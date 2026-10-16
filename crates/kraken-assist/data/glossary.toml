@@ -1,0 +1,1170 @@
+# KRAKEN glossary: plain-language definitions for reverse-engineering terms and the most common
+# x86-64 and AArch64 mnemonics. Written for KRAKEN; each entry has one plain sentence (`short`)
+# and an optional longer `note`.
+#
+# kind  = "concept" | "mnemonic"
+# arch  = "x86_64" | "aarch64"   (mnemonics only; assembly shown in Intel order: destination first)
+
+# ---------------------------------------------------------------------------------------------
+# Concepts: programs and files
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "reverse engineering"
+kind = "concept"
+aliases = ["re"]
+short = "Working out how a program does what it does when you only have the finished program, not its source code."
+note = "In practice you read the machine code (usually through a disassembler or decompiler), give things meaningful names, and build up a picture of the design."
+
+[[entry]]
+term = "binary"
+kind = "concept"
+aliases = ["executable", "program file"]
+short = "The compiled file you are analysing, made of machine code and data rather than readable source."
+
+[[entry]]
+term = "machine code"
+kind = "concept"
+aliases = ["native code", "object code"]
+short = "The raw bytes a processor executes directly."
+note = "Each instruction is a short run of bytes. A disassembler turns them into assembly text so people can read them."
+
+[[entry]]
+term = "assembly"
+kind = "concept"
+aliases = ["assembly language", "asm"]
+short = "A readable text form of machine code, with one short line per processor instruction."
+note = "x86-64 and AArch64 use different assembly languages because their processors have different instructions."
+
+[[entry]]
+term = "instruction"
+kind = "concept"
+short = "A single step the processor performs, such as copying a value, adding two numbers or jumping elsewhere."
+
+[[entry]]
+term = "mnemonic"
+kind = "concept"
+short = "The short name of an instruction in assembly, such as mov or add."
+
+[[entry]]
+term = "operand"
+kind = "concept"
+short = "A value or location an instruction works on, such as a register, a constant or a memory address."
+
+[[entry]]
+term = "opcode"
+kind = "concept"
+short = "The part of a machine instruction's bytes that says which operation it is."
+
+[[entry]]
+term = "disassembler"
+kind = "concept"
+aliases = ["disassembly"]
+short = "A tool that turns machine code bytes back into assembly instructions."
+
+[[entry]]
+term = "decompiler"
+kind = "concept"
+aliases = ["decompilation", "decompile"]
+short = "A tool that turns machine code into C-like code that is much easier to read than assembly."
+note = "The result is a reconstruction, not the original source. Variable names, comments and some structure are lost, and the decompiler can guess wrong, so check surprising output against the assembly."
+
+[[entry]]
+term = "pseudocode"
+kind = "concept"
+short = "Code-like text that shows the logic of a function without being exact source in any real language."
+
+[[entry]]
+term = "compiler"
+kind = "concept"
+short = "A program that turns source code into machine code."
+
+[[entry]]
+term = "compiler optimization"
+kind = "concept"
+aliases = ["optimization", "optimisation"]
+short = "Changes a compiler makes so code runs faster or is smaller, which can make the result look quite different from the source."
+note = "Typical effects are inlined functions, reordered code and loops rewritten in unexpected ways."
+
+[[entry]]
+term = "static analysis"
+kind = "concept"
+short = "Studying a program without running it, by reading its code and data."
+
+[[entry]]
+term = "dynamic analysis"
+kind = "concept"
+short = "Studying a program while it runs, for example in a debugger, to see what it really does."
+
+[[entry]]
+term = "debugger"
+kind = "concept"
+short = "A tool that runs a program under your control so you can pause it, step through it and inspect memory."
+
+[[entry]]
+term = "breakpoint"
+kind = "concept"
+short = "A marker that makes a debugger pause the program when it reaches a chosen place."
+
+[[entry]]
+term = "patch"
+kind = "concept"
+aliases = ["patching"]
+short = "Changing the bytes of a program, for example to skip a check or fix a bug."
+
+[[entry]]
+term = "hook"
+kind = "concept"
+aliases = ["hooking"]
+short = "Redirecting a function so your own code runs when it is called."
+
+[[entry]]
+term = "obfuscation"
+kind = "concept"
+aliases = ["obfuscated"]
+short = "Deliberately making code hard to read so that it is harder to analyse."
+
+[[entry]]
+term = "packer"
+kind = "concept"
+aliases = ["packed", "packing"]
+short = "A tool that compresses or encrypts a program so the real code only appears when it runs."
+note = "A packed file often has very little readable code and few imports. Unpacking it first usually gives a better view."
+
+[[entry]]
+term = "entropy"
+kind = "concept"
+short = "A measure of how random data looks; high entropy suggests compressed or encrypted bytes."
+
+[[entry]]
+term = "hash"
+kind = "concept"
+aliases = ["checksum", "sha-256", "sha256", "md5"]
+short = "A short fingerprint computed from data, used to identify a file or check that it has not changed."
+
+[[entry]]
+term = "magic number"
+kind = "concept"
+aliases = ["magic", "magic bytes"]
+short = "A fixed value at a known place that identifies a file type or marks a special case, like the 'MZ' at the start of Windows programs."
+
+[[entry]]
+term = "syscall"
+kind = "concept"
+aliases = ["system call"]
+short = "A request from a program to the operating system to do something it cannot do itself, such as opening a file."
+
+[[entry]]
+term = "api call"
+kind = "concept"
+aliases = ["api", "library call"]
+short = "A call to a function that a library or the operating system provides."
+
+# ---------------------------------------------------------------------------------------------
+# Concepts: file formats and loading
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "elf"
+kind = "concept"
+aliases = ["elf file"]
+short = "The executable file format used by Linux and many other Unix-like systems."
+
+[[entry]]
+term = "pe"
+kind = "concept"
+aliases = ["pe file", "portable executable", "exe"]
+short = "The executable file format used by Windows for .exe and .dll files."
+
+[[entry]]
+term = "mach-o"
+kind = "concept"
+aliases = ["macho"]
+short = "The executable file format used by macOS and iOS."
+
+[[entry]]
+term = "section"
+kind = "concept"
+short = "A named region of a binary file with a particular purpose, such as code or read-only data."
+
+[[entry]]
+term = ".text"
+kind = "concept"
+aliases = ["text section", "code section"]
+short = "The section that normally holds a program's machine code."
+
+[[entry]]
+term = ".data"
+kind = "concept"
+aliases = ["data section"]
+short = "The section holding global variables that start with a value and can be changed."
+
+[[entry]]
+term = ".rodata"
+kind = "concept"
+aliases = ["rodata", "read-only data"]
+short = "The section holding read-only data such as constant strings and tables."
+
+[[entry]]
+term = ".bss"
+kind = "concept"
+aliases = ["bss"]
+short = "The section for global variables that start out as zero, which takes no space in the file."
+
+[[entry]]
+term = "segment"
+kind = "concept"
+short = "A block of the file that the loader maps into memory with certain permissions such as read, write or execute."
+
+[[entry]]
+term = "loader"
+kind = "concept"
+aliases = ["dynamic linker", "ld.so"]
+short = "The part of the operating system that places a program in memory and gets it ready to run."
+
+[[entry]]
+term = "entry point"
+kind = "concept"
+aliases = ["entrypoint"]
+short = "The address where the program starts running."
+note = "For many programs this is a small startup routine, not main. The startup routine sets things up and then calls main."
+
+[[entry]]
+term = "symbol"
+kind = "concept"
+aliases = ["symbols"]
+short = "A name attached to an address, such as a function or a variable."
+
+[[entry]]
+term = "symbol table"
+kind = "concept"
+short = "The list inside a binary that pairs names with addresses."
+
+[[entry]]
+term = "stripped binary"
+kind = "concept"
+aliases = ["stripped", "strip"]
+short = "A binary with its symbol names removed, so functions only have generated names until you name them."
+
+[[entry]]
+term = "debug info"
+kind = "concept"
+aliases = ["debug symbols", "dwarf", "pdb"]
+short = "Extra data that maps machine code back to source names, files and types, when a program was built with it."
+
+[[entry]]
+term = "import"
+kind = "concept"
+aliases = ["imports", "imported function"]
+short = "A function the program borrows from a library, listed by name in the file."
+note = "The list of imports is one of the quickest ways to see what a program can do, for example networking or file access."
+
+[[entry]]
+term = "export"
+kind = "concept"
+aliases = ["exports", "exported function"]
+short = "A function a library offers to other programs by name."
+
+[[entry]]
+term = "shared library"
+kind = "concept"
+aliases = ["dll", ".so", "dylib", "dynamic library"]
+short = "A file of code that many programs load and use at run time."
+
+[[entry]]
+term = "dynamic linking"
+kind = "concept"
+short = "Connecting a program to library functions when it starts, instead of copying them into the file."
+
+[[entry]]
+term = "static linking"
+kind = "concept"
+short = "Copying the library code a program needs into its own file."
+note = "Statically linked programs contain many library functions that you can usually skip over when reading."
+
+[[entry]]
+term = "plt"
+kind = "concept"
+aliases = ["procedure linkage table"]
+short = "A table of small stubs that jump to library functions that are resolved when first used (Linux)."
+
+[[entry]]
+term = "got"
+kind = "concept"
+aliases = ["global offset table"]
+short = "A table of addresses the loader fills in, so code can find library functions and data (Linux)."
+
+[[entry]]
+term = "relocation"
+kind = "concept"
+aliases = ["relocations"]
+short = "A fix-up that adjusts an address inside the program when it is loaded somewhere other than expected."
+
+[[entry]]
+term = "base address"
+kind = "concept"
+aliases = ["image base", "load address"]
+short = "The address where the start of the program is placed in memory."
+
+[[entry]]
+term = "aslr"
+kind = "concept"
+aliases = ["address space layout randomization"]
+short = "A protection that loads the program at a different random address each run."
+
+[[entry]]
+term = "pie"
+kind = "concept"
+aliases = ["position independent executable", "position-independent code"]
+short = "A program built so it works wherever it is loaded, which lets ASLR move it."
+
+[[entry]]
+term = "nx"
+kind = "concept"
+aliases = ["dep", "no-execute", "w^x"]
+short = "A protection that stops data areas such as the stack from being run as code."
+
+# ---------------------------------------------------------------------------------------------
+# Concepts: memory, data and types
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "address"
+kind = "concept"
+aliases = ["virtual address"]
+short = "A number that says where something is in memory, usually written in hex like 0x401000."
+
+[[entry]]
+term = "offset"
+kind = "concept"
+short = "A distance from some starting point, such as from the start of a structure or a file."
+
+[[entry]]
+term = "hexadecimal"
+kind = "concept"
+aliases = ["hex"]
+short = "A way of writing numbers in base 16 using 0 to 9 and a to f, which lines up neatly with bytes."
+
+[[entry]]
+term = "byte"
+kind = "concept"
+aliases = ["bytes"]
+short = "A unit of data that holds a number from 0 to 255; memory is made of bytes."
+
+[[entry]]
+term = "endianness"
+kind = "concept"
+aliases = ["little endian", "big endian", "little-endian", "big-endian"]
+short = "The order in which a multi-byte number is stored: least significant byte first (little endian) or last (big endian)."
+note = "x86-64 and normal AArch64 systems are little endian, so the number 0x12345678 is stored as the bytes 78 56 34 12."
+
+[[entry]]
+term = "alignment"
+kind = "concept"
+short = "A rule that data sits at addresses divisible by its size, which processors prefer and compilers follow with padding."
+
+[[entry]]
+term = "pointer"
+kind = "concept"
+short = "A value that holds the address of something else in memory."
+
+[[entry]]
+term = "null pointer"
+kind = "concept"
+aliases = ["null"]
+short = "A pointer holding zero, used to mean 'points to nothing'."
+
+[[entry]]
+term = "variable"
+kind = "concept"
+aliases = ["local variable", "global variable"]
+short = "A named place where a program keeps a value; locals live on the stack, globals live in the data sections."
+
+[[entry]]
+term = "constant"
+kind = "concept"
+aliases = ["immediate", "literal"]
+short = "A fixed value written directly into the code, such as the 5 in 'add rax, 5'."
+
+[[entry]]
+term = "string"
+kind = "concept"
+aliases = ["strings", "c string", "null-terminated string"]
+short = "Text stored as bytes; in C it ends with a zero byte."
+note = "Strings in a binary are often the best clue to what code does, such as error messages, file names and URLs."
+
+[[entry]]
+term = "wide string"
+kind = "concept"
+aliases = ["utf-16", "unicode string"]
+short = "Text where each character takes two bytes, common in Windows programs."
+
+[[entry]]
+term = "array"
+kind = "concept"
+short = "A run of items of the same type stored one after another in memory."
+
+[[entry]]
+term = "struct"
+kind = "concept"
+aliases = ["structure"]
+short = "A group of named fields of different types stored together as one unit."
+note = "Applying a struct type to a pointer makes the decompiler show field names instead of raw offsets."
+
+[[entry]]
+term = "enum"
+kind = "concept"
+aliases = ["enumeration"]
+short = "A type whose values are a fixed set of named numbers."
+
+[[entry]]
+term = "union"
+kind = "concept"
+short = "A type whose fields share the same memory, so only one is meaningful at a time."
+
+[[entry]]
+term = "function signature"
+kind = "concept"
+aliases = ["prototype", "function prototype", "signature"]
+short = "The return type, name and parameter types of a function."
+
+[[entry]]
+term = "vtable"
+kind = "concept"
+aliases = ["virtual table", "virtual function table"]
+short = "A table of function addresses an object points to, which C++ uses to pick the right method at run time."
+
+[[entry]]
+term = "jump table"
+kind = "concept"
+aliases = ["switch table"]
+short = "A table of code addresses, often used to implement a switch statement."
+
+# ---------------------------------------------------------------------------------------------
+# Concepts: execution, the stack and calling
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "register"
+kind = "concept"
+aliases = ["registers"]
+short = "A tiny, very fast storage slot inside the processor that instructions work on."
+
+[[entry]]
+term = "program counter"
+kind = "concept"
+aliases = ["instruction pointer", "rip", "pc"]
+short = "The register holding the address of the instruction that runs next."
+
+[[entry]]
+term = "stack"
+kind = "concept"
+aliases = ["call stack"]
+short = "A region of memory used for return addresses and local variables, growing and shrinking as functions are called and return."
+
+[[entry]]
+term = "stack pointer"
+kind = "concept"
+aliases = ["rsp", "sp"]
+short = "The register pointing to the current top of the stack."
+
+[[entry]]
+term = "frame pointer"
+kind = "concept"
+aliases = ["rbp", "base pointer", "fp", "x29"]
+short = "A register some functions use as a fixed anchor to find their local variables on the stack."
+
+[[entry]]
+term = "stack frame"
+kind = "concept"
+aliases = ["frame"]
+short = "The part of the stack that one function call uses for its local variables and saved values."
+
+[[entry]]
+term = "link register"
+kind = "concept"
+aliases = ["lr", "x30"]
+short = "On AArch64, the register that holds the address to return to after a call."
+
+[[entry]]
+term = "flags"
+kind = "concept"
+aliases = ["rflags", "eflags", "condition flags", "nzcv", "zero flag", "carry flag"]
+short = "Single-bit results of earlier instructions, such as 'the result was zero', that conditional jumps and selects then test."
+
+[[entry]]
+term = "heap"
+kind = "concept"
+short = "Memory a program asks for while running, for data whose size or lifetime is not known in advance."
+
+[[entry]]
+term = "function"
+kind = "concept"
+aliases = ["subroutine", "procedure"]
+short = "A named piece of code that other code calls to do one job and then return."
+
+[[entry]]
+term = "default name"
+kind = "concept"
+aliases = ["fun_", "sub_", "auto-generated name"]
+short = "A placeholder name like FUN_00401000 given to a function that has no real name, built from its address."
+note = "Giving these functions meaningful names as you learn what they do is a big part of reverse engineering."
+
+[[entry]]
+term = "caller"
+kind = "concept"
+short = "The code that calls a function."
+
+[[entry]]
+term = "callee"
+kind = "concept"
+short = "The function that is being called."
+
+[[entry]]
+term = "argument"
+kind = "concept"
+aliases = ["parameter", "arguments"]
+short = "A value passed into a function when it is called."
+
+[[entry]]
+term = "return value"
+kind = "concept"
+aliases = ["return"]
+short = "The result a function hands back to its caller."
+
+[[entry]]
+term = "calling convention"
+kind = "concept"
+aliases = ["abi", "system v", "system v abi", "aapcs64", "fastcall", "stdcall"]
+short = "The rules for how a function receives its arguments and returns its result, such as which registers carry them."
+note = "On 64-bit Linux the first integer arguments go in rdi, rsi, rdx, rcx, r8 and r9, and the result comes back in rax. On AArch64 arguments go in x0 to x7 and the result in x0."
+
+[[entry]]
+term = "callee-saved register"
+kind = "concept"
+aliases = ["non-volatile register", "preserved register"]
+short = "A register a function must restore before returning, so callers can rely on it keeping its value."
+
+[[entry]]
+term = "prologue"
+kind = "concept"
+aliases = ["function prologue"]
+short = "The setup code at the start of a function that makes room on the stack and saves registers."
+
+[[entry]]
+term = "epilogue"
+kind = "concept"
+aliases = ["function epilogue"]
+short = "The cleanup code at the end of a function that restores registers and the stack before returning."
+
+[[entry]]
+term = "tail call"
+kind = "concept"
+short = "A call made as the very last step of a function, often compiled as a plain jump so the callee returns straight to the original caller."
+
+[[entry]]
+term = "inlining"
+kind = "concept"
+aliases = ["inline function", "inlined"]
+short = "A compiler copying a small function's body into its callers instead of calling it."
+
+[[entry]]
+term = "thunk"
+kind = "concept"
+aliases = ["stub", "trampoline"]
+short = "A tiny function that only forwards to another one."
+
+[[entry]]
+term = "stack canary"
+kind = "concept"
+aliases = ["canary", "stack cookie", "stack protector"]
+short = "A secret value placed on the stack and checked before return, to detect a buffer overflow."
+
+[[entry]]
+term = "buffer overflow"
+kind = "concept"
+aliases = ["overflow", "stack overflow"]
+short = "A bug where a program writes past the end of a block of memory and damages whatever is next to it."
+
+# ---------------------------------------------------------------------------------------------
+# Concepts: analysis views
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "basic block"
+kind = "concept"
+short = "A straight run of instructions with one way in at the top and one way out at the bottom, with no jumps in between."
+
+[[entry]]
+term = "control flow graph"
+kind = "concept"
+aliases = ["cfg", "flow graph", "graph view"]
+short = "A diagram of a function in which boxes are basic blocks and arrows show the possible jumps between them."
+
+[[entry]]
+term = "branch"
+kind = "concept"
+aliases = ["conditional branch", "conditional jump"]
+short = "A place where the program picks one of two paths depending on a condition, like an if."
+
+[[entry]]
+term = "loop"
+kind = "concept"
+short = "Code that repeats; in a flow graph it shows up as an arrow going back to an earlier block."
+
+[[entry]]
+term = "cross-reference"
+kind = "concept"
+aliases = ["xref", "xrefs", "cross reference"]
+short = "A link showing that some code or data refers to an address, such as every place that calls a function."
+
+[[entry]]
+term = "call graph"
+kind = "concept"
+short = "A map of which functions call which other functions."
+
+[[entry]]
+term = "label"
+kind = "concept"
+short = "A name attached to an address inside code, usually a jump target."
+
+[[entry]]
+term = "comment"
+kind = "concept"
+aliases = ["comments"]
+short = "A note you attach to an address to remember what the code does."
+
+[[entry]]
+term = "annotation"
+kind = "concept"
+aliases = ["annotations", "markup"]
+short = "Anything you add to the analysis, such as names, types and comments."
+
+[[entry]]
+term = "proposal"
+kind = "concept"
+aliases = ["proposals"]
+short = "A change suggested by the assistant that waits for your approval instead of being applied right away."
+
+[[entry]]
+term = "undo"
+kind = "concept"
+short = "Reverting an edit; in KRAKEN every edit, including the assistant's, is logged so it can be undone."
+
+# ---------------------------------------------------------------------------------------------
+# x86-64 mnemonics (Intel order: destination first)
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "mov"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Copies a value from the second operand into the first."
+note = "Operands can be registers, constants or memory, but not memory to memory. Writing to a 32-bit register clears the upper half of the 64-bit register."
+
+[[entry]]
+term = "movzx"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Copies a small value into a larger register, filling the extra bits with zeros."
+
+[[entry]]
+term = "movsx"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["movsxd"]
+short = "Copies a small value into a larger register, extending its sign so negative numbers stay negative."
+
+[[entry]]
+term = "lea"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Works out an address from the expression you give it and stores the address itself, without reading memory."
+note = "Compilers also use it as a cheap way to do arithmetic like 'x*4+8'."
+
+[[entry]]
+term = "push"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Puts a value on top of the stack and moves the stack pointer down."
+
+[[entry]]
+term = "pop"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Takes the value from the top of the stack into a register and moves the stack pointer up."
+
+[[entry]]
+term = "call"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Runs another function, first saving the address to return to on the stack."
+
+[[entry]]
+term = "ret"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["retn"]
+short = "Returns from a function by jumping to the address on top of the stack."
+
+[[entry]]
+term = "jmp"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Jumps to another address without coming back."
+
+[[entry]]
+term = "jcc"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["je", "jne", "jz", "jnz", "jg", "jge", "jl", "jle", "ja", "jae", "jb", "jbe", "js", "jns", "jo", "jno", "jc", "jnc"]
+short = "Jumps only if a condition from an earlier compare or arithmetic instruction holds, such as equal (je) or not equal (jne)."
+note = "Reading a jump together with the cmp or test just before it tells you the if-condition. Signed comparisons use g and l (greater, less); unsigned ones use a and b (above, below)."
+
+[[entry]]
+term = "cmp"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Compares two values by subtracting them, keeping only the flags so a later jump can react."
+
+[[entry]]
+term = "test"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Checks bits by AND-ing two values and keeping only the flags; 'test eax, eax' asks whether eax is zero."
+
+[[entry]]
+term = "add"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Adds the second operand to the first and stores the result in the first."
+
+[[entry]]
+term = "sub"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Subtracts the second operand from the first and stores the result in the first."
+note = "'sub rsp, N' at the start of a function makes room for N bytes of local variables."
+
+[[entry]]
+term = "imul"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["mul"]
+short = "Multiplies two numbers."
+
+[[entry]]
+term = "idiv"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["div"]
+short = "Divides a double-width value in rdx:rax by the operand, leaving the quotient in rax and the remainder in rdx."
+
+[[entry]]
+term = "inc"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["dec"]
+short = "Adds one to (inc) or subtracts one from (dec) its operand."
+
+[[entry]]
+term = "neg"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Flips the sign of a number (two's complement negation)."
+
+[[entry]]
+term = "not"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Flips every bit of its operand."
+
+[[entry]]
+term = "and"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Keeps only the bits that are set in both operands; often used to mask out part of a value."
+
+[[entry]]
+term = "or"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Sets every bit that is set in either operand."
+
+[[entry]]
+term = "xor"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Sets the bits that differ between the operands."
+note = "'xor eax, eax' is the usual short way to set a register to zero."
+
+[[entry]]
+term = "shl"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["sal"]
+short = "Shifts bits left, which multiplies by a power of two."
+
+[[entry]]
+term = "shr"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Shifts bits right filling with zeros, which divides an unsigned number by a power of two."
+
+[[entry]]
+term = "sar"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Shifts bits right keeping the sign bit, which divides a signed number by a power of two."
+
+[[entry]]
+term = "cmovcc"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["cmove", "cmovne", "cmovz", "cmovnz", "cmovg", "cmovl", "cmovge", "cmovle", "cmova", "cmovb", "cmovae", "cmovbe", "cmovs", "cmovns"]
+short = "Copies a value only if a condition holds, which lets the compiler pick between two values without a jump."
+
+[[entry]]
+term = "setcc"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["sete", "setne", "setz", "setnz", "setg", "setl", "setge", "setle", "seta", "setb", "setae", "setbe", "sets", "setns"]
+short = "Sets a byte to 1 if a condition holds and to 0 otherwise, turning a comparison into a true/false value."
+
+[[entry]]
+term = "nop"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Does nothing; compilers use it for padding and alignment."
+
+[[entry]]
+term = "leave"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Tears down a stack frame by restoring the stack pointer from the frame pointer and popping the saved frame pointer."
+
+[[entry]]
+term = "xchg"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Swaps the values of its two operands."
+
+[[entry]]
+term = "cdqe"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["cqo", "cdq", "cwde"]
+short = "Extends the sign of the value in the accumulator register to a wider size, often before a division."
+
+[[entry]]
+term = "rep"
+kind = "mnemonic"
+arch = "x86_64"
+aliases = ["rep movs", "rep stos", "movs", "stos", "repne scas", "scas"]
+short = "A prefix that repeats a string instruction, such as copying or filling memory, a number of times given by rcx."
+
+[[entry]]
+term = "syscall"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Asks the operating system kernel to do something; the call number is in rax and the arguments are in registers."
+
+[[entry]]
+term = "int3"
+kind = "mnemonic"
+arch = "x86_64"
+short = "A one-byte instruction that stops in a debugger; debuggers insert it to make breakpoints."
+
+[[entry]]
+term = "ud2"
+kind = "mnemonic"
+arch = "x86_64"
+short = "An instruction that is deliberately invalid and crashes the program; compilers place it after code that should never be reached."
+
+[[entry]]
+term = "endbr64"
+kind = "mnemonic"
+arch = "x86_64"
+short = "A marker at the start of functions that tells the processor a jump or call may land here; it otherwise does nothing."
+
+[[entry]]
+term = "cpuid"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Asks the processor which features and model it is."
+
+[[entry]]
+term = "hlt"
+kind = "mnemonic"
+arch = "x86_64"
+short = "Halts the processor until the next interrupt; ordinary programs cannot run it."
+
+# ---------------------------------------------------------------------------------------------
+# AArch64 mnemonics (destination first, except for stores)
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "mov"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Copies a register or a small constant into the destination register."
+
+[[entry]]
+term = "movz"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["movn"]
+short = "Loads a 16-bit piece of a constant and clears the rest of the register."
+
+[[entry]]
+term = "movk"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Overwrites one 16-bit piece of a register and keeps the rest; used after movz to build large constants."
+
+[[entry]]
+term = "mvn"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Copies a register with every bit flipped."
+
+[[entry]]
+term = "ldr"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["ldur", "ldrsw"]
+short = "Loads a value from memory into a register."
+note = "The address is a base register plus an optional offset. ldrsw loads a 32-bit value and extends its sign."
+
+[[entry]]
+term = "ldrb"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["ldrh", "ldrsb", "ldrsh"]
+short = "Loads a single byte (ldrb) or two bytes (ldrh) from memory, zero-extended; the 's' forms keep the sign."
+
+[[entry]]
+term = "str"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["stur"]
+short = "Stores the value of a register into memory; the register being stored is the first operand."
+
+[[entry]]
+term = "strb"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["strh"]
+short = "Stores a single byte (strb) or two bytes (strh) of a register into memory."
+
+[[entry]]
+term = "ldp"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Loads two registers from memory in one instruction; common when restoring registers at the end of a function."
+
+[[entry]]
+term = "stp"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Stores two registers to memory in one instruction; common when saving registers at the start of a function."
+
+[[entry]]
+term = "add"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["adds"]
+short = "Adds two values and writes the result to a separate destination register (adds also sets the flags)."
+
+[[entry]]
+term = "sub"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["subs"]
+short = "Subtracts the third operand from the second and writes the result to the destination (subs also sets the flags)."
+
+[[entry]]
+term = "mul"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["madd", "msub"]
+short = "Multiplies two registers; madd and msub multiply and then add or subtract a third value."
+
+[[entry]]
+term = "sdiv"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["udiv"]
+short = "Divides one register by another, as signed (sdiv) or unsigned (udiv) numbers."
+
+[[entry]]
+term = "neg"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Writes the negative of a value to the destination register."
+
+[[entry]]
+term = "and"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["ands"]
+short = "Keeps only the bits set in both inputs (ands also sets the flags)."
+
+[[entry]]
+term = "orr"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Sets every bit that is set in either input."
+
+[[entry]]
+term = "eor"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Sets the bits that differ between the two inputs (exclusive or)."
+
+[[entry]]
+term = "lsl"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Shifts bits left, which multiplies by a power of two."
+
+[[entry]]
+term = "lsr"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Shifts bits right filling with zeros, which divides an unsigned number by a power of two."
+
+[[entry]]
+term = "asr"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Shifts bits right keeping the sign bit, which divides a signed number by a power of two."
+
+[[entry]]
+term = "sxtw"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["sxtb", "sxth", "uxtb", "uxth"]
+short = "Widens a smaller value to a full register, extending its sign (sxt) or filling with zeros (uxt)."
+
+[[entry]]
+term = "adrp"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Computes the address of the 4 KiB page that holds a target, relative to the current instruction."
+note = "It is normally followed by an add or ldr that supplies the rest of the address. Together they reach a global variable or a string."
+
+[[entry]]
+term = "adr"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Computes an address relative to the current instruction and puts it in a register."
+
+[[entry]]
+term = "b"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Jumps to another address without coming back."
+
+[[entry]]
+term = "b.cond"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["b.eq", "b.ne", "b.lt", "b.le", "b.gt", "b.ge", "b.hi", "b.hs", "b.lo", "b.ls", "b.mi", "b.pl", "b.cs", "b.cc"]
+short = "Jumps only if a condition from an earlier cmp or flag-setting instruction holds, such as equal (b.eq) or not equal (b.ne)."
+
+[[entry]]
+term = "bl"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Calls a function by jumping to it after saving the return address in the link register (x30)."
+
+[[entry]]
+term = "br"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Jumps to the address held in a register, as used for jump tables."
+
+[[entry]]
+term = "blr"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Calls the function whose address is in a register, such as a function pointer or a virtual method."
+
+[[entry]]
+term = "ret"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Returns from a function by jumping to the address in the link register."
+
+[[entry]]
+term = "cbz"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["cbnz"]
+short = "Jumps if a register is zero (cbz) or not zero (cbnz), without needing a separate compare."
+
+[[entry]]
+term = "tbz"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["tbnz"]
+short = "Jumps depending on whether one chosen bit of a register is zero (tbz) or one (tbnz)."
+
+[[entry]]
+term = "cmp"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["cmn"]
+short = "Compares two values by subtracting them, keeping only the flags so a later conditional instruction can react."
+
+[[entry]]
+term = "tst"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Checks bits by AND-ing two values and keeping only the flags."
+
+[[entry]]
+term = "csel"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["csinc", "csinv", "csneg"]
+short = "Picks one of two registers depending on a condition, which lets the compiler avoid a jump."
+
+[[entry]]
+term = "cset"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["csetm"]
+short = "Sets a register to 1 if a condition holds and to 0 otherwise, turning a comparison into a true/false value."
+
+[[entry]]
+term = "svc"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Asks the operating system kernel to do something; the system call number is in x8 (Linux) and the arguments are in x0 onwards."
+
+[[entry]]
+term = "nop"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Does nothing; used for padding and alignment."
+
+[[entry]]
+term = "brk"
+kind = "mnemonic"
+arch = "aarch64"
+short = "Triggers a breakpoint exception, used by debuggers and placed after code that should never run."
+
+[[entry]]
+term = "paciasp"
+kind = "mnemonic"
+arch = "aarch64"
+aliases = ["autiasp", "pacibsp", "autibsp"]
+short = "Signs (paciasp) or checks (autiasp) the return address in the link register, a protection against overwritten return addresses."
+
+[[entry]]
+term = "bti"
+kind = "mnemonic"
+arch = "aarch64"
+short = "A marker saying an indirect jump or call may land here; it otherwise does nothing."

@@ -153,7 +153,7 @@ impl CliEnv {
         }
     }
 
-    fn var(&self, k: &str) -> Option<String> {
+    pub(crate) fn var(&self, k: &str) -> Option<String> {
         (self.vars)(k).filter(|v| !v.is_empty())
     }
 
@@ -164,7 +164,7 @@ impl CliEnv {
     }
 
     /// True when the person asked for in-process execution.
-    fn no_daemon(&self, sm: &ArgMatches) -> bool {
+    pub(crate) fn no_daemon(&self, sm: &ArgMatches) -> bool {
         sm.try_get_one::<bool>("no-daemon").ok().flatten().copied() == Some(true)
             || self
                 .var("KRAKEN_NO_DAEMON")
@@ -172,7 +172,7 @@ impl CliEnv {
     }
 
     /// The backend for one invocation, and its session when it runs in this process.
-    async fn backend(
+    pub(crate) async fn backend(
         &self,
         project: Option<&str>,
         no_daemon: bool,
@@ -434,6 +434,80 @@ pub fn build_cli(registry: &Registry) -> Command {
                     .long("force")
                     .action(ArgAction::SetTrue)
                     .help("Download, extract and build again even if everything is in place"),
+            ),
+    )
+    .subcommand(
+        Command::new("explain")
+            .about("Explain a function in plain language (needs an AI provider)")
+            .long_about(
+                "Explain the function at ADDRESS in plain language: what it does, its key \
+                 behaviours and names worth considering. The assistant reads the function through \
+                 the same commands as everyone else and changes nothing. Needs a [provider] table \
+                 in config.toml; see docs/assistant.md. Text streams to stdout, tool calls to \
+                 stderr; --json prints one structured result instead.",
+            )
+            .arg(
+                Arg::new("address")
+                    .required(true)
+                    .value_name("ADDRESS")
+                    .help("Address of the function, as hex (for example 0x401000)"),
+            ),
+    )
+    .subcommand(
+        Command::new("overview")
+            .about("Guided first look at the program: what it is, main parts, where to start")
+            .long_about(
+                "A guided first look at the open project: what the program appears to be, its main \
+                 parts, which functions to open first and why, and what to do next. Reads only. \
+                 Needs an AI provider; see docs/assistant.md.",
+            ),
+    )
+    .subcommand(
+        Command::new("auto-name")
+            .about("Suggest names and comments for default-named functions (needs an AI provider)")
+            .long_about(
+                "Look at functions that still have default names (FUN_...) and suggest names and \
+                 comments with the evidence for each. Without --dry-run the suggestions are \
+                 written under the agent `kraken-assistant`: additive edits are applied (and can \
+                 be undone with `kraken undo-run`), anything that would overwrite a person's work \
+                 becomes a proposal. The confidence shown counts independent kinds of evidence; it \
+                 is not a probability.",
+            )
+            .arg(
+                Arg::new("limit")
+                    .long("limit")
+                    .value_name("N")
+                    .default_value("10")
+                    .value_parser(clap::value_parser!(usize))
+                    .help("Most functions to look at (at most 50)"),
+            )
+            .arg(
+                Arg::new("dry-run")
+                    .long("dry-run")
+                    .action(ArgAction::SetTrue)
+                    .help("Only suggest; write nothing"),
+            ),
+    )
+    .subcommand(
+        Command::new("glossary")
+            .about("Look up a reverse-engineering term or an instruction mnemonic")
+            .long_about(
+                "Plain-language definitions of reverse-engineering terms and of common x86-64 and \
+                 AArch64 mnemonics. Works offline and needs no project or provider.",
+            )
+            .arg(
+                Arg::new("term")
+                    .required(true)
+                    .num_args(1..)
+                    .value_name("TERM")
+                    .help("A term (stack frame) or mnemonic (jne); typos are forgiven"),
+            )
+            .arg(
+                Arg::new("arch")
+                    .long("arch")
+                    .value_name("ARCH")
+                    .value_parser(PossibleValuesParser::new(["x86_64", "aarch64"]))
+                    .help("Prefer mnemonics of this architecture"),
             ),
     )
     .subcommand(
@@ -733,7 +807,7 @@ async fn run_registry_command(
     code
 }
 
-async fn save(session: &Session, err: &mut dyn Write) {
+pub(crate) async fn save(session: &Session, err: &mut dyn Write) {
     let Ok(engine) = session.engine() else {
         return;
     };
@@ -864,6 +938,18 @@ pub async fn run(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    run_with_provider(args, env, None, out, err).await
+}
+
+/// [`run`] with the assistant's chat provider supplied instead of read from `config.toml`
+/// (tests, embedding). `None` loads the `[provider]` table as the real binary does.
+pub async fn run_with_provider(
+    args: Vec<OsString>,
+    env: &CliEnv,
+    provider: Option<Arc<dyn kraken_agent::ChatProvider>>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let cli = build_cli(&env.registry);
     let matches = match cli.try_get_matches_from(args) {
         Ok(m) => m,
@@ -893,6 +979,10 @@ pub async fn run(
         "mcp" => run_mcp(env, sm, json_out, err).await,
         "setup" => crate::setup::run_setup(env, sm, json_out, out, err).await,
         "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
+        "glossary" => crate::assist_cmd::run_glossary(sm, json_out, out, err),
+        "explain" | "overview" | "auto-name" => {
+            crate::assist_cmd::run_assist(env, sub, sm, json_out, provider, out, err).await
+        }
         other => {
             let names: BTreeMap<String, String> = env
                 .registry

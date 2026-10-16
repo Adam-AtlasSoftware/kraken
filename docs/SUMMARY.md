@@ -7,6 +7,7 @@
 - [Getting started](getting-started.md)
 - [Concepts](concepts.md)
 - [Connecting AI agents (MCP)](mcp.md)
+- [The built-in assistant](assistant.md)
 - [Scripting with the CLI](cli.md)
 - [Security](security.md)
 

@@ -284,6 +284,22 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
     step!("get_function", json!({"address": "0x401000"}));
     step!("decompile", json!({"address": "0x401040"}));
     step!("decompile", json!({"address": "0x999999"}));
+    step!("memory_map", json!({}));
+    step!("read_bytes", json!({"address": "0x401000", "length": 16}));
+    step!("read_bytes", json!({"address": "0x401000", "length": 0}));
+    step!("disassemble", json!({"function": "0x401000"}));
+    step!(
+        "disassemble",
+        json!({"address": "0x401000", "max_instructions": 3})
+    );
+    step!("disassemble", json!({}));
+    step!("xrefs", json!({"address": "0x401040", "direction": "to"}));
+    step!("callers", json!({"address": "0x401040"}));
+    step!("callees", json!({"address": "0x401000"}));
+    step!("cfg", json!({"function": "0x401000"}));
+    step!("strings", json!({}));
+    step!("imports", json!({}));
+    step!("exports", json!({}));
 
     let renamed = step!(
         "rename_symbol",

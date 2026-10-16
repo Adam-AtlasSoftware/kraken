@@ -237,6 +237,27 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     step!("decompile", json!({"address": "0x401040"}));
     step!("decompile", json!({"address": "0x999999"}));
 
+    // Program data.
+    let map = step!("memory_map", json!({}));
+    assert!(map["blocks"].as_array().is_some_and(|b| !b.is_empty()));
+    step!("read_bytes", json!({"address": "0x401000", "length": 16}));
+    step!("read_bytes", json!({"address": "0x401000", "length": 0}));
+    let listing = step!("disassemble", json!({"function": "0x401000"}));
+    assert_eq!(listing["items"].as_array().map(Vec::len), Some(16));
+    step!(
+        "disassemble",
+        json!({"address": "0x401000", "max_instructions": 3})
+    );
+    step!("disassemble", json!({}));
+    let xr = step!("xrefs", json!({"address": "0x401040", "direction": "to"}));
+    assert_eq!(xr["items"].as_array().map(Vec::len), Some(1));
+    step!("callers", json!({"address": "0x401040"}));
+    step!("callees", json!({"address": "0x401000"}));
+    step!("cfg", json!({"function": "0x401000"}));
+    step!("strings", json!({}));
+    step!("imports", json!({}));
+    step!("exports", json!({}));
+
     // Edits as an agent: additive edits apply, overwrites and structural edits become proposals.
     let renamed = step!(
         "rename_symbol",

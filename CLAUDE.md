@@ -22,6 +22,7 @@ crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 - `kraken-cli`: CLI client (planned)
 - `kraken-mcp`: MCP server (planned)
 - `kraken-agent`: agent loop and providers (planned)
+- `kraken-assist`: assistant core: registry tool host, explain/overview/auto-name tasks, RE glossary (no GUI deps)
 - `kraken-infer`, plus one crate per inference backend (planned)
 - `kraken-gui`, plus a headless view-model crate tested without egui (planned)
 

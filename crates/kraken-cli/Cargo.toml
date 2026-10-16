@@ -18,6 +18,8 @@ path = "src/main.rs"
 anyhow = "1"
 async-trait = "0.1.89"
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "string", "color"] }
+kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
 kraken-ipc = { version = "0.0.0", path = "../kraken-ipc" }

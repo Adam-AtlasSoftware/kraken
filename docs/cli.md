@@ -54,3 +54,7 @@ They ask on the terminal. In scripts pass `--yes` to approve; without it they ar
 ```sh
 kraken decompile --address 0x1189 || echo "failed with $?"
 ```
+
+## Assistant commands
+
+Beside the registry commands, `kraken explain <address>`, `kraken overview`, `kraken auto-name [--limit N] [--dry-run]` and `kraken glossary <term>` use the built-in assistant. They are described in [The built-in assistant](assistant.md).

@@ -17,11 +17,14 @@
 //! internal failure, 6 cancelled or timed out ([`exit_code`]).
 
 mod app;
+mod assist_cmd;
 mod daemon_cmd;
 mod exit;
 pub mod render;
 pub mod schema;
 mod setup;
 
-pub use app::{BUILD, CliAuthor, CliEnv, DaemonAuto, DaemonMode, build_args, build_cli, run};
+pub use app::{
+    BUILD, CliAuthor, CliEnv, DaemonAuto, DaemonMode, build_args, build_cli, run, run_with_provider,
+};
 pub use exit::exit_code;
