@@ -1,0 +1,60 @@
+//! Entity keys: stable strings naming one versioned aspect of one anchored item.
+
+use kraken_proto::{Anchor, CommentKind, LogOp, ProtoError};
+
+fn comment_suffix(kind: CommentKind) -> &'static str {
+    match kind {
+        CommentKind::Plate => "plate",
+        CommentKind::Pre => "pre",
+        CommentKind::Eol => "eol",
+        CommentKind::Post => "post",
+        CommentKind::Repeatable => "repeatable",
+    }
+}
+
+/// Key prefix for an anchor, e.g. `native:ram:0x401000`. Only the address identifies the entity;
+/// the function hash is not part of the key.
+pub fn anchor_key(anchor: &Anchor) -> Result<String, ProtoError> {
+    let (space, offset, _, _) = anchor.native()?;
+    Ok(format!("native:{space}:{:#x}", offset.0))
+}
+
+/// Aspect-qualified key such as `native:ram:0x401000:name`.
+pub fn entity_key(anchor: &Anchor, aspect: &str) -> Result<String, ProtoError> {
+    Ok(format!("{}:{aspect}", anchor_key(anchor)?))
+}
+
+/// The aspect string a log op writes: `name`, `type`, `comment:<kind>`, `function`, `bounds`,
+/// `codedata` or `cc`.
+pub fn op_aspect(op: &LogOp) -> String {
+    match op {
+        LogOp::Rename { .. } => "name".into(),
+        LogOp::SetType { .. } => "type".into(),
+        LogOp::SetComment { comment_kind, .. } => {
+            format!("comment:{}", comment_suffix(*comment_kind))
+        }
+        LogOp::CreateFunction { .. } | LogOp::DeleteFunction { .. } => "function".into(),
+        LogOp::SetFunctionBounds { .. } => "bounds".into(),
+        LogOp::SetCodeData { .. } => "codedata".into(),
+        LogOp::SetCallingConvention { .. } => "cc".into(),
+    }
+}
+
+/// The anchor a log op applies to.
+pub fn op_anchor(op: &LogOp) -> &Anchor {
+    match op {
+        LogOp::Rename { anchor, .. }
+        | LogOp::SetType { anchor, .. }
+        | LogOp::SetComment { anchor, .. }
+        | LogOp::CreateFunction { anchor, .. }
+        | LogOp::DeleteFunction { anchor, .. }
+        | LogOp::SetFunctionBounds { anchor, .. }
+        | LogOp::SetCodeData { anchor, .. }
+        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+    }
+}
+
+/// The single entity key a log op writes.
+pub fn op_key(op: &LogOp) -> Result<String, ProtoError> {
+    entity_key(op_anchor(op), &op_aspect(op))
+}
