@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+    "tamasfe.even-better-toml",
+    "redhat.java",
+    "vscjava.vscode-gradle",
+    "ms-python.python"
+  ]
+}

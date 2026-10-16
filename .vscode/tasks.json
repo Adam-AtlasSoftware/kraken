@@ -1,0 +1,122 @@
+{
+  // Ghidra + JDK for development live in ~/.cache/kraken-dev (see plans/dev-env.sh or run
+  // "kraken: setup (download Ghidra + JDK)", which installs them under ~/.local/share/kraken).
+  "version": "2.0.0",
+  "options": {
+    "env": {
+      "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
+      "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1",
+      "GHIDRA_INSTALL_DIR": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
+      "JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+    }
+  },
+  "tasks": [
+    {
+      "label": "cargo build (workspace)",
+      "type": "shell",
+      "command": "cargo build --workspace",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo build --release",
+      "type": "shell",
+      "command": "cargo build --workspace --release",
+      "group": "build",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "build Ghidra extension",
+      "type": "shell",
+      "command": "cargo xtask ghidra-ext",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "cargo test (fast, no Ghidra)",
+      "type": "shell",
+      "command": "cargo test --workspace",
+      "options": { "env": { "KRAKEN_NO_DAEMON": "1" } },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo test (real Ghidra, ignored tests)",
+      "type": "shell",
+      "command": "cargo test --workspace -- --ignored --test-threads=1",
+      "dependsOn": "build Ghidra extension",
+      "group": "test",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo clippy",
+      "type": "shell",
+      "command": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo fmt",
+      "type": "shell",
+      "command": "cargo fmt --all",
+      "problemMatcher": []
+    },
+    {
+      "label": "cargo deny",
+      "type": "shell",
+      "command": "cargo deny check",
+      "problemMatcher": []
+    },
+    {
+      "label": "regenerate schema, samples, docs reference, notices",
+      "type": "shell",
+      "command": "cargo xtask schema && cargo xtask samples && cargo xtask docs && cargo xtask notices",
+      "problemMatcher": []
+    },
+    {
+      "label": "run GUI (demo project)",
+      "type": "shell",
+      "command": "cargo run -p kraken-gui -- --demo",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "run GUI (real, through krakend)",
+      "type": "shell",
+      "command": "cargo build --workspace && target/debug/kraken-gui",
+      "dependsOn": "build Ghidra extension",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "kraken: try on a corpus binary",
+      "type": "shell",
+      "command": "cargo build --workspace && P=$(mktemp -d /tmp/kraken-try.XXXX)/proj && target/debug/kraken project-create --binary corpus/bin/pie_list-O0 --project-dir \"$P\" && target/debug/kraken --project \"$P\" analyze && target/debug/kraken --project \"$P\" list-functions --limit 20 && echo \"project: $P\"",
+      "dependsOn": "build Ghidra extension",
+      "problemMatcher": []
+    },
+    {
+      "label": "kraken: daemon status",
+      "type": "shell",
+      "command": "target/debug/kraken daemon status",
+      "problemMatcher": []
+    },
+    {
+      "label": "kraken: daemon stop",
+      "type": "shell",
+      "command": "target/debug/kraken daemon stop",
+      "problemMatcher": []
+    },
+    {
+      "label": "kraken: setup (download Ghidra + JDK)",
+      "type": "shell",
+      "command": "cargo run -p kraken-cli --bin kraken -- setup",
+      "options": { "env": { "KRAKEN_GHIDRA_HOME": "", "KRAKEN_JAVA_HOME": "" } },
+      "problemMatcher": []
+    },
+    {
+      "label": "docs: serve mdBook",
+      "type": "shell",
+      "command": "${env:HOME}/.cargo/bin/mdbook serve docs --open",
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

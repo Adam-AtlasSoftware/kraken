@@ -1,0 +1,72 @@
+{
+  // CodeLLDB (vadimcn.vscode-lldb). rust-analyzer's "Debug" code lens also works for single tests.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GUI: demo project",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["build", "-p", "kraken-gui", "--bin", "kraken-gui"] },
+      "args": ["--demo"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "GUI: real projects (through krakend)",
+      "type": "lldb",
+      "request": "launch",
+      "preLaunchTask": "cargo build (workspace)",
+      "program": "${workspaceFolder}/target/debug/kraken-gui",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+      }
+    },
+    {
+      "name": "GUI: real projects (engine in-process, no daemon)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["build", "-p", "kraken-gui", "--bin", "kraken-gui"] },
+      "args": ["--no-daemon"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+      }
+    },
+    {
+      "name": "CLI: kraken <args>",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["build", "-p", "kraken-cli", "--bin", "kraken"] },
+      "args": ["--no-daemon", "${input:krakenArgs}"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+      }
+    },
+    {
+      "name": "krakend (foreground, logs to terminal)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["build", "-p", "krakend", "--bin", "krakend"] },
+      "args": ["--log-stderr"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1",
+        "KRAKEN_LOG": "info"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "krakenArgs",
+      "type": "promptString",
+      "description": "kraken arguments (one string; e.g. commands)",
+      "default": "commands"
+    }
+  ]
+}
