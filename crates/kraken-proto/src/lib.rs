@@ -99,9 +99,28 @@ pub struct ProtoSchema {
     pub symbol_entry: SymbolEntry,
 }
 
+/// Rebuilds every JSON object with its keys in sorted order, so generated files do not depend on
+/// whether some dependency enables serde_json's `preserve_order` feature.
+pub fn canonical_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: std::collections::BTreeMap<String, serde_json::Value> = map
+                .into_iter()
+                .map(|(k, v)| (k, canonical_json(v)))
+                .collect();
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(canonical_json).collect())
+        }
+        other => other,
+    }
+}
+
 /// Generates the combined JSON Schema as pretty-printed JSON with a trailing newline.
 pub fn schema_json() -> String {
     let schema = schemars::schema_for!(ProtoSchema);
+    let schema = canonical_json(serde_json::to_value(&schema).expect("schema serializes"));
     let mut s = serde_json::to_string_pretty(&schema).expect("schema serializes");
     s.push('\n');
     s
