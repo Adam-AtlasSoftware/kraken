@@ -310,6 +310,9 @@ pub struct AgentInfo {
     pub protocol_version: u16,
     /// Sign-in methods the agent lists.
     pub auth_methods: Vec<String>,
+    /// The model the session starts with, when the agent reports one (a `model` config option).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Why a turn ended.
@@ -641,6 +644,34 @@ fn declined(what: &str) -> agent_client_protocol::Error {
     agent_client_protocol::Error::method_not_found().data(format!(
         "KRAKEN does not offer {what} to agents; use your own tools or KRAKEN's MCP tools"
     ))
+}
+
+/// The display name of the session's current model, from the `model` config option.
+fn session_model(
+    session: &agent_client_protocol::schema::v1::NewSessionResponse,
+) -> Option<String> {
+    let json = serde_json::to_value(&session.config_options).ok()?;
+    let option = json
+        .as_array()?
+        .iter()
+        .find(|o| o.get("category").and_then(Value::as_str) == Some("model"))?;
+    let current = option.get("currentValue").and_then(Value::as_str)?;
+    let mut stack: Vec<&Value> = option
+        .get("options")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    while let Some(o) = stack.pop() {
+        if o.get("value").and_then(Value::as_str) == Some(current)
+            && let Some(n) = o.get("name").and_then(Value::as_str)
+        {
+            return Some(n.to_string());
+        }
+        if let Some(group) = o.get("options").and_then(Value::as_array) {
+            stack.extend(group.iter());
+        }
+    }
+    Some(current.to_string())
 }
 
 fn stderr_suffix(tail: &StderrTail) -> String {
@@ -1051,7 +1082,8 @@ async fn run_connection(args: ConnectionArgs) {
                 )
                 .block_task()
                 .await?;
-            let info = AgentInfo {
+            let mut info = AgentInfo {
+                model: None,
                 name: init.agent_info.as_ref().map(|i| i.name.clone()),
                 version: init.agent_info.as_ref().map(|i| i.version.clone()),
                 protocol_version: init.protocol_version.as_u16(),
@@ -1087,6 +1119,7 @@ async fn run_connection(args: ConnectionArgs) {
                     return Ok(());
                 }
             };
+            info.model = session_model(&session);
             send_ready(
                 &ready_for_main,
                 Ok(Ready {

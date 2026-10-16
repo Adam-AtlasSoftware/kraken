@@ -21,6 +21,7 @@ async-trait = "0.1.89"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 engine-fake = { path = "../engine-fake", version = "0.0.0", optional = true }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0", optional = true }
+kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }

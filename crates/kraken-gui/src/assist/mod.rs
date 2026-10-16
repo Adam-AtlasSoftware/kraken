@@ -13,7 +13,7 @@ mod settings_ai;
 mod setup;
 #[cfg(test)]
 mod tests;
-mod text;
+pub(crate) mod text;
 
 use egui::Ui;
 use egui_dock::DockState;
@@ -72,7 +72,13 @@ pub fn with_assistant_tab(mut dock: DockState<Tab>) -> DockState<Tab> {
         dock.push_to_focused_leaf(Tab::Assistant);
         return dock;
     };
+    let front = tree[leaf]
+        .tabs()
+        .and_then(|t| t.iter().position(|x| *x == Tab::Hex));
     tree[leaf].append_tab(Tab::Assistant);
+    if let (Some(i), Node::Leaf(l)) = (front, &mut tree[leaf]) {
+        let _ = l.set_active_tab(i);
+    }
     // A conversation needs room: give the column more width and its top pane more height.
     let mut at: NodeIndex = leaf;
     let mut tall_done = false;
@@ -80,7 +86,7 @@ pub fn with_assistant_tab(mut dock: DockState<Tab>) -> DockState<Tab> {
     while let Some(parent) = at.parent() {
         match &mut tree[parent] {
             Node::Vertical(split) if !tall_done && at.is_left() => {
-                split.fraction = 0.8;
+                split.fraction = 0.62;
                 tall_done = true;
             }
             Node::Horizontal(split) if !wide_done && !at.is_left() => {

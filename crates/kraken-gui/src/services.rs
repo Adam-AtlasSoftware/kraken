@@ -32,6 +32,8 @@ pub struct Services {
     pub connector: Option<Connector>,
     /// The in-process engine factory of `--no-daemon`.
     pub ghidra: Option<Arc<GhidraEngineFactory>>,
+    /// Where the Agents tab finds agents (`None`: the user's directories, on first use).
+    pub agents: Option<kraken_viewmodel::agents::AgentsConfig>,
 }
 
 impl Services {
@@ -53,6 +55,7 @@ impl Services {
             prefs_file: crate::recent::default_file(),
             connector: None,
             ghidra,
+            agents: kraken_viewmodel::agents::AgentsConfig::from_env(!no_daemon),
         }
     }
 
@@ -68,6 +71,7 @@ impl Services {
                 Box::pin(async { Err("no krakend in this test".to_string()) })
             })),
             ghidra: None,
+            agents: Some(offline_agents()),
         }
     }
 
@@ -77,4 +81,19 @@ impl Services {
             .clone()
             .unwrap_or_else(|| default_connector(StartOptions::default()))
     }
+}
+
+/// Agent settings that touch nothing of the user's.
+#[cfg(test)]
+fn offline_agents() -> kraken_viewmodel::agents::AgentsConfig {
+    use kraken_acp::{AgentPaths, Platform, Resolver};
+    let dir = std::env::temp_dir().join("kraken-gui-test-agents-none");
+    kraken_viewmodel::agents::AgentsConfig::new(
+        Resolver {
+            paths: AgentPaths::in_data_dir(&dir),
+            platform: Platform::current(),
+            path_env: Some(dir.into_os_string()),
+        },
+        None,
+    )
 }

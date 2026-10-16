@@ -27,6 +27,7 @@ pub enum Tab {
     History,
     Proposals,
     Assistant,
+    Agents,
 }
 
 impl Tab {
@@ -43,6 +44,7 @@ impl Tab {
             Tab::History => "History",
             Tab::Proposals => "Proposals",
             Tab::Assistant => "Assistant",
+            Tab::Agents => "Agents",
         }
     }
 
@@ -65,6 +67,9 @@ impl Tab {
             Tab::Proposals => "Changes suggested by AI assistants that wait for your approval.",
             Tab::Assistant => {
                 "Ask the AI assistant questions about this program and get plain-language answers."
+            }
+            Tab::Agents => {
+                "Run a terminal coding agent such as Claude Code on this project, with KRAKEN's tools."
             }
         }
     }
@@ -124,6 +129,7 @@ pub struct UiState {
     /// State of the program views (listing, hex, graph, lists).
     pub panels: PanelState,
     pub assist: crate::assist::AssistUi,
+    pub agents: crate::agents::AgentsUi,
 }
 
 impl UiState {
@@ -209,6 +215,7 @@ impl TabViewer for Viewer<'_> {
             Tab::History => history(ui, self.vm),
             Tab::Proposals => proposals(ui, self.vm),
             Tab::Assistant => crate::assist::panel(ui, self.vm, self.ui),
+            Tab::Agents => crate::agents::panel(ui, self.vm, self.ui),
         }
     }
 }

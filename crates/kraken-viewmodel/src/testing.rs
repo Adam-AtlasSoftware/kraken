@@ -1,7 +1,9 @@
 //! A scripted [`Backend`] for tests of the view-model and the GUI.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
@@ -126,4 +128,42 @@ impl Backend for FakeBackend {
     fn events(&self) -> broadcast::Receiver<BackendEvent> {
         self.events.subscribe()
     }
+}
+
+/// The `kraken-fake-acp-agent` binary, for tests that need a terminal agent to talk to. Cargo
+/// builds a package's binaries only for that package's own tests, so this builds it (a no-op when
+/// it is up to date) and looks it up next to the running test binary.
+pub fn fake_agent() -> PathBuf {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let exe = std::env::current_exe().expect("test exe");
+        let profile_dir = exe
+            .parent()
+            .and_then(Path::parent)
+            .expect("target profile dir")
+            .to_path_buf();
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let mut cmd = Command::new(cargo);
+        cmd.args([
+            "build",
+            "-q",
+            "-p",
+            "kraken-acp",
+            "--bin",
+            "kraken-fake-acp-agent",
+        ]);
+        if profile_dir.file_name().is_some_and(|n| n == "release") {
+            cmd.arg("--release");
+        }
+        cmd.current_dir(env!("CARGO_MANIFEST_DIR"));
+        let status = cmd.status().expect("run cargo build");
+        assert!(status.success(), "building the fake ACP agent failed");
+        let bin = profile_dir.join(format!(
+            "kraken-fake-acp-agent{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        assert!(bin.is_file(), "missing {}", bin.display());
+        bin
+    })
+    .clone()
 }

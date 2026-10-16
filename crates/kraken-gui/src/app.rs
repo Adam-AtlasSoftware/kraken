@@ -16,6 +16,7 @@ use kraken_viewmodel::{
 };
 use tokio::runtime::Runtime;
 
+use crate::agents;
 use crate::args::{Options, Scene};
 use crate::assist::{self, AssistRequest, AssistSetup, Change};
 use crate::recent::{self, Prefs};
@@ -108,7 +109,7 @@ impl KrakenApp {
             vm: None,
             welcome: Welcome::new(services.cfg.clone()),
             services,
-            dock: assist::with_assistant_tab(workspace::initial_dock()),
+            dock: agents::with_agents_tab(assist::with_assistant_tab(workspace::initial_dock())),
             state: UiState::default(),
             theme: if dark {
                 KrakenTheme::DARK
@@ -207,6 +208,15 @@ impl KrakenApp {
         let ctx = ctx.clone();
         vm.set_repaint(Arc::new(move || ctx.request_repaint()));
         self.assist.apply(&mut vm);
+        if self.shot.as_ref().is_some_and(|s| s.scene == Scene::Agents) {
+            // The scripted agent of the screenshot, with the warning counted as read.
+            if let Some(cfg) = agents::scene_config() {
+                vm.agents_configure(cfg);
+            }
+            vm.agents.notice.acknowledged = true;
+        } else if let Some(cfg) = self.services.agents.clone() {
+            vm.agents_configure(cfg);
+        }
         vm
     }
 
@@ -214,6 +224,8 @@ impl KrakenApp {
         match demo_project() {
             Ok(d) => {
                 let mut vm = self.new_vm(d.backend, ctx);
+                // The demo's engine lives in this process, so an agent cannot join it.
+                vm.agents_set_daemon(false);
                 vm.create_project(
                     d.binary.to_string_lossy().into_owned(),
                     d.project_dir.to_string_lossy().into_owned(),
@@ -648,7 +660,7 @@ impl KrakenApp {
                         } else {
                             shot.stage = ShotStage::Settling;
                         }
-                    } else if shot.scene == Scene::AutoName {
+                    } else if matches!(shot.scene, Scene::AutoName | Scene::Agents) {
                         // Leave the placeholder names alone so there is something to suggest.
                         shot.stage = ShotStage::Settling;
                     } else {
@@ -673,7 +685,7 @@ impl KrakenApp {
                     // Keep only the newest notification so the picture stays readable.
                     let keep = usize::from(!matches!(
                         shot.scene,
-                        Scene::Assistant | Scene::Explain | Scene::AutoName
+                        Scene::Assistant | Scene::Explain | Scene::AutoName | Scene::Agents
                     ));
                     let ids: Vec<u64> = vm.toasts.iter().rev().skip(keep).map(|t| t.id).collect();
                     for id in ids {
@@ -686,14 +698,45 @@ impl KrakenApp {
                         }
                         Scene::Rename => vm.begin_rename_current(),
                         Scene::Graph => self.dock = workspace::graph_dock(),
-                        Scene::Assistant => vm.assist_send(assist::CHAT_QUESTION),
-                        Scene::Explain => vm.assist_explain_function(0x4011a0),
+                        Scene::Assistant => {
+                            self.dock = agents::scene_dock(Tab::Assistant);
+                            vm.assist_send(assist::CHAT_QUESTION);
+                        }
+                        Scene::Explain => {
+                            self.dock = agents::scene_dock(Tab::Assistant);
+                            vm.assist_explain_function(0x4011a0);
+                        }
                         Scene::AutoName => vm.assist_auto_name(10),
+                        Scene::Agents => {
+                            self.dock = agents::scene_dock(Tab::Agents);
+                            self.state.bring_to_front = Some(Tab::Agents);
+                        }
                         _ => {}
                     }
                     vm.assist_dismiss_offer();
                 }
+                if shot.scene == Scene::Agents && shot.settle > 12 {
+                    vm.agents_ensure_loaded();
+                    if vm.agents.loaded && vm.agents.session.is_none() && vm.agents.error.is_none()
+                    {
+                        vm.agents_start("demo");
+                    }
+                }
+                if shot.scene == Scene::Agents
+                    && shot.settle > 12
+                    && vm.agents.session.as_ref().is_some_and(|s| {
+                        s.phase == kraken_viewmodel::agents::SessionPhase::Ready
+                            && s.items.is_empty()
+                    })
+                {
+                    vm.agents_send(agents::SCENE_PROMPT);
+                }
                 let views_ready = match shot.scene {
+                    Scene::Agents => vm
+                        .agents
+                        .session
+                        .as_ref()
+                        .is_some_and(|s| s.waiting_permissions() == 1),
                     Scene::Graph => vm.views.graph.data.is_some(),
                     Scene::Main => vm.views.listing.loaded && !vm.views.listing.loading,
                     _ => true,
