@@ -11,11 +11,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod keys;
 pub mod policy;
+pub mod proposals;
 pub mod state;
 mod store;
 
 pub use keys::{anchor_key, entity_key, op_anchor, op_aspect, op_key};
 pub use policy::{Classification, classify, is_default_name};
+pub use proposals::{NewProposal, ProposalId, ProposalStatus, ProposalView};
 pub use state::{AnnotationState, StateValue, UNDEFINED_TYPE, apply_op, invert_op};
 pub use store::{SCHEMA_VERSION, Store};
 

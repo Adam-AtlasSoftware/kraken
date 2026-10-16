@@ -17,7 +17,8 @@ use crate::{
 
 type Result<T> = std::result::Result<T, ProtoError>;
 
-const MIGRATIONS: &[&str] = &["CREATE TABLE entries (
+const MIGRATIONS: &[&str] = &[
+    "CREATE TABLE entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         op TEXT NOT NULL,
         keys TEXT NOT NULL,
@@ -55,7 +56,9 @@ const MIGRATIONS: &[&str] = &["CREATE TABLE entries (
         entry_id INTEGER PRIMARY KEY,
         state TEXT NOT NULL,
         ts INTEGER NOT NULL
-    );"];
+    );",
+    crate::proposals::MIGRATION,
+];
 
 /// Number of schema migrations this build knows; the version of a fully migrated database.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -64,25 +67,25 @@ const ENTRY_COLS: &str = "e.id, e.op, e.author_kind, e.author_id, e.run_id, e.pr
     e.read_set, e.status, e.reason, e.sync, e.sync_reason, e.undoes_entry_id, e.ts, \
     (SELECT MIN(u.id) FROM entries u WHERE u.undoes_entry_id = e.id AND u.status = 'applied')";
 
-fn db(e: impl std::fmt::Display) -> ProtoError {
+pub(crate) fn db(e: impl std::fmt::Display) -> ProtoError {
     ProtoError::new(ErrorCode::Internal, format!("database error: {e}"))
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
 
-fn kind_str(k: AuthorKind) -> &'static str {
+pub(crate) fn kind_str(k: AuthorKind) -> &'static str {
     match k {
         AuthorKind::User => "user",
         AuthorKind::Agent => "agent",
     }
 }
 
-fn parse_kind(s: &str) -> Result<AuthorKind> {
+pub(crate) fn parse_kind(s: &str) -> Result<AuthorKind> {
     match s {
         "user" => Ok(AuthorKind::User),
         "agent" => Ok(AuthorKind::Agent),
@@ -90,11 +93,11 @@ fn parse_kind(s: &str) -> Result<AuthorKind> {
     }
 }
 
-fn to_json<T: serde::Serialize>(v: &T) -> Result<String> {
+pub(crate) fn to_json<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(db)
 }
 
-fn from_json<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
+pub(crate) fn from_json<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
     serde_json::from_str(s).map_err(db)
 }
 
@@ -337,7 +340,7 @@ fn is_undone(conn: &Connection, id: i64) -> Result<bool> {
 
 /// Handle to one project database.
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -443,6 +446,18 @@ impl Store {
         bump_version(&tx, &key, draft.author.kind)?;
         tx.commit().map_err(db)?;
         Ok(id)
+    }
+
+    /// Checks `draft` exactly as [`Store::append`] would, without storing anything: an agent
+    /// writing an entity a user changed after the agent read it gets `rejected_human_priority`,
+    /// any stale read-set version gets `conflict_stale_read`.
+    pub fn validate_draft(&self, draft: &EntryDraft) -> Result<()> {
+        draft.op.check_version()?;
+        let key = op_key(&draft.op.op)?;
+        match validate(&self.conn, draft, &key)? {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     /// Current version of an entity key; 0 if never written.
