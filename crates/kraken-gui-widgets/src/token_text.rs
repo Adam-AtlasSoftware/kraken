@@ -252,6 +252,9 @@ impl<'a> TokenText<'a> {
         if let Some(l) = self.scroll_to_line {
             area = area.vertical_scroll_offset((l as f32 * row_h - 2.0 * row_h).max(0.0));
         }
+        let spacing_y = ui.spacing().item_spacing.y;
+        // The rows are laid out without spacing, so the scroll area must count them that way too.
+        ui.spacing_mut().item_spacing.y = 0.0;
         let out = area.show_rows(ui, row_h, n, |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let width = content_w.max(ui.available_width());
@@ -339,6 +342,7 @@ impl<'a> TokenText<'a> {
                 }
             }
         });
+        ui.spacing_mut().item_spacing.y = spacing_y;
         ui.data_mut(|d| d.insert_temp(id.with("hl"), highlight.clone()));
         let response = ui.interact(out.inner_rect, id.with("outer"), Sense::hover());
         TokenTextResponse {

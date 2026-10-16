@@ -53,6 +53,7 @@ pub fn top_bar(ui: &mut Ui, vm: &mut ViewModel, reqs: &mut Vec<UiRequest>) {
         analysis(ui, vm);
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            crate::assist::top_bar_buttons(ui, vm);
             let theme = if style::dark(ui) { "Light" } else { "Dark" };
             if ui
                 .button(theme)

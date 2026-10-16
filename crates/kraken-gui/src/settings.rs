@@ -58,6 +58,8 @@ pub struct Settings {
     /// Whether the window is showing.
     pub open: bool,
     draft: Draft,
+    /// The AI section.
+    pub ai: crate::assist::AiSettings,
     loaded_from: Option<PathBuf>,
     note: Option<Result<String, String>>,
     status: Option<Result<Value, String>>,
@@ -78,6 +80,7 @@ impl Default for Settings {
         Settings {
             open: false,
             draft: Draft::default(),
+            ai: crate::assist::AiSettings::default(),
             loaded_from: None,
             note: None,
             status: None,
@@ -170,6 +173,7 @@ impl Settings {
         self.open = true;
         self.loaded_from = None;
         self.note = None;
+        self.ai.reset();
     }
 
     /// Opens or closes the window.
@@ -364,6 +368,8 @@ impl Settings {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         self.appearance(ui, dark, &mut actions);
+                        ui.separator();
+                        self.ai.show(ui, env.rt, env.config_path);
                         ui.separator();
                         self.engine(ui, env);
                         ui.separator();

@@ -143,12 +143,17 @@ impl VirtualList {
         let mut area = egui::ScrollArea::vertical()
             .id_salt(id.with("scroll"))
             .auto_shrink([false, false]);
-        if let Some(idx) = memo.pending.take()
+        // The viewport is unknown on the first frame; wait one frame instead of guessing.
+        if memo.viewport_h > 0.0
+            && let Some(idx) = memo.pending.take()
             && let Some(off) = scroll_for_selection(idx, pitch, memo.offset, memo.viewport_h)
         {
             area = area.vertical_scroll_offset(off);
         }
 
+        let spacing_y = ui.spacing().item_spacing.y;
+        // The rows are laid out without spacing, so the scroll area must count them that way too.
+        ui.spacing_mut().item_spacing.y = 0.0;
         let output = area.show_rows(ui, pitch, self.len, |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let width = ui.available_width();
@@ -181,6 +186,7 @@ impl VirtualList {
                 }
             }
         });
+        ui.spacing_mut().item_spacing.y = spacing_y;
         memo.offset = output.state.offset.y;
         memo.viewport_h = output.inner_rect.height();
         ui.data_mut(|d| d.insert_temp(id, memo));

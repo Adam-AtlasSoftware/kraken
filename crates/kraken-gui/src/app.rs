@@ -17,6 +17,7 @@ use kraken_viewmodel::{
 use tokio::runtime::Runtime;
 
 use crate::args::{Options, Scene};
+use crate::assist::{self, AssistRequest, AssistSetup, Change};
 use crate::recent::{self, Prefs};
 use crate::services::{Mode, Services};
 use crate::settings::{Settings, SettingsAction, SettingsEnv};
@@ -60,6 +61,8 @@ pub struct KrakenApp {
     /// What to do once the daemon connection is up.
     pending: Option<Choice>,
     approvals: ApprovalBroker,
+    /// The AI model in use, kept across projects.
+    assist: AssistSetup,
     settings: Settings,
     prefs: Prefs,
     /// The open project is the demo (not worth remembering).
@@ -74,6 +77,8 @@ pub struct KrakenApp {
     applied: Option<KrakenTheme>,
     rename_focus: Option<u64>,
     auto_analyze: bool,
+    /// Function a screenshot selects instead of `main`.
+    function: Option<String>,
     shot: Option<Shot>,
 }
 
@@ -95,6 +100,7 @@ impl KrakenApp {
             slot: Slot::Idle,
             pending: None,
             approvals,
+            assist: AssistSetup::load(services.config_path.clone()),
             settings: Settings::default(),
             prefs,
             is_demo: false,
@@ -102,7 +108,7 @@ impl KrakenApp {
             vm: None,
             welcome: Welcome::new(services.cfg.clone()),
             services,
-            dock: workspace::initial_dock(),
+            dock: assist::with_assistant_tab(workspace::initial_dock()),
             state: UiState::default(),
             theme: if dark {
                 KrakenTheme::DARK
@@ -112,6 +118,7 @@ impl KrakenApp {
             applied: None,
             rename_focus: None,
             auto_analyze: false,
+            function: opts.function.clone(),
             shot: opts.screenshot.clone().map(|path| Shot {
                 real: opts.open_project.is_some(),
                 scene: opts.scene,
@@ -125,6 +132,11 @@ impl KrakenApp {
                 started: Instant::now(),
             }),
         };
+        if opts.screenshot.is_some()
+            && let Some((p, b)) = assist::provider_for(opts.scene)
+        {
+            app.assist.set(p, b);
+        }
         if opts.demo {
             app.start_demo(ctx);
         } else if let Some(dir) = &opts.open_project {
@@ -144,6 +156,11 @@ impl KrakenApp {
     #[cfg(test)]
     pub fn view_model_mut(&mut self) -> Option<&mut ViewModel> {
         self.vm.as_mut()
+    }
+
+    #[cfg(test)]
+    pub fn dock(&self) -> &DockState<Tab> {
+        &self.dock
     }
 
     #[cfg(test)]
@@ -172,6 +189,11 @@ impl KrakenApp {
     }
 
     #[cfg(test)]
+    pub fn assist_setup(&self) -> &AssistSetup {
+        &self.assist
+    }
+
+    #[cfg(test)]
     pub fn approvals(&self) -> &ApprovalBroker {
         &self.approvals
     }
@@ -184,6 +206,7 @@ impl KrakenApp {
         let mut vm = ViewModel::new(backend, self.rt.handle().clone());
         let ctx = ctx.clone();
         vm.set_repaint(Arc::new(move || ctx.request_repaint()));
+        self.assist.apply(&mut vm);
         vm
     }
 
@@ -421,6 +444,38 @@ impl KrakenApp {
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
             }
         }
+        if let Some(change) = self.settings.ai.take_change() {
+            match change {
+                Change::Use(p, b) => self.assist.set(p, b),
+                Change::Clear => self.assist.clear(),
+                Change::Problem(why) => self.assist.set_problem(why),
+            }
+            if let Some(vm) = self.vm.as_mut() {
+                self.assist.apply(vm);
+            }
+        }
+    }
+
+    /// Runs what the assistant panels asked for: one-click presets and opening the AI settings.
+    fn assist_requests(&mut self) {
+        for r in std::mem::take(&mut self.state.assist.requests) {
+            match r {
+                AssistRequest::UsePreset(kind) => {
+                    if let Err(e) = self.assist.use_preset(kind) {
+                        self.assist.set_problem(e);
+                    }
+                }
+                AssistRequest::OpenSettings(kind) => {
+                    self.settings.show_window();
+                    if let Some(k) = kind {
+                        self.settings.ai.preset(k);
+                    }
+                }
+            }
+            if let Some(vm) = self.vm.as_mut() {
+                self.assist.apply(vm);
+            }
+        }
     }
 
     /// Draws one frame. Separate from `eframe::App::ui` so tests can drive it headlessly.
@@ -465,6 +520,7 @@ impl KrakenApp {
             overlays::rename_dialog(&ctx, vm, &mut self.rename_focus);
             overlays::comment_dialog(&ctx, vm);
             chrome::toasts(&ctx, vm);
+            assist::overlays(&ctx, vm, &mut self.state.assist);
             if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
                 ctx.request_repaint_after(Duration::from_millis(400));
             }
@@ -493,6 +549,7 @@ impl KrakenApp {
         for r in reqs {
             self.handle(r, &ctx);
         }
+        self.assist_requests();
         self.settings_window(&ctx);
         overlays::approval_dialog(&ctx, &self.approvals);
         self.drive_screenshot(&ctx);
@@ -552,11 +609,12 @@ impl KrakenApp {
                     && vm.analysis.phase == AnalysisPhase::Complete
                     && !vm.busy()
                 {
+                    let wanted = self.function.as_deref().unwrap_or("main");
                     let pick = vm
                         .functions
                         .items
                         .iter()
-                        .find(|f| f.name == "main")
+                        .find(|f| f.name == wanted)
                         .or_else(|| vm.functions.items.first().filter(|_| shot.real))
                         .map(|f| f.address);
                     if let Some(addr) = pick {
@@ -590,6 +648,9 @@ impl KrakenApp {
                         } else {
                             shot.stage = ShotStage::Settling;
                         }
+                    } else if shot.scene == Scene::AutoName {
+                        // Leave the placeholder names alone so there is something to suggest.
+                        shot.stage = ShotStage::Settling;
                     } else {
                         vm.begin_rename(0x401340, Some("FUN_00401340"));
                         vm.set_rename_input("fatal_out_of_memory");
@@ -610,7 +671,11 @@ impl KrakenApp {
                 shot.settle += 1;
                 if shot.settle == 12 {
                     // Keep only the newest notification so the picture stays readable.
-                    let ids: Vec<u64> = vm.toasts.iter().rev().skip(1).map(|t| t.id).collect();
+                    let keep = usize::from(!matches!(
+                        shot.scene,
+                        Scene::Assistant | Scene::Explain | Scene::AutoName
+                    ));
+                    let ids: Vec<u64> = vm.toasts.iter().rev().skip(keep).map(|t| t.id).collect();
                     for id in ids {
                         vm.dismiss_toast(id);
                     }
@@ -620,10 +685,20 @@ impl KrakenApp {
                             vm.palette.set_query("ren");
                         }
                         Scene::Rename => vm.begin_rename_current(),
+                        Scene::Graph => self.dock = workspace::graph_dock(),
+                        Scene::Assistant => vm.assist_send(assist::CHAT_QUESTION),
+                        Scene::Explain => vm.assist_explain_function(0x4011a0),
+                        Scene::AutoName => vm.assist_auto_name(10),
                         _ => {}
                     }
+                    vm.assist_dismiss_offer();
                 }
-                if shot.settle > 18 && !vm.busy() {
+                let views_ready = match shot.scene {
+                    Scene::Graph => vm.views.graph.data.is_some(),
+                    Scene::Main => vm.views.listing.loaded && !vm.views.listing.loading,
+                    _ => true,
+                };
+                if shot.settle > 18 && !vm.busy() && !vm.assist.busy() && views_ready {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
                     shot.stage = ShotStage::Waiting;
                 }

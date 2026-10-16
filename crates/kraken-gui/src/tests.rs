@@ -32,6 +32,7 @@ fn options(demo: bool) -> Options {
         light: false,
         no_daemon: false,
         open_project: None,
+        function: None,
     }
 }
 
@@ -456,6 +457,10 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         Tab::Decompiler,
         Tab::Hex,
         Tab::Listing,
+        Tab::Graph,
+        Tab::Xrefs,
+        Tab::Strings,
+        Tab::Symbols,
         Tab::History,
         Tab::Proposals,
     ] {
@@ -464,17 +469,7 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         assert!(tip.ends_with('.'), "{tip}");
         assert!(tip.len() < 100, "one plain sentence: {tip}");
     }
-    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 6);
-}
-
-#[test]
-fn placeholder_bytes_are_stable_and_shaped_like_a_function() {
-    let a = workspace::placeholder_bytes(0x401000, 64);
-    assert_eq!(a, workspace::placeholder_bytes(0x401000, 64));
-    assert_ne!(a, workspace::placeholder_bytes(0x401040, 64));
-    assert_eq!(a.len(), 64);
-    assert_eq!(&a[..4], &[0x55, 0x48, 0x89, 0xe5]);
-    assert_eq!(a[63], 0xc3);
+    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 10);
 }
 
 #[test]

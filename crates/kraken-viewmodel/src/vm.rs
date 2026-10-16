@@ -23,6 +23,7 @@ use crate::nav::NavHistory;
 use crate::palette::{AppAction, PaletteState, PaletteTarget, UiRequest};
 use crate::state::*;
 use crate::tokens::tokenize;
+use crate::views::ProgramViews;
 use crate::wire::*;
 
 /// Page size requested for the function list.
@@ -44,6 +45,30 @@ fn kick(cell: &RepaintCell) {
 struct Msg {
     counted: bool,
     apply: ApplyFn,
+}
+
+/// Queues work for the UI thread from background tasks.
+#[derive(Clone)]
+pub(crate) struct Poster {
+    tx: Sender<Msg>,
+    repaint: RepaintCell,
+    rt: Handle,
+}
+
+impl Poster {
+    /// Runs `apply` on the UI thread at the next poll.
+    pub(crate) fn post(&self, apply: impl FnOnce(&mut ViewModel) + Send + 'static) {
+        let _ = self.tx.send(Msg {
+            counted: false,
+            apply: Box::new(apply),
+        });
+        kick(&self.repaint);
+    }
+
+    /// The runtime tasks run on.
+    pub(crate) fn runtime(&self) -> &Handle {
+        &self.rt
+    }
 }
 
 /// All GUI state. Fields are public for reading; change them through the methods.
@@ -88,10 +113,14 @@ pub struct ViewModel {
     pub toasts: Vec<Toast>,
     /// Whether the daemon connection is up.
     pub link: LinkState,
+    /// Listing, hex, graph, cross-references, strings and symbols.
+    pub views: ProgramViews,
+    /// The AI assistant: chat, explanations, overview, auto-naming, learn mode.
+    pub assist: crate::assist::AssistState,
     announced: std::collections::HashSet<u64>,
 }
 
-fn parse<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
+pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
     serde_json::from_value(v).map_err(|e| {
         ProtoError::new(
             ErrorCode::Internal,
@@ -121,7 +150,7 @@ fn expect(versions: &BTreeMap<String, u64>, key: String) -> Value {
     json!({ key: v })
 }
 
-fn hex(addr: u64) -> String {
+pub(crate) fn hex(addr: u64) -> String {
     format!("{addr:#x}")
 }
 
@@ -233,10 +262,22 @@ impl ViewModel {
             palette: PaletteState::default(),
             toasts: Vec::new(),
             link: LinkState::Connected,
+            views: ProgramViews::default(),
+            assist: crate::assist::AssistState::default(),
             announced: std::collections::HashSet::new(),
         };
         vm.start_event_forwarder();
         vm
+    }
+
+    /// A handle for background tasks to queue closures that run on the UI thread in
+    /// [`poll`](Self::poll).
+    pub(crate) fn poster(&self) -> Poster {
+        Poster {
+            tx: self.tx.clone(),
+            repaint: self.repaint.clone(),
+            rt: self.rt.clone(),
+        }
     }
 
     /// Called from worker threads whenever a result is queued, so the window can repaint.
@@ -286,7 +327,7 @@ impl ViewModel {
 
     // ---------------------------------------------------------------- plumbing
 
-    fn call<F>(&mut self, command: &'static str, args: Value, apply: F)
+    pub(crate) fn call<F>(&mut self, command: &'static str, args: Value, apply: F)
     where
         F: FnOnce(&mut ViewModel, Result<Value, ProtoError>) + Send + 'static,
     {
@@ -432,8 +473,10 @@ impl ViewModel {
         self.history = HistoryPanel::default();
         self.proposals = ProposalsPanel::default();
         self.analysis = AnalysisState::default();
+        self.assist.reset_for_project();
         self.detail_seq += 1;
         self.decompile_seq += 1;
+        self.views.reset();
     }
 
     /// Opens the project in `dir`.
@@ -465,6 +508,7 @@ impl ViewModel {
                 self.refresh_functions();
                 self.refresh_history();
                 self.refresh_proposals();
+                self.views_project_opened();
             }
             Err(e) => {
                 self.connection = Connection::Failed(plain_error(&e));
@@ -525,7 +569,7 @@ impl ViewModel {
         self.refresh_current();
     }
 
-    fn refresh_after_edit(&mut self) {
+    pub(crate) fn refresh_after_edit(&mut self) {
         self.refresh_project();
         self.refresh_functions();
         self.refresh_history();
@@ -749,6 +793,7 @@ impl ViewModel {
                 };
                 self.toast(ToastLevel::Success, text);
                 self.refresh_after_edit();
+                self.assist_analysis_finished();
             }
             JobState::Failed => {
                 self.analysis.progress = None;
@@ -868,6 +913,11 @@ impl ViewModel {
     }
 
     fn show(&mut self, addr: u64) {
+        self.show_place(addr);
+    }
+
+    /// Shows the function whose entry is `addr` in the decompiler.
+    pub(crate) fn show_function(&mut self, addr: u64) {
         let name = self
             .functions
             .find(addr)
@@ -898,6 +948,7 @@ impl ViewModel {
         self.detail_seq += 1;
         self.decompile_seq += 1;
         let (dseq, cseq) = (self.detail_seq, self.decompile_seq);
+        self.views_on_request(addr);
         self.call(
             "get_function",
             json!({ "address": hex(addr) }),
@@ -962,6 +1013,7 @@ impl ViewModel {
         if let Some(c) = self.comment.as_mut().filter(|c| c.address == addr) {
             c.versions = Some(detail.versions.clone());
         }
+        self.views_detail(addr, detail.size);
         if let Some(cur) = self.current.as_mut().filter(|c| c.address == addr) {
             cur.name = detail.name.clone();
             cur.detail = Some(detail);
@@ -983,7 +1035,11 @@ impl ViewModel {
             } else {
                 w.language
             },
-            tokens: tokenize(&text, &targets),
+            tokens: if w.tokens.is_empty() {
+                tokenize(&text, &targets)
+            } else {
+                crate::views::server_tokens(&text, &w.tokens)
+            },
             text,
             warnings: Vec::new(),
             completeness: w.completeness.clone(),

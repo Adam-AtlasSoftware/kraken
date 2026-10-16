@@ -172,11 +172,33 @@ pub trait Approver: Send + Sync {
     async fn approve(&self, prompt: ApprovalPrompt) -> bool;
 }
 
+/// Who a command runs for when it is not the GUI user: the built-in assistant's tool calls are
+/// logged under its own agent id and run id, never as the person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallAs {
+    /// True for an agent, false for a person.
+    pub agent: bool,
+    /// Agent id or user name.
+    pub id: String,
+    /// Agent run the call belongs to.
+    pub run_id: Option<String>,
+}
+
 /// Runs KRAKEN commands for the GUI.
 #[async_trait]
 pub trait Backend: Send + Sync {
     /// Runs `command` with JSON `args` as the GUI user and returns its JSON output.
     async fn call(&self, command: &str, args: Value) -> Result<Value, ProtoError>;
+
+    /// Runs `command` as somebody other than the GUI user (the assistant). Backends that cannot
+    /// attribute a call refuse it, so an agent edit is never recorded as the person's.
+    async fn call_as(&self, who: &CallAs, command: &str, args: Value) -> Result<Value, ProtoError> {
+        let _ = (command, args);
+        Err(ProtoError::new(
+            kraken_proto::ErrorCode::Unsupported,
+            format!("this backend cannot run commands as `{}`", who.id),
+        ))
+    }
 
     /// The commands this backend offers.
     fn commands(&self) -> Vec<CommandInfo>;

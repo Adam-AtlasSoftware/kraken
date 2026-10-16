@@ -9,6 +9,7 @@
 //! replies for tests.
 
 mod approval;
+pub mod assist;
 mod backend;
 mod errors;
 mod fuzzy;
@@ -17,6 +18,7 @@ mod palette;
 mod state;
 pub mod testing;
 mod tokens;
+pub mod views;
 mod vm;
 mod wire;
 
@@ -29,8 +31,8 @@ mod inprocess;
 
 pub use approval::ApprovalBroker;
 pub use backend::{
-    ApprovalPrompt, Approver, Backend, BackendEvent, ChangeInfo, CommandInfo, CommandKind, JobInfo,
-    JobProgress, JobState, Permission,
+    ApprovalPrompt, Approver, Backend, BackendEvent, CallAs, ChangeInfo, CommandInfo, CommandKind,
+    JobInfo, JobProgress, JobState, Permission,
 };
 #[cfg(feature = "daemon")]
 pub use daemon::{
@@ -45,6 +47,12 @@ pub use nav::NavHistory;
 pub use palette::{AppAction, PaletteItem, PaletteState, PaletteTarget, UiRequest};
 pub use state::*;
 pub use tokens::tokenize;
+pub use views::{
+    ByteCache, ByteState, FnRef, GraphBlock, GraphData, GraphEdgeKind, GraphState, HexState,
+    ListingOperand, ListingRowItem, ListingState, MemoryBlockItem, MemoryMap, PagedList,
+    ProgramViews, ReferencesTo, Reveal, StringItem, SymbolItem, SymbolTable, XrefItem, XrefList,
+    XrefWhich, XrefsPanel, mnemonic_kind, operand_kind,
+};
 pub use vm::{FUNCTION_PAGE, MAX_NAME_LEN, ViewModel, validate_name};
 
 #[cfg(test)]

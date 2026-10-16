@@ -2,9 +2,11 @@
 
 mod app;
 mod args;
+mod assist;
 mod chrome;
 mod fonts;
 mod overlays;
+mod panels;
 mod recent;
 mod services;
 mod settings;

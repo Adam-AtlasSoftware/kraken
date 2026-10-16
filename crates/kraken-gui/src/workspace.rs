@@ -2,12 +2,13 @@
 
 use std::time::{Duration, Instant};
 
-use egui::{Id, RichText, Sense, Ui, WidgetText};
+use egui::{Id, RichText, Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
-use kraken_gui_widgets::{HexView, SliceSource, TokenText, VirtualList};
+use kraken_gui_widgets::{TokenText, VirtualList};
 use kraken_proto::{Locator, TokenKind};
 use kraken_viewmodel::{Decompiled, FunctionItem, Load, ToastLevel, ViewModel};
 
+use crate::panels::{self, PanelState};
 use crate::style::{self, chip, clock, empty_state, medium, pal};
 
 /// Time a call-target click waits for a possible second click (a rename) before navigating.
@@ -19,8 +20,13 @@ pub enum Tab {
     Decompiler,
     Hex,
     Listing,
+    Graph,
+    Xrefs,
+    Strings,
+    Symbols,
     History,
     Proposals,
+    Assistant,
 }
 
 impl Tab {
@@ -30,8 +36,13 @@ impl Tab {
             Tab::Decompiler => "Decompiler",
             Tab::Hex => "Hex",
             Tab::Listing => "Listing",
+            Tab::Graph => "Graph",
+            Tab::Xrefs => "Xrefs",
+            Tab::Strings => "Strings",
+            Tab::Symbols => "Imports / Exports",
             Tab::History => "History",
             Tab::Proposals => "Proposals",
+            Tab::Assistant => "Assistant",
         }
     }
 
@@ -42,10 +53,19 @@ impl Tab {
             Tab::Decompiler => {
                 "The selected function rewritten as readable C-like code. Click a call to follow it."
             }
-            Tab::Hex => "The raw bytes of the selected function, as hexadecimal numbers and text.",
+            Tab::Hex => "The raw bytes of the program, as hexadecimal numbers and text.",
             Tab::Listing => "The machine instructions behind the code, one per line.",
+            Tab::Graph => {
+                "The same code as boxes joined by arrows. Space swaps it with the listing."
+            }
+            Tab::Xrefs => "Who calls this function, what it calls, and what refers to any address.",
+            Tab::Strings => "Text found inside the program. Double-click one to see what uses it.",
+            Tab::Symbols => "What the program borrows from libraries, and what it makes available.",
             Tab::History => "Every change made to this project, who made it, and a way to undo it.",
             Tab::Proposals => "Changes suggested by AI assistants that wait for your approval.",
+            Tab::Assistant => {
+                "Ask the AI assistant questions about this program and get plain-language answers."
+            }
         }
     }
 }
@@ -53,10 +73,41 @@ impl Tab {
 pub fn initial_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Decompiler]);
     let surface = dock.main_surface_mut();
-    let [center, _left] = surface.split_left(NodeIndex::root(), 0.23, vec![Tab::Functions]);
-    let [center, right] = surface.split_right(center, 0.64, vec![Tab::Hex]);
-    let [_hex, _listing] = surface.split_below(right, 0.62, vec![Tab::Listing]);
-    let [_center, _bottom] = surface.split_below(center, 0.7, vec![Tab::History, Tab::Proposals]);
+    let [center, _left] = surface.split_left(NodeIndex::root(), 0.18, vec![Tab::Functions]);
+    let [center, right] = surface.split_right(center, 0.5, vec![Tab::Hex]);
+    let [_hex, _code] = surface.split_below(right, 0.34, vec![Tab::Listing, Tab::Graph]);
+    let [_center, _bottom] = surface.split_below(
+        center,
+        0.64,
+        vec![
+            Tab::Xrefs,
+            Tab::Strings,
+            Tab::Symbols,
+            Tab::History,
+            Tab::Proposals,
+        ],
+    );
+    dock
+}
+
+/// A layout that gives the graph the room it needs: decompiler and graph side by side.
+pub fn graph_dock() -> DockState<Tab> {
+    let mut dock = DockState::new(vec![Tab::Decompiler]);
+    let surface = dock.main_surface_mut();
+    let [center, _left] = surface.split_left(NodeIndex::root(), 0.17, vec![Tab::Functions]);
+    let [center, _graph] = surface.split_right(center, 0.4, vec![Tab::Graph, Tab::Listing]);
+    let [_decompiler, _bottom] = surface.split_below(
+        center,
+        0.66,
+        vec![
+            Tab::Hex,
+            Tab::Xrefs,
+            Tab::Strings,
+            Tab::Symbols,
+            Tab::History,
+            Tab::Proposals,
+        ],
+    );
     dock
 }
 
@@ -70,7 +121,9 @@ pub struct UiState {
     /// Symbol highlighted when the decompiler first draws (screenshot mode).
     pub initial_highlight: Option<String>,
     pub bring_to_front: Option<Tab>,
-    placeholder: Option<(u64, Vec<u8>)>,
+    /// State of the program views (listing, hex, graph, lists).
+    pub panels: PanelState,
+    pub assist: crate::assist::AssistUi,
 }
 
 impl UiState {
@@ -94,6 +147,10 @@ pub struct Viewer<'a> {
 }
 
 pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &mut UiState) {
+    panels::global_keys(ui.ctx(), dock, vm, &mut state.panels);
+    if std::mem::take(&mut vm.assist.show_requested) {
+        state.bring_to_front = Some(Tab::Assistant);
+    }
     if let Some(tab) = state.bring_to_front.take()
         && let Some(path) = dock.find_tab(&tab)
     {
@@ -121,6 +178,9 @@ impl TabViewer for Viewer<'_> {
         if *tab == Tab::Proposals && !self.vm.proposals.items.is_empty() {
             title = format!("{title} ({})", self.vm.proposals.items.len());
         }
+        if self.vm.assist.learn_mode {
+            title.push_str("  ?");
+        }
         title.into()
     }
 
@@ -129,17 +189,26 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
-        response.clone().on_hover_text(tab.tooltip());
+        let tab = *tab;
+        let vm = &*self.vm;
+        response
+            .clone()
+            .on_hover_ui(|ui| crate::assist::tab_help(ui, vm, tab));
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
         match tab {
             Tab::Functions => functions(ui, self.vm, self.ui),
             Tab::Decompiler => decompiler(ui, self.vm, self.ui),
-            Tab::Hex => hex(ui, self.vm, self.ui),
-            Tab::Listing => listing(ui),
+            Tab::Hex => panels::hex::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Listing => panels::listing::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Graph => panels::graph::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Xrefs => panels::xrefs::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Strings => panels::strings::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Symbols => panels::symbols::show(ui, self.vm, &mut self.ui.panels),
             Tab::History => history(ui, self.vm),
             Tab::Proposals => proposals(ui, self.vm),
+            Tab::Assistant => crate::assist::panel(ui, self.vm, self.ui),
         }
     }
 }
@@ -180,7 +249,12 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     } else {
         format!("{n} function{}", if n == 1 { "" } else { "s" })
     };
-    ui.label(RichText::new(summary).size(11.5).color(p.text_dim));
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(summary).size(11.5).color(p.text_dim));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::assist::suggest_names_button(ui, vm);
+        });
+    });
     ui.add_space(2.0);
 
     if let Some(err) = vm.functions.error.clone() {
@@ -232,6 +306,7 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             name = name.italics();
         }
         let r = ui.label(name);
+        crate::assist::capture_function_row(ui, &r, f.address, &mut st.assist);
         if f.partial || f.signature.is_some() {
             let tip = match (&f.signature, f.partial) {
                 (Some(s), true) => format!("{s}\nStill being analyzed"),
@@ -261,6 +336,7 @@ enum Act {
     Retry,
     RenameAt(u64, Option<String>),
     Notice(&'static str),
+    SyncListing(u64),
 }
 
 fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
@@ -354,6 +430,9 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             Act::Retry => vm.refresh_current(),
             Act::RenameAt(addr, name) => vm.begin_rename(addr, name.as_deref()),
             Act::Notice(t) => vm.toast(ToastLevel::Info, t),
+            Act::SyncListing(a) => {
+                vm.sync_listing_to(a);
+            }
         }
     }
 }
@@ -393,12 +472,16 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
         widget = widget.initial_highlight(sym.clone());
     }
     let out = widget.show(ui);
+    crate::assist::capture_decompiler(ui, &out, d, addr, &mut st.assist);
 
     let double = ui.input(|i| {
         i.pointer
             .button_double_clicked(egui::PointerButton::Primary)
     });
     let hovered_tok = out.hovered.and_then(|i| d.result.tokens.get(i));
+    if let Some(a) = hovered_tok.and_then(target_of) {
+        st.panels.hot = Some(a);
+    }
 
     if double {
         if let Some(t) = hovered_tok {
@@ -415,10 +498,13 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
             Locator::Native { offset, .. } => Some(offset.0),
             _ => None,
         })
-        && target != addr
     {
-        st.pending_nav = Some((target, Instant::now()));
-        ui.ctx().request_repaint_after(DOUBLE_CLICK_WINDOW);
+        // The listing follows the click right away; the jump waits out a possible double-click.
+        acts.push(Act::SyncListing(target));
+        if target != addr {
+            st.pending_nav = Some((target, Instant::now()));
+            ui.ctx().request_repaint_after(DOUBLE_CLICK_WINDOW);
+        }
     }
 
     // N renames the name under the pointer, or the function being read.
@@ -432,100 +518,6 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
             None => acts.push(Act::Rename),
         }
     }
-}
-
-// ---------------------------------------------------------------- hex + listing
-
-/// Stand-in bytes until the backend can read program memory: a plausible prologue, filler and
-/// epilogue sized like the function. Clearly labelled in the UI.
-pub fn placeholder_bytes(addr: u64, len: usize) -> Vec<u8> {
-    let mut x = addr.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
-    let mut v: Vec<u8> = (0..len)
-        .map(|_| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            if x.is_multiple_of(7) {
-                0
-            } else {
-                (x >> 24) as u8
-            }
-        })
-        .collect();
-    let prologue = [0x55, 0x48, 0x89, 0xe5];
-    for (b, p) in v.iter_mut().zip(prologue) {
-        *b = p;
-    }
-    if let Some(last) = v.last_mut() {
-        *last = 0xc3;
-    }
-    v
-}
-
-fn hex(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
-    let p = pal(ui);
-    let Some(cur) = &vm.current else {
-        empty_state(
-            ui,
-            "No bytes to show yet",
-            "Select a function and its raw bytes will appear here.",
-            None,
-        );
-        return;
-    };
-    let addr = cur.address;
-    let len = cur
-        .detail
-        .as_ref()
-        .and_then(|d| d.size)
-        .unwrap_or(64)
-        .clamp(16, 4096) as usize;
-    if st.placeholder.as_ref().map(|(a, b)| (*a, b.len())) != Some((addr, len)) {
-        st.placeholder = Some((addr, placeholder_bytes(addr, len)));
-    }
-    let Some((_, bytes)) = &st.placeholder else {
-        return;
-    };
-    ui.label(
-        RichText::new("Sample bytes. Reading real program memory is not available yet.")
-            .size(11.5)
-            .italics()
-            .color(p.text_dim),
-    )
-    .on_hover_text("The layout is real; the byte values are placeholders for now.");
-    ui.add_space(2.0);
-    HexView::new(&SliceSource(bytes), addr)
-        .id_salt("hex")
-        .show(ui);
-}
-
-fn listing(ui: &mut Ui) {
-    let p = pal(ui);
-    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-        ui.add_space((ui.available_height() * 0.22).clamp(12.0, 120.0));
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(46.0, 34.0), Sense::hover());
-        let painter = ui.painter_at(rect);
-        for i in 0..4 {
-            let y = rect.top() + 4.0 + i as f32 * 8.0;
-            let w = [34.0, 24.0, 40.0, 18.0][i];
-            painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(rect.left() + 3.0, y), egui::vec2(w, 4.0)),
-                2.0,
-                if i == 1 { p.accent } else { p.border },
-            );
-        }
-        ui.add_space(8.0);
-        ui.label(medium("Disassembly is coming soon", 16.0).color(p.text_strong));
-        ui.scope(|ui| {
-            ui.set_max_width(ui.available_width().min(380.0));
-            ui.label(
-                RichText::new(
-                    "KRAKEN cannot list machine instructions yet. The Decompiler shows what each function does, and the Hex tab shows its bytes.",
-                )
-                .color(p.text_dim),
-            );
-        });
-    });
 }
 
 // ---------------------------------------------------------------- history + proposals
