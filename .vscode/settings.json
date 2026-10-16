@@ -1,0 +1,24 @@
+{
+  // Lint with clippy on save, like CI does.
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--all-targets"],
+  // Tests run from the editor never touch your real krakend.
+  "rust-analyzer.runnables.extraEnv": {
+    "KRAKEN_NO_DAEMON": "1"
+  },
+  // spikes/ are separate cargo projects; the Java extension is built by `cargo xtask ghidra-ext`.
+  "rust-analyzer.files.exclude": ["spikes", "target", "docs/book", "corpus/fixtures"],
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/docs/book/**": true,
+    "java/kraken-ghidra/build/**": true
+  },
+  "search.exclude": {
+    "corpus/fixtures/**": true,
+    "THIRD-PARTY-NOTICES.md": true,
+    "docs/reference/commands.md": true
+  },
+  "editor.formatOnSave": true,
+  "[rust]": { "editor.defaultFormatter": "rust-lang.rust-analyzer" },
+  "java.import.gradle.enabled": false
+}
