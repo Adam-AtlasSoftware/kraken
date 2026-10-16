@@ -1,0 +1,4 @@
+/target
+/plans/
+*.swp
+.DS_Store
