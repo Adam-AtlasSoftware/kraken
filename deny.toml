@@ -6,6 +6,7 @@ all-features = true
 ignore = [
     # paste is a compile-time proc-macro pulled in by egui_dock; unmaintained, no known vulnerability.
     { id = "RUSTSEC-2024-0436", reason = "build-time only via egui_dock; revisit when egui_dock drops it" },
+    { id = "RUSTSEC-2026-0344", reason = "ruzstd decodes zstd-compressed debug sections for object/addr2line inside icicle-cpu (kraken-rewrite oracle); the oracle maps PT_LOAD segments itself and never loads debug info. Revisit when object moves to ruzstd >= 0.9.1" },
 ]
 
 [licenses]
@@ -26,11 +27,60 @@ allow = [
     "BSL-1.0",
 ]
 confidence-threshold = 0.8
+
 # egui's bundled default fonts include Ubuntu-Light (Ubuntu Font Licence). The KRAKEN GUI app will
 # ship its own OFL fonts and disable egui's default_fonts before the first GUI release.
 exceptions = [
     { crate = "epaint_default_fonts", allow = ["Ubuntu-font-1.0"] },
 ]
+
+# icicle-emu (kraken-rewrite oracle) is MIT OR Apache-2.0 (README, LICENCE-MIT and LICENCE-APACHE
+# at the repository root) but its crate manifests carry no license field. Clarified per crate; the
+# license files live at the repository root, outside each crate directory, so none can be hashed.
+[[licenses.clarify]]
+crate = "icicle-cpu"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "icicle-jit"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "icicle-linux"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "icicle-mem"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "icicle-vm"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "pcode"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "sleigh-compile"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "sleigh-parse"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "sleigh-runtime"
+expression = "MIT OR Apache-2.0"
+license-files = []
 
 [bans]
 multiple-versions = "warn"
@@ -41,4 +91,6 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# icicle-emu is not on crates.io. One repository, pinned by commit in crates/kraken-rewrite/Cargo.toml
+# (Cargo.lock holds the same commit). Decision record: spikes/rewrite-loop/NOTES.md.
+allow-git = ["https://github.com/icicle-emu/icicle-emu"]
