@@ -4,6 +4,7 @@
 
 # User guide
 
+- [Tutorial: your first reverse-engineering session](tutorial.md)
 - [Install](install.md)
 - [Getting started](getting-started.md)
 - [Concepts](concepts.md)

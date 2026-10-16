@@ -53,6 +53,47 @@ struct Shot {
     stage: ShotStage,
     settle: u32,
     started: Instant,
+    /// Hidden tutorial-screenshot controls from the environment (see `ShotTweaks`).
+    tweaks: ShotTweaks,
+}
+
+/// Hidden environment switches for documentation screenshots of a real project:
+/// `KRAKEN_GUI_SHOT_TAB=<tab title>` brings that tab to the front, `KRAKEN_GUI_SHOT_LAYOUT=graph`
+/// uses the graph layout, `KRAKEN_GUI_SHOT_NO_EDIT=1` skips the scripted rename and
+/// `KRAKEN_GUI_SHOT_STRINGS_FILTER=<text>` types into the Strings filter.
+#[derive(Default)]
+struct ShotTweaks {
+    tab: Option<Tab>,
+    graph_layout: bool,
+    no_edit: bool,
+    strings_filter: Option<String>,
+}
+
+impl ShotTweaks {
+    fn from_env() -> Self {
+        let tab = std::env::var("KRAKEN_GUI_SHOT_TAB").ok().and_then(|name| {
+            [
+                Tab::Functions,
+                Tab::Decompiler,
+                Tab::Hex,
+                Tab::Listing,
+                Tab::Graph,
+                Tab::Xrefs,
+                Tab::Strings,
+                Tab::Symbols,
+                Tab::History,
+                Tab::Proposals,
+            ]
+            .into_iter()
+            .find(|t| t.title().eq_ignore_ascii_case(&name))
+        });
+        ShotTweaks {
+            tab,
+            graph_layout: std::env::var("KRAKEN_GUI_SHOT_LAYOUT").is_ok_and(|v| v == "graph"),
+            no_edit: std::env::var_os("KRAKEN_GUI_SHOT_NO_EDIT").is_some(),
+            strings_filter: std::env::var("KRAKEN_GUI_SHOT_STRINGS_FILTER").ok(),
+        }
+    }
 }
 
 pub struct KrakenApp {
@@ -131,6 +172,7 @@ impl KrakenApp {
                 },
                 settle: 0,
                 started: Instant::now(),
+                tweaks: ShotTweaks::from_env(),
             }),
         };
         if opts.screenshot.is_some()
@@ -647,7 +689,9 @@ impl KrakenApp {
                     .is_some_and(|c| matches!(c.decompiled, Load::Ready(_)));
                 if ready && !vm.busy() {
                     // One real edit so the History tab has something to show.
-                    if shot.real {
+                    if shot.real && shot.tweaks.no_edit {
+                        shot.stage = ShotStage::Settling;
+                    } else if shot.real {
                         let target = vm
                             .functions
                             .items
@@ -727,6 +771,16 @@ impl KrakenApp {
                             vm.rewrite_select(crate::rewrite::SCENE_FUNCTION);
                         }
                         _ => {}
+                    }
+                    if shot.tweaks.graph_layout && shot.scene == Scene::Main {
+                        self.dock = workspace::graph_dock();
+                    }
+                    if let Some(text) = shot.tweaks.strings_filter.clone() {
+                        self.state.panels.strings.filter = text.clone();
+                        vm.set_strings_filter(text);
+                    }
+                    if let Some(tab) = shot.tweaks.tab {
+                        self.state.bring_to_front = Some(tab);
                     }
                     vm.assist_dismiss_offer();
                 }
