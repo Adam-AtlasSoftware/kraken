@@ -155,7 +155,7 @@ jobs:
       - run: cargo build --workspace --all-targets
       - name: cargo test --workspace
         shell: bash
-        run: cargo test --workspace 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+        run: cargo test --workspace --no-fail-fast 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
 
       - name: Report test failures as annotations
         if: failure()
