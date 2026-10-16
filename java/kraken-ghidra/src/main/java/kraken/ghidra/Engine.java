@@ -717,6 +717,17 @@ final class Engine {
                     () -> {
                         Function f = fm.getFunctionAt(a);
                         if (f != null) {
+                            if (t.neu() instanceof TypeRef.Named n && n.name().equals("undefined")) {
+                                // The log's "cleared" marker (undoing a prototype edit): drop the
+                                // user-defined signature back to what the engine infers.
+                                f.setReturnType(DataType.DEFAULT, SourceType.DEFAULT);
+                                f.replaceParameters(
+                                    Function.FunctionUpdateType.DYNAMIC_STORAGE_FORMAL_PARAMS,
+                                    true,
+                                    SourceType.DEFAULT);
+                                f.setVarArgs(false);
+                                return null;
+                            }
                             if (!(t.neu() instanceof TypeRef.Function fn)) {
                                 throw KrakenError.rejected("a function's type must be a function prototype");
                             }
