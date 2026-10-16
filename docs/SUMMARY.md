@@ -2,6 +2,18 @@
 
 [Introduction](introduction.md)
 
+# User guide
+
+- [Getting started](getting-started.md)
+- [Concepts](concepts.md)
+- [Connecting AI agents (MCP)](mcp.md)
+- [Scripting with the CLI](cli.md)
+- [Security](security.md)
+
+# Reference
+
+- [Command reference](reference/commands.md)
+
 # Design
 
 - [Design decisions](design/README.md)

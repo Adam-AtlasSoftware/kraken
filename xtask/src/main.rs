@@ -1,3 +1,4 @@
+mod docs;
 mod samples;
 
 use std::fs;
@@ -14,7 +15,8 @@ Commands:
                Build the extension, then run its in-process self-test against `binary`
                (default: a copy of /bin/ls in a temp dir). Prints PASS/FAIL lines.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
-  samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.";
+  samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
+  docs         Write docs/reference/commands.md from the command registry.";
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -29,6 +31,7 @@ fn main() -> ExitCode {
         Some("ghidra-ext-test") => ghidra_ext_test(args.get(1).map(PathBuf::from)),
         Some("schema") => schema(),
         Some("samples") => write_samples(),
+        Some("docs") => docs::write_docs(),
         Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     };
     match result {

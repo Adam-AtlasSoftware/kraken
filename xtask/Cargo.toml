@@ -8,5 +8,6 @@ publish = false
 
 [dependencies]
 kraken-proto.workspace = true
+kraken-registry = { path = "../crates/kraken-registry", version = "0.0.0" }
 serde.workspace = true
 serde_json.workspace = true
