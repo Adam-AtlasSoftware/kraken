@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "a80a862604339eb838a64a9fff39e792a74da26c0f70519b902d68e30a64e289",
+        "key": "5215487f7be3ea130a160f4b521c6d31775e9cf8beca48a3d079aa6c61d0e60b"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "a2878026a32ce8e665506d0ef2490e16d00d68381bc198c1c34914c5107608bd",
+        "key": "a1a5fcc7704449157216263e6248e64f3d9429a3051f6cca762a515a09aeed92"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_dist` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\nfn dist2(p: &Point) -> i32 {\n    p.x.wrapping_mul(p.x).wrapping_add(p.y.wrapping_mul(p.y))\n}\n\n/// Squared distance from the origin of each record's position; returns their difference.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_dist(a: *const Record, b: *const Record) -> i32 {\n    unsafe { dist2(&(*a).pos).wrapping_sub(dist2(&(*b).pos)) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "72cd455a6d2dba944961a7a263f71728b56249f1c27d9bce7f1540eaf16e4cbb",
+        "key": "182077fc230b28577b44d94046ed0792124ce280b8598d284c42bba4a456a9ec"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of switch_vm `vm_run` with its helpers push, pop and vm_fail\n// (corpus/src/switch_vm.c).\n\nconst STACK_MAX: usize = 32;\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; STACK_MAX],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\nmod op {\n    pub const HALT: u8 = 0;\n    pub const PUSH: u8 = 1;\n    pub const ADD: u8 = 2;\n    pub const SUB: u8 = 3;\n    pub const MUL: u8 = 4;\n    pub const DUP: u8 = 5;\n    pub const SWAP: u8 = 6;\n    pub const DROP: u8 = 7;\n    pub const NEG: u8 = 8;\n    pub const JNZ: u8 = 9;\n    pub const DEC: u8 = 10;\n    pub const PRINT: u8 = 11;\n    pub const AND: u8 = 12;\n    pub const OR: u8 = 13;\n    pub const XOR: u8 = 14;\n}\n\nfn vm_fail(msg: &str, pc: u32) -> ! {\n    eprint!(\"vm error at pc={pc}: {msg}\\n\");\n    std::process::exit(42)\n}\n\nfn push(vm: &mut Vm, v: i32) {\n    if vm.sp >= STACK_MAX as i32 {\n        vm_fail(\"stack overflow\", vm.pc);\n    }\n    vm.stack[vm.sp as usize] = v;\n    vm.sp += 1;\n}\n\nfn pop(vm: &mut Vm) -> i32 {\n    if vm.sp <= 0 {\n        vm_fail(\"stack underflow\", vm.pc);\n    }\n    vm.sp -= 1;\n    vm.stack[vm.sp as usize]\n}\n\n/// Runs bytecode `code[..len]` on `vm`; returns the top of stack at HALT (0 if empty).\n///\n/// # Safety\n/// `vm` and `code` must be valid; `code` must be readable one byte past `len` (an operand or a\n/// jump target is fetched without a bounds check, as in the original).\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn vm_run(vm: *mut Vm, code: *const u8, len: u32) -> i32 {\n    let vm = unsafe { &mut *vm };\n    let fetch = |at: u32| unsafe { *code.add(at as usize) };\n    loop {\n        if vm.pc >= len {\n            vm_fail(\"pc out of range\", vm.pc);\n        }\n        let opcode = fetch(vm.pc);\n        vm.pc = vm.pc.wrapping_add(1);\n        vm.steps = vm.steps.wrapping_add(1);\n        match opcode {\n            op::HALT => return if vm.sp != 0 { vm.stack[(vm.sp - 1) as usize] } else { 0 },\n            op::PUSH => {\n                let imm = fetch(vm.pc) as i8 as i32;\n                vm.pc = vm.pc.wrapping_add(1);\n                push(vm, imm);\n            }\n            op::ADD => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, a.wrapping_add(b));\n            }\n            op::SUB => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, a.wrapping_sub(b));\n            }\n            op::MUL => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, a.wrapping_mul(b));\n            }\n            op::DUP => {\n                let a = pop(vm);\n                push(vm, a);\n                push(vm, a);\n            }\n            op::SWAP => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, b);\n                push(vm, a);\n            }\n            op::DROP => {\n                pop(vm);\n            }\n            op::NEG => {\n                let a = pop(vm);\n                push(vm, a.wrapping_neg());\n            }\n            op::JNZ => {\n                let a = pop(vm);\n                if a != 0 {\n                    vm.pc = u32::from(fetch(vm.pc));\n                } else {\n                    vm.pc = vm.pc.wrapping_add(1);\n                }\n            }\n            op::DEC => {\n                let a = pop(vm);\n                push(vm, a.wrapping_sub(1));\n            }\n            op::PRINT => {\n                // The original reads stack[sp - 1] without checking sp; do the same.\n                let top = unsafe { *vm.stack.as_ptr().offset(vm.sp as isize - 1) };\n                print!(\"out: {top}\\n\");\n            }\n            op::AND => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, a & b);\n            }\n            op::OR => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, a | b);\n            }\n            op::XOR => {\n                let b = pop(vm);\n                let a = pop(vm);\n                push(vm, a ^ b);\n            }\n            _ => vm_fail(\"bad opcode\", vm.pc.wrapping_sub(1)),\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "07c328d6e50a2f2ecc3d792bf28fcddf820e5ad2ce2bc43f1fa5b3701ea6b83f",
+        "key": "a61b4adcc159910bf351b10c4267e3612566e564af1bd23f438bb24686c82dd3"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `evaluate` with its parser (corpus/src/stripped_calc.c):\n// skip_ws, parse_number, parse_atom, parse_term, parse_expr.\n\nstruct Parser {\n    p: *const u8,\n    err: bool,\n}\n\nimpl Parser {\n    fn cur(&self) -> u8 {\n        unsafe { *self.p }\n    }\n\n    fn advance(&mut self) {\n        self.p = unsafe { self.p.add(1) };\n    }\n\n    fn skip_ws(&mut self) {\n        // isspace in the C locale: space, \\t, \\n, \\v, \\f, \\r\n        while matches!(self.cur(), b' ' | b'\\t' | b'\\n' | 0x0b | 0x0c | b'\\r') {\n            self.advance();\n        }\n    }\n\n    fn parse_number(&mut self) -> i64 {\n        let mut v: i64 = 0;\n        let mut any = false;\n        self.skip_ws();\n        while self.cur().is_ascii_digit() {\n            v = v.wrapping_mul(10).wrapping_add(i64::from(self.cur() - b'0'));\n            self.advance();\n            any = true;\n        }\n        if !any {\n            self.err = true;\n        }\n        v\n    }\n\n    fn parse_atom(&mut self) -> i64 {\n        self.skip_ws();\n        if self.cur() == b'(' {\n            self.advance();\n            let v = self.parse_expr();\n            self.skip_ws();\n            if self.cur() != b')' {\n                self.err = true;\n            } else {\n                self.advance();\n            }\n            return v;\n        }\n        if self.cur() == b'-' {\n            self.advance();\n            return self.parse_atom().wrapping_neg();\n        }\n        self.parse_number()\n    }\n\n    fn parse_term(&mut self) -> i64 {\n        let mut v = self.parse_atom();\n        loop {\n            self.skip_ws();\n            let op = self.cur();\n            if op != b'*' && op != b'/' && op != b'%' {\n                return v;\n            }\n            self.advance();\n            let r = self.parse_atom();\n            if op == b'*' {\n                v = v.wrapping_mul(r);\n            } else if r == 0 {\n                self.err = true;\n            } else {\n                // i64::MIN / -1 traps in the original (idiv); here it panics, which the\n                // differential test reports as the same kind of fault.\n                v = if op == b'/' { v / r } else { v % r };\n            }\n        }\n    }\n\n    fn parse_expr(&mut self) -> i64 {\n        let mut v = self.parse_term();\n        loop {\n            self.skip_ws();\n            let op = self.cur();\n            if op != b'+' && op != b'-' {\n                return v;\n            }\n            self.advance();\n            let r = self.parse_term();\n            v = if op == b'+' { v.wrapping_add(r) } else { v.wrapping_sub(r) };\n        }\n    }\n}\n\n/// Evaluates the expression in the NUL-terminated `text`; stores the value in `*out` and returns\n/// 0, or returns -1 (leaving `*out` alone) on a syntax error or division by zero.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn evaluate(text: *const u8, out: *mut i64) -> i32 {\n    let mut ps = Parser { p: text, err: false };\n    let v = ps.parse_expr();\n    ps.skip_ws();\n    if ps.err || ps.cur() != 0 {\n        return -1;\n    }\n    unsafe { *out = v };\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    }
+  ]
+}

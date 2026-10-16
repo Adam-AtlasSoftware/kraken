@@ -1,0 +1,40 @@
+[package]
+name = "kraken-rewrite"
+description = "KRAKEN rewrite pipeline spike: emulation oracle, Rust translation tasks, differential tests and rewrite-unit records"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+futures-util = "0.3"
+# icicle-emu is not on crates.io; pinned by commit (see deny.toml [sources] and
+# spikes/rewrite-loop/NOTES.md). MIT OR Apache-2.0.
+icicle-cpu = { version = "0.1.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
+icicle-vm = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
+pcode = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
+kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
+kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+object = { version = "0.38", default-features = false, features = ["read_core", "elf", "std"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tempfile = "3"
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "process"] }
+tokio-util = { version = "0.7.16", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
+
+[dev-dependencies]
+engine-fake = { path = "../engine-fake", version = "0.0.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "process"] }
