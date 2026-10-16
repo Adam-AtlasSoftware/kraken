@@ -1,0 +1,24 @@
+[package]
+name = "kraken-engine"
+description = "KRAKEN engine capability traits (dyn-compatible, async) and a reusable contract test suite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Reusable contract test suite for engine implementations.
+testing = ["tokio/time"]
+
+[dependencies]
+async-trait = "0.1.89"
+kraken-proto.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync"] }
+tokio-util = { version = "0.7.16", default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "macros", "time"] }

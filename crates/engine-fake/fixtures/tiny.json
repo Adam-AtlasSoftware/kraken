@@ -1,0 +1,241 @@
+{
+  "ghidra_version": "12.1.4",
+  "program": {
+    "arch": "x86:LE:64:default",
+    "format": "elf",
+    "base": "0x400000",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "size": 8192
+  },
+  "functions": [
+    {
+      "summary": {
+        "locator": {
+          "kind": "native",
+          "space": "ram",
+          "offset": "0x401000"
+        },
+        "name": "main",
+        "size": 64,
+        "signature": "int main(int argc, char **argv)",
+        "fn_hash": "h-main",
+        "completeness": {
+          "kind": "complete"
+        }
+      },
+      "decompile": {
+        "function": {
+          "kind": "native",
+          "space": "ram",
+          "offset": "0x401000"
+        },
+        "language": "c",
+        "text": "int main(int argc, char **argv)\n{\n  helper(argc);\n  return 0;\n}\n",
+        "tokens": [
+          {
+            "start": 0,
+            "end": 3,
+            "kind": "type",
+            "symbol": "int"
+          },
+          {
+            "start": 4,
+            "end": 8,
+            "kind": "function",
+            "target": {
+              "kind": "native",
+              "space": "ram",
+              "offset": "0x401000"
+            },
+            "symbol": "main"
+          },
+          {
+            "start": 36,
+            "end": 42,
+            "kind": "function",
+            "target": {
+              "kind": "native",
+              "space": "ram",
+              "offset": "0x401040"
+            },
+            "symbol": "helper"
+          },
+          {
+            "start": 52,
+            "end": 58,
+            "kind": "keyword"
+          }
+        ],
+        "warnings": [],
+        "completeness": {
+          "kind": "complete"
+        }
+      }
+    },
+    {
+      "summary": {
+        "locator": {
+          "kind": "native",
+          "space": "ram",
+          "offset": "0x401040"
+        },
+        "name": "helper",
+        "size": 32,
+        "signature": "void helper(int n)",
+        "fn_hash": "h-helper",
+        "completeness": {
+          "kind": "complete"
+        }
+      },
+      "decompile": {
+        "function": {
+          "kind": "native",
+          "space": "ram",
+          "offset": "0x401040"
+        },
+        "language": "c",
+        "text": "void helper(int n)\n{\n  cleanup();\n}\n",
+        "tokens": [
+          {
+            "start": 0,
+            "end": 4,
+            "kind": "type",
+            "symbol": "void"
+          },
+          {
+            "start": 5,
+            "end": 11,
+            "kind": "function",
+            "target": {
+              "kind": "native",
+              "space": "ram",
+              "offset": "0x401040"
+            },
+            "symbol": "helper"
+          },
+          {
+            "start": 23,
+            "end": 30,
+            "kind": "function",
+            "target": {
+              "kind": "native",
+              "space": "ram",
+              "offset": "0x401080"
+            },
+            "symbol": "cleanup"
+          }
+        ],
+        "warnings": [],
+        "completeness": {
+          "kind": "complete"
+        }
+      }
+    },
+    {
+      "summary": {
+        "locator": {
+          "kind": "native",
+          "space": "ram",
+          "offset": "0x401080"
+        },
+        "name": "cleanup",
+        "size": 16,
+        "signature": "void cleanup(void)",
+        "fn_hash": "h-cleanup",
+        "completeness": {
+          "kind": "complete"
+        }
+      },
+      "decompile": {
+        "function": {
+          "kind": "native",
+          "space": "ram",
+          "offset": "0x401080"
+        },
+        "language": "c",
+        "text": "void cleanup(void)\n{\n  return;\n}\n",
+        "tokens": [
+          {
+            "start": 0,
+            "end": 4,
+            "kind": "type",
+            "symbol": "void"
+          },
+          {
+            "start": 5,
+            "end": 12,
+            "kind": "function",
+            "target": {
+              "kind": "native",
+              "space": "ram",
+              "offset": "0x401080"
+            },
+            "symbol": "cleanup"
+          },
+          {
+            "start": 23,
+            "end": 29,
+            "kind": "keyword"
+          }
+        ],
+        "warnings": [],
+        "completeness": {
+          "kind": "complete"
+        }
+      }
+    }
+  ],
+  "types": [
+    {
+      "kind": "struct",
+      "name": "point",
+      "size": 8,
+      "align": 4,
+      "fields": [
+        {
+          "name": "x",
+          "offset": 0,
+          "type": {
+            "kind": "primitive",
+            "class": "int",
+            "size": 4,
+            "signed": true
+          }
+        },
+        {
+          "name": "y",
+          "offset": 4,
+          "type": {
+            "kind": "primitive",
+            "class": "int",
+            "size": 4,
+            "signed": true
+          }
+        }
+      ]
+    },
+    {
+      "kind": "typedef",
+      "name": "pt_t",
+      "target": {
+        "kind": "named",
+        "name": "point"
+      }
+    },
+    {
+      "kind": "enum",
+      "name": "color",
+      "size": 4,
+      "variants": [
+        {
+          "name": "RED",
+          "value": 0
+        },
+        {
+          "name": "GREEN",
+          "value": 1
+        }
+      ]
+    }
+  ]
+}
