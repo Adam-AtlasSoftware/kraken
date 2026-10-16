@@ -3,9 +3,15 @@
 //! Linux confinement stacks: a scrubbed environment, `PR_SET_PDEATHSIG` (from a spawner thread
 //! that lives as long as the child), Landlock filesystem rules, Landlock ABI v4 TCP denial and
 //! ABI v6 scoping, and `unshare(CLONE_NEWUSER | CLONE_NEWNET)` when the host allows it
-//! (Landlock does not cover UDP). Other platforms refuse to spawn unless
-//! [`ConfinementOptions::allow_unconfined`] is set.
+//! (Landlock does not cover UDP).
+//!
+//! macOS and Windows have no sidecar confinement yet (macOS `sandbox-exec` and a Windows
+//! AppContainer are decision 71's later work), so they refuse to spawn unless
+//! [`ConfinementOptions::allow_unconfined`] is set. Parent death is still handled there: the JVM
+//! watches the parent pid on macOS (decision 68) and a kill-on-close job object ends it on Windows
+//! (decision 40).
 
+use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -25,6 +31,16 @@ pub struct ConfinementOptions {
     pub skip_network_namespace: bool,
 }
 
+/// The refusal shown on platforms without sidecar confinement.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn unconfined_refusal() -> String {
+    "sidecar confinement is only implemented on Linux (Landlock, decision 71); macOS sandbox-exec \
+     and the Windows AppContainer are later work. Set ConfinementOptions::allow_unconfined \
+     (`allow_unconfined = true` in the engine config) to run the sidecar unconfined at your own \
+     risk"
+        .into()
+}
+
 /// What confinement was actually applied to a spawned child.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConfinementReport {
@@ -38,7 +54,8 @@ pub struct ConfinementReport {
     pub scoped: bool,
     /// The child runs in an empty user + network namespace.
     pub network_namespace: bool,
-    /// `PR_SET_PDEATHSIG(SIGKILL)` is set on the child.
+    /// The child dies with its parent: `PR_SET_PDEATHSIG(SIGKILL)` on Linux, the JVM's parent-pid
+    /// watch on macOS, a kill-on-close job object on Windows.
     pub parent_death_signal: bool,
 }
 
@@ -97,44 +114,44 @@ pub struct ExitInfo {
     pub signal: Option<i32>,
 }
 
+/// What to run and how to confine it.
+#[derive(Debug, Clone)]
+pub struct SpawnSpec {
+    /// Executable.
+    pub program: PathBuf,
+    /// Arguments.
+    pub args: Vec<OsString>,
+    /// The complete environment (everything else is cleared).
+    pub env: Vec<(OsString, OsString)>,
+    /// Working directory.
+    pub cwd: PathBuf,
+    /// Paths readable by the child (must exist). Enforced on Linux only.
+    pub read_only: Vec<PathBuf>,
+    /// Paths readable and writable by the child (must exist).
+    pub read_write: Vec<PathBuf>,
+    /// Confinement policy.
+    pub options: ConfinementOptions,
+}
+
 #[cfg(unix)]
-pub use unix::{Sandbox, SpawnSpec};
+pub use unix::Sandbox;
+#[cfg(windows)]
+pub use windows::WinSandbox;
 
 #[cfg(unix)]
 mod unix {
-    use std::ffi::OsString;
     use std::os::fd::OwnedFd;
     use std::os::unix::net::UnixStream;
     use std::os::unix::process::ExitStatusExt;
-    use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
     use std::sync::{Arc, Mutex, PoisonError, mpsc};
     use std::thread;
 
     use tokio::sync::watch;
 
-    use super::{ConfinementOptions, ConfinementReport, ExitInfo};
+    use super::{ConfinementReport, ExitInfo, SpawnSpec};
     use crate::error::GhidraError;
     use crate::log::LogSink;
-
-    /// What to run and how to confine it.
-    #[derive(Debug, Clone)]
-    pub struct SpawnSpec {
-        /// Executable.
-        pub program: PathBuf,
-        /// Arguments.
-        pub args: Vec<OsString>,
-        /// The complete environment (everything else is cleared).
-        pub env: Vec<(OsString, OsString)>,
-        /// Working directory.
-        pub cwd: PathBuf,
-        /// Paths readable by the child (must exist).
-        pub read_only: Vec<PathBuf>,
-        /// Paths readable and writable by the child (must exist).
-        pub read_write: Vec<PathBuf>,
-        /// Confinement policy.
-        pub options: ConfinementOptions,
-    }
 
     /// A running confined child. Dropping it kills the child.
     #[derive(Debug)]
@@ -528,13 +545,15 @@ mod unix {
         pub(super) fn prepare(spec: &SpawnSpec) -> Result<Plan, GhidraError> {
             if spec.options.allow_unconfined {
                 Ok(Plan {
-                    report: ConfinementReport::none(),
+                    report: ConfinementReport {
+                        // The JVM watches the parent pid itself (`--watch-parent`).
+                        parent_death_signal: true,
+                        ..ConfinementReport::none()
+                    },
                 })
             } else {
                 Err(GhidraError::Confinement(
-                    "sidecar confinement is only implemented on Linux (Landlock); set \
-                     ConfinementOptions::allow_unconfined to run it unconfined"
-                        .into(),
+                    crate::sandbox::unconfined_refusal(),
                 ))
             }
         }
@@ -544,6 +563,123 @@ mod unix {
 
     #[cfg(target_os = "linux")]
     pub use confine::{landlock_abi, userns_netns_works};
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::process::Stdio;
+    use std::sync::Arc;
+
+    use kraken_procguard::ProcessGuard;
+    use tokio::process::{ChildStdin, ChildStdout, Command};
+    use tokio::sync::watch;
+    use tokio_util::io::SyncIoBridge;
+
+    use super::{ConfinementReport, ExitInfo, SpawnSpec};
+    use crate::error::GhidraError;
+    use crate::log::LogSink;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    /// A running sidecar on Windows: stdin/stdout pipes carry the protocol, stderr goes to the
+    /// log, and a kill-on-close job object ties the JVM's life to this process.
+    #[derive(Debug)]
+    pub struct WinSandbox {
+        pid: u32,
+        guard: Arc<ProcessGuard>,
+        exit: watch::Receiver<Option<ExitInfo>>,
+        report: ConfinementReport,
+    }
+
+    impl WinSandbox {
+        /// Spawns `spec`; must run inside a Tokio runtime. Refuses unless
+        /// `allow_unconfined` is set, because no Windows confinement exists yet.
+        pub fn spawn(
+            spec: SpawnSpec,
+            log: &LogSink,
+        ) -> Result<(WinSandbox, ChildStdout, ChildStdin), GhidraError> {
+            if !spec.options.allow_unconfined {
+                return Err(GhidraError::Confinement(super::unconfined_refusal()));
+            }
+            let guard = ProcessGuard::new()
+                .map_err(|e| GhidraError::io("creating the sidecar job object", e))?;
+            let mut child = Command::new(&spec.program)
+                .args(&spec.args)
+                .env_clear()
+                .envs(spec.env.iter().map(|(k, v)| (k, v)))
+                .current_dir(&spec.cwd)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .creation_flags(CREATE_NO_WINDOW)
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|e| GhidraError::Spawn(format!("{}: {e}", spec.program.display())))?;
+            let pid = child
+                .id()
+                .ok_or_else(|| GhidraError::Spawn("the sidecar exited immediately".into()))?;
+            guard
+                .assign_pid(pid)
+                .map_err(|e| GhidraError::io("adding the sidecar to its job object", e))?;
+            let (Some(stdin), Some(stdout), Some(stderr)) =
+                (child.stdin.take(), child.stdout.take(), child.stderr.take())
+            else {
+                return Err(GhidraError::Spawn("the sidecar pipes are missing".into()));
+            };
+            let sink = log.clone();
+            drop(tokio::task::spawn_blocking(move || {
+                sink.pump(SyncIoBridge::new(stderr));
+            }));
+            let (exit_tx, exit_rx) = watch::channel(None);
+            drop(tokio::spawn(async move {
+                let info = match child.wait().await {
+                    Ok(st) => ExitInfo {
+                        code: st.code(),
+                        signal: None,
+                    },
+                    Err(_) => ExitInfo {
+                        code: None,
+                        signal: None,
+                    },
+                };
+                let _ = exit_tx.send(Some(info));
+            }));
+            let report = ConfinementReport {
+                parent_death_signal: true,
+                ..ConfinementReport::none()
+            };
+            Ok((
+                WinSandbox {
+                    pid,
+                    guard: Arc::new(guard),
+                    exit: exit_rx,
+                    report,
+                },
+                stdout,
+                stdin,
+            ))
+        }
+
+        /// The child's process id.
+        pub fn pid(&self) -> u32 {
+            self.pid
+        }
+
+        /// What confinement was applied (none, plus the job object).
+        pub fn report(&self) -> &ConfinementReport {
+            &self.report
+        }
+
+        /// A receiver that turns `Some` when the child has exited.
+        pub fn exit_watch(&self) -> watch::Receiver<Option<ExitInfo>> {
+            self.exit.clone()
+        }
+
+        /// Terminates the whole job.
+        pub fn kill(&self) {
+            self.guard.terminate();
+        }
+    }
 }
 
 #[cfg(all(unix, target_os = "linux"))]

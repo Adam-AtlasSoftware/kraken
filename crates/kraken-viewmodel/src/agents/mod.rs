@@ -10,7 +10,8 @@
 mod catalogue;
 mod session;
 mod setup;
-#[cfg(test)]
+// The tests drive shell-script fakes for node and npm, so they run on Unix only.
+#[cfg(all(test, unix))]
 mod tests;
 
 use kraken_acp::NoticeStore;

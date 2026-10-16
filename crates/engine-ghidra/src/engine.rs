@@ -296,6 +296,7 @@ impl GhidraEngine {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))] // its callers are Unix-only tests
     pub(crate) async fn rpc_for_test(
         &self,
         method: &str,

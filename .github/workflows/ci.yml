@@ -121,3 +121,19 @@ jobs:
       # Fails loudly when Landlock is unavailable: allow_unconfined stays false.
       - name: Run the ignored (real Ghidra) tests
         run: cargo test --workspace -- --ignored --test-threads=1
+
+  # macOS arm64 and Windows x86_64 are tier 1 from 0.2.x. Real-Ghidra tests stay Linux-only
+  # until the sidecar sandbox exists on these platforms (decision 71).
+  test-other-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      KRAKEN_NO_DAEMON: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace

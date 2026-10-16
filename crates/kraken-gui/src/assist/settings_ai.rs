@@ -340,6 +340,7 @@ impl AiSettings {
 
     /// Edits the form (for tests).
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))] // its only caller is a Unix-only test
     pub fn draft_mut(&mut self) -> &mut ProviderDraft {
         &mut self.draft
     }

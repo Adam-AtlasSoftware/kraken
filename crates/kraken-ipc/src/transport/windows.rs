@@ -1,10 +1,10 @@
 //! Windows named pipe transport (`\\.\pipe\kraken-<user>`).
 //!
 //! The first pipe instance is created with `first_pipe_instance(true)` so a squatter that created
-//! the name earlier makes `bind` fail, and remote clients are rejected. TODO: pass an explicit
-//! owner-only security descriptor via `create_with_security_attributes_raw` (needs windows-sys
-//! `Win32_Security*`); until then the default DACL applies and the auth token is the access gate.
-//! This module is compile-checked only on Windows targets.
+//! the name earlier makes `bind` fail, and remote clients are rejected. Every instance carries an
+//! explicit protected DACL that grants access only to the OWNER RIGHTS principal (the creating
+//! user), per decision 41; the auth token stays the second gate. This module is cross-compile
+//! checked from Linux; it runs for real only in the Windows CI job.
 
 use std::io;
 use std::time::Duration;
@@ -14,6 +14,74 @@ use tokio::net::windows::named_pipe::{
 };
 
 use crate::paths::RuntimeDir;
+
+/// SDDL for the pipe: protected DACL (no inheritance), generic-all for OWNER RIGHTS only.
+const OWNER_ONLY_SDDL: &str = "D:P(A;;GA;;;OW)";
+
+/// A self-relative security descriptor allocated by the OS, freed on drop.
+struct OwnerOnly {
+    descriptor: *mut core::ffi::c_void,
+}
+
+// SAFETY: the descriptor is immutable after creation and only read by the pipe APIs.
+unsafe impl Send for OwnerOnly {}
+// SAFETY: see above.
+unsafe impl Sync for OwnerOnly {}
+
+impl OwnerOnly {
+    fn new() -> io::Result<Self> {
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+        };
+        let wide: Vec<u16> = OWNER_ONLY_SDDL.encode_utf16().chain(Some(0)).collect();
+        let mut descriptor = std::ptr::null_mut();
+        // SAFETY: `wide` is NUL-terminated; on success the OS allocates `descriptor`, which we
+        // release with LocalFree in Drop.
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(OwnerOnly { descriptor })
+    }
+
+    /// Runs `create` with a `SECURITY_ATTRIBUTES` pointing at the descriptor.
+    fn with_attributes<T>(
+        &self,
+        create: impl FnOnce(*mut core::ffi::c_void) -> io::Result<T>,
+    ) -> io::Result<T> {
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+        let mut attrs = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: self.descriptor,
+            bInheritHandle: 0,
+        };
+        create(std::ptr::addr_of_mut!(attrs).cast())
+    }
+}
+
+impl Drop for OwnerOnly {
+    fn drop(&mut self) {
+        // SAFETY: allocated by ConvertStringSecurityDescriptorToSecurityDescriptorW.
+        unsafe {
+            windows_sys::Win32::Foundation::LocalFree(self.descriptor);
+        }
+    }
+}
+
+fn create_instance(name: &str, first: bool, security: &OwnerOnly) -> io::Result<NamedPipeServer> {
+    let mut opts = ServerOptions::new();
+    opts.first_pipe_instance(first).reject_remote_clients(true);
+    // SAFETY: the attributes (and the descriptor they point at) outlive the call.
+    security
+        .with_attributes(|attrs| unsafe { opts.create_with_security_attributes_raw(name, attrs) })
+}
 
 /// A connected pipe, either end.
 pub enum Stream {
@@ -67,6 +135,7 @@ impl tokio::io::AsyncWrite for Stream {
 /// Pipe listener.
 pub struct Listener {
     name: String,
+    security: OwnerOnly,
     next: Option<NamedPipeServer>,
 }
 
@@ -74,12 +143,11 @@ impl Listener {
     /// Creates the first pipe instance.
     pub fn bind(dir: &RuntimeDir) -> io::Result<Self> {
         let name = dir.pipe_name();
-        let next = ServerOptions::new()
-            .first_pipe_instance(true)
-            .reject_remote_clients(true)
-            .create(&name)?;
+        let security = OwnerOnly::new()?;
+        let next = create_instance(&name, true, &security)?;
         Ok(Listener {
             name,
+            security,
             next: Some(next),
         })
     }
@@ -88,16 +156,10 @@ impl Listener {
     pub async fn accept(&mut self) -> io::Result<Stream> {
         let server = match self.next.take() {
             Some(s) => s,
-            None => ServerOptions::new()
-                .reject_remote_clients(true)
-                .create(&self.name)?,
+            None => create_instance(&self.name, false, &self.security)?,
         };
         server.connect().await?;
-        self.next = Some(
-            ServerOptions::new()
-                .reject_remote_clients(true)
-                .create(&self.name)?,
-        );
+        self.next = Some(create_instance(&self.name, false, &self.security)?);
         Ok(Stream::Server(server))
     }
 }

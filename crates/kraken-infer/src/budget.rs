@@ -51,8 +51,8 @@ impl MemoryBudget {
         }
     }
 
-    /// Reads total RAM from `/proc/meminfo` on Linux. VRAM is not probed; set it with
-    /// [`MemoryBudget::with_vram`]. Other platforms report `Unsupported`.
+    /// Reads total RAM from `/proc/meminfo` on Linux, `sysctl` on macOS and
+    /// `GlobalMemoryStatusEx` on Windows. VRAM is not probed; set it with [`MemoryBudget::with_vram`].
     pub fn from_system() -> Result<Self> {
         #[cfg(target_os = "linux")]
         {
@@ -63,9 +63,9 @@ impl MemoryBudget {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            Err(InferError::Unsupported(
-                "system memory probing is only implemented on Linux".into(),
-            ))
+            kraken_procguard::total_memory_bytes()
+                .map(|total| Self::new(total, None))
+                .ok_or_else(|| InferError::Unsupported("cannot read total system memory".into()))
         }
     }
 
