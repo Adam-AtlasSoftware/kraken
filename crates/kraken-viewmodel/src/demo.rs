@@ -279,7 +279,13 @@ pub fn demo_project_with(
     let binary = tmp.path().join("demo-server");
     std::fs::write(&binary, b"\x7fELF placeholder for the KRAKEN demo project")?;
     let project_dir = tmp.path().join("project");
-    let backend = InProcessBackend::new(Arc::new(DemoEngineFactory::new(fixture, stage_delay)))
+    // The Rewrite tab runs against a scripted pipeline; nothing is translated or run.
+    let rewrite = crate::rewrite::demo::DemoRewrite::new();
+    let session =
+        kraken_registry::Session::new(Arc::new(DemoEngineFactory::new(fixture, stage_delay)))
+            .with_rewrite(Arc::new(rewrite.clone()));
+    let backend = InProcessBackend::with_session(session)
+        .with_extra_query(rewrite.unit_query())
         .with_keepalive(Box::new(tmp));
     Ok(DemoProject {
         backend: Arc::new(backend),

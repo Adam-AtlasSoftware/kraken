@@ -14,6 +14,7 @@ crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 - `kraken-proto`: wire and persisted types, JSON Schema (`cargo xtask schema`, `cargo xtask samples`)
 - `kraken-engine`: engine capability traits + contract suite (feature `testing`)
 - `engine-ghidra` + `java/kraken-ghidra`: confined Ghidra sidecar (build: `cargo xtask ghidra-ext`)
+- `engine-dotnet` + `dotnet/kraken-dotnet`: spike of a managed-code engine (ILSpy decompiler in a confined C# sidecar; build: `cargo xtask dotnet-ext`, SDK via `dotnet/install-sdk.sh`; corpus in `corpus/dotnet`; notes in `spikes/dotnet-engine/NOTES.md`)
 - `engine-fake`: fixture-driven engine for tests; fixtures in `corpus/fixtures` (`kraken-record`)
 - `kraken-model`: SQLite edit log, read-sets, undo, proposals, snapshots
 - `kraken-registry`: command registry (44 commands, incl. `rewrite_*` and `undo_entry`/`undo_preview` and the `RewriteBackend` trait); CLI/MCP/GUI/docs are generated from it

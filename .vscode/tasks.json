@@ -4,6 +4,7 @@
   "version": "2.0.0",
   "options": {
     "env": {
+      "KRAKEN_DOTNET_ROOT": "${env:HOME}/.cache/kraken-dev/dotnet",
       "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
       "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1",
       "GHIDRA_INSTALL_DIR": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
@@ -47,6 +48,34 @@
       "dependsOn": "build Ghidra extension",
       "group": "test",
       "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "install .NET SDK (isolated, sha512-pinned)",
+      "type": "shell",
+      "command": "dotnet/install-sdk.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "build .NET sidecar",
+      "type": "shell",
+      "command": "cargo xtask dotnet-ext",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "cargo test (.NET engine, ignored tests)",
+      "type": "shell",
+      "command": "cargo test -p engine-dotnet --features real-dotnet -- --ignored --test-threads=1",
+      "dependsOn": "build .NET sidecar",
+      "group": "test",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "rebuild .NET corpus (dll + truth)",
+      "type": "shell",
+      "command": "corpus/dotnet/build.sh",
+      "dependsOn": "build .NET sidecar",
+      "problemMatcher": []
     },
     {
       "label": "cargo clippy",

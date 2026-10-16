@@ -15,6 +15,10 @@ Commands:
   ghidra-ext-test [binary]
                Build the extension, then run its in-process self-test against `binary`
                (default: a copy of /bin/ls in a temp dir). Prints PASS/FAIL lines.
+  dotnet-ext   Build the .NET sidecar in dotnet/kraken-dotnet into dotnet/kraken-dotnet/bin with the
+               isolated SDK in ~/.cache/kraken-dev/dotnet (refuses if it is missing; see
+               dotnet/install-sdk.sh). NuGet packages go to ~/.cache/kraken-dev/nuget; the first
+               build restores ICSharpCode.Decompiler from nuget.org.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
   docs         Write docs/reference/commands.md from the command registry.
@@ -31,6 +35,7 @@ fn main() -> ExitCode {
         }
         Some("ghidra-ext") => ghidra_ext(),
         Some("ghidra-ext-test") => ghidra_ext_test(args.get(1).map(PathBuf::from)),
+        Some("dotnet-ext") => dotnet_ext(),
         Some("schema") => schema(),
         Some("samples") => write_samples(),
         Some("docs") => docs::write_docs(),
@@ -82,6 +87,48 @@ fn schema() -> Result<()> {
     fs::write(&path, kraken_proto::schema_json())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     println!("schema: {}", path.display());
+    Ok(())
+}
+
+/// Builds the .NET sidecar with the isolated SDK only: `DOTNET_ROOT`, the CLI home and the NuGet
+/// cache all live under ~/.cache/kraken-dev, telemetry is off, and nothing is added to PATH.
+fn dotnet_ext() -> Result<()> {
+    let cache = cache_dir().ok_or("HOME is not set")?;
+    let sdk = cache.join("dotnet");
+    let exe = sdk.join(if cfg!(windows) {
+        "dotnet.exe"
+    } else {
+        "dotnet"
+    });
+    if !exe.is_file() {
+        return Err(format!(
+            "no .NET SDK at {}; install it with dotnet/install-sdk.sh (the build never uses a \
+             system-wide SDK)",
+            sdk.display()
+        ));
+    }
+    let dir = workspace_root().join("dotnet/kraken-dotnet");
+    let out = dir.join("bin");
+    let status = Command::new(&exe)
+        .args(["publish", "-c", "Release", "--nologo", "-v:q", "-o"])
+        .arg(&out)
+        .current_dir(&dir)
+        .env("DOTNET_ROOT", &sdk)
+        .env("DOTNET_CLI_HOME", cache.join("dotnet-home"))
+        .env("NUGET_PACKAGES", cache.join("nuget"))
+        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
+        .env("DOTNET_NOLOGO", "1")
+        .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1")
+        .status()
+        .map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
+    if !status.success() {
+        return Err(format!("dotnet publish failed: {status}"));
+    }
+    let dll = out.join("kraken-dotnet.dll");
+    if !dll.is_file() {
+        return Err(format!("{} was not produced", dll.display()));
+    }
+    println!("dotnet-ext: {}", dll.display());
     Ok(())
 }
 

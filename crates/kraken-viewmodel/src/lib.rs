@@ -18,6 +18,7 @@ pub mod history;
 pub mod infer;
 mod nav;
 mod palette;
+pub mod rewrite;
 mod state;
 pub mod testing;
 mod tokens;
@@ -45,7 +46,7 @@ pub use daemon::{
 pub use errors::plain_error;
 pub use fuzzy::score as fuzzy_score;
 #[cfg(feature = "inprocess")]
-pub use inprocess::{GUI_USER, InProcessBackend};
+pub use inprocess::{ExtraQuery, GUI_USER, InProcessBackend};
 pub use nav::NavHistory;
 pub use palette::{AppAction, PaletteItem, PaletteState, PaletteTarget, UiRequest};
 pub use state::*;
