@@ -1,0 +1,21 @@
+[workspace]
+
+[package]
+name = "gui-hello"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = [
+    "glow",
+    "wgpu",
+    "x11",
+    "wayland",
+    "default_fonts",
+] }
+egui = "=0.36.2"
+egui_dock = "=0.21.1"
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }

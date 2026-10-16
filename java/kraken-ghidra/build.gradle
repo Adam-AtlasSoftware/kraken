@@ -1,0 +1,7 @@
+// Builds the KRAKEN Ghidra extension against a Ghidra installation.
+// Usage: GHIDRA_INSTALL_DIR=/path/to/ghidra gradle buildExtension   (or `cargo xtask ghidra-ext`)
+def ghidraInstallDir = System.getenv("GHIDRA_INSTALL_DIR") ?: findProperty("GHIDRA_INSTALL_DIR")
+if (!ghidraInstallDir) {
+    throw new GradleException("GHIDRA_INSTALL_DIR is not set")
+}
+apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
