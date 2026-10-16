@@ -9,24 +9,25 @@ Conventions for all cards: Rust 2024 edition, stable toolchain pinned in rust-to
 in binaries; no `unwrap()` outside tests; comments only where the code is not obvious; every new
 crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 
-## Crate map (decision 39)
+## Crate map
 
-- `xtask`: build helper binary (exists)
-- `kraken-proto`: wire/schema types, no tokio/egui/FFI (planned)
-- `kraken-model`: DB, edit log, transactions (planned)
-- `kraken-engine`: engine capability traits (planned)
-- `engine-ghidra`: sidecar manager, plus `java/` extension (planned)
-- `engine-fake`: fake engine for tests (planned)
-- `kraken-registry`: command registry (planned)
-- `krakend`: daemon, owns projects and the sidecar (planned)
-- `kraken-cli`: CLI client (planned)
-- `kraken-mcp`: MCP server (planned)
-- `kraken-agent`: agent loop and providers (planned)
-- `kraken-assist`: assistant core: registry tool host, explain/overview/auto-name tasks, RE glossary (no GUI deps)
-- `kraken-infer`, plus one crate per inference backend (planned)
-- `kraken-gui`, plus a headless view-model crate tested without egui (planned)
+- `kraken-proto`: wire and persisted types, JSON Schema (`cargo xtask schema`, `cargo xtask samples`)
+- `kraken-engine`: engine capability traits + contract suite (feature `testing`)
+- `engine-ghidra` + `java/kraken-ghidra`: confined Ghidra sidecar (build: `cargo xtask ghidra-ext`)
+- `engine-fake`: fixture-driven engine for tests; fixtures in `corpus/fixtures` (`kraken-record`)
+- `kraken-model`: SQLite edit log, read-sets, undo, proposals, snapshots
+- `kraken-registry`: command registry (34 commands); CLI/MCP/GUI/docs are generated from it
+- `kraken-host`: config, Ghidra engine factory, daemon client, `kraken setup` provisioning
+- `kraken-ipc` / `krakend`: authenticated local RPC and the daemon that owns projects
+- `kraken-cli` (binary `kraken`) / `kraken-mcp` (`kraken mcp`)
+- `kraken-agent`: agent loop and providers; `kraken-assist`: explain/overview/auto-name, glossary
+- `kraken-infer`: supervised local inference backends (llama-server, manifest engines)
+- `kraken-layout`: CFG layout; `kraken-gui-widgets`, `kraken-viewmodel`, `kraken-gui` (binary `kraken-gui`)
+- `kraken-record`: records FakeEngine fixtures from real Ghidra; `kraken-e2e`: end-to-end tests
 
-Only `xtask` exists today; `crates/` is empty. Other crates are created by their own cards.
+Tests: `cargo test --workspace`; real-Ghidra tests are `#[ignore]` and need `KRAKEN_GHIDRA_HOME`,
+`KRAKEN_JAVA_HOME` and the extension built. Tests that run `kraken` binaries must set
+`KRAKEN_RUNTIME_DIR` to a private dir or `KRAKEN_NO_DAEMON=1`, so they never use the real daemon.
 
 ## Key decisions
 
@@ -38,7 +39,7 @@ Only `xtask` exists today; `crates/` is empty. Other crates are created by their
 - The sidecar is confined with Landlock on Linux and kept under daemon supervision.
 - License is GPL-3.0-or-later; dependencies are restricted to the cargo-deny allowlist in `deny.toml`.
 - Linux x86_64 is the first platform; Windows and macOS follow as tier 1 with real-Ghidra CI.
-- Sidecar IPC is JSON-RPC over stdio with length-prefixed framing; schemas are generated from Rust types.
+- Sidecar IPC is JSON-RPC with length-prefixed framing over a socketpair passed as the child's stdin; Rust types are the contract.
 - Every query is paginated and size-capped to keep MCP results within token budgets.
 - Analysis runs as jobs with progress, cancel and resume.
 - Engine and inference backends run as supervised child processes.
