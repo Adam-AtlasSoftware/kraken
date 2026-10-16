@@ -1,6 +1,6 @@
 [package]
 name = "kraken-gui-widgets"
-description = "KRAKEN reusable egui widgets: theme, virtual list, hex view, decompiler text, listing"
+description = "KRAKEN reusable egui widgets: theme, virtual list, hex view, decompiler text, listing, CFG graph view"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 egui = { version = "=0.36.2", default-features = false }
 kraken-proto.workspace = true
+kraken-layout = { path = "../kraken-layout", version = "0.0.0" }
 
 [dev-dependencies]
 anyhow = "1"

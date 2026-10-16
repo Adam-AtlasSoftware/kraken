@@ -1,12 +1,16 @@
-//! Widget gallery: `cargo run -p kraken-gui-widgets --example gallery [-- --light --screenshot out.png]`.
+//! Widget gallery: `cargo run -p kraken-gui-widgets --example gallery [-- --light --tab graph --stress --screenshot out.png]`.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use eframe::Renderer;
 use egui::{Id, RichText, Ui, ViewportCommand, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use kraken_gui_widgets::listing::{ListingRow, ListingSource, OperandToken};
-use kraken_gui_widgets::{HexView, KrakenTheme, ListingView, TokenText, VirtualList};
+use kraken_gui_widgets::{
+    BlockModel, CfgModel, EdgeKind, GraphView, HexView, KrakenTheme, ListingView, TokenText,
+    VirtualList,
+};
 use kraken_proto::{Completeness, DecompileResult, Locator, Token, TokenKind};
 
 const SAMPLE_C: &str = r#"// recovered from sub_00401a30, 2 callers
@@ -297,12 +301,193 @@ impl ListingSource for FakeListing {
     }
 }
 
+/// Splits one assembly line into syntax-coloured pieces.
+fn asm_line(line: &str) -> Vec<(String, TokenKind)> {
+    let (mnemonic, rest) = line.split_once(' ').unwrap_or((line, ""));
+    let m_kind = if mnemonic.starts_with('j') || mnemonic == "call" {
+        TokenKind::Function
+    } else {
+        TokenKind::Keyword
+    };
+    let mut out = vec![(mnemonic.to_string(), m_kind)];
+    if rest.is_empty() {
+        return out;
+    }
+    out.push((" ".into(), TokenKind::Other));
+    let call = mnemonic == "call";
+    let flush = |word: &mut String, out: &mut Vec<(String, TokenKind)>| {
+        if word.is_empty() {
+            return;
+        }
+        let kind = if call {
+            TokenKind::Function
+        } else if word.starts_with("0x") || word.starts_with('-') || word.parse::<i64>().is_ok() {
+            TokenKind::Constant
+        } else if matches!(word.as_str(), "qword" | "dword" | "byte" | "ptr" | "rip") {
+            TokenKind::Type
+        } else {
+            TokenKind::Variable
+        };
+        out.push((std::mem::take(word), kind));
+    };
+    let mut word = String::new();
+    for c in rest.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' || (c == '-' && word.is_empty()) {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            let kind = if c == ' ' {
+                TokenKind::Other
+            } else {
+                TokenKind::Op
+            };
+            out.push((c.to_string(), kind));
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
+/// A realistic 26-block function: guards, a checksum loop, if/else and a switch.
+fn sample_cfg() -> CfgModel {
+    use EdgeKind::{Back, ConditionalFalse as F, ConditionalTrue as T, Fallthrough as Ft, Jump};
+    #[rustfmt::skip]
+    let blocks: [&[&str]; 26] = [
+        &["push rbp", "mov rbp, rsp", "sub rsp, 0x40", "mov qword ptr [rbp-0x8], rdi",
+          "mov qword ptr [rbp-0x10], rsi", "mov qword ptr [rbp-0x18], rdx", "test rsi, rsi", "je 0x401a8e"],
+        &["lea rsi, [rip+0x2a1f]", "call log_error", "mov eax, -1", "jmp 0x401c70"],
+        &["cmp rdx, 0xc", "jb 0x401aa2"],
+        &["lea rsi, [rip+0x2a0b]", "call log_error", "mov eax, -1", "jmp 0x401c70"],
+        &["mov rax, qword ptr [rbp-0x10]", "mov eax, dword ptr [rax]", "cmp eax, 0x4b524b4e", "jne 0x401ac6"],
+        &["mov esi, eax", "call log_error", "mov eax, -2", "jmp 0x401c70"],
+        &["mov rax, qword ptr [rbp-0x10]", "mov eax, dword ptr [rax+0x4]", "mov qword ptr [rbp-0x20], rax",
+          "mov rcx, qword ptr [rbp-0x18]", "sub rcx, 0xc", "cmp rax, rcx", "jbe 0x401af0"],
+        &["mov qword ptr [rbp-0x20], rcx"],
+        &["mov dword ptr [rbp-0x24], 0", "mov qword ptr [rbp-0x28], 0"],
+        &["mov rax, qword ptr [rbp-0x28]", "cmp rax, qword ptr [rbp-0x20]", "jae 0x401b3c"],
+        &["mov rdx, qword ptr [rbp-0x10]", "movzx eax, byte ptr [rdx+rax+0xc]", "mov ecx, dword ptr [rbp-0x24]",
+          "shl ecx, 5", "add ecx, dword ptr [rbp-0x24]", "add ecx, eax", "mov dword ptr [rbp-0x24], ecx"],
+        &["add qword ptr [rbp-0x28], 1", "jmp 0x401b10"],
+        &["mov rax, qword ptr [rbp-0x10]", "mov eax, dword ptr [rax+0x8]", "cmp dword ptr [rbp-0x24], eax", "je 0x401b6a"],
+        &["mov rdi, qword ptr [rbp-0x8]", "mov esi, 3", "call session_reset", "mov dword ptr [rbp-0x34], eax",
+          "cmp dword ptr [rbp-0x34], 0", "jne 0x401b5c"],
+        &["mov eax, dword ptr [rbp-0x34]", "jmp 0x401c70"],
+        &["mov rax, qword ptr [rbp-0x10]", "mov eax, dword ptr [rax+0xc]", "cmp eax, 2", "ja 0x401b90"],
+        &["cmp eax, 0x7f", "je 0x401c20"],
+        &["lea rdx, [rip+0x2f4a]", "mov rax, qword ptr [rdx+rax*8]", "jmp rax"],
+        &["mov rdi, qword ptr [rbp-0x8]", "call handle_hello", "mov dword ptr [rbp-0x34], eax", "jmp 0x401c34"],
+        &["mov rdi, qword ptr [rbp-0x8]", "call handle_data", "mov dword ptr [rbp-0x34], eax", "jmp 0x401c34"],
+        &["mov rax, qword ptr [rbp-0x8]", "mov rdi, rax", "call session_close", "mov dword ptr [rbp-0x34], eax", "jmp 0x401c34"],
+        &["lea rsi, [rip+0x29d3]", "call log_error", "mov dword ptr [rbp-0x34], -4"],
+        &["mov rax, qword ptr [rbp-0x8]", "mov rdx, qword ptr [rbp-0x20]", "add qword ptr [rax+0x10], rdx",
+          "cmp dword ptr [rbp-0x34], 0", "jne 0x401c6c"],
+        &["mov eax, -3", "jmp 0x401c70"],
+        &["leave", "ret"],
+        &["add qword ptr [rax+0x18], 1"],
+    ];
+    // Block 24 is the shared epilogue, 23 the checksum-failure return, 25 the packet counter.
+    #[rustfmt::skip]
+    let edges = [
+        (0, 1, T), (0, 2, F), (1, 24, Jump),
+        (2, 3, T), (2, 4, F), (3, 24, Jump),
+        (4, 5, T), (4, 6, F), (5, 24, Jump),
+        (6, 8, T), (6, 7, F), (7, 8, Ft),
+        (8, 9, Ft), (9, 12, T), (9, 10, F),
+        (10, 11, Ft), (11, 9, Back),
+        (12, 15, T), (12, 13, F),
+        (13, 14, T), (13, 23, F), (14, 24, Jump),
+        (15, 16, T), (15, 17, F),
+        (16, 21, T), (16, 22, F),
+        (17, 18, Jump), (17, 19, Jump), (17, 22, Jump),
+        (18, 20, Jump), (19, 20, Jump), (21, 20, Jump), (22, 20, Ft),
+        (20, 24, T), (20, 25, F), (25, 24, Ft),
+        (23, 24, Jump),
+    ];
+    let blocks = blocks
+        .iter()
+        .enumerate()
+        .map(|(i, lines)| BlockModel {
+            id: i as u64,
+            title: format!("0x{:x}", 0x401a30 + i * 0x2c),
+            lines: lines.iter().map(|l| asm_line(l)).collect(),
+        })
+        .collect();
+    CfgModel {
+        blocks,
+        edges: edges.to_vec(),
+        entry: Some(0),
+    }
+}
+
+/// Deterministic pseudo-random CFG of `n` blocks: forward branches, loops and long jumps.
+fn stress_cfg(n: usize) -> CfgModel {
+    const BODY: [&str; 8] = [
+        "mov rax, qword ptr [rbp-0x8]",
+        "add eax, 1",
+        "cmp eax, 0x10",
+        "lea rdx, [rax+rax*4]",
+        "call sub_401230",
+        "xor ecx, ecx",
+        "mov dword ptr [rbp-0x14], eax",
+        "test rax, rax",
+    ];
+    let mut x: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut rnd = move |m: u64| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x % m
+    };
+    let mut blocks = Vec::with_capacity(n);
+    let mut edges = Vec::new();
+    for i in 0..n {
+        let count = 2 + rnd(5) as usize;
+        let mut lines: Vec<Vec<(String, TokenKind)>> = (0..count)
+            .map(|_| asm_line(BODY[rnd(8) as usize]))
+            .collect();
+        let id = i as u64;
+        if i + 1 < n {
+            match rnd(10) {
+                0..=4 => {
+                    lines.push(asm_line("jmp 0x401000"));
+                    edges.push((id, id + 1, EdgeKind::Fallthrough));
+                }
+                5..=8 => {
+                    lines.push(asm_line("jne 0x401000"));
+                    let far = (i + 2 + rnd(6) as usize).min(n - 1) as u64;
+                    edges.push((id, id + 1, EdgeKind::ConditionalFalse));
+                    edges.push((id, far, EdgeKind::ConditionalTrue));
+                }
+                _ => {
+                    lines.push(asm_line("jb 0x401000"));
+                    let back = id.saturating_sub(1 + rnd(8));
+                    edges.push((id, id + 1, EdgeKind::ConditionalFalse));
+                    edges.push((id, back, EdgeKind::ConditionalTrue));
+                }
+            }
+        } else {
+            lines.push(asm_line("ret"));
+        }
+        blocks.push(BlockModel {
+            id,
+            title: format!("0x{:x}", 0x401000 + i * 0x20),
+            lines,
+        });
+    }
+    CfgModel {
+        blocks,
+        edges,
+        entry: Some(0),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 enum Tab {
     Functions,
     Decompiler,
     Hex,
     Listing,
+    Graph,
 }
 
 struct Viewer {
@@ -312,6 +497,12 @@ struct Viewer {
     selected_row: Option<usize>,
     status: String,
     screenshot_mode: bool,
+    cfg: CfgModel,
+    stress: CfgModel,
+    use_stress: bool,
+    graph_sel: Option<u64>,
+    graph_busy: bool,
+    graph_ms: f32,
 }
 
 fn fake_name(i: usize) -> String {
@@ -403,6 +594,34 @@ impl TabViewer for Viewer {
                     );
                 }
             }
+            Tab::Graph => {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.use_stress, "stress: 3,000 blocks");
+                    ui.label(
+                        RichText::new(format!("graph ui {:.2} ms/frame", self.graph_ms))
+                            .small()
+                            .color(pal.text_dim),
+                    );
+                });
+                let (model, id) = if self.use_stress {
+                    (&self.stress, 2)
+                } else {
+                    (&self.cfg, 1)
+                };
+                let t0 = Instant::now();
+                let out = GraphView::new(model)
+                    .id_salt(("graph", id))
+                    .cache_id(id)
+                    .show(ui, &mut self.graph_sel);
+                let ms = t0.elapsed().as_secs_f32() * 1000.0;
+                self.graph_ms = self.graph_ms * 0.9 + ms * 0.1;
+                self.graph_busy = out.laying_out;
+                if let Some(t) = out.token {
+                    self.status = format!("token {:?} ({:?}) in block {}", t.text, t.kind, t.block);
+                } else if out.changed {
+                    self.status = format!("selected block {:?}", self.graph_sel);
+                }
+            }
             Tab::Listing => {
                 ListingView::new(&FakeListing)
                     .id_salt("listing")
@@ -420,6 +639,8 @@ struct App {
     applied: Option<KrakenTheme>,
     screenshot: Option<PathBuf>,
     frames: u32,
+    shot_requested: bool,
+    shot_frame: u32,
 }
 
 impl eframe::App for App {
@@ -478,7 +699,11 @@ impl eframe::App for App {
 
         self.frames += 1;
         if let Some(path) = self.screenshot.clone() {
-            if self.frames == 12 {
+            if self.frames >= 12 && !self.viewer.graph_busy && !self.shot_requested {
+                self.shot_requested = true;
+                self.shot_frame = self.frames;
+            }
+            if self.shot_requested && self.frames == self.shot_frame + 3 {
                 ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
             }
             let shot = ctx.input(|i| {
@@ -527,11 +752,24 @@ fn main() -> anyhow::Result<()> {
     let mut screenshot = None;
     let mut theme = KrakenTheme::DARK;
     let mut renderer = Renderer::default();
+    let mut focus_tab = None;
+    let mut stress = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
             "--light" => theme = KrakenTheme::LIGHT,
+            "--stress" => stress = true,
+            "--tab" => {
+                focus_tab = Some(match args.next().as_deref() {
+                    Some("decompiler") => Tab::Decompiler,
+                    Some("functions") => Tab::Functions,
+                    Some("hex") => Tab::Hex,
+                    Some("listing") => Tab::Listing,
+                    Some("graph") => Tab::Graph,
+                    other => anyhow::bail!("unknown tab {other:?}"),
+                })
+            }
             "--renderer" => {
                 renderer = match args.next().as_deref() {
                     Some("glow") => Renderer::Glow,
@@ -543,11 +781,21 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut dock = DockState::new(vec![Tab::Decompiler]);
+    let mut dock = DockState::new(vec![Tab::Decompiler, Tab::Graph]);
     let surface = dock.main_surface_mut();
-    let [main, _functions] = surface.split_left(NodeIndex::root(), 0.2, vec![Tab::Functions]);
-    let [_decomp, right] = surface.split_right(main, 0.42, vec![Tab::Hex]);
+    let (left, right_frac) = if focus_tab == Some(Tab::Graph) {
+        (0.1, 0.78)
+    } else {
+        (0.2, 0.42)
+    };
+    let [main, _functions] = surface.split_left(NodeIndex::root(), left, vec![Tab::Functions]);
+    let [_decomp, right] = surface.split_right(main, right_frac, vec![Tab::Hex]);
     surface.split_below(right, 0.5, vec![Tab::Listing]);
+    if let Some(tab) = focus_tab
+        && let Some(found) = dock.find_tab(&tab)
+    {
+        let _ = dock.set_active_tab(found);
+    }
 
     let viewer = Viewer {
         decompiled: sample_result(),
@@ -556,11 +804,21 @@ fn main() -> anyhow::Result<()> {
         selected_row: Some(3),
         status: "ready".into(),
         screenshot_mode: screenshot.is_some(),
+        cfg: sample_cfg(),
+        stress: stress_cfg(3000),
+        use_stress: stress,
+        graph_sel: Some(9),
+        graph_busy: false,
+        graph_ms: 0.0,
     };
     let options = eframe::NativeOptions {
         renderer,
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 820.0])
+            .with_inner_size(if focus_tab == Some(Tab::Graph) {
+                [1500.0, 1150.0]
+            } else {
+                [1400.0, 820.0]
+            })
             .with_title("KRAKEN widget gallery"),
         ..Default::default()
     };
@@ -575,6 +833,8 @@ fn main() -> anyhow::Result<()> {
                 applied: None,
                 screenshot,
                 frames: 0,
+                shot_requested: false,
+                shot_frame: 0,
             }))
         }),
     )

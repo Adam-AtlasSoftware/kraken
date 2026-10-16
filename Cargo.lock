@@ -2052,6 +2052,7 @@ dependencies = [
  "egui_dock",
  "egui_kittest",
  "image",
+ "kraken-layout",
  "kraken-proto",
 ]
 
