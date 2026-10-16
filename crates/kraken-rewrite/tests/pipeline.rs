@@ -154,6 +154,7 @@ async fn registry_decompile_feeds_the_task_prompt() {
 }
 
 #[tokio::test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn cassette_backed_rewrite_of_every_target_verifies_and_is_stored() {
     let provider = ReplayProvider::from_path(&cassette_path()).expect("cassette");
     for t in targets() {
@@ -206,6 +207,7 @@ async fn cassette_backed_rewrite_of_every_target_verifies_and_is_stored() {
 }
 
 #[tokio::test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn a_wrong_translation_is_stored_as_a_failed_version_with_its_counterexample() {
     let t = target("cmp_id").expect("target");
     let (r, j) = job(&t).await;

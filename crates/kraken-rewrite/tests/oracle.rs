@@ -35,6 +35,7 @@ fn cmp_sig(name: &str) -> Signature {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_id_and_cmp_dist_match_the_c_source() {
     let mut o = oracle(&corpus_bin("pie_list-O0"));
     let cmp_id = o.symbol("cmp_id").expect("cmp_id");
@@ -127,6 +128,7 @@ fn run(code: &[u8]) -> kraken_rewrite::abi::Observation {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_computes_and_updates_state() {
     // PUSH 6; PUSH 7; MUL; HALT -> 42, sp == 1, pc == 6, steps == 4
     let r = run(&[1, 6, 1, 7, 4, 0]);
@@ -140,6 +142,7 @@ fn vm_run_computes_and_updates_state() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_print_goes_through_the_printf_stub() {
     // PUSH -5; PRINT; HALT
     let r = run(&[1, 0xfb, 11, 0]);
@@ -149,6 +152,7 @@ fn vm_run_print_goes_through_the_printf_stub() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_failure_path_reaches_exit_with_stderr() {
     // ADD on an empty stack: vm_fail("stack underflow", pc) -> fprintf(stderr) + exit(42).
     let r = run(&[2, 0]);
@@ -158,6 +162,7 @@ fn vm_run_failure_path_reaches_exit_with_stderr() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn jump_table_loop_counts_down() {
     // PUSH 3; loop(2): DEC; DUP; JNZ 2; HALT -> 0 after 3 iterations.
     let r = run(&[1, 3, 10, 5, 9, 2, 0]);
@@ -168,6 +173,7 @@ fn jump_table_loop_counts_down() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn unknown_import_is_reported_not_guessed() {
     // pie_list main-less: call list_sort's callee through a null function pointer faults, and an
     // import with no model ends the call as unsupported. node_new calls calloc.
@@ -210,6 +216,7 @@ fn unknown_import_is_reported_not_guessed() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn calls_are_independent() {
     let mut o = oracle(&corpus_bin("switch_vm-O0"));
     let entry = o.symbol("vm_run").expect("vm_run");

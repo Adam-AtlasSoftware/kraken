@@ -54,26 +54,31 @@ fn assert_caught(id: &str, from: &str, to: &str) -> DiffReport {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_id_reference_passes() {
     assert_pass("cmp_id");
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_dist_reference_passes() {
     assert_pass("cmp_dist");
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_reference_passes() {
     assert_pass("vm_run");
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn evaluate_reference_passes() {
     assert_pass("evaluate");
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_id_returning_the_sign_instead_of_the_difference_fails() {
     // The "nicer" comparator: same ordering, different return value.
     let r = assert_caught(
@@ -93,6 +98,7 @@ fn cmp_id_returning_the_sign_instead_of_the_difference_fails() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_dist_without_wrapping_fails_on_overflow() {
     // Plain operators panic on overflow (the runner is built with overflow checks): the
     // original wraps, so the translation faults where the original returns.
@@ -111,6 +117,7 @@ fn cmp_dist_without_wrapping_fails_on_overflow() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_with_swapped_sub_operands_fails() {
     let r = assert_caught(
         "vm_run",
@@ -127,6 +134,7 @@ fn vm_run_with_swapped_sub_operands_fails() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_with_a_wrong_error_message_fails_through_stderr() {
     let r = assert_caught("vm_run", "\"stack underflow\"", "\"stack underrun\"");
     let c = &r.counterexamples[0];
@@ -139,6 +147,7 @@ fn vm_run_with_a_wrong_error_message_fails_through_stderr() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn evaluate_with_euclidean_remainder_fails_on_negative_operands() {
     let r = assert_caught("evaluate", "v % r", "v.rem_euclid(r)");
     let c = &r.counterexamples[0];
@@ -150,6 +159,7 @@ fn evaluate_with_euclidean_remainder_fails_on_negative_operands() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn a_translation_that_does_not_compile_is_rejected_not_an_error() {
     let tgt = t("cmp_id");
     let r = run(&tgt, "this is not rust", 5);
@@ -161,6 +171,7 @@ fn a_translation_that_does_not_compile_is_rejected_not_an_error() {
 }
 
 #[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn translations_that_reach_for_the_system_are_refused_before_building() {
     let tgt = t("cmp_id");
     for bad in [
