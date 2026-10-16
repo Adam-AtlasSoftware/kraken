@@ -86,11 +86,12 @@ pub fn physical_memory_mb() -> Option<u64> {
                 libc::sysconf(libc::_SC_PAGESIZE),
             )
         };
-        if pages > 0 && size > 0 {
-            return Some((pages as u64).saturating_mul(size as u64) / (1024 * 1024));
-        }
+        (pages > 0 && size > 0).then(|| (pages as u64).saturating_mul(size as u64) / (1024 * 1024))
     }
-    None
+    #[cfg(not(unix))]
+    {
+        kraken_procguard::total_memory_bytes().map(|b| b / (1024 * 1024))
+    }
 }
 
 /// JVM heap for a binary of `binary_size` bytes: 1 GiB plus 64 MiB per MiB of binary, at least

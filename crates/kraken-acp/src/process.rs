@@ -219,6 +219,12 @@ fn spawner_main(
         }
     };
     let pid = child.id();
+    // Windows: the job object is the process group and the parent-death hook (no-op elsewhere).
+    kraken_procguard::watch_parent_death(pid, true);
+    let guard = kraken_procguard::ProcessGuard::new().ok();
+    if let Some(g) = &guard {
+        let _ = g.assign_pid(pid);
+    }
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
@@ -263,6 +269,9 @@ fn spawner_main(
     // Whatever the agent left running in its group goes too.
     #[cfg(unix)]
     kill_group(pid);
+    if let Some(g) = &guard {
+        g.terminate();
+    }
     if let Some(r) = reader {
         let _ = r.join();
     }

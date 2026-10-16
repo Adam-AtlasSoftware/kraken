@@ -16,6 +16,20 @@ pub const ENV_JAVA_HOME: &str = "KRAKEN_JAVA_HOME";
 /// Environment variable naming the extension jar.
 pub const ENV_EXT_JAR: &str = "KRAKEN_GHIDRA_EXT_JAR";
 
+/// The JDK launcher's file name.
+#[cfg(windows)]
+const JAVA_BINARY: &str = "java.exe";
+/// The JDK launcher's file name.
+#[cfg(not(windows))]
+const JAVA_BINARY: &str = "java";
+
+/// Separator between `-cp` entries.
+#[cfg(windows)]
+const CLASSPATH_SEPARATOR: &str = ";";
+/// Separator between `-cp` entries.
+#[cfg(not(windows))]
+const CLASSPATH_SEPARATOR: &str = ":";
+
 /// Explicit locations; unset fields are looked up in the environment.
 #[derive(Debug, Clone, Default)]
 pub struct InstallConfig {
@@ -107,6 +121,7 @@ impl GhidraInstall {
     fn validate(ghidra: &Path, java: &Path, ext: &Path) -> Result<Self, GhidraError> {
         let canon = |p: &Path, what: &str| {
             fs::canonicalize(p)
+                .map(|c| simplify_verbatim(&c))
                 .map_err(|e| GhidraError::Install(format!("{what} {}: {e}", p.display())))
         };
         let ghidra_home = canon(ghidra, "Ghidra home")?;
@@ -134,7 +149,7 @@ impl GhidraInstall {
                 TESTED_GHIDRA_VERSIONS.join(", ")
             )));
         }
-        let java_bin = java_home.join("bin/java");
+        let java_bin = java_home.join("bin").join(JAVA_BINARY);
         if !java_bin.is_file() {
             return Err(GhidraError::Install(format!(
                 "{} does not exist (JDK home {})",
@@ -158,7 +173,7 @@ impl GhidraInstall {
 
     /// Path of the `java` launcher.
     pub fn java(&self) -> PathBuf {
-        self.java_home.join("bin/java")
+        self.java_home.join("bin").join(JAVA_BINARY)
     }
 
     /// The `-cp` value: every Ghidra jar (the set Ghidra's `buildExtension.gradle` compiles
@@ -183,7 +198,18 @@ impl GhidraInstall {
             .iter()
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
-            .join(":"))
+            .join(CLASSPATH_SEPARATOR))
+    }
+}
+
+/// Turns a Windows verbatim path (`\\?\C:\dir`, what `canonicalize` returns there) back into the
+/// plain `C:\dir` form, which the JVM and Ghidra's launch scripts handle; UNC verbatim paths and
+/// every non-Windows path are returned unchanged.
+pub(crate) fn simplify_verbatim(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.len() > 2 && rest.as_bytes()[1] == b':' => PathBuf::from(rest),
+        _ => path.to_path_buf(),
     }
 }
 

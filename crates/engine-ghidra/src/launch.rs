@@ -57,7 +57,7 @@ pub trait Launcher: Send + Sync {
 
 pub use real::GhidraLauncher;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod real {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
@@ -70,7 +70,11 @@ mod real {
     use crate::error::GhidraError;
     use crate::install::GhidraInstall;
     use crate::log::LogSink;
-    use crate::sandbox::{ConfinementOptions, Sandbox, SpawnSpec};
+    #[cfg(unix)]
+    use crate::sandbox::Sandbox;
+    #[cfg(windows)]
+    use crate::sandbox::WinSandbox as Sandbox;
+    use crate::sandbox::{ConfinementOptions, SpawnSpec};
 
     /// Launches the Ghidra JVM sidecar under confinement.
     #[derive(Debug, Clone)]
@@ -103,7 +107,8 @@ mod real {
         ) -> Result<SpawnSpec, GhidraError> {
             let i = &self.install;
             let tmp = home.join("tmp");
-            let args: Vec<OsString> = vec![
+            #[cfg_attr(target_os = "linux", allow(unused_mut))]
+            let mut args: Vec<OsString> = vec![
                 format!("-Xmx{}m", plan.heap_mb).into(),
                 "-XX:+UseSerialGC".into(),
                 "-Djava.awt.headless=true".into(),
@@ -115,13 +120,17 @@ mod real {
                 i.classpath()?.into(),
                 "kraken.ghidra.KrakenSidecar".into(),
             ];
-            let env = vec![
-                ("PATH".into(), i.java_home.join("bin").into_os_string()),
-                ("HOME".into(), home.into()),
-                ("TMPDIR".into(), tmp.into_os_string()),
-                ("JAVA_HOME".into(), i.java_home.clone().into_os_string()),
-                ("LANG".into(), "C.UTF-8".into()),
-            ];
+            // Linux dies with its parent through PDEATHSIG; elsewhere the JVM watches the pid.
+            #[cfg(not(target_os = "linux"))]
+            {
+                args.push("--watch-parent".into());
+                args.push(std::process::id().to_string().into());
+            }
+            // Windows has no socketpair to hand down as fd 0, so frames use the stdin and stdout
+            // pipes instead.
+            #[cfg(windows)]
+            args.push("--stdio".into());
+            let env = sidecar_env(i, home, &tmp);
             Ok(SpawnSpec {
                 program: i.java(),
                 args,
@@ -139,6 +148,34 @@ mod real {
         }
     }
 
+    #[cfg(unix)]
+    fn sidecar_env(i: &GhidraInstall, home: &Path, tmp: &Path) -> Vec<(OsString, OsString)> {
+        vec![
+            ("PATH".into(), i.java_home.join("bin").into_os_string()),
+            ("HOME".into(), home.into()),
+            ("TMPDIR".into(), tmp.into()),
+            ("JAVA_HOME".into(), i.java_home.clone().into_os_string()),
+            ("LANG".into(), "C.UTF-8".into()),
+        ]
+    }
+
+    /// The JVM and Ghidra's natives need `SystemRoot` and the system directory on `PATH`.
+    #[cfg(windows)]
+    fn sidecar_env(i: &GhidraInstall, home: &Path, tmp: &Path) -> Vec<(OsString, OsString)> {
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let mut path = i.java_home.join("bin").into_os_string();
+        path.push(";");
+        path.push(Path::new(&system_root).join("System32"));
+        vec![
+            ("PATH".into(), path),
+            ("SystemRoot".into(), system_root),
+            ("USERPROFILE".into(), home.into()),
+            ("TEMP".into(), tmp.into()),
+            ("TMP".into(), tmp.into()),
+            ("JAVA_HOME".into(), i.java_home.clone().into_os_string()),
+        ]
+    }
+
     struct SidecarSession {
         sandbox: Sandbox,
         // Declared after the sandbox so the process is killed before its home is removed.
@@ -151,24 +188,33 @@ mod real {
         }
     }
 
+    /// Creates the per-session private home and the project directory.
+    fn prepare_dirs(launcher: &GhidraLauncher, plan: &LaunchPlan) -> Result<TempDir, GhidraError> {
+        std::fs::create_dir_all(&plan.project_dir)
+            .map_err(|e| GhidraError::io(format!("creating {}", plan.project_dir.display()), e))?;
+        let root = launcher
+            .temp_root
+            .clone()
+            .unwrap_or_else(std::env::temp_dir);
+        let home = tempfile::Builder::new()
+            .prefix("kraken-sidecar-")
+            .tempdir_in(&root)
+            .map_err(|e| {
+                GhidraError::io(format!("creating a temp home in {}", root.display()), e)
+            })?;
+        std::fs::create_dir_all(home.path().join("tmp"))
+            .map_err(|e| GhidraError::io("creating the session tmp dir", e))?;
+        Ok(home)
+    }
+
+    #[cfg(unix)]
     #[async_trait]
     impl Launcher for GhidraLauncher {
         async fn launch(&self, plan: &LaunchPlan) -> Result<Launched, ProtoError> {
             let this = self.clone();
             let plan = plan.clone();
             let (sandbox, home, log, channel) = tokio::task::spawn_blocking(move || {
-                std::fs::create_dir_all(&plan.project_dir).map_err(|e| {
-                    GhidraError::io(format!("creating {}", plan.project_dir.display()), e)
-                })?;
-                let root = this.temp_root.clone().unwrap_or_else(std::env::temp_dir);
-                let home = tempfile::Builder::new()
-                    .prefix("kraken-sidecar-")
-                    .tempdir_in(&root)
-                    .map_err(|e| {
-                        GhidraError::io(format!("creating a temp home in {}", root.display()), e)
-                    })?;
-                std::fs::create_dir_all(home.path().join("tmp"))
-                    .map_err(|e| GhidraError::io("creating the session tmp dir", e))?;
+                let home = prepare_dirs(&this, &plan)?;
                 let spec = this.spawn_spec(&plan, home.path())?;
                 let log = LogSink::default();
                 let (sandbox, channel) = Sandbox::spawn(spec, &log)?;
@@ -199,9 +245,41 @@ mod real {
             })
         }
     }
+
+    #[cfg(windows)]
+    #[async_trait]
+    impl Launcher for GhidraLauncher {
+        async fn launch(&self, plan: &LaunchPlan) -> Result<Launched, ProtoError> {
+            let this = self.clone();
+            let plan = plan.clone();
+            let (home, spec) = tokio::task::spawn_blocking(move || {
+                let home = prepare_dirs(&this, &plan)?;
+                let spec = this.spawn_spec(&plan, home.path())?;
+                Ok::<_, GhidraError>((home, spec))
+            })
+            .await
+            .map_err(|e| {
+                ProtoError::new(ErrorCode::Internal, format!("launch task failed: {e}"))
+            })??;
+            let log = LogSink::default();
+            let (sandbox, stdout, stdin) = Sandbox::spawn(spec, &log)?;
+            Ok(Launched {
+                reader: Box::new(stdout),
+                writer: Box::new(stdin),
+                exit: sandbox.exit_watch(),
+                log,
+                report: sandbox.report().clone(),
+                pid: Some(sandbox.pid()),
+                session: Box::new(SidecarSession {
+                    sandbox,
+                    _home: home,
+                }),
+            })
+        }
+    }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 mod real {
     use async_trait::async_trait;
     use kraken_proto::{ErrorCode, ProtoError};

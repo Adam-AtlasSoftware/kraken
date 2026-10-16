@@ -6,7 +6,9 @@
 //! unix sockets and signals scoped). A host without Landlock refuses to run unless
 //! [`Confinement::allow_unconfined`] is set. Other platforms refuse the same way.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::RewriteError;
@@ -56,6 +58,7 @@ pub fn confine(
     imp::confine(cmd, dir, scope, opts)
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn system_read_paths() -> Vec<PathBuf> {
     [
         "/usr",

@@ -1340,6 +1340,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "kraken-engine",
+ "kraken-procguard",
  "kraken-proto",
  "landlock",
  "libc",
@@ -2544,6 +2545,7 @@ dependencies = [
  "flate2",
  "futures",
  "kraken-host",
+ "kraken-procguard",
  "libc",
  "serde",
  "serde_json",
@@ -2727,6 +2729,7 @@ name = "kraken-infer"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "kraken-procguard",
  "libc",
  "serde",
  "serde_json",
@@ -2789,6 +2792,13 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kraken-procguard"
+version = "0.0.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

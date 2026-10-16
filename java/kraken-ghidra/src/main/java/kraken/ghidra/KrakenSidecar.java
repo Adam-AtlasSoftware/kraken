@@ -22,8 +22,12 @@ import java.io.PrintStream;
  * to the real stdout instead, for manual testing. System.out is redirected to stderr before
  * Ghidra initialises so nothing else can corrupt framing.
  *
+ * <p>On macOS and Windows there is no parent-death signal, so the parent passes
+ * {@code --watch-parent <pid>} and the JVM halts when that process exits (decision 68). Stdin EOF
+ * (the parent's end of the channel closing) ends the serve loop as well.
+ *
  * <pre>
- * KrakenSidecar [--stdio]
+ * KrakenSidecar [--stdio] [--watch-parent &lt;pid&gt;]
  * KrakenSidecar --self-test &lt;binary&gt; &lt;project_dir&gt; [samples_dir]
  * </pre>
  */
@@ -33,13 +37,24 @@ public final class KrakenSidecar {
     public static void main(String[] args) throws Exception {
         boolean stdio = false;
         boolean selfTest = false;
+        long watchParent = -1;
         java.util.List<String> rest = new java.util.ArrayList<>();
-        for (String a : args) {
-            switch (a) {
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
                 case "--stdio" -> stdio = true;
                 case "--self-test" -> selfTest = true;
-                default -> rest.add(a);
+                case "--watch-parent" -> {
+                    if (i + 1 >= args.length) {
+                        System.err.println("usage: --watch-parent <pid>");
+                        System.exit(2);
+                    }
+                    watchParent = Long.parseLong(args[++i]);
+                }
+                default -> rest.add(args[i]);
             }
+        }
+        if (watchParent >= 0) {
+            watchParent(watchParent);
         }
 
         // Taken before anything can touch stdout; fd 0 is both input and (by default) output.
@@ -64,6 +79,16 @@ public final class KrakenSidecar {
             System.exit(code);
         }
         serve(new Wire(frameIn, frameOut), initMs);
+    }
+
+    /** Halts the JVM as soon as process {@code pid} is gone (or already was). */
+    private static void watchParent(long pid) {
+        java.util.Optional<ProcessHandle> parent = ProcessHandle.of(pid);
+        if (parent.isEmpty() || !parent.get().isAlive()) {
+            System.err.println("kraken-ghidra: parent " + pid + " is already gone");
+            Runtime.getRuntime().halt(1);
+        }
+        parent.get().onExit().thenRun(() -> Runtime.getRuntime().halt(1));
     }
 
     private static void serve(Wire wire, long initMs) throws IOException {

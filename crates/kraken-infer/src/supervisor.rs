@@ -252,6 +252,11 @@ fn spawn_incarnation(spec: &ProcessSpec, ring: &LogRing) -> Result<Incarnation> 
                 }
             };
             let pid = child.id();
+            kraken_procguard::watch_parent_death(pid, false);
+            let guard = kraken_procguard::ProcessGuard::new().ok();
+            if let Some(g) = &guard {
+                let _ = g.assign_pid(pid);
+            }
             let _ = ready_tx.send(Ok(pid));
 
             if let Some(out) = child.stdout.take() {
@@ -291,6 +296,9 @@ fn spawn_incarnation(spec: &ProcessSpec, ring: &LogRing) -> Result<Incarnation> 
                     term_deadline = None;
                 }
             };
+            if let Some(g) = &guard {
+                g.terminate();
+            }
             let info = status.map_or(
                 ExitInfo {
                     code: None,
