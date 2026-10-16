@@ -422,7 +422,11 @@ async fn a_second_client_sees_the_change_event_stream() {
 
     let dir = r.create(&worker, "p").await;
     let opened = next_event(&mut rx, "session_opened").await;
-    assert_eq!(Path::new(opened["project_dir"].as_str().unwrap()), dir);
+    // Events carry the canonical project path (macOS temp dirs sit behind a symlink).
+    assert_eq!(
+        Path::new(opened["project_dir"].as_str().unwrap()),
+        canon(&dir)
+    );
 
     let started = call(&worker, &dir, "analyze", json!({})).await.unwrap();
     let progress = next_event(&mut rx, "job_progress").await;
@@ -656,7 +660,10 @@ async fn sessions_are_limited_evicted_and_closed_when_idle() {
     let p3 = r.create(&c, "p3").await;
     let closed = next_event(&mut rx, "session_closed").await;
     assert_eq!(closed["reason"], "evicted");
-    assert_eq!(Path::new(closed["project_dir"].as_str().unwrap()), p1);
+    assert_eq!(
+        Path::new(closed["project_dir"].as_str().unwrap()),
+        canon(&p1)
+    );
     let st = c.status().await.unwrap();
     let open: Vec<&str> = st["sessions"]
         .as_array()
@@ -770,4 +777,9 @@ async fn a_second_daemon_in_the_same_directory_is_refused() {
     });
     assert!(matches!(second, Err(krakend::DaemonError::AlreadyRunning)));
     r.stop().await;
+}
+
+/// The canonical form the daemon publishes events under.
+fn canon(p: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
