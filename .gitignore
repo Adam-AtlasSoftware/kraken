@@ -3,3 +3,4 @@ target/
 /plans/
 *.swp
 .DS_Store
+docs/book/

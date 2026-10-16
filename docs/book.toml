@@ -1,0 +1,7 @@
+[book]
+title = "KRAKEN"
+src = "."
+language = "en"
+
+[build]
+build-dir = "book"
