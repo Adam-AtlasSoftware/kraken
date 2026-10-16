@@ -291,6 +291,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-layout"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
 name = "kraken-model"
 version = "0.0.0"
 dependencies = [
