@@ -92,6 +92,22 @@ kraken glossary adrp
 
 Typos are forgiven (`dissasembler` finds `disassembler`), and a query can match related terms too. `--json` prints the matches with their notes.
 
+## In the GUI
+
+The GUI has an **Assistant** tab (next to Hex) and the same features, with every step visible:
+
+- **Chat.** Ask in your own words. Each tool call shows as a small chip (command, short arguments, result) that opens for details. Changes the assistant is not allowed to make on its own (overwriting something you set) appear inline as proposals with **Accept** and **Reject**; accepting applies them as your own edit. **Stop** cancels. The model in use, whether it runs on your computer or in the cloud, and the tokens used are always shown.
+- **Explain.** Right-click code in the decompiler (a word, its line, or the whole function) or a function in the list, then choose Explain. The answer is a card with clickable addresses and names you can try with one click (the rename box opens pre-filled; nothing changes until you confirm).
+- **First run.** When the first analysis finishes a banner offers an overview of the program.
+- **Suggest names.** The button above the function list asks for names for placeholder-named functions. You get a review table (old name, new name, evidence, how sure) and nothing changes until you press Apply. Applied names are your own edits, and Undo takes them back.
+- **Learn mode.** The switch in the top bar adds a "?" to panel tabs and explains terms and assembly instructions on hover.
+
+### Choosing the model
+
+Open **Settings > AI** (Ctrl+,): pick Ollama, LM Studio, llama-server, vLLM, another OpenAI-compatible server, Anthropic, OpenAI or Gemini, enter the model, and press **Test connection** (one tiny request; failures are explained in plain words) then **Save and use**. The choice is saved as the `[provider]` table of `config.toml`, so the CLI uses it too.
+
+API keys are never written to `config.toml`. Name an environment variable (read when KRAKEN starts), or paste the key: it is stored in `secrets.toml` next to `config.toml`, created with mode 0600 so only you can read it, and `config.toml` only points at it. The CLI commands read keys from environment variables only, so a pasted key works in the GUI but `kraken explain` needs the variable.
+
 ## How it stays safe
 
 The assistant reads code that came from a file you do not trust, so the same rules apply as for any agent (see [Security](security.md)):
