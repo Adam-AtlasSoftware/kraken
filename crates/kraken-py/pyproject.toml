@@ -1,0 +1,41 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+# "kraken" and "kraken-re" are taken on PyPI (an OCR engine, and an unrelated project), so the
+# distribution is named "kraken-workbench"; the import name stays `kraken`.
+name = "kraken-workbench"
+description = "Script the KRAKEN reverse-engineering workbench from Python"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+keywords = ["reverse-engineering", "ghidra", "decompiler", "binary-analysis"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/Adam-AtlasSoftware/kraken"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "kraken._native"
+# `python` is the PyO3 module; release wheels do not carry the test hook (CI adds `testing`).
+features = ["python"]
+include = [{ path = "python/kraken/py.typed", format = ["sdist", "wheel"] }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
