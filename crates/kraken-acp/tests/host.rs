@@ -96,12 +96,27 @@ fn text_of(events: &[AcpEvent]) -> String {
         .collect()
 }
 
+#[cfg(target_os = "linux")]
 fn alive(pid: u32) -> bool {
     // A reaped or killed process disappears from /proc; a zombie shows state Z.
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(s) => !s.contains(") Z "),
         Err(_) => false,
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn alive(pid: u32) -> bool {
+    // No /proc here: ask ps for the state; no output means the process is gone.
+    std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| {
+            let stat = String::from_utf8_lossy(&o.stdout);
+            let stat = stat.trim();
+            !stat.is_empty() && !stat.starts_with('Z')
+        })
+        .unwrap_or(false)
 }
 
 async fn gone(pid: u32) -> bool {

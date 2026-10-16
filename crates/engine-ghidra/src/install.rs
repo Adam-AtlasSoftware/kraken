@@ -241,7 +241,7 @@ mod tests {
         .unwrap();
         let jdk = root.join("jdk");
         fs::create_dir_all(jdk.join("bin")).unwrap();
-        fs::write(jdk.join("bin/java"), b"").unwrap();
+        fs::write(jdk.join("bin").join(JAVA_BINARY), b"").unwrap();
         let jar = root.join("kraken-ghidra.jar");
         fs::write(&jar, b"").unwrap();
         (ghidra, jdk, jar)
@@ -268,7 +268,10 @@ mod tests {
         let env = |_: &str| Some(OsString::from("/nonexistent"));
         let i = GhidraInstall::discover_with(&cfg, &env).unwrap();
         assert_eq!(i.ghidra_version, "12.1.4");
-        assert_eq!(i.ghidra_home, fs::canonicalize(ghidra).unwrap());
+        assert_eq!(
+            i.ghidra_home,
+            simplify_verbatim(&fs::canonicalize(ghidra).unwrap())
+        );
         let cp = i.classpath().unwrap();
         assert!(cp.ends_with("kraken-ghidra.jar"), "{cp}");
         assert!(cp.contains("u.jar"), "{cp}");
