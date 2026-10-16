@@ -86,14 +86,44 @@ fn is_bidi(c: char) -> bool {
 /// `\n` and `\t` (including `\r` and C1 controls), and bidirectional controls: U+202A to U+202E,
 /// U+2066 to U+2069, plus the marks U+200E, U+200F and U+061C.
 pub fn sanitize(input: &str) -> String {
+    sanitize_core(input, None)
+}
+
+/// Like [`sanitize`], and also returns an offset map for keeping byte spans valid.
+///
+/// The map has `input.len() + 1` entries. For a byte offset `i` on a character boundary of
+/// `input`, `map[i]` is the byte offset in the sanitised text where the content that followed `i`
+/// starts. It is non-decreasing, so a span `start..end` of `input` becomes `map[start]..map[end]`,
+/// which is a valid, possibly empty, span of the sanitised text. Entries inside a multi-byte
+/// character repeat the entry of that character's first byte.
+pub fn sanitize_mapped(input: &str) -> (String, Vec<u32>) {
+    let mut map = vec![0u32; input.len() + 1];
+    let out = sanitize_core(input, Some(&mut map));
+    (out, map)
+}
+
+fn sanitize_core(input: &str, mut map: Option<&mut Vec<u32>>) -> String {
     let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut chars = input.char_indices().peekable();
+    // Takes the next character, recording where in the output its position falls.
+    macro_rules! take {
+        () => {{
+            let next = chars.next();
+            if let (Some((i, c)), Some(m)) = (next, map.as_deref_mut()) {
+                let at = out.len().min(u32::MAX as usize) as u32;
+                for slot in &mut m[i..i + c.len_utf8()] {
+                    *slot = at;
+                }
+            }
+            next.map(|(_, c)| c)
+        }};
+    }
+    while let Some(c) = take!() {
         match c {
-            '\u{1b}' => match chars.next() {
+            '\u{1b}' => match take!() {
                 Some('[') => {
                     // CSI: parameter and intermediate bytes, then one final byte.
-                    for n in chars.by_ref() {
+                    while let Some(n) = take!() {
                         if ('\u{40}'..='\u{7e}').contains(&n) {
                             break;
                         }
@@ -101,13 +131,13 @@ pub fn sanitize(input: &str) -> String {
                 }
                 Some(']') => {
                     // OSC: terminated by BEL or ST (ESC \).
-                    while let Some(n) = chars.next() {
+                    while let Some(n) = take!() {
                         if n == '\u{7}' {
                             break;
                         }
                         if n == '\u{1b}' {
-                            if chars.peek() == Some(&'\\') {
-                                chars.next();
+                            if chars.peek().map(|&(_, c)| c) == Some('\\') {
+                                take!();
                             }
                             break;
                         }
@@ -119,6 +149,10 @@ pub fn sanitize(input: &str) -> String {
             c if c.is_control() || is_bidi(c) => {}
             c => out.push(c),
         }
+    }
+    if let Some(m) = map {
+        let end = m.len() - 1;
+        m[end] = out.len().min(u32::MAX as usize) as u32;
     }
     out
 }
@@ -156,6 +190,26 @@ mod tests {
         assert_eq!(sanitize("a\u{202E}b\u{202A}c\u{202D}d\u{202C}"), "abcd");
         assert_eq!(sanitize("x\u{2066}y\u{2067}z\u{2068}w\u{2069}"), "xyzw");
         assert_eq!(sanitize("a\u{200E}b\u{200F}c\u{061C}"), "abc");
+    }
+
+    #[test]
+    fn mapped_offsets_follow_the_stripped_text() {
+        let input = "ab\u{1b}[31mcd\u{202e}é\0f";
+        let (out, map) = sanitize_mapped(input);
+        assert_eq!(out, sanitize(input));
+        assert_eq!(out, "abcdéf");
+        assert_eq!(map.len(), input.len() + 1);
+        let at = |needle: &str| input.find(needle).expect("present");
+        assert_eq!(map[0], 0);
+        assert_eq!(map[at("cd")] as usize, 2);
+        assert_eq!(map[at("cd") + 2] as usize, 4);
+        assert_eq!(map[at("é")] as usize, 4);
+        assert_eq!(map[at("f")] as usize, 6);
+        assert_eq!(map[input.len()] as usize, out.len());
+        assert!(map.windows(2).all(|w| w[0] <= w[1]));
+        for (i, _) in input.char_indices() {
+            assert!(out.is_char_boundary(map[i] as usize));
+        }
     }
 
     #[test]

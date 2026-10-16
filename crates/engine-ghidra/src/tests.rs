@@ -165,6 +165,34 @@ fn handler(fake: Arc<Fake>) -> Handler {
                 "tokens": [{"start": 4, "end": 8, "kind": "function"}], "warnings": [],
                 "completeness": {"kind": "complete"},
             })),
+            "memory_map" => Reply::Result(json!([{
+                "name": ".text", "space": "ram", "start": "0x1000", "end": "0x2000",
+                "perms": "r-x", "initialized": true, "kind": "default",
+            }])),
+            "read_bytes" => Reply::Result(json!({
+                "start": params["locator"]["offset"], "bytes": "AAEC",
+                "uninitialized": [{"space": "ram", "start": "0x1002", "end": "0x1003"}],
+            })),
+            "disassemble" => Reply::Result(json!({
+                "items": [{"address": "0x1000", "bytes": "90", "mnemonic": "nop",
+                           "operands": [], "flow": "fallthrough"}],
+                "next_cursor": "0x1001",
+            })),
+            "xrefs" => Reply::Result(json!({
+                "items": [{"from": "0x1000", "to": params["address"], "kind": "call"}],
+                "total": 1,
+            })),
+            "cfg" => Reply::Result(json!({
+                "function": "0x1000",
+                "blocks": [{"start": "0x1000", "end": "0x1010", "instructions": 4}],
+                "edges": [],
+            })),
+            "strings" => Reply::Result(json!({
+                "items": [{"address": "0x2000", "value": "hi", "encoding": "ascii", "length": 3}],
+            })),
+            "imports" | "exports" => Reply::Result(json!({
+                "items": [{"name": "puts", "address": "0x1030", "kind": "function"}],
+            })),
             "slow" => Reply::Never,
             "die" => Reply::Hangup,
             _ => Reply::Error("unsupported", "method not found"),
@@ -241,7 +269,8 @@ fn rename(offset: u64, old: Option<&str>, new: &str) -> VersionedLogOp {
 async fn capabilities_cover_every_trait() {
     let r = rig();
     let caps = r.engine.capabilities();
-    assert_eq!(caps.present.len(), 6);
+    assert_eq!(caps.present.len(), 12);
+    assert!(r.engine.disassembler().is_some() && r.engine.symbol_lister().is_some());
     assert!(r.engine.loader().is_some() && r.engine.mutator().is_some());
     assert_eq!(caps.handshake.protocol, kraken_proto::PROTOCOL_VERSION);
     assert!(caps.handshake.build.contains("12.1.4"));
@@ -801,4 +830,154 @@ async fn stages_the_sidecar_already_completed_are_still_reported() {
         }
     }
     assert_eq!(stages, [Stage::Core, Stage::Expensive]);
+}
+
+#[tokio::test]
+async fn data_queries_map_requests_and_results() {
+    use kraken_engine::{
+        DisasmRequest, Disassembler, FlowGraph, MemoryReader, StringLister, StringsRequest,
+        SymbolLister, XrefProvider, XrefRequest,
+    };
+    use kraken_proto::{DisasmScope, XrefDirection, XrefKind};
+
+    let r = rig();
+    open(&r).await;
+    let cancel = CancellationToken::new();
+    let e = &r.engine;
+    let last_call = |method: &str| -> Value {
+        r.fake
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .rev()
+            .find(|(m, _)| m == method)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_else(|| panic!("no {method} call"))
+    };
+
+    let map = e.memory_map(&cancel).await.unwrap();
+    assert_eq!(map[0].name, ".text");
+    assert_eq!(map[0].perms, "r-x");
+
+    let read = e.read_bytes(&at(0x1000), 3, &cancel).await.unwrap();
+    assert_eq!(read.bytes, [0, 1, 2]);
+    assert_eq!(read.uninitialized[0].start, Hex64(0x1002));
+    assert_eq!(last_call("read_bytes")["length"], 3);
+    assert_eq!(
+        e.read_bytes(&at(0x1000), 0, &cancel)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+
+    let req = DisasmRequest {
+        start: Hex64(0x1000),
+        scope: DisasmScope::Function,
+    };
+    let page = e
+        .disassemble(
+            &req,
+            &PageRequest {
+                cursor: None,
+                limit: Some(7),
+            },
+            &cancel,
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].mnemonic, "nop");
+    assert_eq!(page.next_cursor.as_deref(), Some("0x1001"));
+    let sent = last_call("disassemble");
+    assert_eq!(sent["start"], "0x1000");
+    assert_eq!(sent["scope"], "function");
+    assert_eq!(sent["limit"], 7);
+    for cursor in ["1001", "zz", "-1"] {
+        let bad = e
+            .disassemble(
+                &req,
+                &PageRequest {
+                    cursor: Some(cursor.into()),
+                    limit: None,
+                },
+                &cancel,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(bad.code, ErrorCode::InvalidArgument, "{cursor}");
+    }
+
+    let x = XrefRequest {
+        address: Hex64(0x1040),
+        direction: XrefDirection::To,
+        kind: Some(XrefKind::Call),
+        whole_function: false,
+    };
+    let page = e.xrefs(&x, &PageRequest::default(), &cancel).await.unwrap();
+    assert_eq!(page.items[0].to, Hex64(0x1040));
+    let sent = last_call("xrefs");
+    assert_eq!(
+        (sent["direction"].as_str(), sent["kind"].as_str()),
+        (Some("to"), Some("call"))
+    );
+    assert_eq!(sent["whole_function"], false);
+    let bad = e
+        .xrefs(
+            &x,
+            &PageRequest {
+                cursor: Some("x".into()),
+                limit: None,
+            },
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(bad.code, ErrorCode::InvalidArgument);
+
+    let cfg = e.cfg(&at(0x1004), &cancel).await.unwrap();
+    assert_eq!(cfg.blocks[0].instructions, 4);
+
+    let sreq = StringsRequest {
+        min_len: 5,
+        filter: Some("hi".into()),
+    };
+    let strings = e
+        .strings(&sreq, &PageRequest::default(), &cancel)
+        .await
+        .unwrap();
+    assert_eq!(strings.items[0].value, "hi");
+    let sent = last_call("strings");
+    assert_eq!(
+        (sent["min_len"].as_u64(), sent["filter"].as_str()),
+        (Some(5), Some("hi"))
+    );
+
+    assert_eq!(
+        e.imports(&PageRequest::default(), &cancel)
+            .await
+            .unwrap()
+            .items[0]
+            .name,
+        "puts"
+    );
+    assert_eq!(
+        e.exports(&PageRequest::default(), &cancel)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    let bad = e
+        .imports(
+            &PageRequest {
+                cursor: Some("abc".into()),
+                limit: None,
+            },
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(bad.code, ErrorCode::InvalidArgument);
 }

@@ -302,6 +302,12 @@ final class SelfTest {
                 check(nameTokenFound, "function name token not found");
                 return r.tokens().size() + " tokens, " + targeted + " with targets";
             });
+        step("memory_map and read_bytes", this::memoryAndBytes);
+        step("disassemble (function scope, paging, linear)", this::disassembly);
+        step("xrefs (to, from, kind filter)", this::crossReferences);
+        step("cfg", this::controlFlow);
+        step("strings", this::strings);
+        step("imports and exports", this::symbols);
         step(
             "rename shows up in decompile",
             () -> {
@@ -442,6 +448,268 @@ final class SelfTest {
             a.add(x);
         }
         return a;
+    }
+
+    // ---- data commands ------------------------------------------------------------------
+
+    private static String hex(long v) {
+        return "0x" + Long.toHexString(v);
+    }
+
+    private List<Proto.DisasmRow> disassembleAll(long start, String scope, int pageSize) {
+        List<Proto.DisasmRow> rows = new ArrayList<>();
+        String cursor = null;
+        int guard = 0;
+        do {
+            JsonObject req = obj("start", hex(start), "scope", scope, "limit", pageSize);
+            if (cursor != null) {
+                req.addProperty("cursor", cursor);
+            }
+            Page<Proto.DisasmRow> page = Page.fromJson(d.call("disassemble", req), Proto.DisasmRow::fromJson);
+            check(page.items().size() <= pageSize, "page too big");
+            rows.addAll(page.items());
+            cursor = page.nextCursor();
+            check(++guard < 10_000, "paging does not terminate");
+        } while (cursor != null);
+        return rows;
+    }
+
+    private String memoryAndBytes() {
+        List<Proto.MemoryBlock> blocks = new ArrayList<>();
+        for (JsonElement e : d.call("memory_map", new JsonObject()).getAsJsonArray()) {
+            blocks.add(Proto.MemoryBlock.fromJson(e));
+        }
+        check(!blocks.isEmpty(), "no memory blocks");
+        Proto.MemoryBlock text = null;
+        Proto.MemoryBlock uninit = null;
+        for (Proto.MemoryBlock b : blocks) {
+            check(b.end() > b.start(), "empty block " + b.name());
+            check(b.perms().matches("[r-][w-][x-]"), "perms " + b.perms());
+            if (b.space().equals("ram") && target >= b.start() && target < b.end()) {
+                text = b;
+            }
+            if (b.space().equals("ram") && !b.initialized() && b.end() - b.start() >= 16 && uninit == null) {
+                uninit = b;
+            }
+        }
+        check(text != null, "no block holds " + hex(target));
+        check(text.perms().charAt(2) == 'x' && text.initialized(), "code block is " + text.perms());
+
+        Proto.BytesRead r =
+            Proto.BytesRead.fromJson(d.call("read_bytes", obj("locator", loc(target), "length", 16)));
+        check(r.start() == target && r.bytes().length == 16 && r.uninitialized().isEmpty(), "read " + r);
+        List<Proto.DisasmRow> rows = disassembleAll(target, "function", 4);
+        StringBuilder expect = new StringBuilder();
+        for (Proto.DisasmRow row : rows) {
+            expect.append(row.bytes());
+            if (expect.length() >= 32) {
+                break;
+            }
+        }
+        check(expect.substring(0, 32).equals(Proto.hexBytes(r.bytes())), "bytes differ from the listing");
+
+        String extra = "";
+        if (uninit != null) {
+            Proto.BytesRead u =
+                Proto.BytesRead.fromJson(
+                    d.call("read_bytes", obj("locator", loc(uninit.start()), "length", 8)));
+            check(u.uninitialized().size() == 1, "uninitialized ranges " + u.uninitialized());
+            check(u.bytes().length == 8 && u.bytes()[0] == 0, "uninitialized bytes are not zero");
+            extra = ", uninitialized " + uninit.name();
+        }
+        check(expectError("read_bytes", obj("locator", loc(0x10), "length", 4)).code.equals("not_found"), "unmapped");
+        check(expectError("read_bytes", obj("locator", loc(target), "length", 0)).code.equals("invalid_argument"), "zero");
+        return blocks.size() + " blocks" + extra;
+    }
+
+    private String disassembly() {
+        List<Proto.DisasmRow> paged = disassembleAll(target, "function", 7);
+        List<Proto.DisasmRow> whole = disassembleAll(target, "function", 500);
+        check(paged.equals(whole), "paged and unpaged function disassembly differ");
+        check(paged.size() >= 5, "only " + paged.size() + " instructions");
+        check(paged.get(0).address() == target, "first row is not the entry");
+        long prev = 0;
+        boolean sawFlow = false;
+        for (Proto.DisasmRow row : paged) {
+            check(Long.compareUnsigned(row.address(), prev) > 0, "rows not ascending");
+            prev = row.address();
+            check(row.bytes().matches("([0-9a-f]{2})+"), "bad bytes " + row.bytes());
+            check(!row.mnemonic().isEmpty(), "empty mnemonic");
+            if (!row.flow().equals("fallthrough")) {
+                sawFlow = true;
+            }
+        }
+        check(sawFlow, "no control flow instruction");
+        FunctionSummary f = function(target);
+        long span = prev - target;
+        check(span < f.size(), "rows run past the function body");
+        List<Proto.DisasmRow> linear = disassembleAll(target, "linear", 5);
+        check(linear.size() > paged.size() - 1, "linear scan is shorter than the function");
+        check(linear.subList(0, Math.min(5, linear.size())).equals(paged.subList(0, 5)), "linear differs");
+        KrakenError e =
+            expectError("disassemble", obj("start", hex(target), "scope", "function", "cursor", "nonsense"));
+        check(e.code.equals("invalid_argument"), e.code);
+        e = expectError("disassemble", obj("start", hex(0x10), "scope", "function"));
+        check(e.code.equals("not_found"), e.code);
+        boolean operands = false;
+        boolean symbolic = false;
+        for (Proto.DisasmRow row : paged) {
+            operands |= !row.operands().isEmpty();
+            for (Proto.OperandToken t : row.operands()) {
+                symbolic |= t.kind().equals("symbol") && t.target() != null;
+            }
+        }
+        check(operands, "no operands at all");
+        return paged.size() + " instructions" + (symbolic ? ", symbol operands" : "");
+    }
+
+    private List<Proto.Xref> xrefsAll(JsonObject base) {
+        List<Proto.Xref> out = new ArrayList<>();
+        String cursor = null;
+        do {
+            JsonObject req = base.deepCopy();
+            req.addProperty("limit", 3);
+            if (cursor != null) {
+                req.addProperty("cursor", cursor);
+            }
+            Page<Proto.Xref> page = Page.fromJson(d.call("xrefs", req), Proto.Xref::fromJson);
+            out.addAll(page.items());
+            cursor = page.nextCursor();
+        } while (cursor != null);
+        return out;
+    }
+
+    private String crossReferences() {
+        List<Proto.Xref> from =
+            xrefsAll(obj("address", hex(target), "direction", "from", "whole_function", true));
+        check(!from.isEmpty(), "function has no outgoing references");
+        FunctionSummary f = function(target);
+        for (Proto.Xref x : from) {
+            check(x.fromFunction() != null && x.fromFunction().address() == target, "from_function " + x);
+            check(x.from() >= target && x.from() < target + f.size(), "reference from outside the body");
+        }
+        List<Proto.Xref> calls =
+            xrefsAll(obj("address", hex(target), "direction", "from", "whole_function", true, "kind", "call"));
+        for (Proto.Xref x : calls) {
+            check(x.kind().equals("call"), "kind filter let " + x.kind() + " through");
+        }
+        check(calls.size() <= from.size(), "filter grew the list");
+        // every function that is called has the call among its incoming references
+        Proto.Xref callee = null;
+        for (Proto.Xref x : calls) {
+            if (x.toFunction() != null) {
+                callee = x;
+                break;
+            }
+        }
+        String extra = "";
+        if (callee != null) {
+            List<Proto.Xref> to = xrefsAll(obj("address", hex(callee.to()), "direction", "to", "kind", "call"));
+            boolean found = false;
+            for (Proto.Xref x : to) {
+                found |= x.from() == callee.from();
+            }
+            check(found, "the call " + callee + " is missing from the callee's incoming references");
+            extra = ", " + to.size() + " callers of " + callee.toFunction().name();
+        }
+        KrakenError e = expectError("xrefs", obj("address", hex(target), "direction", "to", "cursor", "-1"));
+        check(e.code.equals("invalid_argument"), e.code);
+        return from.size() + " outgoing, " + calls.size() + " calls" + extra;
+    }
+
+    private Proto.Cfg cfg(long entry) {
+        return Proto.Cfg.fromJson(d.call("cfg", obj("locator", loc(entry))));
+    }
+
+    private String controlFlow() {
+        Proto.Cfg c = cfg(target);
+        check(c.function() == target, "cfg function " + hex(c.function()));
+        check(!c.blocks().isEmpty(), "no blocks");
+        long insns = 0;
+        java.util.Set<Long> starts = new java.util.HashSet<>();
+        long prev = 0;
+        for (Proto.CfgBlock b : c.blocks()) {
+            check(b.end() > b.start() && b.instructions() > 0, "bad block " + b);
+            check(Long.compareUnsigned(b.start(), prev) > 0, "blocks not ordered");
+            prev = b.start();
+            starts.add(b.start());
+            insns += b.instructions();
+        }
+        check(starts.contains(target), "no block at the entry");
+        for (Proto.CfgEdge e : c.edges()) {
+            check(starts.contains(e.from()) && starts.contains(e.to()), "dangling edge " + e);
+        }
+        check(insns == disassembleAll(target, "function", 500).size(), "instruction counts disagree with the listing");
+        return c.blocks().size() + " blocks, " + c.edges().size() + " edges";
+    }
+
+    private List<Proto.StringEntry> stringsAll(JsonObject base, int pageSize) {
+        List<Proto.StringEntry> out = new ArrayList<>();
+        String cursor = null;
+        do {
+            JsonObject req = base.deepCopy();
+            req.addProperty("limit", pageSize);
+            if (cursor != null) {
+                req.addProperty("cursor", cursor);
+            }
+            Page<Proto.StringEntry> page = Page.fromJson(d.call("strings", req), Proto.StringEntry::fromJson);
+            out.addAll(page.items());
+            cursor = page.nextCursor();
+        } while (cursor != null);
+        return out;
+    }
+
+    private String strings() {
+        List<Proto.StringEntry> small = stringsAll(obj("min_len", 4), 25);
+        List<Proto.StringEntry> big = stringsAll(obj("min_len", 4), 500);
+        check(!big.isEmpty(), "no strings");
+        check(small.equals(big), "paged and unpaged strings differ");
+        long prev = 0;
+        for (Proto.StringEntry s : big) {
+            check(Long.compareUnsigned(s.address(), prev) > 0, "strings not ascending");
+            prev = s.address();
+            check(s.value().codePointCount(0, s.value().length()) >= 4, "short string " + s.value());
+            check(s.length() >= 1, "length");
+        }
+        String needle = big.get(big.size() / 2).value().substring(0, 3).toLowerCase();
+        List<Proto.StringEntry> hits = stringsAll(obj("min_len", 4, "filter", needle), 500);
+        check(!hits.isEmpty() && hits.size() <= big.size(), "filter found " + hits.size());
+        for (Proto.StringEntry s : hits) {
+            check(s.value().toLowerCase().contains(needle), "filter let " + s.value() + " through");
+        }
+        List<Proto.StringEntry> longer = stringsAll(obj("min_len", 12), 500);
+        check(longer.size() <= big.size(), "longer minimum found more");
+        return big.size() + " strings (" + hits.size() + " match `" + needle + "`)";
+    }
+
+    private List<Proto.SymbolEntry> symbolsAll(String method, int pageSize) {
+        List<Proto.SymbolEntry> out = new ArrayList<>();
+        String cursor = null;
+        do {
+            JsonObject req = obj("limit", pageSize);
+            if (cursor != null) {
+                req.addProperty("cursor", cursor);
+            }
+            Page<Proto.SymbolEntry> page = Page.fromJson(d.call(method, req), Proto.SymbolEntry::fromJson);
+            out.addAll(page.items());
+            cursor = page.nextCursor();
+        } while (cursor != null);
+        return out;
+    }
+
+    private String symbols() {
+        List<Proto.SymbolEntry> imports = symbolsAll("imports", 10);
+        check(imports.equals(symbolsAll("imports", 500)), "paged imports differ");
+        check(!imports.isEmpty(), "no imports");
+        for (Proto.SymbolEntry s : imports) {
+            check(!s.name().isEmpty(), "unnamed import");
+        }
+        List<Proto.SymbolEntry> exports = symbolsAll("exports", 3);
+        check(exports.equals(symbolsAll("exports", 500)), "paged exports differ");
+        for (Proto.SymbolEntry s : exports) {
+            check(s.address() != null, "export without an address: " + s.name());
+        }
+        return imports.size() + " imports, " + exports.size() + " exports";
     }
 
     private String samples(String dir) throws Exception {

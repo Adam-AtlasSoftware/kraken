@@ -19,14 +19,17 @@ pub mod types;
 
 #[cfg(feature = "testing")]
 pub mod testing;
+#[cfg(feature = "testing")]
+mod testing_data;
 
 pub use caps::{Cap, Engine, EngineCaps, SharedEngine};
 pub use job::{AnalysisJob, ProgressSender};
 pub use tokio_util::sync::CancellationToken;
 pub use traits::{
-    Analyzer, Decompiler, EngineResult, FunctionLister, Loader, Mutator, TypeStore, unsupported,
+    Analyzer, Decompiler, Disassembler, EngineResult, FlowGraph, FunctionLister, Loader,
+    MemoryReader, Mutator, StringLister, SymbolLister, TypeStore, XrefProvider, unsupported,
 };
 pub use types::{
-    AnalysisSummary, AnalyzeRequest, EngineRejected, LoaderSpec, ProgramInfo, Progress, Stage,
-    Watermark, type_def_name,
+    AnalysisSummary, AnalyzeRequest, DisasmRequest, EngineRejected, LoaderSpec, ProgramInfo,
+    Progress, Stage, StringsRequest, Watermark, XrefRequest, type_def_name,
 };

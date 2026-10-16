@@ -442,7 +442,123 @@ pub fn samples() -> Result<Samples, String> {
         "untrusted_string",
         Untrusted("evil \u{1b}[31m text".to_string()),
     )?;
+    program_samples(o)?;
     Ok(o.clone())
+}
+
+/// Samples of the program-data types (memory map, bytes, listing, xrefs, CFG, strings, symbols).
+fn program_samples(o: &mut Samples) -> Result<(), String> {
+    use kraken_proto::{
+        BytesRead, Cfg, CfgBlock, CfgEdge, CfgEdgeKind, DisasmRow, FlowKind, FunctionRef,
+        MemoryBlock, MemoryKind, OperandKind, OperandToken, StringEncoding, StringEntry,
+        SymbolEntry, SymbolKind, Xref, XrefKind,
+    };
+
+    add(
+        o,
+        "memory_block",
+        MemoryBlock {
+            name: ".text".into(),
+            space: "ram".into(),
+            start: Hex64(0x401000),
+            end: Hex64(0x402000),
+            perms: "r-x".into(),
+            initialized: true,
+            kind: MemoryKind::Default,
+        },
+    )?;
+    add(
+        o,
+        "bytes_read",
+        BytesRead {
+            start: Hex64(0x401000),
+            bytes: vec![0x55, 0x48, 0x89, 0xe5, 0, 0],
+            uninitialized: vec![range(0x401004, 0x401006)],
+        },
+    )?;
+    add(
+        o,
+        "disasm_row",
+        DisasmRow {
+            address: Hex64(0x401004),
+            bytes: "e8f7ffffff".into(),
+            mnemonic: "call".into(),
+            operands: vec![OperandToken {
+                text: "helper".into(),
+                kind: OperandKind::Symbol,
+                target: Some(Locator::ram(0x401000)),
+            }],
+            comment: Some("calls the helper".into()),
+            labels: vec!["loop_top".into()],
+            flow: FlowKind::Call,
+        },
+    )?;
+    add(
+        o,
+        "xref",
+        Xref {
+            from: Hex64(0x401004),
+            to: Hex64(0x401000),
+            kind: XrefKind::Call,
+            from_function: Some(FunctionRef {
+                address: Hex64(0x401000),
+                name: "main".into(),
+            }),
+            to_function: None,
+        },
+    )?;
+    add(
+        o,
+        "cfg",
+        Cfg {
+            function: Hex64(0x401000),
+            blocks: vec![
+                CfgBlock {
+                    start: Hex64(0x401000),
+                    end: Hex64(0x401010),
+                    instructions: 4,
+                },
+                CfgBlock {
+                    start: Hex64(0x401010),
+                    end: Hex64(0x401018),
+                    instructions: 2,
+                },
+            ],
+            edges: vec![
+                CfgEdge {
+                    from: Hex64(0x401000),
+                    to: Hex64(0x401010),
+                    kind: CfgEdgeKind::ConditionalFalse,
+                },
+                CfgEdge {
+                    from: Hex64(0x401000),
+                    to: Hex64(0x401000),
+                    kind: CfgEdgeKind::Switch,
+                },
+            ],
+        },
+    )?;
+    add(
+        o,
+        "string_entry",
+        StringEntry {
+            address: Hex64(0x402000),
+            value: "hello \u{1b}[31mworld".into(),
+            encoding: StringEncoding::Ascii,
+            length: 18,
+        },
+    )?;
+    add(
+        o,
+        "symbol_entry",
+        SymbolEntry {
+            name: "printf".into(),
+            address: Some(Hex64(0x401030)),
+            library: Some("libc.so.6".into()),
+            kind: SymbolKind::Function,
+        },
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

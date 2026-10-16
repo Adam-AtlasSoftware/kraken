@@ -83,6 +83,16 @@ Look at one function as C-like code. Use an address from your own table (`0x1189
 kraken decompile --address 0x1189
 ```
 
+Look under the C: the same function as instructions, who calls it, and the bytes it is made of.
+
+```sh
+kraken disassemble --function 0x1189
+kraken callers --address 0x1189
+kraken read-bytes --address 0x1189 --length 32
+```
+
+`memory-map`, `strings`, `imports`, `exports`, `xrefs`, `callees` and `cfg` (basic blocks and edges) complete the picture. Every list is paged: add `--cursor` from the footer to continue. Names, comments and strings in the output come from the binary, so `--json` marks them as untrusted data.
+
 Give it a better name:
 
 ```sh

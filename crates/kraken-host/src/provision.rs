@@ -789,6 +789,10 @@ pub const EXT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../java/kraken-ghidra/src/main/java/kraken/ghidra/Engine.java"),
     ),
     (
+        "Inspect.java",
+        include_str!("../../../java/kraken-ghidra/src/main/java/kraken/ghidra/Inspect.java"),
+    ),
+    (
         "J.java",
         include_str!("../../../java/kraken-ghidra/src/main/java/kraken/ghidra/J.java"),
     ),

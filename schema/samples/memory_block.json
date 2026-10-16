@@ -1,0 +1,9 @@
+{
+  "end": "0x402000",
+  "initialized": true,
+  "kind": "default",
+  "name": ".text",
+  "perms": "r-x",
+  "space": "ram",
+  "start": "0x401000"
+}

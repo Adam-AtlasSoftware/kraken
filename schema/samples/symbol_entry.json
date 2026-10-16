@@ -1,0 +1,6 @@
+{
+  "address": "0x401030",
+  "kind": "function",
+  "library": "libc.so.6",
+  "name": "printf"
+}

@@ -131,6 +131,10 @@ pub async fn run_contract_suite(
     section!("analyzer", check_analyzer(engine, exp));
     section!("listing", check_listing(engine, exp));
     section!("decompile", check_decompile(engine, exp));
+    section!(
+        "program_data",
+        crate::testing_data::check_program_data(engine, exp)
+    );
     section!("types", check_types(engine));
     section!("cancellation", check_cancellation(engine, exp));
     section!("mutation", check_mutation(engine, exp));
@@ -151,6 +155,12 @@ async fn check_caps(engine: &dyn Engine) -> Check {
         (Cap::TypeStore, engine.type_store().is_some()),
         (Cap::FunctionLister, engine.function_lister().is_some()),
         (Cap::Mutator, engine.mutator().is_some()),
+        (Cap::Memory, engine.memory_reader().is_some()),
+        (Cap::Disassembler, engine.disassembler().is_some()),
+        (Cap::Xrefs, engine.xref_provider().is_some()),
+        (Cap::Cfg, engine.flow_graph().is_some()),
+        (Cap::Strings, engine.string_lister().is_some()),
+        (Cap::Symbols, engine.symbol_lister().is_some()),
     ];
     for (cap, has_accessor) in present {
         ensure!(

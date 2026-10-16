@@ -10,12 +10,15 @@ use async_trait::async_trait;
 use kraken_engine::ProgressSender;
 use kraken_engine::{
     AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
-    Engine, EngineCaps, EngineRejected, EngineResult, FunctionLister, Loader, LoaderSpec, Mutator,
-    ProgramInfo, Progress, Stage, TypeStore, Watermark, type_def_name, unsupported,
+    DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph,
+    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, ProgramInfo, Progress, Stage,
+    StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider, XrefRequest,
+    type_def_name, unsupported,
 };
 use kraken_proto::{
-    Anchor, DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, LogOp, Page, PageRequest,
-    ProtoError, TypeDef, VersionedLogOp,
+    Anchor, BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Hex64, Locator,
+    LogOp, MemoryBlock, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef,
+    VersionedLogOp, Xref,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -686,6 +689,151 @@ impl Mutator for GhidraEngine {
     }
 }
 
+/// A numeric (decimal index) cursor must parse; the sidecar reports the same error, but failing
+/// here keeps the engine's contract independent of the sidecar.
+fn check_index_cursor(page: &PageRequest, what: &str) -> EngineResult<()> {
+    if page
+        .cursor
+        .as_deref()
+        .is_some_and(|c| c.parse::<u32>().is_err())
+    {
+        return Err(bad_cursor(what));
+    }
+    Ok(())
+}
+
+fn with_page(mut params: Value, page: &PageRequest) -> Value {
+    if let (Value::Object(m), Value::Object(p)) = (&mut params, page_params(page)) {
+        m.extend(p);
+    }
+    params
+}
+
+#[async_trait]
+impl MemoryReader for GhidraEngine {
+    async fn memory_map(&self, cancel: &CancellationToken) -> EngineResult<Vec<MemoryBlock>> {
+        self.rpc_typed("memory_map", json!({}), self.deadline(), cancel)
+            .await
+    }
+
+    async fn read_bytes(
+        &self,
+        start: &Locator,
+        length: u32,
+        cancel: &CancellationToken,
+    ) -> EngineResult<BytesRead> {
+        if length == 0 {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                "length must be positive",
+            ));
+        }
+        self.rpc_typed(
+            "read_bytes",
+            json!({"locator": start, "length": length}),
+            self.deadline(),
+            cancel,
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl Disassembler for GhidraEngine {
+    async fn disassemble(
+        &self,
+        req: &DisasmRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<DisasmRow>> {
+        if page
+            .cursor
+            .as_deref()
+            .is_some_and(|c| c.parse::<Hex64>().is_err())
+        {
+            return Err(bad_cursor("disassembly"));
+        }
+        self.rpc_typed(
+            "disassemble",
+            with_page(json!({"start": req.start, "scope": req.scope}), page),
+            self.deadline(),
+            cancel,
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl XrefProvider for GhidraEngine {
+    async fn xrefs(
+        &self,
+        req: &XrefRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<Xref>> {
+        check_index_cursor(page, "xref")?;
+        let mut params = json!({
+            "address": req.address,
+            "direction": req.direction,
+            "whole_function": req.whole_function,
+        });
+        if let (Some(kind), Value::Object(m)) = (req.kind, &mut params) {
+            m.insert("kind".into(), json!(kind));
+        }
+        self.rpc_typed("xrefs", with_page(params, page), self.deadline(), cancel)
+            .await
+    }
+}
+
+#[async_trait]
+impl FlowGraph for GhidraEngine {
+    async fn cfg(&self, function: &Locator, cancel: &CancellationToken) -> EngineResult<Cfg> {
+        self.rpc_typed("cfg", json!({"locator": function}), self.deadline(), cancel)
+            .await
+    }
+}
+
+#[async_trait]
+impl StringLister for GhidraEngine {
+    async fn strings(
+        &self,
+        req: &StringsRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<StringEntry>> {
+        check_index_cursor(page, "string")?;
+        let mut params = json!({"min_len": req.min_len});
+        if let (Some(filter), Value::Object(m)) = (&req.filter, &mut params) {
+            m.insert("filter".into(), json!(filter));
+        }
+        self.rpc_typed("strings", with_page(params, page), self.deadline(), cancel)
+            .await
+    }
+}
+
+#[async_trait]
+impl SymbolLister for GhidraEngine {
+    async fn imports(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<SymbolEntry>> {
+        check_index_cursor(page, "import")?;
+        self.rpc_typed("imports", page_params(page), self.deadline(), cancel)
+            .await
+    }
+
+    async fn exports(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<SymbolEntry>> {
+        check_index_cursor(page, "export")?;
+        self.rpc_typed("exports", page_params(page), self.deadline(), cancel)
+            .await
+    }
+}
+
 impl Engine for GhidraEngine {
     fn capabilities(&self) -> EngineCaps {
         EngineCaps::new(
@@ -713,6 +861,24 @@ impl Engine for GhidraEngine {
         Some(self)
     }
     fn mutator(&self) -> Option<&dyn Mutator> {
+        Some(self)
+    }
+    fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        Some(self)
+    }
+    fn disassembler(&self) -> Option<&dyn Disassembler> {
+        Some(self)
+    }
+    fn xref_provider(&self) -> Option<&dyn XrefProvider> {
+        Some(self)
+    }
+    fn flow_graph(&self) -> Option<&dyn FlowGraph> {
+        Some(self)
+    }
+    fn string_lister(&self) -> Option<&dyn StringLister> {
+        Some(self)
+    }
+    fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         Some(self)
     }
 }

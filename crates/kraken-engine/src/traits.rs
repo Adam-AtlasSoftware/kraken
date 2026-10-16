@@ -4,13 +4,16 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use kraken_proto::{
-    DecompileResult, ErrorCode, FunctionSummary, Locator, Page, PageRequest, ProtoError, TypeDef,
-    VersionedLogOp,
+    BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, MemoryBlock,
+    Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::job::AnalysisJob;
-use crate::types::{AnalyzeRequest, EngineRejected, LoaderSpec, ProgramInfo, Watermark};
+use crate::types::{
+    AnalyzeRequest, DisasmRequest, EngineRejected, LoaderSpec, ProgramInfo, StringsRequest,
+    Watermark, XrefRequest,
+};
 
 /// Result type of every engine call.
 pub type EngineResult<T> = Result<T, ProtoError>;
@@ -101,4 +104,86 @@ pub trait Mutator: Send + Sync {
     ) -> Result<(), EngineRejected>;
     /// Persists applied ops and returns the checkpoint that covers them.
     async fn save(&self, cancel: &CancellationToken) -> EngineResult<Watermark>;
+}
+
+/// Reads the memory layout and raw bytes.
+#[async_trait]
+pub trait MemoryReader: Send + Sync {
+    /// All memory blocks ordered by (space, start).
+    async fn memory_map(&self, cancel: &CancellationToken) -> EngineResult<Vec<MemoryBlock>>;
+    /// Up to `length` bytes starting at `start`. The read stops at the end of mapped memory, so
+    /// the result may be shorter; uninitialized bytes read as zero and are listed in
+    /// [`BytesRead::uninitialized`]. `not_found` if `start` is not in any block and
+    /// `invalid_argument` for a zero `length`.
+    async fn read_bytes(
+        &self,
+        start: &Locator,
+        length: u32,
+        cancel: &CancellationToken,
+    ) -> EngineResult<BytesRead>;
+}
+
+/// Disassembles code.
+#[async_trait]
+pub trait Disassembler: Send + Sync {
+    /// Instructions in address order. With [`kraken_proto::DisasmScope::Function`] the rows are
+    /// the body of the function containing `req.start` (`not_found` if none). The cursor is the
+    /// `0x` address of the next instruction; it overrides `req.start`, and a malformed one is
+    /// `invalid_argument`. Addresses that hold no instruction are skipped.
+    async fn disassemble(
+        &self,
+        req: &DisasmRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<DisasmRow>>;
+}
+
+/// Answers cross-reference queries.
+#[async_trait]
+pub trait XrefProvider: Send + Sync {
+    /// References ordered by (from, to, kind). Cursors are opaque; a malformed one is
+    /// `invalid_argument`.
+    async fn xrefs(
+        &self,
+        req: &XrefRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<Xref>>;
+}
+
+/// Builds control-flow graphs.
+#[async_trait]
+pub trait FlowGraph: Send + Sync {
+    /// The basic blocks and edges of the function containing `function`; `not_found` if there is
+    /// none. Blocks are ordered by start address and every edge joins two listed blocks.
+    async fn cfg(&self, function: &Locator, cancel: &CancellationToken) -> EngineResult<Cfg>;
+}
+
+/// Finds strings in memory.
+#[async_trait]
+pub trait StringLister: Send + Sync {
+    /// Strings ordered by address. Cursors are opaque; a malformed one is `invalid_argument`.
+    async fn strings(
+        &self,
+        req: &StringsRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<StringEntry>>;
+}
+
+/// Lists imported and exported symbols.
+#[async_trait]
+pub trait SymbolLister: Send + Sync {
+    /// Imported symbols ordered by (address, name), addressless ones last.
+    async fn imports(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<SymbolEntry>>;
+    /// Exported symbols ordered by (address, name).
+    async fn exports(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<SymbolEntry>>;
 }

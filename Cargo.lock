@@ -2000,6 +2000,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-assist"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "engine-fake",
+ "kraken-agent",
+ "kraken-engine",
+ "kraken-host",
+ "kraken-proto",
+ "kraken-registry",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "kraken-cli"
 version = "0.0.0"
 dependencies = [
@@ -2007,6 +2028,8 @@ dependencies = [
  "async-trait",
  "clap",
  "engine-fake",
+ "kraken-agent",
+ "kraken-assist",
  "kraken-engine",
  "kraken-host",
  "kraken-ipc",
@@ -2063,12 +2086,20 @@ dependencies = [
  "eframe",
  "egui",
  "egui_dock",
+ "engine-fake",
  "image",
  "kraken-gui-widgets",
+ "kraken-host",
+ "kraken-ipc",
+ "kraken-model",
  "kraken-proto",
  "kraken-registry",
  "kraken-viewmodel",
+ "krakend",
  "rfd",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -2185,6 +2216,7 @@ dependencies = [
 name = "kraken-proto"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "schemars",
  "serde",
  "serde_json",
@@ -2231,8 +2263,12 @@ dependencies = [
  "async-trait",
  "engine-fake",
  "kraken-engine",
+ "kraken-host",
+ "kraken-ipc",
+ "kraken-model",
  "kraken-proto",
  "kraken-registry",
+ "krakend",
  "serde",
  "serde_json",
  "tempfile",

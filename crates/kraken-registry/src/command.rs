@@ -267,6 +267,11 @@ impl Registry {
             .is_some()
     }
 
+    /// Removes a command; returns true when it was present. Used to offer a reduced tool set.
+    pub fn unregister(&mut self, name: &str) -> bool {
+        self.entries.remove(name).is_some()
+    }
+
     /// The command named `name`.
     pub fn get(&self, name: &str) -> Option<&Entry> {
         self.entries.get(name)

@@ -1,0 +1,6 @@
+{
+  "address": "0x402000",
+  "encoding": "ascii",
+  "length": 18,
+  "value": "hello \u001b[31mworld"
+}

@@ -115,6 +115,10 @@ pub struct KrakenConfig {
     pub projects_root: Option<PathBuf>,
     /// `krakend` tunables.
     pub daemon: DaemonSettings,
+    /// The `[provider]` table (chat model for the assistant). Kept opaque here and parsed by
+    /// `kraken-assist` (`kraken_agent::ProviderConfig`); present so the file still loads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<serde_json::Value>,
 }
 
 impl KrakenConfig {
@@ -236,6 +240,30 @@ impl KrakenConfig {
         Ok(())
     }
 
+    /// The configuration as TOML text (unset fields are left out).
+    pub fn to_toml(&self) -> Result<String, String> {
+        toml::to_string_pretty(self).map_err(|e| e.to_string())
+    }
+
+    /// Writes the configuration to `path` (creating its directory), replacing the file in one
+    /// step so a daemon starting at the same moment never reads half of it.
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        let text = self.to_toml().map_err(|message| ConfigError::Parse {
+            path: path.to_path_buf(),
+            message,
+        })?;
+        let io = |source| ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        };
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).map_err(io)?;
+        }
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, text).map_err(io)?;
+        std::fs::rename(&tmp, path).map_err(io)
+    }
+
     /// Session tunables derived from this configuration.
     pub fn session_config(&self) -> SessionConfig {
         let mut s = SessionConfig::default();
@@ -286,6 +314,23 @@ mod tests {
         assert_eq!(c.daemon.max_sessions(), 7);
         assert_eq!(c.daemon.session_idle().as_secs(), 9);
         assert!(KrakenConfig::from_toml("[daemon]\nbogus = 1").is_err());
+    }
+
+    #[test]
+    fn saving_round_trips_and_leaves_unset_fields_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let path = dir.join("nested/config.toml");
+        let mut c = KrakenConfig {
+            ghidra_home: Some("/opt/ghidra".into()),
+            max_heap_mb: Some(3072),
+            ..Default::default()
+        };
+        c.daemon.max_sessions = Some(2);
+        c.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("java_home"), "{text}");
+        assert_eq!(KrakenConfig::from_file(&path).unwrap(), c);
     }
 
     #[test]

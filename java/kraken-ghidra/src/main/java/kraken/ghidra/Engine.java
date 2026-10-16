@@ -102,6 +102,12 @@ final class Engine {
 
     private final Map<String, JobMonitor> jobs = new ConcurrentHashMap<>();
     private long saveCounter;
+    private final Inspect inspect = new Inspect(this::requireProgram);
+
+    /** Read-only data views (memory, listing, references, CFG, strings, symbols). */
+    Inspect inspect() {
+        return inspect;
+    }
 
     // ---- open ---------------------------------------------------------------------------
 

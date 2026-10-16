@@ -884,6 +884,296 @@ final class Proto {
         }
     }
 
+    // ---- program data -------------------------------------------------------------------
+
+    private static String oneOf(JsonObject o, String key, Set<String> allowed) {
+        String v = J.str(o, key);
+        if (!allowed.contains(v)) {
+            throw KrakenError.invalid("unknown " + key + " `" + v + "`");
+        }
+        return v;
+    }
+
+    private static JsonArray strings(List<String> l) {
+        JsonArray a = new JsonArray();
+        l.forEach(a::add);
+        return a;
+    }
+
+    static String hexBytes(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte x : b) {
+            sb.append(Character.forDigit((x >> 4) & 0xf, 16)).append(Character.forDigit(x & 0xf, 16));
+        }
+        return sb.toString();
+    }
+
+    record MemoryBlock(
+            String name,
+            String space,
+            long start,
+            long end,
+            String perms,
+            boolean initialized,
+            String kind) {
+        static final Set<String> KINDS =
+            Set.of("default", "overlay", "byte_mapped", "bit_mapped", "external");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", name);
+            o.addProperty("space", space);
+            o.add("start", J.hexJson(start));
+            o.add("end", J.hexJson(end));
+            o.addProperty("perms", perms);
+            o.addProperty("initialized", initialized);
+            o.addProperty("kind", kind);
+            return o;
+        }
+
+        static MemoryBlock fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "memory_block");
+            return new MemoryBlock(
+                J.str(o, "name"),
+                spaceOf(o),
+                J.hex(o, "start"),
+                J.hex(o, "end"),
+                J.str(o, "perms"),
+                J.bool(o, "initialized"),
+                oneOf(o, "kind", KINDS));
+        }
+    }
+
+    record BytesRead(long start, byte[] bytes, List<AddressRange> uninitialized) {
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("start", J.hexJson(start));
+            o.addProperty("bytes", java.util.Base64.getEncoder().encodeToString(bytes));
+            if (!uninitialized.isEmpty()) {
+                o.add("uninitialized", J.array(uninitialized, AddressRange::toJson));
+            }
+            return o;
+        }
+
+        static BytesRead fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "bytes_read");
+            byte[] data;
+            try {
+                data = java.util.Base64.getDecoder().decode(J.str(o, "bytes"));
+            } catch (IllegalArgumentException ex) {
+                throw KrakenError.invalid("bytes is not valid base64");
+            }
+            List<AddressRange> un =
+                J.opt(o, "uninitialized") == null
+                    ? List.of()
+                    : J.list(o, "uninitialized", AddressRange::fromJson);
+            return new BytesRead(J.hex(o, "start"), data, un);
+        }
+    }
+
+    record OperandToken(String text, String kind, Locator target) {
+        static final Set<String> KINDS = Set.of("register", "immediate", "address", "symbol", "other");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.addProperty("text", text);
+            o.addProperty("kind", kind);
+            if (target != null) {
+                o.add("target", target.toJson());
+            }
+            return o;
+        }
+
+        static OperandToken fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "operand_token");
+            JsonElement t = J.opt(o, "target");
+            return new OperandToken(
+                J.str(o, "text"), oneOf(o, "kind", KINDS), t == null ? null : Locator.fromJson(t));
+        }
+    }
+
+    record DisasmRow(
+            long address,
+            String bytes,
+            String mnemonic,
+            List<OperandToken> operands,
+            String comment,
+            List<String> labels,
+            String flow) {
+        static final Set<String> FLOWS =
+            Set.of("fallthrough", "jump", "conditional_jump", "call", "return", "indirect", "other");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("address", J.hexJson(address));
+            o.addProperty("bytes", bytes);
+            o.addProperty("mnemonic", mnemonic);
+            o.add("operands", J.array(operands, OperandToken::toJson));
+            J.put(o, "comment", comment);
+            if (!labels.isEmpty()) {
+                o.add("labels", strings(labels));
+            }
+            o.addProperty("flow", flow);
+            return o;
+        }
+
+        static DisasmRow fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "disasm_row");
+            List<String> labels =
+                J.opt(o, "labels") == null ? List.of() : J.list(o, "labels", x -> J.str(x, "label"));
+            return new DisasmRow(
+                J.hex(o, "address"),
+                J.str(o, "bytes"),
+                J.str(o, "mnemonic"),
+                J.list(o, "operands", OperandToken::fromJson),
+                J.optStr(o, "comment"),
+                labels,
+                oneOf(o, "flow", FLOWS));
+        }
+    }
+
+    record FunctionRef(long address, String name) {
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("address", J.hexJson(address));
+            o.addProperty("name", name);
+            return o;
+        }
+
+        static FunctionRef fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "function_ref");
+            return new FunctionRef(J.hex(o, "address"), J.str(o, "name"));
+        }
+    }
+
+    record Xref(long from, long to, String kind, FunctionRef fromFunction, FunctionRef toFunction) {
+        static final Set<String> KINDS =
+            Set.of("call", "jump", "read", "write", "data", "fallthrough", "other");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("from", J.hexJson(from));
+            o.add("to", J.hexJson(to));
+            o.addProperty("kind", kind);
+            if (fromFunction != null) {
+                o.add("from_function", fromFunction.toJson());
+            }
+            if (toFunction != null) {
+                o.add("to_function", toFunction.toJson());
+            }
+            return o;
+        }
+
+        static Xref fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "xref");
+            JsonElement f = J.opt(o, "from_function");
+            JsonElement t = J.opt(o, "to_function");
+            return new Xref(
+                J.hex(o, "from"),
+                J.hex(o, "to"),
+                oneOf(o, "kind", KINDS),
+                f == null ? null : FunctionRef.fromJson(f),
+                t == null ? null : FunctionRef.fromJson(t));
+        }
+    }
+
+    record CfgBlock(long start, long end, long instructions) {
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("start", J.hexJson(start));
+            o.add("end", J.hexJson(end));
+            o.addProperty("instructions", instructions);
+            return o;
+        }
+
+        static CfgBlock fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "cfg_block");
+            return new CfgBlock(J.hex(o, "start"), J.hex(o, "end"), J.num(o, "instructions"));
+        }
+    }
+
+    record CfgEdge(long from, long to, String kind) {
+        static final Set<String> KINDS =
+            Set.of("fallthrough", "jump", "conditional_true", "conditional_false", "switch");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("from", J.hexJson(from));
+            o.add("to", J.hexJson(to));
+            o.addProperty("kind", kind);
+            return o;
+        }
+
+        static CfgEdge fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "cfg_edge");
+            return new CfgEdge(J.hex(o, "from"), J.hex(o, "to"), oneOf(o, "kind", KINDS));
+        }
+    }
+
+    record Cfg(long function, List<CfgBlock> blocks, List<CfgEdge> edges) {
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("function", J.hexJson(function));
+            o.add("blocks", J.array(blocks, CfgBlock::toJson));
+            o.add("edges", J.array(edges, CfgEdge::toJson));
+            return o;
+        }
+
+        static Cfg fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "cfg");
+            return new Cfg(
+                J.hex(o, "function"),
+                J.list(o, "blocks", CfgBlock::fromJson),
+                J.list(o, "edges", CfgEdge::fromJson));
+        }
+    }
+
+    record StringEntry(long address, String value, String encoding, long length) {
+        static final Set<String> ENCODINGS = Set.of("ascii", "utf8", "utf16", "utf32", "other");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.add("address", J.hexJson(address));
+            o.addProperty("value", value);
+            o.addProperty("encoding", encoding);
+            o.addProperty("length", length);
+            return o;
+        }
+
+        static StringEntry fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "string_entry");
+            return new StringEntry(
+                J.hex(o, "address"),
+                J.str(o, "value"),
+                oneOf(o, "encoding", ENCODINGS),
+                J.num(o, "length"));
+        }
+    }
+
+    record SymbolEntry(String name, Long address, String library, String kind) {
+        static final Set<String> KINDS = Set.of("function", "data", "other");
+
+        JsonElement toJson() {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", name);
+            if (address != null) {
+                o.add("address", J.hexJson(address));
+            }
+            J.put(o, "library", library);
+            o.addProperty("kind", kind);
+            return o;
+        }
+
+        static SymbolEntry fromJson(JsonElement e) {
+            JsonObject o = J.obj(e, "symbol_entry");
+            return new SymbolEntry(
+                J.str(o, "name"),
+                J.optHex(o, "address"),
+                J.optStr(o, "library"),
+                oneOf(o, "kind", KINDS));
+        }
+    }
+
     /** Untrusted<String>: {"untrusted": true, "value": ...}. */
     static JsonElement untrustedString(JsonElement e) {
         JsonObject o = J.obj(e, "untrusted");
@@ -918,6 +1208,13 @@ final class Proto {
             case "function_page" ->
                 Page.fromJson(e, FunctionSummary::fromJson).toJson(FunctionSummary::toJson);
             case "untrusted_string" -> untrustedString(e);
+            case "memory_block" -> MemoryBlock.fromJson(e).toJson();
+            case "bytes_read" -> BytesRead.fromJson(e).toJson();
+            case "disasm_row" -> DisasmRow.fromJson(e).toJson();
+            case "xref" -> Xref.fromJson(e).toJson();
+            case "cfg" -> Cfg.fromJson(e).toJson();
+            case "string_entry" -> StringEntry.fromJson(e).toJson();
+            case "symbol_entry" -> SymbolEntry.fromJson(e).toJson();
             default -> throw KrakenError.invalid("no DTO for sample type `" + type + "`");
         };
     }

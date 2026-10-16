@@ -1,0 +1,21 @@
+{
+  "address": "0x401004",
+  "bytes": "e8f7ffffff",
+  "comment": "calls the helper",
+  "flow": "call",
+  "labels": [
+    "loop_top"
+  ],
+  "mnemonic": "call",
+  "operands": [
+    {
+      "kind": "symbol",
+      "target": {
+        "kind": "native",
+        "offset": "0x401000",
+        "space": "ram"
+      },
+      "text": "helper"
+    }
+  ]
+}

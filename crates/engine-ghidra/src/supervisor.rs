@@ -23,6 +23,14 @@ pub const REQUIRED_SIDECAR_CAPABILITIES: &[&str] = &[
     "apply_op.v1",
     "types.roundtrip",
     "save",
+    "memory_map",
+    "read_bytes",
+    "disassemble",
+    "xrefs",
+    "cfg",
+    "strings",
+    "imports",
+    "exports",
 ];
 
 /// Lifecycle events for the registry (decision 40).

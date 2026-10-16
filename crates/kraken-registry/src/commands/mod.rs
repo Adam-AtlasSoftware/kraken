@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::command::Registry;
 
+mod data;
 mod edit;
 mod history;
 mod jobs;
@@ -13,6 +14,11 @@ mod project;
 mod query;
 mod rebuild;
 
+pub use data::{
+    CallGraphArgs, Callees, Callers, CfgArgs, CfgCommand, CfgOut, Disassemble, DisassembleArgs,
+    Exports, Imports, MemoryMap, MemoryMapOut, ReadBytes, ReadBytesArgs, ReadBytesOut, Strings,
+    StringsArgs, SymbolsArgs, Xrefs, XrefsArgs,
+};
 pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
     ProposalIdArgs, ProposalReject, RenameSymbol, RenameSymbolArgs, SetCallingConvention,
@@ -70,6 +76,16 @@ pub fn register_all(r: &mut Registry) {
     r.register(ListFunctions);
     r.register(GetFunction);
     r.register(Decompile);
+    r.register(MemoryMap);
+    r.register(ReadBytes);
+    r.register(Disassemble);
+    r.register(Xrefs);
+    r.register(Callers);
+    r.register(Callees);
+    r.register(CfgCommand);
+    r.register(Strings);
+    r.register(Imports);
+    r.register(Exports);
     r.register(RenameSymbol);
     r.register(SetComment);
     r.register(SetType);

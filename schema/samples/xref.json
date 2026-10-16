@@ -1,0 +1,9 @@
+{
+  "from": "0x401004",
+  "from_function": {
+    "address": "0x401000",
+    "name": "main"
+  },
+  "kind": "call",
+  "to": "0x401000"
+}

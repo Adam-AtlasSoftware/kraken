@@ -1,0 +1,11 @@
+{
+  "bytes": "VUiJ5QAA",
+  "start": "0x401000",
+  "uninitialized": [
+    {
+      "end": "0x401006",
+      "space": "ram",
+      "start": "0x401004"
+    }
+  ]
+}

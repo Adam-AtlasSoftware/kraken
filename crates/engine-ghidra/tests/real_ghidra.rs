@@ -336,3 +336,97 @@ async fn live_sidecar_reports_network_confinement() {
     engine.shutdown().await;
     assert_eq!(engine.diagnostics().state, "exited");
 }
+
+/// switch_vm-O0 compiles its dispatch loop to a jump table: the CFG of that function must carry
+/// `switch` edges that lead to blocks of the function, and the listing a computed jump.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a real Ghidra (cargo xtask ghidra-ext)"]
+async fn switch_vm_o0_cfg_has_switch_edges() {
+    use kraken_engine::{DisasmRequest, Disassembler, FlowGraph};
+    use kraken_proto::{CfgEdgeKind, DisasmScope, FlowKind};
+
+    let name = "switch_vm-O0";
+    let binary = repo_root().join("corpus/bin").join(name);
+    let truth: Truth = serde_json::from_slice(
+        &std::fs::read(repo_root().join(format!("corpus/truth/{name}.json"))).expect("truth"),
+    )
+    .expect("truth json");
+    let dir = scratch_dir();
+    let engine = new_engine(&dir.path().join("project"));
+    let program = open_and_analyze(&engine, &binary).await;
+    let cancel = CancellationToken::new();
+
+    let mut with_switch = Vec::new();
+    for t in &truth.functions {
+        let at = program.base.0 + t.entry.0;
+        let cfg = engine
+            .cfg(&Locator::ram(at), &cancel)
+            .await
+            .unwrap_or_else(|e| panic!("cfg of {} at {at:#x}: {e}", t.name));
+        for e in &cfg.edges {
+            assert!(
+                cfg.blocks.iter().any(|b| b.start == e.from)
+                    && cfg.blocks.iter().any(|b| b.start == e.to),
+                "{}: dangling edge {e:?}",
+                t.name
+            );
+        }
+        let cases = cfg
+            .edges
+            .iter()
+            .filter(|e| e.kind == CfgEdgeKind::Switch)
+            .count();
+        if cases > 0 {
+            with_switch.push((t.name.clone(), at, cases, cfg));
+        }
+    }
+    eprintln!(
+        "functions with switch edges: {:?}",
+        with_switch
+            .iter()
+            .map(|(n, _, c, _)| (n.as_str(), *c))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !with_switch.is_empty(),
+        "no function of {name} has a switch edge"
+    );
+    let (name, at, cases, cfg) = with_switch
+        .iter()
+        .max_by_key(|(_, _, c, _)| *c)
+        .expect("one");
+    assert!(*cases >= 3, "{name}: only {cases} switch edges");
+    // every switch edge starts at the block that ends in the computed jump
+    let source = cfg
+        .edges
+        .iter()
+        .find(|e| e.kind == CfgEdgeKind::Switch)
+        .expect("edge")
+        .from;
+    let rows = engine
+        .disassemble(
+            &DisasmRequest {
+                start: Hex64(*at),
+                scope: DisasmScope::Function,
+            },
+            &PageRequest {
+                cursor: None,
+                limit: Some(500),
+            },
+            &cancel,
+        )
+        .await
+        .expect("disassemble");
+    let block = cfg
+        .blocks
+        .iter()
+        .find(|b| b.start == source)
+        .expect("source block");
+    let last = rows
+        .items
+        .iter()
+        .rfind(|r| r.address >= block.start && r.address < block.end)
+        .expect("last instruction of the block");
+    assert_eq!(last.flow, FlowKind::Indirect, "{name}: {last:?}");
+    engine.shutdown().await;
+}

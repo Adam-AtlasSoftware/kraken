@@ -6,7 +6,10 @@ use std::sync::Arc;
 use kraken_proto::{Capability, Handshake, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 
-use crate::traits::{Analyzer, Decompiler, FunctionLister, Loader, Mutator, TypeStore};
+use crate::traits::{
+    Analyzer, Decompiler, Disassembler, FlowGraph, FunctionLister, Loader, MemoryReader, Mutator,
+    StringLister, SymbolLister, TypeStore, XrefProvider,
+};
 
 /// A capability an engine may provide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -24,21 +27,40 @@ pub enum Cap {
     FunctionLister,
     /// [`Mutator`].
     Mutator,
+    /// [`MemoryReader`].
+    Memory,
+    /// [`Disassembler`].
+    Disassembler,
+    /// [`XrefProvider`].
+    Xrefs,
+    /// [`FlowGraph`].
+    Cfg,
+    /// [`StringLister`].
+    Strings,
+    /// [`SymbolLister`].
+    Symbols,
 }
 
 impl Cap {
     /// All capabilities.
-    pub const ALL: [Cap; 6] = [
+    pub const ALL: [Cap; 12] = [
         Cap::Loader,
         Cap::Analyzer,
         Cap::Decompiler,
         Cap::TypeStore,
         Cap::FunctionLister,
         Cap::Mutator,
+        Cap::Memory,
+        Cap::Disassembler,
+        Cap::Xrefs,
+        Cap::Cfg,
+        Cap::Strings,
+        Cap::Symbols,
     ];
 
     /// Name used in the handshake: `"loader"`, `"analyzer"`, `"decompiler"`, `"type_store"`,
-    /// `"function_lister"`, `"mutator"`.
+    /// `"function_lister"`, `"mutator"`, `"memory"`, `"disassembler"`, `"xrefs"`, `"cfg"`,
+    /// `"strings"`, `"symbols"`.
     pub fn name(self) -> &'static str {
         match self {
             Cap::Loader => "loader",
@@ -47,6 +69,12 @@ impl Cap {
             Cap::TypeStore => "type_store",
             Cap::FunctionLister => "function_lister",
             Cap::Mutator => "mutator",
+            Cap::Memory => "memory",
+            Cap::Disassembler => "disassembler",
+            Cap::Xrefs => "xrefs",
+            Cap::Cfg => "cfg",
+            Cap::Strings => "strings",
+            Cap::Symbols => "symbols",
         }
     }
 }
@@ -117,6 +145,30 @@ pub trait Engine: Send + Sync {
     }
     /// The mutator, if supported.
     fn mutator(&self) -> Option<&dyn Mutator> {
+        None
+    }
+    /// The memory reader, if supported.
+    fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        None
+    }
+    /// The disassembler, if supported.
+    fn disassembler(&self) -> Option<&dyn Disassembler> {
+        None
+    }
+    /// The cross-reference provider, if supported.
+    fn xref_provider(&self) -> Option<&dyn XrefProvider> {
+        None
+    }
+    /// The control-flow-graph provider, if supported.
+    fn flow_graph(&self) -> Option<&dyn FlowGraph> {
+        None
+    }
+    /// The string lister, if supported.
+    fn string_lister(&self) -> Option<&dyn StringLister> {
+        None
+    }
+    /// The import/export lister, if supported.
+    fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         None
     }
 }

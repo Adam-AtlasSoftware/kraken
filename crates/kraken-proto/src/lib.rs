@@ -15,6 +15,7 @@ pub mod locator;
 pub mod logop;
 pub mod meta;
 pub mod page;
+pub mod program;
 pub mod types;
 pub mod untrusted;
 
@@ -31,11 +32,16 @@ pub use meta::{
     ProtocolVersion, Provenance, SyncState,
 };
 pub use page::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, PageRequest};
+pub use program::{
+    BytesRead, Cfg, CfgBlock, CfgEdge, CfgEdgeKind, DisasmRow, DisasmScope, FlowKind, FunctionRef,
+    MemoryBlock, MemoryKind, OperandKind, OperandToken, StringEncoding, StringEntry, SymbolEntry,
+    SymbolKind, Xref, XrefDirection, XrefKind, hex_bytes,
+};
 pub use types::{
     Bitfield, Composite, EnumDef, EnumVariant, Field, FunctionPrototype, Param, Primitive,
     PrimitiveClass, TypeDef, TypeRef, TypedefDef,
 };
-pub use untrusted::{Untrusted, sanitize};
+pub use untrusted::{Untrusted, sanitize, sanitize_mapped};
 
 /// Root of the generated JSON Schema: one field per top-level protocol type.
 ///
@@ -77,6 +83,20 @@ pub struct ProtoSchema {
     pub function_page: Page<FunctionSummary>,
     /// An untrusted string, the canonical [`Untrusted`] instantiation.
     pub untrusted_string: Untrusted<String>,
+    /// See [`MemoryBlock`].
+    pub memory_block: MemoryBlock,
+    /// See [`BytesRead`].
+    pub bytes_read: BytesRead,
+    /// See [`DisasmRow`].
+    pub disasm_row: DisasmRow,
+    /// See [`Xref`].
+    pub xref: Xref,
+    /// See [`Cfg`].
+    pub cfg: Cfg,
+    /// See [`StringEntry`].
+    pub string_entry: StringEntry,
+    /// See [`SymbolEntry`].
+    pub symbol_entry: SymbolEntry,
 }
 
 /// Generates the combined JSON Schema as pretty-printed JSON with a trailing newline.

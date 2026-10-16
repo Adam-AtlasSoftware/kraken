@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use kraken_engine::ProgramInfo;
 use kraken_engine::testing::{ExpectedFunction, FixtureExpectations};
 use kraken_proto::{
-    Completeness, DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, ProtoError, Token,
-    TokenKind, TypeDef,
+    Cfg, Completeness, DecompileResult, DisasmRow, ErrorCode, FunctionRef, FunctionSummary, Hex64,
+    Locator, MemoryBlock, ProtoError, StringEntry, SymbolEntry, Token, TokenKind, TypeDef, Xref,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,18 @@ pub struct FixtureFile {
     /// Named types known to the program.
     #[serde(default)]
     pub types: Vec<TypeDef>,
+    /// Memory blocks; absent means four synthetic blocks derived from the functions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<Vec<MemoryBlock>>,
+    /// Strings in memory; absent means string literals found in the decompiled text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strings: Option<Vec<StringEntry>>,
+    /// Imported symbols; absent means call targets that are not functions of the fixture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imports: Option<Vec<SymbolEntry>>,
+    /// Exported symbols; absent means the lowest function.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exports: Option<Vec<SymbolEntry>>,
     /// How the fixture was recorded, when a recorder wrote it (absent in hand-written fixtures).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recording: Option<Recording>,
@@ -46,6 +58,15 @@ pub struct Recording {
     pub types_listed: usize,
     /// Types in this file.
     pub types_recorded: usize,
+    /// Maximum number of strings recorded (strings referenced by recorded functions come first).
+    #[serde(default)]
+    pub string_cap: usize,
+    /// Strings of at least four characters the engine listed.
+    #[serde(default)]
+    pub strings_listed: usize,
+    /// Strings in this file.
+    #[serde(default)]
+    pub strings_recorded: usize,
 }
 
 /// One function: its listing entry and its decompilation.
@@ -55,6 +76,30 @@ pub struct FixtureFunction {
     pub summary: FunctionSummary,
     /// Decompiler output; `decompile.function` must equal `summary.locator`.
     pub decompile: DecompileResult,
+    /// Instructions of the body in address order; absent means a synthetic listing of four-byte
+    /// instructions with calls at the decompiled call targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disassembly: Option<Vec<DisasmRow>>,
+    /// Control-flow graph; absent means one block spanning the listing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg: Option<Cfg>,
+    /// References originating in the body (and any to the entry the recorder kept); absent means
+    /// references derived from the call and jump rows of the listing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xrefs: Option<Vec<Xref>>,
+}
+
+impl FixtureFunction {
+    /// A function with only a summary and a decompilation.
+    pub fn new(summary: FunctionSummary, decompile: DecompileResult) -> Self {
+        FixtureFunction {
+            summary,
+            decompile,
+            disassembly: None,
+            cfg: None,
+            xrefs: None,
+        }
+    }
 }
 
 impl FixtureFile {
@@ -184,9 +229,10 @@ fn split(fx: &mut FixtureFile, entry: u64) {
         .push("function was split by perturbation".into());
     let name = format!("{}_part2", first.summary.name);
     let hash = first.summary.fn_hash.as_ref().map(|h| format!("{h}:part2"));
-    let locator = Locator::ram(entry + half);
-    let second = FixtureFunction {
-        summary: FunctionSummary {
+    let cut = entry + half;
+    let locator = Locator::ram(cut);
+    let mut second = FixtureFunction::new(
+        FunctionSummary {
             locator: locator.clone(),
             name: name.clone(),
             size: Some(size - half),
@@ -194,8 +240,18 @@ fn split(fx: &mut FixtureFile, entry: u64) {
             fn_hash: hash,
             completeness: Completeness::Complete,
         },
-        decompile: stub_decompile(&locator, &name),
-    };
+        stub_decompile(&locator, &name),
+    );
+    // Recorded listing data follows the cut; graphs and derived references are recomputed.
+    if let Some(rows) = first.disassembly.take() {
+        let (head, tail): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| r.address.0 < cut);
+        first.disassembly = Some(head);
+        second.disassembly = (!tail.is_empty()).then_some(tail);
+    }
+    first.cfg = None;
+    if let Some(x) = first.xrefs.as_mut() {
+        x.retain(|x| x.from.0 < cut);
+    }
     fx.functions.push(second);
 }
 
@@ -217,6 +273,16 @@ fn merge(fx: &mut FixtureFile, keep: u64, absorb: u64) {
         .decompile
         .warnings
         .push("function was merged by perturbation".into());
+    keep_fn.disassembly = match (keep_fn.disassembly.take(), absorbed.disassembly) {
+        (Some(mut a), Some(b)) => {
+            a.extend(b);
+            a.sort_by_key(|r| r.address);
+            Some(a)
+        }
+        _ => None,
+    };
+    keep_fn.cfg = None;
+    keep_fn.xrefs = None;
 }
 
 fn shift(fx: &mut FixtureFile, delta: i64) {
@@ -227,6 +293,12 @@ fn shift(fx: &mut FixtureFile, delta: i64) {
             offset.0 = offset.0.wrapping_add_signed(delta);
         }
     }
+    let hex = |h: &mut Hex64| h.0 = h.0.wrapping_add_signed(delta);
+    let func_ref = |r: &mut Option<FunctionRef>| {
+        if let Some(r) = r {
+            r.address.0 = r.address.0.wrapping_add_signed(delta);
+        }
+    };
     fx.program.base.0 = fx.program.base.0.wrapping_add_signed(delta);
     for f in &mut fx.functions {
         loc(&mut f.summary.locator, delta);
@@ -235,6 +307,45 @@ fn shift(fx: &mut FixtureFile, delta: i64) {
             if let Some(l) = t.target.as_mut() {
                 loc(l, delta);
             }
+        }
+        for row in f.disassembly.iter_mut().flatten() {
+            hex(&mut row.address);
+            for op in &mut row.operands {
+                if let Some(l) = op.target.as_mut() {
+                    loc(l, delta);
+                }
+            }
+        }
+        if let Some(c) = f.cfg.as_mut() {
+            hex(&mut c.function);
+            for b in &mut c.blocks {
+                hex(&mut b.start);
+                hex(&mut b.end);
+            }
+            for e in &mut c.edges {
+                hex(&mut e.from);
+                hex(&mut e.to);
+            }
+        }
+        for x in f.xrefs.iter_mut().flatten() {
+            hex(&mut x.from);
+            hex(&mut x.to);
+            func_ref(&mut x.from_function);
+            func_ref(&mut x.to_function);
+        }
+    }
+    for b in fx.memory.iter_mut().flatten() {
+        if b.space == "ram" {
+            hex(&mut b.start);
+            hex(&mut b.end);
+        }
+    }
+    for s in fx.strings.iter_mut().flatten() {
+        hex(&mut s.address);
+    }
+    for s in fx.imports.iter_mut().chain(fx.exports.iter_mut()).flatten() {
+        if let Some(a) = s.address.as_mut() {
+            hex(a);
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Plain data types used by the capability traits.
 
-use kraken_proto::{ErrorCode, Hex64, ProtoError, TypeDef};
+use kraken_proto::{DisasmScope, ErrorCode, Hex64, ProtoError, TypeDef, XrefDirection, XrefKind};
 use serde::{Deserialize, Serialize};
 
 /// Hints for opening a binary; unset fields are auto-detected.
@@ -129,6 +129,41 @@ impl From<ProtoError> for EngineRejected {
     fn from(e: ProtoError) -> Self {
         EngineRejected::new(e.code, e.message)
     }
+}
+
+/// Parameters of [`Disassembler::disassemble`](crate::Disassembler::disassemble).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisasmRequest {
+    /// Where to start (`ram` space); inside the function for [`DisasmScope::Function`].
+    pub start: Hex64,
+    /// Whether to stay within one function.
+    pub scope: DisasmScope,
+}
+
+/// Parameters of [`XrefProvider::xrefs`](crate::XrefProvider::xrefs).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XrefRequest {
+    /// The address queried (`ram` space).
+    pub address: Hex64,
+    /// References to or from the address.
+    pub direction: XrefDirection,
+    /// Keep only references of this kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<XrefKind>,
+    /// With [`XrefDirection::From`]: all references originating anywhere in the function that
+    /// contains `address`, not just at the address itself.
+    #[serde(default)]
+    pub whole_function: bool,
+}
+
+/// Parameters of [`StringLister::strings`](crate::StringLister::strings).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StringsRequest {
+    /// Shortest string to report, in characters.
+    pub min_len: u32,
+    /// Keep only strings containing this text (case-insensitive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 
 /// The name of a type definition, if it has one (anonymous function prototypes do not).

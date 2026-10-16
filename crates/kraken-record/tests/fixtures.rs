@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use engine_fake::{FakeEngine, FixtureFile};
 use kraken_engine::testing::run_contract_suite;
 use kraken_proto::{Hex64, Locator};
-use kraken_record::{DEFAULT_FUNCTION_CAP, render_fixture};
+use kraken_record::{default_function_cap, render_fixture};
 use serde::Deserialize;
 
 fn corpus() -> PathBuf {
@@ -54,7 +54,7 @@ fn fixtures_are_well_formed_and_canonically_formatted() {
         assert!(fx.ghidra_version.starts_with("12."), "{name}");
         assert!(!fx.functions.is_empty(), "{name}");
         let rec = fx.recording.as_ref().expect("recording header");
-        assert_eq!(rec.function_cap, DEFAULT_FUNCTION_CAP, "{name}");
+        assert_eq!(rec.function_cap, default_function_cap(&name), "{name}");
         assert_eq!(rec.functions_recorded, fx.functions.len(), "{name}");
         assert!(rec.functions_recorded <= rec.function_cap, "{name}");
         assert!(rec.functions_listed >= rec.functions_recorded, "{name}");
@@ -73,6 +73,89 @@ fn fixtures_are_well_formed_and_canonically_formatted() {
             f.decompile
                 .validate_tokens()
                 .unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+}
+
+/// Every fixture records the program data the data commands serve: memory map, strings,
+/// symbols, and per function a listing, a control-flow graph and references.
+#[test]
+fn fixtures_carry_program_data() {
+    use kraken_proto::{CfgEdgeKind, FlowKind};
+
+    for name in names() {
+        let fx = load(&name);
+        let rec = fx.recording.as_ref().expect("recording header");
+        assert_eq!(rec.string_cap, kraken_record::STRING_CAP, "{name}");
+        assert!(rec.strings_listed >= rec.strings_recorded, "{name}");
+        let memory = fx
+            .memory
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: no memory map"));
+        assert!(
+            memory
+                .iter()
+                .any(|b| b.perms.ends_with('x') && b.initialized),
+            "{name}"
+        );
+        assert_eq!(
+            fx.strings.as_ref().map(Vec::len),
+            Some(rec.strings_recorded),
+            "{name}"
+        );
+        assert!(fx.imports.is_some() && fx.exports.is_some(), "{name}");
+        for f in &fx.functions {
+            let at = &f.summary.name;
+            let rows = f
+                .disassembly
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} {at}: no listing"));
+            let cfg = f
+                .cfg
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} {at}: no cfg"));
+            assert!(f.xrefs.is_some(), "{name} {at}: no references");
+            assert!(!rows.is_empty(), "{name} {at}");
+            assert!(
+                rows.windows(2).all(|w| w[0].address < w[1].address),
+                "{name} {at}"
+            );
+            let counted: u64 = cfg.blocks.iter().map(|b| u64::from(b.instructions)).sum();
+            assert_eq!(
+                counted,
+                rows.len() as u64,
+                "{name} {at}: cfg disagrees with the listing"
+            );
+            let Locator::Native { offset, .. } = &f.summary.locator else {
+                panic!("non-native locator");
+            };
+            // a function with a cold part has rows below its entry, so only look for the entry
+            assert!(
+                rows.iter().any(|r| r.address == *offset),
+                "{name} {at}: the listing has no instruction at the entry"
+            );
+            assert_eq!(cfg.function, *offset, "{name} {at}");
+            // calls in the listing are calls in the references
+            for r in rows.iter().filter(|r| r.flow == FlowKind::Call) {
+                let target = r.operands.iter().find_map(|o| o.target.as_ref());
+                if target.is_some() {
+                    assert!(
+                        f.xrefs.iter().flatten().any(|x| x.from == r.address),
+                        "{name} {at}: call at {} has no reference",
+                        r.address
+                    );
+                }
+            }
+        }
+        if name.starts_with("switch_vm-O0") {
+            let cases: usize = fx
+                .functions
+                .iter()
+                .filter_map(|f| f.cfg.as_ref())
+                .flat_map(|c| &c.edges)
+                .filter(|e| e.kind == CfgEdgeKind::Switch)
+                .count();
+            assert!(cases >= 3, "{name}: only {cases} switch edges recorded");
         }
     }
 }

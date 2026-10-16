@@ -6,15 +6,37 @@ use std::path::{Path, PathBuf};
 use engine_fake::{FixtureFile, FixtureFunction, Recording};
 use engine_ghidra::{EngineConfig, GhidraEngine, GhidraError, GhidraInstall};
 use kraken_engine::{
-    AnalyzeRequest, Analyzer, CancellationToken, Decompiler, FunctionLister, Loader, LoaderSpec,
-    TypeStore, type_def_name,
+    AnalyzeRequest, Analyzer, CancellationToken, Decompiler, DisasmRequest, Disassembler,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, StringLister, StringsRequest,
+    SymbolLister, TypeStore, XrefProvider, XrefRequest, type_def_name,
 };
-use kraken_proto::{DecompileResult, FunctionSummary, Locator, PageRequest, ProtoError, TypeDef};
+use kraken_proto::{
+    DecompileResult, DisasmScope, FunctionSummary, Hex64, Locator, Page, PageRequest, ProtoError,
+    TypeDef, Xref, XrefDirection, XrefKind,
+};
 
 /// Functions recorded per binary unless overridden.
 pub const DEFAULT_FUNCTION_CAP: usize = 200;
+/// Functions recorded for the statically linked `static_strops` binaries, whose fixtures would
+/// otherwise grow to several megabytes each. The user functions all lie within the first 96.
+pub const STATIC_FUNCTION_CAP: usize = 96;
 /// Types recorded per binary unless overridden.
 pub const DEFAULT_TYPE_CAP: usize = 200;
+/// Strings recorded per binary.
+pub const STRING_CAP: usize = 300;
+/// Shortest string recorded, in characters.
+pub const STRING_MIN_LEN: u32 = 4;
+/// References to a function entry recorded per function.
+const INCOMING_XREF_CAP: usize = 100;
+
+/// The function cap used for a corpus binary file name when none is given.
+pub fn default_function_cap(binary_file_name: &str) -> usize {
+    if binary_file_name.starts_with("static_") {
+        STATIC_FUNCTION_CAP
+    } else {
+        DEFAULT_FUNCTION_CAP
+    }
+}
 
 const PAGE: u32 = 500;
 
@@ -48,8 +70,9 @@ pub enum RecordError {
 /// What to record.
 #[derive(Debug, Clone)]
 pub struct RecordOptions {
-    /// Maximum number of functions (smallest addresses first, externals excluded).
-    pub function_cap: usize,
+    /// Maximum number of functions (smallest addresses first, externals excluded); `None` picks
+    /// [`default_function_cap`] for the binary.
+    pub function_cap: Option<usize>,
     /// Maximum number of types.
     pub type_cap: usize,
     /// Directory for throw-away Ghidra projects; must have no dot-prefixed path element.
@@ -59,7 +82,7 @@ pub struct RecordOptions {
 impl Default for RecordOptions {
     fn default() -> Self {
         RecordOptions {
-            function_cap: DEFAULT_FUNCTION_CAP,
+            function_cap: None,
             type_cap: DEFAULT_TYPE_CAP,
             scratch_root: std::env::temp_dir(),
         }
@@ -153,45 +176,174 @@ async fn record_with(
 
     // Imported/external stubs live in a synthetic memory block: one byte long, and the
     // decompiler reports bad instruction data for them. They are skipped, not recorded.
+    let function_cap = opts.function_cap.unwrap_or_else(|| {
+        default_function_cap(
+            &binary
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        )
+    });
     let mut functions = Vec::new();
     let mut skipped = 0usize;
     for summary in &listed {
-        if functions.len() >= opts.function_cap {
+        if functions.len() >= function_cap {
             break;
         }
         match engine.decompile(&summary.locator, &cancel).await {
             Ok(decompile)
                 if decompile.function == summary.locator && !is_external(summary, &decompile) =>
             {
-                functions.push(FixtureFunction {
-                    summary: summary.clone(),
-                    decompile,
-                });
+                let mut f = FixtureFunction::new(summary.clone(), decompile);
+                record_listing(engine, &mut f, &cancel).await.map_err(eng)?;
+                functions.push(f);
             }
             Ok(_) | Err(_) => skipped += 1,
         }
     }
+
+    let memory = engine.memory_map(&cancel).await.map_err(eng)?;
+    let token = &cancel;
+    let imports = collect_all(|page| async move { engine.imports(&page, token).await })
+        .await
+        .map_err(eng)?;
+    let exports = collect_all(|page| async move { engine.exports(&page, token).await })
+        .await
+        .map_err(eng)?;
+    let (strings, strings_listed) = record_strings(engine, &functions, &cancel)
+        .await
+        .map_err(eng)?;
 
     let (types, types_listed) = record_types(engine, &functions, opts.type_cap, &cancel)
         .await
         .map_err(eng)?;
     let recording = Recording {
         recorder: format!("kraken-record {}", env!("CARGO_PKG_VERSION")),
-        function_cap: opts.function_cap,
+        function_cap,
         functions_listed: listed.len(),
         functions_recorded: functions.len(),
         functions_skipped: skipped,
         type_cap: opts.type_cap,
         types_listed,
         types_recorded: types.len(),
+        string_cap: STRING_CAP,
+        strings_listed,
+        strings_recorded: strings.len(),
     };
     Ok(FixtureFile {
         ghidra_version: install.ghidra_version.clone(),
         program,
         functions,
         types,
+        memory: Some(memory),
+        strings: Some(strings),
+        imports: Some(imports),
+        exports: Some(exports),
         recording: Some(recording),
     })
+}
+
+/// Pages through a listing with the largest page size.
+async fn collect_all<T, F, Fut>(mut next: F) -> Result<Vec<T>, ProtoError>
+where
+    F: FnMut(PageRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<Page<T>, ProtoError>>,
+{
+    let mut out = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = next(PageRequest {
+            cursor: cursor.clone(),
+            limit: Some(PAGE),
+        })
+        .await?;
+        out.extend(page.items);
+        match page.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => return Ok(out),
+        }
+    }
+}
+
+/// Records the listing, control-flow graph and references of one function.
+async fn record_listing(
+    engine: &GhidraEngine,
+    f: &mut FixtureFunction,
+    cancel: &CancellationToken,
+) -> Result<(), ProtoError> {
+    let (_, entry) = offset_of(&f.summary.locator);
+    let req = DisasmRequest {
+        start: Hex64(entry),
+        scope: DisasmScope::Function,
+    };
+    let req_ref = &req;
+    f.disassembly = Some(
+        collect_all(|page| async move { engine.disassemble(req_ref, &page, cancel).await }).await?,
+    );
+    f.cfg = Some(engine.cfg(&f.summary.locator, cancel).await?);
+
+    let from = XrefRequest {
+        address: Hex64(entry),
+        direction: XrefDirection::From,
+        kind: None,
+        whole_function: true,
+    };
+    let from_ref = &from;
+    let mut xrefs: Vec<Xref> =
+        collect_all(|page| async move { engine.xrefs(from_ref, &page, cancel).await }).await?;
+    let to = XrefRequest {
+        address: Hex64(entry),
+        direction: XrefDirection::To,
+        kind: None,
+        whole_function: false,
+    };
+    let incoming = engine
+        .xrefs(
+            &to,
+            &PageRequest {
+                cursor: None,
+                limit: Some(INCOMING_XREF_CAP as u32),
+            },
+            cancel,
+        )
+        .await?;
+    xrefs.extend(incoming.items);
+    xrefs.sort_by_key(|x| (x.from, x.to, x.kind));
+    xrefs.dedup();
+    f.xrefs = Some(xrefs);
+    Ok(())
+}
+
+/// Strings of at least [`STRING_MIN_LEN`] characters: those a recorded function refers to first,
+/// then the lowest addresses, up to [`STRING_CAP`], ordered by address. Also returns how many the
+/// engine listed.
+async fn record_strings(
+    engine: &GhidraEngine,
+    functions: &[FixtureFunction],
+    cancel: &CancellationToken,
+) -> Result<(Vec<kraken_proto::StringEntry>, usize), ProtoError> {
+    let req = StringsRequest {
+        min_len: STRING_MIN_LEN,
+        filter: None,
+    };
+    let req_ref = &req;
+    let all =
+        collect_all(|page| async move { engine.strings(req_ref, &page, cancel).await }).await?;
+    let listed = all.len();
+    let referenced: BTreeSet<Hex64> = functions
+        .iter()
+        .flat_map(|f| f.xrefs.iter().flatten())
+        .filter(|x| matches!(x.kind, XrefKind::Data | XrefKind::Read | XrefKind::Write))
+        .map(|x| x.to)
+        .collect();
+    let (mut chosen, rest): (Vec<_>, Vec<_>) = all
+        .into_iter()
+        .partition(|s| referenced.contains(&s.address));
+    chosen.truncate(STRING_CAP);
+    let room = STRING_CAP - chosen.len();
+    chosen.extend(rest.into_iter().take(room));
+    chosen.sort_by_key(|s| s.address);
+    Ok((chosen, listed))
 }
 
 async fn record_types(

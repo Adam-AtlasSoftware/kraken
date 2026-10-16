@@ -1,6 +1,27 @@
 {
+  "exports": [
+    {"address": "0x101000", "kind": "function", "name": "_init"},
+    {"address": "0x1010a0", "kind": "function", "name": "main"},
+    {"address": "0x101270", "kind": "function", "name": "_start"},
+    {"address": "0x101310", "kind": "function", "name": "__do_global_dtors_aux"},
+    {"address": "0x101350", "kind": "function", "name": "frame_dummy"},
+    {"address": "0x101410", "kind": "function", "name": "list_push"},
+    {"address": "0x101420", "kind": "function", "name": "list_sort"},
+    {"address": "0x1014c0", "kind": "function", "name": "list_each"},
+    {"address": "0x1014f8", "kind": "function", "name": "_fini"},
+    {"address": "0x102000", "kind": "data", "name": "_IO_stdin_used"},
+    {"address": "0x104030", "kind": "other", "name": "data_start"},
+    {"address": "0x104038", "kind": "data", "name": "__dso_handle"},
+    {"address": "0x104040", "kind": "data", "name": "completed.0"},
+    {"address": "0x104048", "kind": "other", "name": "_end"}
+  ],
   "functions": [
     {
+      "cfg": {
+        "blocks": [{"end": "0x101010", "instructions": 4, "start": "0x101000"}, {"end": "0x101012", "instructions": 1, "start": "0x101010"}, {"end": "0x101017", "instructions": 2, "start": "0x101012"}],
+        "edges": [{"from": "0x101000", "kind": "conditional_false", "to": "0x101010"}, {"from": "0x101000", "kind": "conditional_true", "to": "0x101012"}, {"from": "0x101010", "kind": "fallthrough", "to": "0x101012"}],
+        "function": "0x101000"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101000", "space": "ram"},
@@ -22,6 +43,63 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101000",
+          "bytes": "4883ec08",
+          "flow": "fallthrough",
+          "labels": ["__DT_INIT", "_init"],
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {
+          "address": "0x101004",
+          "bytes": "488b05b52f0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103fc0", "space": "ram"}, "text": "PTR___gmon_start___00103fc0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10100b",
+          "bytes": "4885c0",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x10100e",
+          "bytes": "7402",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101012", "space": "ram"}, "text": "LAB_00101012"}]
+        },
+        {"address": "0x101010", "bytes": "ffd0", "flow": "indirect", "mnemonic": "CALL", "operands": [{"kind": "register", "text": "RAX"}]},
+        {
+          "address": "0x101012",
+          "bytes": "4883c408",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101012"],
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {"address": "0x101016", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "59ce7b4790cc82228734e1d3e90c8f6aac03c26e08bc0dbab979b4c63993e16b",
@@ -29,9 +107,20 @@
         "name": "_init",
         "signature": "int _init(EVP_PKEY_CTX * ctx)",
         "size": 23
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x101000", "to_function": {"address": "0x101000", "name": "_init"}},
+        {"from": "0x250", "kind": "data", "to": "0x101000", "to_function": {"address": "0x101000", "name": "_init"}},
+        {"from": "0x1000f8", "kind": "data", "to": "0x101000", "to_function": {"address": "0x101000", "name": "_init"}},
+        {"from": "0x101004", "from_function": {"address": "0x101000", "name": "_init"}, "kind": "read", "to": "0x103fc0"},
+        {"from": "0x101004", "from_function": {"address": "0x101000", "name": "_init"}, "kind": "data", "to": "0x105038", "to_function": {"address": "0x105038", "name": "__gmon_start__"}},
+        {"from": "0x10100e", "from_function": {"address": "0x101000", "name": "_init"}, "kind": "jump", "to": "0x101012"},
+        {"from": "0x101010", "from_function": {"address": "0x101000", "name": "_init"}, "kind": "call", "to": "0x105038", "to_function": {"address": "0x105038", "name": "__gmon_start__"}},
+        {"from": "0x103de8", "kind": "data", "to": "0x101000", "to_function": {"address": "0x101000", "name": "_init"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x10102c", "instructions": 2, "start": "0x101020"}], "edges": [], "function": "0x101020"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101020", "space": "ram"},
@@ -51,6 +140,51 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101020",
+          "bytes": "ff35ca2f0000",
+          "flow": "fallthrough",
+          "labels": ["FUN_00101020"],
+          "mnemonic": "PUSH",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103ff0", "space": "ram"}, "text": "PTR_00103ff0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101026",
+          "bytes": "ff25cc2f0000",
+          "flow": "indirect",
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103ff8", "space": "ram"}, "text": "PTR_00103ff8"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "cb5fb4cedaae04edc9d6c041ffd3166335e5ddff663796600508c98a1b85914a",
@@ -58,9 +192,23 @@
         "name": "FUN_00101020",
         "signature": "undefined FUN_00101020()",
         "size": 12
-      }
+      },
+      "xrefs": [
+        {"from": "0x290", "kind": "data", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x101020", "from_function": {"address": "0x101020", "name": "FUN_00101020"}, "kind": "read", "to": "0x103ff0"},
+        {"from": "0x101026", "from_function": {"address": "0x101020", "name": "FUN_00101020"}, "kind": "other", "to": "0x103ff8"},
+        {"from": "0x10103b", "kind": "call", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x10104b", "kind": "call", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x10105b", "kind": "call", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x10106b", "kind": "call", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x10107b", "kind": "call", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x10108b", "kind": "call", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x102094", "kind": "other", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}},
+        {"from": "0x102140", "kind": "data", "to": "0x101020", "to_function": {"address": "0x101020", "name": "FUN_00101020"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101036", "instructions": 1, "start": "0x101030"}], "edges": [], "function": "0x101030"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101030", "space": "ram"},
@@ -90,6 +238,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101030",
+          "bytes": "ff25ca2f0000",
+          "flow": "indirect",
+          "labels": ["free"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104000", "space": "ram"}, "text": "PTR_free_00104000"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "98216779182a6a197eb42b60ad1949346fa15e72431bd63c741ebb86dbbdaab8",
@@ -97,9 +269,15 @@
         "name": "free",
         "signature": "void free(void * __ptr)",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x101030", "from_function": {"address": "0x101030", "name": "free"}, "kind": "other", "to": "0x104000"},
+        {"from": "0x101030", "from_function": {"address": "0x101030", "name": "free"}, "kind": "call", "to": "0x105000", "to_function": {"address": "0x105000", "name": "free"}},
+        {"from": "0x101237", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101030", "to_function": {"address": "0x101030", "name": "free"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101046", "instructions": 1, "start": "0x101040"}], "edges": [], "function": "0x101040"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101040", "space": "ram"},
@@ -145,6 +323,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101040",
+          "bytes": "ff25c22f0000",
+          "flow": "indirect",
+          "labels": ["strncpy"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104008", "space": "ram"}, "text": "PTR_strncpy_00104008"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "5a78a7265f8e3ff399d9b0279e17e9973a33f997a450a21a9c43586135ea309f",
@@ -152,9 +354,15 @@
         "name": "strncpy",
         "signature": "char * strncpy(char * __dest, char * __src, size_t __n)",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x101040", "from_function": {"address": "0x101040", "name": "strncpy"}, "kind": "other", "to": "0x104008"},
+        {"from": "0x101040", "from_function": {"address": "0x101040", "name": "strncpy"}, "kind": "call", "to": "0x105010", "to_function": {"address": "0x105010", "name": "strncpy"}},
+        {"from": "0x1013d4", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "call", "to": "0x101040", "to_function": {"address": "0x101040", "name": "strncpy"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101056", "instructions": 1, "start": "0x101050"}], "edges": [], "function": "0x101050"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101050", "space": "ram"},
@@ -189,6 +397,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101050",
+          "bytes": "ff25ba2f0000",
+          "flow": "indirect",
+          "labels": ["printf"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104010", "space": "ram"}, "text": "PTR_printf_00104010"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "ce4446c4f2c3f08cc10b711a936d7befb9f5504a5a46cc78cf1c204dd01057fb",
@@ -196,9 +428,18 @@
         "name": "printf",
         "signature": "int printf(char * __format, ...)",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x101050", "from_function": {"address": "0x101050", "name": "printf"}, "kind": "other", "to": "0x104010"},
+        {"from": "0x101050", "from_function": {"address": "0x101050", "name": "printf"}, "kind": "call", "to": "0x105020", "to_function": {"address": "0x105020", "name": "printf"}},
+        {"from": "0x101187", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x1011dd", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x10121d", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x101265", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101066", "instructions": 1, "start": "0x101060"}], "edges": [], "function": "0x101060"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101060", "space": "ram"},
@@ -238,6 +479,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101060",
+          "bytes": "ff25b22f0000",
+          "flow": "indirect",
+          "labels": ["calloc"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104018", "space": "ram"}, "text": "PTR_calloc_00104018"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "2ffc33842eb3fd7c45b7f13351ae073f50cbf6c5bc042578adf9666e67ff76df",
@@ -245,9 +510,15 @@
         "name": "calloc",
         "signature": "void * calloc(size_t __nmemb, size_t __size)",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x101060", "from_function": {"address": "0x101060", "name": "calloc"}, "kind": "other", "to": "0x104018"},
+        {"from": "0x101060", "from_function": {"address": "0x101060", "name": "calloc"}, "kind": "call", "to": "0x105028", "to_function": {"address": "0x105028", "name": "calloc"}},
+        {"from": "0x1013b8", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "call", "to": "0x101060", "to_function": {"address": "0x101060", "name": "calloc"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101076", "instructions": 1, "start": "0x101070"}], "edges": [], "function": "0x101070"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101070", "space": "ram"},
@@ -287,6 +558,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101070",
+          "bytes": "ff25aa2f0000",
+          "flow": "indirect",
+          "labels": ["strcmp"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104020", "space": "ram"}, "text": "PTR_strcmp_00104020"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "4e69f1d77283fcfab1ed89003a5a8d262d10fe3e577d633d5ab56a8ecf6b02c3",
@@ -294,9 +589,15 @@
         "name": "strcmp",
         "signature": "int strcmp(char * __s1, char * __s2)",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x101070", "from_function": {"address": "0x101070", "name": "strcmp"}, "kind": "other", "to": "0x104020"},
+        {"from": "0x101070", "from_function": {"address": "0x101070", "name": "strcmp"}, "kind": "call", "to": "0x105030", "to_function": {"address": "0x105030", "name": "strcmp"}},
+        {"from": "0x101408", "from_function": {"address": "0x101400", "name": "cmp_name"}, "kind": "call", "to": "0x101070", "to_function": {"address": "0x101070", "name": "strcmp"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101086", "instructions": 1, "start": "0x101080"}], "edges": [], "function": "0x101080"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101080", "space": "ram"},
@@ -331,6 +632,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101080",
+          "bytes": "ff25a22f0000",
+          "flow": "indirect",
+          "labels": ["exit"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104028", "space": "ram"}, "text": "PTR_exit_00104028"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "1e593d19790a007d6f3773070559a53fa4fa65da6d44d76306dd9679ed79b458",
@@ -338,9 +663,15 @@
         "name": "exit",
         "signature": "void exit(int __status)",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x101080", "from_function": {"address": "0x101080", "name": "exit"}, "kind": "other", "to": "0x104028"},
+        {"from": "0x101080", "from_function": {"address": "0x101080", "name": "exit"}, "kind": "call", "to": "0x105040", "to_function": {"address": "0x105040", "name": "exit"}},
+        {"from": "0x1013fb", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "call", "to": "0x101080", "to_function": {"address": "0x101080", "name": "exit"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101096", "instructions": 1, "start": "0x101090"}], "edges": [], "function": "0x101090"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101090", "space": "ram"},
@@ -355,6 +686,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101090",
+          "bytes": "ff253a2f0000",
+          "flow": "indirect",
+          "labels": ["__cxa_finalize"],
+          "mnemonic": "JMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103fd0", "space": "ram"}, "text": "PTR___cxa_finalize_00103fd0"},
+            {"kind": "other", "text": "]"}
+          ]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "1ea5c085ea90fc586dc8d2bfc06818bd95510925cfd2b1ebdba545b575078307",
@@ -362,9 +717,73 @@
         "name": "__cxa_finalize",
         "signature": "undefined __cxa_finalize()",
         "size": 6
-      }
+      },
+      "xrefs": [
+        {"from": "0x2d0", "kind": "data", "to": "0x101090", "to_function": {"address": "0x101090", "name": "__cxa_finalize"}},
+        {"from": "0x101090", "from_function": {"address": "0x101090", "name": "__cxa_finalize"}, "kind": "other", "to": "0x103fd0"},
+        {"from": "0x101090", "from_function": {"address": "0x101090", "name": "__cxa_finalize"}, "kind": "call", "to": "0x105050", "to_function": {"address": "0x105050", "name": "__cxa_finalize"}},
+        {"from": "0x101332", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "call", "to": "0x101090", "to_function": {"address": "0x101090", "name": "__cxa_finalize"}},
+        {"from": "0x10209c", "kind": "other", "to": "0x101090", "to_function": {"address": "0x101090", "name": "__cxa_finalize"}},
+        {"from": "0x102168", "kind": "data", "to": "0x101090", "to_function": {"address": "0x101090", "name": "__cxa_finalize"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x1010e3", "instructions": 16, "start": "0x1010a0"},
+          {"end": "0x101111", "instructions": 8, "start": "0x1010e3"},
+          {"end": "0x101138", "instructions": 8, "start": "0x101111"},
+          {"end": "0x101162", "instructions": 8, "start": "0x101138"},
+          {"end": "0x10117a", "instructions": 5, "start": "0x101162"},
+          {"end": "0x10118c", "instructions": 4, "start": "0x10117a"},
+          {"end": "0x1011a5", "instructions": 5, "start": "0x10118c"},
+          {"end": "0x1011b4", "instructions": 4, "start": "0x1011a5"},
+          {"end": "0x1011c0", "instructions": 2, "start": "0x1011b4"},
+          {"end": "0x1011e2", "instructions": 8, "start": "0x1011c0"},
+          {"end": "0x1011eb", "instructions": 3, "start": "0x1011e2"},
+          {"end": "0x1011f4", "instructions": 3, "start": "0x1011eb"},
+          {"end": "0x1011f9", "instructions": 2, "start": "0x1011f4"},
+          {"end": "0x101200", "instructions": 2, "start": "0x1011f9"},
+          {"end": "0x10120e", "instructions": 4, "start": "0x101200"},
+          {"end": "0x101222", "instructions": 4, "start": "0x10120e"},
+          {"end": "0x101230", "instructions": 2, "start": "0x101222"},
+          {"end": "0x10123c", "instructions": 3, "start": "0x101230"},
+          {"end": "0x101241", "instructions": 2, "start": "0x10123c"},
+          {"end": "0x101252", "instructions": 9, "start": "0x101241"},
+          {"end": "0x10126a", "instructions": 5, "start": "0x101252"},
+          {"end": "0x10126c", "instructions": 1, "start": "0x10126a"}
+        ],
+        "edges": [
+          {"from": "0x1010a0", "kind": "fallthrough", "to": "0x1010e3"},
+          {"from": "0x1010e3", "kind": "fallthrough", "to": "0x101111"},
+          {"from": "0x101111", "kind": "fallthrough", "to": "0x101138"},
+          {"from": "0x101138", "kind": "fallthrough", "to": "0x101162"},
+          {"from": "0x101162", "kind": "fallthrough", "to": "0x10117a"},
+          {"from": "0x10117a", "kind": "fallthrough", "to": "0x10118c"},
+          {"from": "0x10118c", "kind": "fallthrough", "to": "0x1011a5"},
+          {"from": "0x1011a5", "kind": "conditional_false", "to": "0x1011b4"},
+          {"from": "0x1011a5", "kind": "conditional_true", "to": "0x1011eb"},
+          {"from": "0x1011b4", "kind": "fallthrough", "to": "0x1011c0"},
+          {"from": "0x1011c0", "kind": "fallthrough", "to": "0x1011e2"},
+          {"from": "0x1011e2", "kind": "conditional_true", "to": "0x1011c0"},
+          {"from": "0x1011e2", "kind": "conditional_false", "to": "0x1011eb"},
+          {"from": "0x1011eb", "kind": "conditional_true", "to": "0x10117a"},
+          {"from": "0x1011eb", "kind": "conditional_false", "to": "0x1011f4"},
+          {"from": "0x1011f4", "kind": "conditional_false", "to": "0x1011f9"},
+          {"from": "0x1011f4", "kind": "conditional_true", "to": "0x101252"},
+          {"from": "0x1011f9", "kind": "fallthrough", "to": "0x101200"},
+          {"from": "0x101200", "kind": "conditional_true", "to": "0x101200"},
+          {"from": "0x101200", "kind": "conditional_false", "to": "0x10120e"},
+          {"from": "0x10120e", "kind": "fallthrough", "to": "0x101222"},
+          {"from": "0x101222", "kind": "fallthrough", "to": "0x101230"},
+          {"from": "0x101230", "kind": "fallthrough", "to": "0x10123c"},
+          {"from": "0x10123c", "kind": "conditional_true", "to": "0x101230"},
+          {"from": "0x10123c", "kind": "conditional_false", "to": "0x101241"},
+          {"from": "0x101252", "kind": "fallthrough", "to": "0x10126a"},
+          {"from": "0x10126a", "kind": "jump", "to": "0x101241"}
+        ],
+        "function": "0x1010a0"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x1010a0", "space": "ram"},
@@ -727,6 +1146,1294 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x1010a0",
+          "bytes": "4157",
+          "comment": "Unresolved local var: list l@[???]\nUnresolved local var: double total@[???]",
+          "flow": "fallthrough",
+          "labels": ["main"],
+          "mnemonic": "PUSH",
+          "operands": [{"kind": "register", "text": "R15"}]
+        },
+        {
+          "address": "0x1010a2",
+          "bytes": "b901000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ECX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x1010a7",
+          "bytes": "ba05000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x5"}]
+        },
+        {
+          "address": "0x1010ac",
+          "bytes": "488d35510f0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102004", "space": "ram"}, "text": "s_gamma_00102004"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x1010b3", "bytes": "4156", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R14"}]},
+        {
+          "address": "0x1010b5",
+          "bytes": "bf03000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x3"}]
+        },
+        {"address": "0x1010ba", "bytes": "4155", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R13"}]},
+        {
+          "address": "0x1010bc",
+          "bytes": "41bd04000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R13D"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x4"}]
+        },
+        {"address": "0x1010c2", "bytes": "4154", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R12"}]},
+        {
+          "address": "0x1010c4",
+          "bytes": "4c8d25d52c0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103da0", "space": "ram"}, "text": "orders"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x1010cb", "bytes": "55", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBP"}]},
+        {
+          "address": "0x1010cc",
+          "bytes": "4d8d7c2430",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "R15"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x30"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x1010d1", "bytes": "53", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBX"}]},
+        {
+          "address": "0x1010d2",
+          "bytes": "4883ec28",
+          "flow": "fallthrough",
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x28"}]
+        },
+        {
+          "address": "0x1010d6",
+          "bytes": "f20f10058a0f0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOVSD",
+          "operands": [
+            {"kind": "register", "text": "XMM0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102068", "space": "ram"}, "text": "DAT_00102068"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1010de",
+          "bytes": "e8ad020000",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101390", "space": "ram"}, "text": "node_new"}]
+        },
+        {
+          "address": "0x1010e3",
+          "bytes": "b907000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ECX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x7"}]
+        },
+        {
+          "address": "0x1010e8",
+          "bytes": "f20f1005800f0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOVSD",
+          "operands": [
+            {"kind": "register", "text": "XMM0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102070", "space": "ram"}, "text": "DAT_00102070"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1010f0",
+          "bytes": "bafeffffff",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0xfffffffe"}]
+        },
+        {
+          "address": "0x1010f5",
+          "bytes": "48c7402800000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "immediate", "text": "0x0"}
+          ]
+        },
+        {
+          "address": "0x1010fd",
+          "bytes": "488d35060f0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x10200a", "space": "ram"}, "text": "s_delta_0010200a"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101104",
+          "bytes": "bf01000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x101109",
+          "bytes": "4889c5",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x10110c",
+          "bytes": "e87f020000",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101390", "space": "ram"}, "text": "node_new"}]
+        },
+        {
+          "address": "0x101111",
+          "bytes": "f20f10055f0f0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOVSD",
+          "operands": [
+            {"kind": "register", "text": "XMM0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102078", "space": "ram"}, "text": "DAT_00102078"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101119",
+          "bytes": "31d2",
+          "flow": "fallthrough",
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDX"}]
+        },
+        {
+          "address": "0x10111b",
+          "bytes": "b903000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ECX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x3"}]
+        },
+        {
+          "address": "0x101120",
+          "bytes": "48896828",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RBP"}
+          ]
+        },
+        {
+          "address": "0x101124",
+          "bytes": "488d35e50e0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102010", "space": "ram"}, "text": "s_alpha_00102010"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10112b",
+          "bytes": "bf02000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x2"}]
+        },
+        {
+          "address": "0x101130",
+          "bytes": "4889c3",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x101133",
+          "bytes": "e858020000",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101390", "space": "ram"}, "text": "node_new"}]
+        },
+        {
+          "address": "0x101138",
+          "bytes": "b901000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ECX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x10113d",
+          "bytes": "f20f10053b0f0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOVSD",
+          "operands": [
+            {"kind": "register", "text": "XMM0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102080", "space": "ram"}, "text": "DAT_00102080"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101145",
+          "bytes": "ba01000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x10114a",
+          "bytes": "48895828",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RBX"}
+          ]
+        },
+        {
+          "address": "0x10114e",
+          "bytes": "488d35c10e0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102016", "space": "ram"}, "text": "DAT_00102016"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101155",
+          "bytes": "bf04000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x4"}]
+        },
+        {
+          "address": "0x10115a",
+          "bytes": "4889c5",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x10115d",
+          "bytes": "e82e020000",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101390", "space": "ram"}, "text": "node_new"}]
+        },
+        {
+          "address": "0x101162",
+          "bytes": "48896828",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RBP"}
+          ]
+        },
+        {
+          "address": "0x101166",
+          "bytes": "4889c3",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x101169",
+          "bytes": "488d442410",
+          "comment": "Unresolved local var: uint i@[???]",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10116e",
+          "bytes": "488d2dab0e0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RBP"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102020", "space": "ram"}, "text": "s_#%d_%-6s_(%d,%d)_%.1f_00102020"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101175",
+          "bytes": "4889442408",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RAX"}
+          ]
+        },
+        {
+          "address": "0x10117a",
+          "bytes": "498b3424",
+          "flow": "fallthrough",
+          "labels": ["LAB_0010117a"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10117e",
+          "bytes": "488d3d960e0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x10201b", "space": "ram"}, "text": "DAT_0010201b"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101185",
+          "bytes": "31c0",
+          "flow": "fallthrough",
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EAX"}]
+        },
+        {
+          "address": "0x101187",
+          "bytes": "e8c4feffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101050", "space": "ram"}, "text": "printf"}]
+        },
+        {
+          "address": "0x10118c",
+          "bytes": "498b742408",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101191",
+          "bytes": "488b7c2408",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101196",
+          "bytes": "48895c2410",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RBX"}
+          ]
+        },
+        {
+          "address": "0x10119b",
+          "bytes": "44896c2418",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x18"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "R13D"}
+          ]
+        },
+        {
+          "address": "0x1011a0",
+          "bytes": "e87b020000",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101420", "space": "ram"}, "text": "list_sort"}]
+        },
+        {
+          "address": "0x1011a5",
+          "bytes": "488b5c2410",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011aa",
+          "bytes": "448b6c2418",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "R13D"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x18"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011af",
+          "bytes": "4885db",
+          "comment": "Unresolved local var: node * n@[???]",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1011b2",
+          "bytes": "7437",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1011eb", "space": "ram"}, "text": "LAB_001011eb"}]
+        },
+        {
+          "address": "0x1011b4",
+          "bytes": "4989de",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R14"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1011b7",
+          "bytes": "660f1f840000000000",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "*"},
+            {"kind": "immediate", "text": "0x1"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011c0",
+          "bytes": "f2410f104620",
+          "flow": "fallthrough",
+          "labels": ["LAB_001011c0"],
+          "mnemonic": "MOVSD",
+          "operands": [
+            {"kind": "register", "text": "XMM0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x20"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011c6",
+          "bytes": "418b36",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "ESI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011c9",
+          "bytes": "498d5604",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x4"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011cd",
+          "bytes": "4889ef",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RDI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBP"}]
+        },
+        {
+          "address": "0x1011d0",
+          "bytes": "418b4e14",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "ECX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x14"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011d4",
+          "bytes": "458b4618",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "R8D"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x18"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011d8",
+          "bytes": "b801000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x1011dd",
+          "bytes": "e86efeffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101050", "space": "ram"}, "text": "printf"}]
+        },
+        {
+          "address": "0x1011e2",
+          "bytes": "4d8b7628",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R14"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1011e6",
+          "bytes": "4d85f6",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "R14"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R14"}]
+        },
+        {
+          "address": "0x1011e9",
+          "bytes": "75d5",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1011c0", "space": "ram"}, "text": "LAB_001011c0"}]
+        },
+        {
+          "address": "0x1011eb",
+          "bytes": "4983c410",
+          "flow": "fallthrough",
+          "labels": ["LAB_001011eb"],
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "R12"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x10"}]
+        },
+        {
+          "address": "0x1011ef",
+          "bytes": "4d39e7",
+          "flow": "fallthrough",
+          "mnemonic": "CMP",
+          "operands": [{"kind": "register", "text": "R15"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R12"}]
+        },
+        {
+          "address": "0x1011f2",
+          "bytes": "7586",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x10117a", "space": "ram"}, "text": "LAB_0010117a"}]
+        },
+        {
+          "address": "0x1011f4",
+          "bytes": "4885db",
+          "comment": "Unresolved local var: node * n@[???]",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1011f7",
+          "bytes": "7459",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101252", "space": "ram"}, "text": "LAB_00101252"}]
+        },
+        {
+          "address": "0x1011f9",
+          "bytes": "4889d8",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1011fc",
+          "bytes": "660fefc0",
+          "flow": "fallthrough",
+          "mnemonic": "PXOR",
+          "operands": [{"kind": "register", "text": "XMM0"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "XMM0"}]
+        },
+        {
+          "address": "0x101200",
+          "bytes": "f20f584020",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101200"],
+          "mnemonic": "ADDSD",
+          "operands": [
+            {"kind": "register", "text": "XMM0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x20"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101205",
+          "bytes": "488b4028",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101209",
+          "bytes": "4885c0",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x10120c",
+          "bytes": "75f2",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101200", "space": "ram"}, "text": "LAB_00101200"}]
+        },
+        {
+          "address": "0x10120e",
+          "bytes": "4489ee",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ESI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R13D"}]
+        },
+        {
+          "address": "0x101211",
+          "bytes": "488d3d210e0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102039", "space": "ram"}, "text": "s_count=%d_total=%.2f_00102039"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101218",
+          "bytes": "b801000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x10121d",
+          "bytes": "e82efeffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101050", "space": "ram"}, "text": "printf"}]
+        },
+        {
+          "address": "0x101222",
+          "bytes": "66662e0f1f840000000000",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "CS"},
+            {"kind": "other", "text": ":"},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "*"},
+            {"kind": "immediate", "text": "0x1"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10122d",
+          "bytes": "0f1f00",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101230",
+          "bytes": "4889df",
+          "comment": "Unresolved local var: node * n@[???]",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101230"],
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RDI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x101233",
+          "bytes": "488b5b28",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x101237", "bytes": "e8f4fdffff", "flow": "call", "mnemonic": "CALL", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101030", "space": "ram"}, "text": "free"}]},
+        {
+          "address": "0x10123c",
+          "bytes": "4885db",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x10123f",
+          "bytes": "75ef",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101230", "space": "ram"}, "text": "LAB_00101230"}]
+        },
+        {
+          "address": "0x101241",
+          "bytes": "4883c428",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101241"],
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x28"}]
+        },
+        {
+          "address": "0x101245",
+          "bytes": "31c0",
+          "flow": "fallthrough",
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EAX"}]
+        },
+        {"address": "0x101247", "bytes": "5b", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBX"}]},
+        {"address": "0x101248", "bytes": "5d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x101249", "bytes": "415c", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R12"}]},
+        {"address": "0x10124b", "bytes": "415d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R13"}]},
+        {"address": "0x10124d", "bytes": "415e", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R14"}]},
+        {"address": "0x10124f", "bytes": "415f", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R15"}]},
+        {"address": "0x101251", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []},
+        {
+          "address": "0x101252",
+          "bytes": "660fefc0",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101252"],
+          "mnemonic": "PXOR",
+          "operands": [{"kind": "register", "text": "XMM0"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "XMM0"}]
+        },
+        {
+          "address": "0x101256",
+          "bytes": "4489ee",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ESI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R13D"}]
+        },
+        {
+          "address": "0x101259",
+          "bytes": "b801000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x10125e",
+          "bytes": "488d3dd40d0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x102039", "space": "ram"}, "text": "s_count=%d_total=%.2f_00102039"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101265",
+          "bytes": "e8e6fdffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101050", "space": "ram"}, "text": "printf"}]
+        },
+        {
+          "address": "0x10126a",
+          "bytes": "ebd5",
+          "flow": "jump",
+          "mnemonic": "JMP",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101241", "space": "ram"}, "text": "LAB_00101241"}]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "81988e65ac8e5b561c57556c093d0029cb5f0727437671a1d60c999a76df39d4",
@@ -734,9 +2441,59 @@
         "name": "main",
         "signature": "int main(void)",
         "size": 460
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x1010a0", "to_function": {"address": "0x1010a0", "name": "main"}},
+        {"from": "0x310", "kind": "data", "to": "0x1010a0", "to_function": {"address": "0x1010a0", "name": "main"}},
+        {"from": "0x1010ac", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102004"},
+        {"from": "0x1010c4", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x103da0"},
+        {"from": "0x1010cc", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x103dd0"},
+        {"from": "0x1010d6", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x102068"},
+        {"from": "0x1010de", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x1010e8", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x102070"},
+        {"from": "0x1010fd", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x10200a"},
+        {"from": "0x10110c", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x101111", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x102078"},
+        {"from": "0x101124", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102010"},
+        {"from": "0x101133", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x10113d", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x102080"},
+        {"from": "0x10114e", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102016"},
+        {"from": "0x10115d", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x10116e", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102020"},
+        {"from": "0x10117a", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x10204e"},
+        {"from": "0x10117a", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102054"},
+        {"from": "0x10117a", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x103da0"},
+        {"from": "0x10117a", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x103db0"},
+        {"from": "0x10117e", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x10201b"},
+        {"from": "0x101187", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x10118c", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x101360", "to_function": {"address": "0x101360", "name": "cmp_id"}},
+        {"from": "0x10118c", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "read", "to": "0x103da8"},
+        {"from": "0x1011a0", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101420", "to_function": {"address": "0x101420", "name": "list_sort"}},
+        {"from": "0x1011b2", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x1011eb"},
+        {"from": "0x1011cd", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102020"},
+        {"from": "0x1011dd", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x1011e9", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x1011c0"},
+        {"from": "0x1011f2", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x10117a"},
+        {"from": "0x1011f7", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x101252"},
+        {"from": "0x10120c", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x101200"},
+        {"from": "0x101211", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102039"},
+        {"from": "0x10121d", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x101237", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101030", "to_function": {"address": "0x101030", "name": "free"}},
+        {"from": "0x10123f", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x101230"},
+        {"from": "0x10125e", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x102039"},
+        {"from": "0x101265", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101050", "to_function": {"address": "0x101050", "name": "printf"}},
+        {"from": "0x10126a", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "jump", "to": "0x101241"},
+        {"from": "0x101284", "from_function": {"address": "0x101270", "name": "_start"}, "kind": "data", "to": "0x1010a0", "to_function": {"address": "0x1010a0", "name": "main"}},
+        {"from": "0x1020a4", "kind": "other", "to": "0x1010a0", "to_function": {"address": "0x1010a0", "name": "main"}},
+        {"from": "0x102290", "kind": "data", "to": "0x1010a0", "to_function": {"address": "0x1010a0", "name": "main"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [{"end": "0x101291", "instructions": 11, "start": "0x101270"}, {"end": "0x101292", "instructions": 1, "start": "0x101291"}],
+        "edges": [{"from": "0x101270", "kind": "fallthrough", "to": "0x101291"}],
+        "function": "0x101270"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101270", "space": "ram"},
@@ -783,6 +2540,89 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101270",
+          "bytes": "31ed",
+          "flow": "fallthrough",
+          "labels": ["_start"],
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "EBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EBP"}]
+        },
+        {
+          "address": "0x101272",
+          "bytes": "4989d1",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R9"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RDX"}]
+        },
+        {"address": "0x101275", "bytes": "5e", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RSI"}]},
+        {
+          "address": "0x101276",
+          "bytes": "4889e2",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RDX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RSP"}]
+        },
+        {
+          "address": "0x101279",
+          "bytes": "4883e4f0",
+          "flow": "fallthrough",
+          "mnemonic": "AND",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "-0x10"}]
+        },
+        {"address": "0x10127d", "bytes": "50", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RAX"}]},
+        {"address": "0x10127e", "bytes": "54", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RSP"}]},
+        {
+          "address": "0x10127f",
+          "bytes": "4531c0",
+          "flow": "fallthrough",
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "R8D"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R8D"}]
+        },
+        {
+          "address": "0x101282",
+          "bytes": "31c9",
+          "flow": "fallthrough",
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "ECX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "ECX"}]
+        },
+        {
+          "address": "0x101284",
+          "bytes": "488d3d15feffff",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x1010a0", "space": "ram"}, "text": "main"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10128b",
+          "bytes": "ff151f2d0000",
+          "flow": "indirect",
+          "mnemonic": "CALL",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103fb0", "space": "ram"}, "text": "PTR___libc_start_main_00103fb0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x101291", "bytes": "f4", "flow": "return", "mnemonic": "HLT", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "0a4ff74ddd39e3cf8bd7ea35d154303713bbfa14cdd30247c00a0f29a9cbf487",
@@ -790,9 +2630,33 @@
         "name": "_start",
         "signature": "undefined _start(undefined8 param_1, undefined8 param_2)",
         "size": 34
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x101270", "to_function": {"address": "0x101270", "name": "_start"}},
+        {"from": "0x100018", "kind": "data", "to": "0x101270", "to_function": {"address": "0x101270", "name": "_start"}},
+        {"from": "0x101284", "from_function": {"address": "0x101270", "name": "_start"}, "kind": "data", "to": "0x1010a0", "to_function": {"address": "0x1010a0", "name": "main"}},
+        {"from": "0x10128b", "from_function": {"address": "0x101270", "name": "_start"}, "kind": "read", "to": "0x103fb0"},
+        {"from": "0x10128b", "from_function": {"address": "0x101270", "name": "_start"}, "kind": "call", "to": "0x105008", "to_function": {"address": "0x105008", "name": "__libc_start_main"}},
+        {"from": "0x1020ac", "kind": "other", "to": "0x101270", "to_function": {"address": "0x101270", "name": "_start"}},
+        {"from": "0x102110", "kind": "data", "to": "0x101270", "to_function": {"address": "0x101270", "name": "_start"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x1012b3", "instructions": 4, "start": "0x1012a0"},
+          {"end": "0x1012bf", "instructions": 3, "start": "0x1012b3"},
+          {"end": "0x1012c1", "instructions": 1, "start": "0x1012bf"},
+          {"end": "0x1012c9", "instructions": 1, "start": "0x1012c8"}
+        ],
+        "edges": [
+          {"from": "0x1012a0", "kind": "conditional_false", "to": "0x1012b3"},
+          {"from": "0x1012a0", "kind": "conditional_true", "to": "0x1012c8"},
+          {"from": "0x1012b3", "kind": "conditional_false", "to": "0x1012bf"},
+          {"from": "0x1012b3", "kind": "conditional_true", "to": "0x1012c8"}
+        ],
+        "function": "0x1012a0"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x1012a0", "space": "ram"},
@@ -820,6 +2684,88 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x1012a0",
+          "bytes": "488d3d992d0000",
+          "flow": "fallthrough",
+          "labels": ["deregister_tm_clones"],
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104040", "space": "ram"}, "text": "completed.0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1012a7",
+          "bytes": "488d05922d0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104040", "space": "ram"}, "text": "completed.0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1012ae",
+          "bytes": "4839f8",
+          "flow": "fallthrough",
+          "mnemonic": "CMP",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RDI"}]
+        },
+        {
+          "address": "0x1012b1",
+          "bytes": "7415",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1012c8", "space": "ram"}, "text": "LAB_001012c8"}]
+        },
+        {
+          "address": "0x1012b3",
+          "bytes": "488b05fe2c0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103fb8", "space": "ram"}, "text": "PTR__ITM_deregisterTMCloneTable_00103fb8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1012ba",
+          "bytes": "4885c0",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x1012bd",
+          "bytes": "7409",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1012c8", "space": "ram"}, "text": "LAB_001012c8"}]
+        },
+        {"address": "0x1012bf", "bytes": "ffe0", "flow": "indirect", "mnemonic": "JMP", "operands": [{"kind": "register", "text": "RAX"}]},
+        {"address": "0x1012c8", "bytes": "c3", "flow": "return", "labels": ["LAB_001012c8"], "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "66773e15514614cd8a0d5cf01555de4b087f41c097f2b9e933694df2c8db7917",
@@ -827,9 +2773,52 @@
         "name": "deregister_tm_clones",
         "signature": "undefined deregister_tm_clones(void)",
         "size": 34
-      }
+      },
+      "xrefs": [
+        {"from": "0x1012a0", "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}, "kind": "data", "to": "0x104040"},
+        {"from": "0x1012a7", "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}, "kind": "data", "to": "0x104040"},
+        {"from": "0x1012b1", "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}, "kind": "jump", "to": "0x1012c8"},
+        {"from": "0x1012b3", "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}, "kind": "read", "to": "0x103fb8"},
+        {
+          "from": "0x1012b3",
+          "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"},
+          "kind": "data",
+          "to": "0x105018",
+          "to_function": {"address": "0x105018", "name": "_ITM_deregisterTMCloneTable"}
+        },
+        {"from": "0x1012bd", "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}, "kind": "jump", "to": "0x1012c8"},
+        {
+          "from": "0x1012bf",
+          "from_function": {"address": "0x1012a0", "name": "deregister_tm_clones"},
+          "kind": "call",
+          "to": "0x105018",
+          "to_function": {"address": "0x105018", "name": "_ITM_deregisterTMCloneTable"}
+        },
+        {
+          "from": "0x101337",
+          "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"},
+          "kind": "call",
+          "to": "0x1012a0",
+          "to_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}
+        }
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x1012f4", "instructions": 9, "start": "0x1012d0"},
+          {"end": "0x101300", "instructions": 3, "start": "0x1012f4"},
+          {"end": "0x101302", "instructions": 1, "start": "0x101300"},
+          {"end": "0x101309", "instructions": 1, "start": "0x101308"}
+        ],
+        "edges": [
+          {"from": "0x1012d0", "kind": "conditional_false", "to": "0x1012f4"},
+          {"from": "0x1012d0", "kind": "conditional_true", "to": "0x101308"},
+          {"from": "0x1012f4", "kind": "conditional_false", "to": "0x101300"},
+          {"from": "0x1012f4", "kind": "conditional_true", "to": "0x101308"}
+        ],
+        "function": "0x1012d0"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x1012d0", "space": "ram"},
@@ -857,6 +2846,123 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x1012d0",
+          "bytes": "488d3d692d0000",
+          "flow": "fallthrough",
+          "labels": ["register_tm_clones"],
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104040", "space": "ram"}, "text": "completed.0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1012d7",
+          "bytes": "488d35622d0000",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104040", "space": "ram"}, "text": "completed.0"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1012de",
+          "bytes": "4829fe",
+          "flow": "fallthrough",
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RDI"}]
+        },
+        {
+          "address": "0x1012e1",
+          "bytes": "4889f0",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RSI"}]
+        },
+        {
+          "address": "0x1012e4",
+          "bytes": "48c1ee3f",
+          "flow": "fallthrough",
+          "mnemonic": "SHR",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x3f"}]
+        },
+        {
+          "address": "0x1012e8",
+          "bytes": "48c1f803",
+          "flow": "fallthrough",
+          "mnemonic": "SAR",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x3"}]
+        },
+        {
+          "address": "0x1012ec",
+          "bytes": "4801c6",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x1012ef",
+          "bytes": "48d1fe",
+          "flow": "fallthrough",
+          "mnemonic": "SAR",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x1012f2",
+          "bytes": "7414",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101308", "space": "ram"}, "text": "LAB_00101308"}]
+        },
+        {
+          "address": "0x1012f4",
+          "bytes": "488b05cd2c0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103fc8", "space": "ram"}, "text": "PTR__ITM_registerTMCloneTable_00103fc8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1012fb",
+          "bytes": "4885c0",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x1012fe",
+          "bytes": "7408",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101308", "space": "ram"}, "text": "LAB_00101308"}]
+        },
+        {"address": "0x101300", "bytes": "ffe0", "flow": "indirect", "mnemonic": "JMP", "operands": [{"kind": "register", "text": "RAX"}]},
+        {"address": "0x101308", "bytes": "c3", "flow": "return", "labels": ["LAB_00101308"], "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "a2684b7ec5406c5f3df75f2c2734e00ac1ca0362ad8b5d55a5741f58398267ab",
@@ -864,9 +2970,50 @@
         "name": "register_tm_clones",
         "signature": "undefined register_tm_clones(void)",
         "size": 51
-      }
+      },
+      "xrefs": [
+        {"from": "0x1012d0", "from_function": {"address": "0x1012d0", "name": "register_tm_clones"}, "kind": "data", "to": "0x104040"},
+        {"from": "0x1012d7", "from_function": {"address": "0x1012d0", "name": "register_tm_clones"}, "kind": "data", "to": "0x104040"},
+        {"from": "0x1012f2", "from_function": {"address": "0x1012d0", "name": "register_tm_clones"}, "kind": "jump", "to": "0x101308"},
+        {"from": "0x1012f4", "from_function": {"address": "0x1012d0", "name": "register_tm_clones"}, "kind": "read", "to": "0x103fc8"},
+        {
+          "from": "0x1012f4",
+          "from_function": {"address": "0x1012d0", "name": "register_tm_clones"},
+          "kind": "data",
+          "to": "0x105048",
+          "to_function": {"address": "0x105048", "name": "_ITM_registerTMCloneTable"}
+        },
+        {"from": "0x1012fe", "from_function": {"address": "0x1012d0", "name": "register_tm_clones"}, "kind": "jump", "to": "0x101308"},
+        {
+          "from": "0x101300",
+          "from_function": {"address": "0x1012d0", "name": "register_tm_clones"},
+          "kind": "call",
+          "to": "0x105048",
+          "to_function": {"address": "0x105048", "name": "_ITM_registerTMCloneTable"}
+        },
+        {"from": "0x101354", "from_function": {"address": "0x101350", "name": "frame_dummy"}, "kind": "call", "to": "0x1012d0", "to_function": {"address": "0x1012d0", "name": "register_tm_clones"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x10131d", "instructions": 3, "start": "0x101310"},
+          {"end": "0x10132b", "instructions": 4, "start": "0x10131d"},
+          {"end": "0x101337", "instructions": 2, "start": "0x10132b"},
+          {"end": "0x10133c", "instructions": 1, "start": "0x101337"},
+          {"end": "0x101345", "instructions": 3, "start": "0x10133c"},
+          {"end": "0x101349", "instructions": 1, "start": "0x101348"}
+        ],
+        "edges": [
+          {"from": "0x101310", "kind": "conditional_false", "to": "0x10131d"},
+          {"from": "0x101310", "kind": "conditional_true", "to": "0x101348"},
+          {"from": "0x10131d", "kind": "conditional_false", "to": "0x10132b"},
+          {"from": "0x10131d", "kind": "conditional_true", "to": "0x101337"},
+          {"from": "0x10132b", "kind": "fallthrough", "to": "0x101337"},
+          {"from": "0x101337", "kind": "fallthrough", "to": "0x10133c"}
+        ],
+        "function": "0x101310"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101310", "space": "ram"},
@@ -891,6 +3038,139 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {"address": "0x101310", "bytes": "f30f1efa", "flow": "fallthrough", "labels": ["__do_global_dtors_aux"], "mnemonic": "ENDBR64", "operands": []},
+        {
+          "address": "0x101314",
+          "bytes": "803d252d000000",
+          "flow": "fallthrough",
+          "mnemonic": "CMP",
+          "operands": [
+            {"kind": "other", "text": "b"},
+            {"kind": "other", "text": "y"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "e"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104040", "space": "ram"}, "text": "completed.0"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "immediate", "text": "0x0"}
+          ]
+        },
+        {
+          "address": "0x10131b",
+          "bytes": "752b",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101348", "space": "ram"}, "text": "LAB_00101348"}]
+        },
+        {"address": "0x10131d", "bytes": "55", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBP"}]},
+        {
+          "address": "0x10131e",
+          "bytes": "48833daa2c000000",
+          "flow": "fallthrough",
+          "mnemonic": "CMP",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x103fd0", "space": "ram"}, "text": "PTR___cxa_finalize_00103fd0"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "immediate", "text": "0x0"}
+          ]
+        },
+        {
+          "address": "0x101326",
+          "bytes": "4889e5",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RSP"}]
+        },
+        {
+          "address": "0x101329",
+          "bytes": "740c",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101337", "space": "ram"}, "text": "LAB_00101337"}]
+        },
+        {
+          "address": "0x10132b",
+          "bytes": "488b3d062d0000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104038", "space": "ram"}, "text": "__dso_handle"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101332",
+          "bytes": "e859fdffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101090", "space": "ram"}, "text": "__cxa_finalize"}]
+        },
+        {
+          "address": "0x101337",
+          "bytes": "e864ffffff",
+          "flow": "call",
+          "labels": ["LAB_00101337"],
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1012a0", "space": "ram"}, "text": "deregister_tm_clones"}]
+        },
+        {
+          "address": "0x10133c",
+          "bytes": "c605fd2c000001",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "b"},
+            {"kind": "other", "text": "y"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "e"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x104040", "space": "ram"}, "text": "completed.0"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "immediate", "text": "0x1"}
+          ]
+        },
+        {"address": "0x101343", "bytes": "5d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x101344", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []},
+        {"address": "0x101348", "bytes": "c3", "flow": "return", "labels": ["LAB_00101348"], "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "c4faf2e7cfbe74ff208f9f1a7c6ee3838a9dedb047befd8421012faccae15c6f",
@@ -898,9 +3178,28 @@
         "name": "__do_global_dtors_aux",
         "signature": "undefined __do_global_dtors_aux(void)",
         "size": 54
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x101310", "to_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}},
+        {"from": "0x101314", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "read", "to": "0x104040"},
+        {"from": "0x10131b", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "jump", "to": "0x101348"},
+        {"from": "0x10131e", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "read", "to": "0x103fd0"},
+        {"from": "0x101329", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "jump", "to": "0x101337"},
+        {"from": "0x10132b", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "read", "to": "0x104038"},
+        {"from": "0x101332", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "call", "to": "0x101090", "to_function": {"address": "0x101090", "name": "__cxa_finalize"}},
+        {
+          "from": "0x101337",
+          "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"},
+          "kind": "call",
+          "to": "0x1012a0",
+          "to_function": {"address": "0x1012a0", "name": "deregister_tm_clones"}
+        },
+        {"from": "0x10133c", "from_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}, "kind": "write", "to": "0x104040"},
+        {"from": "0x103d98", "kind": "data", "to": "0x101310", "to_function": {"address": "0x101310", "name": "__do_global_dtors_aux"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101359", "instructions": 2, "start": "0x101350"}], "edges": [], "function": "0x101350"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101350", "space": "ram"},
@@ -915,6 +3214,16 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {"address": "0x101350", "bytes": "f30f1efa", "flow": "fallthrough", "labels": ["frame_dummy"], "mnemonic": "ENDBR64", "operands": []},
+        {
+          "address": "0x101354",
+          "bytes": "e977ffffff",
+          "flow": "call",
+          "mnemonic": "JMP",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1012d0", "space": "ram"}, "text": "register_tm_clones"}]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "a146f398ed239efabd0b8b857bac5f815f8a41638d98f39c5b47848ac2fed14a",
@@ -922,9 +3231,15 @@
         "name": "frame_dummy",
         "signature": "undefined frame_dummy(void)",
         "size": 9
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x101350", "to_function": {"address": "0x101350", "name": "frame_dummy"}},
+        {"from": "0x101354", "from_function": {"address": "0x101350", "name": "frame_dummy"}, "kind": "call", "to": "0x1012d0", "to_function": {"address": "0x1012d0", "name": "register_tm_clones"}},
+        {"from": "0x103d90", "kind": "data", "to": "0x101350", "to_function": {"address": "0x101350", "name": "frame_dummy"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101365", "instructions": 3, "start": "0x101360"}], "edges": [], "function": "0x101360"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101360", "space": "ram"},
@@ -950,6 +3265,56 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101360",
+          "bytes": "8b07",
+          "flow": "fallthrough",
+          "labels": ["cmp_id"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "EAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101362",
+          "bytes": "2b06",
+          "flow": "fallthrough",
+          "mnemonic": "SUB",
+          "operands": [
+            {"kind": "register", "text": "EAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x101364", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "f3429794e67585b75e7dc660c88593fbe25483cf4cc8c93ab6dd5900fbc3e370",
@@ -957,9 +3322,16 @@
         "name": "cmp_id",
         "signature": "int cmp_id(record * a, record * b)",
         "size": 5
-      }
+      },
+      "xrefs": [
+        {"from": "0x10118c", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "data", "to": "0x101360", "to_function": {"address": "0x101360", "name": "cmp_id"}},
+        {"from": "0x1020b4", "kind": "other", "to": "0x101360", "to_function": {"address": "0x101360", "name": "cmp_id"}},
+        {"from": "0x102180", "kind": "data", "to": "0x101360", "to_function": {"address": "0x101360", "name": "cmp_id"}},
+        {"from": "0x103da8", "kind": "data", "to": "0x101360", "to_function": {"address": "0x101360", "name": "cmp_id"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x10138f", "instructions": 12, "start": "0x101370"}], "edges": [], "function": "0x101370"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101370", "space": "ram"},
@@ -1041,6 +3413,168 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101370",
+          "bytes": "8b4714",
+          "comment": "Unresolved local var: int da@[???]\nUnresolved local var: int db@[???]",
+          "flow": "fallthrough",
+          "labels": ["cmp_dist"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "EAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x14"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101373",
+          "bytes": "8b5614",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "EDX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x14"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101376",
+          "bytes": "8b7f18",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "EDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x18"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101379",
+          "bytes": "8b4e18",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "ECX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x18"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10137c",
+          "bytes": "0fafc0",
+          "flow": "fallthrough",
+          "mnemonic": "IMUL",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EAX"}]
+        },
+        {
+          "address": "0x10137f",
+          "bytes": "0fafff",
+          "flow": "fallthrough",
+          "mnemonic": "IMUL",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDI"}]
+        },
+        {
+          "address": "0x101382",
+          "bytes": "0fafd2",
+          "flow": "fallthrough",
+          "mnemonic": "IMUL",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDX"}]
+        },
+        {
+          "address": "0x101385",
+          "bytes": "0fafc9",
+          "flow": "fallthrough",
+          "mnemonic": "IMUL",
+          "operands": [{"kind": "register", "text": "ECX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "ECX"}]
+        },
+        {
+          "address": "0x101388",
+          "bytes": "01f8",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDI"}]
+        },
+        {
+          "address": "0x10138a",
+          "bytes": "01ca",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "ECX"}]
+        },
+        {
+          "address": "0x10138c",
+          "bytes": "29d0",
+          "flow": "fallthrough",
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDX"}]
+        },
+        {"address": "0x10138e", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "ea714ee84a03a0cbaadd8ce41b83e7e1a15907c57cbcc00bf1650c32d4164b0f",
@@ -1048,9 +3582,30 @@
         "name": "cmp_dist",
         "signature": "int cmp_dist(record * a, record * b)",
         "size": 31
-      }
+      },
+      "xrefs": [
+        {"from": "0x1020bc", "kind": "other", "to": "0x101370", "to_function": {"address": "0x101370", "name": "cmp_dist"}},
+        {"from": "0x102194", "kind": "data", "to": "0x101370", "to_function": {"address": "0x101370", "name": "cmp_dist"}},
+        {"from": "0x103dc8", "kind": "data", "to": "0x101370", "to_function": {"address": "0x101370", "name": "cmp_dist"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x1013bd", "instructions": 15, "start": "0x101390"},
+          {"end": "0x1013c2", "instructions": 2, "start": "0x1013bd"},
+          {"end": "0x1013d9", "instructions": 6, "start": "0x1013c2"},
+          {"end": "0x1013f6", "instructions": 12, "start": "0x1013d9"},
+          {"end": "0x101400", "instructions": 2, "start": "0x1013f6"}
+        ],
+        "edges": [
+          {"from": "0x101390", "kind": "fallthrough", "to": "0x1013bd"},
+          {"from": "0x1013bd", "kind": "conditional_false", "to": "0x1013c2"},
+          {"from": "0x1013bd", "kind": "conditional_true", "to": "0x1013f6"},
+          {"from": "0x1013c2", "kind": "fallthrough", "to": "0x1013d9"}
+        ],
+        "function": "0x101390"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101390", "space": "ram"},
@@ -1150,6 +3705,278 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101390",
+          "bytes": "4157",
+          "comment": "Unresolved local var: node * n@[???]",
+          "flow": "fallthrough",
+          "labels": ["node_new"],
+          "mnemonic": "PUSH",
+          "operands": [{"kind": "register", "text": "R15"}]
+        },
+        {
+          "address": "0x101392",
+          "bytes": "66490f7ec7",
+          "flow": "fallthrough",
+          "mnemonic": "MOVQ",
+          "operands": [{"kind": "register", "text": "R15"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "XMM0"}]
+        },
+        {"address": "0x101397", "bytes": "4156", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R14"}]},
+        {
+          "address": "0x101399",
+          "bytes": "4189fe",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R14D"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDI"}]
+        },
+        {
+          "address": "0x10139c",
+          "bytes": "bf01000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {"address": "0x1013a1", "bytes": "4155", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R13"}]},
+        {
+          "address": "0x1013a3",
+          "bytes": "4989f5",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R13"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RSI"}]
+        },
+        {
+          "address": "0x1013a6",
+          "bytes": "be30000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "ESI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x30"}]
+        },
+        {"address": "0x1013ab", "bytes": "4154", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R12"}]},
+        {
+          "address": "0x1013ad",
+          "bytes": "4189d4",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R12D"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EDX"}]
+        },
+        {"address": "0x1013b0", "bytes": "55", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBP"}]},
+        {
+          "address": "0x1013b1",
+          "bytes": "89cd",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "ECX"}]
+        },
+        {"address": "0x1013b3", "bytes": "53", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBX"}]},
+        {
+          "address": "0x1013b4",
+          "bytes": "4883ec08",
+          "flow": "fallthrough",
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {
+          "address": "0x1013b8",
+          "bytes": "e8a3fcffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101060", "space": "ram"}, "text": "calloc"}]
+        },
+        {
+          "address": "0x1013bd",
+          "bytes": "4885c0",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x1013c0",
+          "bytes": "7434",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1013f6", "space": "ram"}, "text": "LAB_001013f6"}]
+        },
+        {
+          "address": "0x1013c2",
+          "bytes": "448930",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "R14D"}
+          ]
+        },
+        {
+          "address": "0x1013c5",
+          "bytes": "4889c3",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RAX"}]
+        },
+        {
+          "address": "0x1013c8",
+          "bytes": "4c89ee",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R13"}]
+        },
+        {
+          "address": "0x1013cb",
+          "bytes": "488d7804",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x4"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1013cf",
+          "bytes": "ba0f000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDX"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0xf"}]
+        },
+        {
+          "address": "0x1013d4",
+          "bytes": "e867fcffff",
+          "flow": "call",
+          "mnemonic": "CALL",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101040", "space": "ram"}, "text": "strncpy"}]
+        },
+        {
+          "address": "0x1013d9",
+          "bytes": "44896314",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x14"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "R12D"}
+          ]
+        },
+        {
+          "address": "0x1013dd",
+          "bytes": "4889d8",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1013e0",
+          "bytes": "896b18",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x18"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "EBP"}
+          ]
+        },
+        {
+          "address": "0x1013e3",
+          "bytes": "4c897b20",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x20"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "R15"}
+          ]
+        },
+        {
+          "address": "0x1013e7",
+          "bytes": "4883c408",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {"address": "0x1013eb", "bytes": "5b", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBX"}]},
+        {"address": "0x1013ec", "bytes": "5d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x1013ed", "bytes": "415c", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R12"}]},
+        {"address": "0x1013ef", "bytes": "415d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R13"}]},
+        {"address": "0x1013f1", "bytes": "415e", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R14"}]},
+        {"address": "0x1013f3", "bytes": "415f", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R15"}]},
+        {"address": "0x1013f5", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []},
+        {
+          "address": "0x1013f6",
+          "bytes": "bf03000000",
+          "flow": "fallthrough",
+          "labels": ["LAB_001013f6"],
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "EDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x3"}]
+        },
+        {"address": "0x1013fb", "bytes": "e880fcffff", "flow": "call", "mnemonic": "CALL", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101080", "space": "ram"}, "text": "exit"}]}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "1283ffac26f3f83b3a479b617704916761547816941b18fb34d153738374a611",
@@ -1157,9 +3984,22 @@
         "name": "node_new",
         "signature": "node * node_new(int id, char * name, int x, int y, double w)",
         "size": 112
-      }
+      },
+      "xrefs": [
+        {"from": "0x1010de", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x10110c", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x101133", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x10115d", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x1013b8", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "call", "to": "0x101060", "to_function": {"address": "0x101060", "name": "calloc"}},
+        {"from": "0x1013c0", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "jump", "to": "0x1013f6"},
+        {"from": "0x1013d4", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "call", "to": "0x101040", "to_function": {"address": "0x101040", "name": "strncpy"}},
+        {"from": "0x1013fb", "from_function": {"address": "0x101390", "name": "node_new"}, "kind": "call", "to": "0x101080", "to_function": {"address": "0x101080", "name": "exit"}},
+        {"from": "0x1020c4", "kind": "other", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}},
+        {"from": "0x1021a8", "kind": "data", "to": "0x101390", "to_function": {"address": "0x101390", "name": "node_new"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x10140d", "instructions": 3, "start": "0x101400"}], "edges": [], "function": "0x101400"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101400", "space": "ram"},
@@ -1191,6 +4031,30 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101400",
+          "bytes": "4883c604",
+          "flow": "fallthrough",
+          "labels": ["cmp_name"],
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x4"}]
+        },
+        {
+          "address": "0x101404",
+          "bytes": "4883c704",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RDI"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x4"}]
+        },
+        {
+          "address": "0x101408",
+          "bytes": "e963fcffff",
+          "flow": "call",
+          "mnemonic": "JMP",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101070", "space": "ram"}, "text": "strcmp"}]
+        }
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "3af6897775573fd21b3c7f6b2d58787b09714228f8a8a74828980a88870d04dd",
@@ -1198,9 +4062,16 @@
         "name": "cmp_name",
         "signature": "int cmp_name(record * a, record * b)",
         "size": 13
-      }
+      },
+      "xrefs": [
+        {"from": "0x101408", "from_function": {"address": "0x101400", "name": "cmp_name"}, "kind": "call", "to": "0x101070", "to_function": {"address": "0x101070", "name": "strcmp"}},
+        {"from": "0x1020cc", "kind": "other", "to": "0x101400", "to_function": {"address": "0x101400", "name": "cmp_name"}},
+        {"from": "0x1021f4", "kind": "data", "to": "0x101400", "to_function": {"address": "0x101400", "name": "cmp_name"}},
+        {"from": "0x103db8", "kind": "data", "to": "0x101400", "to_function": {"address": "0x101400", "name": "cmp_name"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x10141f", "instructions": 5, "start": "0x101410"}], "edges": [], "function": "0x101410"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101410", "space": "ram"},
@@ -1240,6 +4111,110 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101410",
+          "bytes": "488b07",
+          "flow": "fallthrough",
+          "labels": ["list_push"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101413",
+          "bytes": "48894628",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RSI"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RAX"}
+          ]
+        },
+        {
+          "address": "0x101417",
+          "bytes": "83470801",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "immediate", "text": "0x1"}
+          ]
+        },
+        {
+          "address": "0x10141b",
+          "bytes": "488937",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RSI"}
+          ]
+        },
+        {"address": "0x10141e", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "09c87262d229fe46c0358d885c9421c0b1aa561e56c7cd535f4ec2172ab743f3",
@@ -1247,9 +4222,48 @@
         "name": "list_push",
         "signature": "void list_push(list * l, node * n)",
         "size": 15
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x101410", "to_function": {"address": "0x101410", "name": "list_push"}},
+        {"from": "0x1020d4", "kind": "other", "to": "0x101410", "to_function": {"address": "0x101410", "name": "list_push"}},
+        {"from": "0x102208", "kind": "data", "to": "0x101410", "to_function": {"address": "0x101410", "name": "list_push"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x101440", "instructions": 11, "start": "0x101420"},
+          {"end": "0x10144b", "instructions": 4, "start": "0x101440"},
+          {"end": "0x101450", "instructions": 2, "start": "0x10144b"},
+          {"end": "0x101473", "instructions": 9, "start": "0x101450"},
+          {"end": "0x10147c", "instructions": 3, "start": "0x101473"},
+          {"end": "0x101485", "instructions": 3, "start": "0x10147c"},
+          {"end": "0x101489", "instructions": 2, "start": "0x101485"},
+          {"end": "0x10149a", "instructions": 5, "start": "0x101489"},
+          {"end": "0x1014a0", "instructions": 1, "start": "0x10149a"},
+          {"end": "0x1014a5", "instructions": 2, "start": "0x1014a0"},
+          {"end": "0x1014b4", "instructions": 8, "start": "0x1014a5"}
+        ],
+        "edges": [
+          {"from": "0x101420", "kind": "fallthrough", "to": "0x101440"},
+          {"from": "0x101440", "kind": "conditional_false", "to": "0x10144b"},
+          {"from": "0x101440", "kind": "conditional_true", "to": "0x1014a5"},
+          {"from": "0x10144b", "kind": "jump", "to": "0x101473"},
+          {"from": "0x101450", "kind": "conditional_false", "to": "0x101473"},
+          {"from": "0x101450", "kind": "conditional_true", "to": "0x1014a0"},
+          {"from": "0x101473", "kind": "conditional_false", "to": "0x10147c"},
+          {"from": "0x101473", "kind": "conditional_true", "to": "0x1014a0"},
+          {"from": "0x10147c", "kind": "fallthrough", "to": "0x101485"},
+          {"from": "0x101485", "kind": "conditional_true", "to": "0x101450"},
+          {"from": "0x101485", "kind": "conditional_false", "to": "0x101489"},
+          {"from": "0x101489", "kind": "conditional_true", "to": "0x101473"},
+          {"from": "0x101489", "kind": "conditional_false", "to": "0x10149a"},
+          {"from": "0x10149a", "kind": "fallthrough", "to": "0x1014a0"},
+          {"from": "0x1014a0", "kind": "conditional_true", "to": "0x101440"},
+          {"from": "0x1014a0", "kind": "conditional_false", "to": "0x1014a5"}
+        ],
+        "function": "0x101420"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x101420", "space": "ram"},
@@ -1434,6 +4448,512 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x101420",
+          "bytes": "4157",
+          "comment": "Unresolved local var: int swapped@[???]",
+          "flow": "fallthrough",
+          "labels": ["list_sort"],
+          "mnemonic": "PUSH",
+          "operands": [{"kind": "register", "text": "R15"}]
+        },
+        {
+          "address": "0x101422",
+          "bytes": "4989ff",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R15"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RDI"}]
+        },
+        {"address": "0x101425", "bytes": "4156", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R14"}]},
+        {"address": "0x101427", "bytes": "4155", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R13"}]},
+        {
+          "address": "0x101429",
+          "bytes": "4989f5",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R13"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RSI"}]
+        },
+        {"address": "0x10142c", "bytes": "4154", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "R12"}]},
+        {"address": "0x10142e", "bytes": "55", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x10142f", "bytes": "53", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBX"}]},
+        {
+          "address": "0x101430",
+          "bytes": "4883ec08",
+          "flow": "fallthrough",
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {
+          "address": "0x101434",
+          "bytes": "66662e0f1f840000000000",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "CS"},
+            {"kind": "other", "text": ":"},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "*"},
+            {"kind": "immediate", "text": "0x1"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x10143f", "bytes": "90", "flow": "fallthrough", "mnemonic": "NOP", "operands": []},
+        {
+          "address": "0x101440",
+          "bytes": "498b2f",
+          "comment": "Unresolved local var: node * * pp@[???]",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101440"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBP"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R15"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101443",
+          "bytes": "4d89fc",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R12"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R15"}]
+        },
+        {
+          "address": "0x101446",
+          "bytes": "4885ed",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBP"}]
+        },
+        {
+          "address": "0x101449",
+          "bytes": "745a",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1014a5", "space": "ram"}, "text": "LAB_001014a5"}]
+        },
+        {
+          "address": "0x10144b",
+          "bytes": "4531f6",
+          "flow": "fallthrough",
+          "mnemonic": "XOR",
+          "operands": [{"kind": "register", "text": "R14D"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R14D"}]
+        },
+        {
+          "address": "0x10144e",
+          "bytes": "eb23",
+          "flow": "jump",
+          "mnemonic": "JMP",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101473", "space": "ram"}, "text": "LAB_00101473"}]
+        },
+        {
+          "address": "0x101450",
+          "bytes": "488b4328",
+          "comment": "Unresolved local var: node * a@[???]\nUnresolved local var: node * b@[???]",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101450"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101454",
+          "bytes": "41be01000000",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R14D"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x1"}]
+        },
+        {
+          "address": "0x10145a",
+          "bytes": "48894528",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RAX"}
+          ]
+        },
+        {
+          "address": "0x10145e",
+          "bytes": "48896b28",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RBP"}
+          ]
+        },
+        {
+          "address": "0x101462",
+          "bytes": "49891c24",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": "]"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "RBX"}
+          ]
+        },
+        {
+          "address": "0x101466",
+          "bytes": "488b6b28",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBP"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10146a",
+          "bytes": "4c8d6328",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10146e",
+          "bytes": "4885ed",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBP"}]
+        },
+        {
+          "address": "0x101471",
+          "bytes": "742d",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1014a0", "space": "ram"}, "text": "LAB_001014a0"}]
+        },
+        {
+          "address": "0x101473",
+          "bytes": "488b5d28",
+          "flow": "fallthrough",
+          "labels": ["LAB_00101473"],
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBP"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101477",
+          "bytes": "4885db",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x10147a",
+          "bytes": "7424",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1014a0", "space": "ram"}, "text": "LAB_001014a0"}]
+        },
+        {
+          "address": "0x10147c",
+          "bytes": "4889de",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x10147f",
+          "bytes": "4889ef",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RDI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBP"}]
+        },
+        {"address": "0x101482", "bytes": "41ffd5", "flow": "indirect", "mnemonic": "CALL", "operands": [{"kind": "register", "text": "R13"}]},
+        {
+          "address": "0x101485",
+          "bytes": "85c0",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "EAX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "EAX"}]
+        },
+        {
+          "address": "0x101487",
+          "bytes": "7fc7",
+          "flow": "conditional_jump",
+          "mnemonic": "JG",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101450", "space": "ram"}, "text": "LAB_00101450"}]
+        },
+        {
+          "address": "0x101489",
+          "bytes": "498b1c24",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x10148d",
+          "bytes": "488b6b28",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBP"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101491",
+          "bytes": "4c8d6328",
+          "flow": "fallthrough",
+          "mnemonic": "LEA",
+          "operands": [
+            {"kind": "register", "text": "R12"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x101495",
+          "bytes": "4885ed",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBP"}]
+        },
+        {
+          "address": "0x101498",
+          "bytes": "75d9",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101473", "space": "ram"}, "text": "LAB_00101473"}]
+        },
+        {
+          "address": "0x10149a",
+          "bytes": "660f1f440000",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "*"},
+            {"kind": "immediate", "text": "0x1"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1014a0",
+          "bytes": "4585f6",
+          "flow": "fallthrough",
+          "labels": ["LAB_001014a0"],
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "R14D"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "R14D"}]
+        },
+        {
+          "address": "0x1014a3",
+          "bytes": "759b",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x101440", "space": "ram"}, "text": "LAB_00101440"}]
+        },
+        {
+          "address": "0x1014a5",
+          "bytes": "4883c408",
+          "flow": "fallthrough",
+          "labels": ["LAB_001014a5"],
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {"address": "0x1014a9", "bytes": "5b", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBX"}]},
+        {"address": "0x1014aa", "bytes": "5d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x1014ab", "bytes": "415c", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R12"}]},
+        {"address": "0x1014ad", "bytes": "415d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R13"}]},
+        {"address": "0x1014af", "bytes": "415e", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R14"}]},
+        {"address": "0x1014b1", "bytes": "415f", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R15"}]},
+        {"address": "0x1014b3", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "30f43ad39c549df0ab2671254a0d043489ac6caa106e254f59e4b36c3e044a8d",
@@ -1441,9 +4961,40 @@
         "name": "list_sort",
         "signature": "void list_sort(list * l, cmp_fn cmp)",
         "size": 148
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x101420", "to_function": {"address": "0x101420", "name": "list_sort"}},
+        {"from": "0x1011a0", "from_function": {"address": "0x1010a0", "name": "main"}, "kind": "call", "to": "0x101420", "to_function": {"address": "0x101420", "name": "list_sort"}},
+        {"from": "0x101449", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x1014a5"},
+        {"from": "0x10144e", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x101473"},
+        {"from": "0x101471", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x1014a0"},
+        {"from": "0x10147a", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x1014a0"},
+        {"from": "0x101487", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x101450"},
+        {"from": "0x101498", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x101473"},
+        {"from": "0x1014a3", "from_function": {"address": "0x101420", "name": "list_sort"}, "kind": "jump", "to": "0x101440"},
+        {"from": "0x1020dc", "kind": "other", "to": "0x101420", "to_function": {"address": "0x101420", "name": "list_sort"}},
+        {"from": "0x10221c", "kind": "data", "to": "0x101420", "to_function": {"address": "0x101420", "name": "list_sort"}}
+      ]
     },
     {
+      "cfg": {
+        "blocks": [
+          {"end": "0x1014cc", "instructions": 6, "start": "0x1014c0"},
+          {"end": "0x1014e0", "instructions": 4, "start": "0x1014cc"},
+          {"end": "0x1014e9", "instructions": 3, "start": "0x1014e0"},
+          {"end": "0x1014f2", "instructions": 3, "start": "0x1014e9"},
+          {"end": "0x1014f7", "instructions": 4, "start": "0x1014f2"}
+        ],
+        "edges": [
+          {"from": "0x1014c0", "kind": "conditional_false", "to": "0x1014cc"},
+          {"from": "0x1014c0", "kind": "conditional_true", "to": "0x1014f2"},
+          {"from": "0x1014cc", "kind": "fallthrough", "to": "0x1014e0"},
+          {"from": "0x1014e0", "kind": "fallthrough", "to": "0x1014e9"},
+          {"from": "0x1014e9", "kind": "conditional_true", "to": "0x1014e0"},
+          {"from": "0x1014e9", "kind": "conditional_false", "to": "0x1014f2"}
+        ],
+        "function": "0x1014c0"
+      },
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x1014c0", "space": "ram"},
@@ -1499,6 +5050,181 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x1014c0",
+          "bytes": "4154",
+          "comment": "Unresolved local var: node * n@[???]",
+          "flow": "fallthrough",
+          "labels": ["list_each"],
+          "mnemonic": "PUSH",
+          "operands": [{"kind": "register", "text": "R12"}]
+        },
+        {"address": "0x1014c2", "bytes": "55", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x1014c3", "bytes": "53", "flow": "fallthrough", "mnemonic": "PUSH", "operands": [{"kind": "register", "text": "RBX"}]},
+        {
+          "address": "0x1014c4",
+          "bytes": "488b1f",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RDI"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1014c7",
+          "bytes": "4885db",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1014ca",
+          "bytes": "7426",
+          "flow": "conditional_jump",
+          "mnemonic": "JZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1014f2", "space": "ram"}, "text": "LAB_001014f2"}]
+        },
+        {
+          "address": "0x1014cc",
+          "bytes": "4989f4",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "R12"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RSI"}]
+        },
+        {
+          "address": "0x1014cf",
+          "bytes": "4889d5",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RBP"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RDX"}]
+        },
+        {
+          "address": "0x1014d2",
+          "bytes": "66662e0f1f840000000000",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "CS"},
+            {"kind": "other", "text": ":"},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "*"},
+            {"kind": "immediate", "text": "0x1"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1014dd",
+          "bytes": "0f1f00",
+          "flow": "fallthrough",
+          "mnemonic": "NOP",
+          "operands": [
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RAX"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1014e0",
+          "bytes": "4889df",
+          "flow": "fallthrough",
+          "labels": ["LAB_001014e0"],
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RDI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1014e3",
+          "bytes": "4889ee",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [{"kind": "register", "text": "RSI"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBP"}]
+        },
+        {"address": "0x1014e6", "bytes": "41ffd4", "flow": "indirect", "mnemonic": "CALL", "operands": [{"kind": "register", "text": "R12"}]},
+        {
+          "address": "0x1014e9",
+          "bytes": "488b5b28",
+          "flow": "fallthrough",
+          "mnemonic": "MOV",
+          "operands": [
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "q"},
+            {"kind": "other", "text": "w"},
+            {"kind": "other", "text": "o"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": "d"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "p"},
+            {"kind": "other", "text": "t"},
+            {"kind": "other", "text": "r"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "RBX"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "+"},
+            {"kind": "other", "text": " "},
+            {"kind": "immediate", "text": "0x28"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x1014ed",
+          "bytes": "4885db",
+          "flow": "fallthrough",
+          "mnemonic": "TEST",
+          "operands": [{"kind": "register", "text": "RBX"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "RBX"}]
+        },
+        {
+          "address": "0x1014f0",
+          "bytes": "75ee",
+          "flow": "conditional_jump",
+          "mnemonic": "JNZ",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x1014e0", "space": "ram"}, "text": "LAB_001014e0"}]
+        },
+        {"address": "0x1014f2", "bytes": "5b", "flow": "fallthrough", "labels": ["LAB_001014f2"], "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBX"}]},
+        {"address": "0x1014f3", "bytes": "5d", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "RBP"}]},
+        {"address": "0x1014f4", "bytes": "415c", "flow": "fallthrough", "mnemonic": "POP", "operands": [{"kind": "register", "text": "R12"}]},
+        {"address": "0x1014f6", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "57d0a88fea683b17cba9af5591c5655be91c77e65e35466824b3f26a96e69cf2",
@@ -1506,9 +5232,17 @@
         "name": "list_each",
         "signature": "void list_each(list * l, visit_fn fn, void * ctx)",
         "size": 55
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x1014c0", "to_function": {"address": "0x1014c0", "name": "list_each"}},
+        {"from": "0x1014ca", "from_function": {"address": "0x1014c0", "name": "list_each"}, "kind": "jump", "to": "0x1014f2"},
+        {"from": "0x1014f0", "from_function": {"address": "0x1014c0", "name": "list_each"}, "kind": "jump", "to": "0x1014e0"},
+        {"from": "0x1020e4", "kind": "other", "to": "0x1014c0", "to_function": {"address": "0x1014c0", "name": "list_each"}},
+        {"from": "0x102264", "kind": "data", "to": "0x1014c0", "to_function": {"address": "0x1014c0", "name": "list_each"}}
+      ]
     },
     {
+      "cfg": {"blocks": [{"end": "0x101501", "instructions": 3, "start": "0x1014f8"}], "edges": [], "function": "0x1014f8"},
       "decompile": {
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x1014f8", "space": "ram"},
@@ -1522,6 +5256,24 @@
         ],
         "warnings": []
       },
+      "disassembly": [
+        {
+          "address": "0x1014f8",
+          "bytes": "4883ec08",
+          "flow": "fallthrough",
+          "labels": ["__DT_FINI", "_fini"],
+          "mnemonic": "SUB",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {
+          "address": "0x1014fc",
+          "bytes": "4883c408",
+          "flow": "fallthrough",
+          "mnemonic": "ADD",
+          "operands": [{"kind": "register", "text": "RSP"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8"}]
+        },
+        {"address": "0x101500", "bytes": "c3", "flow": "return", "mnemonic": "RET", "operands": []}
+      ],
       "summary": {
         "completeness": {"kind": "complete"},
         "fn_hash": "66e6f54550612182b4ad78f30b140dd08318b968db3878de2db65fef87dc04d7",
@@ -1529,12 +5281,128 @@
         "name": "_fini",
         "signature": "undefined _fini(void)",
         "size": 9
-      }
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x1014f8", "to_function": {"address": "0x1014f8", "name": "_fini"}},
+        {"from": "0x350", "kind": "data", "to": "0x1014f8", "to_function": {"address": "0x1014f8", "name": "_fini"}},
+        {"from": "0x103df8", "kind": "data", "to": "0x1014f8", "to_function": {"address": "0x1014f8", "name": "_fini"}}
+      ]
     }
   ],
   "ghidra_version": "12.1.4",
+  "imports": [
+    {"address": "0x101030", "kind": "function", "name": "free"},
+    {"address": "0x101040", "kind": "function", "name": "strncpy"},
+    {"address": "0x101050", "kind": "function", "name": "printf"},
+    {"address": "0x101060", "kind": "function", "name": "calloc"},
+    {"address": "0x101070", "kind": "function", "name": "strcmp"},
+    {"address": "0x101080", "kind": "function", "name": "exit"},
+    {"address": "0x101090", "kind": "function", "name": "__cxa_finalize"},
+    {"address": "0x105008", "kind": "function", "name": "__libc_start_main"},
+    {"address": "0x105018", "kind": "function", "name": "_ITM_deregisterTMCloneTable"},
+    {"address": "0x105038", "kind": "function", "name": "__gmon_start__"},
+    {"address": "0x105048", "kind": "function", "name": "_ITM_registerTMCloneTable"}
+  ],
+  "memory": [
+    {"end": "0x1f", "initialized": true, "kind": "overlay", "name": ".comment", "perms": "---", "space": ".comment", "start": "0x0"},
+    {"end": "0x332", "initialized": true, "kind": "overlay", "name": ".debug_abbrev", "perms": "---", "space": ".debug_abbrev", "start": "0x0"},
+    {"end": "0x40", "initialized": true, "kind": "overlay", "name": ".debug_aranges", "perms": "---", "space": ".debug_aranges", "start": "0x0"},
+    {"end": "0xab4", "initialized": true, "kind": "overlay", "name": ".debug_info", "perms": "---", "space": ".debug_info", "start": "0x0"},
+    {"end": "0x3f9", "initialized": true, "kind": "overlay", "name": ".debug_line", "perms": "---", "space": ".debug_line", "start": "0x0"},
+    {"end": "0x3c", "initialized": true, "kind": "overlay", "name": ".debug_line_str", "perms": "---", "space": ".debug_line_str", "start": "0x0"},
+    {"end": "0x5ad", "initialized": true, "kind": "overlay", "name": ".debug_loclists", "perms": "---", "space": ".debug_loclists", "start": "0x0"},
+    {"end": "0xba", "initialized": true, "kind": "overlay", "name": ".debug_rnglists", "perms": "---", "space": ".debug_rnglists", "start": "0x0"},
+    {"end": "0x185", "initialized": true, "kind": "overlay", "name": ".debug_str", "perms": "---", "space": ".debug_str", "start": "0x0"},
+    {"end": "0x184", "initialized": true, "kind": "overlay", "name": ".shstrtab", "perms": "---", "space": ".shstrtab", "start": "0x0"},
+    {"end": "0x285", "initialized": true, "kind": "overlay", "name": ".strtab", "perms": "---", "space": ".strtab", "start": "0x0"},
+    {"end": "0x498", "initialized": true, "kind": "overlay", "name": ".symtab", "perms": "---", "space": ".symtab", "start": "0x0"},
+    {"end": "0x9c0", "initialized": true, "kind": "overlay", "name": "_elfSectionHeaders", "perms": "---", "space": "_elfSectionHeaders", "start": "0x0"},
+    {"end": "0x100318", "initialized": true, "kind": "default", "name": "segment_2.1", "perms": "r--", "space": "ram", "start": "0x100000"},
+    {"end": "0x100334", "initialized": true, "kind": "default", "name": ".interp", "perms": "r--", "space": "ram", "start": "0x100318"},
+    {"end": "0x10035c", "initialized": true, "kind": "default", "name": ".gnu.hash", "perms": "r--", "space": "ram", "start": "0x100338"},
+    {"end": "0x100480", "initialized": true, "kind": "default", "name": ".dynsym", "perms": "r--", "space": "ram", "start": "0x100360"},
+    {"end": "0x10052f", "initialized": true, "kind": "default", "name": ".dynstr", "perms": "r--", "space": "ram", "start": "0x100480"},
+    {"end": "0x100548", "initialized": true, "kind": "default", "name": ".gnu.version", "perms": "r--", "space": "ram", "start": "0x100530"},
+    {"end": "0x100578", "initialized": true, "kind": "default", "name": ".gnu.version_r", "perms": "r--", "space": "ram", "start": "0x100548"},
+    {"end": "0x1006c8", "initialized": true, "kind": "default", "name": ".rela.dyn", "perms": "r--", "space": "ram", "start": "0x100578"},
+    {"end": "0x100758", "initialized": true, "kind": "default", "name": ".rela.plt", "perms": "r--", "space": "ram", "start": "0x1006c8"},
+    {"end": "0x101017", "initialized": true, "kind": "default", "name": ".init", "perms": "r-x", "space": "ram", "start": "0x101000"},
+    {"end": "0x101090", "initialized": true, "kind": "default", "name": ".plt", "perms": "r-x", "space": "ram", "start": "0x101020"},
+    {"end": "0x101098", "initialized": true, "kind": "default", "name": ".plt.got", "perms": "r-x", "space": "ram", "start": "0x101090"},
+    {"end": "0x1014f7", "initialized": true, "kind": "default", "name": ".text", "perms": "r-x", "space": "ram", "start": "0x1010a0"},
+    {"end": "0x101501", "initialized": true, "kind": "default", "name": ".fini", "perms": "r-x", "space": "ram", "start": "0x1014f8"},
+    {"end": "0x102088", "initialized": true, "kind": "default", "name": ".rodata", "perms": "r--", "space": "ram", "start": "0x102000"},
+    {"end": "0x1020ec", "initialized": true, "kind": "default", "name": ".eh_frame_hdr", "perms": "r--", "space": "ram", "start": "0x102088"},
+    {"end": "0x1022d8", "initialized": true, "kind": "default", "name": ".eh_frame", "perms": "r--", "space": "ram", "start": "0x1020f0"},
+    {"end": "0x1022f8", "initialized": true, "kind": "default", "name": ".note.gnu.property", "perms": "r--", "space": "ram", "start": "0x1022d8"},
+    {"end": "0x102318", "initialized": true, "kind": "default", "name": ".note.ABI-tag", "perms": "r--", "space": "ram", "start": "0x1022f8"},
+    {"end": "0x103d98", "initialized": true, "kind": "default", "name": ".init_array", "perms": "r--", "space": "ram", "start": "0x103d90"},
+    {"end": "0x103da0", "initialized": true, "kind": "default", "name": ".fini_array", "perms": "r--", "space": "ram", "start": "0x103d98"},
+    {"end": "0x103dd0", "initialized": true, "kind": "default", "name": ".data.rel.ro", "perms": "r--", "space": "ram", "start": "0x103da0"},
+    {"end": "0x103fb0", "initialized": true, "kind": "default", "name": ".dynamic", "perms": "r--", "space": "ram", "start": "0x103dd0"},
+    {"end": "0x103fd8", "initialized": true, "kind": "default", "name": ".got", "perms": "r--", "space": "ram", "start": "0x103fb0"},
+    {"end": "0x104030", "initialized": true, "kind": "default", "name": ".got.plt", "perms": "r--", "space": "ram", "start": "0x103fe8"},
+    {"end": "0x104040", "initialized": true, "kind": "default", "name": ".data", "perms": "rw-", "space": "ram", "start": "0x104030"},
+    {"end": "0x104048", "initialized": false, "kind": "default", "name": ".bss", "perms": "rw-", "space": "ram", "start": "0x104040"},
+    {"end": "0x105058", "initialized": false, "kind": "external", "name": "EXTERNAL", "perms": "rw-", "space": "ram", "start": "0x105000"}
+  ],
   "program": {"arch": "x86:LE:64:default", "base": "0x100000", "format": "elf", "sha256": "eb256dbb3b30593f3985c0d4996fdf42ca453f175a1e59a77d7ee9d8282aa1d6", "size": 23824},
-  "recording": {"function_cap": 200, "functions_listed": 34, "functions_recorded": 23, "functions_skipped": 11, "recorder": "kraken-record 0.0.0", "type_cap": 200, "types_listed": 34, "types_recorded": 11},
+  "recording": {
+    "function_cap": 200,
+    "functions_listed": 34,
+    "functions_recorded": 23,
+    "functions_skipped": 11,
+    "recorder": "kraken-record 0.0.0",
+    "string_cap": 300,
+    "strings_listed": 26,
+    "strings_recorded": 26,
+    "type_cap": 200,
+    "types_listed": 34,
+    "types_recorded": 11
+  },
+  "strings": [
+    {"address": "0x100318", "encoding": "ascii", "length": 28, "value": "/lib64/ld-linux-x86-64.so.2"},
+    {"address": "0x100481", "encoding": "utf8", "length": 8, "value": "strncpy"},
+    {"address": "0x100489", "encoding": "utf8", "length": 5, "value": "free"},
+    {"address": "0x10048e", "encoding": "utf8", "length": 5, "value": "exit"},
+    {"address": "0x100493", "encoding": "utf8", "length": 18, "value": "__libc_start_main"},
+    {"address": "0x1004a5", "encoding": "utf8", "length": 15, "value": "__cxa_finalize"},
+    {"address": "0x1004b4", "encoding": "utf8", "length": 7, "value": "calloc"},
+    {"address": "0x1004bb", "encoding": "utf8", "length": 7, "value": "printf"},
+    {"address": "0x1004c2", "encoding": "utf8", "length": 7, "value": "strcmp"},
+    {"address": "0x1004c9", "encoding": "utf8", "length": 10, "value": "libc.so.6"},
+    {"address": "0x1004d3", "encoding": "utf8", "length": 11, "value": "GLIBC_2.34"},
+    {"address": "0x1004de", "encoding": "utf8", "length": 12, "value": "GLIBC_2.2.5"},
+    {"address": "0x1004ea", "encoding": "utf8", "length": 28, "value": "_ITM_deregisterTMCloneTable"},
+    {"address": "0x100506", "encoding": "utf8", "length": 15, "value": "__gmon_start__"},
+    {"address": "0x100515", "encoding": "utf8", "length": 26, "value": "_ITM_registerTMCloneTable"},
+    {"address": "0x102004", "encoding": "ascii", "length": 6, "value": "gamma"},
+    {"address": "0x10200a", "encoding": "ascii", "length": 6, "value": "delta"},
+    {"address": "0x102010", "encoding": "ascii", "length": 6, "value": "alpha"},
+    {"address": "0x102016", "encoding": "ascii", "length": 5, "value": "beta"},
+    {
+      "address": "0x10201b",
+      "encoding": "ascii",
+      "length": 5,
+      "value": "%s:\n"
+    },
+    {
+      "address": "0x102020",
+      "encoding": "ascii",
+      "length": 25,
+      "value": "  #%d %-6s (%d,%d) %.1f\n"
+    },
+    {
+      "address": "0x102039",
+      "encoding": "ascii",
+      "length": 21,
+      "value": "count=%d total=%.2f\n"
+    },
+    {"address": "0x10204e", "encoding": "ascii", "length": 6, "value": "by id"},
+    {"address": "0x102054", "encoding": "ascii", "length": 8, "value": "by name"},
+    {"address": "0x10205c", "encoding": "ascii", "length": 12, "value": "by distance"},
+    {"address": "0x102157", "encoding": "ascii", "length": 6, "value": ";*3$\""}
+  ],
   "types": [
     {"kind": "typedef", "name": "EVP_PKEY_CTX", "target": {"kind": "named", "name": "evp_pkey_ctx_st"}},
     {

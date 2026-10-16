@@ -19,6 +19,7 @@ mod mutate;
 pub mod session;
 pub mod validate;
 pub mod views;
+pub mod views_data;
 
 pub use command::{Command, CommandKind, CommandSpec, Entry, Permission, Registry};
 pub use context::{

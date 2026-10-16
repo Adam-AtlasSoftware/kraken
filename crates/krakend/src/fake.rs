@@ -13,8 +13,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use engine_fake::{FakeEngine, FixtureFile};
 use kraken_engine::{
-    Analyzer, CancellationToken, Decompiler, Engine, EngineCaps, EngineRejected, FunctionLister,
-    Loader, Mutator, SharedEngine, TypeStore, Watermark,
+    Analyzer, CancellationToken, Decompiler, Disassembler, Engine, EngineCaps, EngineRejected,
+    FlowGraph, FunctionLister, Loader, MemoryReader, Mutator, SharedEngine, StringLister,
+    SymbolLister, TypeStore, Watermark, XrefProvider,
 };
 use kraken_host::{EngineDiagnostics, EngineEvent, FactoryEvent, ManagedFactory};
 use kraken_proto::{ErrorCode, ProtoError, VersionedLogOp};
@@ -136,6 +137,24 @@ impl Engine for Controlled {
     }
     fn mutator(&self) -> Option<&dyn Mutator> {
         Some(&self.mutator)
+    }
+    fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        self.inner.memory_reader()
+    }
+    fn disassembler(&self) -> Option<&dyn Disassembler> {
+        self.inner.disassembler()
+    }
+    fn xref_provider(&self) -> Option<&dyn XrefProvider> {
+        self.inner.xref_provider()
+    }
+    fn flow_graph(&self) -> Option<&dyn FlowGraph> {
+        self.inner.flow_graph()
+    }
+    fn string_lister(&self) -> Option<&dyn StringLister> {
+        self.inner.string_lister()
+    }
+    fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
+        self.inner.symbol_lister()
     }
 }
 

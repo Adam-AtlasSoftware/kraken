@@ -9,14 +9,18 @@ use std::time::Duration;
 use async_trait::async_trait;
 use kraken_engine::{
     AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
-    Engine, EngineCaps, EngineRejected, EngineResult, FunctionLister, Loader, LoaderSpec, Mutator,
-    ProgramInfo, Progress, Stage, TypeStore, Watermark, type_def_name,
+    DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph,
+    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, ProgramInfo, Progress, Stage,
+    StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider, XrefRequest,
+    type_def_name,
 };
 use kraken_proto::{
-    DecompileResult, ErrorCode, FunctionSummary, Locator, LogOp, Page, PageRequest, ProtoError,
-    TypeDef, VersionedLogOp,
+    BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, LogOp,
+    MemoryBlock, OperandKind, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef,
+    VersionedLogOp, Xref,
 };
 
+use crate::data::DataView;
 use crate::fixture::{FixtureFile, FixtureFunction, Perturb, key_of, stub_decompile};
 use crate::text::{rename_in_result, replace_word};
 
@@ -32,6 +36,10 @@ struct State {
     types: BTreeMap<String, TypeDef>,
     applied: Vec<VersionedLogOp>,
     saved: usize,
+    memory: Option<Vec<MemoryBlock>>,
+    strings: Option<Vec<StringEntry>>,
+    imports: Option<Vec<SymbolEntry>>,
+    exports: Option<Vec<SymbolEntry>>,
 }
 
 /// An in-memory engine serving a [`FixtureFile`]. See the crate docs for semantics.
@@ -89,6 +97,10 @@ impl FakeEngine {
                 types,
                 applied: Vec::new(),
                 saved: 0,
+                memory: fixture.memory,
+                strings: fixture.strings,
+                imports: fixture.imports,
+                exports: fixture.exports,
             }),
             ghidra_version: fixture.ghidra_version,
             caps: Cap::ALL.into_iter().collect(),
@@ -157,6 +169,25 @@ impl Engine for FakeEngine {
     }
     fn mutator(&self) -> Option<&dyn Mutator> {
         self.has(Cap::Mutator).then_some(self as &dyn Mutator)
+    }
+    fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        self.has(Cap::Memory).then_some(self as &dyn MemoryReader)
+    }
+    fn disassembler(&self) -> Option<&dyn Disassembler> {
+        self.has(Cap::Disassembler)
+            .then_some(self as &dyn Disassembler)
+    }
+    fn xref_provider(&self) -> Option<&dyn XrefProvider> {
+        self.has(Cap::Xrefs).then_some(self as &dyn XrefProvider)
+    }
+    fn flow_graph(&self) -> Option<&dyn FlowGraph> {
+        self.has(Cap::Cfg).then_some(self as &dyn FlowGraph)
+    }
+    fn string_lister(&self) -> Option<&dyn StringLister> {
+        self.has(Cap::Strings).then_some(self as &dyn StringLister)
+    }
+    fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
+        self.has(Cap::Symbols).then_some(self as &dyn SymbolLister)
     }
 }
 
@@ -350,6 +381,134 @@ impl FunctionLister for FakeEngine {
     }
 }
 
+impl State {
+    fn view(&self) -> DataView<'_> {
+        DataView {
+            functions: &self.functions,
+            base: self.program.base.0,
+            memory: self.memory.as_deref(),
+            strings: self.strings.as_deref(),
+            imports: self.imports.as_deref(),
+            exports: self.exports.as_deref(),
+        }
+    }
+}
+
+#[async_trait]
+impl MemoryReader for FakeEngine {
+    async fn memory_map(&self, cancel: &CancellationToken) -> EngineResult<Vec<MemoryBlock>> {
+        check(cancel)?;
+        Ok(self.lock().view().memory_map())
+    }
+
+    async fn read_bytes(
+        &self,
+        start: &Locator,
+        length: u32,
+        cancel: &CancellationToken,
+    ) -> EngineResult<BytesRead> {
+        check(cancel)?;
+        self.lock().view().read_bytes(start, length)
+    }
+}
+
+#[async_trait]
+impl Disassembler for FakeEngine {
+    async fn disassemble(
+        &self,
+        req: &DisasmRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<DisasmRow>> {
+        check(cancel)?;
+        self.lock().view().disassemble(req, page)
+    }
+}
+
+#[async_trait]
+impl XrefProvider for FakeEngine {
+    async fn xrefs(
+        &self,
+        req: &XrefRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<Xref>> {
+        check(cancel)?;
+        self.lock().view().xrefs(req, page)
+    }
+}
+
+#[async_trait]
+impl FlowGraph for FakeEngine {
+    async fn cfg(&self, function: &Locator, cancel: &CancellationToken) -> EngineResult<Cfg> {
+        check(cancel)?;
+        self.lock().view().cfg(function)
+    }
+}
+
+#[async_trait]
+impl StringLister for FakeEngine {
+    async fn strings(
+        &self,
+        req: &StringsRequest,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<StringEntry>> {
+        check(cancel)?;
+        self.lock().view().strings(req, page)
+    }
+}
+
+#[async_trait]
+impl SymbolLister for FakeEngine {
+    async fn imports(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<SymbolEntry>> {
+        check(cancel)?;
+        self.lock().view().imports(page)
+    }
+
+    async fn exports(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<SymbolEntry>> {
+        check(cancel)?;
+        self.lock().view().exports(page)
+    }
+}
+
+/// Follows a function rename through recorded listing data: labels, symbol operands and the
+/// function names in references.
+fn rename_in_listing(functions: &mut BTreeMap<FnKey, FixtureFunction>, old: &str, new: &str) {
+    for f in functions.values_mut() {
+        for row in f.disassembly.iter_mut().flatten() {
+            for l in &mut row.labels {
+                if l == old {
+                    *l = new.to_string();
+                }
+            }
+            for op in &mut row.operands {
+                if op.kind == OperandKind::Symbol && op.text == old {
+                    op.text = new.to_string();
+                }
+            }
+        }
+        for x in f.xrefs.iter_mut().flatten() {
+            for r in [&mut x.from_function, &mut x.to_function]
+                .into_iter()
+                .flatten()
+            {
+                if r.name == old {
+                    r.name = new.to_string();
+                }
+            }
+        }
+    }
+}
+
 fn valid_name(n: &str) -> bool {
     !n.is_empty() && !n.chars().any(|c| c.is_whitespace() || c.is_control())
 }
@@ -407,6 +566,7 @@ impl State {
                     .as_ref()
                     .map(|s| replace_word(s, &current, new_name));
                 f.summary.name = new_name.clone();
+                rename_in_listing(&mut self.functions, &current, new_name);
                 Ok(())
             }
             LogOp::CreateFunction { anchor, name, body } => {
@@ -447,7 +607,7 @@ impl State {
                     completeness: kraken_proto::Completeness::Complete,
                 };
                 self.functions
-                    .insert(key, FixtureFunction { summary, decompile });
+                    .insert(key, FixtureFunction::new(summary, decompile));
                 Ok(())
             }
             LogOp::DeleteFunction { anchor, .. } => {
@@ -475,6 +635,10 @@ impl State {
                     ));
                 }
                 f.summary.size = Some(new.end.0 - new.start.0);
+                // recorded listing data no longer matches the body
+                f.disassembly = None;
+                f.cfg = None;
+                f.xrefs = None;
                 Ok(())
             }
             LogOp::SetType { anchor, .. }

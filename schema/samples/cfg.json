@@ -1,0 +1,27 @@
+{
+  "blocks": [
+    {
+      "end": "0x401010",
+      "instructions": 4,
+      "start": "0x401000"
+    },
+    {
+      "end": "0x401018",
+      "instructions": 2,
+      "start": "0x401010"
+    }
+  ],
+  "edges": [
+    {
+      "from": "0x401000",
+      "kind": "conditional_false",
+      "to": "0x401010"
+    },
+    {
+      "from": "0x401000",
+      "kind": "switch",
+      "to": "0x401000"
+    }
+  ],
+  "function": "0x401000"
+}

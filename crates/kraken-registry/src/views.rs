@@ -13,6 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::validate::untrusted;
+use crate::views_data::TokenView;
 
 /// Splits a locator into its address space and offset.
 pub(crate) fn locator_parts(l: &Locator) -> (String, Hex64) {
@@ -115,6 +116,8 @@ pub struct DecompileView {
     pub text: Untrusted<String>,
     /// True when `text` was cut.
     pub truncated: bool,
+    /// Token spans into `text`: UTF-8 byte offsets, valid for exactly the returned text.
+    pub tokens: Vec<TokenView>,
     /// Distinct call and data targets found in the output, capped.
     pub references: Vec<ReferenceView>,
     /// Decompiler warnings (binary-derived).

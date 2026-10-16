@@ -145,6 +145,54 @@ final class Dispatcher {
                     .decompile(Locator.fromJson(J.req(params, "locator")), J.optNum(params, "timeout_ms"))
                     .toJson();
             }
+            case "memory_map" -> {
+                return J.array(engine.inspect().memoryMap(), Proto.MemoryBlock::toJson);
+            }
+            case "read_bytes" -> {
+                return engine
+                    .inspect()
+                    .readBytes(Locator.fromJson(J.req(params, "locator")), J.num(params, "length"))
+                    .toJson();
+            }
+            case "disassemble" -> {
+                return engine
+                    .inspect()
+                    .disassemble(J.hex(params, "start"), J.str(params, "scope"), PageRequest.fromJson(params))
+                    .toJson(Proto.DisasmRow::toJson);
+            }
+            case "xrefs" -> {
+                boolean whole = J.opt(params, "whole_function") != null && J.bool(params, "whole_function");
+                return engine
+                    .inspect()
+                    .xrefs(
+                        J.hex(params, "address"),
+                        J.str(params, "direction"),
+                        J.optStr(params, "kind"),
+                        whole,
+                        PageRequest.fromJson(params))
+                    .toJson(Proto.Xref::toJson);
+            }
+            case "cfg" -> {
+                return engine.inspect().cfg(Locator.fromJson(J.req(params, "locator"))).toJson();
+            }
+            case "strings" -> {
+                return engine
+                    .inspect()
+                    .strings(J.num(params, "min_len"), J.optStr(params, "filter"), PageRequest.fromJson(params))
+                    .toJson(Proto.StringEntry::toJson);
+            }
+            case "imports" -> {
+                return engine
+                    .inspect()
+                    .imports(PageRequest.fromJson(params))
+                    .toJson(Proto.SymbolEntry::toJson);
+            }
+            case "exports" -> {
+                return engine
+                    .inspect()
+                    .exports(PageRequest.fromJson(params))
+                    .toJson(Proto.SymbolEntry::toJson);
+            }
             case "apply_op" -> {
                 engine.applyOp(VersionedLogOp.fromJson(J.req(params, "op")));
                 JsonObject o = new JsonObject();
@@ -183,7 +231,15 @@ final class Dispatcher {
                 new Capability("decompile.tokens", 1),
                 new Capability("apply_op.v1", 1),
                 new Capability("types.roundtrip", 1),
-                new Capability("save", 1));
+                new Capability("save", 1),
+                new Capability("memory_map", 1),
+                new Capability("read_bytes", 1),
+                new Capability("disassemble", 1),
+                new Capability("xrefs", 1),
+                new Capability("cfg", 1),
+                new Capability("strings", 1),
+                new Capability("imports", 1),
+                new Capability("exports", 1));
         return new Handshake(
             PROTOCOL_MAJOR,
             PROTOCOL_MINOR,

@@ -6,9 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use engine_fake::FixtureFile;
 use engine_ghidra::GhidraInstall;
-use kraken_record::{
-    DEFAULT_FUNCTION_CAP, DEFAULT_TYPE_CAP, RecordOptions, compare, record_binary, render_fixture,
-};
+use kraken_record::{DEFAULT_TYPE_CAP, RecordOptions, compare, record_binary, render_fixture};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -16,16 +14,20 @@ const USAGE: &str = "\
 usage: kraken-record [--check] [--jobs N] [--function-cap N] [--type-cap N]
                      [--corpus DIR] [--fixtures DIR] [BINARY...]
 
-Records an engine-fake fixture per corpus binary into <corpus>/fixtures/<binary>.json.
+Records an engine-fake fixture per corpus binary into <corpus>/fixtures/<binary>.json: functions
+with their decompilation, listing, control-flow graph and references, plus types, the memory map,
+strings and imports/exports. The function cap is 200, or 96 for the static_* binaries; override it
+with --function-cap.
 With --check nothing is written: each binary is re-recorded in memory and compared structurally
-(functions, names, signatures, sizes, token kinds, type names) with the committed fixture;
+(functions, names, signatures, sizes, token kinds, type names, listing, CFG, references, memory
+map, strings, symbols) with the committed fixture;
 the exit status is 1 on drift. Without BINARY arguments every file in <corpus>/bin is used.
 Needs KRAKEN_GHIDRA_HOME, KRAKEN_JAVA_HOME and the extension built by `cargo xtask ghidra-ext`.";
 
 struct Args {
     check: bool,
     jobs: usize,
-    function_cap: usize,
+    function_cap: Option<usize>,
     type_cap: usize,
     corpus: PathBuf,
     fixtures: Option<PathBuf>,
@@ -36,7 +38,7 @@ fn parse_args() -> Result<Option<Args>> {
     let mut a = Args {
         check: false,
         jobs: 4,
-        function_cap: DEFAULT_FUNCTION_CAP,
+        function_cap: None,
         type_cap: DEFAULT_TYPE_CAP,
         corpus: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"),
         fixtures: None,
@@ -49,7 +51,7 @@ fn parse_args() -> Result<Option<Args>> {
             "-h" | "--help" => return Ok(None),
             "--check" => a.check = true,
             "--jobs" => a.jobs = value("--jobs")?.parse().context("--jobs")?,
-            "--function-cap" => a.function_cap = value("--function-cap")?.parse()?,
+            "--function-cap" => a.function_cap = Some(value("--function-cap")?.parse()?),
             "--type-cap" => a.type_cap = value("--type-cap")?.parse()?,
             "--corpus" => a.corpus = value("--corpus")?.into(),
             "--fixtures" => a.fixtures = Some(value("--fixtures")?.into()),

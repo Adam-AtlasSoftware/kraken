@@ -12,6 +12,14 @@
       "description": "See [`Anchor`].",
       "$ref": "#/$defs/Anchor"
     },
+    "bytes_read": {
+      "description": "See [`BytesRead`].",
+      "$ref": "#/$defs/BytesRead"
+    },
+    "cfg": {
+      "description": "See [`Cfg`].",
+      "$ref": "#/$defs/Cfg"
+    },
     "completeness": {
       "description": "See [`Completeness`].",
       "$ref": "#/$defs/Completeness"
@@ -19,6 +27,10 @@
     "decompile_result": {
       "description": "See [`DecompileResult`].",
       "$ref": "#/$defs/DecompileResult"
+    },
+    "disasm_row": {
+      "description": "See [`DisasmRow`].",
+      "$ref": "#/$defs/DisasmRow"
     },
     "error": {
       "description": "See [`ProtoError`].",
@@ -48,6 +60,10 @@
       "description": "See [`LogStatus`].",
       "$ref": "#/$defs/LogStatus"
     },
+    "memory_block": {
+      "description": "See [`MemoryBlock`].",
+      "$ref": "#/$defs/MemoryBlock"
+    },
     "page_request": {
       "description": "See [`PageRequest`].",
       "$ref": "#/$defs/PageRequest"
@@ -55,6 +71,14 @@
     "provenance": {
       "description": "See [`Provenance`].",
       "$ref": "#/$defs/Provenance"
+    },
+    "string_entry": {
+      "description": "See [`StringEntry`].",
+      "$ref": "#/$defs/StringEntry"
+    },
+    "symbol_entry": {
+      "description": "See [`SymbolEntry`].",
+      "$ref": "#/$defs/SymbolEntry"
     },
     "sync_state": {
       "description": "See [`SyncState`].",
@@ -71,6 +95,10 @@
     "untrusted_string": {
       "description": "An untrusted string, the canonical [`Untrusted`] instantiation.",
       "$ref": "#/$defs/Untrusted_string"
+    },
+    "xref": {
+      "description": "See [`Xref`].",
+      "$ref": "#/$defs/Xref"
     }
   },
   "required": [
@@ -90,7 +118,14 @@
     "handshake",
     "page_request",
     "function_page",
-    "untrusted_string"
+    "untrusted_string",
+    "memory_block",
+    "bytes_read",
+    "disasm_row",
+    "xref",
+    "cfg",
+    "string_entry",
+    "symbol_entry"
   ],
   "$defs": {
     "AddressRange": {
@@ -222,6 +257,31 @@
         "bit_size"
       ]
     },
+    "BytesRead": {
+      "description": "Bytes read from program memory. The read may be shorter than requested when it reaches the\nend of mapped memory.",
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "description": "The bytes, base64-encoded on the wire (standard alphabet, padded).",
+          "type": "string"
+        },
+        "start": {
+          "description": "Address of the first byte.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "uninitialized": {
+          "description": "Sub-ranges of the read that lie in uninitialized memory; their bytes are zero.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AddressRange"
+          }
+        }
+      },
+      "required": [
+        "start",
+        "bytes"
+      ]
+    },
     "Capability": {
       "description": "One named capability an engine or server offers.",
       "type": "object",
@@ -240,6 +300,113 @@
       "required": [
         "name",
         "version"
+      ]
+    },
+    "Cfg": {
+      "description": "The control-flow graph of one function.",
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "description": "Blocks ordered by start address; the one at the entry is first by convention only.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CfgBlock"
+          }
+        },
+        "edges": {
+          "description": "Edges between blocks of the function; calls and edges leaving the function are omitted.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CfgEdge"
+          }
+        },
+        "function": {
+          "description": "Function entry.",
+          "$ref": "#/$defs/Hex64"
+        }
+      },
+      "required": [
+        "function",
+        "blocks",
+        "edges"
+      ]
+    },
+    "CfgBlock": {
+      "description": "A basic block of a function.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "Address after the last instruction (half-open).",
+          "$ref": "#/$defs/Hex64"
+        },
+        "instructions": {
+          "description": "Number of instructions in the block.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "description": "Address of the first instruction.",
+          "$ref": "#/$defs/Hex64"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "instructions"
+      ]
+    },
+    "CfgEdge": {
+      "description": "An edge between two blocks, named by their start addresses.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "Start of the source block.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "kind": {
+          "description": "Kind of the edge.",
+          "$ref": "#/$defs/CfgEdgeKind"
+        },
+        "to": {
+          "description": "Start of the destination block.",
+          "$ref": "#/$defs/Hex64"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ]
+    },
+    "CfgEdgeKind": {
+      "description": "Why control moves between blocks.",
+      "oneOf": [
+        {
+          "description": "The next block follows without a branch.",
+          "type": "string",
+          "const": "fallthrough"
+        },
+        {
+          "description": "Unconditional jump.",
+          "type": "string",
+          "const": "jump"
+        },
+        {
+          "description": "Branch taken when the condition holds.",
+          "type": "string",
+          "const": "conditional_true"
+        },
+        {
+          "description": "Branch not taken (the fall-through of a conditional jump).",
+          "type": "string",
+          "const": "conditional_false"
+        },
+        {
+          "description": "One case of a computed jump such as a switch table.",
+          "type": "string",
+          "const": "switch"
+        }
       ]
     },
     "CodeData": {
@@ -455,6 +622,56 @@
         "completeness"
       ]
     },
+    "DisasmRow": {
+      "description": "One disassembled instruction.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Address of the instruction.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "bytes": {
+          "description": "Instruction bytes as contiguous lower-case hex.",
+          "type": "string"
+        },
+        "comment": {
+          "description": "End-of-line or plate comment at the address, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flow": {
+          "description": "Control flow out of the instruction.",
+          "$ref": "#/$defs/FlowKind"
+        },
+        "labels": {
+          "description": "Labels (symbols) defined at the address.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mnemonic": {
+          "description": "Mnemonic such as `mov`.",
+          "type": "string"
+        },
+        "operands": {
+          "description": "Operands flattened to tokens, with separators as `other` tokens.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OperandToken"
+          }
+        }
+      },
+      "required": [
+        "address",
+        "bytes",
+        "mnemonic",
+        "operands",
+        "flow"
+      ]
+    },
     "EnumDef": {
       "description": "An enum definition.",
       "type": "object",
@@ -593,6 +810,46 @@
         "type"
       ]
     },
+    "FlowKind": {
+      "description": "Control flow out of an instruction.",
+      "oneOf": [
+        {
+          "description": "Execution continues with the next instruction.",
+          "type": "string",
+          "const": "fallthrough"
+        },
+        {
+          "description": "Unconditional jump.",
+          "type": "string",
+          "const": "jump"
+        },
+        {
+          "description": "Conditional jump (also falls through).",
+          "type": "string",
+          "const": "conditional_jump"
+        },
+        {
+          "description": "Call (also falls through).",
+          "type": "string",
+          "const": "call"
+        },
+        {
+          "description": "Return from the function.",
+          "type": "string",
+          "const": "return"
+        },
+        {
+          "description": "Computed jump or call whose target is not a constant.",
+          "type": "string",
+          "const": "indirect"
+        },
+        {
+          "description": "Anything else that ends or redirects flow, such as a halt.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
     "FunctionPrototype": {
       "description": "A function prototype.",
       "type": "object",
@@ -634,6 +891,24 @@
         "calling_convention",
         "varargs",
         "noreturn"
+      ]
+    },
+    "FunctionRef": {
+      "description": "A function named by an address.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Entry address.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "name": {
+          "description": "Function name (binary-derived).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "name"
       ]
     },
     "FunctionSummary": {
@@ -1070,6 +1345,138 @@
         }
       ]
     },
+    "MemoryBlock": {
+      "description": "One block (segment or section) of the program's memory.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "First address after the block (half-open, like [`AddressRange`]).",
+          "$ref": "#/$defs/Hex64"
+        },
+        "initialized": {
+          "description": "Whether the block has file or zero contents; uninitialized blocks (like `.bss`) have none.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "How the block is backed.",
+          "$ref": "#/$defs/MemoryKind"
+        },
+        "name": {
+          "description": "Block name such as `.text` (binary-derived).",
+          "type": "string"
+        },
+        "perms": {
+          "description": "Permissions as three characters, `r`, `w`, `x` or `-` in that order, such as `r-x`.",
+          "type": "string"
+        },
+        "space": {
+          "description": "Address-space name; defaults to `\"ram\"`.",
+          "type": "string",
+          "default": "ram"
+        },
+        "start": {
+          "description": "First address of the block.",
+          "$ref": "#/$defs/Hex64"
+        }
+      },
+      "required": [
+        "name",
+        "start",
+        "end",
+        "perms",
+        "initialized",
+        "kind"
+      ]
+    },
+    "MemoryKind": {
+      "description": "How a memory block is backed.",
+      "oneOf": [
+        {
+          "description": "Ordinary block, initialized from the file or zero-filled.",
+          "type": "string",
+          "const": "default"
+        },
+        {
+          "description": "Overlay block in its own address space.",
+          "type": "string",
+          "const": "overlay"
+        },
+        {
+          "description": "Bytes are mapped from another part of memory.",
+          "type": "string",
+          "const": "byte_mapped"
+        },
+        {
+          "description": "Bits are mapped from another part of memory.",
+          "type": "string",
+          "const": "bit_mapped"
+        },
+        {
+          "description": "Synthetic block holding external (imported) symbols.",
+          "type": "string",
+          "const": "external"
+        }
+      ]
+    },
+    "OperandKind": {
+      "description": "What an operand token is.",
+      "oneOf": [
+        {
+          "description": "A register name.",
+          "type": "string",
+          "const": "register"
+        },
+        {
+          "description": "A numeric constant that is not an address.",
+          "type": "string",
+          "const": "immediate"
+        },
+        {
+          "description": "An address without a symbol.",
+          "type": "string",
+          "const": "address"
+        },
+        {
+          "description": "An address that has a symbol; `text` is the symbol name and `target` the address.",
+          "type": "string",
+          "const": "symbol"
+        },
+        {
+          "description": "Punctuation, size keywords and anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "OperandToken": {
+      "description": "One piece of an instruction operand.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Token category.",
+          "$ref": "#/$defs/OperandKind"
+        },
+        "target": {
+          "description": "The address an address or symbol token refers to.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Locator"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "description": "Text of the token; for [`OperandKind::Symbol`] the raw symbol name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "kind"
+      ]
+    },
     "Page": {
       "description": "One page of results with an optional cursor for the next page.",
       "type": "object",
@@ -1271,6 +1678,122 @@
           "description": "Produced by an agent from text found in the binary; always treated as untrusted.",
           "type": "string",
           "const": "agent_from_binary_text"
+        }
+      ]
+    },
+    "StringEncoding": {
+      "description": "Character encoding of a string in memory.",
+      "oneOf": [
+        {
+          "description": "7-bit ASCII.",
+          "type": "string",
+          "const": "ascii"
+        },
+        {
+          "description": "UTF-8.",
+          "type": "string",
+          "const": "utf8"
+        },
+        {
+          "description": "UTF-16.",
+          "type": "string",
+          "const": "utf16"
+        },
+        {
+          "description": "UTF-32.",
+          "type": "string",
+          "const": "utf32"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "StringEntry": {
+      "description": "A string found in memory.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Address of the first byte.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "encoding": {
+          "description": "Encoding of the bytes.",
+          "$ref": "#/$defs/StringEncoding"
+        },
+        "length": {
+          "description": "Length in bytes in memory, including the terminator when there is one.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "value": {
+          "description": "Decoded text (binary-derived).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "value",
+        "encoding",
+        "length"
+      ]
+    },
+    "SymbolEntry": {
+      "description": "An imported or exported symbol.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Address: the definition for an export, the stub or thunk (if any) for an import.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hex64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "description": "What the symbol names.",
+          "$ref": "#/$defs/SymbolKind"
+        },
+        "library": {
+          "description": "Library an import comes from, when known (binary-derived).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Symbol name (binary-derived).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ]
+    },
+    "SymbolKind": {
+      "description": "What a symbol names.",
+      "oneOf": [
+        {
+          "description": "A function.",
+          "type": "string",
+          "const": "function"
+        },
+        {
+          "description": "A data item.",
+          "type": "string",
+          "const": "data"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
         }
       ]
     },
@@ -1653,6 +2176,91 @@
       "required": [
         "schema_version",
         "op"
+      ]
+    },
+    "Xref": {
+      "description": "A cross-reference.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "Address the reference originates at.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "from_function": {
+          "description": "The function containing `from`, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FunctionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "description": "What the reference does.",
+          "$ref": "#/$defs/XrefKind"
+        },
+        "to": {
+          "description": "Address the reference points to.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "to_function": {
+          "description": "The function whose entry is `to`, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FunctionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ]
+    },
+    "XrefKind": {
+      "description": "What a reference does.",
+      "oneOf": [
+        {
+          "description": "Call.",
+          "type": "string",
+          "const": "call"
+        },
+        {
+          "description": "Jump, conditional or not.",
+          "type": "string",
+          "const": "jump"
+        },
+        {
+          "description": "Data read.",
+          "type": "string",
+          "const": "read"
+        },
+        {
+          "description": "Data write.",
+          "type": "string",
+          "const": "write"
+        },
+        {
+          "description": "Other data reference such as a pointer or an address taken.",
+          "type": "string",
+          "const": "data"
+        },
+        {
+          "description": "Fall-through flow.",
+          "type": "string",
+          "const": "fallthrough"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
       ]
     }
   }
