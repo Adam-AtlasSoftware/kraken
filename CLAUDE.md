@@ -21,6 +21,7 @@ crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 - `kraken-ipc` / `krakend`: authenticated local RPC and the daemon that owns projects
 - `kraken-cli` (binary `kraken`) / `kraken-mcp` (`kraken mcp`)
 - `kraken-agent`: agent loop and providers; `kraken-assist`: explain/overview/auto-name, glossary
+- `kraken-acp`: terminal-agent host over ACP (Claude Code, Codex, Gemini CLI), Node/adapter provisioning, fake ACP agent for tests
 - `kraken-infer`: supervised local inference backends (llama-server, manifest engines)
 - `kraken-layout`: CFG layout; `kraken-gui-widgets`, `kraken-viewmodel`, `kraken-gui` (binary `kraken-gui`)
 - `kraken-record`: records FakeEngine fixtures from real Ghidra; `kraken-e2e`: end-to-end tests
