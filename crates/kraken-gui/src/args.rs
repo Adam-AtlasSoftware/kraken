@@ -31,15 +31,21 @@ pub struct Options {
     /// Render the demo, save a PNG and exit.
     pub screenshot: Option<PathBuf>,
     pub light: bool,
+    /// Run the engine inside the GUI process instead of through `krakend`.
+    pub no_daemon: bool,
+    /// Open this project at startup (scripting and screenshots).
+    pub open_project: Option<PathBuf>,
 }
 
 pub const USAGE: &str =
-    "kraken-gui [--renderer glow|wgpu] [--demo] [--light] [--screenshot <png> [--scene S]]
+    "kraken-gui [--renderer glow|wgpu] [--demo | --no-daemon] [--light] [--screenshot <png> [--scene S]]
 
   --renderer R       graphics backend: wgpu (default) or glow
-  --demo             open the built-in demo project at startup
+  --demo             open the built-in demo project at startup (fake engine, no daemon)
+  --no-daemon        run the engine inside this window instead of through krakend
   --light            start with the light theme
-  --screenshot FILE  with --demo: select main, render, save FILE as a PNG and exit
+  --screenshot FILE  with --demo or a hidden --open-project: select a function, render, save
+                     FILE as a PNG and exit
   --scene S          what --screenshot shows: main (default), palette, rename or welcome
   -h, --help         show this text";
 
@@ -56,6 +62,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
         demo: false,
         screenshot: None,
         light: false,
+        no_daemon: false,
+        open_project: None,
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -63,6 +71,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "-h" | "--help" => return Ok(Parsed::Help),
             "--demo" => o.demo = true,
             "--light" => o.light = true,
+            "--no-daemon" => o.no_daemon = true,
+            "--open-project" => {
+                o.open_project = Some(PathBuf::from(
+                    it.next().ok_or("--open-project needs a project folder")?,
+                ));
+            }
             "--renderer" => {
                 o.renderer = match it.next().as_deref() {
                     Some("glow") => RendererChoice::Glow,
@@ -97,8 +111,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             other => return Err(format!("unknown option `{other}`")),
         }
     }
-    if o.screenshot.is_some() && !o.demo && o.scene != Scene::Welcome {
+    if o.screenshot.is_some() && !o.demo && o.open_project.is_none() && o.scene != Scene::Welcome {
         return Err("--screenshot needs --demo".into());
+    }
+    if o.demo && o.open_project.is_some() {
+        return Err("--demo and --open-project cannot be combined".into());
     }
     Ok(Parsed::Run(o))
 }
@@ -141,6 +158,21 @@ mod tests {
     }
 
     #[test]
+    fn daemon_flags() {
+        match p(&["--no-daemon"]).unwrap() {
+            Parsed::Run(o) => assert!(o.no_daemon && o.open_project.is_none()),
+            Parsed::Help => panic!(),
+        }
+        match p(&["--open-project", "/p", "--screenshot", "a.png"]).unwrap() {
+            Parsed::Run(o) => {
+                assert_eq!(o.open_project, Some(PathBuf::from("/p")));
+                assert!(!o.no_daemon);
+            }
+            Parsed::Help => panic!(),
+        }
+    }
+
+    #[test]
     fn bad_input_is_explained() {
         assert!(p(&["--renderer", "metal"]).unwrap_err().contains("glow"));
         assert!(p(&["--renderer"]).is_err());
@@ -151,6 +183,8 @@ mod tests {
                 .contains("--demo")
         );
         assert!(p(&["--nope"]).unwrap_err().contains("--nope"));
+        assert!(p(&["--open-project"]).is_err());
+        assert!(p(&["--demo", "--open-project", "/x"]).is_err());
         assert!(p(&["--scene", "x"]).unwrap_err().contains("palette"));
         assert!(p(&["--screenshot", "a.png", "--scene", "welcome"]).is_ok());
     }

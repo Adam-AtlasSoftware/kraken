@@ -1,20 +1,22 @@
 //! [`Backend`] over the command registry running inside the GUI process.
 
 use std::any::Any;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use kraken_proto::ProtoError;
 use kraken_registry::{
-    CallContext, CommandKind as RegKind, EngineFactory, JobId, JobSnapshot, JobStatus,
-    Permission as RegPermission, Registry, Session, Surface,
+    ApprovalDecision, ApprovalRequest, ApprovalRequester, CallContext, CommandKind as RegKind,
+    EngineFactory, JobId, JobSnapshot, JobStatus, Permission as RegPermission, Registry, Session,
+    Surface,
 };
 use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::backend::{
-    Backend, BackendEvent, CommandInfo, CommandKind, JobInfo, JobProgress, JobState, Permission,
+    ApprovalPrompt, Approver, Backend, BackendEvent, CommandInfo, CommandKind, JobInfo,
+    JobProgress, JobState, Permission,
 };
 
 /// Id the GUI's edits are logged under.
@@ -27,6 +29,7 @@ pub struct InProcessBackend {
     registry: Registry,
     session: Arc<Session>,
     events: broadcast::Sender<BackendEvent>,
+    approver: Mutex<Option<Arc<dyn Approver>>>,
     _keepalive: Option<Box<dyn Any + Send + Sync>>,
 }
 
@@ -43,6 +46,7 @@ impl InProcessBackend {
             registry: Registry::standard(),
             session: Arc::new(session),
             events,
+            approver: Mutex::new(None),
             _keepalive: None,
         }
     }
@@ -51,6 +55,11 @@ impl InProcessBackend {
     pub fn with_keepalive(mut self, value: Box<dyn Any + Send + Sync>) -> Self {
         self._keepalive = Some(value);
         self
+    }
+
+    /// Sets who is asked before a dangerous command runs; without one such commands are refused.
+    pub fn set_approver(&self, approver: Arc<dyn Approver>) {
+        *self.approver.lock().unwrap_or_else(PoisonError::into_inner) = Some(approver);
     }
 
     /// The underlying session, for embedding code and tests.
@@ -79,6 +88,30 @@ impl InProcessBackend {
     }
 }
 
+struct Adapter(Arc<dyn Approver>);
+
+#[async_trait]
+impl ApprovalRequester for Adapter {
+    async fn request(&self, req: ApprovalRequest) -> ApprovalDecision {
+        let command = req.command.clone();
+        let allowed = self
+            .0
+            .approve(ApprovalPrompt {
+                command: req.command,
+                summary: req.summary,
+                args: req.args,
+            })
+            .await;
+        if allowed {
+            ApprovalDecision::Allow
+        } else {
+            ApprovalDecision::Deny {
+                reason: format!("`{command}` was not approved"),
+            }
+        }
+    }
+}
+
 fn job_info(s: JobSnapshot) -> JobInfo {
     JobInfo {
         job_id: s.id.0,
@@ -103,7 +136,15 @@ fn job_info(s: JobSnapshot) -> JobInfo {
 #[async_trait]
 impl Backend for InProcessBackend {
     async fn call(&self, command: &str, args: Value) -> Result<Value, ProtoError> {
-        let ctx = CallContext::user(GUI_USER, Surface::Gui);
+        let mut ctx = CallContext::user(GUI_USER, Surface::Gui);
+        let approver = self
+            .approver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(approver) = approver {
+            ctx = ctx.with_approval(Arc::new(Adapter(approver)));
+        }
         let out = self
             .registry
             .call_json(command, &self.session, &ctx, args)

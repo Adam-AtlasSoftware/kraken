@@ -1059,6 +1059,159 @@ fn backend_events_for_other_jobs_and_disconnects() {
     assert!(r.vm.block_until_idle(WAIT));
 }
 
+fn change(author: &str, by_agent: bool, ids: &[u64]) -> ChangeInfo {
+    ChangeInfo {
+        command: "rename_symbol".into(),
+        by_agent,
+        author: author.into(),
+        run_id: Some("run-1".into()),
+        entry_ids: ids.to_vec(),
+        key: None,
+    }
+}
+
+fn history_row(id: u64, op: &str, description: &str, run: Option<&str>) -> Value {
+    json!({
+        "id": id, "op": op, "address": "0x401000", "description": u(description),
+        "author": {"kind": "agent", "id": "claude"}, "run_id": run,
+        "status": "applied", "sync": "pushed", "ts_ms": 1,
+    })
+}
+
+#[test]
+fn an_agent_edit_refreshes_everything_and_toasts_with_an_undo() {
+    let backend = base_backend()
+        .reply(
+            "history",
+            page(
+                vec![history_row(
+                    4,
+                    "rename",
+                    "rename 0x401000 main -> entry",
+                    Some("run-1"),
+                )],
+                None,
+            ),
+        )
+        .reply(
+            "undo_run",
+            json!({"status": "applied", "undone_entry_ids": [4], "failed": []}),
+        );
+    let mut r = opened(backend);
+    let before = r.backend.calls_to("list_functions").len();
+    r.backend
+        .emit(BackendEvent::EntryApplied(change("claude", true, &[4])));
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.toasts
+            .iter()
+            .any(|t| t.text.contains("Agent renamed main"))
+    }));
+    let backend = r.backend.clone();
+    assert!(r.vm.block_until(WAIT, |_| backend.calls_to("list_functions").len() > before));
+    let toast = r.vm.toasts.last().cloned().expect("toast");
+    assert!(toast.text.contains("main \u{2192} entry"), "{}", toast.text);
+    assert!(toast.text.contains("claude"));
+    assert_eq!(
+        toast.action,
+        Some(ToastAction::UndoRun {
+            run_id: "run-1".into()
+        })
+    );
+
+    // The same entry is announced only once.
+    r.backend
+        .emit(BackendEvent::EntryApplied(change("claude", true, &[4])));
+    assert!(r.vm.block_until_idle(WAIT));
+    std::thread::sleep(Duration::from_millis(50));
+    r.vm.poll();
+    assert_eq!(r.vm.toasts.iter().filter(|t| t.action.is_some()).count(), 1);
+
+    // The toast's button undoes the run.
+    let backend = r.backend.clone();
+    r.vm.run_toast_action(toast.id);
+    assert!(r.vm.block_until(WAIT, |_| !backend.calls_to("undo_run").is_empty()));
+    assert_eq!(
+        r.backend.calls_to("undo_run")[0],
+        json!({"run_id": "run-1"})
+    );
+    assert!(r.vm.toasts.iter().all(|t| t.id != toast.id));
+}
+
+#[test]
+fn a_persons_edit_elsewhere_refreshes_quietly() {
+    let mut r = opened(base_backend());
+    let n = r.backend.calls_to("list_functions").len();
+    r.backend
+        .emit(BackendEvent::EntryApplied(change("adam", false, &[9])));
+    let backend = r.backend.clone();
+    assert!(r.vm.block_until(WAIT, |_| backend.calls_to("list_functions").len() > n));
+    assert!(r.vm.block_until_idle(WAIT));
+    assert!(r.vm.toasts.is_empty());
+    assert!(r.backend.calls_to("history").len() >= 2);
+}
+
+#[test]
+fn a_new_proposal_reloads_the_tab_and_says_so() {
+    let mut r = opened(base_backend());
+    let n = r.backend.calls_to("proposals_list").len();
+    r.backend
+        .emit(BackendEvent::ProposalCreated(change("claude", true, &[])));
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.toasts
+            .iter()
+            .any(|t| t.text.contains("Agent claude proposed"))
+    }));
+    let backend = r.backend.clone();
+    assert!(r.vm.block_until(WAIT, |_| backend.calls_to("proposals_list").len() > n));
+}
+
+#[test]
+fn sidecar_and_connection_events_are_explained_and_refresh_on_return() {
+    let mut r = opened(base_backend());
+    r.backend.emit(BackendEvent::SidecarExited {
+        restart_failed: false,
+    });
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.toasts
+            .iter()
+            .any(|t| t.level == ToastLevel::Warning && t.text.contains("Restarting"))
+    }));
+
+    let backend = r.backend.clone();
+    let n = backend.calls_to("list_functions").len();
+    r.backend.emit(BackendEvent::SidecarRestarted {
+        replayed: 2,
+        rejected: 1,
+    });
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.toasts
+            .iter()
+            .any(|t| t.text.contains("2 saved edit(s)") && t.text.contains("refused 1"))
+    }));
+    assert!(r.vm.block_until(WAIT, |_| backend.calls_to("list_functions").len() > n));
+
+    r.backend.emit(BackendEvent::Disconnected("gone".into()));
+    assert!(r.vm.block_until(WAIT, |vm| matches!(vm.link, LinkState::Disconnected(_))));
+    // A second drop notice does not stack another error toast.
+    let errors = |vm: &ViewModel| {
+        vm.toasts
+            .iter()
+            .filter(|t| t.level == ToastLevel::Error)
+            .count()
+    };
+    r.backend
+        .emit(BackendEvent::Disconnected("still gone".into()));
+    assert!(r.vm.block_until(WAIT, |vm| vm.link
+        == LinkState::Disconnected("still gone".into())));
+    assert_eq!(errors(&r.vm), 1);
+
+    let n = backend.calls_to("list_functions").len();
+    r.backend.emit(BackendEvent::Reconnected);
+    assert!(r.vm.block_until(WAIT, |vm| vm.link == LinkState::Connected));
+    assert!(r.vm.block_until(WAIT, |_| backend.calls_to("list_functions").len() > n));
+    assert!(r.vm.block_until_idle(WAIT));
+}
+
 // ------------------------------------------------------------------ palette, actions, toasts
 
 fn command_list() -> Vec<CommandInfo> {

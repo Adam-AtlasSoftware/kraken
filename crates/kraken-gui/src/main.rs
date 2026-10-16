@@ -3,15 +3,19 @@
 mod app;
 mod args;
 mod chrome;
-mod engine;
 mod fonts;
 mod overlays;
+mod recent;
+mod services;
+mod settings;
 mod style;
 mod welcome;
 mod workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod testutil;
 
 use std::sync::Arc;
 
@@ -38,7 +42,7 @@ fn main() -> anyhow::Result<()> {
             .enable_all()
             .build()?,
     );
-    let factory = engine::real_engine_factory();
+    let services = services::Services::from_env(opts.no_daemon);
 
     let size = if opts.screenshot.is_some() {
         [1440.0, 900.0]
@@ -58,15 +62,19 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     let rt_for_app = rt.clone();
+    let mut services = Some(services);
     eframe::run_native(
         "KRAKEN",
         native,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx);
+            let services = services
+                .take()
+                .ok_or_else(|| anyhow!("the application was created twice"))?;
             Ok(Box::new(app::KrakenApp::new(
                 &cc.egui_ctx,
                 rt_for_app,
-                factory,
+                services,
                 &opts,
             )))
         }),

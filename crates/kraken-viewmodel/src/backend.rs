@@ -103,6 +103,23 @@ pub struct JobInfo {
     pub error: Option<ProtoError>,
 }
 
+/// Who made a change another client reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeInfo {
+    /// Command that made the change (`rename_symbol`, ...).
+    pub command: String,
+    /// True when an agent (not a person) made it.
+    pub by_agent: bool,
+    /// User name or agent id.
+    pub author: String,
+    /// Agent run the change belongs to.
+    pub run_id: Option<String>,
+    /// Log entries the change created or undid; empty for a proposal.
+    pub entry_ids: Vec<u64>,
+    /// Entity key such as `native:ram:0x401000:name`.
+    pub key: Option<String>,
+}
+
 /// Something that happened outside a call the view-model made itself.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BackendEvent {
@@ -110,8 +127,49 @@ pub enum BackendEvent {
     Job(JobInfo),
     /// Another client changed the project; panels should refresh.
     ProjectChanged,
-    /// The connection to the engine or daemon is gone.
+    /// Somebody (a person in another window, an agent over MCP) edited the open project.
+    EntryApplied(ChangeInfo),
+    /// An agent edit was held back as a proposal for review.
+    ProposalCreated(ChangeInfo),
+    /// The analysis engine behind the project ended.
+    SidecarExited {
+        /// True when it also could not be restarted.
+        restart_failed: bool,
+    },
+    /// The analysis engine came back; queued edits were replayed.
+    SidecarRestarted {
+        /// Edits pushed again.
+        replayed: u64,
+        /// Edits the engine refused on replay.
+        rejected: u64,
+    },
+    /// The daemon opened a session for the open project.
+    SessionOpened,
+    /// The daemon closed the project's session (`idle`, `evicted`, `shutdown`).
+    SessionClosed(String),
+    /// The connection to the engine or daemon is gone; the backend keeps trying to reconnect.
     Disconnected(String),
+    /// The connection is back; everything shown should be reloaded.
+    Reconnected,
+}
+
+/// A dangerous command waiting for the person's decision.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApprovalPrompt {
+    /// Command name.
+    pub command: String,
+    /// One-line summary of the command.
+    pub summary: String,
+    /// The arguments it will run with.
+    pub args: Value,
+}
+
+/// Asks the person whether a dangerous command may run (decision 16: the client asks, the
+/// daemon never decides).
+#[async_trait]
+pub trait Approver: Send + Sync {
+    /// True when the person allowed `prompt`.
+    async fn approve(&self, prompt: ApprovalPrompt) -> bool;
 }
 
 /// Runs KRAKEN commands for the GUI.

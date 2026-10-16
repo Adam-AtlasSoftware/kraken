@@ -5,7 +5,7 @@ use egui::{
 };
 use kraken_gui_widgets::KrakenTheme;
 use kraken_proto::CommentKind;
-use kraken_viewmodel::{UiRequest, ViewModel};
+use kraken_viewmodel::{ApprovalBroker, UiRequest, ViewModel};
 
 use crate::style::{self, medium};
 
@@ -363,5 +363,55 @@ pub fn comment_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.cancel_comment();
     } else if submit {
         vm.submit_comment();
+    }
+}
+
+/// Asks whether a dangerous command may run. Nothing runs until the person says yes.
+pub fn approval_dialog(ctx: &egui::Context, broker: &ApprovalBroker) {
+    let Some((id, prompt)) = broker.current() else {
+        return;
+    };
+    let dark = ctx.global_style().visuals.dark_mode;
+    let p = KrakenTheme { dark }.palette();
+    let s = style::status(dark);
+    let mut answer = None;
+    egui::Window::new(medium("Allow this action?", 15.0))
+        .id(Id::new("kraken_approval"))
+        .collapsible(false)
+        .resizable(false)
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, -50.0))
+        .fixed_size(vec2(440.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new("This can change or remove work in your project.").color(s.warning),
+            );
+            ui.add_space(4.0);
+            ui.label(medium(&prompt.command, 14.0).color(p.text_strong));
+            ui.label(RichText::new(&prompt.summary).color(p.text_dim));
+            let args = serde_json::to_string_pretty(&prompt.args).unwrap_or_default();
+            if args != "null" && args != "{}" {
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(args).monospace().size(12.0).color(p.text));
+                    });
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if style::primary_button(ui, "Allow").clicked() {
+                    answer = Some(true);
+                }
+                if ui.button("Deny").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        answer = Some(false);
+    }
+    if let Some(a) = answer {
+        broker.respond(id, a);
     }
 }

@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::backend::{Backend, BackendEvent, CommandInfo, JobInfo, JobState};
+use crate::backend::{Backend, BackendEvent, ChangeInfo, CommandInfo, JobInfo, JobState};
 use crate::errors::plain_error;
 use crate::nav::NavHistory;
 use crate::palette::{AppAction, PaletteState, PaletteTarget, UiRequest};
@@ -86,6 +86,9 @@ pub struct ViewModel {
     pub palette: PaletteState,
     /// Live notifications, oldest first.
     pub toasts: Vec<Toast>,
+    /// Whether the daemon connection is up.
+    pub link: LinkState,
+    announced: std::collections::HashSet<u64>,
 }
 
 fn parse<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
@@ -144,6 +147,24 @@ fn kind_of(v: &Value) -> String {
         .or_else(|| v.as_str())
         .unwrap_or("")
         .to_string()
+}
+
+/// "Agent renamed old -> new" and friends, from a history row.
+fn agent_edit_text(author: &str, op: &str, description: &str) -> String {
+    let suffix = if author.is_empty() {
+        String::new()
+    } else {
+        format!(" ({author})")
+    };
+    let words: Vec<&str> = description.split_whitespace().collect();
+    match (op, words.as_slice()) {
+        ("rename", [_, _, old, "->", new, ..]) => {
+            format!("Agent renamed {old} \u{2192} {new}{suffix}")
+        }
+        ("set_comment", [_, addr, ..]) => format!("Agent commented on {addr}{suffix}"),
+        (_, [_, addr, ..]) => format!("Agent changed {addr} ({op}){suffix}"),
+        _ => format!("Agent edited the project ({op}){suffix}"),
+    }
 }
 
 fn who(a: &AuthorWire) -> String {
@@ -211,6 +232,8 @@ impl ViewModel {
             analysis: AnalysisState::default(),
             palette: PaletteState::default(),
             toasts: Vec::new(),
+            link: LinkState::Connected,
+            announced: std::collections::HashSet::new(),
         };
         vm.start_event_forwarder();
         vm
@@ -340,12 +363,23 @@ impl ViewModel {
 
     /// Shows a notification.
     pub fn toast(&mut self, level: ToastLevel, text: impl Into<String>) {
+        self.toast_with(level, text, None);
+    }
+
+    /// Shows a notification with a button.
+    pub fn toast_with(
+        &mut self,
+        level: ToastLevel,
+        text: impl Into<String>,
+        action: Option<ToastAction>,
+    ) {
         let id = self.next_toast;
         self.next_toast += 1;
         self.toasts.push(Toast {
             id,
             level,
             text: text.into(),
+            action,
             created: Instant::now(),
         });
         if self.toasts.len() > 6 {
@@ -356,6 +390,20 @@ impl ViewModel {
     fn toast_error(&mut self, e: &ProtoError) {
         let text = plain_error(e);
         self.toast(ToastLevel::Error, text);
+    }
+
+    /// Runs the button of toast `id` and closes the toast.
+    pub fn run_toast_action(&mut self, id: u64) {
+        let action = self
+            .toasts
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.action.clone());
+        self.dismiss_toast(id);
+        match action {
+            Some(ToastAction::UndoRun { run_id }) => self.undo_run(run_id),
+            None => {}
+        }
     }
 
     /// Closes one notification.
@@ -576,13 +624,93 @@ impl ViewModel {
         match ev {
             BackendEvent::Job(info) => self.on_job(info),
             BackendEvent::ProjectChanged => self.refresh_after_edit(),
-            BackendEvent::Disconnected(why) => {
+            BackendEvent::EntryApplied(change) => {
+                self.refresh_after_edit();
+                if change.by_agent {
+                    self.announce_agent_edit(change);
+                }
+            }
+            BackendEvent::ProposalCreated(change) => {
+                self.refresh_proposals();
+                self.refresh_project();
+                self.refresh_history();
+                let who = if change.author.is_empty() {
+                    "An agent".to_string()
+                } else {
+                    format!("Agent {}", change.author)
+                };
                 self.toast(
-                    ToastLevel::Error,
-                    format!("Lost the connection to the engine: {why}"),
+                    ToastLevel::Info,
+                    format!("{who} proposed a change. Review it in the Proposals tab."),
                 );
             }
+            BackendEvent::SidecarExited { restart_failed } => {
+                if restart_failed {
+                    self.toast(
+                        ToastLevel::Error,
+                        "The analysis engine stopped and could not be restarted. Your edits are saved and will be applied when it comes back.",
+                    );
+                } else {
+                    self.toast(
+                        ToastLevel::Warning,
+                        "The analysis engine stopped. Restarting it...",
+                    );
+                }
+            }
+            BackendEvent::SidecarRestarted { replayed, rejected } => {
+                let mut text = String::from("The analysis engine is back.");
+                if replayed > 0 {
+                    text.push_str(&format!(" {replayed} saved edit(s) were applied again."));
+                }
+                if rejected > 0 {
+                    text.push_str(&format!(" The engine refused {rejected}."));
+                }
+                self.toast(ToastLevel::Info, text);
+                self.refresh_all();
+            }
+            BackendEvent::SessionOpened | BackendEvent::SessionClosed(_) => {}
+            BackendEvent::Disconnected(why) => {
+                if self.link == LinkState::Connected {
+                    self.toast(
+                        ToastLevel::Error,
+                        format!("Lost the connection to the engine: {why}. Reconnecting..."),
+                    );
+                }
+                self.link = LinkState::Disconnected(why);
+            }
+            BackendEvent::Reconnected => {
+                self.link = LinkState::Connected;
+                self.toast(ToastLevel::Success, "Reconnected to the engine.");
+                if self.connection == Connection::Open {
+                    self.refresh_all();
+                    self.refresh_job();
+                }
+            }
         }
+    }
+
+    /// Looks the agent's new log entries up and tells the person what changed, with an Undo.
+    fn announce_agent_edit(&mut self, change: ChangeInfo) {
+        let wanted: Vec<u64> = change
+            .entry_ids
+            .iter()
+            .copied()
+            .filter(|id| self.announced.insert(*id))
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        self.call("history", json!({ "limit": 30 }), move |vm, res| {
+            let Ok(page) = res.and_then(parse::<kraken_proto::Page<HistoryWire>>) else {
+                return;
+            };
+            for h in page.items.into_iter().filter(|h| wanted.contains(&h.id)) {
+                let text = agent_edit_text(&change.author, &h.op, &h.description.0);
+                let run = h.run_id.clone().or_else(|| change.run_id.clone());
+                let action = run.map(|run_id| ToastAction::UndoRun { run_id });
+                vm.toast_with(ToastLevel::Info, text, action);
+            }
+        });
     }
 
     fn on_job(&mut self, info: JobInfo) {
@@ -1383,6 +1511,7 @@ impl ViewModel {
             AppAction::OpenProject => return Some(UiRequest::OpenProject),
             AppAction::NewProject => return Some(UiRequest::NewProject),
             AppAction::OpenDemo => return Some(UiRequest::OpenDemo),
+            AppAction::OpenSettings => return Some(UiRequest::OpenSettings),
         }
         None
     }

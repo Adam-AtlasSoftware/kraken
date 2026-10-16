@@ -2,18 +2,25 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use egui::{Frame, Key, Margin, Modifiers, Ui, ViewportCommand};
 use egui_dock::DockState;
 use kraken_gui_widgets::KrakenTheme;
-use kraken_registry::EngineFactory;
+use kraken_host::ManagedFactory;
 use kraken_viewmodel::demo::demo_project;
-use kraken_viewmodel::{AnalysisPhase, Connection, InProcessBackend, Load, UiRequest, ViewModel};
+use kraken_viewmodel::{
+    AnalysisPhase, ApprovalBroker, Backend, BackendOptions, Connection, DaemonClientBackend,
+    InProcessBackend, Load, UiRequest, ViewModel,
+};
 use tokio::runtime::Runtime;
 
 use crate::args::{Options, Scene};
-use crate::welcome::{self, Choice, Welcome, default_project_dir};
+use crate::recent::{self, Prefs};
+use crate::services::{Mode, Services};
+use crate::settings::{Settings, SettingsAction, SettingsEnv};
+use crate::welcome::{self, Choice, Welcome, WelcomeAction};
 use crate::workspace::{self, Tab, UiState};
 use crate::{chrome, overlays};
 
@@ -28,7 +35,17 @@ enum ShotStage {
     Waiting,
 }
 
+/// The connection to `krakend`, made when a real project is first needed.
+enum Slot {
+    Idle,
+    Connecting(Receiver<Result<Arc<DaemonClientBackend>, String>>),
+    Ready(Arc<DaemonClientBackend>),
+    Failed(String),
+}
+
 struct Shot {
+    /// A real project opened with `--open-project` instead of the demo.
+    real: bool,
     scene: Scene,
     path: PathBuf,
     stage: ShotStage,
@@ -38,7 +55,17 @@ struct Shot {
 
 pub struct KrakenApp {
     rt: Arc<Runtime>,
-    factory: Option<Arc<dyn EngineFactory>>,
+    services: Services,
+    slot: Slot,
+    /// What to do once the daemon connection is up.
+    pending: Option<Choice>,
+    approvals: ApprovalBroker,
+    settings: Settings,
+    prefs: Prefs,
+    /// The open project is the demo (not worth remembering).
+    is_demo: bool,
+    /// The open project was added to the recent list.
+    recorded: bool,
     vm: Option<ViewModel>,
     welcome: Welcome,
     dock: DockState<Tab>,
@@ -51,28 +78,42 @@ pub struct KrakenApp {
 }
 
 impl KrakenApp {
-    pub fn new(
-        ctx: &egui::Context,
-        rt: Arc<Runtime>,
-        factory: Option<Arc<dyn EngineFactory>>,
-        opts: &Options,
-    ) -> Self {
+    pub fn new(ctx: &egui::Context, rt: Arc<Runtime>, services: Services, opts: &Options) -> Self {
+        let prefs = Prefs::load(services.prefs_file.clone());
+        let dark = if opts.light {
+            false
+        } else {
+            prefs.dark().unwrap_or(true)
+        };
+        let approvals = ApprovalBroker::new();
+        {
+            let ctx = ctx.clone();
+            approvals.set_repaint(Arc::new(move || ctx.request_repaint()));
+        }
         let mut app = KrakenApp {
             rt,
-            factory,
+            slot: Slot::Idle,
+            pending: None,
+            approvals,
+            settings: Settings::default(),
+            prefs,
+            is_demo: false,
+            recorded: false,
             vm: None,
-            welcome: Welcome::default(),
+            welcome: Welcome::new(services.cfg.clone()),
+            services,
             dock: workspace::initial_dock(),
             state: UiState::default(),
-            theme: if opts.light {
-                KrakenTheme::LIGHT
-            } else {
+            theme: if dark {
                 KrakenTheme::DARK
+            } else {
+                KrakenTheme::LIGHT
             },
             applied: None,
             rename_focus: None,
             auto_analyze: false,
             shot: opts.screenshot.clone().map(|path| Shot {
+                real: opts.open_project.is_some(),
                 scene: opts.scene,
                 path,
                 stage: if opts.scene == Scene::Welcome {
@@ -86,6 +127,10 @@ impl KrakenApp {
         };
         if opts.demo {
             app.start_demo(ctx);
+        } else if let Some(dir) = &opts.open_project {
+            app.start_real(Choice::OpenProject(dir.to_string_lossy().into_owned()), ctx);
+            // Screenshot runs analyze a project that has not been analyzed yet.
+            app.auto_analyze = opts.screenshot.is_some();
         }
         app
     }
@@ -116,6 +161,21 @@ impl KrakenApp {
         &mut self.state
     }
 
+    #[cfg(test)]
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    #[cfg(test)]
+    pub fn prefs(&self) -> &Prefs {
+        &self.prefs
+    }
+
+    #[cfg(test)]
+    pub fn approvals(&self) -> &ApprovalBroker {
+        &self.approvals
+    }
+
     fn new_vm(
         &mut self,
         backend: Arc<dyn kraken_viewmodel::Backend>,
@@ -137,6 +197,8 @@ impl KrakenApp {
                 );
                 self.vm = Some(vm);
                 self.auto_analyze = true;
+                self.is_demo = true;
+                self.recorded = false;
                 self.welcome.error = None;
                 self.welcome.busy = Some("Opening the demo project...".into());
             }
@@ -144,30 +206,103 @@ impl KrakenApp {
         }
     }
 
+    /// Opens or creates a real project through the daemon (or in-process with `--no-daemon`).
     pub(crate) fn start_real(&mut self, choice: Choice, ctx: &egui::Context) {
-        let Some(factory) = self.factory.clone() else {
-            self.welcome.error = Some(
-                "The analysis engine is not connected in this build yet, so real programs cannot be opened. The demo project works today."
-                    .into(),
-            );
+        self.welcome.error = None;
+        match self.services.mode {
+            Mode::NoDaemon => {
+                let Some(factory) = self.services.ghidra.clone() else {
+                    self.welcome.error = Some("The in-process engine is not available.".into());
+                    return;
+                };
+                let backend = InProcessBackend::new(factory);
+                backend.set_approver(Arc::new(self.approvals.clone()));
+                self.launch(choice, Arc::new(backend), ctx);
+            }
+            Mode::Daemon => {
+                if let Slot::Failed(_) = self.slot {
+                    self.slot = Slot::Idle;
+                }
+                if let Slot::Ready(b) = &self.slot {
+                    let backend = b.clone();
+                    self.launch(choice, backend, ctx);
+                } else {
+                    self.pending = Some(choice);
+                    self.connect_daemon(ctx);
+                    self.welcome.busy = Some("Starting the analysis engine...".into());
+                }
+            }
+        }
+    }
+
+    fn connect_daemon(&mut self, ctx: &egui::Context) {
+        if matches!(self.slot, Slot::Connecting(_) | Slot::Ready(_)) {
+            return;
+        }
+        let (tx, rx) = channel();
+        let connector = self.services.connector();
+        let ctx = ctx.clone();
+        self.rt.spawn(async move {
+            let r = DaemonClientBackend::connect(connector, BackendOptions::default())
+                .await
+                .map(Arc::new);
+            let _ = tx.send(r);
+            ctx.request_repaint();
+        });
+        self.slot = Slot::Connecting(rx);
+    }
+
+    fn poll_daemon(&mut self, ctx: &egui::Context) {
+        let Slot::Connecting(rx) = &self.slot else {
             return;
         };
-        let backend = Arc::new(InProcessBackend::new(factory));
+        let outcome = match rx.try_recv() {
+            Ok(r) => r,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("the connection attempt was dropped".into()),
+        };
+        match outcome {
+            Ok(backend) => {
+                backend.set_approver(Arc::new(self.approvals.clone()));
+                self.slot = Slot::Ready(backend.clone());
+                if let Some(choice) = self.pending.take() {
+                    self.launch(choice, backend, ctx);
+                }
+            }
+            Err(e) => {
+                self.slot = Slot::Failed(e.clone());
+                if self.pending.take().is_some() {
+                    self.welcome.busy = None;
+                    self.welcome.error = Some(format!(
+                        "Could not reach the analysis engine (krakend): {e}. Run `kraken daemon start` to see why, or start the GUI with --no-daemon."
+                    ));
+                }
+            }
+        }
+    }
+
+    fn launch(&mut self, choice: Choice, backend: Arc<dyn Backend>, ctx: &egui::Context) {
         let mut vm = self.new_vm(backend, ctx);
         match choice {
             Choice::OpenProject(dir) => vm.open_project(dir),
-            Choice::NewProject(bin) => {
-                let dir = default_project_dir(&bin);
-                vm.create_project(bin, dir);
+            Choice::NewProject {
+                binary,
+                project_dir,
+            } => {
+                vm.create_project(binary, project_dir);
+                self.auto_analyze = true;
             }
             Choice::Demo => return,
         }
         self.vm = Some(vm);
+        self.is_demo = false;
+        self.recorded = false;
         self.welcome.error = None;
         self.welcome.busy = Some("Opening...".into());
     }
 
     fn step_vm(&mut self, ctx: &egui::Context) {
+        self.poll_daemon(ctx);
         let Some(vm) = self.vm.as_mut() else {
             return;
         };
@@ -185,7 +320,17 @@ impl KrakenApp {
                 self.welcome.busy = None;
                 if self.auto_analyze {
                     self.auto_analyze = false;
-                    vm.start_analysis();
+                    if vm.analysis.phase == AnalysisPhase::NotStarted {
+                        vm.start_analysis();
+                    }
+                }
+                if !self.recorded
+                    && !self.is_demo
+                    && let Some(info) = &vm.project
+                {
+                    self.recorded = true;
+                    self.prefs
+                        .touch(&info.project_dir, &info.name, recent::now_ms());
                 }
                 self.state.flush_pending_nav(vm, ctx);
             }
@@ -194,6 +339,9 @@ impl KrakenApp {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context, reqs: &mut Vec<UiRequest>) {
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma)) {
+            self.settings.toggle();
+        }
         let Some(vm) = self
             .vm
             .as_mut()
@@ -243,6 +391,35 @@ impl KrakenApp {
                 self.welcome.busy = None;
             }
             UiRequest::OpenDemo => self.start_demo(ctx),
+            UiRequest::OpenSettings => self.settings.show_window(),
+        }
+    }
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        let backend = match &self.slot {
+            Slot::Ready(b) => Some(b),
+            _ => None,
+        };
+        let env = SettingsEnv {
+            rt: self.rt.handle(),
+            mode: self.services.mode,
+            dark: self.theme.dark,
+            config_path: self.services.config_path.as_ref(),
+            backend,
+            connecting: matches!(self.slot, Slot::Connecting(_)),
+            connect_error: match &self.slot {
+                Slot::Failed(e) => Some(e.as_str()),
+                _ => None,
+            },
+        };
+        for a in self.settings.show(ctx, &env) {
+            match a {
+                SettingsAction::SetDark(dark) => {
+                    self.theme.dark = dark;
+                    self.prefs.set_dark(dark);
+                }
+                SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
+            }
         }
     }
 
@@ -288,25 +465,36 @@ impl KrakenApp {
             overlays::rename_dialog(&ctx, vm, &mut self.rename_focus);
             overlays::comment_dialog(&ctx, vm);
             chrome::toasts(&ctx, vm);
-            if !vm.toasts.is_empty() {
+            if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
                 ctx.request_repaint_after(Duration::from_millis(400));
             }
         } else {
-            let choice = egui::CentralPanel::default()
+            let actions = egui::CentralPanel::default()
                 .frame(Frame::new().fill(pal.bg).inner_margin(24))
                 .show(ui, |ui| {
-                    welcome::show(ui, &mut self.welcome, self.rt.handle())
+                    welcome::show(
+                        ui,
+                        &mut self.welcome,
+                        self.rt.handle(),
+                        self.prefs.items(),
+                        recent::now_ms(),
+                    )
                 })
                 .inner;
-            match choice {
-                Some(Choice::Demo) => self.start_demo(&ctx),
-                Some(c) => self.start_real(c, &ctx),
-                None => {}
+            for a in actions {
+                match a {
+                    WelcomeAction::Choose(Choice::Demo) => self.start_demo(&ctx),
+                    WelcomeAction::Choose(c) => self.start_real(c, &ctx),
+                    WelcomeAction::Forget(path) => self.prefs.remove(&path),
+                    WelcomeAction::Settings => self.settings.show_window(),
+                }
             }
         }
         for r in reqs {
             self.handle(r, &ctx);
         }
+        self.settings_window(&ctx);
+        overlays::approval_dialog(&ctx, &self.approvals);
         self.drive_screenshot(&ctx);
     }
 
@@ -363,12 +551,21 @@ impl KrakenApp {
                 if vm.connection == Connection::Open
                     && vm.analysis.phase == AnalysisPhase::Complete
                     && !vm.busy()
-                    && let Some(main) = vm.functions.items.iter().find(|f| f.name == "main")
                 {
-                    let addr = main.address;
-                    self.state.initial_highlight = Some("helper".into());
-                    vm.select_function(addr);
-                    shot.stage = ShotStage::Selecting;
+                    let pick = vm
+                        .functions
+                        .items
+                        .iter()
+                        .find(|f| f.name == "main")
+                        .or_else(|| vm.functions.items.first().filter(|_| shot.real))
+                        .map(|f| f.address);
+                    if let Some(addr) = pick {
+                        if !shot.real {
+                            self.state.initial_highlight = Some("helper".into());
+                        }
+                        vm.select_function(addr);
+                        shot.stage = ShotStage::Selecting;
+                    }
                 }
             }
             ShotStage::Selecting => {
@@ -378,10 +575,27 @@ impl KrakenApp {
                     .is_some_and(|c| matches!(c.decompiled, Load::Ready(_)));
                 if ready && !vm.busy() {
                     // One real edit so the History tab has something to show.
-                    vm.begin_rename(0x401340, Some("FUN_00401340"));
-                    vm.set_rename_input("fatal_out_of_memory");
-                    vm.submit_rename();
-                    shot.stage = ShotStage::Editing;
+                    if shot.real {
+                        let target = vm
+                            .functions
+                            .items
+                            .iter()
+                            .find(|f| f.name.starts_with("FUN_") && Some(f.address) != vm.selected)
+                            .map(|f| (f.address, f.name.clone()));
+                        if let Some((addr, name)) = target {
+                            vm.begin_rename(addr, Some(&name));
+                            vm.set_rename_input("dispatch_command");
+                            vm.submit_rename();
+                            shot.stage = ShotStage::Editing;
+                        } else {
+                            shot.stage = ShotStage::Settling;
+                        }
+                    } else {
+                        vm.begin_rename(0x401340, Some("FUN_00401340"));
+                        vm.set_rename_input("fatal_out_of_memory");
+                        vm.submit_rename();
+                        shot.stage = ShotStage::Editing;
+                    }
                 }
             }
             ShotStage::Editing => {
@@ -422,5 +636,19 @@ impl KrakenApp {
 impl eframe::App for KrakenApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.stop_in_process_engine();
+    }
+}
+
+impl KrakenApp {
+    /// Ends the sidecar of a `--no-daemon` run; a daemon outlives the window by design.
+    fn stop_in_process_engine(&mut self) {
+        if let Some(f) = self.services.ghidra.clone() {
+            self.vm = None;
+            self.rt.block_on(f.shutdown());
+        }
     }
 }

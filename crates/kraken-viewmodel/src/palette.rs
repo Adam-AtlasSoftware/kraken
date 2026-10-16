@@ -36,11 +36,13 @@ pub enum AppAction {
     NewProject,
     /// Open the built-in demo project.
     OpenDemo,
+    /// Open the settings window.
+    OpenSettings,
 }
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 15] = [
+    pub const ALL: [AppAction; 16] = [
         AppAction::RenameCurrent,
         AppAction::CommentCurrent,
         AppAction::Back,
@@ -56,6 +58,7 @@ impl AppAction {
         AppAction::OpenProject,
         AppAction::NewProject,
         AppAction::OpenDemo,
+        AppAction::OpenSettings,
     ];
 
     /// Palette title.
@@ -76,6 +79,7 @@ impl AppAction {
             AppAction::OpenProject => "Open project...",
             AppAction::NewProject => "New project from a binary...",
             AppAction::OpenDemo => "Open demo project",
+            AppAction::OpenSettings => "Settings...",
         }
     }
 
@@ -97,6 +101,7 @@ impl AppAction {
             AppAction::OpenProject => "Open a KRAKEN project folder",
             AppAction::NewProject => "Start analysing an executable",
             AppAction::OpenDemo => "Try KRAKEN on a small built-in program",
+            AppAction::OpenSettings => "Engine paths, theme, daemon status and setup",
         }
     }
 
@@ -107,6 +112,7 @@ impl AppAction {
             AppAction::Forward => Some("Alt+Right"),
             AppAction::RenameCurrent => Some("N"),
             AppAction::FocusFunctionFilter => Some("Ctrl+L"),
+            AppAction::OpenSettings => Some("Ctrl+,"),
             _ => None,
         }
     }
@@ -142,6 +148,8 @@ pub enum UiRequest {
     NewProject,
     /// Open the demo project.
     OpenDemo,
+    /// Show the settings window.
+    OpenSettings,
 }
 
 /// What a palette row does when chosen.

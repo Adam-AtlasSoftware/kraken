@@ -11,6 +11,7 @@ use kraken_viewmodel::{AnalysisPhase, Connection, Load, UiRequest};
 use crate::app::KrakenApp;
 use crate::args::{Options, RendererChoice, Scene};
 use crate::fonts;
+use crate::services::Services;
 use crate::welcome::Choice;
 use crate::workspace::{self, DOUBLE_CLICK_WINDOW, Tab};
 
@@ -29,11 +30,17 @@ fn options(demo: bool) -> Options {
         demo,
         screenshot: None,
         light: false,
+        no_daemon: false,
+        open_project: None,
     }
 }
 
 impl Harness {
     fn new(demo: bool) -> Self {
+        Self::with_services(demo, Services::offline())
+    }
+
+    fn with_services(demo: bool, services: Services) -> Self {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -43,7 +50,7 @@ impl Harness {
         );
         let ctx = Context::default();
         fonts::install(&ctx);
-        let app = KrakenApp::new(&ctx, rt.clone(), None, &options(demo));
+        let app = KrakenApp::new(&ctx, rt.clone(), services, &options(demo));
         Harness { ctx, app, _rt: rt }
     }
 
@@ -138,15 +145,80 @@ fn welcome_screen_renders_without_a_project() {
 }
 
 #[test]
-fn real_projects_explain_that_the_engine_is_not_connected_yet() {
+fn real_projects_explain_when_the_daemon_cannot_be_reached() {
     let mut h = Harness::new(false);
     let ctx = h.ctx.clone();
     h.app
         .start_real(Choice::OpenProject("/some/project".into()), &ctx);
-    h.app.start_real(Choice::NewProject("/bin/ls".into()), &ctx);
-    h.step();
+    h.run_until("the connection to fail", |a| {
+        a.welcome_error()
+            .is_some_and(|e| e.contains("Could not reach"))
+    });
     assert!(h.app.view_model().is_none());
-    assert!(h.app.welcome_error().unwrap().contains("not connected"));
+    assert!(h.app.welcome_error().unwrap().contains("--no-daemon"));
+}
+
+#[test]
+fn ctrl_comma_opens_and_closes_the_settings_window() {
+    let mut h = Harness::new(false);
+    h.key(Key::Comma, CTRL);
+    h.step();
+    assert!(h.app.settings().open);
+    h.step();
+    h.key(Key::Comma, CTRL);
+    assert!(!h.app.settings().open);
+    h.key(Key::Comma, CTRL);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.settings().open);
+}
+
+#[test]
+fn a_dangerous_command_waits_for_the_dialog_and_escape_denies_it() {
+    use kraken_viewmodel::{ApprovalPrompt, Approver};
+    let mut h = Harness::new(false);
+    let broker = h.app.approvals().clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    h._rt.spawn(async move {
+        let allowed = broker
+            .approve(ApprovalPrompt {
+                command: "wipe_project".into(),
+                summary: "Remove everything".into(),
+                args: serde_json::json!({"keep": false}),
+            })
+            .await;
+        let _ = tx.send(allowed);
+    });
+    h.run_until("the question", |a| a.approvals().current().is_some());
+    h.step();
+    assert!(
+        rx.try_recv().is_err(),
+        "nothing is decided until the person answers"
+    );
+    h.key(Key::Escape, Modifiers::NONE);
+    let deadline = Instant::now() + WAIT;
+    let allowed = loop {
+        if let Ok(a) = rx.try_recv() {
+            break a;
+        }
+        assert!(Instant::now() < deadline, "no answer");
+        h.step();
+    };
+    assert!(!allowed);
+    assert!(h.app.approvals().current().is_none());
+}
+
+#[test]
+fn the_palette_action_for_settings_asks_the_window_to_open_it() {
+    let mut h = Harness::ready_demo();
+    h.key(Key::Comma, CTRL);
+    h.step();
+    assert!(h.app.settings().open);
+    // The palette lists the window too.
+    let vm = h.app.view_model_mut().unwrap();
+    assert_eq!(
+        vm.perform(kraken_viewmodel::AppAction::OpenSettings),
+        Some(UiRequest::OpenSettings)
+    );
 }
 
 #[test]
@@ -416,4 +488,189 @@ fn no_default_fonts_are_needed() {
         ui.label(crate::style::medium("medium", 14.0));
     });
     out.textures_delta.clear();
+}
+
+// ---------------------------------------------------------------- against a real daemon
+
+mod live {
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use engine_fake::FixtureFile;
+    use kraken_host::DaemonSettings;
+    use kraken_host::daemon::{CallParams, DaemonClient};
+    use kraken_ipc::{Client, ClientHello, ClientKind, ManualClock, RuntimeDir};
+    use kraken_model::AuthorKind;
+    use kraken_proto::Locator;
+    use kraken_registry::{Registry, SessionConfig};
+    use krakend::fake::FakeFactory;
+    use krakend::{Daemon, DaemonOptions};
+    use serde_json::json;
+
+    use super::*;
+    use crate::testutil;
+
+    const BUILD: &str = env!("CARGO_PKG_VERSION");
+
+    struct Rig {
+        tmp: tempfile::TempDir,
+        dir: RuntimeDir,
+        daemon: Option<Daemon>,
+        h: Harness,
+    }
+
+    fn fixture() -> FixtureFile {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine-fake/fixtures/tiny.json");
+        let mut fx = FixtureFile::from_path(&p).expect("fixture");
+        for f in &mut fx.functions {
+            if let Locator::Native { offset, .. } = &f.summary.locator {
+                f.summary.name = format!("FUN_{:08x}", offset.0);
+            }
+        }
+        fx
+    }
+
+    impl Rig {
+        fn new() -> Self {
+            let tmp = testutil::tempdir();
+            let dir = RuntimeDir::from_dir(tmp.path().join("rt")).expect("runtime dir");
+            let mut services = Services::offline();
+            services.connector = Some(kraken_viewmodel::attach_connector(dir.clone()));
+            services.prefs_file = Some(tmp.path().join("cfg/gui.json"));
+            services.config_path = Some(tmp.path().join("cfg/config.toml"));
+            services.cfg.projects_root = Some(tmp.path().join("projects"));
+            let h = Harness::with_services(false, services);
+            let daemon = {
+                let _g = h._rt.enter();
+                krakend::start(DaemonOptions {
+                    runtime_dir: dir.clone(),
+                    factory: Arc::new(FakeFactory::new(fixture(), Duration::ZERO)),
+                    registry: Arc::new(Registry::standard()),
+                    settings: DaemonSettings {
+                        idle_secs: Some(600),
+                        session_idle_secs: Some(1800),
+                        max_sessions: Some(4),
+                    },
+                    session_config: SessionConfig::default(),
+                    clock: Arc::new(ManualClock::new()),
+                    poll: Duration::from_millis(10),
+                    build: BUILD.into(),
+                })
+                .expect("daemon starts")
+            };
+            Rig {
+                tmp,
+                dir,
+                daemon: Some(daemon),
+                h,
+            }
+        }
+
+        fn binary(&self) -> String {
+            let p = self.tmp.path().join("prog.bin");
+            std::fs::write(&p, b"\x7fELF fake binary").expect("binary");
+            p.to_string_lossy().into_owned()
+        }
+
+        fn project(&self) -> PathBuf {
+            self.tmp.path().join("projects/prog")
+        }
+
+        fn agent(&self) -> DaemonClient {
+            self.h._rt.block_on(async {
+                let c = Client::connect(&self.dir, &ClientHello::new(ClientKind::Mcp, BUILD))
+                    .await
+                    .expect("connect");
+                DaemonClient::from_client(c, BUILD)
+            })
+        }
+    }
+
+    impl Drop for Rig {
+        fn drop(&mut self) {
+            if let Some(d) = self.daemon.take() {
+                d.shutdown();
+                self.h._rt.block_on(async {
+                    let _ = tokio::time::timeout(Duration::from_secs(10), d.wait()).await;
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn the_gui_creates_a_project_through_the_daemon_and_follows_an_agent() {
+        let mut r = Rig::new();
+        let ctx = r.h.ctx.clone();
+        let (binary, project) = (r.binary(), r.project());
+        r.h.app.start_real(
+            Choice::NewProject {
+                binary,
+                project_dir: project.to_string_lossy().into_owned(),
+            },
+            &ctx,
+        );
+        r.h.run_until("the new project to be analyzed", |a| {
+            a.view_model().is_some_and(|vm| {
+                vm.connection == Connection::Open
+                    && vm.analysis.phase == AnalysisPhase::Complete
+                    && !vm.functions.items.is_empty()
+                    && !vm.busy()
+            })
+        });
+        // It is remembered, and a second window would list it.
+        assert_eq!(r.h.app.prefs().items().len(), 1);
+        let again = crate::recent::Prefs::load(Some(r.tmp.path().join("cfg/gui.json")));
+        assert_eq!(again.items()[0].name, "prog.bin");
+
+        // An agent renames a function over a second connection.
+        let (addr, old) = {
+            let f = &r.h.app.view_model().unwrap().functions.items[0];
+            (f.address, f.name.clone())
+        };
+        let agent = r.agent();
+        let out =
+            r.h._rt
+                .block_on(agent.call(&CallParams {
+                    project_dir: project.to_string_lossy().into_owned(),
+                    command: "rename_symbol".into(),
+                    args: json!({"address": format!("{addr:#x}"), "new_name": "from_agent"}),
+                    author_kind: AuthorKind::Agent,
+                    author_id: Some("claude".into()),
+                    run_id: Some("run-1".into()),
+                    surface: None,
+                    approved: false,
+                }))
+                .expect("agent rename")
+                .result;
+        assert_eq!(out["status"], "applied", "{out}");
+        r.h.run_until("the toast and the refreshed list", |a| {
+            a.view_model().is_some_and(|vm| {
+                vm.functions.items.iter().any(|f| f.name == "from_agent")
+                    && vm.toasts.iter().any(|t| {
+                        t.text.contains(&format!("Agent renamed {old}")) && t.action.is_some()
+                    })
+            })
+        });
+
+        // The settings window shows the daemon's sessions and engines.
+        r.h.key(Key::Comma, CTRL);
+        r.h.run_until("daemon status", |a| {
+            matches!(a.settings().status(), Some(Ok(v)) if v["sessions"].as_array().is_some_and(|s| s.len() == 1))
+        });
+    }
+
+    #[test]
+    fn a_missing_binary_is_reported_by_the_daemon() {
+        let mut r = Rig::new();
+        let ctx = r.h.ctx.clone();
+        r.h.app.start_real(
+            Choice::NewProject {
+                binary: r.tmp.path().join("nope").to_string_lossy().into_owned(),
+                project_dir: r.project().to_string_lossy().into_owned(),
+            },
+            &ctx,
+        );
+        r.h.run_until("the failure", |a| a.welcome_error().is_some());
+        assert!(r.h.app.view_model().is_none());
+    }
 }

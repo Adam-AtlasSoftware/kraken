@@ -183,8 +183,8 @@ fn function(addr: u64, name: &str, text: &str, targets: &HashMap<String, u64>) -
     let locator = Locator::ram(addr);
     let signature = text.lines().next().unwrap_or("").trim().to_string();
     let lines = text.lines().count() as u64;
-    FixtureFunction {
-        summary: FunctionSummary {
+    FixtureFunction::new(
+        FunctionSummary {
             locator: locator.clone(),
             name: name.to_string(),
             size: Some(lines * 12),
@@ -192,7 +192,7 @@ fn function(addr: u64, name: &str, text: &str, targets: &HashMap<String, u64>) -
             fn_hash: Some(format!("h-{name}")),
             completeness: Completeness::Complete,
         },
-        decompile: DecompileResult {
+        DecompileResult {
             function: locator,
             language: "c".into(),
             text: text.to_string(),
@@ -200,7 +200,7 @@ fn function(addr: u64, name: &str, text: &str, targets: &HashMap<String, u64>) -
             warnings: Vec::new(),
             completeness: Completeness::Complete,
         },
-    }
+    )
 }
 
 /// The tiny fixture with `main` rewritten and nine more functions added.

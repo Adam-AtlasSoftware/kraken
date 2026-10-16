@@ -359,6 +359,35 @@ pub enum ToastLevel {
     Error,
 }
 
+/// A button on a toast.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToastAction {
+    /// Reverse every edit of an agent run.
+    UndoRun {
+        /// The run to undo.
+        run_id: String,
+    },
+}
+
+impl ToastAction {
+    /// Button text.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ToastAction::UndoRun { .. } => "Undo",
+        }
+    }
+}
+
+/// Whether the connection to the daemon is up.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum LinkState {
+    /// Working (also the state of backends that cannot disconnect).
+    #[default]
+    Connected,
+    /// The daemon connection is gone and being re-established.
+    Disconnected(String),
+}
+
 /// A transient notification.
 #[derive(Debug, Clone)]
 pub struct Toast {
@@ -368,11 +397,16 @@ pub struct Toast {
     pub level: ToastLevel,
     /// Plain-language text.
     pub text: String,
+    /// A button shown on the toast.
+    pub action: Option<ToastAction>,
     pub(crate) created: Instant,
 }
 
 impl Toast {
     pub(crate) fn lifetime(&self) -> std::time::Duration {
+        if self.action.is_some() {
+            return std::time::Duration::from_secs(12);
+        }
         match self.level {
             ToastLevel::Error => std::time::Duration::from_secs(12),
             ToastLevel::Warning => std::time::Duration::from_secs(8),

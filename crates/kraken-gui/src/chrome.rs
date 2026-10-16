@@ -3,7 +3,7 @@
 use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, Ui, vec2,
 };
-use kraken_viewmodel::{AnalysisPhase, AppAction, UiRequest, ViewModel};
+use kraken_viewmodel::{AnalysisPhase, AppAction, LinkState, UiRequest, ViewModel};
 
 use crate::style::{self, chip, level_color, medium, pal};
 
@@ -129,6 +129,14 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
             ui.spinner();
         }
         ui.label(RichText::new(vm.status_text()).size(12.0).color(p.text_dim));
+        if let LinkState::Disconnected(why) = &vm.link {
+            chip(
+                ui,
+                "reconnecting to krakend",
+                style::status(style::dark(ui)).warning,
+            )
+            .on_hover_text(why);
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if let Some(info) = &vm.project {
                 ui.label(
@@ -160,6 +168,7 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
     let dark = ctx.global_style().visuals.dark_mode;
     let p = kraken_gui_widgets::KrakenTheme { dark }.palette();
     let mut dismiss = Vec::new();
+    let mut act = Vec::new();
     egui::Area::new(egui::Id::new("kraken_toasts"))
         .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -40.0))
         .order(egui::Order::Foreground)
@@ -189,6 +198,11 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
                                     .wrap(),
                             );
                             ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
+                                if let Some(a) = &t.action
+                                    && ui.small_button(a.label()).clicked()
+                                {
+                                    act.push(t.id);
+                                }
                                 if ui
                                     .small_button("\u{00d7}")
                                     .on_hover_text("Dismiss")
@@ -202,6 +216,9 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
                 ui.add_space(6.0);
             }
         });
+    for id in act {
+        vm.run_toast_action(id);
+    }
     for id in dismiss {
         vm.dismiss_toast(id);
     }

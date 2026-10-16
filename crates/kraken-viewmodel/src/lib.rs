@@ -4,9 +4,11 @@
 //! and their results are applied by [`ViewModel::poll`], which the window calls once per frame.
 //!
 //! Backends: [`InProcessBackend`] (feature `inprocess`) runs the command registry inside the GUI
-//! process; a daemon client implements the same trait over IPC. [`testing::FakeBackend`] scripts
+//! process; [`DaemonClientBackend`] (feature `daemon`, the GUI default) implements the same trait
+//! over the `krakend` socket and turns its change events into [`BackendEvent`]s. [`testing::FakeBackend`] scripts
 //! replies for tests.
 
+mod approval;
 mod backend;
 mod errors;
 mod fuzzy;
@@ -18,13 +20,22 @@ mod tokens;
 mod vm;
 mod wire;
 
+#[cfg(feature = "daemon")]
+pub mod daemon;
 #[cfg(feature = "demo")]
 pub mod demo;
 #[cfg(feature = "inprocess")]
 mod inprocess;
 
+pub use approval::ApprovalBroker;
 pub use backend::{
-    Backend, BackendEvent, CommandInfo, CommandKind, JobInfo, JobProgress, JobState, Permission,
+    ApprovalPrompt, Approver, Backend, BackendEvent, ChangeInfo, CommandInfo, CommandKind, JobInfo,
+    JobProgress, JobState, Permission,
+};
+#[cfg(feature = "daemon")]
+pub use daemon::{
+    BackendOptions, Backoff, Connector, DaemonClientBackend, attach_connector, default_connector,
+    start_connector,
 };
 pub use errors::plain_error;
 pub use fuzzy::score as fuzzy_score;
