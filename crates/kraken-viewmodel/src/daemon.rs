@@ -25,8 +25,8 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::backend::{
-    ApprovalPrompt, Approver, Backend, BackendEvent, ChangeInfo, CommandInfo, JobInfo, JobProgress,
-    JobState, Permission,
+    ApprovalPrompt, Approver, Backend, BackendEvent, CallAs, ChangeInfo, CommandInfo, JobInfo,
+    JobProgress, JobState, Permission,
 };
 
 /// A boxed future, as returned by a [`Connector`].
@@ -333,9 +333,55 @@ fn absolutize(command: &str, args: &mut Value) {
 
 #[async_trait]
 impl Backend for DaemonClientBackend {
-    async fn call(&self, command: &str, mut args: Value) -> Result<Value, ProtoError> {
-        let client = self.inner.client()?;
+    async fn call(&self, command: &str, args: Value) -> Result<Value, ProtoError> {
         let approved = self.inner.approved(command, &args).await?;
+        let who = Identity {
+            kind: AuthorKind::User,
+            id: self.inner.author.clone(),
+            run_id: None,
+        };
+        self.send(command, args, who, approved).await
+    }
+
+    async fn call_as(&self, who: &CallAs, command: &str, args: Value) -> Result<Value, ProtoError> {
+        // An agent never gets a dangerous command through: nobody was asked.
+        let who = Identity {
+            kind: if who.agent {
+                AuthorKind::Agent
+            } else {
+                AuthorKind::User
+            },
+            id: who.id.clone(),
+            run_id: who.run_id.clone(),
+        };
+        self.send(command, args, who, false).await
+    }
+
+    fn commands(&self) -> Vec<CommandInfo> {
+        lock(&self.inner.commands).clone()
+    }
+
+    fn events(&self) -> broadcast::Receiver<BackendEvent> {
+        self.inner.events.subscribe()
+    }
+}
+
+/// Who a call is sent as.
+struct Identity {
+    kind: AuthorKind,
+    id: String,
+    run_id: Option<String>,
+}
+
+impl DaemonClientBackend {
+    async fn send(
+        &self,
+        command: &str,
+        mut args: Value,
+        who: Identity,
+        approved: bool,
+    ) -> Result<Value, ProtoError> {
+        let client = self.inner.client()?;
         absolutize(command, &mut args);
         let creating = matches!(command, "project_create" | "project_open");
         let project_dir = if creating {
@@ -355,9 +401,9 @@ impl Backend for DaemonClientBackend {
             project_dir: project_dir.to_string_lossy().into_owned(),
             command: command.to_string(),
             args,
-            author_kind: AuthorKind::User,
-            author_id: Some(self.inner.author.clone()),
-            run_id: None,
+            author_kind: who.kind,
+            author_id: Some(who.id),
+            run_id: who.run_id,
             surface: None,
             approved,
         };
@@ -367,14 +413,6 @@ impl Backend for DaemonClientBackend {
             *lock(&self.inner.project) = Some((project_dir, key));
         }
         Ok(reply.result)
-    }
-
-    fn commands(&self) -> Vec<CommandInfo> {
-        lock(&self.inner.commands).clone()
-    }
-
-    fn events(&self) -> broadcast::Receiver<BackendEvent> {
-        self.inner.events.subscribe()
     }
 }
 

@@ -20,6 +20,14 @@ pub enum Scene {
     Rename,
     /// The welcome screen (no demo needed).
     Welcome,
+    /// The control-flow graph next to the decompiler.
+    Graph,
+    /// The Assistant tab after a scripted conversation (hidden).
+    Assistant,
+    /// An "Explain" card (hidden).
+    Explain,
+    /// The name-review window (hidden).
+    AutoName,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +43,8 @@ pub struct Options {
     pub no_daemon: bool,
     /// Open this project at startup (scripting and screenshots).
     pub open_project: Option<PathBuf>,
+    /// Function a screenshot opens instead of `main` (hidden).
+    pub function: Option<String>,
 }
 
 pub const USAGE: &str =
@@ -46,7 +56,7 @@ pub const USAGE: &str =
   --light            start with the light theme
   --screenshot FILE  with --demo or a hidden --open-project: select a function, render, save
                      FILE as a PNG and exit
-  --scene S          what --screenshot shows: main (default), palette, rename or welcome
+  --scene S          what --screenshot shows: main (default), graph, palette, rename or welcome
   -h, --help         show this text";
 
 #[derive(Debug)]
@@ -64,6 +74,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
         light: false,
         no_daemon: false,
         open_project: None,
+        function: None,
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -76,6 +87,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 o.open_project = Some(PathBuf::from(
                     it.next().ok_or("--open-project needs a project folder")?,
                 ));
+            }
+            "--function" => {
+                o.function = Some(it.next().ok_or("--function needs a function name")?);
             }
             "--renderer" => {
                 o.renderer = match it.next().as_deref() {
@@ -95,9 +109,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     Some("palette") => Scene::Palette,
                     Some("rename") => Scene::Rename,
                     Some("welcome") => Scene::Welcome,
+                    Some("graph") => Scene::Graph,
+                    Some("assistant") => Scene::Assistant,
+                    Some("explain") => Scene::Explain,
+                    Some("autoname") => Scene::AutoName,
                     other => {
                         return Err(format!(
-                            "--scene needs main, palette, rename or welcome, got {}",
+                            "--scene needs main, graph, palette, rename or welcome, got {}",
                             other.unwrap_or("nothing")
                         ));
                     }

@@ -15,7 +15,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::backend::{
-    ApprovalPrompt, Approver, Backend, BackendEvent, CommandInfo, CommandKind, JobInfo,
+    ApprovalPrompt, Approver, Backend, BackendEvent, CallAs, CommandInfo, CommandKind, JobInfo,
     JobProgress, JobState, Permission,
 };
 
@@ -135,6 +135,17 @@ fn job_info(s: JobSnapshot) -> JobInfo {
 
 #[async_trait]
 impl Backend for InProcessBackend {
+    async fn call_as(&self, who: &CallAs, command: &str, args: Value) -> Result<Value, ProtoError> {
+        let ctx = match (&who.run_id, who.agent) {
+            (Some(run), true) => CallContext::agent(who.id.clone(), run.clone(), Surface::Gui),
+            (None, true) => CallContext::agent(who.id.clone(), who.id.clone(), Surface::Gui),
+            (_, false) => CallContext::user(who.id.clone(), Surface::Gui),
+        };
+        self.registry
+            .call_json(command, &self.session, &ctx, args)
+            .await
+    }
+
     async fn call(&self, command: &str, args: Value) -> Result<Value, ProtoError> {
         let mut ctx = CallContext::user(GUI_USER, Surface::Gui);
         let approver = self

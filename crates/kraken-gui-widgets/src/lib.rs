@@ -11,8 +11,8 @@ pub mod virtual_list;
 pub use graph_view::{
     BlockModel, CfgModel, EdgeKind, GraphToken, GraphView, GraphViewResponse, Viewport,
 };
-pub use hex_view::{ByteSource, HexView, HexViewResponse, SliceSource};
-pub use listing::{ListingRow, ListingSource, ListingView, OperandToken};
+pub use hex_view::{ByteSource, ByteState, HexView, HexViewResponse, SliceSource};
+pub use listing::{ListingResponse, ListingRow, ListingSource, ListingView, OperandToken};
 pub use theme::{KrakenTheme, Palette, TokenStyle};
 pub use token_text::{TokenClick, TokenText, TokenTextResponse};
 pub use virtual_list::{VirtualList, VirtualListResponse};

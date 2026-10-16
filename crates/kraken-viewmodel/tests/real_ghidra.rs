@@ -160,4 +160,75 @@ fn the_gui_view_model_creates_analyzes_lists_and_renames_through_a_spawned_daemo
         "history shows the edit"
     );
     println!("renamed {old} -> gui_renamed_entry at {addr:#x}");
+
+    // The program views against the real engine: listing, graph, hex, xrefs, strings, symbols.
+    let main = vm
+        .functions
+        .items
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("main")
+        .address;
+    vm.select_function(main);
+    assert!(
+        vm.block_until(SLOW, |v| {
+            !v.busy()
+                && v.current
+                    .as_ref()
+                    .is_some_and(|c| c.decompiled.ready().is_some())
+        }),
+        "main decompiles"
+    );
+    {
+        let d = vm
+            .current
+            .as_ref()
+            .and_then(|c| c.decompiled.ready())
+            .expect("decompiled");
+        assert!(
+            d.result.tokens.iter().any(|t| t.target.is_some()),
+            "the server's token spans carry call targets"
+        );
+    }
+    vm.ensure_graph();
+    vm.ensure_xrefs();
+    vm.ensure_strings();
+    vm.ensure_symbols(kraken_viewmodel::SymbolTable::Imports);
+    assert!(
+        vm.block_until(SLOW, |v| {
+            !v.busy()
+                && v.views.graph.data.is_some()
+                && v.views.strings.loaded
+                && v.views.imports.loaded
+        }),
+        "views load: {:?}",
+        vm.views.graph.error
+    );
+    let v = &vm.views;
+    assert!(v.listing.rows.len() > 50 && v.listing.rows[0].address <= main + 1);
+    let graph = v.graph.data.as_ref().expect("graph");
+    assert!(graph.blocks.len() > 5 && !graph.edges.is_empty());
+    assert_eq!(
+        graph.blocks.iter().map(|b| b.lines.len()).sum::<usize>(),
+        v.listing.rows.len()
+    );
+    assert!(!v.xrefs.callees.items.is_empty());
+    assert!(!v.strings.items.is_empty() && !v.imports.items.is_empty());
+    let text = v
+        .memory
+        .blocks
+        .iter()
+        .find(|b| b.name == ".text")
+        .expect(".text");
+    assert!(text.contains(main));
+    let first = &v.listing.rows[0];
+    assert_eq!(v.bytes.byte(first.address), first.bytes.first().copied());
+    println!(
+        "views: {} rows, {} blocks, {} callees, {} strings, {} imports",
+        v.listing.rows.len(),
+        graph.blocks.len(),
+        v.xrefs.callees.items.len(),
+        v.strings.items.len(),
+        v.imports.items.len()
+    );
 }

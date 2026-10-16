@@ -56,6 +56,9 @@ pub(crate) struct DecompileWire {
     pub text: Untrusted<String>,
     #[serde(default)]
     pub truncated: bool,
+    /// Server-made token spans (UTF-8 byte offsets into `text`); absent on older daemons.
+    #[serde(default)]
+    pub tokens: Vec<crate::views::TokenWire>,
     #[serde(default)]
     pub references: Vec<ReferenceWire>,
     #[serde(default)]
