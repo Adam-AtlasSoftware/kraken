@@ -424,7 +424,7 @@ fn settings_pairs_follow_the_schema() {
     assert_eq!(
         v,
         json!({
-            "model_path": "/work/models/a b.gguf",
+            "model_path": cwd.join("models/a b.gguf").to_string_lossy(),
             "context_size": 32768,
             "temp": 0.5,
             "jinja": false,
@@ -433,8 +433,13 @@ fn settings_pairs_follow_the_schema() {
         })
     );
     // Absolute paths and a missing cwd are left alone.
-    let v = settings_from_pairs(&schema, &["model_path=/m/x.gguf".into()], Some(cwd)).unwrap();
-    assert_eq!(v["model_path"], "/m/x.gguf");
+    let abs = if cfg!(windows) {
+        "C:\\m\\x.gguf"
+    } else {
+        "/m/x.gguf"
+    };
+    let v = settings_from_pairs(&schema, &[format!("model_path={abs}")], Some(cwd)).unwrap();
+    assert_eq!(v["model_path"], abs);
     let v = settings_from_pairs(&schema, &["model_path=x.gguf".into()], None).unwrap();
     assert_eq!(v["model_path"], "x.gguf");
 

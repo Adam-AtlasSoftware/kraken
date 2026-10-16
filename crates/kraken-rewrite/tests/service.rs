@@ -595,10 +595,18 @@ async fn functions_the_oracle_cannot_check_are_refused_before_any_model_call() {
         .await
         .expect_err("unsupported");
     assert_eq!(err.code, ErrorCode::Unsupported, "{err}");
-    assert!(
-        err.message.contains("pointer result") || err.message.contains("floating-point"),
-        "{err}"
-    );
+    // The host confinement gate comes first by design (the command refuses to run model-written
+    // code on a host that cannot confine it, whatever the function), so where the sandbox is not
+    // enforced (macOS, Windows) the refusal is that gate's; the function-level check is reached,
+    // and asserted, only where it is.
+    if kraken_rewrite::sandbox::enforced() {
+        assert!(
+            err.message.contains("pointer result") || err.message.contains("floating-point"),
+            "{err}"
+        );
+    } else {
+        assert!(err.message.contains("cannot confine"), "{err}");
+    }
 }
 
 // ----- accept -----

@@ -122,10 +122,15 @@ async fn cli_call(s: &Surfaces, tool: &str, args: &Value, extra: &[&str]) -> (bo
 }
 
 fn normalise(v: &Value, s: &Surfaces) -> Value {
+    // The text is JSON, so a Windows path appears with its backslashes escaped.
+    let escaped = |p: &str| {
+        let q = Value::String(p.to_string()).to_string();
+        q[1..q.len() - 1].to_string()
+    };
     let text = v
         .to_string()
-        .replace(&s.cli_dir, "<dir>")
-        .replace(&s.mcp_dir, "<dir>")
+        .replace(&escaped(&s.cli_dir), "<dir>")
+        .replace(&escaped(&s.mcp_dir), "<dir>")
         .replace(CLI_RUN, "<run>")
         .replace(MCP_RUN, "<run>");
     let mut out: Value = serde_json::from_str(&text).expect("still JSON");
