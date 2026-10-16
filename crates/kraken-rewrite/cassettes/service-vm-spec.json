@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "system_hash": "d8e217fd2483f8e89e2c93fb9bf80132ea98c27e4b3b27fd16b3a34e655a7528",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "40aad283b07707bb00e1bd6f4ad94fd471dde1fab6a81bec169940d8de1a776e",
+        "key": "dc281d026b82a99ebc2f61158b3a8c912757b482122c5705e43ff58c634d4da3"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "# Behavioural spec: vm_run (switch_vm)\n\n## Purpose\n\n`vm_run` interprets a small stack-machine bytecode program against a caller-owned VM state and returns the value on top of the stack when the program halts. Any malformed program or stack misuse ends the whole process with exit status 42.\n\n## Inputs\n\n- `vm`: pointer to a 144-byte `struct vm`: `int32_t stack[32]` at offset 0, `int sp` at 128, `unsigned pc` at 132, `unsigned long steps` at 136. Execution continues from the stored `pc` and `sp`. [@0x101255]\n- `code`: pointer to the bytecode. It must be readable one byte past `len`, because a PUSH operand and a JNZ target are fetched without a bounds check. [@0x101255]\n- `len`: `unsigned` number of valid opcode bytes. The fetch loop runs while `vm->pc < len`. [@0x101255]\n\n## Outputs\n\n- Returns `int`: on HALT (opcode 0) the value `stack[sp - 1]`, or 0 when `sp == 0`. [@0x101255]\n- Updates `*vm` in place: `pc` after every fetched byte and operand, `sp` and `stack` per instruction, and `steps` incremented once per opcode fetched (operands do not count). [@0x101255]\n- Opcodes: 1 PUSH (signed 8-bit immediate), 2 ADD, 3 SUB, 4 MUL, 5 DUP, 6 SWAP, 7 DROP, 8 NEG, 9 JNZ, 10 DEC, 11 PRINT, 12 AND, 13 OR, 14 XOR. [@0x101255]\n\n## Side effects\n\n- PRINT writes `out: %d\\n` with the signed top of stack to stdout through `printf`, without popping and without checking `sp`. [@0x101255]\n- Every failure calls `vm_fail`, which writes `vm error at pc=%u: %s\\n` to stderr and calls `exit(42)`; `vm_run` never returns after that. [@0x101159]\n- Pushing when `sp >= 32` fails with `stack overflow`, using the current `vm->pc`. [@0x101194]\n- Popping when `sp < 1` fails with `stack underflow`, using the current `vm->pc`. [@0x1011f3]\n- An unknown opcode fails with `bad opcode` and `pc` of the opcode byte (`vm->pc - 1`). [@0x101255]\n- Running off the end (`pc >= len`) without HALT fails with `pc out of range`. [@0x101255]\n\n## Invariants\n\n- `int32` arithmetic wraps: ADD, SUB, MUL, NEG and DEC use two's complement on 32 bits. [@0x101255]\n- SUB computes second-from-top minus top; SWAP exchanges the top two values; DUP leaves two copies. [@0x101255]\n- JNZ always pops its operand; if it was non-zero `pc` becomes the unsigned byte at `code[pc]`, otherwise `pc` skips that byte. [@0x101255]\n- PUSH sign-extends its immediate: byte 0xfb pushes -5. [@0x101255]\n\n## Open questions\n\n- PRINT with `sp == 0` reads `stack[-1]`, outside the array; the result is undefined and probably garbage.\n- Whether callers ever start with `vm->pc != 0` is not visible from this function.\n"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    }
+  ]
+}

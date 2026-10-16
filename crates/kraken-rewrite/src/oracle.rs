@@ -41,6 +41,26 @@ const BUFFER_BASE: u64 = 0x6000_0000_0000;
 const BUFFER_STRIDE: u64 = 0x100_0000;
 const MAX_BUFFER: usize = 0x10_0000;
 
+/// Imports the oracle models (everything else a function calls ends the case as unsupported).
+/// The planner flags functions that call anything outside this list.
+pub const STUBBED_IMPORTS: &[&str] = &[
+    "exit",
+    "_exit",
+    "_Exit",
+    "abort",
+    "__stack_chk_fail",
+    "printf",
+    "fprintf",
+    "puts",
+    "putchar",
+    "strlen",
+    "strcmp",
+    "memcpy",
+    "memmove",
+    "memset",
+    "__ctype_b_loc",
+];
+
 /// Oracle settings.
 #[derive(Debug, Clone)]
 pub struct OracleConfig {
@@ -103,6 +123,7 @@ pub struct FunctionOracle {
     vm: Vm,
     regs: Regs,
     bias: u64,
+    is_pie: bool,
     symbols: BTreeMap<String, u64>,
     /// Stub index to the import it stands for.
     stub_names: Vec<String>,
@@ -349,6 +370,7 @@ impl FunctionOracle {
             vm,
             regs,
             bias,
+            is_pie,
             symbols,
             stub_names,
             regions,
@@ -356,6 +378,17 @@ impl FunctionOracle {
             stdout: Vec::new(),
             stderr: Vec::new(),
         })
+    }
+
+    /// The ELF virtual address of the function KRAKEN reports at `address` for a program loaded
+    /// at `image_base`: a position-independent executable's addresses include the image base
+    /// Ghidra chose, a fixed-address executable's are the ELF addresses themselves.
+    pub fn elf_vaddr(&self, address: u64, image_base: u64) -> u64 {
+        if self.is_pie {
+            address.wrapping_sub(image_base)
+        } else {
+            address
+        }
     }
 
     /// The ELF virtual address of a symbol (not including the load bias).

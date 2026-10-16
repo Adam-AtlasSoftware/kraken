@@ -1,5 +1,7 @@
 # Spike: the rewrite loop on single functions
 
+> Status: the proposals at the end of this file became [ADR 0013](../../docs/design/0013-rewrite-pipeline.md) and the pipeline core in `crates/kraken-rewrite` (R1). Where they differ, the ADR wins: the store is `rewrite.sqlite` (not `units.json`), commands live in `kraken-registry` with the backend in `kraken-rewrite`, and the `kraken-sandbox` / `kraken-emu` crates are still future work.
+
 Goal (decisions 2, 46, 53): prove the core loop of KRAKEN's end goal on real corpus functions.
 
     lift (KRAKEN decompile, via the registry)

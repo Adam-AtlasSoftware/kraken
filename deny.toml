@@ -6,7 +6,14 @@ all-features = true
 ignore = [
     # paste is a compile-time proc-macro pulled in by egui_dock; unmaintained, no known vulnerability.
     { id = "RUSTSEC-2024-0436", reason = "build-time only via egui_dock; revisit when egui_dock drops it" },
-    { id = "RUSTSEC-2026-0344", reason = "ruzstd decodes zstd-compressed debug sections for object/addr2line inside icicle-cpu (kraken-rewrite oracle); the oracle maps PT_LOAD segments itself and never loads debug info. Revisit when object moves to ruzstd >= 0.9.1" },
+    # ruzstd is reached only through icicle-cpu -> addr2line -> object (zstd-compressed DWARF
+    # sections). icicle-cpu has no feature to drop that and the workspace manifest may not patch
+    # it. The only icicle entry point that parses a program image's debug info is
+    # icicle_cpu::debug_info::DebugInfo::add_file, called by icicle's PE loader and icicle-linux;
+    # the kraken-rewrite oracle maps PT_LOAD segments itself and reads ELF symbols and relocations
+    # with object's ELF reader, never DWARF. crates/kraken-rewrite/tests/no_debug_info.rs fails if
+    # that changes. Details: docs/design/0013-rewrite-pipeline.md.
+    { id = "RUSTSEC-2026-0344", reason = "ruzstd is unreachable from KRAKEN: only icicle's DebugInfo::add_file (PE loader, icicle-linux) decodes compressed debug sections, and kraken-rewrite never calls it (guarded by tests/no_debug_info.rs); no icicle feature drops the dependency (ADR 0013). Revisit when object moves to ruzstd >= 0.9.1" },
 ]
 
 [licenses]

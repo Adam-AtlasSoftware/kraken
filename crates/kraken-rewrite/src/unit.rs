@@ -2,20 +2,17 @@
 //! to a function anchor and carrying the source hash, the Rust code, the ABI, the oracle that
 //! checked it, the test cases and the verdict.
 //!
-//! For the spike units live in a JSON file under the project directory
-//! (`<project>/rewrite/units.json`); the DB migration comes with the pipeline proper.
+//! Units are persisted by [`crate::store::RewriteStore`] in `<project>/rewrite.sqlite`.
 
-use std::path::{Path, PathBuf};
-
+use kraken_registry::commands::{RewriteMode, UnitStatus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::abi::Signature;
 use crate::difftest::{CaseRecord, Counterexample, DiffReport, Verdict};
-use crate::error::RewriteError;
 
 /// Version of the record layout.
-pub const UNIT_SCHEMA: u32 = 1;
+pub const UNIT_SCHEMA: u32 = 2;
 /// Most stored test cases per unit (counterexamples are kept on top of these).
 pub const MAX_STORED_CASES: usize = 256;
 
@@ -104,6 +101,15 @@ pub struct RewriteUnit {
     pub id: String,
     /// 1, 2, ... per anchor address.
     pub version: u32,
+    /// How the translation was made.
+    #[serde(default)]
+    pub mode: RewriteMode,
+    /// Lifecycle status of this version.
+    #[serde(default = "default_status")]
+    pub status: UnitStatus,
+    /// The stored spec a `spec` mode translation was made from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_id: Option<u64>,
     /// The function this is for.
     pub anchor: FunctionAnchor,
     /// SHA-256 of the decompile text the translation was made from.
@@ -133,9 +139,27 @@ pub struct RewriteUnit {
     pub verdict: Verdict,
 }
 
+fn default_status() -> UnitStatus {
+    UnitStatus::Translated
+}
+
+/// The status a verdict leads to: only a pass is `verified`; an inconclusive run leaves the unit
+/// `translated`; a refused, uncompilable or disagreeing translation is `failed`.
+pub fn status_for(verdict: &Verdict) -> UnitStatus {
+    match verdict {
+        Verdict::Pass => UnitStatus::Verified,
+        Verdict::Fail | Verdict::Rejected { .. } => UnitStatus::Failed,
+        Verdict::Inconclusive { .. } => UnitStatus::Translated,
+    }
+}
+
 /// What a unit is made from, besides the code and the run.
 #[derive(Debug, Clone)]
 pub struct UnitSource {
+    /// How the translation was made.
+    pub mode: RewriteMode,
+    /// The spec used, for `spec` mode.
+    pub spec_id: Option<u64>,
     /// The function.
     pub anchor: FunctionAnchor,
     /// SHA-256 of its decompile text.
@@ -154,6 +178,8 @@ impl RewriteUnit {
     /// Builds a record (version 0 until stored) from a differential run.
     pub fn from_run(source: UnitSource, rust_code: String, report: DiffReport) -> Self {
         let UnitSource {
+            mode,
+            spec_id,
             anchor,
             source_decompile_hash,
             callees,
@@ -185,6 +211,9 @@ impl RewriteUnit {
             schema: UNIT_SCHEMA,
             id,
             version: 0,
+            mode,
+            status: status_for(&report.verdict),
+            spec_id,
             anchor,
             source_decompile_hash,
             callees,
@@ -199,97 +228,5 @@ impl RewriteUnit {
             counterexamples: report.counterexamples,
             verdict: report.verdict,
         }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct StoreFile {
-    schema: u32,
-    units: Vec<RewriteUnit>,
-}
-
-/// A JSON file of units.
-#[derive(Debug, Clone)]
-pub struct UnitStore {
-    path: PathBuf,
-}
-
-impl UnitStore {
-    /// The store of a project directory: `<project>/rewrite/units.json`.
-    pub fn in_project(project_dir: &Path) -> Self {
-        UnitStore {
-            path: project_dir.join("rewrite").join("units.json"),
-        }
-    }
-
-    /// A store at an explicit file.
-    pub fn at(path: impl Into<PathBuf>) -> Self {
-        UnitStore { path: path.into() }
-    }
-
-    /// The file.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn read(&self) -> Result<StoreFile, RewriteError> {
-        match std::fs::read_to_string(&self.path) {
-            Ok(text) => {
-                let f: StoreFile = serde_json::from_str(&text)
-                    .map_err(|e| RewriteError::Store(format!("{}: {e}", self.path.display())))?;
-                if f.schema != UNIT_SCHEMA {
-                    return Err(RewriteError::Store(format!(
-                        "unit store schema {} is not supported (expected {UNIT_SCHEMA})",
-                        f.schema
-                    )));
-                }
-                Ok(f)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StoreFile {
-                schema: UNIT_SCHEMA,
-                units: Vec::new(),
-            }),
-            Err(e) => Err(RewriteError::Store(format!("{}: {e}", self.path.display()))),
-        }
-    }
-
-    /// Every unit, oldest first.
-    pub fn list(&self) -> Result<Vec<RewriteUnit>, RewriteError> {
-        Ok(self.read()?.units)
-    }
-
-    /// The newest unit for the function at `address`.
-    pub fn latest(&self, address: &str) -> Result<Option<RewriteUnit>, RewriteError> {
-        Ok(self
-            .read()?
-            .units
-            .into_iter()
-            .filter(|u| u.anchor.address == address)
-            .max_by_key(|u| u.version))
-    }
-
-    /// Appends a unit as the next version for its anchor and returns it. Older versions stay.
-    pub fn put(&self, mut unit: RewriteUnit) -> Result<RewriteUnit, RewriteError> {
-        let mut file = self.read()?;
-        unit.version = file
-            .units
-            .iter()
-            .filter(|u| u.anchor.address == unit.anchor.address)
-            .map(|u| u.version)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        file.units.push(unit.clone());
-        let text =
-            serde_json::to_string_pretty(&file).map_err(|e| RewriteError::Store(e.to_string()))?;
-        let dir = self
-            .path
-            .parent()
-            .ok_or_else(|| RewriteError::Store("store path has no parent".into()))?;
-        std::fs::create_dir_all(dir).map_err(|e| RewriteError::Store(e.to_string()))?;
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| RewriteError::Store(e.to_string()))?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| RewriteError::Store(e.to_string()))?;
-        Ok(unit)
     }
 }

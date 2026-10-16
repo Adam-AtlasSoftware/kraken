@@ -1,5 +1,5 @@
 //! The loop end to end, offline: registry decompile (FakeEngine on a corpus fixture) -> task with
-//! a cassette -> differential test under emulation -> versioned unit in a JSON store.
+//! a cassette -> differential test under emulation -> versioned unit in rewrite.sqlite.
 
 mod common;
 
@@ -21,9 +21,10 @@ use kraken_rewrite::difftest::{DiffOptions, Verdict};
 use kraken_rewrite::fetch::fetch_function;
 use kraken_rewrite::oracle::FunctionOracle;
 use kraken_rewrite::pipeline::{RewriteJob, job_for_target, rewrite_and_verify, verify};
+use kraken_rewrite::store::RewriteStore;
 use kraken_rewrite::targets::{Target, target, targets};
 use kraken_rewrite::task::{RewriteTask, SpecScope, SpecTask};
-use kraken_rewrite::unit::{Provenance, UnitStore};
+use kraken_rewrite::unit::Provenance;
 use tokio_util::sync::CancellationToken;
 
 struct FakeFactory {
@@ -161,7 +162,7 @@ async fn cassette_backed_rewrite_of_every_target_verifies_and_is_stored() {
         let (r, j) = job(&t).await;
         let mut oracle = FunctionOracle::load(&corpus_bin(t.binary), &config()).expect("oracle");
         let dir = r._tmp.path().join("p");
-        let store = UnitStore::in_project(&dir);
+        let store = RewriteStore::in_project(&dir).expect("store");
         let opts = DiffOptions {
             random_cases: 60,
             ..DiffOptions::default()
@@ -196,10 +197,10 @@ async fn cassette_backed_rewrite_of_every_target_verifies_and_is_stored() {
                 .contains(&format!("extern \"C\" fn {}(", t.function))
         );
 
-        // Persisted as JSON under the project dir and read back identically.
-        assert!(dir.join("rewrite/units.json").is_file());
+        // Persisted in rewrite.sqlite under the project dir and read back identically.
+        assert!(dir.join("rewrite.sqlite").is_file());
         let back = store
-            .latest(&unit.anchor.address)
+            .latest(&unit.anchor.program_sha256, &unit.anchor.address)
             .expect("read")
             .expect("unit");
         assert_eq!(back, unit);
@@ -212,7 +213,7 @@ async fn a_wrong_translation_is_stored_as_a_failed_version_with_its_counterexamp
     let t = target("cmp_id").expect("target");
     let (r, j) = job(&t).await;
     let mut oracle = FunctionOracle::load(&corpus_bin(t.binary), &config()).expect("oracle");
-    let store = UnitStore::in_project(&r._tmp.path().join("p"));
+    let store = RewriteStore::in_project(&r._tmp.path().join("p")).expect("store");
     let opts = DiffOptions {
         random_cases: 30,
         ..DiffOptions::default()
@@ -229,23 +230,25 @@ async fn a_wrong_translation_is_stored_as_a_failed_version_with_its_counterexamp
         "(*a).id.cmp(&(*b).id) as i32",
     );
     let bad = store
-        .put(verify(&j, &wrong, prov("model"), &mut oracle, &opts).expect("verify"))
+        .put_unit(verify(&j, &wrong, prov("model"), &mut oracle, &opts).expect("verify"))
         .expect("put");
     assert_eq!(bad.verdict, Verdict::Fail);
     assert_eq!(bad.version, 1);
     assert!(!bad.counterexamples.is_empty());
 
     let good = store
-        .put(verify(&j, t.reference, prov("reference"), &mut oracle, &opts).expect("verify"))
+        .put_unit(verify(&j, t.reference, prov("reference"), &mut oracle, &opts).expect("verify"))
         .expect("put");
     assert_eq!(good.verdict, Verdict::Pass);
     assert_eq!(good.version, 2, "a new version for the same anchor");
     assert_ne!(good.id, bad.id);
-    let all = store.list().expect("list");
+    let all = store
+        .versions(&good.anchor.program_sha256, &good.anchor.address)
+        .expect("versions");
     assert_eq!(all.len(), 2, "older versions are kept");
     assert_eq!(
         store
-            .latest(&good.anchor.address)
+            .latest(&good.anchor.program_sha256, &good.anchor.address)
             .expect("latest")
             .expect("unit")
             .id,

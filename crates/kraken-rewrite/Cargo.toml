@@ -1,6 +1,6 @@
 [package]
 name = "kraken-rewrite"
-description = "KRAKEN rewrite pipeline spike: emulation oracle, Rust translation tasks, differential tests and rewrite-unit records"
+description = "KRAKEN rewrite pipeline: emulation oracle, Rust translation and spec tasks, sandboxed differential tests, rewrite.sqlite store, registry command backend and strangler export"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,9 +16,11 @@ icicle-cpu = { version = "0.1.0", git = "https://github.com/icicle-emu/icicle-em
 icicle-vm = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
 pcode = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+rusqlite = { version = "0.40", features = ["bundled"] }
 object = { version = "0.38", default-features = false, features = ["read_core", "elf", "std"] }
 serde.workspace = true
 serde_json.workspace = true

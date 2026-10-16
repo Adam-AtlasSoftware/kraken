@@ -58,6 +58,17 @@ pub fn confine(
     imp::confine(cmd, dir, scope, opts)
 }
 
+/// True when this host can confine the processes that build and run generated code (Landlock on
+/// Linux). The `rewrite_*` commands that run generated code refuse to start when it is false.
+pub fn enforced() -> bool {
+    imp::enforced()
+}
+
+/// The Landlock ABI version the host enforces (0 when none or not Linux).
+pub fn landlock_abi_version() -> u32 {
+    imp::abi()
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn system_read_paths() -> Vec<PathBuf> {
     [
@@ -91,7 +102,15 @@ mod imp {
     const CPU_SECONDS: u64 = 30;
     const FILE_SIZE_LIMIT: u64 = 64 << 20;
 
-    pub fn landlock_abi() -> u32 {
+    pub fn abi() -> u32 {
+        landlock_abi()
+    }
+
+    pub fn enforced() -> bool {
+        landlock_abi() > 0
+    }
+
+    fn landlock_abi() -> u32 {
         const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
         // SAFETY: with a null attribute pointer and the VERSION flag the syscall only returns the
         // supported ABI number (or -1); it touches no memory.
@@ -234,6 +253,14 @@ mod imp {
 #[cfg(not(target_os = "linux"))]
 mod imp {
     use super::*;
+
+    pub fn abi() -> u32 {
+        0
+    }
+
+    pub fn enforced() -> bool {
+        false
+    }
 
     pub fn confine(
         cmd: &mut Command,

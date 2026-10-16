@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "89e846257135a1052f7f3ffb0b4f7f2b50cb59c1b15fbc4aa6711d9b38bf47d0",
+        "key": "9dfb486fe74d3c043a4fb582855c467d64ce0a6b71f5ac227ed1591650f13ba8"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [\"struct record is 40 bytes\"], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "99ae68911ba0f72a3b86a4ab08b87469443da364228be4faa6f048ef344642e2",
+        "key": "0b2de490b867d0d199f7ae0407c17fc612b71ffa1e0bcda073451027fa88f7e1"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_dist` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\nfn dist2(p: &Point) -> i32 {\n    p.x.wrapping_mul(p.x).wrapping_add(p.y.wrapping_mul(p.y))\n}\n\n/// Squared distance from the origin of each record's position; returns their difference.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_dist(a: *const Record, b: *const Record) -> i32 {\n    unsafe { dist2(&(*a).pos).wrapping_sub(dist2(&(*b).pos)) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "d8e217fd2483f8e89e2c93fb9bf80132ea98c27e4b3b27fd16b3a34e655a7528",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "e74b6c61a23eca805bcc52ce322e72a17369a5ab38c58335a27936e5d2941743",
+        "key": "7df9c7a1b1a7d74a74b62e70057cdca50729b57ca0d67a7efe1d481ae61174d4"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "# Behavioural spec: cmp_id (pie_list)\n\n## Purpose\n\n`cmp_id` is a three-way style comparator for two records. It orders them by their integer id and returns the plain difference of the ids rather than -1, 0 or 1.\n\n## Inputs\n\n- `a`: pointer to a 40-byte `struct record`; only the `int` id at offset 0 is read. [@0x10124e]\n- `b`: pointer to a second `struct record`, read the same way. [@0x10124e]\n\n## Outputs\n\n- Returns `int`: `a->id - b->id` computed in 32-bit two's complement, so the result wraps when the true difference does not fit. [@0x10124e]\n- A positive result means `a` sorts after `b`, a negative one before, zero means equal ids. [@0x10124e]\n\n## Side effects\n\n- None: nothing is written through either pointer and nothing is printed. [@0x10124e]\n\n## Invariants\n\n- The result depends only on the two ids; the names, positions and weights of the records are never read. [@0x10124e]\n- `cmp_id(a, a)` is 0 for every `a`. [@0x10124e]\n\n## Open questions\n\n- none\n"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "0afea636628315432aed6db53dc63181e193baf1fb8c3c14c46d684898c7ca2d",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "ea51800c6e5a51569820a8f2e5cc81c2dab7199f9c4373b25a7c6c21b094b329",
+        "key": "ef395812ee89a3fef623b19a15de9828590e86e8f1e9bc5b0e7435e739afdf3e"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [\"ids are compared as i32\"], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    }
+  ]
+}

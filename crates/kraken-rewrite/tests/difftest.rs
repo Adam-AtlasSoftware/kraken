@@ -189,6 +189,7 @@ fn translations_that_reach_for_the_system_are_refused_before_building() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn the_runner_is_confined_by_landlock() {
     use kraken_rewrite::native::{Build, build};
     use kraken_rewrite::sandbox::Confinement;
