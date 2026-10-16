@@ -5,7 +5,6 @@
 //! `dotnet/install-sdk.sh`), the sidecar from `KRAKEN_DOTNET_EXT_DLL` or the xtask output.
 // Needs the isolated .NET SDK and `cargo xtask dotnet-ext`; enable with `--features real-dotnet`.
 #![cfg(feature = "real-dotnet")]
-
 #![cfg(unix)]
 
 use std::collections::BTreeMap;

@@ -42,6 +42,13 @@ jobs:
       - name: cargo test --workspace
         shell: bash
         run: cargo test --workspace 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+      # macOS keeps temp dirs behind a symlink (/var -> /private/var); reproduce that here so
+      # path canonicalization bugs in the daemon's live events show up on Linux too.
+      - name: live daemon tests under a symlinked TMPDIR
+        shell: bash
+        run: |
+          mkdir -p /tmp/kr && ln -sfn /tmp/kr /tmp/kl
+          TMPDIR=/tmp/kl KRAKEN_NO_DAEMON=1 cargo test -p kraken-viewmodel -p kraken-gui live 2>&1 | tee -a test-output.log; exit ${PIPESTATUS[0]}
       - name: Report test failures as annotations
         if: failure()
         shell: bash
