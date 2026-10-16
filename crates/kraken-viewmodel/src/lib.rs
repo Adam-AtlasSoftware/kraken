@@ -8,6 +8,7 @@
 //! over the `krakend` socket and turns its change events into [`BackendEvent`]s. [`testing::FakeBackend`] scripts
 //! replies for tests.
 
+pub mod agents;
 mod approval;
 pub mod assist;
 mod backend;

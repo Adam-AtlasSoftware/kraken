@@ -12,8 +12,11 @@
 //! - `env`: one chunk listing the interesting environment variable names it can see
 //! - `fs`: tries `fs/write_text_file` and says whether the client declined
 //! - `wait`: streams a chunk, then waits for `session/cancel` and ends with `cancelled`
+//! - `kraken`: a session like a real one: KRAKEN MCP tool calls, then the agent's own shell tool
+//!   waiting for permission
 //! - `die`: exits with status 7 without answering
 //!
+//! `FAKE_ACP_SCRIPT=kraken` makes every other prompt play the `kraken` turn.
 //! `FAKE_ACP_REQUIRE_AUTH=1` makes `session/new` fail with an authentication error.
 //! `FAKE_ACP_RECORD=<file>` appends every message received, one JSON document per line.
 
@@ -210,7 +213,23 @@ impl<R: BufRead, W: Write> Fake<R, W> {
         }
         self.cwd = cwd.to_string();
         self.mcp_servers = servers;
-        self.respond(id, json!({"sessionId": SESSION_ID}))
+        self.respond(
+            id,
+            json!({
+                "sessionId": SESSION_ID,
+                "configOptions": [{
+                    "id": "model",
+                    "name": "Model",
+                    "category": "model",
+                    "type": "select",
+                    "currentValue": "fake-1",
+                    "options": [
+                        {"value": "fake-1", "name": "Fake model 1"},
+                        {"value": "fake-2", "name": "Fake model 2"}
+                    ]
+                }]
+            }),
+        )
     }
 
     fn prompt(&mut self, id: &Value, params: &Value) -> io::Result<()> {
@@ -270,6 +289,10 @@ impl<R: BufRead, W: Write> Fake<R, W> {
                 self.end(id, "cancelled")
             }
             "die" => std::process::exit(7),
+            "kraken" => self.kraken_turn(id),
+            _ if std::env::var("FAKE_ACP_SCRIPT").as_deref() == Ok("kraken") => {
+                self.kraken_turn(id)
+            }
             _ => self.scripted_turn(id),
         }
     }
@@ -326,6 +349,82 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             "content": [{"type": "content", "content": {"type": "text", "text": format!("permission {verdict}")}}]
         }))?;
         self.chunk(&format!("permission {verdict}."))?;
+        self.end(id, if cancelled { "cancelled" } else { "end_turn" })
+    }
+
+    fn tool(&mut self, id: &str, title: &str, input: Value, output: &str) -> io::Result<()> {
+        self.update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": id,
+            "title": title,
+            "kind": "other",
+            "status": "in_progress",
+            "rawInput": input
+        }))?;
+        self.update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": id,
+            "status": "completed",
+            "content": [{"type": "content", "content": {"type": "text", "text": output}}]
+        }))
+    }
+
+    /// KRAKEN MCP tool calls (named like Claude Code names them), then a shell command that
+    /// needs permission, then the answer.
+    fn kraken_turn(&mut self, id: &Value) -> io::Result<()> {
+        self.chunk("I'll start with the function the program enters at.\n\n")?;
+        self.tool(
+            "k2",
+            "mcp__kraken__decompile",
+            json!({"address": "0x401340"}),
+            "void FUN_00401340(void) { ... }",
+        )?;
+        self.chunk(
+            "`FUN_00401340` prints a message and exits, so it looks like a fatal error handler. I'll name it and then check the strings in the file.",
+        )?;
+        self.tool(
+            "k3",
+            "mcp__kraken__rename_symbol",
+            json!({"address": "0x401340", "new_name": "fatal_error_exit"}),
+            "renamed",
+        )?;
+        self.update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "s1",
+            "title": "Run strings -n 8 ./sample",
+            "kind": "execute",
+            "status": "pending",
+            "rawInput": {"command": "strings -n 8 ./sample"}
+        }))?;
+        let (answer, cancelled) = self.ask(
+            "session/request_permission",
+            json!({
+                "sessionId": SESSION_ID,
+                "toolCall": {
+                    "toolCallId": "s1",
+                    "title": "Run strings -n 8 ./sample",
+                    "kind": "execute",
+                    "rawInput": {"command": "strings -n 8 ./sample"}
+                },
+                "options": [
+                    {"optionId": "allow", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "reject", "name": "Deny", "kind": "reject_once"}
+                ]
+            }),
+        )?;
+        let outcome = &answer["result"]["outcome"];
+        let granted = outcome["optionId"].as_str() == Some("allow");
+        self.update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "s1",
+            "status": if granted { "completed" } else { "failed" },
+            "content": [{"type": "content", "content": {"type": "text", "text": if granted { "ran" } else { "not run" }}}]
+        }))?;
+        self.chunk(if granted {
+            "\n\nDone: the strings match the error handler."
+        } else {
+            "\n\nUnderstood, I did not run the command."
+        })?;
         self.end(id, if cancelled { "cancelled" } else { "end_turn" })
     }
 

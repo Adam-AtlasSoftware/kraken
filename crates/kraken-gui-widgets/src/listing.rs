@@ -153,7 +153,7 @@ impl<'a> ListingView<'a> {
                 Align2::LEFT_CENTER,
                 format_bytes(&row.bytes, 6),
                 font.clone(),
-                pal.hex_zero.gamma_multiply(1.5),
+                pal.text_dim,
             );
             x += bytes_w;
             let mut job = LayoutJob::default();

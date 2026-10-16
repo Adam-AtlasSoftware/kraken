@@ -25,8 +25,8 @@ pub fn status(dark: bool) -> Status {
         }
     } else {
         Status {
-            success: Color32::from_rgb(0x1d, 0x8a, 0x63),
-            warning: Color32::from_rgb(0xb2, 0x71, 0x08),
+            success: Color32::from_rgb(0x16, 0x7a, 0x56),
+            warning: Color32::from_rgb(0x8f, 0x5c, 0x08),
             danger: Color32::from_rgb(0xc2, 0x3a, 0x3a),
             info: Color32::from_rgb(0x0b, 0x72, 0xa8),
         }

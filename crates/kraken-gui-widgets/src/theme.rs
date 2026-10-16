@@ -148,17 +148,17 @@ impl KrakenTheme {
                 border: rgb(0xc3d5dc),
                 text: rgb(0x2b3e47),
                 text_strong: rgb(0x0e1c22),
-                text_dim: rgb(0x71878f),
-                accent: rgb(0x0f9d8c),
-                selection: Color32::from_rgba_unmultiplied(0x0f, 0x9d, 0x8c, 52),
+                text_dim: rgb(0x566c75),
+                accent: rgb(0x0b8577),
+                selection: Color32::from_rgba_unmultiplied(0x0b, 0x85, 0x77, 52),
                 row_hover: Color32::from_rgba_unmultiplied(0x00, 0x30, 0x40, 14),
                 row_stripe: Color32::from_rgba_unmultiplied(0x00, 0x30, 0x40, 8),
                 highlight: Color32::from_rgba_unmultiplied(0xe0, 0x9a, 0x10, 62),
-                address: rgb(0x2a7f98),
+                address: rgb(0x1f6f88),
                 hex_byte: rgb(0x2b3e47),
                 hex_zero: rgb(0xa5b8c0),
-                ascii: rgb(0x1d8a63),
-                gutter: rgb(0x98aab2),
+                ascii: rgb(0x187a56),
+                gutter: rgb(0x7a8e97),
             }
         }
     }
