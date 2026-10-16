@@ -39,7 +39,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # Downloads every crate source (incl. other platforms') so the notices staleness test runs.
       - run: cargo fetch --locked
-      - run: cargo test --workspace
+      - name: cargo test --workspace
+        shell: bash
+        run: cargo test --workspace 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+      - name: Report test failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          grep -E -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | head -40 | while IFS= read -r line; do
+            echo "::error title=test failure::${line//%/%25}"
+          done || true
 
   deny:
     runs-on: ubuntu-latest
@@ -120,7 +129,15 @@ jobs:
 
       # Fails loudly when Landlock is unavailable: allow_unconfined stays false.
       - name: Run the ignored (real Ghidra) tests
-        run: cargo test --workspace -- --ignored --test-threads=1
+        shell: bash
+        run: cargo test --workspace -- --ignored --test-threads=1 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+      - name: Report test failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          grep -E -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | head -40 | while IFS= read -r line; do
+            echo "::error title=test failure::${line//%/%25}"
+          done || true
 
   # macOS arm64 and Windows x86_64 are tier 1 from 0.2.x. Real-Ghidra tests stay Linux-only
   # until the sidecar sandbox exists on these platforms (decision 71).
@@ -136,4 +153,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --workspace --all-targets
-      - run: cargo test --workspace
+      - name: cargo test --workspace
+        shell: bash
+        run: cargo test --workspace 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+
+      - name: Report test failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          # Job logs need admin rights; annotations are public, so surface the failures there.
+          grep -E -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | head -40 | while IFS= read -r line; do
+            echo "::error title=test failure::${line//%/%25}"
+          done || true
