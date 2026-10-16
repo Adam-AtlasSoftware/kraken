@@ -369,6 +369,7 @@ final class Engine {
     private Address address(Locator l) {
         return switch (l) {
             case Locator.Native n -> address(n.space(), n.offset());
+            case Locator.Managed m -> throw KrakenError.unsupported("managed locators are not supported by Ghidra");
         };
     }
 

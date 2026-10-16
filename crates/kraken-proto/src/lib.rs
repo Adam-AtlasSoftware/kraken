@@ -22,7 +22,7 @@ pub mod untrusted;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use decompile::{DecompileResult, LANGUAGE_C, Token, TokenKind};
+pub use decompile::{DecompileResult, LANGUAGE_C, LANGUAGE_CSHARP, Token, TokenKind};
 pub use error::{ErrorCode, ProtoError};
 pub use hex::{Hex64, ParseHexError};
 pub use locator::{AddressRange, Anchor, DEFAULT_SPACE, Locator};

@@ -861,7 +861,7 @@
       "type": "string"
     },
     "Locator": {
-      "description": "Where something lives in a program; protocol-level and extensible with new variants.\n\nSerialized with `\"kind\"` as the tag. Managed-code member tokens are added when an engine needs them.",
+      "description": "Where something lives in a program; protocol-level and extensible with new variants.\n\nSerialized with `\"kind\"` as the tag.",
       "oneOf": [
         {
           "description": "An offset in a named address space.",
@@ -883,6 +883,31 @@
           "required": [
             "kind",
             "offset"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A member or type of a managed (.NET) module, identified by its metadata token.",
+          "properties": {
+            "kind": {
+              "const": "managed",
+              "type": "string"
+            },
+            "module": {
+              "description": "Module version id (MVID) as a lowercase hyphenated GUID; it pins the token to one build\nof the assembly.",
+              "type": "string"
+            },
+            "token": {
+              "description": "ECMA-335 metadata token (table in the high byte, row in the low 24 bits), e.g.\n`0x06000001` for the first method. A plain JSON number.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "module",
+            "token"
           ],
           "type": "object"
         }
