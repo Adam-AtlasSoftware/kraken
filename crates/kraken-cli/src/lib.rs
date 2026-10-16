@@ -10,12 +10,14 @@
 //! `--no-daemon` (or `KRAKEN_NO_DAEMON=1`) runs the command in this process instead (the 0.1a
 //! behaviour: open the project session, run one command, save, shut the sidecar down); the output
 //! is identical either way. If the daemon cannot be started the CLI warns and runs directly.
+//! `kraken agents list|setup|run` hosts terminal agents over ACP (`kraken-acp`).
 //! `kraken daemon status|stop|start` controls the daemon, `kraken setup` provisions Ghidra and a
 //! JDK, and `kraken mcp --daemon` routes the MCP tools through the daemon too.
 //!
 //! Exit codes: 0 ok, 2 invalid arguments, 3 not found, 4 conflict or rejected, 5 engine or
 //! internal failure, 6 cancelled or timed out ([`exit_code`]).
 
+mod agents_cmd;
 mod app;
 mod assist_cmd;
 mod daemon_cmd;

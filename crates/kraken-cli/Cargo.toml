@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 async-trait = "0.1.89"
+kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "string", "color"] }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
