@@ -46,7 +46,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | head -40 | while IFS= read -r line; do
+          grep -E -A1 -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | grep -v '^--$' | head -60 | while IFS= read -r line; do
             echo "::error title=test failure::${line//%/%25}"
           done || true
 
@@ -135,7 +135,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | head -40 | while IFS= read -r line; do
+          grep -E -A1 -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | grep -v '^--$' | head -60 | while IFS= read -r line; do
             echo "::error title=test failure::${line//%/%25}"
           done || true
 
@@ -162,6 +162,6 @@ jobs:
         shell: bash
         run: |
           # Job logs need admin rights; annotations are public, so surface the failures there.
-          grep -E -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | head -40 | while IFS= read -r line; do
+          grep -E -A1 -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | grep -v '^--$' | head -60 | while IFS= read -r line; do
             echo "::error title=test failure::${line//%/%25}"
           done || true
