@@ -10,6 +10,9 @@ use crate::meta::Completeness;
 /// Language tag for C output.
 pub const LANGUAGE_C: &str = "c";
 
+/// Language tag for C# output (managed-code engines).
+pub const LANGUAGE_CSHARP: &str = "csharp";
+
 fn default_language() -> String {
     LANGUAGE_C.to_string()
 }

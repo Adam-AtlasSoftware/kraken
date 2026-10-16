@@ -1,0 +1,28 @@
+[package]
+name = "engine-dotnet"
+description = "KRAKEN engine for managed (.NET) code backed by a confined ILSpy sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "io-util", "net"] }
+tokio-util = { version = "0.7.16", default-features = false }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "net"] }
+
+[features]
+# Compiles the tests that run the real .NET sidecar (kept out of the real-Ghidra CI job).
+real-dotnet = []

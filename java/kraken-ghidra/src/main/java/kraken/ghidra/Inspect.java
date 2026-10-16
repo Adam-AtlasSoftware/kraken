@@ -80,7 +80,9 @@ final class Inspect {
     }
 
     private Address at(Locator l) {
-        Locator.Native n = (Locator.Native) l;
+        if (!(l instanceof Locator.Native n)) {
+            throw KrakenError.unsupported("managed locators are not supported by Ghidra");
+        }
         AddressSpace sp = program().getAddressFactory().getAddressSpace(n.space());
         if (sp == null) {
             throw KrakenError.invalid("unknown address space `" + n.space() + "`");

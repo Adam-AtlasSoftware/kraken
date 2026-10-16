@@ -45,11 +45,24 @@ final class Proto {
             }
         }
 
+        /** A .NET member or type; parsed so it can be refused cleanly, Ghidra never emits it. */
+        record Managed(String module, long token) implements Locator {
+            public JsonElement toJson() {
+                JsonObject o = tagged("kind", "managed");
+                o.addProperty("module", module);
+                o.addProperty("token", token);
+                return o;
+            }
+        }
+
         static Locator fromJson(JsonElement e) {
             JsonObject o = J.obj(e, "locator");
             String tag = J.tag(o, "kind");
             if (tag.equals("native")) {
                 return new Native(spaceOf(o), J.hex(o, "offset"));
+            }
+            if (tag.equals("managed")) {
+                return new Managed(J.str(o, "module"), J.num(o, "token"));
             }
             throw unknownTag("locator", tag);
         }

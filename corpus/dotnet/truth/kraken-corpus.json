@@ -1,0 +1,71 @@
+{
+  "module_mvid": "61a35c05-1940-4673-81a7-f2157a66b75c",
+  "sha256": "9d6ebe9c45c14e7be0c28e000aa736fe5ce08ef33ff300018a41f40f6fc636d4",
+  "assembly": "kraken-corpus",
+  "functions": [
+    {
+      "name": "KrakenCorpus.Point..ctor",
+      "token": "0x06000001",
+      "size": 15
+    },
+    {
+      "name": "KrakenCorpus.Point.Manhattan",
+      "token": "0x06000002",
+      "size": 24
+    },
+    {
+      "name": "KrakenCorpus.IShape.Area",
+      "token": "0x06000003"
+    },
+    {
+      "name": "KrakenCorpus.Circle..ctor",
+      "token": "0x06000004",
+      "size": 14
+    },
+    {
+      "name": "KrakenCorpus.Circle.Area",
+      "token": "0x06000005",
+      "size": 24
+    },
+    {
+      "name": "KrakenCorpus.Square.get_Side",
+      "token": "0x06000006",
+      "size": 7
+    },
+    {
+      "name": "KrakenCorpus.Square..ctor",
+      "token": "0x06000007",
+      "size": 14
+    },
+    {
+      "name": "KrakenCorpus.Square.Area",
+      "token": "0x06000008",
+      "size": 14
+    },
+    {
+      "name": "KrakenCorpus.Calc.Add",
+      "token": "0x06000009",
+      "size": 4
+    },
+    {
+      "name": "KrakenCorpus.Calc.Fib",
+      "token": "0x0600000a",
+      "size": 24
+    },
+    {
+      "name": "KrakenCorpus.Calc.Describe",
+      "token": "0x0600000b",
+      "size": 84
+    },
+    {
+      "name": "KrakenCorpus.Calc.TotalArea",
+      "token": "0x0600000c",
+      "size": 57
+    },
+    {
+      "name": "KrakenCorpus.Program.Main",
+      "token": "0x0600000d",
+      "size": 126
+    }
+  ]
+}
