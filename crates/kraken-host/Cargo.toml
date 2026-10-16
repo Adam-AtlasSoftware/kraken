@@ -10,14 +10,24 @@ publish = false
 [dependencies]
 async-trait = "0.1.89"
 engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
+filetime = "0.2"
+flate2 = "1.1.10"
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-ipc = { version = "0.0.0", path = "../kraken-ipc" }
+kraken-model = { version = "0.0.0", path = "../kraken-model" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+tar = "0.4.46"
 thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "fs", "io-util"] }
 toml = "0.8"
 tracing = "0.1"
+zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "macros"] }

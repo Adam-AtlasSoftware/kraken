@@ -171,6 +171,28 @@ async fn server_notifications_and_broadcast() {
 }
 
 #[tokio::test]
+async fn dropping_every_client_clone_disconnects() {
+    let (_t, dir) = runtime_dir();
+    let r = start(&dir, PROTOCOL_VERSION);
+    let c = Client::connect(&dir, &hello()).await.unwrap();
+    let c2 = c.clone();
+    c.call("echo", json!(1)).await.unwrap();
+    assert_eq!(r.server.connections().get(), 1);
+    drop(c);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(r.server.connections().get(), 1, "a clone keeps it open");
+    drop(c2);
+    for _ in 0..100 {
+        if r.server.connections().get() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(r.server.connections().get(), 0);
+    r.stop().await;
+}
+
+#[tokio::test]
 async fn oversize_frame_closes_connection() {
     let (_t, dir) = runtime_dir();
     let r = start(&dir, PROTOCOL_VERSION);

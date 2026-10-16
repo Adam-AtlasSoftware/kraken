@@ -1,0 +1,322 @@
+//! The RPC methods of the daemon (see `kraken_host::daemon` for the table).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use kraken_host::daemon::{
+    CallParams, CallResult, METHOD_CALL, METHOD_COMMANDS, METHOD_EVENTS, METHOD_SHUTDOWN,
+    METHOD_STATUS, event_kind,
+};
+use kraken_ipc::{ClientKind, ConnInfo, Counter, RpcHandler, Shutdown};
+use kraken_model::{AuthorKind, RunId};
+use kraken_proto::{ErrorCode, ProtoError};
+use kraken_registry::{AutoApprove, CallContext, CommandKind, DenyApprover, Registry, Surface};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::host::{SessionHost, canonical_key};
+
+/// Facts about the running daemon for the `status` method.
+#[derive(Debug, Clone)]
+pub struct DaemonFacts {
+    /// Process id.
+    pub pid: u32,
+    /// Build string.
+    pub build: String,
+    /// IPC protocol version.
+    pub protocol: u32,
+    /// Runtime directory.
+    pub runtime_dir: PathBuf,
+    /// Daemon idle timeout.
+    pub idle_timeout: Duration,
+    /// When the daemon started.
+    pub started: Instant,
+}
+
+/// Serves `call`, `commands`, `status`, `events` and `shutdown`.
+pub struct DaemonHandler {
+    host: SessionHost,
+    registry: Arc<Registry>,
+    facts: DaemonFacts,
+    clients: Counter,
+    jobs: Counter,
+    shutdown: Shutdown,
+}
+
+impl DaemonHandler {
+    /// A handler over `host`. `clients` and `jobs` are the idle monitor's counters, shown in
+    /// `status`; `shutdown` is triggered by the `shutdown` method.
+    pub fn new(
+        host: SessionHost,
+        registry: Arc<Registry>,
+        facts: DaemonFacts,
+        clients: Counter,
+        jobs: Counter,
+        shutdown: Shutdown,
+    ) -> Self {
+        DaemonHandler {
+            host,
+            registry,
+            facts,
+            clients,
+            jobs,
+            shutdown,
+        }
+    }
+}
+
+fn invalid(msg: impl Into<String>) -> ProtoError {
+    ProtoError::new(ErrorCode::InvalidArgument, msg)
+}
+
+fn internal(msg: impl Into<String>) -> ProtoError {
+    ProtoError::new(ErrorCode::Internal, msg)
+}
+
+fn surface_for(kind: ClientKind) -> Surface {
+    match kind {
+        ClientKind::Cli => Surface::Cli,
+        ClientKind::Gui => Surface::Gui,
+        ClientKind::Mcp => Surface::Mcp,
+    }
+}
+
+fn context(p: &CallParams, conn: &ConnInfo) -> CallContext {
+    let surface = p.surface.unwrap_or_else(|| surface_for(conn.client_kind));
+    let id = p.author_id.clone().unwrap_or_else(|| match p.author_kind {
+        AuthorKind::User => "user".to_string(),
+        AuthorKind::Agent => format!("{:?}-client", conn.client_kind).to_lowercase(),
+    });
+    let mut ctx = match p.author_kind {
+        AuthorKind::User => CallContext::user(id, surface),
+        AuthorKind::Agent => CallContext::agent(id, "", surface),
+    };
+    ctx.run_id = p.run_id.clone().map(RunId);
+    ctx.with_approval(if p.approved {
+        Arc::new(AutoApprove)
+    } else {
+        Arc::new(DenyApprover)
+    })
+}
+
+/// Events caused by a successful command.
+fn events_for(
+    name: &str,
+    kind: CommandKind,
+    result: &Value,
+    ctx: &CallContext,
+) -> Vec<(&'static str, Value)> {
+    if kind != CommandKind::Mutation
+        || matches!(name, "project_create" | "project_open" | "job_cancel")
+    {
+        return Vec::new();
+    }
+    let mut ev = json!({
+        "command": name,
+        "author_kind": ctx.author.kind,
+        "author_id": ctx.author.id,
+    });
+    if let Some(r) = &ctx.run_id {
+        ev["run_id"] = json!(r.0);
+    }
+    for k in [
+        "status",
+        "entry_id",
+        "entry_ids",
+        "undone_entry_ids",
+        "key",
+        "proposal_id",
+        "versions",
+        "reason",
+    ] {
+        if let Some(v) = result.get(k) {
+            ev[k] = v.clone();
+        }
+    }
+    let proposed = result.get("status").and_then(Value::as_str) == Some("proposed");
+    vec![(
+        if proposed {
+            event_kind::PROPOSAL_CREATED
+        } else {
+            event_kind::ENTRY_APPLIED
+        },
+        ev,
+    )]
+}
+
+#[derive(Deserialize, Default)]
+struct EventsParams {
+    #[serde(default)]
+    after_seq: u64,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+impl DaemonHandler {
+    async fn call_command(&self, conn: &ConnInfo, params: Value) -> Result<Value, ProtoError> {
+        let p: CallParams =
+            serde_json::from_value(params).map_err(|e| invalid(format!("bad call params: {e}")))?;
+        let registry = self.registry.clone();
+        let entry = registry.get(&p.command).ok_or_else(|| {
+            ProtoError::new(
+                ErrorCode::NotFound,
+                format!("unknown command `{}`", p.command),
+            )
+        })?;
+        let spec = entry.spec().clone();
+        let dir = PathBuf::from(&p.project_dir);
+        if !dir.is_absolute() {
+            return Err(invalid(format!(
+                "project_dir {} must be absolute: the daemon does not share the client's working directory",
+                p.project_dir
+            )));
+        }
+        let key = canonical_key(&dir)?;
+        let lease = self.host.acquire(&key, &dir).await?;
+        let ctx = context(&p, conn);
+        let queued = matches!(spec.kind, CommandKind::Mutation | CommandKind::Job)
+            && spec.name != "job_cancel";
+        let queue_guard = if queued {
+            Some(lease.entry().lock_queue().await)
+        } else {
+            None
+        };
+
+        let mut name = p.command.clone();
+        let mut args = p.args.clone();
+        let mut warnings = Vec::new();
+        if name == "project_open" && lease.entry().session().project().is_ok() {
+            // Already open here: report instead of reopening (which would restart the sidecar).
+            name = "project_info".into();
+            args = Value::Null;
+        } else if !matches!(name.as_str(), "project_create" | "project_open") {
+            match self.host.ensure_open(&lease).await {
+                Ok(w) => warnings = w,
+                Err(e) => {
+                    self.host.discard_if_unopened(&lease);
+                    return Err(e);
+                }
+            }
+        }
+
+        // The command runs in its own task: a client that disconnects mid-call must not leave a
+        // half-finished mutation or free the write queue early.
+        let cancel = ctx.cancel.clone();
+        let guard = (spec.kind == CommandKind::Query).then(|| cancel.drop_guard());
+        let host = self.host.clone();
+        let kind = spec.kind;
+        let creating = matches!(p.command.as_str(), "project_create" | "project_open");
+        let task = tokio::spawn(async move {
+            let _queue = queue_guard;
+            let entry = lease.entry().clone();
+            let result = registry.call_json(&name, entry.session(), &ctx, args).await;
+            match &result {
+                Ok(v) => {
+                    if creating && name != "project_info" {
+                        host.note_opened(&lease);
+                    }
+                    for (k, fields) in events_for(&name, kind, v, &ctx) {
+                        host.hub().publish(entry.dir(), k, fields);
+                    }
+                }
+                Err(_) if creating => host.discard_if_unopened(&lease),
+                Err(_) => {}
+            }
+            result
+        });
+        let result = task
+            .await
+            .map_err(|e| internal(format!("command task failed: {e}")))?;
+        if let Some(g) = guard {
+            g.disarm();
+        }
+        let result = result?;
+        serde_json::to_value(CallResult { result, warnings })
+            .map_err(|e| internal(format!("cannot encode the reply: {e}")))
+    }
+
+    fn commands(&self) -> Value {
+        Value::Array(
+            self.registry
+                .iter()
+                .map(|e| {
+                    json!({
+                        "spec": e.spec(),
+                        "args_schema": e.args_schema(),
+                        "output_schema": e.output_schema(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    async fn status(&self) -> Value {
+        let engines: Vec<Value> = self
+            .host
+            .factory()
+            .diagnostics()
+            .into_iter()
+            .map(|d| json!({"engine_dir": d.engine_dir, "diagnostics": d.value}))
+            .collect();
+        let cfg = self.host.config();
+        json!({
+            "daemon": {
+                "pid": self.facts.pid,
+                "build": self.facts.build,
+                "protocol": self.facts.protocol,
+                "runtime_dir": self.facts.runtime_dir,
+                "uptime_secs": self.facts.started.elapsed().as_secs(),
+                "idle_timeout_secs": self.facts.idle_timeout.as_secs(),
+                "session_idle_secs": cfg.session_idle.as_secs(),
+                "max_sessions": cfg.max_sessions,
+                "clients": self.clients.get(),
+                "running_jobs": self.jobs.get(),
+            },
+            "sessions": self.host.session_status().await,
+            "engines": engines,
+            "last_event_seq": self.host.hub().last_seq(),
+        })
+    }
+}
+
+#[async_trait]
+impl RpcHandler for DaemonHandler {
+    async fn call(
+        &self,
+        conn: &ConnInfo,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, ProtoError> {
+        match method {
+            METHOD_CALL => self.call_command(conn, params).await,
+            METHOD_COMMANDS => Ok(self.commands()),
+            METHOD_STATUS => Ok(self.status().await),
+            METHOD_EVENTS => {
+                let p: EventsParams = if params.is_null() {
+                    EventsParams::default()
+                } else {
+                    serde_json::from_value(params)
+                        .map_err(|e| invalid(format!("bad params: {e}")))?
+                };
+                let limit = p.limit.map_or(256, |l| l.clamp(1, 1024)) as usize;
+                let (events, last_seq) = self.host.hub().since(p.after_seq, limit);
+                Ok(json!({"events": events, "last_seq": last_seq}))
+            }
+            METHOD_SHUTDOWN => {
+                let s = self.shutdown.clone();
+                // Let the reply reach the caller before the connections are torn down.
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    s.trigger();
+                });
+                Ok(json!({"stopping": true}))
+            }
+            other => Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!("unknown method `{other}`"),
+            )),
+        }
+    }
+}

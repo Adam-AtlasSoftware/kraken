@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine_fake::{FakeEngine, FixtureFile};
-use kraken_cli::{CliAuthor, CliEnv, run};
+use kraken_cli::{CliAuthor, CliEnv, DaemonMode, run};
 use kraken_engine::SharedEngine;
 use kraken_host::{KrakenConfig, ManagedFactory};
 use kraken_proto::{Locator, ProtoError};
@@ -60,6 +60,7 @@ pub fn rig(author: CliAuthor, vars: Vec<(&'static str, String)>) -> Rig {
         vars: Box::new(move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())),
         interactive: false,
         session: Some(session.clone()),
+        daemon: DaemonMode::Direct,
     };
     Rig {
         factory,
@@ -135,5 +136,6 @@ pub fn fresh_env(config: KrakenConfig, vars: Vec<(&'static str, String)>) -> Cli
         vars: Box::new(move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())),
         interactive: false,
         session: None,
+        daemon: DaemonMode::Direct,
     }
 }

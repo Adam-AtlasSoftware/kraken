@@ -16,6 +16,12 @@ pub const ENV_PER_RUN_CAP: &str = "KRAKEN_PER_RUN_CAP";
 pub const ENV_PROJECTS_ROOT: &str = "KRAKEN_PROJECTS_ROOT";
 /// Environment variable overriding the config file location.
 pub const ENV_CONFIG: &str = "KRAKEN_CONFIG";
+/// Environment variable overriding `daemon.idle_secs`.
+pub const ENV_DAEMON_IDLE_SECS: &str = "KRAKEN_DAEMON_IDLE_SECS";
+/// Environment variable overriding `daemon.session_idle_secs`.
+pub const ENV_SESSION_IDLE_SECS: &str = "KRAKEN_SESSION_IDLE_SECS";
+/// Environment variable overriding `daemon.max_sessions`.
+pub const ENV_MAX_SESSIONS: &str = "KRAKEN_MAX_SESSIONS";
 
 /// Failure to read the configuration.
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +53,47 @@ pub enum ConfigError {
     },
 }
 
+/// The `[daemon]` table of the configuration (decisions 17, 40).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DaemonSettings {
+    /// Seconds without clients, jobs or running analysis before `krakend` exits (default 600).
+    pub idle_secs: Option<u64>,
+    /// Seconds without activity before a project session is closed (default 1800).
+    pub session_idle_secs: Option<u64>,
+    /// Most project sessions open at once (default 4).
+    pub max_sessions: Option<u32>,
+}
+
+impl DaemonSettings {
+    /// Default daemon idle timeout.
+    pub const DEFAULT_IDLE_SECS: u64 = 600;
+    /// Default per-session idle time.
+    pub const DEFAULT_SESSION_IDLE_SECS: u64 = 1800;
+    /// Default limit on open sessions.
+    pub const DEFAULT_MAX_SESSIONS: u32 = 4;
+
+    /// Daemon idle timeout.
+    pub fn idle(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.idle_secs.unwrap_or(Self::DEFAULT_IDLE_SECS))
+    }
+
+    /// Per-session idle time.
+    pub fn session_idle(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.session_idle_secs
+                .unwrap_or(Self::DEFAULT_SESSION_IDLE_SECS),
+        )
+    }
+
+    /// Open-session limit (at least one).
+    pub fn max_sessions(&self) -> usize {
+        self.max_sessions
+            .unwrap_or(Self::DEFAULT_MAX_SESSIONS)
+            .max(1) as usize
+    }
+}
+
 /// User configuration. Unset fields fall back to the environment (`KRAKEN_GHIDRA_HOME`, ...) and
 /// then to the engine's defaults.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +113,8 @@ pub struct KrakenConfig {
     pub per_run_cap: Option<u32>,
     /// Directory holding projects created without an explicit directory.
     pub projects_root: Option<PathBuf>,
+    /// `krakend` tunables.
+    pub daemon: DaemonSettings,
 }
 
 impl KrakenConfig {
@@ -158,6 +207,19 @@ impl KrakenConfig {
                 value: v.to_string_lossy().into_owned(),
             })?);
         }
+        if let Some(v) = get(ENV_DAEMON_IDLE_SECS) {
+            self.daemon.idle_secs = Some(parse_num(ENV_DAEMON_IDLE_SECS, &v)?);
+        }
+        if let Some(v) = get(ENV_SESSION_IDLE_SECS) {
+            self.daemon.session_idle_secs = Some(parse_num(ENV_SESSION_IDLE_SECS, &v)?);
+        }
+        if let Some(v) = get(ENV_MAX_SESSIONS) {
+            let n = parse_num(ENV_MAX_SESSIONS, &v)?;
+            self.daemon.max_sessions = Some(u32::try_from(n).map_err(|_| ConfigError::Env {
+                var: ENV_MAX_SESSIONS,
+                value: v.to_string_lossy().into_owned(),
+            })?);
+        }
         if let Some(v) = get(ENV_ALLOW_UNCONFINED) {
             let s = v.to_string_lossy().to_ascii_lowercase();
             self.allow_unconfined = match s.as_str() {
@@ -208,6 +270,22 @@ mod tests {
         assert_eq!(c.max_heap_mb, Some(2048));
         assert!(c.allow_unconfined);
         assert_eq!(c.session_config().per_run_cap, 7);
+    }
+
+    #[test]
+    fn daemon_table_and_env() {
+        let mut c = KrakenConfig::from_toml("[daemon]\nidle_secs = 5\nmax_sessions = 2\n").unwrap();
+        assert_eq!(c.daemon.idle(), std::time::Duration::from_secs(5));
+        assert_eq!(c.daemon.max_sessions(), 2);
+        assert_eq!(c.daemon.session_idle().as_secs(), 1800);
+        c.apply_env(&env_of(&[
+            (ENV_MAX_SESSIONS, "7"),
+            (ENV_SESSION_IDLE_SECS, "9"),
+        ]))
+        .unwrap();
+        assert_eq!(c.daemon.max_sessions(), 7);
+        assert_eq!(c.daemon.session_idle().as_secs(), 9);
+        assert!(KrakenConfig::from_toml("[daemon]\nbogus = 1").is_err());
     }
 
     #[test]

@@ -20,6 +20,7 @@ async-trait = "0.1.89"
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "string", "color"] }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-ipc = { version = "0.0.0", path = "../kraken-ipc" }
 kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
@@ -30,6 +31,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [dev-dependencies]
 engine-fake = { path = "../engine-fake", version = "0.0.0" }
+krakend = { path = "../krakend", version = "0.0.0" }
 rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "transport-child-process"] }
 schemars.workspace = true
 serde.workspace = true

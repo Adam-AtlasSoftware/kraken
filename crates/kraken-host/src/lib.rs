@@ -10,13 +10,18 @@
 //! - [`convention`]: output conventions applied identically by every surface.
 
 pub mod author;
+pub mod backend;
 pub mod config;
 pub mod convention;
+pub mod daemon;
 pub mod factory;
 pub mod paths;
+pub mod provision;
 
 pub use author::{RunIdGen, agent_id_from_client, user_id};
-pub use config::{ConfigError, KrakenConfig};
+pub use config::{ConfigError, DaemonSettings, KrakenConfig};
 pub use convention::finalize_output;
-pub use factory::{GhidraEngineFactory, ManagedFactory};
+pub use factory::{
+    EngineDiagnostics, EngineEvent, FactoryEvent, GhidraEngineFactory, ManagedFactory,
+};
 pub use paths::{check_ghidra_safe, default_project_dir, projects_root};

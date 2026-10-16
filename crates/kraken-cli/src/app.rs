@@ -10,10 +10,13 @@ use async_trait::async_trait;
 use clap::builder::PossibleValuesParser;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use kraken_engine::CancellationToken;
+use kraken_host::backend::{CommandBackend, DaemonBackend, LocalBackend};
+use kraken_host::daemon::{DaemonClient, StartOptions};
 use kraken_host::{
     GhidraEngineFactory, KrakenConfig, ManagedFactory, default_project_dir, finalize_output,
     user_id,
 };
+use kraken_ipc::{ClientKind, RuntimeDir};
 use kraken_mcp::{KrakenMcp, McpOptions, serve_stdio};
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::{
@@ -32,6 +35,9 @@ Every command of the KRAKEN command registry is a subcommand. Use --project <dir
 KRAKEN_PROJECT) to choose the project, --json for machine output (exactly the command's output \
 JSON; errors are printed to stderr as JSON), and `kraken commands --json` for all commands with \
 their JSON Schemas. `kraken mcp` serves the same commands as MCP tools over stdio.\n\n\
+Commands run in the `krakend` daemon, which is started on demand, keeps projects and the Ghidra \
+sidecar warm between invocations and exits when idle (`kraken daemon status|stop|start`). \
+`--no-daemon` runs the command in this process instead. `kraken setup` downloads Ghidra and a JDK.\n\n\
 Objects and arrays are passed as JSON text (--<flag> '<json>'); --args-json '<json>' supplies the \
 whole argument object.\n\n\
 Exit codes: 0 ok, 2 invalid arguments, 3 not found, 4 conflict or rejected, 5 engine or internal \
@@ -54,6 +60,62 @@ pub enum CliAuthor {
 /// Looks up an environment variable.
 pub type EnvLookup = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
+/// The build string `kraken` announces to the daemon (and expects `krakend` to report).
+pub const BUILD: &str = env!("CARGO_PKG_VERSION");
+
+/// How to reach (or start) the daemon.
+#[derive(Debug, Clone, Default)]
+pub struct DaemonAuto {
+    /// The runtime directory; `None` resolves the per-user default (`KRAKEN_RUNTIME_DIR` wins).
+    pub runtime_dir: Option<RuntimeDir>,
+    /// How `krakend` is found and started when none runs.
+    pub start: StartOptions,
+}
+
+impl DaemonAuto {
+    fn dir(&self) -> Result<RuntimeDir, ProtoError> {
+        match &self.runtime_dir {
+            Some(d) => Ok(d.clone()),
+            None => RuntimeDir::resolve()
+                .map_err(|e| ProtoError::new(ErrorCode::Internal, format!("runtime dir: {e}"))),
+        }
+    }
+
+    /// Connects to the running daemon, starting it when needed.
+    pub async fn connect(
+        &self,
+        kind: ClientKind,
+    ) -> Result<DaemonClient, kraken_host::daemon::DaemonError> {
+        let dir = self.dir().map_err(|e| {
+            kraken_host::daemon::DaemonError::Runtime(kraken_ipc::IpcError::NoRuntimeDir(e.message))
+        })?;
+        DaemonClient::connect_or_start(&dir, kind, BUILD, &self.start).await
+    }
+
+    /// Connects to the daemon only if one is already running; never starts one.
+    pub async fn connect_running(
+        &self,
+        kind: ClientKind,
+    ) -> Result<Option<DaemonClient>, kraken_host::daemon::DaemonError> {
+        let dir = self.dir().map_err(|e| {
+            kraken_host::daemon::DaemonError::Runtime(kraken_ipc::IpcError::NoRuntimeDir(e.message))
+        })?;
+        DaemonClient::connect_running(&dir, kind, BUILD).await
+    }
+}
+
+/// Where commands run.
+#[derive(Clone)]
+pub enum DaemonMode {
+    /// In this process, one session per invocation (the 0.1a behaviour).
+    Direct,
+    /// Through `krakend`: connect to the running daemon or start it; fall back to
+    /// [`Direct`](DaemonMode::Direct) with a warning when that is impossible.
+    Auto(DaemonAuto),
+    /// Through an already connected daemon (tests, embedding).
+    Connected(Arc<DaemonClient>),
+}
+
 /// Everything `run` needs besides the command line.
 pub struct CliEnv {
     /// The commands.
@@ -70,7 +132,10 @@ pub struct CliEnv {
     /// terminal. Tests leave it false.
     pub interactive: bool,
     /// An existing session to run against instead of opening the project (tests, embedding).
+    /// Commands then run in this process whatever `daemon` says.
     pub session: Option<Arc<Session>>,
+    /// Where commands run; `--no-daemon` and `KRAKEN_NO_DAEMON` force direct mode.
+    pub daemon: DaemonMode,
 }
 
 impl CliEnv {
@@ -84,6 +149,7 @@ impl CliEnv {
             vars: Box::new(|k| std::env::var(k).ok()),
             interactive: true,
             session: None,
+            daemon: DaemonMode::Auto(DaemonAuto::default()),
         }
     }
 
@@ -95,6 +161,71 @@ impl CliEnv {
         self.session.clone().unwrap_or_else(|| {
             Arc::new(Session::new(self.factory.clone()).with_config(self.config.session_config()))
         })
+    }
+
+    /// True when the person asked for in-process execution.
+    fn no_daemon(&self, sm: &ArgMatches) -> bool {
+        sm.try_get_one::<bool>("no-daemon").ok().flatten().copied() == Some(true)
+            || self
+                .var("KRAKEN_NO_DAEMON")
+                .is_some_and(|v| !matches!(v.as_str(), "0" | "false" | "no" | "off"))
+    }
+
+    /// The backend for one invocation, and its session when it runs in this process.
+    async fn backend(
+        &self,
+        project: Option<&str>,
+        no_daemon: bool,
+        err: &mut dyn Write,
+    ) -> Result<(Arc<dyn CommandBackend>, Option<Arc<Session>>), ProtoError> {
+        let project = project.map(PathBuf::from);
+        let local = |this: &Self, project: Option<PathBuf>| {
+            let session = this.new_session();
+            let backend: Arc<dyn CommandBackend> = Arc::new(LocalBackend::new(
+                this.registry.clone(),
+                session.clone(),
+                project,
+            ));
+            (backend, Some(session))
+        };
+        if self.session.is_some() || no_daemon {
+            return Ok(local(self, project));
+        }
+        match &self.daemon {
+            DaemonMode::Direct => Ok(local(self, project)),
+            DaemonMode::Connected(c) => Ok((
+                Arc::new(DaemonBackend::new(
+                    c.clone(),
+                    self.registry.clone(),
+                    project,
+                )),
+                None,
+            )),
+            DaemonMode::Auto(auto) => match auto.connect(ClientKind::Cli).await {
+                Ok(c) => Ok((
+                    Arc::new(DaemonBackend::new(
+                        Arc::new(c),
+                        self.registry.clone(),
+                        project,
+                    )),
+                    None,
+                )),
+                Err(e) if e.restart_required() => Err(ProtoError::new(
+                    ErrorCode::Unsupported,
+                    format!("{e}; run `kraken daemon stop` and retry"),
+                )),
+                Err(e) => {
+                    emit(
+                        err,
+                        &format!(
+                            "warning: cannot use krakend ({e}); running in this process \
+                             (--no-daemon silences this)\n"
+                        ),
+                    );
+                    Ok(local(self, project))
+                }
+            },
+        }
     }
 
     fn context(&self, yes: bool) -> CallContext {
@@ -256,6 +387,13 @@ pub fn build_cli(registry: &Registry) -> Command {
                 .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Approve dangerous commands without asking"),
+        )
+        .arg(
+            Arg::new("no-daemon")
+                .long("no-daemon")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help("Run in this process instead of through krakend (also KRAKEN_NO_DAEMON=1)"),
         );
     for entry in registry.iter() {
         root = root.subcommand(sub_for(entry));
@@ -264,10 +402,51 @@ pub fn build_cli(registry: &Registry) -> Command {
         Command::new("commands")
             .about("List all commands with their argument and output JSON Schemas"),
     )
-    .subcommand(Command::new("mcp").about("Serve the commands as MCP tools over stdio"))
+    .subcommand(
+        Command::new("mcp")
+            .about("Serve the commands as MCP tools over stdio")
+            .long_about(
+                "Serve the commands as MCP tools over stdio. By default the server keeps its own \
+                 in-process session (0.1b) unless krakend is already running, in which case it joins it; \
+                 with --daemon the commands always run in krakend (started on demand), sharing \
+                 projects and the Ghidra sidecar with the CLI and the GUI.",
+            )
+            .arg(
+                Arg::new("daemon")
+                    .long("daemon")
+                    .action(ArgAction::SetTrue)
+                    .help("Route the commands through krakend (started on demand)"),
+            ),
+    )
+    .subcommand(
+        Command::new("setup")
+            .about("Download and install the pinned Ghidra and JDK, and build the Ghidra extension")
+            .long_about(
+                "Downloads Ghidra 12.1.4 and Temurin JDK 21 (HTTPS only, SHA-256 checked before \
+                 anything is extracted), unpacks them into the runtime directory \
+                 ($XDG_DATA_HOME/kraken/runtime) and compiles the KRAKEN extension with the \
+                 downloaded JDK. Interrupted downloads resume; a finished setup is left alone unless \
+                 --force is given. KRAKEN_GHIDRA_HOME / KRAKEN_JAVA_HOME (or the config file) take \
+                 precedence over this copy.",
+            )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .action(ArgAction::SetTrue)
+                    .help("Download, extract and build again even if everything is in place"),
+            ),
+    )
+    .subcommand(
+        Command::new("daemon")
+            .about("Inspect and control the krakend daemon")
+            .subcommand_required(true)
+            .subcommand(Command::new("status").about("Show whether krakend runs, its sessions and sidecars"))
+            .subcommand(Command::new("stop").about("Ask krakend to exit (it closes projects and stops Ghidra first)"))
+            .subcommand(Command::new("start").about("Start krakend if it is not running")),
+    )
 }
 
-fn bad(msg: impl Into<String>) -> ProtoError {
+pub(crate) fn bad(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
 }
 
@@ -293,12 +472,12 @@ fn absolute(p: &Path) -> PathBuf {
     std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-fn emit(w: &mut dyn Write, s: &str) {
+pub(crate) fn emit(w: &mut dyn Write, s: &str) {
     // A closed pipe (`| head`) is not an error worth reporting.
     let _ = w.write_all(s.as_bytes());
 }
 
-fn fail(e: &ProtoError, json: bool, err: &mut dyn Write) -> i32 {
+pub(crate) fn fail(e: &ProtoError, json: bool, err: &mut dyn Write) -> i32 {
     if json {
         let v = serde_json::to_string(e).unwrap_or_else(|_| "{\"code\":\"internal\"}".into());
         emit(err, &format!("{v}\n"));
@@ -405,7 +584,7 @@ fn commands_table(registry: &Registry) -> String {
 
 async fn wait_for_job(
     env: &CliEnv,
-    session: &Session,
+    backend: &dyn CommandBackend,
     ctx: &CallContext,
     started: &Value,
     err: &mut dyn Write,
@@ -417,18 +596,13 @@ async fn wait_for_job(
         .to_string();
     let mut last: Option<Value> = None;
     loop {
-        let wait = env.registry.call_json(
-            "job_await",
-            session,
-            ctx,
-            json!({"job_id": id, "timeout_ms": 500}),
-        );
+        let wait = backend.call("job_await", ctx, json!({"job_id": id, "timeout_ms": 500}));
         let view = if env.interactive {
             tokio::select! {
                 v = wait => v?,
                 _ = tokio::signal::ctrl_c() => {
                     emit(err, "cancelling...\n");
-                    let _ = env.registry.call_json("job_cancel", session, ctx, json!({"job_id": id})).await;
+                    let _ = backend.call("job_cancel", ctx, json!({"job_id": id})).await;
                     continue;
                 }
             }
@@ -496,46 +670,43 @@ async fn run_registry_command(
         .or_else(|| env.var("KRAKEN_PROJECT"));
     let yes = sm.get_flag("yes");
     let no_wait = sm.try_get_one::<bool>("no-wait").ok().flatten().copied() == Some(true);
-    let session = env.new_session();
     let creating = matches!(name, "project_create" | "project_open");
 
-    let setup: Result<(), ProtoError> = async {
-        if creating {
-            fill_project_dir(env, name, &mut args, project.as_deref())
-        } else if session.project().is_err() {
-            let dir = project
-                .as_deref()
-                .ok_or_else(|| bad("no project: pass --project <dir> or set KRAKEN_PROJECT"))?;
-            let p = session.open_project(&absolute(Path::new(dir))).await?;
-            if !p.epoch_mismatch().is_empty() {
-                emit(
-                    err,
-                    &format!(
-                        "warning: the engine cache is stale ({}); run `kraken rebuild`\n",
-                        p.epoch_mismatch().join(", ")
-                    ),
-                );
-            }
-            Ok(())
-        } else {
-            Ok(())
-        }
+    let setup = if creating {
+        fill_project_dir(env, name, &mut args, project.as_deref())
+    } else if project.is_none() && !env.session.as_ref().is_some_and(|s| s.project().is_ok()) {
+        Err(bad(
+            "no project: pass --project <dir> or set KRAKEN_PROJECT",
+        ))
+    } else {
+        Ok(())
+    };
+    if let Err(e) = setup {
+        env.factory.shutdown().await;
+        return fail(&e, json_out, err);
     }
-    .await;
 
     let ctx = env.context(yes);
-    let result = match setup {
-        Err(e) => Err(e),
-        Ok(()) => {
-            let first = env.registry.call_json(name, &session, &ctx, args).await;
-            match first {
-                Ok(v) if entry.spec().kind == CommandKind::Job && !no_wait => {
-                    wait_for_job(env, &session, &ctx, &v, err).await
-                }
-                other => other,
-            }
+    let (backend, local_session) = match env
+        .backend(project.as_deref(), env.no_daemon(sm), err)
+        .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            env.factory.shutdown().await;
+            return fail(&e, json_out, err);
         }
     };
+    let first = backend.call(name, &ctx, args).await;
+    let result = match first {
+        Ok(v) if entry.spec().kind == CommandKind::Job && !no_wait => {
+            wait_for_job(env, backend.as_ref(), &ctx, &v, err).await
+        }
+        other => other,
+    };
+    for w in backend.take_warnings() {
+        emit(err, &format!("warning: {w}\n"));
+    }
 
     let code = match result {
         Ok(v) => {
@@ -552,8 +723,11 @@ async fn run_registry_command(
         Err(e) => fail(&e, json_out, err),
     };
 
-    if code == 0 && entry.spec().kind != CommandKind::Query {
-        save(&session, err).await;
+    if code == 0
+        && entry.spec().kind != CommandKind::Query
+        && let Some(session) = &local_session
+    {
+        save(session, err).await;
     }
     env.factory.shutdown().await;
     code
@@ -574,11 +748,24 @@ async fn save(session: &Session, err: &mut dyn Write) {
 }
 
 async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Write) -> i32 {
-    let session = env.new_session();
     let project = sm
         .get_one::<String>("project")
         .cloned()
         .or_else(|| env.var("KRAKEN_PROJECT"));
+    if sm.get_flag("daemon") {
+        return run_mcp_via_daemon(env, project, json_out, err).await;
+    }
+    // A running krakend may already hold the project (the CLI starts it on demand), and a
+    // Ghidra project can only be open in one process, so join the daemon when it is up.
+    if env.session.is_none()
+        && !env.no_daemon(sm)
+        && let DaemonMode::Auto(auto) = &env.daemon
+        && let Ok(Some(client)) = auto.connect_running(ClientKind::Mcp).await
+    {
+        tracing::info!("krakend is running; serving MCP through it");
+        return run_mcp_with_client(env, Arc::new(client), project, json_out, err).await;
+    }
+    let session = env.new_session();
     if let Some(dir) = project
         && session.project().is_err()
         && let Err(e) = session.open_project(&absolute(Path::new(&dir))).await
@@ -590,6 +777,14 @@ async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Wr
     tracing::info!(run_id = server.run_id(), "starting MCP server on stdio");
     let result = serve_stdio(server).await;
     env.factory.shutdown().await;
+    finish_mcp(result, json_out, err)
+}
+
+fn finish_mcp(
+    result: Result<(), kraken_mcp::ServeError>,
+    json_out: bool,
+    err: &mut dyn Write,
+) -> i32 {
     match result {
         Ok(()) => 0,
         Err(e) => fail(
@@ -598,6 +793,67 @@ async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Wr
             err,
         ),
     }
+}
+
+/// `kraken mcp --daemon`: the same tools, but the commands run in `krakend`.
+async fn run_mcp_via_daemon(
+    env: &CliEnv,
+    project: Option<String>,
+    json_out: bool,
+    err: &mut dyn Write,
+) -> i32 {
+    let client = match &env.daemon {
+        DaemonMode::Connected(c) => Ok(c.clone()),
+        DaemonMode::Auto(auto) => auto.connect(ClientKind::Mcp).await.map(Arc::new),
+        DaemonMode::Direct => DaemonAuto::default()
+            .connect(ClientKind::Mcp)
+            .await
+            .map(Arc::new),
+    };
+    let client = match client {
+        Ok(c) => c,
+        Err(e) => {
+            let hint = if e.restart_required() {
+                "; run `kraken daemon stop` and retry"
+            } else {
+                ""
+            };
+            return fail(
+                &ProtoError::new(ErrorCode::Unsupported, format!("{e}{hint}")),
+                json_out,
+                err,
+            );
+        }
+    };
+    run_mcp_with_client(env, client, project, json_out, err).await
+}
+
+/// Serves MCP with every command routed through an already connected daemon.
+async fn run_mcp_with_client(
+    env: &CliEnv,
+    client: Arc<DaemonClient>,
+    project: Option<String>,
+    json_out: bool,
+    err: &mut dyn Write,
+) -> i32 {
+    let backend = Arc::new(DaemonBackend::new(
+        client,
+        env.registry.clone(),
+        project.clone().map(PathBuf::from),
+    ));
+    if project.is_some() {
+        // Fail early on a bad project, as the in-process server does.
+        let ctx = CallContext::user(user_id(), Surface::Mcp);
+        if let Err(e) = backend.call("project_info", &ctx, Value::Null).await {
+            return fail(&e, json_out, err);
+        }
+    }
+    let server = KrakenMcp::with_backend(env.registry.clone(), backend, McpOptions::default());
+    tracing::info!(
+        run_id = server.run_id(),
+        "starting MCP server on stdio (via krakend)"
+    );
+    finish_mcp(serve_stdio(server).await, json_out, err)
 }
 
 /// Runs the CLI: parses `args` (including the program name), writes to `out` and `err`, and
@@ -635,6 +891,8 @@ pub async fn run(
             0
         }
         "mcp" => run_mcp(env, sm, json_out, err).await,
+        "setup" => crate::setup::run_setup(env, sm, json_out, out, err).await,
+        "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
         other => {
             let names: BTreeMap<String, String> = env
                 .registry

@@ -178,6 +178,19 @@ pub(crate) struct FlushReport {
     pub stopped: Option<ProtoError>,
 }
 
+/// Outcome of [`Project::replay_pending`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReplayReport {
+    /// Entries pushed to the engine.
+    pub pushed: u64,
+    /// Entries the engine refused (now `engine_rejected`).
+    pub rejected: u64,
+    /// True when nothing was pushed because an analysis or rebuild is running; its end flushes.
+    pub skipped_analysis_running: bool,
+    /// True when the caller cancelled mid-push; the rest stays pending.
+    pub stopped: bool,
+}
+
 /// An open project: engine, model database and analysis state.
 pub struct Project {
     dir: PathBuf,
@@ -340,6 +353,30 @@ impl Project {
             self.checkpoint(last, cancel).await?;
         }
         Ok(report)
+    }
+
+    /// Pushes the log entries still pending to the (possibly just restarted) engine, in log
+    /// order, under the project write lock. The daemon calls this when the sidecar came back
+    /// (decision 40); pushes are idempotent. While an analysis or rebuild runs nothing is pushed:
+    /// its end flushes the queue.
+    pub async fn replay_pending(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<ReplayReport, ProtoError> {
+        if self.analysis_running() {
+            return Ok(ReplayReport {
+                skipped_analysis_running: true,
+                ..Default::default()
+            });
+        }
+        let _guard = self.write_lock.lock().await;
+        let r = self.flush_pending(cancel).await?;
+        Ok(ReplayReport {
+            pushed: r.pushed.len() as u64,
+            rejected: r.rejected.len() as u64,
+            skipped_analysis_running: false,
+            stopped: r.stopped.is_some(),
+        })
     }
 
     /// Saves the engine and records `last` as the push watermark saved with it.

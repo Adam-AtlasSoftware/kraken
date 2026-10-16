@@ -81,7 +81,7 @@ type Pending = HashMap<u64, oneshot::Sender<Result<Value, ProtoError>>>;
 struct Inner {
     out: mpsc::UnboundedSender<Vec<u8>>,
     next_id: AtomicU64,
-    pending: Mutex<Option<Pending>>,
+    pending: Arc<Mutex<Option<Pending>>>,
     notifications: Mutex<Option<mpsc::UnboundedReceiver<Notification>>>,
     hello: HelloResult,
 }
@@ -135,27 +135,29 @@ impl Client {
         let inner = Arc::new(Inner {
             out,
             next_id: AtomicU64::new(1),
-            pending: Mutex::new(Some(HashMap::new())),
+            pending: Arc::new(Mutex::new(Some(HashMap::new()))),
             notifications: Mutex::new(Some(note_rx)),
             hello: hello_result,
         });
 
+        // Ends when every `Client` clone is gone; the half-close then lets the server see EOF and
+        // drop the connection (the reader task holds no strong reference to `Inner`).
         tokio::spawn(async move {
             while let Some(frame) = out_rx.recv().await {
                 if write_frame(&mut wr, &frame).await.is_err() {
                     break;
                 }
             }
+            let _ = tokio::io::AsyncWriteExt::shutdown(&mut wr).await;
         });
 
-        let reader_inner = inner.clone();
+        let reader_pending = inner.pending.clone();
         tokio::spawn(async move {
             while let Ok(Some(frame)) = read_frame(&mut rd).await {
                 match parse(&frame) {
                     Ok(Inbound::Response { id, result }) => {
                         let Some(id) = id.as_u64() else { continue };
-                        let tx = reader_inner
-                            .pending
+                        let tx = reader_pending
                             .lock()
                             .unwrap_or_else(|p| p.into_inner())
                             .as_mut()
@@ -171,8 +173,7 @@ impl Client {
                 }
             }
             // Dropping the senders wakes every waiter with `Closed`.
-            reader_inner
-                .pending
+            reader_pending
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .take();

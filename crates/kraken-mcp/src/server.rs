@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use kraken_host::backend::{CommandBackend, LocalBackend};
 use kraken_host::{RunIdGen, agent_id_from_client, finalize_output};
 use kraken_proto::ProtoError;
 use kraken_registry::{CallContext, Registry, Session, Surface};
@@ -39,18 +40,30 @@ pub struct ServeError(pub String);
 /// The MCP server: one instance per connection.
 pub struct KrakenMcp {
     registry: Arc<Registry>,
-    session: Arc<Session>,
+    backend: Arc<dyn CommandBackend>,
     run_id: String,
     agent_id: Option<String>,
 }
 
 impl KrakenMcp {
-    /// A server for one connection. The session is shared with whoever else holds the `Arc`.
+    /// A server for one connection that runs commands in this process on `session` (shared with
+    /// whoever else holds the `Arc`).
     pub fn new(registry: Arc<Registry>, session: Arc<Session>, options: McpOptions) -> Self {
+        let backend = Arc::new(LocalBackend::new(registry.clone(), session, None));
+        Self::with_backend(registry, backend, options)
+    }
+
+    /// A server for one connection that sends commands to `backend` (for example a
+    /// `DaemonBackend`). `registry` only describes the tools.
+    pub fn with_backend(
+        registry: Arc<Registry>,
+        backend: Arc<dyn CommandBackend>,
+        options: McpOptions,
+    ) -> Self {
         let run_id = options.run_id.unwrap_or_else(|| RunIdGen::new().next_id());
         KrakenMcp {
             registry,
-            session,
+            backend,
             run_id,
             agent_id: options.agent_id,
         }
@@ -85,8 +98,7 @@ fn error_result(err: &ProtoError) -> CallToolResult {
 fn send_progress(
     peer: rmcp::service::Peer<RoleServer>,
     token: ProgressToken,
-    registry: Arc<Registry>,
-    session: Arc<Session>,
+    backend: Arc<dyn CommandBackend>,
     ctx: CallContext,
     job_id: String,
 ) -> tokio::task::JoinHandle<()> {
@@ -95,8 +107,8 @@ fn send_progress(
         let mut sent = 0u32;
         loop {
             tokio::time::sleep(PROGRESS_POLL).await;
-            let Ok(view) = registry
-                .call_json("job_status", &session, &ctx, json!({"job_id": job_id}))
+            let Ok(view) = backend
+                .call("job_status", &ctx, json!({"job_id": job_id}))
                 .await
             else {
                 return;
@@ -179,18 +191,17 @@ impl ServerHandler for KrakenMcp {
                 Some(send_progress(
                     context.peer.clone(),
                     token,
-                    self.registry.clone(),
-                    self.session.clone(),
+                    self.backend.clone(),
                     ctx.clone(),
                     job_id,
                 ))
             })
             .flatten();
 
-        let outcome = self
-            .registry
-            .call_json(&name, &self.session, &ctx, args)
-            .await;
+        let outcome = self.backend.call(&name, &ctx, args).await;
+        for w in self.backend.take_warnings() {
+            tracing::warn!("{w}");
+        }
         if let Some(p) = poller {
             p.abort();
         }

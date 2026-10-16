@@ -28,6 +28,10 @@ fn first_child(parent: &Path) -> Option<PathBuf> {
 struct Kraken {
     project: PathBuf,
     config: PathBuf,
+    /// Private runtime directory (a private daemon, never the user's).
+    runtime: PathBuf,
+    /// `--no-daemon`: the 0.1a in-process path.
+    no_daemon: bool,
     ghidra_home: Option<PathBuf>,
     java_home: Option<PathBuf>,
 }
@@ -37,6 +41,7 @@ impl Kraken {
     fn run(&self, with_project: bool, args: &[&str]) -> (i32, String, String) {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_kraken"));
         cmd.env("KRAKEN_CONFIG", &self.config);
+        cmd.env("KRAKEN_RUNTIME_DIR", &self.runtime);
         cmd.env_remove("KRAKEN_PROJECT");
         if let Some(g) = &self.ghidra_home {
             cmd.env("KRAKEN_GHIDRA_HOME", g);
@@ -45,6 +50,9 @@ impl Kraken {
             cmd.env("KRAKEN_JAVA_HOME", j);
         }
         cmd.arg("--json");
+        if self.no_daemon {
+            cmd.arg("--no-daemon");
+        }
         if with_project {
             cmd.arg("--project").arg(&self.project);
         }
@@ -81,9 +89,27 @@ fn names(list: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
+impl Drop for Kraken {
+    fn drop(&mut self) {
+        // Never leave a daemon (and its JVM) behind.
+        let _ = self.run(false, &["daemon", "stop"]);
+    }
+}
+
 #[test]
 #[ignore = "needs Ghidra: source plans/dev-env.sh && cargo xtask ghidra-ext"]
 fn project_create_analyze_list_decompile_rename_undo() {
+    flow(true);
+}
+
+/// The same flow through an auto-started `krakend`, then `daemon status` and `daemon stop`.
+#[test]
+#[ignore = "needs Ghidra: source plans/dev-env.sh && cargo xtask ghidra-ext"]
+fn the_same_flow_through_an_auto_started_daemon() {
+    flow(false);
+}
+
+fn flow(no_daemon: bool) {
     let cache = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/kraken-dev"));
     let ghidra_home = std::env::var_os("KRAKEN_GHIDRA_HOME")
         .map(PathBuf::from)
@@ -101,6 +127,8 @@ fn project_create_analyze_list_decompile_rename_undo() {
     let k = Kraken {
         project: tmp.path().join("proj"),
         config: tmp.path().join("no-config.toml"),
+        runtime: tmp.path().join("rt"),
+        no_daemon,
         ghidra_home,
         java_home,
     };
@@ -190,4 +218,17 @@ fn project_create_analyze_list_decompile_rename_undo() {
         "{addr} should be named {original} again: {restored:?}"
     );
     assert!(!restored.iter().any(|(_, n)| n == "smoke_renamed"));
+
+    if !no_daemon {
+        // The daemon kept the project open, with its sidecar confined.
+        let st = k.ok(false, &["daemon", "status"]);
+        assert_eq!(st["running"], true, "{st}");
+        assert_eq!(st["sessions"].as_array().map(Vec::len), Some(1), "{st}");
+        let engine = &st["engines"][0]["diagnostics"];
+        assert_eq!(engine["state"], "running", "{st}");
+        assert!(engine["confinement"].is_object(), "{st}");
+        let stop = k.ok(false, &["daemon", "stop"]);
+        assert_eq!(stop["stopped"], true, "{stop}");
+        assert!(!k.runtime.join("daemon.json").exists());
+    }
 }

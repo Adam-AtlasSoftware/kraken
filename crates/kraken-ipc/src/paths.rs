@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::IpcError;
 
+/// Environment variable overriding the runtime directory.
+pub const ENV_RUNTIME_DIR: &str = "KRAKEN_RUNTIME_DIR";
+
 /// Maximum accepted socket path length in bytes (macOS `sun_path` is 104 incl. NUL).
 pub const MAX_SOCKET_PATH_LEN: usize = 100;
 
@@ -15,15 +18,37 @@ pub struct RuntimeDir {
 
 impl RuntimeDir {
     /// Resolves the platform default directory, creating it with mode 0700 where applicable.
+    ///
+    /// `KRAKEN_RUNTIME_DIR` (an absolute path) overrides the platform default; tests and
+    /// side-by-side installs use it to get a private daemon.
     pub fn resolve() -> Result<Self, IpcError> {
+        Self::resolve_with(&|k| std::env::var_os(k))
+    }
+
+    /// [`resolve`](Self::resolve) with an injectable environment.
+    pub fn resolve_with(
+        env: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+    ) -> Result<Self, IpcError> {
+        if let Some(dir) = env(ENV_RUNTIME_DIR)
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            if !dir.is_absolute() {
+                return Err(IpcError::NoRuntimeDir(format!(
+                    "{ENV_RUNTIME_DIR} must be an absolute path, got {}",
+                    dir.display()
+                )));
+            }
+            return Self::from_dir(dir);
+        }
         #[cfg(target_os = "linux")]
         {
-            let xdg = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+            let xdg = env("XDG_RUNTIME_DIR").map(PathBuf::from);
             Self::resolve_linux(xdg.as_deref(), rustix::process::getuid().as_raw())
         }
         #[cfg(target_os = "macos")]
         {
-            let home = std::env::var_os("HOME")
+            let home = env("HOME")
                 .map(PathBuf::from)
                 .ok_or_else(|| IpcError::NoRuntimeDir("HOME is not set".into()))?;
             Self::from_dir(home.join("Library/Application Support/kraken/run"))
@@ -179,6 +204,20 @@ mod tests {
         let mode = std::fs::metadata(d.path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         assert!(d.socket_path().ends_with("daemon.sock"));
+    }
+
+    #[test]
+    fn env_override_wins_and_must_be_absolute() {
+        let t = tempfile::tempdir().unwrap();
+        let want = t.path().join("rt");
+        let w = want.clone();
+        let d = RuntimeDir::resolve_with(&move |k| {
+            (k == ENV_RUNTIME_DIR).then(|| w.clone().into_os_string())
+        })
+        .unwrap();
+        assert_eq!(d.path(), want);
+        let rel = RuntimeDir::resolve_with(&|k| (k == ENV_RUNTIME_DIR).then(|| "rel/dir".into()));
+        assert!(matches!(rel, Err(IpcError::NoRuntimeDir(_))));
     }
 
     #[test]
