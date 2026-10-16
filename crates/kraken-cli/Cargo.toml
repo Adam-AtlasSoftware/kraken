@@ -1,0 +1,37 @@
+[package]
+name = "kraken-cli"
+description = "The `kraken` command line: one subcommand per registry command, plus `kraken mcp`"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "kraken_cli"
+
+[[bin]]
+name = "kraken"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1.89"
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "string", "color"] }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+serde_json.workspace = true
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+
+[dev-dependencies]
+engine-fake = { path = "../engine-fake", version = "0.0.0" }
+rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "transport-child-process"] }
+schemars.workspace = true
+serde.workspace = true
+tempfile = "3"
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }

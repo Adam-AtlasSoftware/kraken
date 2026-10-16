@@ -1,0 +1,23 @@
+[package]
+name = "kraken-host"
+description = "Shared hosting glue for the KRAKEN CLI, MCP server and daemon: config, Ghidra engine factory, authors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml = "0.8"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["rt", "macros"] }

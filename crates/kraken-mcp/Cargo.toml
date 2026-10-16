@@ -1,0 +1,28 @@
+[package]
+name = "kraken-mcp"
+description = "KRAKEN MCP server: one tool per registry command, jobs, progress and approvals"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+rmcp = { version = "=3.5.1", features = ["server", "transport-io", "elicitation"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros"] }
+tracing = "0.1"
+
+[dev-dependencies]
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.0.0" }
+rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "elicitation"] }
+tempfile = "3"
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }
