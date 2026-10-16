@@ -231,7 +231,7 @@ impl DaemonHandler {
                         host.note_opened(&lease);
                     }
                     for (k, fields) in events_for(&name, kind, v, &ctx) {
-                        host.hub().publish(entry.dir(), k, fields);
+                        host.hub().publish(entry.key(), k, fields);
                     }
                 }
                 Err(_) if creating => host.discard_if_unopened(&lease),

@@ -87,6 +87,12 @@ impl SessionEntry {
         &self.dir
     }
 
+    /// The canonical project directory (symlinks resolved): what events are published under, so
+    /// every client compares against the same form whatever path it used to open the project.
+    pub fn key(&self) -> &Path {
+        &self.key
+    }
+
     /// Takes the write queue; the guard can move into a task that outlives the caller.
     pub async fn lock_queue(&self) -> OwnedMutexGuard<()> {
         self.queue.clone().lock_owned().await
@@ -294,7 +300,7 @@ impl SessionHost {
     pub fn note_opened(&self, lease: &Lease) {
         self.inner
             .hub
-            .publish(&lease.entry.dir, event_kind::SESSION_OPENED, json!({}));
+            .publish(&lease.entry.key, event_kind::SESSION_OPENED, json!({}));
     }
 
     /// Opens the project of `lease` if the session has none yet. Returns notices for the
@@ -346,7 +352,7 @@ impl SessionHost {
             self.inner.factory.shutdown_under(&entry.key).await;
         }
         self.inner.hub.publish(
-            &entry.dir,
+            &entry.key,
             event_kind::SESSION_CLOSED,
             json!({ "reason": reason }),
         );
@@ -387,7 +393,7 @@ impl SessionHost {
             if s.progress != st.progress {
                 if let Some(p) = &s.progress {
                     self.inner.hub.publish(
-                        &entry.dir,
+                        &entry.key,
                         event_kind::JOB_PROGRESS,
                         json!({
                             "job_id": s.id.0,
@@ -417,7 +423,7 @@ impl SessionHost {
                     {
                         ev["result"] = r.clone();
                     }
-                    self.inner.hub.publish(&entry.dir, event_kind::JOB_DONE, ev);
+                    self.inner.hub.publish(&entry.key, event_kind::JOB_DONE, ev);
                     if s.status == JobStatus::Succeeded {
                         finished_ok.push(s.command.clone());
                     }
@@ -507,14 +513,14 @@ impl SessionHost {
             EngineEvent::Started => {}
             EngineEvent::Exited { code } => {
                 self.inner.hub.publish(
-                    &entry.dir,
+                    &entry.key,
                     event_kind::SIDECAR_EXITED,
                     json!({ "code": code, "engine_dir": ev.engine_dir }),
                 );
                 if current && let Err(e) = self.inner.factory.restart_engine(&ev.engine_dir).await {
                     tracing::warn!(error = %e.message, "sidecar restart failed");
                     self.inner.hub.publish(
-                        &entry.dir,
+                        &entry.key,
                         event_kind::SIDECAR_EXITED,
                         json!({
                             "engine_dir": ev.engine_dir,
@@ -547,7 +553,7 @@ impl SessionHost {
                 };
                 self.inner
                     .hub
-                    .publish(&entry.dir, event_kind::SIDECAR_RESTARTED, ev_fields);
+                    .publish(&entry.key, event_kind::SIDECAR_RESTARTED, ev_fields);
             }
         }
     }
