@@ -1779,6 +1779,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-record"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "engine-fake",
+ "engine-ghidra",
+ "kraken-engine",
+ "kraken-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "kraken-registry"
 version = "0.0.0"
 dependencies = [

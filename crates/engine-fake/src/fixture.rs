@@ -22,6 +22,30 @@ pub struct FixtureFile {
     /// Named types known to the program.
     #[serde(default)]
     pub types: Vec<TypeDef>,
+    /// How the fixture was recorded, when a recorder wrote it (absent in hand-written fixtures).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording: Option<Recording>,
+}
+
+/// Provenance and caps of a recorded fixture (written by `kraken-record`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recording {
+    /// Recorder name and version.
+    pub recorder: String,
+    /// Maximum number of functions recorded.
+    pub function_cap: usize,
+    /// Functions the engine listed.
+    pub functions_listed: usize,
+    /// Functions in this file.
+    pub functions_recorded: usize,
+    /// Listed functions skipped because they could not be decompiled (externals, failures).
+    pub functions_skipped: usize,
+    /// Maximum number of types recorded.
+    pub type_cap: usize,
+    /// Types the engine listed.
+    pub types_listed: usize,
+    /// Types in this file.
+    pub types_recorded: usize,
 }
 
 /// One function: its listing entry and its decompilation.

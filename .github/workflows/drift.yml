@@ -1,0 +1,68 @@
+name: Fixture drift
+
+# Re-records the corpus fixtures against the pinned Ghidra and fails when their structure
+# (functions, names, signatures, token kinds) differs from the committed ones (decision 64).
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  GHIDRA_VERSION: "12.1.4"
+  GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+  GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+  JDK_URL: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz
+  JDK_SHA256: ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Ghidra and Temurin
+        id: toolcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kraken-dev
+          key: kraken-dev-ghidra-12.1.4-${{ env.GHIDRA_SHA256 }}-jdk-${{ env.JDK_SHA256 }}
+
+      - name: Download Ghidra and Temurin
+        if: steps.toolcache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cache/kraken-dev/ghidra ~/.cache/kraken-dev/jdk
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o ghidra.zip "$GHIDRA_URL"
+          echo "$GHIDRA_SHA256  ghidra.zip" | sha256sum -c -
+          curl -fsSL -o jdk.tar.gz "$JDK_URL"
+          echo "$JDK_SHA256  jdk.tar.gz" | sha256sum -c -
+          unzip -q ghidra.zip -d ~/.cache/kraken-dev/ghidra
+          tar -xzf jdk.tar.gz -C ~/.cache/kraken-dev/jdk
+
+      - name: Select the toolchains
+        run: |
+          set -euo pipefail
+          ghidra=$(echo ~/.cache/kraken-dev/ghidra/ghidra_${GHIDRA_VERSION}_PUBLIC)
+          jdk=$(echo ~/.cache/kraken-dev/jdk/jdk-21*)
+          test -d "$ghidra" && test -d "$jdk"
+          {
+            echo "KRAKEN_GHIDRA_HOME=$ghidra"
+            echo "GHIDRA_INSTALL_DIR=$ghidra"
+            echo "KRAKEN_JAVA_HOME=$jdk"
+            echo "JAVA_HOME=$jdk"
+          } >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.8.0"
+
+      - name: Build the Ghidra extension
+        run: cargo xtask ghidra-ext
+
+      - name: Re-record and compare
+        run: cargo run --release -p kraken-record -- --check --jobs 2

@@ -16,7 +16,8 @@
 //!     { "summary":   { /* FunctionSummary: locator, name, size?, signature?, fn_hash?, completeness */ },
 //!       "decompile": { /* DecompileResult: function, language?, text, tokens, warnings, completeness */ } }
 //!   ],
-//!   "types": [ /* TypeDef, internally tagged by "kind"; optional */ ]
+//!   "types": [ /* TypeDef, internally tagged by "kind"; optional */ ],
+//!   "recording": { /* optional provenance and caps, written by kraken-record */ }
 //! }
 //! ```
 //!
@@ -49,7 +50,7 @@ mod fixture;
 mod text;
 
 pub use engine::FakeEngine;
-pub use fixture::{FixtureFile, FixtureFunction, Perturb};
+pub use fixture::{FixtureFile, FixtureFunction, Perturb, Recording};
 
 #[cfg(test)]
 mod tests;
