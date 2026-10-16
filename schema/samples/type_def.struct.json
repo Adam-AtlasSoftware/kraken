@@ -1,0 +1,48 @@
+{
+  "align": 8,
+  "fields": [
+    {
+      "name": "next",
+      "offset": 0,
+      "type": {
+        "kind": "pointer",
+        "size": 8,
+        "target": {
+          "kind": "named",
+          "name": "node"
+        }
+      }
+    },
+    {
+      "name": "buf",
+      "offset": 8,
+      "type": {
+        "count": 4,
+        "element": {
+          "class": "char",
+          "kind": "primitive",
+          "signed": true,
+          "size": 1
+        },
+        "kind": "array"
+      }
+    },
+    {
+      "bitfield": {
+        "bit_offset": 3,
+        "bit_size": 5
+      },
+      "name": "flags",
+      "offset": 12,
+      "type": {
+        "class": "int",
+        "kind": "primitive",
+        "signed": false,
+        "size": 4
+      }
+    }
+  ],
+  "kind": "struct",
+  "name": "node",
+  "size": 16
+}

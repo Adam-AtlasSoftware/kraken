@@ -1,0 +1,7 @@
+{
+  "code": "engine_rejected",
+  "details": {
+    "name": "x"
+  },
+  "message": "name exists"
+}

@@ -1,178 +1,151 @@
 package kraken.ghidra;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import ghidra.app.util.opinion.LoadResults;
-import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
-import ghidra.app.util.importer.ProgramLoader;
-import ghidra.base.project.GhidraProject;
-import ghidra.framework.Application;
 import ghidra.GhidraApplicationLayout;
+import ghidra.framework.Application;
 import ghidra.framework.HeadlessGhidraApplicationConfiguration;
-import ghidra.program.model.listing.Program;
-import ghidra.util.task.TaskMonitor;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.EOFException;
-import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 
 /**
- * Headless KRAKEN sidecar. Frames are a 4-byte big-endian length followed by a UTF-8 JSON-RPC 2.0
- * message. Only protocol frames are written to the real stdout; everything else goes to stderr.
+ * Headless KRAKEN sidecar. Frames are a 4-byte big-endian length plus a UTF-8 JSON-RPC 2.0
+ * message. By default frames travel over the process's stdin file descriptor in both directions
+ * (the parent passes one end of a socketpair as fd 0, decision 87); with --stdio they are written
+ * to the real stdout instead, for manual testing. System.out is redirected to stderr before
+ * Ghidra initialises so nothing else can corrupt framing.
+ *
+ * <pre>
+ * KrakenSidecar [--stdio]
+ * KrakenSidecar --self-test &lt;binary&gt; &lt;project_dir&gt; [samples_dir]
+ * </pre>
  */
 public final class KrakenSidecar {
-    private static final int MAX_FRAME = 64 * 1024 * 1024;
-    private static final Gson GSON = new Gson();
-
-    private static GhidraProject project;
-
     private KrakenSidecar() {}
 
     public static void main(String[] args) throws Exception {
-        // Capture the real stdout for protocol frames, then point System.out at stderr before
-        // Ghidra (and log4j's console appender) initialises, so nothing else can corrupt framing.
-        DataOutputStream out =
-            new DataOutputStream(new BufferedOutputStream(new FileOutputStream(FileDescriptor.out)));
-        System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.err), true));
-        DataInputStream in =
-            new DataInputStream(new BufferedInputStream(new FileInputStream(FileDescriptor.in)));
+        boolean stdio = false;
+        boolean selfTest = false;
+        java.util.List<String> rest = new java.util.ArrayList<>();
+        for (String a : args) {
+            switch (a) {
+                case "--stdio" -> stdio = true;
+                case "--self-test" -> selfTest = true;
+                default -> rest.add(a);
+            }
+        }
 
-        String projectDir = args.length > 0 ? args[0] : System.getProperty("java.io.tmpdir");
+        // Taken before anything can touch stdout; fd 0 is both input and (by default) output.
+        OutputStream frameOut =
+            new java.io.BufferedOutputStream(
+                new FileOutputStream(stdio ? FileDescriptor.out : FileDescriptor.in));
+        InputStream frameIn = new FileInputStream(FileDescriptor.in);
+        System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.err), true));
 
         long t0 = System.nanoTime();
         Application.initializeApplication(
             new GhidraApplicationLayout(), new HeadlessGhidraApplicationConfiguration());
-        project = GhidraProject.createProject(projectDir, "kraken", true);
         long initMs = (System.nanoTime() - t0) / 1_000_000;
         System.err.printf("kraken-ghidra: initialised in %d ms%n", initMs);
 
-        // Readiness notification (JSON-RPC notification, no id).
+        if (selfTest) {
+            if (rest.size() < 2) {
+                System.err.println("usage: --self-test <binary> <project_dir> [samples_dir]");
+                System.exit(2);
+            }
+            int code = SelfTest.run(rest.get(0), rest.get(1), rest.size() > 2 ? rest.get(2) : "schema/samples");
+            System.exit(code);
+        }
+        serve(new Wire(frameIn, frameOut), initMs);
+    }
+
+    private static void serve(Wire wire, long initMs) throws IOException {
+        Dispatcher dispatcher =
+            new Dispatcher(
+                n -> {
+                    try {
+                        wire.write(n);
+                    } catch (IOException e) {
+                        System.err.println("kraken-ghidra: cannot write notification: " + e);
+                    }
+                });
+
         JsonObject ready = new JsonObject();
         ready.addProperty("jsonrpc", "2.0");
         ready.addProperty("method", "ready");
         JsonObject rp = new JsonObject();
-        rp.addProperty("ghidra_version", Application.getApplicationVersion());
+        rp.addProperty("ghidra_version", dispatcher.ghidraVersion());
         rp.addProperty("init_ms", initMs);
         ready.add("params", rp);
-        writeFrame(out, GSON.toJson(ready));
+        wire.write(ready);
 
         while (true) {
-            String frame;
-            try {
-                frame = readFrame(in);
-            } catch (EOFException e) {
+            String frame = wire.read();
+            if (frame == null) {
                 break;
             }
-            writeFrame(out, GSON.toJson(handle(frame)));
+            JsonElement id = null;
+            String method;
+            JsonObject params;
+            try {
+                JsonObject req = JsonParser.parseString(frame).getAsJsonObject();
+                id = req.get("id");
+                method = J.str(req, "method");
+                params = req.has("params") && !req.get("params").isJsonNull()
+                    ? J.obj(req.get("params"), "params")
+                    : new JsonObject();
+            } catch (Exception e) {
+                send(wire, id, null, new KrakenError("invalid_argument", "bad request: " + e.getMessage()));
+                continue;
+            }
+            final JsonElement reqId = id;
+            final boolean isShutdown = method.equals("shutdown");
+            String idText = id == null ? "notify" : id.getAsString();
+            dispatcher
+                .submit(method, params, idText)
+                .whenComplete(
+                    (result, err) -> {
+                        if (reqId != null) {
+                            send(wire, reqId, result, err == null ? null : Dispatcher.asKrakenError(err));
+                        }
+                        if (isShutdown) {
+                            System.exit(0);
+                        }
+                    });
         }
-        project.close();
+        dispatcher.shutdownNow();
         System.exit(0);
     }
 
-    private static JsonObject handle(String frame) {
+    private static void send(Wire wire, JsonElement id, JsonElement result, KrakenError err) {
         JsonObject resp = new JsonObject();
         resp.addProperty("jsonrpc", "2.0");
-        JsonElement id = null;
-        try {
-            JsonObject req = JsonParser.parseString(frame).getAsJsonObject();
-            id = req.get("id");
-            String method = req.get("method").getAsString();
-            JsonObject params =
-                req.has("params") ? req.getAsJsonObject("params") : new JsonObject();
-            JsonElement result;
-            switch (method) {
-                case "ping" -> {
-                    JsonObject o = new JsonObject();
-                    o.addProperty("pong", true);
-                    result = o;
-                }
-                case "open_binary" -> result = openBinary(params.get("path").getAsString());
-                default -> throw new RpcError(-32601, "method not found: " + method);
+        if (err != null) {
+            JsonObject e = new JsonObject();
+            e.addProperty("code", err.rpcCode());
+            e.addProperty("message", String.valueOf(err.getMessage()));
+            JsonObject data = new JsonObject();
+            data.addProperty("code", err.code);
+            if (err.details != null) {
+                data.add("details", err.details);
             }
-            resp.add("result", result);
-        } catch (RpcError e) {
-            resp.add("error", error(e.code, e.getMessage()));
-        } catch (Throwable t) {
-            t.printStackTrace();
-            resp.add("error", error(-32603, String.valueOf(t)));
+            e.add("data", data);
+            resp.add("error", e);
+        } else {
+            resp.add("result", result == null ? JsonNull.INSTANCE : result);
         }
         resp.add("id", id == null ? JsonNull.INSTANCE : id);
-        return resp;
-    }
-
-    private static JsonObject error(int code, String message) {
-        JsonObject e = new JsonObject();
-        e.addProperty("code", code);
-        e.addProperty("message", message);
-        return e;
-    }
-
-    private static JsonObject openBinary(String path) throws Exception {
-        long t0 = System.nanoTime();
-        try (LoadResults<Program> results = ProgramLoader.builder()
-                .source(new File(path))
-                .project(project.getProject())
-                .monitor(TaskMonitor.DUMMY)
-                .load()) {
-            Program program = results.getPrimaryDomainObject(project);
-            long loadMs = (System.nanoTime() - t0) / 1_000_000;
-            long a0 = System.nanoTime();
-            int tx = program.startTransaction("kraken analysis");
-            try {
-                AutoAnalysisManager mgr = AutoAnalysisManager.getAnalysisManager(program);
-                mgr.initializeOptions();
-                mgr.reAnalyzeAll(null);
-                mgr.startAnalysis(TaskMonitor.DUMMY);
-            } finally {
-                program.endTransaction(tx, true);
-            }
-            long analyzeMs = (System.nanoTime() - a0) / 1_000_000;
-            int count = program.getFunctionManager().getFunctionCount();
-            String lang = program.getLanguageID().getIdAsString();
-            program.release(project);
-            JsonObject o = new JsonObject();
-            o.addProperty("function_count", count);
-            o.addProperty("language", lang);
-            o.addProperty("load_ms", loadMs);
-            o.addProperty("analyze_ms", analyzeMs);
-            return o;
-        }
-    }
-
-    private static String readFrame(DataInputStream in) throws IOException {
-        int len = in.readInt();
-        if (len < 0 || len > MAX_FRAME) {
-            throw new IOException("bad frame length " + len);
-        }
-        byte[] buf = new byte[len];
-        in.readFully(buf);
-        return new String(buf, StandardCharsets.UTF_8);
-    }
-
-    private static void writeFrame(DataOutputStream out, String json) throws IOException {
-        byte[] b = json.getBytes(StandardCharsets.UTF_8);
-        out.writeInt(b.length);
-        out.write(b);
-        out.flush();
-    }
-
-    private static final class RpcError extends RuntimeException {
-        final int code;
-
-        RpcError(int code, String message) {
-            super(message);
-            this.code = code;
+        try {
+            wire.write(resp);
+        } catch (IOException e) {
+            System.err.println("kraken-ghidra: cannot write response: " + e);
         }
     }
 }

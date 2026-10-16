@@ -1,0 +1,6 @@
+{
+  "bank": "2",
+  "kind": "banked",
+  "offset": "0x8000",
+  "space": "rom"
+}

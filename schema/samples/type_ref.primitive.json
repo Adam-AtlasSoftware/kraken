@@ -1,0 +1,6 @@
+{
+  "class": "float",
+  "kind": "primitive",
+  "signed": true,
+  "size": 8
+}

@@ -1,0 +1,28 @@
+{
+  "align": 8,
+  "fields": [
+    {
+      "name": "i",
+      "offset": 0,
+      "type": {
+        "class": "int",
+        "kind": "primitive",
+        "signed": true,
+        "size": 8
+      }
+    },
+    {
+      "name": "d",
+      "offset": 0,
+      "type": {
+        "class": "float",
+        "kind": "primitive",
+        "signed": true,
+        "size": 8
+      }
+    }
+  ],
+  "kind": "union",
+  "name": "value",
+  "size": 8
+}

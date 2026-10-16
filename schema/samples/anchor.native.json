@@ -1,0 +1,7 @@
+{
+  "fn_entry": "0x401000",
+  "fn_hash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+  "kind": "native",
+  "offset": "0x401010",
+  "space": "ram"
+}

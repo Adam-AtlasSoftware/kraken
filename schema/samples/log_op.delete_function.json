@@ -1,0 +1,18 @@
+{
+  "op": {
+    "anchor": {
+      "fn_entry": "0x401000",
+      "fn_hash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      "kind": "native",
+      "offset": "0x401010",
+      "space": "ram"
+    },
+    "old_body": {
+      "end": "0x401040",
+      "space": "ram",
+      "start": "0x401000"
+    },
+    "op": "delete_function"
+  },
+  "schema_version": 1
+}

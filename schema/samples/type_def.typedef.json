@@ -1,0 +1,10 @@
+{
+  "kind": "typedef",
+  "name": "u32",
+  "target": {
+    "class": "int",
+    "kind": "primitive",
+    "signed": false,
+    "size": 4
+  }
+}

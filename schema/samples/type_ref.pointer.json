@@ -1,0 +1,10 @@
+{
+  "kind": "pointer",
+  "size": 8,
+  "target": {
+    "class": "void",
+    "kind": "primitive",
+    "signed": false,
+    "size": 0
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "op": {
+    "anchor": {
+      "fn_entry": "0x401000",
+      "fn_hash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      "kind": "native",
+      "offset": "0x401010",
+      "space": "ram"
+    },
+    "new": {
+      "calling_convention": "__cdecl",
+      "kind": "function",
+      "name": "add",
+      "noreturn": false,
+      "params": [
+        {
+          "name": "a",
+          "storage": "edi",
+          "type": {
+            "class": "int",
+            "kind": "primitive",
+            "signed": true,
+            "size": 4
+          }
+        },
+        {
+          "type": {
+            "kind": "pointer",
+            "size": 8,
+            "target": {
+              "kind": "named",
+              "name": "node"
+            }
+          }
+        }
+      ],
+      "return_type": {
+        "class": "int",
+        "kind": "primitive",
+        "signed": true,
+        "size": 4
+      },
+      "varargs": true
+    },
+    "old": {
+      "class": "undefined",
+      "kind": "primitive",
+      "signed": false,
+      "size": 4
+    },
+    "op": "set_type"
+  },
+  "schema_version": 1
+}

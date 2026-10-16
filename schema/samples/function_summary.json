@@ -1,0 +1,14 @@
+{
+  "completeness": {
+    "kind": "complete"
+  },
+  "fn_hash": "abababababababababababababababababababababababababababababababab",
+  "locator": {
+    "kind": "native",
+    "offset": "0x401000",
+    "space": "ram"
+  },
+  "name": "main",
+  "signature": "int main(int argc, char **argv)",
+  "size": 64
+}

@@ -1,0 +1,13 @@
+{
+  "build": "kraken-ghidra 0.0.0 (ghidra 12.1.4)",
+  "capabilities": [
+    {
+      "name": "decompile",
+      "version": 1
+    }
+  ],
+  "protocol": {
+    "major": 0,
+    "minor": 1
+  }
+}

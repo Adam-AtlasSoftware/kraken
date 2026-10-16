@@ -1,0 +1,15 @@
+{
+  "kind": "enum",
+  "name": "color",
+  "size": 4,
+  "variants": [
+    {
+      "name": "RED",
+      "value": 0
+    },
+    {
+      "name": "NEG",
+      "value": -5
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "completeness": {
+    "kind": "partial",
+    "reason": "r"
+  },
+  "function": {
+    "kind": "native",
+    "offset": "0x401000",
+    "space": "ram"
+  },
+  "language": "c",
+  "text": "int main(void) { return 0; }",
+  "tokens": [
+    {
+      "end": 3,
+      "kind": "type",
+      "start": 0
+    },
+    {
+      "end": 8,
+      "kind": "function",
+      "start": 4,
+      "symbol": "main",
+      "target": {
+        "kind": "native",
+        "offset": "0x401000",
+        "space": "ram"
+      },
+      "varnode": "(ram, 0x401000, 1)"
+    }
+  ],
+  "warnings": [
+    "w"
+  ]
+}

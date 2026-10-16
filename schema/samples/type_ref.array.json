@@ -1,0 +1,10 @@
+{
+  "count": 16,
+  "element": {
+    "class": "int",
+    "kind": "primitive",
+    "signed": false,
+    "size": 2
+  },
+  "kind": "array"
+}

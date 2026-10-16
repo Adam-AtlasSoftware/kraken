@@ -1,0 +1,35 @@
+{
+  "calling_convention": "__cdecl",
+  "kind": "function",
+  "name": "add",
+  "noreturn": false,
+  "params": [
+    {
+      "name": "a",
+      "storage": "edi",
+      "type": {
+        "class": "int",
+        "kind": "primitive",
+        "signed": true,
+        "size": 4
+      }
+    },
+    {
+      "type": {
+        "kind": "pointer",
+        "size": 8,
+        "target": {
+          "kind": "named",
+          "name": "node"
+        }
+      }
+    }
+  ],
+  "return_type": {
+    "class": "int",
+    "kind": "primitive",
+    "signed": true,
+    "size": 4
+  },
+  "varargs": true
+}
