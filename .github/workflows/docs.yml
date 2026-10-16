@@ -2,10 +2,9 @@ name: Docs
 
 # Builds the mdBook and publishes it to GitHub Pages.
 # The repository owner must enable Settings -> Pages -> Source: GitHub Actions.
+# Manual only until Pages is enabled; then add `push: branches: [main]` back.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
