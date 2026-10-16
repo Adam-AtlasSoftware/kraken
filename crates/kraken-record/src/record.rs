@@ -48,8 +48,8 @@ pub enum RecordError {
     Engine {
         /// Binary being recorded.
         binary: String,
-        /// The engine's error.
-        source: ProtoError,
+        /// The engine's error (boxed: `ProtoError` carries a JSON value and is large).
+        source: Box<ProtoError>,
     },
     /// Ghidra could not be set up.
     #[error("ghidra setup: {0}")]
@@ -115,7 +115,7 @@ pub async fn record_binary(
         .unwrap_or_default();
     let eng = |source: ProtoError| RecordError::Engine {
         binary: name.clone(),
-        source,
+        source: Box::new(source),
     };
     let scratch = tempfile::Builder::new()
         .prefix("kraken-record-")

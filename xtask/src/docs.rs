@@ -93,7 +93,8 @@ struct Arg {
 fn render_entry(out: &mut String, e: &Entry) {
     let s = e.spec();
     let cli_name = s.name.replace('_', "-");
-    let args = args_of(e.args_schema());
+    let args_schema = kraken_proto::canonical_json(e.args_schema().clone());
+    let args = args_of(&args_schema);
     let _ = write!(out, "\n## {}\n\n", s.name);
     let _ = writeln!(out, "{}\n", s.summary);
     let mut form = format!("kraken {cli_name}");
@@ -137,7 +138,9 @@ fn render_entry(out: &mut String, e: &Entry) {
         }
         out.push('\n');
     }
-    let pretty = serde_json::to_string_pretty(e.output_schema()).unwrap_or_default();
+    let pretty =
+        serde_json::to_string_pretty(&kraken_proto::canonical_json(e.output_schema().clone()))
+            .unwrap_or_default();
     let _ = write!(
         out,
         "<details>\n<summary>Output schema</summary>\n\n```json\n{pretty}\n```\n\n</details>\n"
