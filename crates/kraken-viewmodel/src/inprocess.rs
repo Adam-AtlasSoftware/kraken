@@ -24,12 +24,24 @@ pub const GUI_USER: &str = "gui-user";
 
 const JOB_POLL: Duration = Duration::from_millis(40);
 
+/// Answers a call of an [`ExtraQuery`].
+pub type QueryFn = Arc<dyn Fn(&Value) -> Result<Value, ProtoError> + Send + Sync>;
+
+/// A query the embedding code answers itself (the demo's scripted `rewrite_unit`).
+pub struct ExtraQuery {
+    /// How the command is listed.
+    pub info: CommandInfo,
+    /// Answers a call.
+    pub run: QueryFn,
+}
+
 /// Runs [`Registry::standard`] commands against a [`Session`] as the GUI user.
 pub struct InProcessBackend {
     registry: Registry,
     session: Arc<Session>,
     events: broadcast::Sender<BackendEvent>,
     approver: Mutex<Option<Arc<dyn Approver>>>,
+    extra: Vec<ExtraQuery>,
     _keepalive: Option<Box<dyn Any + Send + Sync>>,
 }
 
@@ -47,8 +59,15 @@ impl InProcessBackend {
             session: Arc::new(session),
             events,
             approver: Mutex::new(None),
+            extra: Vec::new(),
             _keepalive: None,
         }
+    }
+
+    /// Adds a query that is answered by `query.run` instead of the registry.
+    pub fn with_extra_query(mut self, query: ExtraQuery) -> Self {
+        self.extra.push(query);
+        self
     }
 
     /// Keeps `value` alive as long as the backend (a temp directory, for instance).
@@ -147,6 +166,9 @@ impl Backend for InProcessBackend {
     }
 
     async fn call(&self, command: &str, args: Value) -> Result<Value, ProtoError> {
+        if let Some(q) = self.extra.iter().find(|q| q.info.name == command) {
+            return (q.run)(&args);
+        }
         let mut ctx = CallContext::user(GUI_USER, Surface::Gui);
         let approver = self
             .approver
@@ -160,8 +182,10 @@ impl Backend for InProcessBackend {
             .registry
             .call_json(command, &self.session, &ctx, args)
             .await?;
-        if command == "analyze"
-            && let Some(id) = out.get("job_id").and_then(Value::as_str)
+        if matches!(
+            command,
+            "analyze" | "rewrite_function" | "rewrite_spec" | "rewrite_export"
+        ) && let Some(id) = out.get("job_id").and_then(Value::as_str)
         {
             self.watch_job(id.to_string());
         }
@@ -169,6 +193,7 @@ impl Backend for InProcessBackend {
     }
 
     fn commands(&self) -> Vec<CommandInfo> {
+        let extra = self.extra.iter().map(|q| q.info.clone());
         self.registry
             .iter()
             .map(|e| {
@@ -189,6 +214,7 @@ impl Backend for InProcessBackend {
                     },
                 }
             })
+            .chain(extra)
             .collect()
     }
 

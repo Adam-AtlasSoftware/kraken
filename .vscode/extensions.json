@@ -5,6 +5,7 @@
     "tamasfe.even-better-toml",
     "redhat.java",
     "vscjava.vscode-gradle",
-    "ms-python.python"
+    "ms-python.python",
+    "ms-dotnettools.csharp"
   ]
 }

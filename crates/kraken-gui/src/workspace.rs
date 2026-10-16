@@ -28,6 +28,7 @@ pub enum Tab {
     Proposals,
     Assistant,
     Agents,
+    Rewrite,
 }
 
 impl Tab {
@@ -45,6 +46,7 @@ impl Tab {
             Tab::Proposals => "Proposals",
             Tab::Assistant => "Assistant",
             Tab::Agents => "Agents",
+            Tab::Rewrite => "Rewrite",
         }
     }
 
@@ -71,6 +73,9 @@ impl Tab {
             Tab::Agents => {
                 "Run a terminal coding agent such as Claude Code on this project, with KRAKEN's tools."
             }
+            Tab::Rewrite => {
+                "Rewrite functions in Rust, check each against the original, and export what you accept."
+            }
         }
     }
 }
@@ -90,6 +95,7 @@ pub fn initial_dock() -> DockState<Tab> {
             Tab::Symbols,
             Tab::History,
             Tab::Proposals,
+            Tab::Rewrite,
         ],
     );
     dock
@@ -111,6 +117,7 @@ pub fn graph_dock() -> DockState<Tab> {
             Tab::Symbols,
             Tab::History,
             Tab::Proposals,
+            Tab::Rewrite,
         ],
     );
     dock
@@ -130,6 +137,7 @@ pub struct UiState {
     pub panels: PanelState,
     pub assist: crate::assist::AssistUi,
     pub agents: crate::agents::AgentsUi,
+    pub rewrite: crate::rewrite::RewriteUi,
 }
 
 impl UiState {
@@ -216,6 +224,12 @@ impl TabViewer for Viewer<'_> {
             Tab::Proposals => proposals(ui, self.vm),
             Tab::Assistant => crate::assist::panel(ui, self.vm, self.ui),
             Tab::Agents => crate::agents::panel(ui, self.vm, self.ui),
+            Tab::Rewrite => crate::rewrite::panel(
+                ui,
+                self.vm,
+                &mut self.ui.rewrite,
+                &mut self.ui.bring_to_front,
+            ),
         }
     }
 }
@@ -356,6 +370,7 @@ enum Act {
     RenameAt(u64, Option<String>),
     Notice(&'static str),
     SyncListing(u64),
+    RewriteThis,
 }
 
 fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
@@ -401,6 +416,15 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                     .clicked()
                 {
                     acts.push(Act::Comment);
+                }
+                if ui
+                    .add_enabled(vm.rewrite.can_run(), egui::Button::new("Rewrite in Rust"))
+                    .on_hover_text(vm.rewrite.blocked_note().unwrap_or(
+                        "Translate this function to Rust and check it against the original. See the Rewrite tab.",
+                    ))
+                    .clicked()
+                {
+                    acts.push(Act::RewriteThis);
                 }
                 if ui
                     .button("Rename  (N)")
@@ -454,6 +478,10 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             Act::Notice(t) => vm.toast(ToastLevel::Info, t),
             Act::SyncListing(a) => {
                 vm.sync_listing_to(a);
+            }
+            Act::RewriteThis => {
+                vm.rewrite_run_current();
+                st.bring_to_front = Some(Tab::Rewrite);
             }
         }
     }

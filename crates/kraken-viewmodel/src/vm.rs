@@ -122,7 +122,25 @@ pub struct ViewModel {
     announced: std::collections::HashSet<u64>,
     /// Undoing an older edit with the edits that depend on it, and stale functions.
     pub undo: crate::history::UndoFlow,
+    job_watch: JobWatch,
+    /// The Rewrite tab: plan, jobs, generated Rust, spec and export.
+    pub rewrite: crate::rewrite::RewriteState,
 }
+
+/// Bookkeeping of the analysis fallback poll (see [`ViewModel::watch_analysis`]).
+struct JobWatch {
+    /// Last time an event or status reply about the analysis arrived.
+    last_activity: Instant,
+    /// Last time a fallback `job_status` was sent.
+    last_poll: Instant,
+    /// A fallback `job_status` is on its way.
+    inflight: bool,
+}
+
+/// Quiet time after which a running analysis is checked with `job_status`.
+const JOB_QUIET_POLL: Duration = Duration::from_secs(1);
+/// Minimum gap between fallback polls once the last stage reports done.
+const JOB_FINAL_POLL: Duration = Duration::from_millis(250);
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
     serde_json::from_value(v).map_err(|e| {
@@ -271,6 +289,12 @@ impl ViewModel {
             agents: crate::agents::AgentsState::default(),
             announced: std::collections::HashSet::new(),
             undo: crate::history::UndoFlow::default(),
+            job_watch: JobWatch {
+                last_activity: Instant::now(),
+                last_poll: Instant::now(),
+                inflight: false,
+            },
+            rewrite: crate::rewrite::RewriteState::default(),
         };
         vm.start_event_forwarder();
         vm
@@ -362,7 +386,39 @@ impl ViewModel {
             (m.apply)(self);
             changed = true;
         }
+        self.watch_analysis();
         changed | self.expire_toasts(Instant::now())
+    }
+
+    /// Safety net for a missed `job_done`: while an analysis runs, ask `job_status` when nothing
+    /// was heard for a second, and at once (rate limited) when the last stage reports done.
+    fn watch_analysis(&mut self) {
+        if !self.analysis.running() || self.analysis.job_id.is_none() || self.job_watch.inflight {
+            return;
+        }
+        let now = Instant::now();
+        let since_poll = now.saturating_duration_since(self.job_watch.last_poll);
+        let quiet = now.saturating_duration_since(self.job_watch.last_activity);
+        let last_stage = self
+            .analysis
+            .progress
+            .as_ref()
+            .is_some_and(|p| p.total > 0 && p.done >= p.total);
+        if (last_stage && since_poll >= JOB_FINAL_POLL)
+            || (quiet >= JOB_QUIET_POLL && since_poll >= JOB_QUIET_POLL)
+        {
+            let Some(id) = self.analysis.job_id.clone() else {
+                return;
+            };
+            self.job_watch.inflight = true;
+            self.job_watch.last_poll = now;
+            self.call("job_status", json!({ "job_id": id }), |vm, res| {
+                vm.job_watch.inflight = false;
+                if let Ok(info) = res.and_then(parse::<JobInfo>) {
+                    vm.on_job(info);
+                }
+            });
+        }
     }
 
     /// Calls still running.
@@ -478,6 +534,7 @@ impl ViewModel {
         self.comment = None;
         self.history = HistoryPanel::default();
         self.undo = crate::history::UndoFlow::default();
+        self.rewrite = self.rewrite.reset();
         self.proposals = ProposalsPanel::default();
         self.analysis = AnalysisState::default();
         self.assist.reset_for_project();
@@ -635,9 +692,15 @@ impl ViewModel {
         self.call("analyze", json!({}), |vm, res| {
             match res.and_then(parse::<AnalyzeWire>) {
                 Ok(a) => {
-                    vm.analysis.phase = AnalysisPhase::Running;
-                    vm.analysis.job_id = Some(a.job_id);
-                    vm.refresh_job();
+                    // `job_done` may already have been handled by the time this reply is.
+                    let already_done = vm.analysis.job_id.as_deref() == Some(a.job_id.as_str())
+                        && vm.analysis.is_finished();
+                    if !already_done {
+                        vm.analysis.phase = AnalysisPhase::Running;
+                        vm.analysis.job_id = Some(a.job_id);
+                        vm.job_watch.last_activity = Instant::now();
+                        vm.refresh_job();
+                    }
                 }
                 Err(e) => vm.toast_error(&e),
             }
@@ -677,7 +740,10 @@ impl ViewModel {
 
     fn on_event(&mut self, ev: BackendEvent) {
         match ev {
-            BackendEvent::Job(info) => self.on_job(info),
+            BackendEvent::Job(info) => {
+                self.rewrite_on_job(&info);
+                self.on_job(info);
+            }
             BackendEvent::ProjectChanged => self.refresh_after_edit(),
             BackendEvent::EntryApplied(change) => {
                 self.refresh_after_edit();
@@ -778,8 +844,14 @@ impl ViewModel {
             JobState::Failed => AnalysisPhase::Failed,
             JobState::Cancelled => AnalysisPhase::Cancelled,
         };
+        self.job_watch.last_activity = Instant::now();
         let same_job = self.analysis.job_id.as_deref() == Some(info.job_id.as_str());
         if info.status.is_terminal() && same_job && self.analysis.phase == new_phase {
+            return;
+        }
+        // A `job_status` reply that was in flight when `job_done` arrived is older than it: a
+        // finished job never goes back to running.
+        if same_job && !info.status.is_terminal() && self.analysis.is_finished() {
             return;
         }
         self.analysis.job_id = Some(info.job_id.clone());

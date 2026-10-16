@@ -11,7 +11,9 @@
   "files.watcherExclude": {
     "**/target/**": true,
     "**/docs/book/**": true,
-    "java/kraken-ghidra/build/**": true
+    "java/kraken-ghidra/build/**": true,
+    "**/dotnet/kraken-dotnet/bin/**": true,
+    "**/dotnet/kraken-dotnet/obj/**": true
   },
   "search.exclude": {
     "corpus/fixtures/**": true,
@@ -20,5 +22,7 @@
   },
   "editor.formatOnSave": true,
   "[rust]": { "editor.defaultFormatter": "rust-lang.rust-analyzer" },
-  "java.import.gradle.enabled": false
+  "java.import.gradle.enabled": false,
+  // The C# sidecar is built by `cargo xtask dotnet-ext` with the isolated SDK in ~/.cache/kraken-dev/dotnet.
+  "dotnet.defaultSolution": "disable"
 }

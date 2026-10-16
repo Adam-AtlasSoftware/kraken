@@ -11,6 +11,7 @@ mod infer;
 mod overlays;
 mod panels;
 mod recent;
+mod rewrite;
 mod services;
 mod settings;
 mod style;

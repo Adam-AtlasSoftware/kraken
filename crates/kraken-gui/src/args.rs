@@ -30,6 +30,8 @@ pub enum Scene {
     AutoName,
     /// The Agents tab with a scripted agent session (hidden).
     Agents,
+    /// The Rewrite tab over the demo's scripted pipeline.
+    Rewrite,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +60,7 @@ pub const USAGE: &str =
   --light            start with the light theme
   --screenshot FILE  with --demo or a hidden --open-project: select a function, render, save
                      FILE as a PNG and exit
-  --scene S          what --screenshot shows: main (default), graph, palette, rename or welcome
+  --scene S          what --screenshot shows: main (default), graph, palette, rename, rewrite or welcome
   -h, --help         show this text";
 
 #[derive(Debug)]
@@ -116,6 +118,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     Some("explain") => Scene::Explain,
                     Some("autoname") => Scene::AutoName,
                     Some("agents") => Scene::Agents,
+                    Some("rewrite") => Scene::Rewrite,
                     other => {
                         return Err(format!(
                             "--scene needs main, graph, palette, rename or welcome, got {}",

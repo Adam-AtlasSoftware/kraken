@@ -124,6 +124,11 @@ pub fn samples() -> Result<Samples, String> {
     let o = &mut o;
 
     add(o, "locator.native", Locator::ram(0x401000))?;
+    add(
+        o,
+        "locator.managed",
+        Locator::managed("61a35c05-1940-4673-81a7-f2157a66b75c", 0x0600_000a),
+    )?;
     add(o, "anchor.native", anchor())?;
     add(
         o,

@@ -532,6 +532,7 @@ impl KrakenApp {
             overlays::rename_dialog(&ctx, vm, &mut self.rename_focus);
             overlays::comment_dialog(&ctx, vm);
             crate::history::dialog(&ctx, vm);
+            crate::rewrite::export_dialog(&ctx, vm);
             chrome::toasts(&ctx, vm);
             assist::overlays(&ctx, vm, &mut self.state.assist);
             if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
@@ -661,7 +662,8 @@ impl KrakenApp {
                         } else {
                             shot.stage = ShotStage::Settling;
                         }
-                    } else if matches!(shot.scene, Scene::AutoName | Scene::Agents) {
+                    } else if matches!(shot.scene, Scene::AutoName | Scene::Agents | Scene::Rewrite)
+                    {
                         // Leave the placeholder names alone so there is something to suggest.
                         shot.stage = ShotStage::Settling;
                     } else {
@@ -686,7 +688,11 @@ impl KrakenApp {
                     // Keep only the newest notification so the picture stays readable.
                     let keep = usize::from(!matches!(
                         shot.scene,
-                        Scene::Assistant | Scene::Explain | Scene::AutoName | Scene::Agents
+                        Scene::Assistant
+                            | Scene::Explain
+                            | Scene::AutoName
+                            | Scene::Agents
+                            | Scene::Rewrite
                     ));
                     let ids: Vec<u64> = vm.toasts.iter().rev().skip(keep).map(|t| t.id).collect();
                     for id in ids {
@@ -712,6 +718,14 @@ impl KrakenApp {
                             self.dock = agents::scene_dock(Tab::Agents);
                             self.state.bring_to_front = Some(Tab::Agents);
                         }
+                        Scene::Rewrite => {
+                            self.dock = crate::rewrite::scene_dock();
+                            // The demo's pipeline is scripted, so it runs on any computer.
+                            vm.rewrite.availability =
+                                kraken_viewmodel::rewrite::Availability::Unknown;
+                            vm.rewrite_ensure_loaded();
+                            vm.rewrite_select(crate::rewrite::SCENE_FUNCTION);
+                        }
                         _ => {}
                     }
                     vm.assist_dismiss_offer();
@@ -733,6 +747,12 @@ impl KrakenApp {
                     vm.agents_send(agents::SCENE_PROMPT);
                 }
                 let views_ready = match shot.scene {
+                    Scene::Rewrite => {
+                        vm.rewrite.loaded
+                            && vm.rewrite.selected_detail().is_some_and(|d| {
+                                d.c.is_some() && !d.loading && !d.versions().is_empty()
+                            })
+                    }
                     Scene::Agents => vm
                         .agents
                         .session

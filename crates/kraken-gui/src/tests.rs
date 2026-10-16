@@ -463,13 +463,14 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         Tab::Symbols,
         Tab::History,
         Tab::Proposals,
+        Tab::Rewrite,
     ] {
         assert!(!t.title().is_empty());
         let tip = t.tooltip();
         assert!(tip.ends_with('.'), "{tip}");
         assert!(tip.len() < 100, "one plain sentence: {tip}");
     }
-    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 10);
+    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 11);
 }
 
 #[test]
@@ -593,10 +594,6 @@ mod live {
     }
 
     #[test]
-    #[cfg_attr(
-        target_os = "macos",
-        ignore = "daemon event stream stalls on macOS CI runners; under investigation"
-    )]
     fn the_gui_creates_a_project_through_the_daemon_and_follows_an_agent() {
         let mut r = Rig::new();
         let ctx = r.h.ctx.clone();
