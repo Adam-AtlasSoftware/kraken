@@ -1,0 +1,25 @@
+[package]
+name = "kraken-gui-widgets"
+description = "KRAKEN reusable egui widgets: theme, virtual list, hex view, decompiler text, listing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+egui = "=0.36.2"
+kraken-proto.workspace = true
+
+[dev-dependencies]
+anyhow = "1"
+eframe = { version = "=0.36.2", default-features = false, features = [
+    "glow",
+    "wgpu",
+    "x11",
+    "wayland",
+    "default_fonts",
+] }
+egui_dock = "=0.21.1"
+egui_kittest = "=0.36.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
