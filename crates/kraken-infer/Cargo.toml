@@ -1,0 +1,22 @@
+[package]
+name = "kraken-infer"
+description = "KRAKEN supervised local inference backends: llama.cpp and manifest-driven OpenAI-compatible engines"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "net", "io-util"] }
+toml = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["rt", "sync", "time", "net", "io-util", "macros"] }

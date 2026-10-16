@@ -1,0 +1,68 @@
+# Template manifest for GenericOpenAiServerBackend.
+#
+# Copy this file, change `id`, `command` and the schema to match an engine that serves an
+# OpenAI-compatible HTTP API (/v1/chat/completions), and drop it into a manifest directory
+# loaded by BackendRegistry::load_manifest_dir. "example-engine" is a placeholder: it names no
+# real project, and its flags are illustrative only. Check your engine's own documentation.
+
+# Lowercase letters, digits, '-' and '_'. Shown in the registry and used as the backend id.
+id = "example-engine"
+name = "Example engine (template)"
+
+# SPDX identifier of the engine's license.
+license = "Apache-2.0"
+
+# argv template, no shell involved. Element 0 is the program (absolute path, or found on PATH)
+# and cannot contain placeholders. Placeholders:
+#   {host}  always 127.0.0.1 (KRAKEN only talks to loopback)
+#   {port}  a free port chosen by KRAKEN, or the `port` setting if you define one
+#   {name}  any property of [settings_schema.properties], filled from the user's settings or
+#           that property's `default`
+# Write {{ and }} for literal braces.
+command = [
+  "/usr/local/bin/example-engine", "serve",
+  "--model", "{model}",
+  "--host", "{host}",
+  "--port", "{port}",
+  "--context", "{ctx}",
+]
+
+# Polled with HTTP GET on 127.0.0.1 until it answers 2xx. llama-server uses "/health";
+# most OpenAI-compatible servers answer "/v1/models".
+health_path = "/v1/models"
+
+# How long loading may take before the supervisor gives up, and the SIGTERM->SIGKILL grace.
+ready_timeout_secs = 900
+grace_secs = 10
+
+# Extra environment variables for the engine. The rest of the parent environment is dropped
+# except a small allowlist (PATH, HOME, library paths, GPU visibility); API keys never pass.
+[env]
+# EXAMPLE_THREADS = "8"
+
+[capabilities]
+os = ["linux"]
+arch = ["x86_64"]
+# Any of: cpu, cuda, rocm, vulkan, metal
+gpu_apis = ["cpu"]
+min_ram_mb = 1024
+# Can the engine keep MoE expert weights in system RAM while attention runs on the GPU?
+supports_moe_offload = false
+supports_tool_calls = false
+
+# JSON Schema rendered by the GUI as the settings form. Property names double as placeholder
+# names above. Keep `title`/`description` human-readable.
+[settings_schema]
+type = "object"
+required = ["model"]
+
+[settings_schema.properties.model]
+type = "string"
+title = "Model path"
+x-kraken-widget = "file-path"
+
+[settings_schema.properties.ctx]
+type = "integer"
+title = "Context size"
+minimum = 1
+default = 8192
