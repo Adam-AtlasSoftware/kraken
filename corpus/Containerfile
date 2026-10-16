@@ -1,0 +1,11 @@
+# Pinned build environment for the KRAKEN test corpus (decision 65).
+# Base image pinned by digest (debian:trixie-slim as pulled 2026-10-16).
+# Package versions are whatever trixie provides at rebuild time; build.sh records
+# them in corpus/TOOLCHAIN.txt and the README lists the ones used for committed binaries.
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc g++ make binutils libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work

@@ -1,0 +1,11 @@
+base-image: debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+gcc: gcc (Debian 14.2.0-19) 14.2.0
+g++: g++ (Debian 14.2.0-19) 14.2.0
+ld: GNU ld (GNU Binutils for Debian) 2.44
+strip: GNU strip (GNU Binutils for Debian) 2.44
+make: GNU Make 4.4.1
+dpkg: binutils 2.44-3
+dpkg: g++ 4:14.2.0-1
+dpkg: gcc 4:14.2.0-1
+dpkg: libc6-dev:amd64 2.41-12+deb13u4
+dpkg: make 4.4.1-2

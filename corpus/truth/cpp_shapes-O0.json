@@ -1,0 +1,1989 @@
+{
+  "binary": "cpp_shapes-O0",
+  "ground_truth_from": "cpp_shapes-O0",
+  "sha256": "e5dbd4926ad52d5c3026b90759782524529aa3a76f066d96da52c445a8217cff",
+  "source_file": "src/cpp_shapes.cpp",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "_ZL4joinRKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EERKS5_",
+      "demangled": "join(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
+      "entry": "0x2369",
+      "size": 172
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x2415",
+      "size": 1489
+    },
+    {
+      "name": "_ZnwmPv",
+      "demangled": "operator new(unsigned long, void*)",
+      "entry": "0x29e6",
+      "size": 18
+    },
+    {
+      "name": "_ZdlPvS_",
+      "demangled": "operator delete(void*, void*)",
+      "entry": "0x29f8",
+      "size": 15
+    },
+    {
+      "name": "_ZNSt11char_traitsIcE6lengthEPKc",
+      "demangled": "std::char_traits<char>::length(char const*)",
+      "entry": "0x2a07",
+      "size": 50
+    },
+    {
+      "name": "_ZZNSt7__cxx119to_stringEiENKUlPcmE_clES0_m",
+      "demangled": "std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1}::operator()(char*, unsigned long) const",
+      "entry": "0x2a3a",
+      "size": 74
+    },
+    {
+      "name": "_ZNSt7__cxx119to_stringEi",
+      "demangled": "std::__cxx11::to_string(int)",
+      "entry": "0x2a84",
+      "size": 134
+    },
+    {
+      "name": "_ZNSt8__detail14__to_chars_lenIjEEjT_i",
+      "demangled": "unsigned int std::__detail::__to_chars_len<unsigned int>(unsigned int, int)",
+      "entry": "0x2b0a",
+      "size": 136
+    },
+    {
+      "name": "_ZN5ShapeC1ENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE",
+      "demangled": "Shape::Shape(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)",
+      "entry": "0x2b92",
+      "size": 69
+    },
+    {
+      "name": "_ZNK5Shape8describeB5cxx11Ev",
+      "demangled": "Shape::describe[abi:cxx11]() const",
+      "entry": "0x2bd8",
+      "size": 191
+    },
+    {
+      "name": "_ZNK5Shape4nameB5cxx11Ev",
+      "demangled": "Shape::name[abi:cxx11]() const",
+      "entry": "0x2c98",
+      "size": 18
+    },
+    {
+      "name": "_ZN5ShapeD1Ev",
+      "demangled": "Shape::~Shape()",
+      "entry": "0x2caa",
+      "size": 45
+    },
+    {
+      "name": "_ZN5ShapeD0Ev",
+      "demangled": "Shape::~Shape()",
+      "entry": "0x2cd8",
+      "size": 43
+    },
+    {
+      "name": "_ZN4RectC1Edd",
+      "demangled": "Rect::Rect(double, double)",
+      "entry": "0x2d04",
+      "size": 180
+    },
+    {
+      "name": "_ZNK4Rect4areaEv",
+      "demangled": "Rect::area() const",
+      "entry": "0x2db8",
+      "size": 32
+    },
+    {
+      "name": "_ZNK4Rect9perimeterEv",
+      "demangled": "Rect::perimeter() const",
+      "entry": "0x2dd8",
+      "size": 36
+    },
+    {
+      "name": "_ZN4RectD1Ev",
+      "demangled": "Rect::~Rect()",
+      "entry": "0x2dfc",
+      "size": 41
+    },
+    {
+      "name": "_ZN4RectD0Ev",
+      "demangled": "Rect::~Rect()",
+      "entry": "0x2e26",
+      "size": 43
+    },
+    {
+      "name": "_ZN6SquareC1Ed",
+      "demangled": "Square::Square(double)",
+      "entry": "0x2e52",
+      "size": 122
+    },
+    {
+      "name": "_ZNK6Square8describeB5cxx11Ev",
+      "demangled": "Square::describe[abi:cxx11]() const",
+      "entry": "0x2ecc",
+      "size": 113
+    },
+    {
+      "name": "_ZN6CircleC1Ed",
+      "demangled": "Circle::Circle(double)",
+      "entry": "0x2f3e",
+      "size": 161
+    },
+    {
+      "name": "_ZNK6Circle4areaEv",
+      "demangled": "Circle::area() const",
+      "entry": "0x2fe0",
+      "size": 44
+    },
+    {
+      "name": "_ZNK6Circle9perimeterEv",
+      "demangled": "Circle::perimeter() const",
+      "entry": "0x300c",
+      "size": 31
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE12_Vector_implD1Ev",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_Vector_impl::~_Vector_impl()",
+      "entry": "0x302c",
+      "size": 36
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EEC1Ev",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_Vector_base()",
+      "entry": "0x3050",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EEC1Ev",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::vector()",
+      "entry": "0x306c",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEE12_Vector_implD1Ev",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_Vector_impl::~_Vector_impl()",
+      "entry": "0x3088",
+      "size": 36
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEEC1Ev",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_Vector_base()",
+      "entry": "0x30ac",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEEC1Ev",
+      "demangled": "std::vector<double, std::allocator<double> >::vector()",
+      "entry": "0x30c8",
+      "size": 27
+    },
+    {
+      "name": "_ZN11AccumulatorIdEC1Ev",
+      "demangled": "Accumulator<double>::Accumulator()",
+      "entry": "0x30e4",
+      "size": 27
+    },
+    {
+      "name": "_ZN11AccumulatorIdED1Ev",
+      "demangled": "Accumulator<double>::~Accumulator()",
+      "entry": "0x3100",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE12_Vector_implD1Ev",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_Vector_impl::~_Vector_impl()",
+      "entry": "0x311c",
+      "size": 36
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEC1Ev",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_Vector_base()",
+      "entry": "0x3140",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEC1Ev",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::vector()",
+      "entry": "0x315c",
+      "size": 27
+    },
+    {
+      "name": "_ZN11AccumulatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEC1Ev",
+      "demangled": "Accumulator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::Accumulator()",
+      "entry": "0x3178",
+      "size": 27
+    },
+    {
+      "name": "_ZN11AccumulatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEED1Ev",
+      "demangled": "Accumulator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::~Accumulator()",
+      "entry": "0x3194",
+      "size": 27
+    },
+    {
+      "name": "_ZN9__gnu_cxx11char_traitsIcE6lengthEPKc",
+      "demangled": "__gnu_cxx::char_traits<char>::length(char const*)",
+      "entry": "0x31b0",
+      "size": 70
+    },
+    {
+      "name": "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_Alloc_hiderD1Ev",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_Alloc_hider::~_Alloc_hider()",
+      "entry": "0x31f6",
+      "size": 36
+    },
+    {
+      "name": "_ZNSt8__detail18__to_chars_10_implIjEEvPcjT_",
+      "demangled": "void std::__detail::__to_chars_10_impl<unsigned int>(char*, unsigned int, unsigned int)",
+      "entry": "0x321a",
+      "size": 679
+    },
+    {
+      "name": "_ZZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE22__resize_and_overwriteIZNS_9to_stringEiEUlPcmE_EEvmT_EN11_TerminatorD1Ev",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::__resize_and_overwrite<std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1}>(unsigned long, std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1})::_Terminator::~_Terminator()",
+      "entry": "0x34c2",
+      "size": 41
+    },
+    {
+      "name": "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE22__resize_and_overwriteIZNS_9to_stringEiEUlPcmE_EEvmT_",
+      "demangled": "void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::__resize_and_overwrite<std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1}>(unsigned long, std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1})",
+      "entry": "0x34ec",
+      "size": 156
+    },
+    {
+      "name": "_ZSt4moveIRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEONSt16remove_referenceIT_E4typeEOS8_",
+      "demangled": "std::remove_reference<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&>::type&& std::move<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&)",
+      "entry": "0x3588",
+      "size": 14
+    },
+    {
+      "name": "_ZStplIcSt11char_traitsIcESaIcEENSt7__cxx1112basic_stringIT_T0_T1_EERKS8_PKS5_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > std::operator+<char, std::char_traits<char>, std::allocator<char> >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, char const*)",
+      "entry": "0x3596",
+      "size": 175
+    },
+    {
+      "name": "_ZStplIcSt11char_traitsIcESaIcEENSt7__cxx1112basic_stringIT_T0_T1_EEOS8_S9_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > std::operator+<char, std::char_traits<char>, std::allocator<char> >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)",
+      "entry": "0x3645",
+      "size": 229
+    },
+    {
+      "name": "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1IS3_EEPKcRKS3_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string<std::allocator<char> >(char const*, std::allocator<char> const&)",
+      "entry": "0x372a",
+      "size": 160
+    },
+    {
+      "name": "_ZStplIcSt11char_traitsIcESaIcEENSt7__cxx1112basic_stringIT_T0_T1_EEPKS5_OS8_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > std::operator+<char, std::char_traits<char>, std::allocator<char> >(char const*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)",
+      "entry": "0x37ca",
+      "size": 73
+    },
+    {
+      "name": "_ZNKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE4sizeEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::size() const",
+      "entry": "0x3814",
+      "size": 35
+    },
+    {
+      "name": "_ZNKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EEixEm",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::operator[](unsigned long) const",
+      "entry": "0x3838",
+      "size": 32
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE12_Vector_implC1Ev",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_Vector_impl::_Vector_impl()",
+      "entry": "0x3858",
+      "size": 45
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EED1Ev",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::~_Vector_base()",
+      "entry": "0x3886",
+      "size": 77
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EED1Ev",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::~vector()",
+      "entry": "0x38d4",
+      "size": 86
+    },
+    {
+      "name": "_ZSt7forwardIiEOT_RNSt16remove_referenceIS0_E4typeE",
+      "demangled": "int&& std::forward<int>(std::remove_reference<int>::type&)",
+      "entry": "0x392a",
+      "size": 14
+    },
+    {
+      "name": "_ZSt11make_uniqueI4RectJiiEENSt8__detail9_MakeUniqIT_E15__single_objectEDpOT0_",
+      "demangled": "std::__detail::_MakeUniq<Rect>::__single_object std::make_unique<Rect, int, int>(int&&, int&&)",
+      "entry": "0x3938",
+      "size": 206
+    },
+    {
+      "name": "_ZNSt10unique_ptrI4RectSt14default_deleteIS0_EED1Ev",
+      "demangled": "std::unique_ptr<Rect, std::default_delete<Rect> >::~unique_ptr()",
+      "entry": "0x3a06",
+      "size": 100
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI5ShapeSt14default_deleteIS0_ELb1ELb1EECI1St15__uniq_ptr_implIS0_S2_EIS1_I4RectEEEPS0_OT_",
+      "demangled": "std::__uniq_ptr_data<Shape, std::default_delete<Shape>, true, true>::__uniq_ptr_impl<std::default_delete<Rect> >(Shape*, std::default_delete<Rect>&&)",
+      "entry": "0x3a6a",
+      "size": 46
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EEC1I4RectS1_IS5_EvEEOS_IT_T0_E",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::unique_ptr<Rect, std::default_delete<Rect>, void>(std::unique_ptr<Rect, std::default_delete<Rect> >&&)",
+      "entry": "0x3a98",
+      "size": 82
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EED1Ev",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::~unique_ptr()",
+      "entry": "0x3aea",
+      "size": 100
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE9push_backEOS4_",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::push_back(std::unique_ptr<Shape, std::default_delete<Shape> >&&)",
+      "entry": "0x3b4e",
+      "size": 49
+    },
+    {
+      "name": "_ZSt11make_uniqueI6SquareJiEENSt8__detail9_MakeUniqIT_E15__single_objectEDpOT0_",
+      "demangled": "std::__detail::_MakeUniq<Square>::__single_object std::make_unique<Square, int>(int&&)",
+      "entry": "0x3b7f",
+      "size": 170
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6SquareSt14default_deleteIS0_EED1Ev",
+      "demangled": "std::unique_ptr<Square, std::default_delete<Square> >::~unique_ptr()",
+      "entry": "0x3c2a",
+      "size": 100
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI5ShapeSt14default_deleteIS0_ELb1ELb1EECI1St15__uniq_ptr_implIS0_S2_EIS1_I6SquareEEEPS0_OT_",
+      "demangled": "std::__uniq_ptr_data<Shape, std::default_delete<Shape>, true, true>::__uniq_ptr_impl<std::default_delete<Square> >(Shape*, std::default_delete<Square>&&)",
+      "entry": "0x3c8e",
+      "size": 46
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EEC1I6SquareS1_IS5_EvEEOS_IT_T0_E",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::unique_ptr<Square, std::default_delete<Square>, void>(std::unique_ptr<Square, std::default_delete<Square> >&&)",
+      "entry": "0x3cbc",
+      "size": 82
+    },
+    {
+      "name": "_ZSt11make_uniqueI6CircleJiEENSt8__detail9_MakeUniqIT_E15__single_objectEDpOT0_",
+      "demangled": "std::__detail::_MakeUniq<Circle>::__single_object std::make_unique<Circle, int>(int&&)",
+      "entry": "0x3d0e",
+      "size": 170
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6CircleSt14default_deleteIS0_EED1Ev",
+      "demangled": "std::unique_ptr<Circle, std::default_delete<Circle> >::~unique_ptr()",
+      "entry": "0x3db8",
+      "size": 100
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI5ShapeSt14default_deleteIS0_ELb1ELb1EECI1St15__uniq_ptr_implIS0_S2_EIS1_I6CircleEEEPS0_OT_",
+      "demangled": "std::__uniq_ptr_data<Shape, std::default_delete<Shape>, true, true>::__uniq_ptr_impl<std::default_delete<Circle> >(Shape*, std::default_delete<Circle>&&)",
+      "entry": "0x3e1c",
+      "size": 46
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EEC1I6CircleS1_IS5_EvEEOS_IT_T0_E",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::unique_ptr<Circle, std::default_delete<Circle>, void>(std::unique_ptr<Circle, std::default_delete<Circle> >&&)",
+      "entry": "0x3e4a",
+      "size": 82
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEE12_Vector_implC1Ev",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_Vector_impl::_Vector_impl()",
+      "entry": "0x3e9c",
+      "size": 45
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEED1Ev",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::~_Vector_base()",
+      "entry": "0x3eca",
+      "size": 77
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEED1Ev",
+      "demangled": "std::vector<double, std::allocator<double> >::~vector()",
+      "entry": "0x3f18",
+      "size": 86
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE12_Vector_implC1Ev",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_Vector_impl::_Vector_impl()",
+      "entry": "0x3f6e",
+      "size": 45
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EED1Ev",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::~_Vector_base()",
+      "entry": "0x3f9c",
+      "size": 77
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EED1Ev",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::~vector()",
+      "entry": "0x3fea",
+      "size": 86
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE5beginEv",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::begin()",
+      "entry": "0x4040",
+      "size": 37
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE3endEv",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::end()",
+      "entry": "0x4066",
+      "size": 41
+    },
+    {
+      "name": "_ZN9__gnu_cxxneIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEEEbRKNS_17__normal_iteratorIT_T0_EESF_",
+      "demangled": "bool __gnu_cxx::operator!=<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >(__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > > const&, __gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > > const&)",
+      "entry": "0x408f",
+      "size": 59
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEEppEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >::operator++()",
+      "entry": "0x40ca",
+      "size": 32
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEEdeEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >::operator*() const",
+      "entry": "0x40ea",
+      "size": 17
+    },
+    {
+      "name": "_ZNKSt10unique_ptrI5ShapeSt14default_deleteIS0_EEptEv",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::operator->() const",
+      "entry": "0x40fc",
+      "size": 26
+    },
+    {
+      "name": "_ZN11AccumulatorIdE3addERKd",
+      "demangled": "Accumulator<double>::add(double const&)",
+      "entry": "0x4116",
+      "size": 38
+    },
+    {
+      "name": "_ZN11AccumulatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE3addERKS5_",
+      "demangled": "Accumulator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::add(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
+      "entry": "0x413c",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE9push_backEOS5_",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::push_back(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)",
+      "entry": "0x4162",
+      "size": 49
+    },
+    {
+      "name": "_ZNK11AccumulatorIdE3sumEv",
+      "demangled": "Accumulator<double>::sum() const",
+      "entry": "0x4194",
+      "size": 143
+    },
+    {
+      "name": "_ZNK11AccumulatorIdE4sizeEv",
+      "demangled": "Accumulator<double>::size() const",
+      "entry": "0x4224",
+      "size": 26
+    },
+    {
+      "name": "_ZNK11AccumulatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE3sumEv",
+      "demangled": "Accumulator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::sum() const",
+      "entry": "0x423e",
+      "size": 179
+    },
+    {
+      "name": "_ZN9__gnu_cxx11char_traitsIcE2eqERKcS3_",
+      "demangled": "__gnu_cxx::char_traits<char>::eq(char const&, char const&)",
+      "entry": "0x42f1",
+      "size": 33
+    },
+    {
+      "name": "_ZSt4moveIRZNSt7__cxx119to_stringEiEUlPcmE_EONSt16remove_referenceIT_E4typeEOS5_",
+      "demangled": "std::remove_reference<std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1}&>::type&& std::move<std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1}&>(std::__cxx11::to_string(int)::{lambda(char*, unsigned long)#1}&)",
+      "entry": "0x4312",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__new_allocatorIcED1Ev",
+      "demangled": "std::__new_allocator<char>::~__new_allocator()",
+      "entry": "0x4320",
+      "size": 11
+    },
+    {
+      "name": "_ZZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPKcEEvT_S8_St20forward_iterator_tagEN6_GuardC1EPS4_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char const*>(char const*, char const*, std::forward_iterator_tag)::_Guard::_Guard(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*)",
+      "entry": "0x432c",
+      "size": 26
+    },
+    {
+      "name": "_ZZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPKcEEvT_S8_St20forward_iterator_tagEN6_GuardD1Ev",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char const*>(char const*, char const*, std::forward_iterator_tag)::_Guard::~_Guard()",
+      "entry": "0x4346",
+      "size": 42
+    },
+    {
+      "name": "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPKcEEvT_S8_St20forward_iterator_tag",
+      "demangled": "void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char const*>(char const*, char const*, std::forward_iterator_tag)",
+      "entry": "0x4370",
+      "size": 275
+    },
+    {
+      "name": "_ZSt12__str_concatINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEET_PKNS6_10value_typeENS6_9size_typeES9_SA_RKNS6_14allocator_typeE",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > std::__str_concat<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::value_type const*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::size_type, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::value_type const*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::size_type, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::allocator_type const&)",
+      "entry": "0x4483",
+      "size": 227
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE17_Vector_impl_dataC1Ev",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_Vector_impl_data::_Vector_impl_data()",
+      "entry": "0x4566",
+      "size": 46
+    },
+    {
+      "name": "_ZNSt15__new_allocatorISt10unique_ptrI5ShapeSt14default_deleteIS1_EEED1Ev",
+      "demangled": "std::__new_allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >::~__new_allocator()",
+      "entry": "0x4594",
+      "size": 11
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE13_M_deallocateEPS4_m",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_deallocate(std::unique_ptr<Shape, std::default_delete<Shape> >*, unsigned long)",
+      "entry": "0x45a0",
+      "size": 78
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE19_M_get_Tp_allocatorEv",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_get_Tp_allocator()",
+      "entry": "0x45ee",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI4RectSt14default_deleteIS0_ELb1ELb1EECI1St15__uniq_ptr_implIS0_S2_EEPS0_",
+      "demangled": "std::__uniq_ptr_data<Rect, std::default_delete<Rect>, true, true>::__uniq_ptr_impl(Rect*)",
+      "entry": "0x45fc",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt10unique_ptrI4RectSt14default_deleteIS0_EEC1IS2_vEEPS0_",
+      "demangled": "std::unique_ptr<Rect, std::default_delete<Rect> >::unique_ptr<std::default_delete<Rect>, void>(Rect*)",
+      "entry": "0x4622",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI4RectSt14default_deleteIS0_EE6_M_ptrEv",
+      "demangled": "std::__uniq_ptr_impl<Rect, std::default_delete<Rect> >::_M_ptr()",
+      "entry": "0x4648",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10unique_ptrI4RectSt14default_deleteIS0_EE11get_deleterEv",
+      "demangled": "std::unique_ptr<Rect, std::default_delete<Rect> >::get_deleter()",
+      "entry": "0x4662",
+      "size": 26
+    },
+    {
+      "name": "_ZSt4moveIRP4RectEONSt16remove_referenceIT_E4typeEOS4_",
+      "demangled": "std::remove_reference<Rect*&>::type&& std::move<Rect*&>(Rect*&)",
+      "entry": "0x467c",
+      "size": 14
+    },
+    {
+      "name": "_ZNKSt14default_deleteI4RectEclEPS0_",
+      "demangled": "std::default_delete<Rect>::operator()(Rect*) const",
+      "entry": "0x468a",
+      "size": 43
+    },
+    {
+      "name": "_ZNSt10unique_ptrI4RectSt14default_deleteIS0_EE7releaseEv",
+      "demangled": "std::unique_ptr<Rect, std::default_delete<Rect> >::release()",
+      "entry": "0x46b6",
+      "size": 26
+    },
+    {
+      "name": "_ZSt7forwardISt14default_deleteI4RectEEOT_RNSt16remove_referenceIS3_E4typeE",
+      "demangled": "std::default_delete<Rect>&& std::forward<std::default_delete<Rect> >(std::remove_reference<std::default_delete<Rect> >::type&)",
+      "entry": "0x46d0",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EEC1IS1_I4RectEEEPS0_OT_",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::__uniq_ptr_impl<std::default_delete<Rect> >(Shape*, std::default_delete<Rect>&&)",
+      "entry": "0x46de",
+      "size": 62
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EE6_M_ptrEv",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::_M_ptr()",
+      "entry": "0x471c",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EE11get_deleterEv",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::get_deleter()",
+      "entry": "0x4736",
+      "size": 26
+    },
+    {
+      "name": "_ZSt4moveIRP5ShapeEONSt16remove_referenceIT_E4typeEOS4_",
+      "demangled": "std::remove_reference<Shape*&>::type&& std::move<Shape*&>(Shape*&)",
+      "entry": "0x4750",
+      "size": 14
+    },
+    {
+      "name": "_ZNKSt14default_deleteI5ShapeEclEPS0_",
+      "demangled": "std::default_delete<Shape>::operator()(Shape*) const",
+      "entry": "0x475e",
+      "size": 43
+    },
+    {
+      "name": "_ZSt4moveIRSt10unique_ptrI5ShapeSt14default_deleteIS1_EEEONSt16remove_referenceIT_E4typeEOS7_",
+      "demangled": "std::remove_reference<std::unique_ptr<Shape, std::default_delete<Shape> >&>::type&& std::move<std::unique_ptr<Shape, std::default_delete<Shape> >&>(std::unique_ptr<Shape, std::default_delete<Shape> >&)",
+      "entry": "0x4789",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE12emplace_backIJS4_EEERS4_DpOT_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >& std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::emplace_back<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >&&)",
+      "entry": "0x4798",
+      "size": 250
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI6SquareSt14default_deleteIS0_ELb1ELb1EECI1St15__uniq_ptr_implIS0_S2_EEPS0_",
+      "demangled": "std::__uniq_ptr_data<Square, std::default_delete<Square>, true, true>::__uniq_ptr_impl(Square*)",
+      "entry": "0x4892",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6SquareSt14default_deleteIS0_EEC1IS2_vEEPS0_",
+      "demangled": "std::unique_ptr<Square, std::default_delete<Square> >::unique_ptr<std::default_delete<Square>, void>(Square*)",
+      "entry": "0x48b8",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6SquareSt14default_deleteIS0_EE6_M_ptrEv",
+      "demangled": "std::__uniq_ptr_impl<Square, std::default_delete<Square> >::_M_ptr()",
+      "entry": "0x48de",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6SquareSt14default_deleteIS0_EE11get_deleterEv",
+      "demangled": "std::unique_ptr<Square, std::default_delete<Square> >::get_deleter()",
+      "entry": "0x48f8",
+      "size": 26
+    },
+    {
+      "name": "_ZSt4moveIRP6SquareEONSt16remove_referenceIT_E4typeEOS4_",
+      "demangled": "std::remove_reference<Square*&>::type&& std::move<Square*&>(Square*&)",
+      "entry": "0x4912",
+      "size": 14
+    },
+    {
+      "name": "_ZN6SquareD1Ev",
+      "demangled": "Square::~Square()",
+      "entry": "0x4920",
+      "size": 41
+    },
+    {
+      "name": "_ZN6SquareD0Ev",
+      "demangled": "Square::~Square()",
+      "entry": "0x494a",
+      "size": 43
+    },
+    {
+      "name": "_ZNKSt14default_deleteI6SquareEclEPS0_",
+      "demangled": "std::default_delete<Square>::operator()(Square*) const",
+      "entry": "0x4976",
+      "size": 43
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6SquareSt14default_deleteIS0_EE7releaseEv",
+      "demangled": "std::unique_ptr<Square, std::default_delete<Square> >::release()",
+      "entry": "0x49a2",
+      "size": 26
+    },
+    {
+      "name": "_ZSt7forwardISt14default_deleteI6SquareEEOT_RNSt16remove_referenceIS3_E4typeE",
+      "demangled": "std::default_delete<Square>&& std::forward<std::default_delete<Square> >(std::remove_reference<std::default_delete<Square> >::type&)",
+      "entry": "0x49bc",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EEC1IS1_I6SquareEEEPS0_OT_",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::__uniq_ptr_impl<std::default_delete<Square> >(Shape*, std::default_delete<Square>&&)",
+      "entry": "0x49ca",
+      "size": 62
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI6CircleSt14default_deleteIS0_ELb1ELb1EECI1St15__uniq_ptr_implIS0_S2_EEPS0_",
+      "demangled": "std::__uniq_ptr_data<Circle, std::default_delete<Circle>, true, true>::__uniq_ptr_impl(Circle*)",
+      "entry": "0x4a08",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6CircleSt14default_deleteIS0_EEC1IS2_vEEPS0_",
+      "demangled": "std::unique_ptr<Circle, std::default_delete<Circle> >::unique_ptr<std::default_delete<Circle>, void>(Circle*)",
+      "entry": "0x4a2e",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6CircleSt14default_deleteIS0_EE6_M_ptrEv",
+      "demangled": "std::__uniq_ptr_impl<Circle, std::default_delete<Circle> >::_M_ptr()",
+      "entry": "0x4a54",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6CircleSt14default_deleteIS0_EE11get_deleterEv",
+      "demangled": "std::unique_ptr<Circle, std::default_delete<Circle> >::get_deleter()",
+      "entry": "0x4a6e",
+      "size": 26
+    },
+    {
+      "name": "_ZSt4moveIRP6CircleEONSt16remove_referenceIT_E4typeEOS4_",
+      "demangled": "std::remove_reference<Circle*&>::type&& std::move<Circle*&>(Circle*&)",
+      "entry": "0x4a88",
+      "size": 14
+    },
+    {
+      "name": "_ZN6CircleD1Ev",
+      "demangled": "Circle::~Circle()",
+      "entry": "0x4a96",
+      "size": 41
+    },
+    {
+      "name": "_ZN6CircleD0Ev",
+      "demangled": "Circle::~Circle()",
+      "entry": "0x4ac0",
+      "size": 43
+    },
+    {
+      "name": "_ZNKSt14default_deleteI6CircleEclEPS0_",
+      "demangled": "std::default_delete<Circle>::operator()(Circle*) const",
+      "entry": "0x4aec",
+      "size": 43
+    },
+    {
+      "name": "_ZNSt10unique_ptrI6CircleSt14default_deleteIS0_EE7releaseEv",
+      "demangled": "std::unique_ptr<Circle, std::default_delete<Circle> >::release()",
+      "entry": "0x4b18",
+      "size": 26
+    },
+    {
+      "name": "_ZSt7forwardISt14default_deleteI6CircleEEOT_RNSt16remove_referenceIS3_E4typeE",
+      "demangled": "std::default_delete<Circle>&& std::forward<std::default_delete<Circle> >(std::remove_reference<std::default_delete<Circle> >::type&)",
+      "entry": "0x4b32",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EEC1IS1_I6CircleEEEPS0_OT_",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::__uniq_ptr_impl<std::default_delete<Circle> >(Shape*, std::default_delete<Circle>&&)",
+      "entry": "0x4b40",
+      "size": 62
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEE17_Vector_impl_dataC1Ev",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_Vector_impl_data::_Vector_impl_data()",
+      "entry": "0x4b7e",
+      "size": 46
+    },
+    {
+      "name": "_ZNSt15__new_allocatorIdED1Ev",
+      "demangled": "std::__new_allocator<double>::~__new_allocator()",
+      "entry": "0x4bac",
+      "size": 11
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEE13_M_deallocateEPdm",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_M_deallocate(double*, unsigned long)",
+      "entry": "0x4bb8",
+      "size": 78
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEE19_M_get_Tp_allocatorEv",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_M_get_Tp_allocator()",
+      "entry": "0x4c06",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_Vector_impl_dataC1Ev",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_Vector_impl_data::_Vector_impl_data()",
+      "entry": "0x4c14",
+      "size": 46
+    },
+    {
+      "name": "_ZNSt15__new_allocatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEED1Ev",
+      "demangled": "std::__new_allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::~__new_allocator()",
+      "entry": "0x4c42",
+      "size": 11
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE13_M_deallocateEPS5_m",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_deallocate(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, unsigned long)",
+      "entry": "0x4c4e",
+      "size": 78
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE19_M_get_Tp_allocatorEv",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_get_Tp_allocator()",
+      "entry": "0x4c9c",
+      "size": 14
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEEC1ERKS6_",
+      "demangled": "__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >::__normal_iterator(std::unique_ptr<Shape, std::default_delete<Shape> >* const&)",
+      "entry": "0x4caa",
+      "size": 29
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEE4baseEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >::base() const",
+      "entry": "0x4cc8",
+      "size": 14
+    },
+    {
+      "name": "_ZNKSt10unique_ptrI5ShapeSt14default_deleteIS0_EE3getEv",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::get() const",
+      "entry": "0x4cd6",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEE9push_backERKd",
+      "demangled": "std::vector<double, std::allocator<double> >::push_back(double const&)",
+      "entry": "0x4cf0",
+      "size": 217
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE9push_backERKS5_",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::push_back(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
+      "entry": "0x4dca",
+      "size": 264
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE12emplace_backIJS5_EEERS5_DpOT_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >& std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::emplace_back<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)",
+      "entry": "0x4ed2",
+      "size": 250
+    },
+    {
+      "name": "_ZNKSt6vectorIdSaIdEE5beginEv",
+      "demangled": "std::vector<double, std::allocator<double> >::begin() const",
+      "entry": "0x4fcc",
+      "size": 37
+    },
+    {
+      "name": "_ZNKSt6vectorIdSaIdEE3endEv",
+      "demangled": "std::vector<double, std::allocator<double> >::end() const",
+      "entry": "0x4ff2",
+      "size": 41
+    },
+    {
+      "name": "_ZN9__gnu_cxxneIPKdSt6vectorIdSaIdEEEEbRKNS_17__normal_iteratorIT_T0_EESB_",
+      "demangled": "bool __gnu_cxx::operator!=<double const*, std::vector<double, std::allocator<double> > >(__gnu_cxx::__normal_iterator<double const*, std::vector<double, std::allocator<double> > > const&, __gnu_cxx::__normal_iterator<double const*, std::vector<double, std::allocator<double> > > const&)",
+      "entry": "0x501b",
+      "size": 59
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPKdSt6vectorIdSaIdEEEppEv",
+      "demangled": "__gnu_cxx::__normal_iterator<double const*, std::vector<double, std::allocator<double> > >::operator++()",
+      "entry": "0x5056",
+      "size": 32
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPKdSt6vectorIdSaIdEEEdeEv",
+      "demangled": "__gnu_cxx::__normal_iterator<double const*, std::vector<double, std::allocator<double> > >::operator*() const",
+      "entry": "0x5076",
+      "size": 17
+    },
+    {
+      "name": "_ZNKSt6vectorIdSaIdEE4sizeEv",
+      "demangled": "std::vector<double, std::allocator<double> >::size() const",
+      "entry": "0x5088",
+      "size": 35
+    },
+    {
+      "name": "_ZNKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE5beginEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::begin() const",
+      "entry": "0x50ac",
+      "size": 37
+    },
+    {
+      "name": "_ZNKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE3endEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::end() const",
+      "entry": "0x50d2",
+      "size": 41
+    },
+    {
+      "name": "_ZN9__gnu_cxxneIPKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEEbRKNS_17__normal_iteratorIT_T0_EESH_",
+      "demangled": "bool __gnu_cxx::operator!=<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >(__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > > const&, __gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > > const&)",
+      "entry": "0x50fb",
+      "size": 59
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEppEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::operator++()",
+      "entry": "0x5136",
+      "size": 32
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEdeEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::operator*() const",
+      "entry": "0x5156",
+      "size": 17
+    },
+    {
+      "name": "_ZSt8_DestroyIPSt10unique_ptrI5ShapeSt14default_deleteIS1_EEEvT_S6_",
+      "demangled": "void std::_Destroy<std::unique_ptr<Shape, std::default_delete<Shape> >*>(std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*)",
+      "entry": "0x5167",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI4RectSt14default_deleteIS0_EEC1EPS0_",
+      "demangled": "std::__uniq_ptr_impl<Rect, std::default_delete<Rect> >::__uniq_ptr_impl(Rect*)",
+      "entry": "0x518e",
+      "size": 55
+    },
+    {
+      "name": "_ZSt3getILm0EJP4RectSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<0ul, std::tuple<Rect*, std::default_delete<Rect> > >::type& std::get<0ul, Rect*, std::default_delete<Rect> >(std::tuple<Rect*, std::default_delete<Rect> >&)",
+      "entry": "0x51c5",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI4RectSt14default_deleteIS0_EE10_M_deleterEv",
+      "demangled": "std::__uniq_ptr_impl<Rect, std::default_delete<Rect> >::_M_deleter()",
+      "entry": "0x51e0",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI4RectSt14default_deleteIS0_EE7releaseEv",
+      "demangled": "std::__uniq_ptr_impl<Rect, std::default_delete<Rect> >::release()",
+      "entry": "0x51fa",
+      "size": 56
+    },
+    {
+      "name": "_ZNSt5tupleIJP5ShapeSt14default_deleteIS0_EEEC1IRS1_S2_I4RectELb1EEEOT_OT0_",
+      "demangled": "std::tuple<Shape*, std::default_delete<Shape> >::tuple<Shape*&, std::default_delete<Rect>, true>(Shape*&, std::default_delete<Rect>&&)",
+      "entry": "0x5232",
+      "size": 78
+    },
+    {
+      "name": "_ZSt3getILm0EJP5ShapeSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<0ul, std::tuple<Shape*, std::default_delete<Shape> > >::type& std::get<0ul, Shape*, std::default_delete<Shape> >(std::tuple<Shape*, std::default_delete<Shape> >&)",
+      "entry": "0x5280",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EE10_M_deleterEv",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::_M_deleter()",
+      "entry": "0x529a",
+      "size": 26
+    },
+    {
+      "name": "_ZSt7forwardISt10unique_ptrI5ShapeSt14default_deleteIS1_EEEOT_RNSt16remove_referenceIS5_E4typeE",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >&& std::forward<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::remove_reference<std::unique_ptr<Shape, std::default_delete<Shape> > >::type&)",
+      "entry": "0x52b4",
+      "size": 14
+    },
+    {
+      "name": "_ZZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE17_M_realloc_appendIJS4_EEEvDpOT_EN6_GuardC1EPS4_mRS5_",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_realloc_append<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >&&)::_Guard::_Guard(std::unique_ptr<Shape, std::default_delete<Shape> >*, unsigned long, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >&)",
+      "entry": "0x52c2",
+      "size": 58
+    },
+    {
+      "name": "_ZZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE17_M_realloc_appendIJS4_EEEvDpOT_EN6_GuardD1Ev",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_realloc_append<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >&&)::_Guard::~_Guard()",
+      "entry": "0x52fc",
+      "size": 86
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE17_M_realloc_appendIJS4_EEEvDpOT_",
+      "demangled": "void std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_realloc_append<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >&&)",
+      "entry": "0x5352",
+      "size": 550
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE4backEv",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::back()",
+      "entry": "0x5578",
+      "size": 63
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6SquareSt14default_deleteIS0_EEC1EPS0_",
+      "demangled": "std::__uniq_ptr_impl<Square, std::default_delete<Square> >::__uniq_ptr_impl(Square*)",
+      "entry": "0x55b8",
+      "size": 55
+    },
+    {
+      "name": "_ZSt3getILm0EJP6SquareSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<0ul, std::tuple<Square*, std::default_delete<Square> > >::type& std::get<0ul, Square*, std::default_delete<Square> >(std::tuple<Square*, std::default_delete<Square> >&)",
+      "entry": "0x55ef",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6SquareSt14default_deleteIS0_EE10_M_deleterEv",
+      "demangled": "std::__uniq_ptr_impl<Square, std::default_delete<Square> >::_M_deleter()",
+      "entry": "0x560a",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6SquareSt14default_deleteIS0_EE7releaseEv",
+      "demangled": "std::__uniq_ptr_impl<Square, std::default_delete<Square> >::release()",
+      "entry": "0x5624",
+      "size": 56
+    },
+    {
+      "name": "_ZNSt5tupleIJP5ShapeSt14default_deleteIS0_EEEC1IRS1_S2_I6SquareELb1EEEOT_OT0_",
+      "demangled": "std::tuple<Shape*, std::default_delete<Shape> >::tuple<Shape*&, std::default_delete<Square>, true>(Shape*&, std::default_delete<Square>&&)",
+      "entry": "0x565c",
+      "size": 78
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6CircleSt14default_deleteIS0_EEC1EPS0_",
+      "demangled": "std::__uniq_ptr_impl<Circle, std::default_delete<Circle> >::__uniq_ptr_impl(Circle*)",
+      "entry": "0x56aa",
+      "size": 55
+    },
+    {
+      "name": "_ZSt3getILm0EJP6CircleSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<0ul, std::tuple<Circle*, std::default_delete<Circle> > >::type& std::get<0ul, Circle*, std::default_delete<Circle> >(std::tuple<Circle*, std::default_delete<Circle> >&)",
+      "entry": "0x56e1",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6CircleSt14default_deleteIS0_EE10_M_deleterEv",
+      "demangled": "std::__uniq_ptr_impl<Circle, std::default_delete<Circle> >::_M_deleter()",
+      "entry": "0x56fc",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI6CircleSt14default_deleteIS0_EE7releaseEv",
+      "demangled": "std::__uniq_ptr_impl<Circle, std::default_delete<Circle> >::release()",
+      "entry": "0x5716",
+      "size": 56
+    },
+    {
+      "name": "_ZNSt5tupleIJP5ShapeSt14default_deleteIS0_EEEC1IRS1_S2_I6CircleELb1EEEOT_OT0_",
+      "demangled": "std::tuple<Shape*, std::default_delete<Shape> >::tuple<Shape*&, std::default_delete<Circle>, true>(Shape*&, std::default_delete<Circle>&&)",
+      "entry": "0x574e",
+      "size": 78
+    },
+    {
+      "name": "_ZSt8_DestroyIPdEvT_S1_",
+      "demangled": "void std::_Destroy<double*>(double*, double*)",
+      "entry": "0x579c",
+      "size": 38
+    },
+    {
+      "name": "_ZSt8_DestroyIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEvT_S7_",
+      "demangled": "void std::_Destroy<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*)",
+      "entry": "0x57c2",
+      "size": 38
+    },
+    {
+      "name": "_ZNKSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EE6_M_ptrEv",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::_M_ptr() const",
+      "entry": "0x57e8",
+      "size": 29
+    },
+    {
+      "name": "_ZZNSt6vectorIdSaIdEE17_M_realloc_appendIJRKdEEEvDpOT_EN6_GuardC1EPdmRS0_",
+      "demangled": "std::vector<double, std::allocator<double> >::_M_realloc_append<double const&>(double const&)::_Guard::_Guard(double*, unsigned long, std::allocator<double>&)",
+      "entry": "0x5806",
+      "size": 58
+    },
+    {
+      "name": "_ZZNSt6vectorIdSaIdEE17_M_realloc_appendIJRKdEEEvDpOT_EN6_GuardD1Ev",
+      "demangled": "std::vector<double, std::allocator<double> >::_M_realloc_append<double const&>(double const&)::_Guard::~_Guard()",
+      "entry": "0x5840",
+      "size": 86
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEE17_M_realloc_appendIJRKdEEEvDpOT_",
+      "demangled": "void std::vector<double, std::allocator<double> >::_M_realloc_append<double const&>(double const&)",
+      "entry": "0x5896",
+      "size": 547
+    },
+    {
+      "name": "_ZZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_M_realloc_appendIJRKS5_EEEvDpOT_EN6_GuardC1EPS5_mRS6_",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_realloc_append<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)::_Guard::_Guard(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, unsigned long, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >&)",
+      "entry": "0x5aba",
+      "size": 58
+    },
+    {
+      "name": "_ZZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_M_realloc_appendIJRKS5_EEEvDpOT_EN6_GuardD1Ev",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_realloc_append<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)::_Guard::~_Guard()",
+      "entry": "0x5af4",
+      "size": 86
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_M_realloc_appendIJRKS5_EEEvDpOT_",
+      "demangled": "void std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_realloc_append<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
+      "entry": "0x5b4a",
+      "size": 623
+    },
+    {
+      "name": "_ZSt7forwardINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEOT_RNSt16remove_referenceIS6_E4typeE",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&& std::forward<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::remove_reference<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::type&)",
+      "entry": "0x5db9",
+      "size": 14
+    },
+    {
+      "name": "_ZZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_M_realloc_appendIJS5_EEEvDpOT_EN6_GuardC1EPS5_mRS6_",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_realloc_append<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)::_Guard::_Guard(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, unsigned long, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >&)",
+      "entry": "0x5dc8",
+      "size": 58
+    },
+    {
+      "name": "_ZZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_M_realloc_appendIJS5_EEEvDpOT_EN6_GuardD1Ev",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_realloc_append<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)::_Guard::~_Guard()",
+      "entry": "0x5e02",
+      "size": 86
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE17_M_realloc_appendIJS5_EEEvDpOT_",
+      "demangled": "void std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_realloc_append<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)",
+      "entry": "0x5e58",
+      "size": 548
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE4backEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::back()",
+      "entry": "0x607c",
+      "size": 63
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPKdSt6vectorIdSaIdEEEC1ERKS2_",
+      "demangled": "__gnu_cxx::__normal_iterator<double const*, std::vector<double, std::allocator<double> > >::__normal_iterator(double const* const&)",
+      "entry": "0x60bc",
+      "size": 29
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPKdSt6vectorIdSaIdEEE4baseEv",
+      "demangled": "__gnu_cxx::__normal_iterator<double const*, std::vector<double, std::allocator<double> > >::base() const",
+      "entry": "0x60da",
+      "size": 14
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEC1ERKS8_",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::__normal_iterator(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const* const&)",
+      "entry": "0x60e8",
+      "size": 29
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEE4baseEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::base() const",
+      "entry": "0x6106",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__new_allocatorISt10unique_ptrI5ShapeSt14default_deleteIS1_EEE10deallocateEPS4_m",
+      "demangled": "std::__new_allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >::deallocate(std::unique_ptr<Shape, std::default_delete<Shape> >*, unsigned long)",
+      "entry": "0x6114",
+      "size": 49
+    },
+    {
+      "name": "_ZNSt12_Destroy_auxILb0EE9__destroyIPSt10unique_ptrI5ShapeSt14default_deleteIS3_EEEEvT_S8_",
+      "demangled": "void std::_Destroy_aux<false>::__destroy<std::unique_ptr<Shape, std::default_delete<Shape> >*>(std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*)",
+      "entry": "0x6145",
+      "size": 57
+    },
+    {
+      "name": "_ZNSt5tupleIJP4RectSt14default_deleteIS0_EEEC1ILb1ELb1EEEv",
+      "demangled": "std::tuple<Rect*, std::default_delete<Rect> >::tuple<true, true>()",
+      "entry": "0x617e",
+      "size": 27
+    },
+    {
+      "name": "_ZSt12__get_helperILm0EP4RectJSt14default_deleteIS0_EEERT0_RSt11_Tuple_implIXT_EJS4_DpT1_EE",
+      "demangled": "Rect*& std::__get_helper<0ul, Rect*, std::default_delete<Rect> >(std::_Tuple_impl<0ul, Rect*, std::default_delete<Rect> >&)",
+      "entry": "0x6199",
+      "size": 26
+    },
+    {
+      "name": "_ZSt3getILm1EJP4RectSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<1ul, std::tuple<Rect*, std::default_delete<Rect> > >::type& std::get<1ul, Rect*, std::default_delete<Rect> >(std::tuple<Rect*, std::default_delete<Rect> >&)",
+      "entry": "0x61b3",
+      "size": 26
+    },
+    {
+      "name": "_ZSt7forwardIRP5ShapeEOT_RNSt16remove_referenceIS3_E4typeE",
+      "demangled": "Shape*& std::forward<Shape*&>(std::remove_reference<Shape*&>::type&)",
+      "entry": "0x61cd",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP5ShapeSt14default_deleteIS0_EEEC1IRS1_JS2_I4RectEEvEEOT_DpOT0_",
+      "demangled": "std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >::_Tuple_impl<Shape*&, std::default_delete<Rect>, void>(Shape*&, std::default_delete<Rect>&&)",
+      "entry": "0x61dc",
+      "size": 85
+    },
+    {
+      "name": "_ZSt12__get_helperILm0EP5ShapeJSt14default_deleteIS0_EEERT0_RSt11_Tuple_implIXT_EJS4_DpT1_EE",
+      "demangled": "Shape*& std::__get_helper<0ul, Shape*, std::default_delete<Shape> >(std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >&)",
+      "entry": "0x6231",
+      "size": 26
+    },
+    {
+      "name": "_ZSt3getILm1EJP5ShapeSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<1ul, std::tuple<Shape*, std::default_delete<Shape> > >::type& std::get<1ul, Shape*, std::default_delete<Shape> >(std::tuple<Shape*, std::default_delete<Shape> >&)",
+      "entry": "0x624b",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_dataI5ShapeSt14default_deleteIS0_ELb1ELb1EEC1EOS3_",
+      "demangled": "std::__uniq_ptr_data<Shape, std::default_delete<Shape>, true, true>::__uniq_ptr_data(std::__uniq_ptr_data<Shape, std::default_delete<Shape>, true, true>&&)",
+      "entry": "0x6266",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EEC1EOS3_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::unique_ptr(std::unique_ptr<Shape, std::default_delete<Shape> >&&)",
+      "entry": "0x628c",
+      "size": 38
+    },
+    {
+      "name": "_ZNKSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE12_M_check_lenEmPKc",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_check_len(unsigned long, char const*) const",
+      "entry": "0x62b2",
+      "size": 200
+    },
+    {
+      "name": "_ZN9__gnu_cxxmiIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEEENS_17__normal_iteratorIT_T0_E15difference_typeERKSD_SG_",
+      "demangled": "__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >::difference_type __gnu_cxx::operator-<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >(__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > > const&, __gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > > const&)",
+      "entry": "0x637a",
+      "size": 66
+    },
+    {
+      "name": "_ZNSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE11_M_allocateEm",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_allocate(unsigned long)",
+      "entry": "0x63bc",
+      "size": 73
+    },
+    {
+      "name": "_ZSt12__to_addressISt10unique_ptrI5ShapeSt14default_deleteIS1_EEEPT_S6_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >* std::__to_address<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >*)",
+      "entry": "0x6405",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE11_S_relocateEPS4_S7_S7_RS5_",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_S_relocate(std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >&)",
+      "entry": "0x6413",
+      "size": 50
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPSt10unique_ptrI5ShapeSt14default_deleteIS2_EESt6vectorIS5_SaIS5_EEEmiEl",
+      "demangled": "__gnu_cxx::__normal_iterator<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > > >::operator-(long) const",
+      "entry": "0x6446",
+      "size": 66
+    },
+    {
+      "name": "_ZNSt5tupleIJP6SquareSt14default_deleteIS0_EEEC1ILb1ELb1EEEv",
+      "demangled": "std::tuple<Square*, std::default_delete<Square> >::tuple<true, true>()",
+      "entry": "0x6488",
+      "size": 27
+    },
+    {
+      "name": "_ZSt12__get_helperILm0EP6SquareJSt14default_deleteIS0_EEERT0_RSt11_Tuple_implIXT_EJS4_DpT1_EE",
+      "demangled": "Square*& std::__get_helper<0ul, Square*, std::default_delete<Square> >(std::_Tuple_impl<0ul, Square*, std::default_delete<Square> >&)",
+      "entry": "0x64a3",
+      "size": 26
+    },
+    {
+      "name": "_ZSt3getILm1EJP6SquareSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<1ul, std::tuple<Square*, std::default_delete<Square> > >::type& std::get<1ul, Square*, std::default_delete<Square> >(std::tuple<Square*, std::default_delete<Square> >&)",
+      "entry": "0x64bd",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP5ShapeSt14default_deleteIS0_EEEC1IRS1_JS2_I6SquareEEvEEOT_DpOT0_",
+      "demangled": "std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >::_Tuple_impl<Shape*&, std::default_delete<Square>, void>(Shape*&, std::default_delete<Square>&&)",
+      "entry": "0x64d8",
+      "size": 85
+    },
+    {
+      "name": "_ZNSt5tupleIJP6CircleSt14default_deleteIS0_EEEC1ILb1ELb1EEEv",
+      "demangled": "std::tuple<Circle*, std::default_delete<Circle> >::tuple<true, true>()",
+      "entry": "0x652e",
+      "size": 27
+    },
+    {
+      "name": "_ZSt12__get_helperILm0EP6CircleJSt14default_deleteIS0_EEERT0_RSt11_Tuple_implIXT_EJS4_DpT1_EE",
+      "demangled": "Circle*& std::__get_helper<0ul, Circle*, std::default_delete<Circle> >(std::_Tuple_impl<0ul, Circle*, std::default_delete<Circle> >&)",
+      "entry": "0x6549",
+      "size": 26
+    },
+    {
+      "name": "_ZSt3getILm1EJP6CircleSt14default_deleteIS0_EEERNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERS8_",
+      "demangled": "std::tuple_element<1ul, std::tuple<Circle*, std::default_delete<Circle> > >::type& std::get<1ul, Circle*, std::default_delete<Circle> >(std::tuple<Circle*, std::default_delete<Circle> >&)",
+      "entry": "0x6563",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP5ShapeSt14default_deleteIS0_EEEC1IRS1_JS2_I6CircleEEvEEOT_DpOT0_",
+      "demangled": "std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >::_Tuple_impl<Shape*&, std::default_delete<Circle>, void>(Shape*&, std::default_delete<Circle>&&)",
+      "entry": "0x657e",
+      "size": 85
+    },
+    {
+      "name": "_ZNSt15__new_allocatorIdE10deallocateEPdm",
+      "demangled": "std::__new_allocator<double>::deallocate(double*, unsigned long)",
+      "entry": "0x65d4",
+      "size": 49
+    },
+    {
+      "name": "_ZNSt12_Destroy_auxILb1EE9__destroyIPdEEvT_S3_",
+      "demangled": "void std::_Destroy_aux<true>::__destroy<double*>(double*, double*)",
+      "entry": "0x6605",
+      "size": 15
+    },
+    {
+      "name": "_ZNSt15__new_allocatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE10deallocateEPS5_m",
+      "demangled": "std::__new_allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::deallocate(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, unsigned long)",
+      "entry": "0x6614",
+      "size": 48
+    },
+    {
+      "name": "_ZNSt12_Destroy_auxILb0EE9__destroyIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEEvT_S9_",
+      "demangled": "void std::_Destroy_aux<false>::__destroy<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*)",
+      "entry": "0x6644",
+      "size": 57
+    },
+    {
+      "name": "_ZSt3getILm0EJP5ShapeSt14default_deleteIS0_EEERKNSt13tuple_elementIXT_ESt5tupleIJDpT0_EEE4typeERKS8_",
+      "demangled": "std::tuple_element<0ul, std::tuple<Shape*, std::default_delete<Shape> > >::type const& std::get<0ul, Shape*, std::default_delete<Shape> >(std::tuple<Shape*, std::default_delete<Shape> > const&)",
+      "entry": "0x667d",
+      "size": 26
+    },
+    {
+      "name": "_ZSt7forwardIRKdEOT_RNSt16remove_referenceIS2_E4typeE",
+      "demangled": "double const& std::forward<double const&>(std::remove_reference<double const&>::type&)",
+      "entry": "0x6697",
+      "size": 14
+    },
+    {
+      "name": "_ZNKSt6vectorIdSaIdEE12_M_check_lenEmPKc",
+      "demangled": "std::vector<double, std::allocator<double> >::_M_check_len(unsigned long, char const*) const",
+      "entry": "0x66a6",
+      "size": 200
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEE3endEv",
+      "demangled": "std::vector<double, std::allocator<double> >::end()",
+      "entry": "0x676e",
+      "size": 41
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEE5beginEv",
+      "demangled": "std::vector<double, std::allocator<double> >::begin()",
+      "entry": "0x6798",
+      "size": 37
+    },
+    {
+      "name": "_ZN9__gnu_cxxmiIPdSt6vectorIdSaIdEEEENS_17__normal_iteratorIT_T0_E15difference_typeERKS8_SB_",
+      "demangled": "__gnu_cxx::__normal_iterator<double*, std::vector<double, std::allocator<double> > >::difference_type __gnu_cxx::operator-<double*, std::vector<double, std::allocator<double> > >(__gnu_cxx::__normal_iterator<double*, std::vector<double, std::allocator<double> > > const&, __gnu_cxx::__normal_iterator<double*, std::vector<double, std::allocator<double> > > const&)",
+      "entry": "0x67bd",
+      "size": 66
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEE11_M_allocateEm",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_M_allocate(unsigned long)",
+      "entry": "0x6800",
+      "size": 73
+    },
+    {
+      "name": "_ZSt12__to_addressIdEPT_S1_",
+      "demangled": "double* std::__to_address<double>(double*)",
+      "entry": "0x6849",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEE11_S_relocateEPdS2_S2_RS0_",
+      "demangled": "std::vector<double, std::allocator<double> >::_S_relocate(double*, double*, double*, std::allocator<double>&)",
+      "entry": "0x6857",
+      "size": 50
+    },
+    {
+      "name": "_ZSt7forwardIRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEOT_RNSt16remove_referenceIS8_E4typeE",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const& std::forward<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&>(std::remove_reference<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&>::type&)",
+      "entry": "0x6889",
+      "size": 14
+    },
+    {
+      "name": "_ZNKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE12_M_check_lenEmPKc",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_check_len(unsigned long, char const*) const",
+      "entry": "0x6898",
+      "size": 200
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE3endEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::end()",
+      "entry": "0x6960",
+      "size": 41
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE5beginEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::begin()",
+      "entry": "0x698a",
+      "size": 37
+    },
+    {
+      "name": "_ZN9__gnu_cxxmiIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEENS_17__normal_iteratorIT_T0_E15difference_typeERKSE_SH_",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::difference_type __gnu_cxx::operator-<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >(__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > > const&, __gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > > const&)",
+      "entry": "0x69af",
+      "size": 66
+    },
+    {
+      "name": "_ZNSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE11_M_allocateEm",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_allocate(unsigned long)",
+      "entry": "0x69f2",
+      "size": 73
+    },
+    {
+      "name": "_ZSt12__to_addressINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEPT_S7_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >* std::__to_address<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*)",
+      "entry": "0x6a3b",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE11_S_relocateEPS5_S8_S8_RS6_",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_S_relocate(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >&)",
+      "entry": "0x6a49",
+      "size": 50
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEmiEl",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::operator-(long) const",
+      "entry": "0x6a7c",
+      "size": 66
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEdeEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::operator*() const",
+      "entry": "0x6abe",
+      "size": 17
+    },
+    {
+      "name": "_ZSt11__addressofISt10unique_ptrI5ShapeSt14default_deleteIS1_EEEPT_RS5_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >* std::__addressof<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >&)",
+      "entry": "0x6acf",
+      "size": 14
+    },
+    {
+      "name": "_ZSt8_DestroyISt10unique_ptrI5ShapeSt14default_deleteIS1_EEEvPT_",
+      "demangled": "void std::_Destroy<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >*)",
+      "entry": "0x6add",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP4RectSt14default_deleteIS0_EEEC1Ev",
+      "demangled": "std::_Tuple_impl<0ul, Rect*, std::default_delete<Rect> >::_Tuple_impl()",
+      "entry": "0x6af8",
+      "size": 39
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP4RectSt14default_deleteIS0_EEE7_M_headERS4_",
+      "demangled": "std::_Tuple_impl<0ul, Rect*, std::default_delete<Rect> >::_M_head(std::_Tuple_impl<0ul, Rect*, std::default_delete<Rect> >&)",
+      "entry": "0x6b1f",
+      "size": 26
+    },
+    {
+      "name": "_ZSt12__get_helperILm1ESt14default_deleteI4RectEJEERT0_RSt11_Tuple_implIXT_EJS3_DpT1_EE",
+      "demangled": "std::default_delete<Rect>& std::__get_helper<1ul, std::default_delete<Rect>>(std::_Tuple_impl<1ul, std::default_delete<Rect>>&)",
+      "entry": "0x6b39",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI5ShapeEEEC1IS0_I4RectEEEOT_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Shape> >::_Tuple_impl<std::default_delete<Rect> >(std::default_delete<Rect>&&)",
+      "entry": "0x6b54",
+      "size": 49
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP5ShapeLb0EEC1IRS1_EEOT_",
+      "demangled": "std::_Head_base<0ul, Shape*, false>::_Head_base<Shape*&>(Shape*&)",
+      "entry": "0x6b86",
+      "size": 41
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP5ShapeSt14default_deleteIS0_EEE7_M_headERS4_",
+      "demangled": "std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >::_M_head(std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >&)",
+      "entry": "0x6baf",
+      "size": 26
+    },
+    {
+      "name": "_ZSt12__get_helperILm1ESt14default_deleteI5ShapeEJEERT0_RSt11_Tuple_implIXT_EJS3_DpT1_EE",
+      "demangled": "std::default_delete<Shape>& std::__get_helper<1ul, std::default_delete<Shape>>(std::_Tuple_impl<1ul, std::default_delete<Shape>>&)",
+      "entry": "0x6bc9",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP5ShapeSt14default_deleteIS0_EEEC1EOS4_",
+      "demangled": "std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >::_Tuple_impl(std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >&&)",
+      "entry": "0x6be4",
+      "size": 52
+    },
+    {
+      "name": "_ZNSt5tupleIJP5ShapeSt14default_deleteIS0_EEEC1EOS4_",
+      "demangled": "std::tuple<Shape*, std::default_delete<Shape> >::tuple(std::tuple<Shape*, std::default_delete<Shape> >&&)",
+      "entry": "0x6c18",
+      "size": 38
+    },
+    {
+      "name": "_ZNSt15__uniq_ptr_implI5ShapeSt14default_deleteIS0_EEC1EOS3_",
+      "demangled": "std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >::__uniq_ptr_impl(std::__uniq_ptr_impl<Shape, std::default_delete<Shape> >&&)",
+      "entry": "0x6c3e",
+      "size": 70
+    },
+    {
+      "name": "_ZNKSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE8max_sizeEv",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::max_size() const",
+      "entry": "0x6c84",
+      "size": 34
+    },
+    {
+      "name": "_ZNKSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE4sizeEv",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::size() const",
+      "entry": "0x6ca6",
+      "size": 35
+    },
+    {
+      "name": "_ZSt3maxImERKT_S2_S2_",
+      "demangled": "unsigned long const& std::max<unsigned long>(unsigned long const&, unsigned long const&)",
+      "entry": "0x6cc9",
+      "size": 43
+    },
+    {
+      "name": "_ZSt12__relocate_aIPSt10unique_ptrI5ShapeSt14default_deleteIS1_EES5_SaIS4_EET0_T_S8_S7_RT1_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >* std::__relocate_a<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >(std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >&)",
+      "entry": "0x6cf4",
+      "size": 99
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP6SquareSt14default_deleteIS0_EEEC1Ev",
+      "demangled": "std::_Tuple_impl<0ul, Square*, std::default_delete<Square> >::_Tuple_impl()",
+      "entry": "0x6d58",
+      "size": 39
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP6SquareSt14default_deleteIS0_EEE7_M_headERS4_",
+      "demangled": "std::_Tuple_impl<0ul, Square*, std::default_delete<Square> >::_M_head(std::_Tuple_impl<0ul, Square*, std::default_delete<Square> >&)",
+      "entry": "0x6d7f",
+      "size": 26
+    },
+    {
+      "name": "_ZSt12__get_helperILm1ESt14default_deleteI6SquareEJEERT0_RSt11_Tuple_implIXT_EJS3_DpT1_EE",
+      "demangled": "std::default_delete<Square>& std::__get_helper<1ul, std::default_delete<Square>>(std::_Tuple_impl<1ul, std::default_delete<Square>>&)",
+      "entry": "0x6d99",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI5ShapeEEEC1IS0_I6SquareEEEOT_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Shape> >::_Tuple_impl<std::default_delete<Square> >(std::default_delete<Square>&&)",
+      "entry": "0x6db4",
+      "size": 49
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP6CircleSt14default_deleteIS0_EEEC1Ev",
+      "demangled": "std::_Tuple_impl<0ul, Circle*, std::default_delete<Circle> >::_Tuple_impl()",
+      "entry": "0x6de6",
+      "size": 39
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP6CircleSt14default_deleteIS0_EEE7_M_headERS4_",
+      "demangled": "std::_Tuple_impl<0ul, Circle*, std::default_delete<Circle> >::_M_head(std::_Tuple_impl<0ul, Circle*, std::default_delete<Circle> >&)",
+      "entry": "0x6e0d",
+      "size": 26
+    },
+    {
+      "name": "_ZSt12__get_helperILm1ESt14default_deleteI6CircleEJEERT0_RSt11_Tuple_implIXT_EJS3_DpT1_EE",
+      "demangled": "std::default_delete<Circle>& std::__get_helper<1ul, std::default_delete<Circle>>(std::_Tuple_impl<1ul, std::default_delete<Circle>>&)",
+      "entry": "0x6e27",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI5ShapeEEEC1IS0_I6CircleEEEOT_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Shape> >::_Tuple_impl<std::default_delete<Circle> >(std::default_delete<Circle>&&)",
+      "entry": "0x6e42",
+      "size": 49
+    },
+    {
+      "name": "_ZSt11__addressofINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEPT_RS6_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >* std::__addressof<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&)",
+      "entry": "0x6e73",
+      "size": 14
+    },
+    {
+      "name": "_ZSt8_DestroyINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEEvPT_",
+      "demangled": "void std::_Destroy<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*)",
+      "entry": "0x6e81",
+      "size": 27
+    },
+    {
+      "name": "_ZSt12__get_helperILm0EP5ShapeJSt14default_deleteIS0_EEERKT0_RKSt11_Tuple_implIXT_EJS4_DpT1_EE",
+      "demangled": "Shape* const& std::__get_helper<0ul, Shape*, std::default_delete<Shape> >(std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> > const&)",
+      "entry": "0x6e9c",
+      "size": 26
+    },
+    {
+      "name": "_ZNKSt6vectorIdSaIdEE8max_sizeEv",
+      "demangled": "std::vector<double, std::allocator<double> >::max_size() const",
+      "entry": "0x6eb6",
+      "size": 34
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPdSt6vectorIdSaIdEEEC1ERKS1_",
+      "demangled": "__gnu_cxx::__normal_iterator<double*, std::vector<double, std::allocator<double> > >::__normal_iterator(double* const&)",
+      "entry": "0x6ed8",
+      "size": 29
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPdSt6vectorIdSaIdEEE4baseEv",
+      "demangled": "__gnu_cxx::__normal_iterator<double*, std::vector<double, std::allocator<double> > >::base() const",
+      "entry": "0x6ef6",
+      "size": 14
+    },
+    {
+      "name": "_ZSt12__relocate_aIPdS0_SaIdEET0_T_S3_S2_RT1_",
+      "demangled": "double* std::__relocate_a<double*, double*, std::allocator<double> >(double*, double*, double*, std::allocator<double>&)",
+      "entry": "0x6f04",
+      "size": 99
+    },
+    {
+      "name": "_ZNKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE8max_sizeEv",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::max_size() const",
+      "entry": "0x6f68",
+      "size": 34
+    },
+    {
+      "name": "_ZN9__gnu_cxx17__normal_iteratorIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEEC1ERKS7_",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::__normal_iterator(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >* const&)",
+      "entry": "0x6f8a",
+      "size": 29
+    },
+    {
+      "name": "_ZNK9__gnu_cxx17__normal_iteratorIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorIS6_SaIS6_EEE4baseEv",
+      "demangled": "__gnu_cxx::__normal_iterator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::base() const",
+      "entry": "0x6fa8",
+      "size": 14
+    },
+    {
+      "name": "_ZSt12__relocate_aIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_SaIS5_EET0_T_S9_S8_RT1_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >* std::__relocate_a<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >&)",
+      "entry": "0x6fb6",
+      "size": 99
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI4RectEEEC1Ev",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Rect> >::_Tuple_impl()",
+      "entry": "0x701a",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP4RectLb0EEC1Ev",
+      "demangled": "std::_Head_base<0ul, Rect*, false>::_Head_base()",
+      "entry": "0x7036",
+      "size": 22
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP4RectLb0EE7_M_headERS2_",
+      "demangled": "std::_Head_base<0ul, Rect*, false>::_M_head(std::_Head_base<0ul, Rect*, false>&)",
+      "entry": "0x704c",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI4RectEEE7_M_headERS3_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Rect> >::_M_head(std::_Tuple_impl<1ul, std::default_delete<Rect> >&)",
+      "entry": "0x705a",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI5ShapeELb1EEC1IS0_I4RectEEEOT_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Shape>, true>::_Head_base<std::default_delete<Rect> >(std::default_delete<Rect>&&)",
+      "entry": "0x7074",
+      "size": 51
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP5ShapeLb0EE7_M_headERS2_",
+      "demangled": "std::_Head_base<0ul, Shape*, false>::_M_head(std::_Head_base<0ul, Shape*, false>&)",
+      "entry": "0x70a7",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI5ShapeEEE7_M_headERS3_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Shape> >::_M_head(std::_Tuple_impl<1ul, std::default_delete<Shape> >&)",
+      "entry": "0x70b5",
+      "size": 26
+    },
+    {
+      "name": "_ZSt4moveIRSt5tupleIJP5ShapeSt14default_deleteIS1_EEEEONSt16remove_referenceIT_E4typeEOS8_",
+      "demangled": "std::remove_reference<std::tuple<Shape*, std::default_delete<Shape> >&>::type&& std::move<std::tuple<Shape*, std::default_delete<Shape> >&>(std::tuple<Shape*, std::default_delete<Shape> >&)",
+      "entry": "0x70cf",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI5ShapeEEEC1EOS3_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Shape> >::_Tuple_impl(std::_Tuple_impl<1ul, std::default_delete<Shape> >&&)",
+      "entry": "0x70de",
+      "size": 15
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE11_S_max_sizeERKS5_",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_S_max_size(std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > const&)",
+      "entry": "0x70ed",
+      "size": 90
+    },
+    {
+      "name": "_ZNKSt12_Vector_baseISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE19_M_get_Tp_allocatorEv",
+      "demangled": "std::_Vector_base<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_get_Tp_allocator() const",
+      "entry": "0x7148",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__new_allocatorISt10unique_ptrI5ShapeSt14default_deleteIS1_EEE8allocateEmPKv",
+      "demangled": "std::__new_allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >::allocate(unsigned long, void const*)",
+      "entry": "0x7156",
+      "size": 103
+    },
+    {
+      "name": "_ZSt12__niter_baseIPSt10unique_ptrI5ShapeSt14default_deleteIS1_EEET_S6_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >* std::__niter_base<std::unique_ptr<Shape, std::default_delete<Shape> >*>(std::unique_ptr<Shape, std::default_delete<Shape> >*)",
+      "entry": "0x71bd",
+      "size": 14
+    },
+    {
+      "name": "_ZSt14__relocate_a_1IPSt10unique_ptrI5ShapeSt14default_deleteIS1_EES5_SaIS4_EET0_T_S8_S7_RT1_",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >* std::__relocate_a_1<std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >(std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >&)",
+      "entry": "0x71cb",
+      "size": 113
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI6SquareEEEC1Ev",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Square> >::_Tuple_impl()",
+      "entry": "0x723c",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP6SquareLb0EEC1Ev",
+      "demangled": "std::_Head_base<0ul, Square*, false>::_Head_base()",
+      "entry": "0x7258",
+      "size": 22
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP6SquareLb0EE7_M_headERS2_",
+      "demangled": "std::_Head_base<0ul, Square*, false>::_M_head(std::_Head_base<0ul, Square*, false>&)",
+      "entry": "0x726e",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI6SquareEEE7_M_headERS3_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Square> >::_M_head(std::_Tuple_impl<1ul, std::default_delete<Square> >&)",
+      "entry": "0x727c",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI5ShapeELb1EEC1IS0_I6SquareEEEOT_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Shape>, true>::_Head_base<std::default_delete<Square> >(std::default_delete<Square>&&)",
+      "entry": "0x7296",
+      "size": 51
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI6CircleEEEC1Ev",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Circle> >::_Tuple_impl()",
+      "entry": "0x72ca",
+      "size": 27
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP6CircleLb0EEC1Ev",
+      "demangled": "std::_Head_base<0ul, Circle*, false>::_Head_base()",
+      "entry": "0x72e6",
+      "size": 22
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP6CircleLb0EE7_M_headERS2_",
+      "demangled": "std::_Head_base<0ul, Circle*, false>::_M_head(std::_Head_base<0ul, Circle*, false>&)",
+      "entry": "0x72fc",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm1EJSt14default_deleteI6CircleEEE7_M_headERS3_",
+      "demangled": "std::_Tuple_impl<1ul, std::default_delete<Circle> >::_M_head(std::_Tuple_impl<1ul, std::default_delete<Circle> >&)",
+      "entry": "0x730a",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI5ShapeELb1EEC1IS0_I6CircleEEEOT_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Shape>, true>::_Head_base<std::default_delete<Circle> >(std::default_delete<Circle>&&)",
+      "entry": "0x7324",
+      "size": 51
+    },
+    {
+      "name": "_ZNSt11_Tuple_implILm0EJP5ShapeSt14default_deleteIS0_EEE7_M_headERKS4_",
+      "demangled": "std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> >::_M_head(std::_Tuple_impl<0ul, Shape*, std::default_delete<Shape> > const&)",
+      "entry": "0x7357",
+      "size": 26
+    },
+    {
+      "name": "_ZNSt6vectorIdSaIdEE11_S_max_sizeERKS0_",
+      "demangled": "std::vector<double, std::allocator<double> >::_S_max_size(std::allocator<double> const&)",
+      "entry": "0x7371",
+      "size": 90
+    },
+    {
+      "name": "_ZNKSt12_Vector_baseIdSaIdEE19_M_get_Tp_allocatorEv",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::_M_get_Tp_allocator() const",
+      "entry": "0x73cc",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__new_allocatorIdE8allocateEmPKv",
+      "demangled": "std::__new_allocator<double>::allocate(unsigned long, void const*)",
+      "entry": "0x73da",
+      "size": 103
+    },
+    {
+      "name": "_ZSt12__niter_baseIPdET_S1_",
+      "demangled": "double* std::__niter_base<double*>(double*)",
+      "entry": "0x7441",
+      "size": 14
+    },
+    {
+      "name": "_ZSt14__relocate_a_1IddENSt9enable_ifIXsrSt24__is_bitwise_relocatableIT_vE5valueEPS2_E4typeES4_S4_S4_RSaIT0_E",
+      "demangled": "std::enable_if<std::__is_bitwise_relocatable<double, void>::value, double*>::type std::__relocate_a_1<double, double>(double*, double*, double*, std::allocator<double>&)",
+      "entry": "0x744f",
+      "size": 105
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE11_S_max_sizeERKS6_",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_S_max_size(std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&)",
+      "entry": "0x74b8",
+      "size": 90
+    },
+    {
+      "name": "_ZNKSt12_Vector_baseINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EE19_M_get_Tp_allocatorEv",
+      "demangled": "std::_Vector_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::_M_get_Tp_allocator() const",
+      "entry": "0x7512",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt15__new_allocatorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE8allocateEmPKv",
+      "demangled": "std::__new_allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::allocate(unsigned long, void const*)",
+      "entry": "0x7520",
+      "size": 103
+    },
+    {
+      "name": "_ZSt12__niter_baseIPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEET_S7_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >* std::__niter_base<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*)",
+      "entry": "0x7587",
+      "size": 14
+    },
+    {
+      "name": "_ZSt14__relocate_a_1IPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_SaIS5_EET0_T_S9_S8_RT1_",
+      "demangled": "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >* std::__relocate_a_1<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >&)",
+      "entry": "0x7595",
+      "size": 113
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI4RectELb1EEC1Ev",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Rect>, true>::_Head_base()",
+      "entry": "0x7606",
+      "size": 11
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI4RectELb1EE7_M_headERS3_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Rect>, true>::_M_head(std::_Head_base<1ul, std::default_delete<Rect>, true>&)",
+      "entry": "0x7611",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt14default_deleteI5ShapeEC1I4RectvEERKS_IT_E",
+      "demangled": "std::default_delete<Shape>::default_delete<Rect, void>(std::default_delete<Rect> const&)",
+      "entry": "0x7620",
+      "size": 15
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI5ShapeELb1EE7_M_headERS3_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Shape>, true>::_M_head(std::_Head_base<1ul, std::default_delete<Shape>, true>&)",
+      "entry": "0x762f",
+      "size": 14
+    },
+    {
+      "name": "_ZSt3minImERKT_S2_S2_",
+      "demangled": "unsigned long const& std::min<unsigned long>(unsigned long const&, unsigned long const&)",
+      "entry": "0x763d",
+      "size": 43
+    },
+    {
+      "name": "_ZSt19__relocate_object_aISt10unique_ptrI5ShapeSt14default_deleteIS1_EES4_SaIS4_EEvPT_PT0_RT1_",
+      "demangled": "void std::__relocate_object_a<std::unique_ptr<Shape, std::default_delete<Shape> >, std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >(std::unique_ptr<Shape, std::default_delete<Shape> >*, std::unique_ptr<Shape, std::default_delete<Shape> >*, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > >&)",
+      "entry": "0x7668",
+      "size": 216
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI6SquareELb1EEC1Ev",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Square>, true>::_Head_base()",
+      "entry": "0x7740",
+      "size": 11
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI6SquareELb1EE7_M_headERS3_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Square>, true>::_M_head(std::_Head_base<1ul, std::default_delete<Square>, true>&)",
+      "entry": "0x774b",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt14default_deleteI5ShapeEC1I6SquarevEERKS_IT_E",
+      "demangled": "std::default_delete<Shape>::default_delete<Square, void>(std::default_delete<Square> const&)",
+      "entry": "0x775a",
+      "size": 15
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI6CircleELb1EEC1Ev",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Circle>, true>::_Head_base()",
+      "entry": "0x776a",
+      "size": 11
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm1ESt14default_deleteI6CircleELb1EE7_M_headERS3_",
+      "demangled": "std::_Head_base<1ul, std::default_delete<Circle>, true>::_M_head(std::_Head_base<1ul, std::default_delete<Circle>, true>&)",
+      "entry": "0x7775",
+      "size": 14
+    },
+    {
+      "name": "_ZNSt14default_deleteI5ShapeEC1I6CirclevEERKS_IT_E",
+      "demangled": "std::default_delete<Shape>::default_delete<Circle, void>(std::default_delete<Circle> const&)",
+      "entry": "0x7784",
+      "size": 15
+    },
+    {
+      "name": "_ZNSt10_Head_baseILm0EP5ShapeLb0EE7_M_headERKS2_",
+      "demangled": "std::_Head_base<0ul, Shape*, false>::_M_head(std::_Head_base<0ul, Shape*, false> const&)",
+      "entry": "0x7793",
+      "size": 14
+    },
+    {
+      "name": "_ZSt19__relocate_object_aINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES5_SaIS5_EEvPT_PT0_RT1_",
+      "demangled": "void std::__relocate_object_a<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >*, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >&)",
+      "entry": "0x77a1",
+      "size": 216
+    }
+  ]
+}

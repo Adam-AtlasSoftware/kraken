@@ -1,0 +1,33 @@
+{
+  "binary": "switch_vm-O2-stripped",
+  "ground_truth_from": "switch_vm-O2",
+  "sha256": "3e221a1404fe51053070c1934afa620fd6ac5d76da939b097bcaae8b4f02bdf8",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x1070",
+      "size": 81
+    },
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x11c0",
+      "size": 40
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x11f0",
+      "size": 1112
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0x1650",
+      "size": 272
+    }
+  ]
+}

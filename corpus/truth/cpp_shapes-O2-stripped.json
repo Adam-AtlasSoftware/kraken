@@ -1,0 +1,129 @@
+{
+  "binary": "cpp_shapes-O2-stripped",
+  "ground_truth_from": "cpp_shapes-O2",
+  "sha256": "bdf4d870478b93b6f57179aeeabaa2e622b51d0d10a08f44e8170d461fd61e34",
+  "source_file": "src/cpp_shapes.cpp",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x1380",
+      "size": 3719
+    },
+    {
+      "name": "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPcEEvT_S7_St20forward_iterator_tag.isra.0",
+      "demangled": "void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) [clone .isra.0]",
+      "entry": "0x2300",
+      "size": 146
+    },
+    {
+      "name": "_ZNK4Rect4areaEv",
+      "demangled": "Rect::area() const",
+      "entry": "0x23a0",
+      "size": 11
+    },
+    {
+      "name": "_ZNK4Rect9perimeterEv",
+      "demangled": "Rect::perimeter() const",
+      "entry": "0x23b0",
+      "size": 15
+    },
+    {
+      "name": "_ZNK6Circle4areaEv",
+      "demangled": "Circle::area() const",
+      "entry": "0x23c0",
+      "size": 22
+    },
+    {
+      "name": "_ZNK6Circle9perimeterEv",
+      "demangled": "Circle::perimeter() const",
+      "entry": "0x23e0",
+      "size": 14
+    },
+    {
+      "name": "_ZN4RectD1Ev",
+      "demangled": "Rect::~Rect()",
+      "entry": "0x23f0",
+      "size": 49
+    },
+    {
+      "name": "_ZN6SquareD1Ev",
+      "demangled": "Square::~Square()",
+      "entry": "0x2430",
+      "size": 49
+    },
+    {
+      "name": "_ZN6CircleD1Ev",
+      "demangled": "Circle::~Circle()",
+      "entry": "0x2470",
+      "size": 49
+    },
+    {
+      "name": "_ZN4RectD0Ev",
+      "demangled": "Rect::~Rect()",
+      "entry": "0x24b0",
+      "size": 54
+    },
+    {
+      "name": "_ZN6SquareD0Ev",
+      "demangled": "Square::~Square()",
+      "entry": "0x24f0",
+      "size": 54
+    },
+    {
+      "name": "_ZN6CircleD0Ev",
+      "demangled": "Circle::~Circle()",
+      "entry": "0x2530",
+      "size": 54
+    },
+    {
+      "name": "_ZNK5Shape8describeB5cxx11Ev",
+      "demangled": "Shape::describe[abi:cxx11]() const",
+      "entry": "0x2570",
+      "size": 1465
+    },
+    {
+      "name": "_ZNK6Square8describeB5cxx11Ev",
+      "demangled": "Square::describe[abi:cxx11]() const",
+      "entry": "0x2b30",
+      "size": 331
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EED1Ev",
+      "demangled": "std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::~vector()",
+      "entry": "0x2c80",
+      "size": 93
+    },
+    {
+      "name": "_ZNSt10unique_ptrI5ShapeSt14default_deleteIS0_EED1Ev",
+      "demangled": "std::unique_ptr<Shape, std::default_delete<Shape> >::~unique_ptr()",
+      "entry": "0x2ce0",
+      "size": 17
+    },
+    {
+      "name": "_ZSt11make_uniqueI6SquareJiEENSt8__detail9_MakeUniqIT_E15__single_objectEDpOT0_",
+      "demangled": "std::__detail::_MakeUniq<Square>::__single_object std::make_unique<Square, int>(int&&)",
+      "entry": "0x2d00",
+      "size": 185
+    },
+    {
+      "name": "_ZNSt12_Vector_baseIdSaIdEED1Ev",
+      "demangled": "std::_Vector_base<double, std::allocator<double> >::~_Vector_base()",
+      "entry": "0x2dc0",
+      "size": 33
+    },
+    {
+      "name": "_ZNSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EED1Ev",
+      "demangled": "std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >::~vector()",
+      "entry": "0x2df0",
+      "size": 101
+    },
+    {
+      "name": "_ZNSt6vectorISt10unique_ptrI5ShapeSt14default_deleteIS1_EESaIS4_EE17_M_realloc_appendIJS4_EEEvDpOT_",
+      "demangled": "void std::vector<std::unique_ptr<Shape, std::default_delete<Shape> >, std::allocator<std::unique_ptr<Shape, std::default_delete<Shape> > > >::_M_realloc_append<std::unique_ptr<Shape, std::default_delete<Shape> > >(std::unique_ptr<Shape, std::default_delete<Shape> >&&)",
+      "entry": "0x2e60",
+      "size": 280
+    }
+  ]
+}

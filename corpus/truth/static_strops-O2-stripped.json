@@ -1,0 +1,45 @@
+{
+  "binary": "static_strops-O2-stripped",
+  "ground_truth_from": "static_strops-O2",
+  "sha256": "3776c0f64f43190b2101d55fd4ebf01715f92dfbe23fa7c61effe8c3c6844a85",
+  "source_file": "src/static_strops.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x4015c0",
+      "size": 694
+    },
+    {
+      "name": "str_reverse",
+      "demangled": "str_reverse",
+      "entry": "0x401a00",
+      "size": 59
+    },
+    {
+      "name": "str_count_char",
+      "demangled": "str_count_char",
+      "entry": "0x401a40",
+      "size": 57
+    },
+    {
+      "name": "str_upper",
+      "demangled": "str_upper",
+      "entry": "0x401a80",
+      "size": 57
+    },
+    {
+      "name": "is_palindrome",
+      "demangled": "is_palindrome",
+      "entry": "0x401ac0",
+      "size": 71
+    },
+    {
+      "name": "join_words",
+      "demangled": "join_words",
+      "entry": "0x401b10",
+      "size": 158
+    }
+  ]
+}
