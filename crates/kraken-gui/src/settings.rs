@@ -130,6 +130,9 @@ pub fn describe_progress(p: &Progress) -> (String, Option<f32>) {
         Progress::Verifying { name } => (format!("Checking the {name} download"), None),
         Progress::Extracting { name } => (format!("Unpacking {name}"), None),
         Progress::BuildingExtension => ("Building the Ghidra extension".into(), None),
+        Progress::InstallingBundledExtension => {
+            ("Installing the bundled Ghidra extension".into(), None)
+        }
         Progress::Skipped { name } => (format!("{name} is already installed"), None),
     }
 }
@@ -319,7 +322,7 @@ impl Settings {
                     &layout,
                     &fetcher,
                     &specs,
-                    &SetupOptions::default(),
+                    &SetupOptions::with_bundled(false),
                     &mut report,
                 )
                 .await

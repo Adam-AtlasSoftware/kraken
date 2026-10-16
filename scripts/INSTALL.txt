@@ -1,0 +1,37 @@
+KRAKEN release archive
+======================
+
+Contents
+  bin/                       kraken (CLI and MCP server), krakend (daemon), kraken-gui
+  share/kraken/kraken-ghidra.jar
+                             prebuilt Ghidra extension; `kraken setup` installs it, so you do
+                             not need Gradle or a JDK to build it
+  docs/                      the documentation (open docs/index.html)
+  README.md, LICENSE, THIRD-PARTY-NOTICES.md
+
+Install
+  1. Put the three programs on your PATH, keeping share/kraken next to bin/:
+       Linux/macOS:  cp -R bin share ~/.local/        (and make sure ~/.local/bin is on PATH)
+       Windows:      unzip anywhere and add its bin folder to PATH
+     KRAKEN finds kraken-ghidra.jar next to the program or in ../share/kraken.
+  2. Run `kraken setup`. It downloads the pinned Ghidra and Temurin JDK 21 (both checked against
+     compiled-in SHA-256 hashes) into your user data directory. Nothing needs root.
+  3. Try it: `kraken --help`, or start `kraken-gui`.
+
+Verify the download
+  Compare the archive with SHA256SUMS from the release page:
+       sha256sum -c SHA256SUMS --ignore-missing
+  Release archives also carry GitHub build provenance attestations:
+       gh attestation verify <archive> --repo Adam-AtlasSoftware/kraken
+
+macOS
+  The binaries are ad-hoc signed, not notarized yet. If Gatekeeper blocks a program, run
+       xattr -d com.apple.quarantine bin/*
+  or allow it in System Settings -> Privacy & Security.
+
+Windows
+  The programs are not signed yet. SmartScreen may warn; choose "More info" -> "Run anyway".
+
+Uninstall
+  Remove the programs you copied, and the data directory (~/.local/share/kraken on Linux,
+  holding the downloaded Ghidra and JDK) and ~/.config/kraken.

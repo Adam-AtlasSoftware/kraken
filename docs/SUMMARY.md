@@ -4,6 +4,7 @@
 
 # User guide
 
+- [Install](install.md)
 - [Getting started](getting-started.md)
 - [Concepts](concepts.md)
 - [Connecting AI agents (MCP)](mcp.md)

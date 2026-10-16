@@ -37,6 +37,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Downloads every crate source (incl. other platforms') so the notices staleness test runs.
+      - run: cargo fetch --locked
       - run: cargo test --workspace
 
   deny:

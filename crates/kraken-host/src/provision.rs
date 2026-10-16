@@ -10,7 +10,8 @@
 //!   paths, links pointing outside) and strips group/other write bits.
 //! - The extension is compiled from the Java sources embedded in this binary with the
 //!   downloaded JDK's `javac` and `jar` (the extension needs only Ghidra's own jars on the
-//!   classpath, so no Gradle is involved).
+//!   classpath, so no Gradle is involved). A release ships a prebuilt `kraken-ghidra.jar` next to
+//!   the executable (or in `share/kraken`); setup installs that instead of compiling when present.
 //!
 //! Everything lives under `$XDG_DATA_HOME/kraken/runtime` (default `~/.local/share/kraken/runtime`),
 //! see [`Layout`]. The directory may have dotted elements: only Ghidra *project* paths cannot.
@@ -280,6 +281,8 @@ pub enum Progress {
     },
     /// Compiling the Ghidra extension.
     BuildingExtension,
+    /// Installing the `kraken-ghidra.jar` that ships with the release.
+    InstallingBundledExtension,
     /// An artifact is already installed and was left alone.
     Skipped {
         /// Artifact name.
@@ -948,6 +951,65 @@ pub fn build_extension(
 pub struct SetupOptions {
     /// Download, extract and build again even when everything is in place.
     pub force: bool,
+    /// A prebuilt `kraken-ghidra.jar` to install instead of compiling the embedded sources
+    /// (see [`bundled_ext_jar`]).
+    pub bundled_jar: Option<PathBuf>,
+}
+
+impl SetupOptions {
+    /// Options that use the jar shipped next to the running executable, when there is one.
+    pub fn with_bundled(force: bool) -> Self {
+        SetupOptions {
+            force,
+            bundled_jar: bundled_ext_jar(),
+        }
+    }
+}
+
+/// File name of the prebuilt extension in release archives.
+pub const BUNDLED_JAR_NAME: &str = "kraken-ghidra.jar";
+
+/// Candidate locations of a release's prebuilt extension relative to an executable:
+/// next to it, then `../share/kraken/` (the prefix layout).
+pub fn bundled_ext_jar_candidates(exe: &Path) -> Vec<PathBuf> {
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    let mut out = vec![dir.join(BUNDLED_JAR_NAME)];
+    if let Some(prefix) = dir.parent() {
+        out.push(prefix.join("share/kraken").join(BUNDLED_JAR_NAME));
+    }
+    out
+}
+
+/// The prebuilt extension that ships with this release, if one sits next to the running
+/// executable (symlinks resolved) or in `share/kraken`.
+pub fn bundled_ext_jar() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    bundled_ext_jar_candidates(&exe)
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+/// Copies a bundled jar to `out_jar` (atomically, via a sibling temporary file).
+pub fn install_bundled_extension(bundled: &Path, out_jar: &Path) -> Result<(), ProvisionError> {
+    let Some(parent) = out_jar.parent() else {
+        return Err(ProvisionError::Build(format!(
+            "{} has no parent directory",
+            out_jar.display()
+        )));
+    };
+    fs::create_dir_all(parent).map_err(io_err(format!("cannot create {}", parent.display())))?;
+    let tmp = parent.join(format!(".{BUNDLED_JAR_NAME}.{}.part", std::process::id()));
+    fs::copy(bundled, &tmp).map_err(io_err(format!("cannot copy {}", bundled.display())))?;
+    fs::rename(&tmp, out_jar).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        ProvisionError::Io {
+            what: format!("cannot write {}", out_jar.display()),
+            source: e,
+        }
+    })
 }
 
 /// Installs the pinned Ghidra and JDK and builds the extension. Idempotent: pieces that are
@@ -1011,6 +1073,12 @@ pub async fn setup(
 
     let have = layout.provisioned();
     if opts.force || installed_now || have.ext_jar.is_none() {
+        if let Some(bundled) = opts.bundled_jar.as_ref().filter(|p| p.is_file()) {
+            progress(Progress::InstallingBundledExtension);
+            let (b, out) = (bundled.clone(), layout.ext_jar());
+            blocking(move || install_bundled_extension(&b, &out)).await?;
+            return Ok(layout.provisioned());
+        }
         let (Some(ghidra), Some(jdk)) = (have.ghidra_home.clone(), have.java_home.clone()) else {
             return Err(ProvisionError::Build(
                 "Ghidra or the JDK is missing after extraction".into(),

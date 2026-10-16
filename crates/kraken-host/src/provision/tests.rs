@@ -735,3 +735,53 @@ fn the_real_extension_compiles_with_javac() {
     .unwrap();
     assert!(fs::metadata(&jar).unwrap().len() > 10_000);
 }
+
+#[test]
+fn bundled_jar_is_looked_up_next_to_the_exe_then_in_share() {
+    let c = bundled_ext_jar_candidates(Path::new("/opt/kraken/bin/kraken"));
+    assert_eq!(
+        c,
+        vec![
+            PathBuf::from("/opt/kraken/bin/kraken-ghidra.jar"),
+            PathBuf::from("/opt/kraken/share/kraken/kraken-ghidra.jar"),
+        ]
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[tokio::test]
+async fn a_bundled_jar_is_installed_instead_of_building() {
+    let t = tmp();
+    let layout = Layout::at(t.path().join("runtime"));
+    let bundled = write(t.path(), "kraken-ghidra.jar", b"prebuilt");
+    let (g, j, f) = fixture_specs();
+    let opts = SetupOptions {
+        force: false,
+        bundled_jar: Some(bundled),
+    };
+    let mut steps = Vec::new();
+    let p = setup(&layout, &f, &(g, j), &opts, &mut |s| steps.push(s))
+        .await
+        .unwrap();
+    assert!(p.is_complete(), "{p:?}");
+    assert_eq!(fs::read(p.ext_jar.unwrap()).unwrap(), b"prebuilt");
+    assert!(steps.contains(&Progress::InstallingBundledExtension));
+    assert!(!steps.contains(&Progress::BuildingExtension));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[tokio::test]
+async fn a_missing_bundled_jar_falls_back_to_building() {
+    let t = tmp();
+    let layout = Layout::at(t.path().join("runtime"));
+    let (g, j, f) = fixture_specs();
+    let opts = SetupOptions {
+        force: false,
+        bundled_jar: Some(t.path().join("absent.jar")),
+    };
+    let mut steps = Vec::new();
+    setup(&layout, &f, &(g, j), &opts, &mut |s| steps.push(s))
+        .await
+        .unwrap();
+    assert!(steps.contains(&Progress::BuildingExtension));
+}
