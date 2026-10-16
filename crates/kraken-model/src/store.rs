@@ -5,12 +5,12 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kraken_proto::VersionedLogOp;
-use kraken_proto::{ErrorCode, LogStatus, Page, PageRequest, ProtoError, Provenance, SyncState};
+use kraken_proto::{ErrorCode, LogStatus, Page, PageRequest, ProtoError, SyncState};
 use rusqlite::{Connection, OptionalExtension, ToSql, params};
 use serde_json::json;
 
 use crate::keys::op_key;
-use crate::state::{AnnotationState, apply_op, invert_op};
+use crate::state::{AnnotationState, apply_op};
 use crate::{
     Author, AuthorKind, EntryDraft, EntryId, HistoryFilter, LogEntryView, RunId, Watermark,
 };
@@ -58,6 +58,7 @@ const MIGRATIONS: &[&str] = &[
         ts INTEGER NOT NULL
     );",
     crate::proposals::MIGRATION,
+    crate::lineage::MIGRATION,
 ];
 
 /// Number of schema migrations this build knows; the version of a fully migrated database.
@@ -174,7 +175,11 @@ impl RawEntry {
     }
 }
 
-fn query_entries(conn: &Connection, tail: &str, args: &[&dyn ToSql]) -> Result<Vec<LogEntryView>> {
+pub(crate) fn query_entries(
+    conn: &Connection,
+    tail: &str,
+    args: &[&dyn ToSql],
+) -> Result<Vec<LogEntryView>> {
     let sql = format!("SELECT {ENTRY_COLS} FROM entries e {tail}");
     let mut stmt = conn.prepare_cached(&sql).map_err(db)?;
     let rows = stmt
@@ -185,7 +190,7 @@ fn query_entries(conn: &Connection, tail: &str, args: &[&dyn ToSql]) -> Result<V
     rows.into_iter().map(RawEntry::into_view).collect()
 }
 
-fn get_entry(conn: &Connection, id: EntryId) -> Result<LogEntryView> {
+pub(crate) fn get_entry(conn: &Connection, id: EntryId) -> Result<LogEntryView> {
     let id = id.0 as i64;
     query_entries(conn, "WHERE e.id = ?1", &[&id])?
         .pop()
@@ -207,7 +212,7 @@ fn version_info(conn: &Connection, key: &str) -> Result<(u64, Option<AuthorKind>
     }
 }
 
-fn bump_version(conn: &Connection, key: &str, kind: AuthorKind) -> Result<()> {
+pub(crate) fn bump_version(conn: &Connection, key: &str, kind: AuthorKind) -> Result<()> {
     conn.execute(
         "INSERT INTO entity_versions(key, version, last_author_kind) VALUES (?1, 1, ?2)
          ON CONFLICT(key) DO UPDATE SET version = version + 1,
@@ -229,13 +234,13 @@ fn ensure_run(conn: &Connection, draft: &EntryDraft) -> Result<()> {
     Ok(())
 }
 
-struct Disposition<'a> {
-    status: &'a str,
-    reason: Option<&'a str>,
-    undoes: Option<EntryId>,
+pub(crate) struct Disposition<'a> {
+    pub(crate) status: &'a str,
+    pub(crate) reason: Option<&'a str>,
+    pub(crate) undoes: Option<EntryId>,
 }
 
-fn insert_entry(
+pub(crate) fn insert_entry(
     conn: &Connection,
     draft: &EntryDraft,
     key: &str,
@@ -329,7 +334,7 @@ fn latest_snapshot(conn: &Connection) -> Result<(i64, AnnotationState)> {
     }
 }
 
-fn is_undone(conn: &Connection, id: i64) -> Result<bool> {
+pub(crate) fn is_undone(conn: &Connection, id: i64) -> Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM entries WHERE undoes_entry_id = ?1 AND status = 'applied')",
         [id],
@@ -636,46 +641,7 @@ impl Store {
 
     fn undo_ids(&mut self, ids: &[i64], by: &Author) -> Result<Vec<EntryId>> {
         let tx = self.conn.transaction().map_err(db)?;
-        let mut out = Vec::with_capacity(ids.len());
-        for &id in ids {
-            let orig = get_entry(&tx, EntryId(id as u64))?;
-            if orig.status != LogStatus::Applied || orig.undoes_entry_id.is_some() {
-                return Err(ProtoError::new(
-                    ErrorCode::InvalidArgument,
-                    format!("entry {id} is not an applied original entry"),
-                ));
-            }
-            if is_undone(&tx, id)? {
-                return Err(ProtoError::new(
-                    ErrorCode::InvalidArgument,
-                    format!("entry {id} is already undone"),
-                ));
-            }
-            let comp = invert_op(&orig.op.op);
-            let key = op_key(&comp)?;
-            let draft = EntryDraft {
-                op: VersionedLogOp::new(comp),
-                author: by.clone(),
-                run_id: orig.run_id.clone(),
-                provenance: match by.kind {
-                    AuthorKind::User => Provenance::User,
-                    AuthorKind::Agent => Provenance::Agent,
-                },
-                read_set: BTreeMap::new(),
-            };
-            let new_id = insert_entry(
-                &tx,
-                &draft,
-                &key,
-                Disposition {
-                    status: "applied",
-                    reason: None,
-                    undoes: Some(orig.id),
-                },
-            )?;
-            bump_version(&tx, &key, by.kind)?;
-            out.push(new_id);
-        }
+        let out = crate::lineage::compensate(&tx, ids, by, false)?;
         tx.commit().map_err(db)?;
         Ok(out)
     }

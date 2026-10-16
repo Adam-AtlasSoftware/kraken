@@ -58,3 +58,17 @@ pub fn op_anchor(op: &LogOp) -> &Anchor {
 pub fn op_key(op: &LogOp) -> Result<String, ProtoError> {
     entity_key(op_anchor(op), &op_aspect(op))
 }
+
+/// Short name of a log op, such as `rename` or `set_type`.
+pub fn op_kind_name(op: &LogOp) -> &'static str {
+    match op {
+        LogOp::Rename { .. } => "rename",
+        LogOp::SetType { .. } => "set_type",
+        LogOp::SetComment { .. } => "set_comment",
+        LogOp::CreateFunction { .. } => "create_function",
+        LogOp::DeleteFunction { .. } => "delete_function",
+        LogOp::SetFunctionBounds { .. } => "set_function_bounds",
+        LogOp::SetCodeData { .. } => "set_code_data",
+        LogOp::SetCallingConvention { .. } => "set_calling_convention",
+    }
+}
