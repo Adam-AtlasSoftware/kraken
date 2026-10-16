@@ -1,5 +1,7 @@
 //! `AcpHost` against the fake ACP agent (a separate process speaking raw ACP JSON-RPC).
 //! No network, no real agents.
+// These tests drive /bin/sh helpers and inspect processes the Unix way.
+#![cfg(unix)]
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
