@@ -7,7 +7,8 @@ const USAGE: &str = "usage: cargo xtask <command>
 Commands:
   ghidra-ext   Build the Ghidra extension in java/kraken-ghidra with Gradle.
                Honours GHIDRA_INSTALL_DIR, JAVA_HOME and GRADLE (default: `gradle`);
-               falls back to the pinned copies in ~/.cache/kraken-dev.";
+               falls back to the pinned copies in ~/.cache/kraken-dev.
+  schema       Write schema/kraken-proto.schema.json from the kraken-proto types.";
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -19,6 +20,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         Some("ghidra-ext") => ghidra_ext(),
+        Some("schema") => schema(),
         Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     };
     match result {
@@ -56,6 +58,17 @@ fn env_or_cache(var: &str, sub: &str) -> Result<PathBuf> {
     cache_dir()
         .and_then(|c| sole_child(&c.join(sub)))
         .ok_or_else(|| format!("{var} is not set and no copy found in ~/.cache/kraken-dev/{sub}"))
+}
+
+fn schema() -> Result<()> {
+    let path = workspace_root().join("schema/kraken-proto.schema.json");
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    fs::write(&path, kraken_proto::schema_json())
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    println!("schema: {}", path.display());
+    Ok(())
 }
 
 fn ghidra_ext() -> Result<()> {

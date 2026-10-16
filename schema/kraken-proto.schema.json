@@ -1,0 +1,1659 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProtoSchema",
+  "description": "Root of the generated JSON Schema: one field per top-level protocol type.\n\nNever sent on the wire; it exists so `cargo xtask schema` can emit a single schema whose\n`$defs` contain every protocol type.",
+  "type": "object",
+  "properties": {
+    "address_range": {
+      "description": "See [`AddressRange`].",
+      "$ref": "#/$defs/AddressRange"
+    },
+    "anchor": {
+      "description": "See [`Anchor`].",
+      "$ref": "#/$defs/Anchor"
+    },
+    "completeness": {
+      "description": "See [`Completeness`].",
+      "$ref": "#/$defs/Completeness"
+    },
+    "decompile_result": {
+      "description": "See [`DecompileResult`].",
+      "$ref": "#/$defs/DecompileResult"
+    },
+    "error": {
+      "description": "See [`ProtoError`].",
+      "$ref": "#/$defs/ProtoError"
+    },
+    "function_page": {
+      "description": "A page of function summaries, the canonical [`Page`] instantiation.",
+      "$ref": "#/$defs/Page"
+    },
+    "function_summary": {
+      "description": "See [`FunctionSummary`].",
+      "$ref": "#/$defs/FunctionSummary"
+    },
+    "handshake": {
+      "description": "See [`Handshake`].",
+      "$ref": "#/$defs/Handshake"
+    },
+    "locator": {
+      "description": "See [`Locator`].",
+      "$ref": "#/$defs/Locator"
+    },
+    "log_op": {
+      "description": "See [`VersionedLogOp`].",
+      "$ref": "#/$defs/VersionedLogOp"
+    },
+    "log_status": {
+      "description": "See [`LogStatus`].",
+      "$ref": "#/$defs/LogStatus"
+    },
+    "page_request": {
+      "description": "See [`PageRequest`].",
+      "$ref": "#/$defs/PageRequest"
+    },
+    "provenance": {
+      "description": "See [`Provenance`].",
+      "$ref": "#/$defs/Provenance"
+    },
+    "sync_state": {
+      "description": "See [`SyncState`].",
+      "$ref": "#/$defs/SyncState"
+    },
+    "type_def": {
+      "description": "See [`TypeDef`].",
+      "$ref": "#/$defs/TypeDef"
+    },
+    "type_ref": {
+      "description": "See [`TypeRef`].",
+      "$ref": "#/$defs/TypeRef"
+    },
+    "untrusted_string": {
+      "description": "An untrusted string, the canonical [`Untrusted`] instantiation.",
+      "$ref": "#/$defs/Untrusted_string"
+    }
+  },
+  "required": [
+    "locator",
+    "anchor",
+    "address_range",
+    "type_ref",
+    "type_def",
+    "log_op",
+    "provenance",
+    "log_status",
+    "sync_state",
+    "function_summary",
+    "decompile_result",
+    "completeness",
+    "error",
+    "handshake",
+    "page_request",
+    "function_page",
+    "untrusted_string"
+  ],
+  "$defs": {
+    "AddressRange": {
+      "description": "A half-open address range `[start, end)` in one address space.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "One past the last offset, hex-encoded.",
+          "$ref": "#/$defs/Hex64"
+        },
+        "space": {
+          "description": "Address-space name; defaults to `\"ram\"`.",
+          "type": "string",
+          "default": "ram"
+        },
+        "start": {
+          "description": "First offset in the range, hex-encoded.",
+          "$ref": "#/$defs/Hex64"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "Anchor": {
+      "description": "A stable reference persisted in the edit log: function entry plus content hash.\n\nSerialized with `\"kind\"` as the tag and always stored together with the log schema version.\nOnly `Native` is implemented; the other variants are reserved and rejected by [`Anchor::native`].",
+      "oneOf": [
+        {
+          "description": "An address plus the entry and content hash of the containing function.",
+          "type": "object",
+          "properties": {
+            "fn_entry": {
+              "description": "Entry offset of the containing function, hex-encoded.",
+              "$ref": "#/$defs/Hex64"
+            },
+            "fn_hash": {
+              "description": "Hash of the function's original bytes, as an opaque string.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "native"
+            },
+            "offset": {
+              "description": "Offset of the anchored item, hex-encoded.",
+              "$ref": "#/$defs/Hex64"
+            },
+            "space": {
+              "description": "Address-space name; defaults to `\"ram\"`.",
+              "type": "string",
+              "default": "ram"
+            }
+          },
+          "required": [
+            "kind",
+            "offset",
+            "fn_entry",
+            "fn_hash"
+          ]
+        },
+        {
+          "description": "Reserved: a managed-code member identified by a token.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "managed"
+            },
+            "token": {
+              "description": "Engine-specific member token.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ]
+        },
+        {
+          "description": "Reserved: an address within a bank of a banked address space.",
+          "type": "object",
+          "properties": {
+            "bank": {
+              "description": "Bank identifier.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "banked"
+            },
+            "offset": {
+              "description": "Offset within the bank, hex-encoded.",
+              "$ref": "#/$defs/Hex64"
+            },
+            "space": {
+              "description": "Address-space name.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "bank",
+            "space",
+            "offset"
+          ]
+        }
+      ]
+    },
+    "Bitfield": {
+      "description": "Position of a bitfield within its storage unit.",
+      "type": "object",
+      "properties": {
+        "bit_offset": {
+          "description": "Bit offset from the least significant bit of the storage unit at the field offset.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "bit_size": {
+          "description": "Width in bits.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "bit_offset",
+        "bit_size"
+      ]
+    },
+    "Capability": {
+      "description": "One named capability an engine or server offers.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Capability name such as `\"decompiler\"`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Capability-specific version.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "CodeData": {
+      "description": "What an address is defined as.\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "Disassembled code.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "code"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Data of an optional type.",
+          "type": "object",
+          "properties": {
+            "data_type": {
+              "description": "Data type, if known.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TypeRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "data"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Neither code nor data.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "undefined"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "CommentKind": {
+      "description": "Kind of listing comment.",
+      "oneOf": [
+        {
+          "description": "Comment above a function or label.",
+          "type": "string",
+          "const": "plate"
+        },
+        {
+          "description": "Comment on the line before an instruction.",
+          "type": "string",
+          "const": "pre"
+        },
+        {
+          "description": "End-of-line comment.",
+          "type": "string",
+          "const": "eol"
+        },
+        {
+          "description": "Comment on the line after an instruction.",
+          "type": "string",
+          "const": "post"
+        },
+        {
+          "description": "Repeatable comment shown at every reference.",
+          "type": "string",
+          "const": "repeatable"
+        }
+      ]
+    },
+    "Completeness": {
+      "description": "How much analysis backs a result (decision 36).\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "All analysis relevant to this result has finished.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Analysis is still running or was cut short.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "partial"
+            },
+            "reason": {
+              "description": "What is missing.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "description": "The item has not been analysed at all.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_analyzed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "Composite": {
+      "description": "Layout of a struct or union.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "description": "Alignment in bytes.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "fields": {
+          "description": "Fields in declaration order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Field"
+          }
+        },
+        "name": {
+          "description": "Type name.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Total size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "align",
+        "fields"
+      ]
+    },
+    "DecompileResult": {
+      "description": "The decompilation of one function.",
+      "type": "object",
+      "properties": {
+        "completeness": {
+          "description": "Analysis completeness behind this result.",
+          "$ref": "#/$defs/Completeness"
+        },
+        "function": {
+          "description": "The decompiled function's entry.",
+          "$ref": "#/$defs/Locator"
+        },
+        "language": {
+          "description": "Output language tag; `\"c\"` by default.",
+          "type": "string",
+          "default": "c"
+        },
+        "text": {
+          "description": "Decompiled source text; binary-derived, so sanitise it at ingestion.",
+          "type": "string"
+        },
+        "tokens": {
+          "description": "Token spans into `text`, in increasing start order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Token"
+          }
+        },
+        "warnings": {
+          "description": "Non-fatal problems the decompiler reported.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "function",
+        "text",
+        "tokens",
+        "warnings",
+        "completeness"
+      ]
+    },
+    "EnumDef": {
+      "description": "An enum definition.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Type name.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Size in bytes.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "variants": {
+          "description": "Enumerators in declaration order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnumVariant"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "variants"
+      ]
+    },
+    "EnumVariant": {
+      "description": "One enumerator.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Enumerator name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Enumerator value.",
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "ErrorCode": {
+      "description": "Stable machine-readable error code; the snake_case strings never change once released.",
+      "oneOf": [
+        {
+          "description": "The addressed entity does not exist.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "A request argument is malformed or out of range.",
+          "type": "string",
+          "const": "invalid_argument"
+        },
+        {
+          "description": "A write was based on a read that is no longer current; re-read and retry.",
+          "type": "string",
+          "const": "conflict_stale_read"
+        },
+        {
+          "description": "A concurrent human edit won over an agent edit.",
+          "type": "string",
+          "const": "rejected_human_priority"
+        },
+        {
+          "description": "The engine refused to apply a change.",
+          "type": "string",
+          "const": "engine_rejected"
+        },
+        {
+          "description": "The operation or variant is not supported by this engine or version.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The result depends on analysis that has not finished.",
+          "type": "string",
+          "const": "analysis_incomplete"
+        },
+        {
+          "description": "The deadline passed before the operation finished.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The operation was cancelled.",
+          "type": "string",
+          "const": "cancelled"
+        },
+        {
+          "description": "An unexpected internal failure.",
+          "type": "string",
+          "const": "internal"
+        }
+      ]
+    },
+    "Field": {
+      "description": "One field of a struct or union.",
+      "type": "object",
+      "properties": {
+        "bitfield": {
+          "description": "Bit position and width when the field is a bitfield.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bitfield"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Field name.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Byte offset from the start of the composite.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "type": {
+          "description": "Field type.",
+          "$ref": "#/$defs/TypeRef"
+        }
+      },
+      "required": [
+        "name",
+        "offset",
+        "type"
+      ]
+    },
+    "FunctionPrototype": {
+      "description": "A function prototype.",
+      "type": "object",
+      "properties": {
+        "calling_convention": {
+          "description": "Calling convention name, such as `\"__cdecl\"`; empty for the engine default.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Prototype name; absent for anonymous prototypes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "noreturn": {
+          "description": "Whether the function never returns.",
+          "type": "boolean"
+        },
+        "params": {
+          "description": "Parameters in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Param"
+          }
+        },
+        "return_type": {
+          "description": "Return type.",
+          "$ref": "#/$defs/TypeRef"
+        },
+        "varargs": {
+          "description": "Whether the function takes variable arguments.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "return_type",
+        "params",
+        "calling_convention",
+        "varargs",
+        "noreturn"
+      ]
+    },
+    "FunctionSummary": {
+      "description": "A short description of one function for listings.",
+      "type": "object",
+      "properties": {
+        "completeness": {
+          "description": "Analysis completeness for this function.",
+          "$ref": "#/$defs/Completeness"
+        },
+        "fn_hash": {
+          "description": "Content hash of the function's bytes, as used in anchors.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locator": {
+          "description": "Entry point.",
+          "$ref": "#/$defs/Locator"
+        },
+        "name": {
+          "description": "Current function name; binary-derived, so sanitise it at ingestion.",
+          "type": "string"
+        },
+        "signature": {
+          "description": "Rendered signature, if known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "description": "Size of the function body in bytes, if known.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "locator",
+        "name",
+        "completeness"
+      ]
+    },
+    "Handshake": {
+      "description": "Handshake payload: protocol version, build identity and capability list.",
+      "type": "object",
+      "properties": {
+        "build": {
+          "description": "Free-form build identifier of the sender.",
+          "type": "string"
+        },
+        "capabilities": {
+          "description": "Capabilities the sender offers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          }
+        },
+        "protocol": {
+          "description": "Protocol version of the sender.",
+          "$ref": "#/$defs/ProtocolVersion"
+        }
+      },
+      "required": [
+        "protocol",
+        "build",
+        "capabilities"
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "type": "string",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$"
+    },
+    "Locator": {
+      "description": "Where something lives in a program; protocol-level and extensible with new variants.\n\nSerialized with `\"kind\"` as the tag. Managed-code member tokens are added when an engine needs them.",
+      "oneOf": [
+        {
+          "description": "An offset in a named address space.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "native"
+            },
+            "offset": {
+              "description": "Offset within the space, hex-encoded on the wire.",
+              "$ref": "#/$defs/Hex64"
+            },
+            "space": {
+              "description": "Address-space name; defaults to `\"ram\"`.",
+              "type": "string",
+              "default": "ram"
+            }
+          },
+          "required": [
+            "kind",
+            "offset"
+          ]
+        }
+      ]
+    },
+    "LogOp": {
+      "description": "One edit-log operation; each carries the anchor it applies to and the old value for undo.",
+      "oneOf": [
+        {
+          "description": "Rename a symbol.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Target of the rename.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "new_name": {
+              "description": "Name after the edit.",
+              "type": "string"
+            },
+            "old_name": {
+              "description": "Name before the edit, if any.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "rename"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "new_name"
+          ]
+        },
+        {
+          "description": "Set the type of an item.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Target item.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "new": {
+              "description": "Type after the edit.",
+              "$ref": "#/$defs/TypeRef"
+            },
+            "old": {
+              "description": "Type before the edit, if any.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TypeRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "set_type"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "new"
+          ]
+        },
+        {
+          "description": "Set or clear a comment.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Target item.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "comment_kind": {
+              "description": "Which comment slot is edited.",
+              "$ref": "#/$defs/CommentKind"
+            },
+            "new": {
+              "description": "Text after the edit; absent clears the comment.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "description": "Text before the edit, if any.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "set_comment"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "comment_kind"
+          ]
+        },
+        {
+          "description": "Create a function.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Function entry.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "body": {
+              "description": "Explicit body, if the engine should not infer it.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AddressRange"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "description": "Name to give the function, if any.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "create_function"
+            }
+          },
+          "required": [
+            "op",
+            "anchor"
+          ]
+        },
+        {
+          "description": "Delete a function.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Function entry.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "old_body": {
+              "description": "Body before the edit, kept for undo.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AddressRange"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "delete_function"
+            }
+          },
+          "required": [
+            "op",
+            "anchor"
+          ]
+        },
+        {
+          "description": "Change a function's address range.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Function entry.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "new": {
+              "description": "Body after the edit.",
+              "$ref": "#/$defs/AddressRange"
+            },
+            "old": {
+              "description": "Body before the edit, if known.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AddressRange"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "set_function_bounds"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "new"
+          ]
+        },
+        {
+          "description": "Mark an address as code, data or undefined.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Target address.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "length": {
+              "description": "Length in bytes of the affected region, if not implied by the type.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Hex64"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "new": {
+              "description": "Definition after the edit.",
+              "$ref": "#/$defs/CodeData"
+            },
+            "old": {
+              "description": "Definition before the edit, if known.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CodeData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "set_code_data"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "new"
+          ]
+        },
+        {
+          "description": "Set a function's calling convention.",
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "description": "Function entry.",
+              "$ref": "#/$defs/Anchor"
+            },
+            "new": {
+              "description": "Convention after the edit.",
+              "type": "string"
+            },
+            "old": {
+              "description": "Convention before the edit, if known.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "type": "string",
+              "const": "set_calling_convention"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "new"
+          ]
+        }
+      ]
+    },
+    "LogStatus": {
+      "description": "Outcome of applying a log entry (decision 27).\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "The entry took effect.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "applied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The entry was refused.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "rejected"
+            },
+            "reason": {
+              "description": "Why it was refused.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "description": "The anchor could no longer be resolved.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orphaned"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "Page": {
+      "description": "One page of results with an optional cursor for the next page.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "description": "The items on this page.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FunctionSummary"
+          }
+        },
+        "next_cursor": {
+          "description": "Cursor for the next page; absent on the last page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "description": "Total item count when the engine can cheaply provide it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "items"
+      ]
+    },
+    "PageRequest": {
+      "description": "Cursor and size for one page of a paginated query.",
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "description": "Opaque cursor from a previous [`Page::next_cursor`]; absent for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Requested page size; clamped to [`MAX_PAGE_LIMIT`].",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    },
+    "Param": {
+      "description": "One parameter of a function prototype.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Parameter name, if known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storage": {
+          "description": "Storage description such as `\"RDI\"` or `\"stack+8\"`, if known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "Parameter type.",
+          "$ref": "#/$defs/TypeRef"
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "Primitive": {
+      "description": "A primitive type with explicit size and signedness.",
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "What kind of primitive this is.",
+          "$ref": "#/$defs/PrimitiveClass"
+        },
+        "signed": {
+          "description": "Whether the type is signed (meaningful for `int`, `char` and `float`).",
+          "type": "boolean"
+        },
+        "size": {
+          "description": "Size in bytes.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "class",
+        "size",
+        "signed"
+      ]
+    },
+    "PrimitiveClass": {
+      "description": "Class of a primitive type.",
+      "oneOf": [
+        {
+          "description": "No value (`void`); size is 0.",
+          "type": "string",
+          "const": "void"
+        },
+        {
+          "description": "Boolean.",
+          "type": "string",
+          "const": "bool"
+        },
+        {
+          "description": "Integer.",
+          "type": "string",
+          "const": "int"
+        },
+        {
+          "description": "Floating point.",
+          "type": "string",
+          "const": "float"
+        },
+        {
+          "description": "Character.",
+          "type": "string",
+          "const": "char"
+        },
+        {
+          "description": "Opaque bytes of known size and unknown meaning.",
+          "type": "string",
+          "const": "undefined"
+        }
+      ]
+    },
+    "ProtoError": {
+      "description": "A protocol error: a stable code, a human-readable message and optional structured details.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "Stable error code.",
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "details": {
+          "description": "Optional code-specific structured details."
+        },
+        "message": {
+          "description": "Human-readable description; not for programmatic matching.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ProtocolVersion": {
+      "description": "Protocol version; a different `major` is incompatible.",
+      "type": "object",
+      "properties": {
+        "major": {
+          "description": "Incompatible-change counter.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "minor": {
+          "description": "Compatible-addition counter.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "major",
+        "minor"
+      ]
+    },
+    "Provenance": {
+      "description": "Where an annotation came from (decision 61).",
+      "oneOf": [
+        {
+          "description": "Entered by a human.",
+          "type": "string",
+          "const": "user"
+        },
+        {
+          "description": "Produced by an agent from its own reasoning.",
+          "type": "string",
+          "const": "agent"
+        },
+        {
+          "description": "Produced by an agent from text found in the binary; always treated as untrusted.",
+          "type": "string",
+          "const": "agent_from_binary_text"
+        }
+      ]
+    },
+    "SyncState": {
+      "description": "Whether a log entry has reached the engine (decision 57).\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "Not yet sent to the engine.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pending"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Applied by the engine.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pushed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The engine refused the change.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "engine_rejected"
+            },
+            "reason": {
+              "description": "The engine's reason.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "Token": {
+      "description": "A span of the decompiled text with optional links to program entities.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "End byte offset into the text (exclusive).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "Syntactic category.",
+          "$ref": "#/$defs/TokenKind"
+        },
+        "start": {
+          "description": "Start byte offset into the text (inclusive).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "symbol": {
+          "description": "Symbol name the token refers to, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "description": "Program location the token refers to, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Locator"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "varnode": {
+          "description": "Engine-neutral varnode description such as `\"unique:0x1f80:4\"`, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "kind"
+      ]
+    },
+    "TokenKind": {
+      "description": "Syntactic category of a decompiler token.",
+      "oneOf": [
+        {
+          "description": "Language keyword.",
+          "type": "string",
+          "const": "keyword"
+        },
+        {
+          "description": "Local variable or parameter.",
+          "type": "string",
+          "const": "variable"
+        },
+        {
+          "description": "Function name.",
+          "type": "string",
+          "const": "function"
+        },
+        {
+          "description": "Type name.",
+          "type": "string",
+          "const": "type"
+        },
+        {
+          "description": "Struct or union field.",
+          "type": "string",
+          "const": "field"
+        },
+        {
+          "description": "Literal or named constant.",
+          "type": "string",
+          "const": "constant"
+        },
+        {
+          "description": "Comment.",
+          "type": "string",
+          "const": "comment"
+        },
+        {
+          "description": "Operator or punctuation.",
+          "type": "string",
+          "const": "op"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "TypeDef": {
+      "description": "A named type definition.\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "A struct.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "struct"
+            }
+          },
+          "$ref": "#/$defs/Composite",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A union.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "union"
+            }
+          },
+          "$ref": "#/$defs/Composite",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An enum.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "enum"
+            }
+          },
+          "$ref": "#/$defs/EnumDef",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A typedef.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "typedef"
+            }
+          },
+          "$ref": "#/$defs/TypedefDef",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A named function prototype.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "function"
+            }
+          },
+          "$ref": "#/$defs/FunctionPrototype",
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "TypeRef": {
+      "description": "A use of a type: either a named definition or an anonymous composition of references.\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "A reference to a [`TypeDef`] by its name.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "named"
+            },
+            "name": {
+              "description": "Name of the referenced definition.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "description": "A primitive type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "primitive"
+            }
+          },
+          "$ref": "#/$defs/Primitive",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A pointer with an explicit size in bytes.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pointer"
+            },
+            "size": {
+              "description": "Pointer size in bytes.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "target": {
+              "description": "The pointed-to type.",
+              "$ref": "#/$defs/TypeRef"
+            }
+          },
+          "required": [
+            "kind",
+            "target",
+            "size"
+          ]
+        },
+        {
+          "description": "A fixed-size array.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "description": "Number of elements.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "element": {
+              "description": "Element type.",
+              "$ref": "#/$defs/TypeRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "element",
+            "count"
+          ]
+        },
+        {
+          "description": "An anonymous function prototype (for function pointers).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "function"
+            }
+          },
+          "$ref": "#/$defs/FunctionPrototype",
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "TypedefDef": {
+      "description": "A typedef definition.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The new name.",
+          "type": "string"
+        },
+        "target": {
+          "description": "The aliased type.",
+          "$ref": "#/$defs/TypeRef"
+        }
+      },
+      "required": [
+        "name",
+        "target"
+      ]
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "type": "object",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ]
+    },
+    "VersionedLogOp": {
+      "description": "A [`LogOp`] together with the schema version it was written under.",
+      "type": "object",
+      "properties": {
+        "op": {
+          "description": "The operation.",
+          "$ref": "#/$defs/LogOp"
+        },
+        "schema_version": {
+          "description": "Log schema version; see [`LOG_SCHEMA_VERSION`].",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "op"
+      ]
+    }
+  }
+}

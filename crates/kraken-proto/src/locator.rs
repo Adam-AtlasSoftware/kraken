@@ -1,0 +1,166 @@
+//! Engine-neutral locations and persisted log anchors.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::error::{ErrorCode, ProtoError};
+use crate::hex::Hex64;
+
+/// Name of the default address space.
+pub const DEFAULT_SPACE: &str = "ram";
+
+fn default_space() -> String {
+    DEFAULT_SPACE.to_string()
+}
+
+/// Where something lives in a program; protocol-level and extensible with new variants.
+///
+/// Serialized with `"kind"` as the tag. Managed-code member tokens are added when an engine needs them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Locator {
+    /// An offset in a named address space.
+    Native {
+        /// Address-space name; defaults to `"ram"`.
+        #[serde(default = "default_space")]
+        space: String,
+        /// Offset within the space, hex-encoded on the wire.
+        offset: Hex64,
+    },
+}
+
+impl Locator {
+    /// A locator in the default `"ram"` space.
+    pub fn ram(offset: u64) -> Self {
+        Locator::Native {
+            space: default_space(),
+            offset: Hex64(offset),
+        }
+    }
+}
+
+/// A stable reference persisted in the edit log: function entry plus content hash.
+///
+/// Serialized with `"kind"` as the tag and always stored together with the log schema version.
+/// Only `Native` is implemented; the other variants are reserved and rejected by [`Anchor::native`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Anchor {
+    /// An address plus the entry and content hash of the containing function.
+    Native {
+        /// Address-space name; defaults to `"ram"`.
+        #[serde(default = "default_space")]
+        space: String,
+        /// Offset of the anchored item, hex-encoded.
+        offset: Hex64,
+        /// Entry offset of the containing function, hex-encoded.
+        fn_entry: Hex64,
+        /// Hash of the function's original bytes, as an opaque string.
+        fn_hash: String,
+    },
+    /// Reserved: a managed-code member identified by a token.
+    Managed {
+        /// Engine-specific member token.
+        token: String,
+    },
+    /// Reserved: an address within a bank of a banked address space.
+    Banked {
+        /// Bank identifier.
+        bank: String,
+        /// Address-space name.
+        space: String,
+        /// Offset within the bank, hex-encoded.
+        offset: Hex64,
+    },
+}
+
+impl Anchor {
+    /// Returns `(space, offset, fn_entry, fn_hash)` for a native anchor, or an `unsupported` error
+    /// for the reserved variants.
+    pub fn native(&self) -> Result<(&str, Hex64, Hex64, &str), ProtoError> {
+        match self {
+            Anchor::Native {
+                space,
+                offset,
+                fn_entry,
+                fn_hash,
+            } => Ok((space, *offset, *fn_entry, fn_hash)),
+            Anchor::Managed { .. } => Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "managed anchors are not supported yet",
+            )),
+            Anchor::Banked { .. } => Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "banked anchors are not supported yet",
+            )),
+        }
+    }
+}
+
+/// A half-open address range `[start, end)` in one address space.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct AddressRange {
+    /// Address-space name; defaults to `"ram"`.
+    #[serde(default = "default_space")]
+    pub space: String,
+    /// First offset in the range, hex-encoded.
+    pub start: Hex64,
+    /// One past the last offset, hex-encoded.
+    pub end: Hex64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locator_round_trip_and_default_space() {
+        let l = Locator::ram(0x401000);
+        let json = serde_json::to_value(&l).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"kind": "native", "space": "ram", "offset": "0x401000"})
+        );
+        assert_eq!(serde_json::from_value::<Locator>(json).unwrap(), l);
+        let no_space: Locator =
+            serde_json::from_str(r#"{"kind":"native","offset":"0x10"}"#).unwrap();
+        assert_eq!(no_space, Locator::ram(0x10));
+    }
+
+    #[test]
+    fn anchor_round_trip_and_reserved_variants() {
+        let native = Anchor::Native {
+            space: "ram".into(),
+            offset: Hex64(0x401010),
+            fn_entry: Hex64(0x401000),
+            fn_hash: "abc123".into(),
+        };
+        let managed = Anchor::Managed {
+            token: "0x06000001".into(),
+        };
+        let banked = Anchor::Banked {
+            bank: "2".into(),
+            space: "rom".into(),
+            offset: Hex64(0x8000),
+        };
+        for a in [&native, &managed, &banked] {
+            let back: Anchor = serde_json::from_str(&serde_json::to_string(a).unwrap()).unwrap();
+            assert_eq!(&back, a);
+        }
+        assert!(native.native().is_ok());
+        assert_eq!(managed.native().unwrap_err().code, ErrorCode::Unsupported);
+        assert_eq!(banked.native().unwrap_err().code, ErrorCode::Unsupported);
+    }
+
+    #[test]
+    fn range_round_trip() {
+        let r = AddressRange {
+            space: "ram".into(),
+            start: Hex64(0x1000),
+            end: Hex64(0x1040),
+        };
+        let back: AddressRange = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back, r);
+    }
+}
