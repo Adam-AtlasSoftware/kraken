@@ -376,13 +376,23 @@ mod tests {
 
     #[test]
     fn config_path_follows_xdg() {
-        let p = KrakenConfig::default_path_with(&env_of(&[
-            ("XDG_CONFIG_HOME", "/xdg"),
-            ("HOME", "/home/u"),
-        ]));
-        assert_eq!(p, Some("/xdg/kraken/config.toml".into()));
-        let p = KrakenConfig::default_path_with(&env_of(&[("HOME", "/home/u")]));
-        assert_eq!(p, Some("/home/u/.config/kraken/config.toml".into()));
+        // An absolute root on every platform (a bare `/xdg` has no drive on Windows).
+        let abs = |p: &str| {
+            if cfg!(windows) {
+                format!("C:{}", p.replace('/', "\\"))
+            } else {
+                p.to_string()
+            }
+        };
+        let (xdg, home) = (abs("/xdg"), abs("/home/u"));
+        let p =
+            KrakenConfig::default_path_with(&env_of(&[("XDG_CONFIG_HOME", &xdg), ("HOME", &home)]));
+        assert_eq!(p, Some(PathBuf::from(&xdg).join("kraken/config.toml")));
+        let p = KrakenConfig::default_path_with(&env_of(&[("HOME", &home)]));
+        assert_eq!(
+            p,
+            Some(PathBuf::from(&home).join(".config/kraken/config.toml"))
+        );
         let p = KrakenConfig::default_path_with(&env_of(&[(ENV_CONFIG, "/c.toml")]));
         assert_eq!(p, Some("/c.toml".into()));
     }

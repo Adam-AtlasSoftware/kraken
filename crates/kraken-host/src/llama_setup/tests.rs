@@ -160,7 +160,16 @@ fn choose_defaults_to_the_first_and_explains_misses() {
 
 #[test]
 fn data_dir_follows_xdg_then_home() {
-    let env = |pairs: Vec<(&'static str, &'static str)>| {
+    // An absolute root on every platform (a bare `/x` has no drive on Windows).
+    let abs = |p: &str| {
+        if cfg!(windows) {
+            format!("C:{}", p.replace('/', "\\"))
+        } else {
+            p.to_string()
+        }
+    };
+    let (x, h) = (abs("/x"), abs("/h"));
+    let env = |pairs: Vec<(&'static str, String)>| {
         move |k: &str| {
             pairs
                 .iter()
@@ -169,16 +178,22 @@ fn data_dir_follows_xdg_then_home() {
         }
     };
     assert_eq!(
-        data_dir_with(&env(vec![("XDG_DATA_HOME", "/x"), ("HOME", "/h")])),
-        Some(PathBuf::from("/x/kraken"))
+        data_dir_with(&env(vec![
+            ("XDG_DATA_HOME", x.clone()),
+            ("HOME", h.clone())
+        ])),
+        Some(PathBuf::from(&x).join("kraken"))
     );
     assert_eq!(
-        data_dir_with(&env(vec![("HOME", "/h")])),
-        Some(PathBuf::from("/h/.local/share/kraken"))
+        data_dir_with(&env(vec![("HOME", h.clone())])),
+        Some(PathBuf::from(&h).join(".local/share/kraken"))
     );
     assert_eq!(
-        data_dir_with(&env(vec![("XDG_DATA_HOME", "relative"), ("HOME", "/h")])),
-        Some(PathBuf::from("/h/.local/share/kraken"))
+        data_dir_with(&env(vec![
+            ("XDG_DATA_HOME", "relative".to_string()),
+            ("HOME", h.clone())
+        ])),
+        Some(PathBuf::from(&h).join(".local/share/kraken"))
     );
 }
 

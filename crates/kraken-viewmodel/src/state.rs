@@ -344,6 +344,14 @@ impl AnalysisState {
     pub fn running(&self) -> bool {
         self.phase == AnalysisPhase::Running
     }
+
+    /// True once the run ended, however it ended.
+    pub fn is_finished(&self) -> bool {
+        matches!(
+            self.phase,
+            AnalysisPhase::Complete | AnalysisPhase::Failed | AnalysisPhase::Cancelled
+        )
+    }
 }
 
 /// How loud a toast is.
