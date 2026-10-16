@@ -5,6 +5,7 @@
 use kraken_agent::ChatProvider;
 use kraken_host::backend::CommandBackend;
 use kraken_registry::CallContext;
+use kraken_registry::commands::RewriteMode;
 use tokio_util::sync::CancellationToken;
 
 use crate::abi::Signature;
@@ -12,9 +13,10 @@ use crate::difftest::{DiffOptions, InputSpec, run_differential};
 use crate::error::RewriteError;
 use crate::fetch::{FunctionContext, fetch_function};
 use crate::oracle::FunctionOracle;
+use crate::store::RewriteStore;
 use crate::targets::Target;
 use crate::task::{Budget, RewriteTask};
-use crate::unit::{CalleeRef, OracleInfo, Provenance, RewriteUnit, UnitSource, UnitStore};
+use crate::unit::{CalleeRef, OracleInfo, Provenance, RewriteUnit, UnitSource};
 use crate::{EMULATOR_PIN, ORACLE_KIND};
 
 /// Everything needed to rewrite and check one function.
@@ -42,6 +44,7 @@ impl RewriteJob {
             callees: self.callees.clone(),
             signature: self.signature.clone(),
             layout_notes: self.layout_notes.clone(),
+            spec: None,
             budget: Budget::default(),
         }
     }
@@ -69,18 +72,45 @@ pub async fn job_for_target(
     })
 }
 
-/// Differential-tests `rust_code` for `job` against the original and returns the (unstored)
-/// record.
-pub fn verify(
-    job: &RewriteJob,
+/// What a verification run needs besides the code: the function, its context, the ABI, the
+/// inputs and where the original runs.
+#[derive(Debug, Clone)]
+pub struct VerifyPlan<'a> {
+    /// The function.
+    pub function: &'a FunctionContext,
+    /// Callees translated together with it.
+    pub callees: &'a [FunctionContext],
+    /// The ABI to check at.
+    pub signature: &'a Signature,
+    /// Test inputs.
+    pub inputs: &'a InputSpec,
+    /// File name of the binary the oracle runs.
+    pub binary: &'a str,
+    /// The function's ELF virtual address in that binary.
+    pub entry: u64,
+    /// How the translation was made.
+    pub mode: RewriteMode,
+    /// The spec it was made from, for `spec` mode.
+    pub spec_id: Option<u64>,
+}
+
+/// Differential-tests `rust_code` and returns the (unstored) record.
+pub fn verify_with(
+    plan: &VerifyPlan<'_>,
     rust_code: &str,
     provenance: Provenance,
     oracle: &mut FunctionOracle,
     opts: &DiffOptions,
 ) -> Result<RewriteUnit, RewriteError> {
-    let entry = job.function.elf_vaddr();
-    let report = run_differential(oracle, entry, &job.signature, rust_code, &job.inputs, opts)?;
-    let callees = job
+    let report = run_differential(
+        oracle,
+        plan.entry,
+        plan.signature,
+        rust_code,
+        plan.inputs,
+        opts,
+    )?;
+    let callees = plan
         .callees
         .iter()
         .map(|c| CalleeRef {
@@ -91,21 +121,50 @@ pub fn verify(
         .collect();
     Ok(RewriteUnit::from_run(
         UnitSource {
-            anchor: job.function.anchor(),
-            source_decompile_hash: job.function.decompile_hash.clone(),
+            mode: plan.mode,
+            spec_id: plan.spec_id,
+            anchor: plan.function.anchor(),
+            source_decompile_hash: plan.function.decompile_hash.clone(),
             callees,
-            signature: job.signature.clone(),
+            signature: plan.signature.clone(),
             provenance,
             oracle: OracleInfo {
                 kind: ORACLE_KIND.to_string(),
                 emulator: EMULATOR_PIN.to_string(),
-                binary: job.binary.clone(),
-                elf_vaddr: entry,
+                binary: plan.binary.to_string(),
+                elf_vaddr: plan.entry,
             },
         },
         rust_code.to_string(),
         report,
     ))
+}
+
+/// Differential-tests `rust_code` for `job` against the original and returns the (unstored)
+/// record.
+pub fn verify(
+    job: &RewriteJob,
+    rust_code: &str,
+    provenance: Provenance,
+    oracle: &mut FunctionOracle,
+    opts: &DiffOptions,
+) -> Result<RewriteUnit, RewriteError> {
+    verify_with(
+        &VerifyPlan {
+            function: &job.function,
+            callees: &job.callees,
+            signature: &job.signature,
+            inputs: &job.inputs,
+            binary: &job.binary,
+            entry: job.function.elf_vaddr(),
+            mode: RewriteMode::Incremental,
+            spec_id: None,
+        },
+        rust_code,
+        provenance,
+        oracle,
+        opts,
+    )
 }
 
 /// Asks `provider` for a translation, verifies it, and stores the record when `store` is given.
@@ -114,7 +173,7 @@ pub async fn rewrite_and_verify(
     provider: &dyn ChatProvider,
     oracle: &mut FunctionOracle,
     opts: &DiffOptions,
-    store: Option<&UnitStore>,
+    store: Option<&RewriteStore>,
     cancel: CancellationToken,
 ) -> Result<RewriteUnit, RewriteError> {
     let task = job.task();
@@ -128,7 +187,7 @@ pub async fn rewrite_and_verify(
     };
     let unit = verify(job, &out.rust_code, provenance, oracle, opts)?;
     match store {
-        Some(s) => s.put(unit),
+        Some(s) => s.put_unit(unit),
         None => Ok(unit),
     }
 }
