@@ -1,0 +1,30 @@
+[package]
+name = "engine-ghidra"
+description = "KRAKEN engine backed by a confined Ghidra JVM sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "io-util", "net", "fs"] }
+tokio-util = { version = "0.7.16", default-features = false }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
+
+[dev-dependencies]
+kraken-engine = { path = "../kraken-engine", version = "0.0.0", features = ["testing"] }
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "net"] }

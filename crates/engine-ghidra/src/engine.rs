@@ -1,0 +1,805 @@
+//! [`GhidraEngine`]: every `kraken-engine` capability, backed by the Ghidra sidecar.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use kraken_engine::ProgressSender;
+use kraken_engine::{
+    AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
+    Engine, EngineCaps, EngineRejected, EngineResult, FunctionLister, Loader, LoaderSpec, Mutator,
+    ProgramInfo, Progress, Stage, TypeStore, Watermark, type_def_name, unsupported,
+};
+use kraken_proto::{
+    Anchor, DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, LogOp, Page, PageRequest,
+    ProtoError, TypeDef, VersionedLogOp,
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tokio::sync::broadcast;
+
+use crate::config::{EngineConfig, heap_mb, physical_memory_mb};
+use crate::launch::{GhidraLauncher, LaunchPlan, Launcher};
+use crate::rpc::WireProgress;
+use crate::supervisor::{
+    Diagnostics, OpenParams, Running, SidecarEvent, Supervisor, SupervisorConfig, open_request,
+};
+
+/// The Ghidra-backed engine. Cheap to share behind `Arc`; nothing is started until the first
+/// [`Loader::open_binary`].
+pub struct GhidraEngine {
+    cfg: EngineConfig,
+    sup: Supervisor,
+    job_seq: AtomicU64,
+    /// Sidecar stages known to be complete for the open program.
+    stages_done: Arc<Mutex<BTreeSet<Stage>>>,
+}
+
+impl std::fmt::Debug for GhidraEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GhidraEngine")
+            .field("project_dir", &self.cfg.project_dir)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Deserialize)]
+struct WireProgramInfo {
+    #[serde(default)]
+    stages_done: Vec<String>,
+    language: String,
+    format: String,
+    image_base: Hex64,
+    sha256: String,
+}
+
+#[derive(Deserialize)]
+struct WireAnalyzeResult {
+    #[serde(default)]
+    function_count: u64,
+}
+
+#[derive(Deserialize)]
+struct WireSave {
+    checkpoint: String,
+}
+
+fn cancelled(what: &str) -> ProtoError {
+    ProtoError::new(ErrorCode::Cancelled, format!("{what} cancelled"))
+}
+
+/// The Ghidra loader name for a neutral format name.
+pub fn loader_name(format: &str) -> Option<&'static str> {
+    match format {
+        "elf" => Some("Executable and Linking Format (ELF)"),
+        "pe" => Some("Portable Executable (PE)"),
+        "macho" => Some("Mac OS X Mach-O"),
+        "raw" => Some("Raw Binary"),
+        _ => None,
+    }
+}
+
+/// The neutral format name for Ghidra's `getExecutableFormat()` string.
+pub fn normalize_format(ghidra: &str) -> String {
+    let l = ghidra.to_ascii_lowercase();
+    if l.contains("(elf)") || l.starts_with("executable and linking") {
+        "elf".into()
+    } else if l.contains("(pe)") || l.starts_with("portable executable") {
+        "pe".into()
+    } else if l.contains("mach-o") {
+        "macho".into()
+    } else if l.contains("raw binary") {
+        "raw".into()
+    } else {
+        l
+    }
+}
+
+/// `"<loader>;<language>"` for the sidecar, or `None` for full auto-detection.
+fn loader_spec(spec: &LoaderSpec) -> EngineResult<Option<String>> {
+    if spec.base.is_some() {
+        return Err(unsupported("overriding the image base"));
+    }
+    let loader = match spec.format.as_deref() {
+        None => "",
+        Some(f) => loader_name(f).ok_or_else(|| unsupported(&format!("loader format `{f}`")))?,
+    };
+    let arch = spec.arch.as_deref().unwrap_or("");
+    if arch.contains(';') {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "arch must not contain `;`",
+        ));
+    }
+    if loader.is_empty() && arch.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("{loader};{arch}")))
+}
+
+/// Creates and canonicalises the project directory. Ghidra refuses project paths with an element
+/// that starts with a dot (such as `~/.local/...` or a `.tmpXXXX` directory).
+async fn prepare_project_dir(dir: &Path) -> EngineResult<std::path::PathBuf> {
+    let invalid = |msg: String| ProtoError::new(ErrorCode::InvalidArgument, msg);
+    tokio::fs::create_dir_all(dir).await.map_err(|e| {
+        invalid(format!(
+            "cannot create the project dir {}: {e}",
+            dir.display()
+        ))
+    })?;
+    let dir = tokio::fs::canonicalize(dir)
+        .await
+        .map_err(|e| invalid(format!("project dir {}: {e}", dir.display())))?;
+    check_project_path(&dir)?;
+    Ok(dir)
+}
+
+fn check_project_path(dir: &Path) -> EngineResult<()> {
+    if let Some(bad) = dir.components().find_map(|c| match c {
+        std::path::Component::Normal(n) if n.to_string_lossy().starts_with('.') => Some(n),
+        _ => None,
+    }) {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            format!(
+                "the project path {} has an element starting with a dot ({}), which Ghidra rejects",
+                dir.display(),
+                bad.to_string_lossy()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn op_anchor(op: &LogOp) -> &Anchor {
+    match op {
+        LogOp::Rename { anchor, .. }
+        | LogOp::SetType { anchor, .. }
+        | LogOp::SetComment { anchor, .. }
+        | LogOp::CreateFunction { anchor, .. }
+        | LogOp::DeleteFunction { anchor, .. }
+        | LogOp::SetFunctionBounds { anchor, .. }
+        | LogOp::SetCodeData { anchor, .. }
+        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+    }
+}
+
+fn page_params(page: &PageRequest) -> Value {
+    let mut v = json!({"limit": page.effective_limit()});
+    if let (Some(c), Some(obj)) = (&page.cursor, v.as_object_mut()) {
+        obj.insert("cursor".into(), Value::String(c.clone()));
+    }
+    v
+}
+
+fn bad_cursor(what: &str) -> ProtoError {
+    ProtoError::new(
+        ErrorCode::InvalidArgument,
+        format!("malformed {what} cursor"),
+    )
+}
+
+fn stage_from_wire(s: &str) -> Option<Stage> {
+    Stage::ALL.into_iter().find(|st| st.as_str() == s)
+}
+
+/// Which stages an analysis request runs: whether `load` counts as part of it, and the sidecar
+/// stages (already-complete ones are skipped by the sidecar).
+fn plan_stages(resume_from: Option<Stage>) -> (bool, Vec<Stage>) {
+    match resume_from {
+        None | Some(Stage::Load) => (true, vec![Stage::Core, Stage::Expensive]),
+        Some(Stage::Core) => (false, vec![Stage::Core, Stage::Expensive]),
+        Some(Stage::Expensive) => (false, vec![Stage::Expensive]),
+    }
+}
+
+impl GhidraEngine {
+    /// An engine for `config`. Nothing is spawned yet.
+    pub fn new(config: EngineConfig) -> Self {
+        let launcher = GhidraLauncher::new(
+            config.install.clone(),
+            config.confinement.clone(),
+            config.temp_root.clone(),
+        );
+        Self::with_launcher(config, Arc::new(launcher))
+    }
+
+    /// An engine that starts sidecars with `launcher` (tests use an in-process fake).
+    pub fn with_launcher(config: EngineConfig, launcher: Arc<dyn Launcher>) -> Self {
+        let sup = Supervisor::new(
+            launcher,
+            SupervisorConfig {
+                max_restarts: config.max_restarts,
+                startup_timeout: config.startup_timeout,
+                restart_backoff: config.restart_backoff,
+                open_timeout: config.deadlines.open_binary,
+                expected_ghidra_version: Some(config.install.ghidra_version.clone()),
+            },
+        );
+        GhidraEngine {
+            cfg: config,
+            sup,
+            job_seq: AtomicU64::new(0),
+            stages_done: Arc::default(),
+        }
+    }
+
+    /// The configuration this engine runs with.
+    pub fn config(&self) -> &EngineConfig {
+        &self.cfg
+    }
+
+    /// Subscribes to sidecar lifecycle events (`Started`, `Exited`, `Restarted`).
+    pub fn subscribe(&self) -> broadcast::Receiver<SidecarEvent> {
+        self.sup.subscribe()
+    }
+
+    /// Replaces a dead (or stuck) sidecar and reopens the last binary, making up to
+    /// `max_restarts` attempts. Unsaved edits are lost with the old process: the caller replays
+    /// its log afterwards (the `Restarted` event says when).
+    pub async fn restart(&self) -> Result<(), ProtoError> {
+        self.sup.restart().await.map(|_| ())
+    }
+
+    /// Asks the sidecar to exit and kills it. A later `open_binary` starts a new one.
+    pub async fn shutdown(&self) {
+        self.sup.shutdown().await;
+    }
+
+    /// State, confinement report, heap, restart count and the sidecar's log tail.
+    pub fn diagnostics(&self) -> Diagnostics {
+        self.sup.diagnostics()
+    }
+
+    async fn rpc(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Option<Duration>,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Value> {
+        if cancel.is_cancelled() {
+            return Err(cancelled(method));
+        }
+        let running = self.sup.current()?;
+        running
+            .client
+            .call(method, params, deadline, Some(cancel))
+            .await
+            .map_err(|e| running.enrich(e))
+    }
+
+    async fn rpc_typed<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Option<Duration>,
+        cancel: &CancellationToken,
+    ) -> EngineResult<T> {
+        let v = self.rpc(method, params, deadline, cancel).await?;
+        serde_json::from_value(v).map_err(|e| {
+            ProtoError::new(
+                ErrorCode::Internal,
+                format!("malformed `{method}` result from the sidecar: {e}"),
+            )
+        })
+    }
+
+    fn deadline(&self) -> Option<Duration> {
+        Some(self.cfg.deadlines.default)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn rpc_for_test(
+        &self,
+        method: &str,
+        params: Value,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Value> {
+        self.rpc(method, params, self.deadline(), cancel).await
+    }
+}
+
+#[async_trait]
+impl Loader for GhidraEngine {
+    async fn open_binary(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+    ) -> EngineResult<ProgramInfo> {
+        if cancel.is_cancelled() {
+            return Err(cancelled("open_binary"));
+        }
+        let loader_spec = loader_spec(spec)?;
+        let binary = tokio::fs::canonicalize(path).await.map_err(|e| {
+            let code = if e.kind() == std::io::ErrorKind::NotFound {
+                ErrorCode::NotFound
+            } else {
+                ErrorCode::InvalidArgument
+            };
+            ProtoError::new(code, format!("cannot open {}: {e}", path.display()))
+        })?;
+        let meta = tokio::fs::metadata(&binary).await.map_err(|e| {
+            ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!("{}: {e}", binary.display()),
+            )
+        })?;
+        if !meta.is_file() {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!("{} is not a regular file", binary.display()),
+            ));
+        }
+        let project_dir = prepare_project_dir(&self.cfg.project_dir).await?;
+        let plan = LaunchPlan {
+            binary_size: meta.len(),
+            heap_mb: heap_mb(meta.len(), self.cfg.max_heap_mb, physical_memory_mb()),
+            binary,
+            project_dir,
+        };
+        let running = self.sup.ensure(plan.clone()).await?;
+        let request = open_request(&plan.binary, &plan.project_dir, loader_spec.as_deref());
+        let info: WireProgramInfo = running
+            .client
+            .call_typed(
+                "open_binary",
+                request.clone(),
+                Some(self.cfg.deadlines.open_binary),
+                Some(cancel),
+            )
+            .await
+            .map_err(|e| running.enrich(e))?;
+        let size = plan.binary_size;
+        *self
+            .stages_done
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = info
+            .stages_done
+            .iter()
+            .filter_map(|s| stage_from_wire(s))
+            .collect();
+        self.sup.remember_open(OpenParams { request, plan });
+        Ok(ProgramInfo {
+            arch: info.language,
+            format: normalize_format(&info.format),
+            base: info.image_base,
+            sha256: info.sha256,
+            size,
+        })
+    }
+}
+
+#[async_trait]
+impl Analyzer for GhidraEngine {
+    async fn analyze(
+        &self,
+        req: AnalyzeRequest,
+        cancel: CancellationToken,
+    ) -> EngineResult<AnalysisJob> {
+        if cancel.is_cancelled() {
+            return Err(cancelled("analyze"));
+        }
+        let running = self.sup.current()?;
+        let (with_load, wanted) = plan_stages(req.resume_from);
+        let job_id = format!(
+            "kraken-job-{}",
+            self.job_seq.fetch_add(1, Ordering::Relaxed) + 1
+        );
+        let deadline = self.cfg.deadlines.analyze;
+        let done = self.stages_done.clone();
+        Ok(AnalysisJob::spawn(cancel, move |progress, cancel| {
+            run_analysis(
+                running, job_id, with_load, wanted, done, deadline, progress, cancel,
+            )
+        }))
+    }
+}
+
+fn forward_progress(tx: &ProgressSender, p: WireProgress) {
+    if let Some(stage) = stage_from_wire(&p.stage) {
+        tx.send(Progress {
+            stage,
+            done: p.done.min(p.total),
+            total: p.total,
+            message: p.message,
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_analysis(
+    running: Arc<Running>,
+    job_id: String,
+    with_load: bool,
+    wanted: Vec<Stage>,
+    stages_done: Arc<Mutex<BTreeSet<Stage>>>,
+    deadline: Option<Duration>,
+    progress: ProgressSender,
+    cancel: CancellationToken,
+) -> Result<AnalysisSummary, ProtoError> {
+    let cancelled_err = || {
+        ProtoError::new(ErrorCode::Cancelled, "analysis cancelled")
+            .with_details(json!({"job_id": job_id}))
+    };
+    if cancel.is_cancelled() {
+        return Err(cancelled_err());
+    }
+    if with_load {
+        progress.send(Progress {
+            stage: Stage::Load,
+            done: 1,
+            total: 1,
+            message: "binary loaded".into(),
+        });
+    }
+    // The sidecar skips stages that are already complete and says nothing about them; report
+    // them as done so every requested stage shows up, in order.
+    let already: BTreeSet<Stage> = {
+        let done = stages_done.lock().unwrap_or_else(PoisonError::into_inner);
+        wanted
+            .iter()
+            .copied()
+            .filter(|s| done.contains(s))
+            .collect()
+    };
+    let already_done = |stage: Stage| Progress {
+        stage,
+        done: 1,
+        total: 1,
+        message: "already complete".into(),
+    };
+    let leading = wanted.iter().take_while(|s| already.contains(s)).count();
+    for stage in &wanted[..leading] {
+        progress.send(already_done(*stage));
+    }
+    let mut sub = running.client.subscribe_progress(&job_id);
+    let params = json!({
+        "job_id": job_id,
+        "stages": wanted.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+    });
+    let call = running.client.call("analyze", params, deadline, None);
+    tokio::pin!(call);
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let (mut cancel_requested, mut cancel_acked) = (false, false);
+    let result = loop {
+        tokio::select! {
+            r = &mut call => break r,
+            Some(p) = sub.events.recv() => forward_progress(&progress, p),
+            () = cancel.cancelled(), if !cancel_requested => cancel_requested = true,
+            // The sidecar may not have registered the job yet: keep asking until it accepts.
+            _ = tick.tick(), if cancel_requested && !cancel_acked => {
+                let ask = running.client.call(
+                    "cancel",
+                    json!({"job_id": job_id}),
+                    Some(Duration::from_secs(5)),
+                    None,
+                );
+                cancel_acked = ask.await.is_ok();
+            }
+        }
+    };
+    while let Ok(p) = sub.events.try_recv() {
+        forward_progress(&progress, p);
+    }
+    let value = result.map_err(|e| running.enrich(e))?;
+    for stage in &wanted[leading..] {
+        if already.contains(stage) {
+            progress.send(already_done(*stage));
+        }
+    }
+    if cancel.is_cancelled() {
+        return Err(cancelled_err());
+    }
+    let done: WireAnalyzeResult = serde_json::from_value(value).map_err(|e| {
+        ProtoError::new(
+            ErrorCode::Internal,
+            format!("malformed `analyze` result from the sidecar: {e}"),
+        )
+    })?;
+    stages_done
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .extend(wanted.iter().copied());
+    let mut stages_completed = Vec::new();
+    if with_load {
+        stages_completed.push(Stage::Load);
+    }
+    stages_completed.extend(wanted);
+    Ok(AnalysisSummary {
+        stages_completed,
+        function_count: done.function_count,
+    })
+}
+
+#[async_trait]
+impl Decompiler for GhidraEngine {
+    async fn decompile(
+        &self,
+        locator: &Locator,
+        cancel: &CancellationToken,
+    ) -> EngineResult<DecompileResult> {
+        let limit = self.cfg.deadlines.decompile;
+        let result: DecompileResult = self
+            .rpc_typed(
+                "decompile",
+                json!({"locator": locator, "timeout_ms": limit.as_millis() as u64}),
+                // The decompiler enforces `limit` itself; the request deadline is a backstop.
+                Some(limit + Duration::from_secs(5)),
+                cancel,
+            )
+            .await?;
+        result.validate_tokens().map_err(|e| {
+            ProtoError::new(
+                ErrorCode::Internal,
+                format!("the sidecar produced invalid token spans: {e}"),
+            )
+        })?;
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl TypeStore for GhidraEngine {
+    async fn get_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<TypeDef> {
+        let page: Page<TypeDef> = self
+            .rpc_typed(
+                "get_types",
+                json!({"name": name, "limit": kraken_proto::MAX_PAGE_LIMIT}),
+                self.deadline(),
+                cancel,
+            )
+            .await?;
+        page.items
+            .into_iter()
+            .find(|d| type_def_name(d) == Some(name))
+            .ok_or_else(|| ProtoError::new(ErrorCode::NotFound, format!("no type named `{name}`")))
+    }
+
+    async fn define_type(&self, def: TypeDef, cancel: &CancellationToken) -> EngineResult<()> {
+        if type_def_name(&def).is_none() {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                "an anonymous type cannot be defined",
+            ));
+        }
+        self.rpc("define_type", json!({"def": def}), self.deadline(), cancel)
+            .await
+            .map(drop)
+    }
+
+    async fn list_types(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<TypeDef>> {
+        if page
+            .cursor
+            .as_deref()
+            .is_some_and(|c| c.parse::<u64>().is_err())
+        {
+            return Err(bad_cursor("type"));
+        }
+        self.rpc_typed("get_types", page_params(page), self.deadline(), cancel)
+            .await
+    }
+}
+
+#[async_trait]
+impl FunctionLister for GhidraEngine {
+    async fn list_functions(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<FunctionSummary>> {
+        if page
+            .cursor
+            .as_deref()
+            .is_some_and(|c| c.parse::<Hex64>().is_err())
+        {
+            return Err(bad_cursor("function"));
+        }
+        self.rpc_typed("list_functions", page_params(page), self.deadline(), cancel)
+            .await
+    }
+
+    async fn get_function(
+        &self,
+        locator: &Locator,
+        cancel: &CancellationToken,
+    ) -> EngineResult<FunctionSummary> {
+        let f: FunctionSummary = self
+            .rpc_typed(
+                "get_function",
+                json!({"locator": locator}),
+                self.deadline(),
+                cancel,
+            )
+            .await?;
+        // The sidecar also answers for addresses inside a function; the trait asks for entries.
+        if &f.locator != locator {
+            return Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!(
+                    "no function starts at {locator:?} (it lies inside {:?})",
+                    f.locator
+                ),
+            ));
+        }
+        Ok(f)
+    }
+}
+
+#[async_trait]
+impl Mutator for GhidraEngine {
+    async fn apply(
+        &self,
+        op: &VersionedLogOp,
+        cancel: &CancellationToken,
+    ) -> Result<(), EngineRejected> {
+        op.check_version()?;
+        op_anchor(&op.op).native()?;
+        if let LogOp::Rename {
+            anchor: Anchor::Native { space, offset, .. },
+            old_name,
+            new_name,
+        } = &op.op
+        {
+            // The sidecar ignores `old_name`; idempotence and stale-read detection live here.
+            let at = Locator::Native {
+                space: space.clone(),
+                offset: *offset,
+            };
+            match self.get_function(&at, cancel).await {
+                Ok(f) => {
+                    if &f.name == new_name {
+                        return Ok(());
+                    }
+                    if let Some(old) = old_name
+                        && old != &f.name
+                    {
+                        return Err(EngineRejected::new(
+                            ErrorCode::ConflictStaleRead,
+                            format!("function at {at:?} is named `{}`, not `{old}`", f.name),
+                        ));
+                    }
+                }
+                Err(e) if e.code == ErrorCode::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        self.rpc("apply_op", json!({"op": op}), self.deadline(), cancel)
+            .await?;
+        Ok(())
+    }
+
+    async fn save(&self, cancel: &CancellationToken) -> EngineResult<Watermark> {
+        let s: WireSave = self
+            .rpc_typed("save", json!({}), self.deadline(), cancel)
+            .await?;
+        Ok(Watermark(s.checkpoint))
+    }
+}
+
+impl Engine for GhidraEngine {
+    fn capabilities(&self) -> EngineCaps {
+        EngineCaps::new(
+            format!(
+                "engine-ghidra {} (ghidra {})",
+                env!("CARGO_PKG_VERSION"),
+                self.cfg.install.ghidra_version
+            ),
+            Cap::ALL,
+        )
+    }
+    fn loader(&self) -> Option<&dyn Loader> {
+        Some(self)
+    }
+    fn analyzer(&self) -> Option<&dyn Analyzer> {
+        Some(self)
+    }
+    fn decompiler(&self) -> Option<&dyn Decompiler> {
+        Some(self)
+    }
+    fn type_store(&self) -> Option<&dyn TypeStore> {
+        Some(self)
+    }
+    fn function_lister(&self) -> Option<&dyn FunctionLister> {
+        Some(self)
+    }
+    fn mutator(&self) -> Option<&dyn Mutator> {
+        Some(self)
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn formats_map_both_ways() {
+        for f in ["elf", "pe", "macho", "raw"] {
+            assert_eq!(normalize_format(loader_name(f).unwrap()), f);
+        }
+        assert_eq!(normalize_format("Something Else"), "something else");
+        assert!(loader_name("a.out").is_none());
+    }
+
+    #[test]
+    fn loader_spec_is_built_from_the_neutral_spec() {
+        let none = LoaderSpec::default();
+        assert_eq!(loader_spec(&none).unwrap(), None);
+        let elf = LoaderSpec {
+            format: Some("elf".into()),
+            arch: Some("x86:LE:64:default".into()),
+            base: None,
+        };
+        assert_eq!(
+            loader_spec(&elf).unwrap().as_deref(),
+            Some("Executable and Linking Format (ELF);x86:LE:64:default")
+        );
+        let arch_only = LoaderSpec {
+            arch: Some("ARM:LE:32:v8".into()),
+            ..LoaderSpec::default()
+        };
+        assert_eq!(
+            loader_spec(&arch_only).unwrap().as_deref(),
+            Some(";ARM:LE:32:v8")
+        );
+        let bad = LoaderSpec {
+            format: Some("nope".into()),
+            ..LoaderSpec::default()
+        };
+        assert_eq!(loader_spec(&bad).unwrap_err().code, ErrorCode::Unsupported);
+        let based = LoaderSpec {
+            base: Some(Hex64(0x1000)),
+            ..LoaderSpec::default()
+        };
+        assert_eq!(
+            loader_spec(&based).unwrap_err().code,
+            ErrorCode::Unsupported
+        );
+    }
+
+    #[test]
+    fn dotted_project_paths_are_rejected_up_front() {
+        assert!(check_project_path(Path::new("/var/lib/kraken/proj")).is_ok());
+        let e = check_project_path(Path::new("/home/me/.local/share/kraken/proj")).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(e.message.contains(".local"));
+    }
+
+    #[test]
+    fn analysis_stage_plans() {
+        assert_eq!(
+            plan_stages(None),
+            (true, vec![Stage::Core, Stage::Expensive])
+        );
+        assert_eq!(
+            plan_stages(Some(Stage::Core)),
+            (false, vec![Stage::Core, Stage::Expensive])
+        );
+        assert_eq!(
+            plan_stages(Some(Stage::Expensive)),
+            (false, vec![Stage::Expensive])
+        );
+    }
+
+    #[test]
+    fn page_params_clamp_the_limit() {
+        let p = PageRequest {
+            cursor: Some("0x10".into()),
+            limit: Some(0),
+        };
+        assert_eq!(page_params(&p), json!({"limit": 1, "cursor": "0x10"}));
+        assert_eq!(
+            page_params(&PageRequest::default()),
+            json!({"limit": kraken_proto::DEFAULT_PAGE_LIMIT})
+        );
+    }
+}
