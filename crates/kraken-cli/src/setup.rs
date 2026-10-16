@@ -98,6 +98,10 @@ impl Printer {
                 self.end_line();
                 let _ = writeln!(e, "extracting {name}");
             }
+            Progress::InstallingBundledExtension => {
+                self.end_line();
+                let _ = writeln!(e, "installing the bundled Ghidra extension");
+            }
             Progress::BuildingExtension => {
                 self.end_line();
                 let _ = writeln!(e, "building the Ghidra extension with the downloaded JDK");
@@ -143,9 +147,9 @@ pub(crate) async fn run_setup(
         Ok(f) => f,
         Err(e) => return fail(&to_proto(e), json_out, err),
     };
-    let opts = SetupOptions {
-        force: sm.try_get_one::<bool>("force").ok().flatten().copied() == Some(true),
-    };
+    let opts = SetupOptions::with_bundled(
+        sm.try_get_one::<bool>("force").ok().flatten().copied() == Some(true),
+    );
     let mut printer = Printer::new();
     let result = setup(&layout, &fetcher, &specs, &opts, &mut |p| printer.show(p)).await;
     printer.end_line();

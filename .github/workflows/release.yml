@@ -1,0 +1,233 @@
+name: Release
+
+# On a tag v*: build, package, checksum, attest and create a DRAFT GitHub release.
+# workflow_dispatch with a version is a dry run: everything is built and uploaded as workflow
+# artifacts, but no release is created.
+# No secrets are used. Each platform job is independent (fail-fast: false), so Linux ships
+# even when macOS or Windows fail. macOS binaries are ad-hoc signed only (decision 72).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for a dry run, without the leading v (for example 0.1.0-dryrun)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  GHIDRA_VERSION: "12.1.4"
+  GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+  GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+  JDK_URL: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz
+  JDK_SHA256: ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94
+
+permissions:
+  contents: read
+
+jobs:
+  # The version string every other job uses, validated once.
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_tag: ${{ steps.v.outputs.is_tag }}
+    steps:
+      - id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            version="${REF_NAME#v}"
+            is_tag=true
+          else
+            version="${INPUT_VERSION#v}"
+            is_tag=false
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9][0-9A-Za-z._+-]*$'; then
+            echo "bad version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "is_tag=$is_tag" >> "$GITHUB_OUTPUT"
+
+  # Platform independent pieces: the Java extension jar and the built mdBook.
+  assets:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Ghidra and Temurin
+        id: toolcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kraken-dev
+          key: kraken-dev-ghidra-12.1.4-${{ env.GHIDRA_SHA256 }}-jdk-${{ env.JDK_SHA256 }}
+
+      - name: Download Ghidra and Temurin
+        if: steps.toolcache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cache/kraken-dev/ghidra ~/.cache/kraken-dev/jdk
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o ghidra.zip "$GHIDRA_URL"
+          echo "$GHIDRA_SHA256  ghidra.zip" | sha256sum -c -
+          curl -fsSL -o jdk.tar.gz "$JDK_URL"
+          echo "$JDK_SHA256  jdk.tar.gz" | sha256sum -c -
+          unzip -q ghidra.zip -d ~/.cache/kraken-dev/ghidra
+          tar -xzf jdk.tar.gz -C ~/.cache/kraken-dev/jdk
+
+      - name: Select the toolchains
+        run: |
+          set -euo pipefail
+          ghidra=$(echo ~/.cache/kraken-dev/ghidra/ghidra_${GHIDRA_VERSION}_PUBLIC)
+          jdk=$(echo ~/.cache/kraken-dev/jdk/jdk-21*)
+          test -d "$ghidra" && test -d "$jdk"
+          {
+            echo "GHIDRA_INSTALL_DIR=$ghidra"
+            echo "JAVA_HOME=$jdk"
+          } >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.8.0"
+
+      - name: Build the Ghidra extension
+        run: |
+          set -euo pipefail
+          cargo xtask ghidra-ext
+          test -f java/kraken-ghidra/build/libs/kraken-ghidra.jar
+          mkdir -p dist
+          cp java/kraken-ghidra/build/libs/kraken-ghidra.jar dist/kraken-ghidra.jar
+
+      - name: Check the notices are current
+        run: |
+          set -euo pipefail
+          cargo xtask notices
+          git diff --exit-code THIRD-PARTY-NOTICES.md
+
+      - name: Build the documentation
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/rust-lang/mdBook/releases/download/v0.4.52/mdbook-v0.4.52-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/mdbook" build docs
+          cp -R docs/book dist/docs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets
+          path: dist
+          if-no-files-found: error
+
+  package:
+    needs: [version, assets]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: dist-assets
+
+      - name: Build release binaries
+        run: cargo build --release --locked -p kraken-cli -p krakend -p kraken-gui
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          KRAKEN_GHIDRA_JAR: dist-assets/kraken-ghidra.jar
+          KRAKEN_DOCS_DIR: dist-assets/docs
+        run: scripts/package.sh "$TARGET" "$VERSION" out
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: out/kraken-*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: |
+            out/kraken-*.tar.gz
+            out/kraken-*.zip
+            out/*.sha256
+          if-no-files-found: error
+
+  # Collects whatever packaged successfully, writes SHA256SUMS and, on a tag, creates a draft release.
+  release:
+    needs: [version, package]
+    if: ${{ !cancelled() && needs.package.result != 'skipped' }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: parts
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find parts -maxdepth 1 -type f \( -name 'kraken-*.tar.gz' -o -name 'kraken-*.zip' \) -exec cp {} release/ \;
+          ls release
+          # Linux is the supported platform: never publish a release without it.
+          ls release/kraken-*-x86_64-unknown-linux-gnu.tar.gz
+          cd release
+          sha256sum kraken-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest SHA256SUMS
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: release/*
+          if-no-files-found: error
+
+      - name: Create the draft release
+        if: ${{ needs.version.outputs.is_tag == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" release/* --repo "$REPO" --draft --verify-tag \
+            --title "KRAKEN $TAG" --generate-notes "${prerelease[@]}"

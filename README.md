@@ -26,6 +26,7 @@ Connect an agent: `claude mcp add kraken -- kraken mcp --project ~/kraken-projec
 
 ## Documentation
 
+- [Install](docs/install.md)
 - [Getting started](docs/getting-started.md)
 - [Concepts for newcomers to reverse engineering](docs/concepts.md)
 - [Connecting AI agents](docs/mcp.md)

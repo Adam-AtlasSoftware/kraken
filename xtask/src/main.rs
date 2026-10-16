@@ -1,4 +1,5 @@
 mod docs;
+mod notices;
 mod samples;
 
 use std::fs;
@@ -16,7 +17,8 @@ Commands:
                (default: a copy of /bin/ls in a temp dir). Prints PASS/FAIL lines.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
-  docs         Write docs/reference/commands.md from the command registry.";
+  docs         Write docs/reference/commands.md from the command registry.
+  notices      Write THIRD-PARTY-NOTICES.md from cargo metadata and the crates' license files.";
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -32,6 +34,7 @@ fn main() -> ExitCode {
         Some("schema") => schema(),
         Some("samples") => write_samples(),
         Some("docs") => docs::write_docs(),
+        Some("notices") => notices::write_notices(),
         Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     };
     match result {

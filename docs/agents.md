@@ -5,7 +5,7 @@ tools. The agent can then read the program you are studying, search it, rename t
 comments, with every change logged under its name and undoable like any other KRAKEN change.
 
 KRAKEN talks to these agents with the Agent Client Protocol (ACP), the same protocol code editors
-use. A chat view in the GUI follows later; today you use the command line.
+use. You can start them from the **Agents** tab of the GUI or from the command line.
 
 ## Read this first: what KRAKEN does not protect
 
@@ -88,6 +88,26 @@ Without a terminal, requests are declined. `--auto-approve` allows everything an
 Press Ctrl-C to cancel the current turn.
 
 KRAKEN advertises no file or terminal features to the agent; the agent uses its own for those.
+
+## In the GUI
+
+The **Agents** tab (next to Hex and Assistant) lists the terminal agents and runs them on the open
+project.
+
+- **The list** shows each agent as *Ready*, *Needs setup* (with the reason), *Not found* (with what
+  to install) or *Not supported here* (this platform cannot run it). **Check again** looks again.
+- **Set up...** shows exactly what would be downloaded (Node.js if needed, and the adapter, with
+  sizes and sources) and asks before it fetches anything. Progress is shown while it works.
+- **Start** shows the warning above the first time and only starts the agent after you press *I
+  understand*. The acknowledgement is saved in the config folder, so you see it once.
+- **The session** shows which agent (and model, when the agent says) is running. You type a prompt;
+  the agent's words stream in. Tool calls appear as compact chips: *KRAKEN* chips are calls to
+  KRAKEN's own tools, *agent tool* chips are the agent's own tools (shell, files), which KRAKEN does
+  not sandbox. A permission request is an inline card with **Allow once** and **Deny**. **Stop**
+  ends the current turn and withdraws waiting requests; **End session** closes the agent.
+- With the daemon (the default) the agent gets `kraken mcp --daemon --project <dir>`, so its edits
+  reach the window as they happen, with the usual notification and Undo. With `--no-daemon` the
+  agent uses its own session on the project and the window refreshes when each turn ends.
 
 ## What the agent can see
 
