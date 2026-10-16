@@ -22,6 +22,8 @@ allow = [
     "Unicode-3.0",
     "GPL-3.0-or-later",
     "CDLA-Permissive-2.0", "OFL-1.1",
+    # Boost: clipboard-win / error-code, Windows-only deps of eframe clipboard support.
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 # egui's bundled default fonts include Ubuntu-Light (Ubuntu Font Licence). The KRAKEN GUI app will

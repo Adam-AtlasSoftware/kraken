@@ -1,0 +1,27 @@
+[package]
+name = "kraken-viewmodel"
+description = "KRAKEN GUI view-model: all GUI state and logic behind a Backend trait, no egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["inprocess", "demo"]
+# Backend running the command registry inside the GUI process.
+inprocess = ["dep:kraken-registry"]
+# Demo project over the fake engine (implies inprocess).
+demo = ["inprocess", "dep:engine-fake", "dep:kraken-engine", "dep:tempfile"]
+
+[dependencies]
+async-trait = "0.1.89"
+engine-fake = { path = "../engine-fake", version = "0.0.0", optional = true }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0", optional = true }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+tempfile = { version = "3", optional = true }
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }

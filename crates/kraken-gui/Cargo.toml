@@ -1,0 +1,31 @@
+[package]
+name = "kraken-gui"
+description = "KRAKEN desktop GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "kraken-gui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+# default_fonts is deliberately off: the app bundles IBM Plex (decision 93).
+eframe = { version = "=0.36.2", default-features = false, features = [
+    "glow",
+    "wgpu",
+    "x11",
+    "wayland",
+] }
+egui = { version = "=0.36.2", default-features = false }
+egui_dock = "=0.21.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+kraken-gui-widgets = { path = "../kraken-gui-widgets", version = "0.0.0" }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-viewmodel = { path = "../kraken-viewmodel", version = "0.0.0" }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time"] }

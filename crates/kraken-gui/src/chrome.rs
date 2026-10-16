@@ -1,0 +1,208 @@
+//! Top bar, status bar and toasts.
+
+use egui::{
+    Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, Ui, vec2,
+};
+use kraken_viewmodel::{AnalysisPhase, AppAction, UiRequest, ViewModel};
+
+use crate::style::{self, chip, level_color, medium, pal};
+
+/// The bar across the top: project, history arrows, analysis, palette and theme.
+pub fn top_bar(ui: &mut Ui, vm: &mut ViewModel, reqs: &mut Vec<UiRequest>) {
+    let p = pal(ui);
+    ui.horizontal_centered(|ui| {
+        ui.add_space(2.0);
+        ui.label(medium("KRAKEN", 16.0).color(p.accent));
+        if let Some(info) = &vm.project {
+            ui.add_space(6.0);
+            ui.label(medium(&info.name, 14.0).color(p.text_strong))
+                .on_hover_text(format!(
+                    "{}\nProject folder: {}",
+                    info.binary_path, info.project_dir
+                ));
+            chip(ui, &format!("{} / {}", info.format, info.arch), p.text_dim)
+                .on_hover_text("File format and processor type of the program");
+            if info.epoch_stale {
+                chip(
+                    ui,
+                    "engine cache out of date",
+                    style::status(style::dark(ui)).warning,
+                );
+            }
+        }
+        ui.add_space(8.0);
+        ui.add_enabled_ui(vm.nav.can_back(), |ui| {
+            if ui
+                .button("\u{2190}")
+                .on_hover_text("Go back  (Alt+Left)")
+                .clicked()
+            {
+                reqs.extend(vm.perform(AppAction::Back));
+            }
+        });
+        ui.add_enabled_ui(vm.nav.can_forward(), |ui| {
+            if ui
+                .button("\u{2192}")
+                .on_hover_text("Go forward  (Alt+Right)")
+                .clicked()
+            {
+                reqs.extend(vm.perform(AppAction::Forward));
+            }
+        });
+        ui.add_space(8.0);
+        analysis(ui, vm);
+
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let theme = if style::dark(ui) { "Light" } else { "Dark" };
+            if ui
+                .button(theme)
+                .on_hover_text("Switch between the dark and light look")
+                .clicked()
+            {
+                reqs.push(UiRequest::ToggleTheme);
+            }
+            let label = RichText::new("Commands").color(p.text);
+            if ui
+                .add(egui::Button::new(label).min_size(vec2(0.0, 24.0)))
+                .on_hover_text("Search every action by name  (Ctrl+K or Ctrl+Shift+P)")
+                .clicked()
+            {
+                vm.open_palette();
+            }
+            ui.label(
+                RichText::new("Ctrl+K")
+                    .monospace()
+                    .size(11.0)
+                    .color(p.text_dim),
+            );
+        });
+    });
+}
+
+fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
+    let p = pal(ui);
+    match vm.analysis.phase {
+        AnalysisPhase::Running => {
+            let text = vm.analysis.progress.as_ref().map_or_else(
+                || "Analyzing".to_string(),
+                |pr| format!("Analyzing: {}", pr.phase),
+            );
+            let bar = egui::ProgressBar::new(vm.analysis.fraction().unwrap_or(0.0))
+                .desired_width(190.0)
+                .fill(p.accent)
+                .text(RichText::new(text).size(12.0).color(Color32::WHITE))
+                .animate(true);
+            ui.add(bar).on_hover_text(
+                "KRAKEN is finding functions in the program. You can keep working; edits wait until it finishes.",
+            );
+            if ui.small_button("Cancel").clicked() {
+                vm.cancel_analysis();
+            }
+        }
+        _ => {
+            let (label, tip) = match vm.analysis.phase {
+                AnalysisPhase::NotStarted => (
+                    "Analyze",
+                    "Let KRAKEN find and name the functions in this program",
+                ),
+                _ => ("Re-analyze", "Run the analysis again"),
+            };
+            let clicked = if vm.analysis.phase == AnalysisPhase::NotStarted {
+                style::primary_button(ui, label)
+                    .on_hover_text(tip)
+                    .clicked()
+            } else {
+                ui.button(label).on_hover_text(tip).clicked()
+            };
+            if clicked {
+                vm.start_analysis();
+            }
+        }
+    }
+}
+
+/// The strip along the bottom.
+pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
+    let p = pal(ui);
+    ui.horizontal_centered(|ui| {
+        if vm.analysis.running() || vm.busy() {
+            ui.spinner();
+        }
+        ui.label(RichText::new(vm.status_text()).size(12.0).color(p.text_dim));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if let Some(info) = &vm.project {
+                ui.label(
+                    RichText::new(format!(
+                        "{} edit{}",
+                        info.log_entries,
+                        if info.log_entries == 1 { "" } else { "s" }
+                    ))
+                    .size(12.0)
+                    .color(p.text_dim),
+                );
+                if info.open_proposals > 0 {
+                    chip(
+                        ui,
+                        &format!("{} to review", info.open_proposals),
+                        style::status(style::dark(ui)).info,
+                    );
+                }
+            }
+        });
+    });
+}
+
+/// Notifications in the bottom-right corner.
+pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
+    if vm.toasts.is_empty() {
+        return;
+    }
+    let dark = ctx.global_style().visuals.dark_mode;
+    let p = kraken_gui_widgets::KrakenTheme { dark }.palette();
+    let mut dismiss = Vec::new();
+    egui::Area::new(egui::Id::new("kraken_toasts"))
+        .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -40.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.set_width(360.0);
+            for t in &vm.toasts {
+                let color = level_color(t.level, dark);
+                Frame::new()
+                    .fill(p.surface)
+                    .stroke(Stroke::new(1.0, color.gamma_multiply(0.6)))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .shadow(egui::Shadow {
+                        offset: [0, 4],
+                        blur: 14,
+                        spread: 0,
+                        color: Color32::from_black_alpha(80),
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_top(|ui| {
+                            let (rect, _) =
+                                ui.allocate_exact_size(vec2(4.0, 18.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 2.0, color);
+                            ui.add(
+                                egui::Label::new(RichText::new(&t.text).color(p.text_strong))
+                                    .wrap(),
+                            );
+                            ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
+                                if ui
+                                    .small_button("\u{00d7}")
+                                    .on_hover_text("Dismiss")
+                                    .clicked()
+                                {
+                                    dismiss.push(t.id);
+                                }
+                            });
+                        });
+                    });
+                ui.add_space(6.0);
+            }
+        });
+    for id in dismiss {
+        vm.dismiss_toast(id);
+    }
+}

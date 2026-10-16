@@ -1,0 +1,676 @@
+//! The dock layout and the panels that fill it.
+
+use std::time::{Duration, Instant};
+
+use egui::{Id, RichText, Sense, Ui, WidgetText};
+use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+use kraken_gui_widgets::{HexView, SliceSource, TokenText, VirtualList};
+use kraken_proto::{Locator, TokenKind};
+use kraken_viewmodel::{Decompiled, FunctionItem, Load, ToastLevel, ViewModel};
+
+use crate::style::{self, chip, clock, empty_state, medium, pal};
+
+/// Time a call-target click waits for a possible second click (a rename) before navigating.
+pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(260);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Tab {
+    Functions,
+    Decompiler,
+    Hex,
+    Listing,
+    History,
+    Proposals,
+}
+
+impl Tab {
+    pub fn title(self) -> &'static str {
+        match self {
+            Tab::Functions => "Functions",
+            Tab::Decompiler => "Decompiler",
+            Tab::Hex => "Hex",
+            Tab::Listing => "Listing",
+            Tab::History => "History",
+            Tab::Proposals => "Proposals",
+        }
+    }
+
+    /// One plain sentence for the tab's tooltip (decision 20, staged).
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            Tab::Functions => "Every function KRAKEN found in the program. Click one to read it.",
+            Tab::Decompiler => {
+                "The selected function rewritten as readable C-like code. Click a call to follow it."
+            }
+            Tab::Hex => "The raw bytes of the selected function, as hexadecimal numbers and text.",
+            Tab::Listing => "The machine instructions behind the code, one per line.",
+            Tab::History => "Every change made to this project, who made it, and a way to undo it.",
+            Tab::Proposals => "Changes suggested by AI assistants that wait for your approval.",
+        }
+    }
+}
+
+pub fn initial_dock() -> DockState<Tab> {
+    let mut dock = DockState::new(vec![Tab::Decompiler]);
+    let surface = dock.main_surface_mut();
+    let [center, _left] = surface.split_left(NodeIndex::root(), 0.23, vec![Tab::Functions]);
+    let [center, right] = surface.split_right(center, 0.64, vec![Tab::Hex]);
+    let [_hex, _listing] = surface.split_below(right, 0.62, vec![Tab::Listing]);
+    let [_center, _bottom] = surface.split_below(center, 0.7, vec![Tab::History, Tab::Proposals]);
+    dock
+}
+
+/// GUI-only state that does not belong in the view-model.
+#[derive(Default)]
+pub struct UiState {
+    pub filter_text: String,
+    pub focus_filter: bool,
+    /// A call-target click waiting out the double-click window.
+    pub pending_nav: Option<(u64, Instant)>,
+    /// Symbol highlighted when the decompiler first draws (screenshot mode).
+    pub initial_highlight: Option<String>,
+    pub bring_to_front: Option<Tab>,
+    placeholder: Option<(u64, Vec<u8>)>,
+}
+
+impl UiState {
+    /// Applies a navigation click once the double-click window has passed.
+    pub fn flush_pending_nav(&mut self, vm: &mut ViewModel, ctx: &egui::Context) {
+        if let Some((addr, at)) = self.pending_nav {
+            let waited = at.elapsed();
+            if waited >= DOUBLE_CLICK_WINDOW {
+                self.pending_nav = None;
+                vm.navigate_to(addr);
+            } else {
+                ctx.request_repaint_after(DOUBLE_CLICK_WINDOW - waited);
+            }
+        }
+    }
+}
+
+pub struct Viewer<'a> {
+    pub vm: &'a mut ViewModel,
+    pub ui: &'a mut UiState,
+}
+
+pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &mut UiState) {
+    if let Some(tab) = state.bring_to_front.take()
+        && let Some(path) = dock.find_tab(&tab)
+    {
+        let _ = dock.set_active_tab(path);
+    }
+    let style = Style::from_egui(ui.style().as_ref());
+    let mut viewer = Viewer { vm, ui: state };
+    DockArea::new(dock)
+        .style(style)
+        .show_close_buttons(false)
+        .show_leaf_close_all_buttons(false)
+        .show_leaf_collapse_buttons(false)
+        .show_inside(ui, &mut viewer);
+}
+
+impl TabViewer for Viewer<'_> {
+    type Tab = Tab;
+
+    fn id(&mut self, tab: &mut Tab) -> Id {
+        Id::new(("kraken_tab", *tab))
+    }
+
+    fn title(&mut self, tab: &mut Tab) -> WidgetText {
+        let mut title = tab.title().to_string();
+        if *tab == Tab::Proposals && !self.vm.proposals.items.is_empty() {
+            title = format!("{title} ({})", self.vm.proposals.items.len());
+        }
+        title.into()
+    }
+
+    fn is_closeable(&self, _tab: &Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
+        response.clone().on_hover_text(tab.tooltip());
+    }
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
+        match tab {
+            Tab::Functions => functions(ui, self.vm, self.ui),
+            Tab::Decompiler => decompiler(ui, self.vm, self.ui),
+            Tab::Hex => hex(ui, self.vm, self.ui),
+            Tab::Listing => listing(ui),
+            Tab::History => history(ui, self.vm),
+            Tab::Proposals => proposals(ui, self.vm),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- functions
+
+fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
+    let p = pal(ui);
+    ui.add_space(2.0);
+    let filter_id = Id::new("kraken_function_filter");
+    let edit = egui::TextEdit::singleline(&mut st.filter_text)
+        .id(filter_id)
+        .hint_text("Filter functions  (Ctrl+L)")
+        .desired_width(f32::INFINITY);
+    let resp = ui.add(edit);
+    if st.focus_filter {
+        st.focus_filter = false;
+        resp.request_focus();
+    }
+    if resp.changed() {
+        vm.set_filter(st.filter_text.clone());
+    }
+    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        st.filter_text.clear();
+        vm.set_filter("");
+        resp.surrender_focus();
+    }
+
+    let n = vm.functions.items.len();
+    let summary = if vm.functions.loading && n == 0 {
+        "Loading...".to_string()
+    } else if !vm.functions.filter.is_empty() {
+        format!("{n} match{}", if n == 1 { "" } else { "es" })
+    } else if let Some(total) = vm.functions.total {
+        format!("{n} of {total} functions")
+    } else if vm.functions.has_more() {
+        format!("{n}+ functions")
+    } else {
+        format!("{n} function{}", if n == 1 { "" } else { "s" })
+    };
+    ui.label(RichText::new(summary).size(11.5).color(p.text_dim));
+    ui.add_space(2.0);
+
+    if let Some(err) = vm.functions.error.clone() {
+        let s = style::status(style::dark(ui));
+        ui.label(RichText::new(err).color(s.danger));
+        if ui.button("Try again").clicked() {
+            vm.refresh_functions();
+        }
+        return;
+    }
+    if n == 0 {
+        if vm.functions.loading {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Loading functions...").color(p.text_dim));
+            });
+        } else if !vm.functions.filter.is_empty() {
+            empty_state(
+                ui,
+                "No matches",
+                &format!("No function name contains \"{}\".", vm.functions.filter),
+                Some("Clear the filter to see everything."),
+            );
+        } else {
+            empty_state(
+                ui,
+                "No functions yet",
+                "Functions appear here once the program has been analyzed.",
+                Some("Press Analyze in the top bar."),
+            );
+        }
+        return;
+    }
+
+    let mut selected = vm.selected.and_then(|a| vm.functions.index_of(a));
+    let mut max_seen = 0usize;
+    let items: &[FunctionItem] = &vm.functions.items;
+    let resp = VirtualList::new("functions", n, 22.0).show(ui, &mut selected, |ui, i, sel| {
+        max_seen = max_seen.max(i);
+        let f = &items[i];
+        let addr = RichText::new(format!("{:08x}", f.address))
+            .monospace()
+            .size(12.0)
+            .color(p.address);
+        ui.label(addr);
+        let color = if sel { p.text_strong } else { p.text };
+        let mut name = RichText::new(&f.name).monospace().size(12.5).color(color);
+        if f.partial {
+            name = name.italics();
+        }
+        let r = ui.label(name);
+        if f.partial || f.signature.is_some() {
+            let tip = match (&f.signature, f.partial) {
+                (Some(s), true) => format!("{s}\nStill being analyzed"),
+                (Some(s), false) => s.clone(),
+                (None, _) => "Still being analyzed".to_string(),
+            };
+            r.on_hover_text(tip);
+        }
+    });
+    if resp.changed
+        && let Some(i) = selected
+        && let Some(f) = vm.functions.items.get(i)
+    {
+        let addr = f.address;
+        st.pending_nav = None;
+        vm.select_function(addr);
+    }
+    vm.ensure_loaded(max_seen + 1);
+}
+
+// ---------------------------------------------------------------- decompiler
+
+/// What the decompiler pane wants done once its borrow of the view-model ends.
+enum Act {
+    Rename,
+    Comment,
+    Retry,
+    RenameAt(u64, Option<String>),
+    Notice(&'static str),
+}
+
+fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    let mut acts: Vec<Act> = Vec::new();
+    {
+        let Some(cur) = vm.current.as_ref() else {
+            empty_state(
+                ui,
+                "Pick a function to read",
+                "Choose one from the Functions list on the left. KRAKEN turns its machine code into readable C-like code here.",
+                Some(
+                    "Tip: click a call to follow it, double-click a name (or press N) to rename it.",
+                ),
+            );
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(medium(&cur.name, 15.0).color(p.text_strong));
+            ui.label(
+                RichText::new(format!("{:#x}", cur.address))
+                    .monospace()
+                    .size(12.0)
+                    .color(p.address),
+            );
+            if let Load::Ready(d) = &cur.decompiled
+                && let Some(reason) = &d.partial_reason
+            {
+                chip(ui, "partial", s.warning)
+                    .on_hover_text(format!("This result may change: {reason}."));
+            }
+            if cur.refreshing {
+                ui.spinner();
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("Comment")
+                    .on_hover_text("Leave a note on this function")
+                    .clicked()
+                {
+                    acts.push(Act::Comment);
+                }
+                if ui
+                    .button("Rename  (N)")
+                    .on_hover_text("Give this function a better name")
+                    .clicked()
+                {
+                    acts.push(Act::Rename);
+                }
+            });
+        });
+        if let Some(d) = &cur.detail {
+            if let Some(sig) = &d.signature {
+                ui.label(RichText::new(sig).monospace().size(12.0).color(p.text_dim));
+            }
+            for c in &d.comments {
+                ui.label(
+                    RichText::new(format!("// {}", c.text))
+                        .italics()
+                        .size(12.0)
+                        .color(p.text_dim),
+                );
+            }
+        }
+        ui.add_space(2.0);
+        ui.separator();
+
+        match &cur.decompiled {
+            Load::Idle | Load::Loading => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Decompiling...").color(p.text_dim));
+                });
+            }
+            Load::Failed(msg) => {
+                ui.add_space(8.0);
+                ui.label(RichText::new("This function could not be decompiled.").color(s.danger));
+                ui.label(RichText::new(msg).color(p.text_dim));
+                if ui.button("Try again").clicked() {
+                    acts.push(Act::Retry);
+                }
+            }
+            Load::Ready(d) => code(ui, st, cur.address, d, &mut acts),
+        }
+    }
+    for a in acts {
+        match a {
+            Act::Rename => vm.begin_rename_current(),
+            Act::Comment => vm.begin_comment_current(),
+            Act::Retry => vm.refresh_current(),
+            Act::RenameAt(addr, name) => vm.begin_rename(addr, name.as_deref()),
+            Act::Notice(t) => vm.toast(ToastLevel::Info, t),
+        }
+    }
+}
+
+fn target_of(t: &kraken_proto::Token) -> Option<u64> {
+    match &t.target {
+        Some(Locator::Native { offset, .. }) => Some(offset.0),
+        _ => None,
+    }
+}
+
+fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec<Act>) {
+    let s = style::status(style::dark(ui));
+    if !d.warnings.is_empty() {
+        ui.label(
+            RichText::new(format!(
+                "{} decompiler warning{}: {}",
+                d.warnings.len(),
+                if d.warnings.len() == 1 { "" } else { "s" },
+                d.warnings.join("; ")
+            ))
+            .size(12.0)
+            .color(s.warning),
+        );
+    }
+    if d.truncated {
+        ui.label(
+            RichText::new("This function is very long; the end is cut off.")
+                .size(12.0)
+                .color(s.warning),
+        );
+    }
+    let mut widget = TokenText::new(&d.result)
+        .id_salt("decompiler")
+        .cache_id(d.revision);
+    if let Some(sym) = &st.initial_highlight {
+        widget = widget.initial_highlight(sym.clone());
+    }
+    let out = widget.show(ui);
+
+    let double = ui.input(|i| {
+        i.pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    });
+    let hovered_tok = out.hovered.and_then(|i| d.result.tokens.get(i));
+
+    if double {
+        if let Some(t) = hovered_tok {
+            st.pending_nav = None;
+            match target_of(t) {
+                Some(a) => acts.push(Act::RenameAt(a, t.symbol.clone())),
+                None => acts.push(Act::Notice(
+                    "Only function names can be renamed so far. Variables are coming later.",
+                )),
+            }
+        }
+    } else if let Some(c) = out.clicked
+        && let Some(target) = c.target.as_ref().and_then(|l| match l {
+            Locator::Native { offset, .. } => Some(offset.0),
+            _ => None,
+        })
+        && target != addr
+    {
+        st.pending_nav = Some((target, Instant::now()));
+        ui.ctx().request_repaint_after(DOUBLE_CLICK_WINDOW);
+    }
+
+    // N renames the name under the pointer, or the function being read.
+    let typing = ui.ctx().egui_wants_keyboard_input();
+    if !typing && ui.input(|i| i.key_pressed(egui::Key::N) && !i.modifiers.any()) {
+        match hovered_tok
+            .filter(|t| t.kind == TokenKind::Function)
+            .and_then(|t| target_of(t).map(|a| (a, t.symbol.clone())))
+        {
+            Some((a, sym)) => acts.push(Act::RenameAt(a, sym)),
+            None => acts.push(Act::Rename),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- hex + listing
+
+/// Stand-in bytes until the backend can read program memory: a plausible prologue, filler and
+/// epilogue sized like the function. Clearly labelled in the UI.
+pub fn placeholder_bytes(addr: u64, len: usize) -> Vec<u8> {
+    let mut x = addr.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    let mut v: Vec<u8> = (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            if x.is_multiple_of(7) {
+                0
+            } else {
+                (x >> 24) as u8
+            }
+        })
+        .collect();
+    let prologue = [0x55, 0x48, 0x89, 0xe5];
+    for (b, p) in v.iter_mut().zip(prologue) {
+        *b = p;
+    }
+    if let Some(last) = v.last_mut() {
+        *last = 0xc3;
+    }
+    v
+}
+
+fn hex(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
+    let p = pal(ui);
+    let Some(cur) = &vm.current else {
+        empty_state(
+            ui,
+            "No bytes to show yet",
+            "Select a function and its raw bytes will appear here.",
+            None,
+        );
+        return;
+    };
+    let addr = cur.address;
+    let len = cur
+        .detail
+        .as_ref()
+        .and_then(|d| d.size)
+        .unwrap_or(64)
+        .clamp(16, 4096) as usize;
+    if st.placeholder.as_ref().map(|(a, b)| (*a, b.len())) != Some((addr, len)) {
+        st.placeholder = Some((addr, placeholder_bytes(addr, len)));
+    }
+    let Some((_, bytes)) = &st.placeholder else {
+        return;
+    };
+    ui.label(
+        RichText::new("Sample bytes. Reading real program memory is not available yet.")
+            .size(11.5)
+            .italics()
+            .color(p.text_dim),
+    )
+    .on_hover_text("The layout is real; the byte values are placeholders for now.");
+    ui.add_space(2.0);
+    HexView::new(&SliceSource(bytes), addr)
+        .id_salt("hex")
+        .show(ui);
+}
+
+fn listing(ui: &mut Ui) {
+    let p = pal(ui);
+    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.add_space((ui.available_height() * 0.22).clamp(12.0, 120.0));
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(46.0, 34.0), Sense::hover());
+        let painter = ui.painter_at(rect);
+        for i in 0..4 {
+            let y = rect.top() + 4.0 + i as f32 * 8.0;
+            let w = [34.0, 24.0, 40.0, 18.0][i];
+            painter.rect_filled(
+                egui::Rect::from_min_size(egui::pos2(rect.left() + 3.0, y), egui::vec2(w, 4.0)),
+                2.0,
+                if i == 1 { p.accent } else { p.border },
+            );
+        }
+        ui.add_space(8.0);
+        ui.label(medium("Disassembly is coming soon", 16.0).color(p.text_strong));
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width().min(380.0));
+            ui.label(
+                RichText::new(
+                    "KRAKEN cannot list machine instructions yet. The Decompiler shows what each function does, and the Hex tab shows its bytes.",
+                )
+                .color(p.text_dim),
+            );
+        });
+    });
+}
+
+// ---------------------------------------------------------------- history + proposals
+
+fn history(ui: &mut Ui, vm: &mut ViewModel) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    ui.horizontal(|ui| {
+        if ui
+            .button("Undo my last change")
+            .on_hover_text("Reverses your most recent edit. Press again to step further back.")
+            .clicked()
+        {
+            vm.undo_last();
+        }
+        if ui.button("Refresh").clicked() {
+            vm.refresh_history();
+        }
+        if vm.history.loading {
+            ui.spinner();
+        }
+    });
+    if let Some(e) = &vm.history.error {
+        ui.label(RichText::new(e).color(s.danger));
+    }
+    if vm.history.entries.is_empty() && !vm.history.loading {
+        empty_state(
+            ui,
+            "No changes yet",
+            "Rename a function or add a comment and it will be listed here, with a way to undo it.",
+            None,
+        );
+        return;
+    }
+    let mut undo_run: Option<String> = None;
+    let mut want_more = false;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for e in &vm.history.entries {
+                ui.horizontal(|ui| {
+                    let dim = e.undone || e.status == "rejected";
+                    let text = |t: String| {
+                        let r = RichText::new(t).size(12.5);
+                        if dim {
+                            r.color(p.text_dim).strikethrough()
+                        } else {
+                            r.color(p.text)
+                        }
+                    };
+                    ui.label(
+                        RichText::new(clock(e.ts_ms))
+                            .monospace()
+                            .size(11.5)
+                            .color(p.text_dim),
+                    );
+                    if e.by_agent {
+                        chip(ui, &e.who, s.info);
+                    } else {
+                        chip(ui, "you", p.accent);
+                    }
+                    ui.label(text(e.description.clone()));
+                    if e.is_undo {
+                        chip(ui, "undo", p.text_dim);
+                    }
+                    if e.undone {
+                        chip(ui, "undone", p.text_dim);
+                    }
+                    if e.sync == "engine_rejected" {
+                        chip(ui, "engine refused", s.danger);
+                    } else if e.sync == "pending" {
+                        chip(ui, "waiting", s.warning);
+                    }
+                    if e.by_agent
+                        && let Some(run) = &e.run_id
+                        && !e.undone
+                        && ui
+                            .small_button("Undo run")
+                            .on_hover_text(format!("Reverse every change from run {run}"))
+                            .clicked()
+                    {
+                        undo_run = Some(run.clone());
+                    }
+                });
+            }
+            if vm.history.next_cursor.is_some() && ui.button("Load older changes").clicked() {
+                want_more = true;
+            }
+        });
+    if let Some(r) = undo_run {
+        vm.undo_run(r);
+    }
+    if want_more {
+        vm.load_more_history();
+    }
+}
+
+fn proposals(ui: &mut Ui, vm: &mut ViewModel) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    if let Some(e) = &vm.proposals.error {
+        ui.label(RichText::new(e).color(s.danger));
+    }
+    if vm.proposals.items.is_empty() {
+        empty_state(
+            ui,
+            "Nothing to review",
+            "When an AI assistant suggests a change that needs your approval, it will wait here.",
+            None,
+        );
+        return;
+    }
+    let mut accept = None;
+    let mut reject = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for pr in &vm.proposals.items {
+                style::card().fill(p.surface).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        chip(ui, &pr.who, s.info);
+                        ui.label(RichText::new(&pr.description).monospace().size(12.5));
+                    });
+                    ui.label(
+                        RichText::new(format!("Waiting because: {}", pr.reason))
+                            .size(12.0)
+                            .color(p.text_dim),
+                    );
+                    ui.horizontal(|ui| {
+                        if style::primary_button(ui, "Accept").clicked() {
+                            accept = Some(pr.id);
+                        }
+                        if ui.button("Reject").clicked() {
+                            reject = Some(pr.id);
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            }
+        });
+    if let Some(id) = accept {
+        vm.accept_proposal(id);
+    }
+    if let Some(id) = reject {
+        vm.reject_proposal(id);
+    }
+}

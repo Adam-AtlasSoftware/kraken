@@ -1,0 +1,157 @@
+//! Command-line options.
+
+use std::path::PathBuf;
+
+/// Which graphics backend to render with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RendererChoice {
+    Glow,
+    Wgpu,
+}
+
+/// What a screenshot shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scene {
+    /// The demo project with `main` open (default).
+    Main,
+    /// The command palette with a query typed.
+    Palette,
+    /// The rename dialog.
+    Rename,
+    /// The welcome screen (no demo needed).
+    Welcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Options {
+    pub scene: Scene,
+    pub renderer: RendererChoice,
+    /// Open the demo project at startup.
+    pub demo: bool,
+    /// Render the demo, save a PNG and exit.
+    pub screenshot: Option<PathBuf>,
+    pub light: bool,
+}
+
+pub const USAGE: &str =
+    "kraken-gui [--renderer glow|wgpu] [--demo] [--light] [--screenshot <png> [--scene S]]
+
+  --renderer R       graphics backend: wgpu (default) or glow
+  --demo             open the built-in demo project at startup
+  --light            start with the light theme
+  --screenshot FILE  with --demo: select main, render, save FILE as a PNG and exit
+  --scene S          what --screenshot shows: main (default), palette, rename or welcome
+  -h, --help         show this text";
+
+#[derive(Debug)]
+pub enum Parsed {
+    Run(Options),
+    Help,
+}
+
+pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
+    let mut o = Options {
+        scene: Scene::Main,
+        renderer: RendererChoice::Wgpu,
+        demo: false,
+        screenshot: None,
+        light: false,
+    };
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-h" | "--help" => return Ok(Parsed::Help),
+            "--demo" => o.demo = true,
+            "--light" => o.light = true,
+            "--renderer" => {
+                o.renderer = match it.next().as_deref() {
+                    Some("glow") => RendererChoice::Glow,
+                    Some("wgpu") => RendererChoice::Wgpu,
+                    other => {
+                        return Err(format!(
+                            "--renderer needs `glow` or `wgpu`, got {}",
+                            other.unwrap_or("nothing")
+                        ));
+                    }
+                }
+            }
+            "--scene" => {
+                o.scene = match it.next().as_deref() {
+                    Some("main") => Scene::Main,
+                    Some("palette") => Scene::Palette,
+                    Some("rename") => Scene::Rename,
+                    Some("welcome") => Scene::Welcome,
+                    other => {
+                        return Err(format!(
+                            "--scene needs main, palette, rename or welcome, got {}",
+                            other.unwrap_or("nothing")
+                        ));
+                    }
+                }
+            }
+            "--screenshot" => {
+                o.screenshot = Some(PathBuf::from(
+                    it.next().ok_or("--screenshot needs a file name")?,
+                ));
+            }
+            other => return Err(format!("unknown option `{other}`")),
+        }
+    }
+    if o.screenshot.is_some() && !o.demo && o.scene != Scene::Welcome {
+        return Err("--screenshot needs --demo".into());
+    }
+    Ok(Parsed::Run(o))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(args: &[&str]) -> Result<Parsed, String> {
+        parse(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn defaults_and_flags() {
+        match p(&[]).unwrap() {
+            Parsed::Run(o) => {
+                assert_eq!(o.renderer, RendererChoice::Wgpu);
+                assert!(!o.demo && !o.light && o.screenshot.is_none());
+            }
+            Parsed::Help => panic!(),
+        }
+        match p(&[
+            "--renderer",
+            "glow",
+            "--demo",
+            "--light",
+            "--screenshot",
+            "x.png",
+        ])
+        .unwrap()
+        {
+            Parsed::Run(o) => {
+                assert_eq!(o.renderer, RendererChoice::Glow);
+                assert!(o.demo && o.light);
+                assert_eq!(o.screenshot, Some(PathBuf::from("x.png")));
+            }
+            Parsed::Help => panic!(),
+        }
+        assert!(matches!(p(&["--help"]).unwrap(), Parsed::Help));
+    }
+
+    #[test]
+    fn bad_input_is_explained() {
+        assert!(p(&["--renderer", "metal"]).unwrap_err().contains("glow"));
+        assert!(p(&["--renderer"]).is_err());
+        assert!(p(&["--screenshot"]).is_err());
+        assert!(
+            p(&["--screenshot", "a.png"])
+                .unwrap_err()
+                .contains("--demo")
+        );
+        assert!(p(&["--nope"]).unwrap_err().contains("--nope"));
+        assert!(p(&["--scene", "x"]).unwrap_err().contains("palette"));
+        assert!(p(&["--screenshot", "a.png", "--scene", "welcome"]).is_ok());
+    }
+}
