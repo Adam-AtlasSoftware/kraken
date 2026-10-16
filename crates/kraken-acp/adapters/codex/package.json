@@ -1,0 +1,8 @@
+{
+  "name": "kraken-adapter-codex",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@agentclientprotocol/codex-acp": "2.2.2"
+  }
+}

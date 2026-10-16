@@ -1,0 +1,8 @@
+{
+  "name": "kraken-adapter-gemini",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@google/gemini-cli": "0.62.0"
+  }
+}

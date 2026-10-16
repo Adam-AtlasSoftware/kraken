@@ -511,6 +511,49 @@ pub fn build_cli(registry: &Registry) -> Command {
             ),
     )
     .subcommand(
+        Command::new("agents")
+            .about("Terminal agents (Claude Code, Codex, Gemini CLI) connected to KRAKEN over ACP")
+            .long_about(
+                "Run terminal coding agents over the Agent Client Protocol, pre-connected to \
+                 KRAKEN's MCP server so they can use KRAKEN's tools. The agents also bring their \
+                 own shell and file tools, which are outside KRAKEN's safety model; a warning is \
+                 shown on first use. See docs/agents.md.",
+            )
+            .subcommand_required(true)
+            .subcommand(Command::new("list").about("Show which agents are detected, available, missing or unsupported"))
+            .subcommand(
+                Command::new("setup")
+                    .about("Download Node.js if needed and install an agent's adapter")
+                    .arg(Arg::new("id").required(true).value_name("AGENT").help("claude, codex, gemini or a custom id"))
+                    .arg(
+                        Arg::new("yes")
+                            .long("yes")
+                            .short('y')
+                            .action(ArgAction::SetTrue)
+                            .help("Download without asking first"),
+                    ),
+            )
+            .subcommand(
+                Command::new("run")
+                    .about("Send one prompt to an agent and stream its answer")
+                    .arg(Arg::new("id").required(true).value_name("AGENT").help("claude, codex, gemini or a custom id"))
+                    .arg(Arg::new("prompt").required(true).value_name("PROMPT").help("What to ask the agent"))
+                    .arg(
+                        Arg::new("daemon")
+                            .long("daemon")
+                            .action(ArgAction::SetTrue)
+                            .help("Connect the agent to `kraken mcp --daemon` instead of its own session"),
+                    )
+                    .arg(
+                        Arg::new("auto-approve")
+                            .long("auto-approve")
+                            .action(ArgAction::SetTrue)
+                            .help("Allow every permission request the agent makes (dangerous)"),
+                    ),
+            )
+            .subcommand(Command::new("__fake-agent").hide(true).about("Test support: a fake ACP agent on stdio")),
+    )
+    .subcommand(
         Command::new("daemon")
             .about("Inspect and control the krakend daemon")
             .subcommand_required(true)
@@ -977,6 +1020,7 @@ pub async fn run_with_provider(
             0
         }
         "mcp" => run_mcp(env, sm, json_out, err).await,
+        "agents" => crate::agents_cmd::run_agents(env, sm, json_out, out, err).await,
         "setup" => crate::setup::run_setup(env, sm, json_out, out, err).await,
         "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
         "glossary" => crate::assist_cmd::run_glossary(sm, json_out, out, err),

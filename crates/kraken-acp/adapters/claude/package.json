@@ -1,0 +1,8 @@
+{
+  "name": "kraken-adapter-claude",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.89.1"
+  }
+}

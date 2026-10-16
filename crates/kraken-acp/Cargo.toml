@@ -1,0 +1,40 @@
+[package]
+name = "kraken-acp"
+description = "KRAKEN terminal-agent host: launches Claude Code, Codex and Gemini CLI over the Agent Client Protocol, pre-connected to KRAKEN's MCP server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "kraken_acp"
+
+[[bin]]
+name = "kraken-fake-acp-agent"
+path = "src/bin/kraken-fake-acp-agent.rs"
+doc = false
+
+[dependencies]
+agent-client-protocol = "=3.4.0"
+async-trait = "0.1.89"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+kraken-host = { path = "../kraken-host", version = "0.0.0" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "process", "io-util", "fs"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+toml = "0.8"
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+flate2 = "1.1.10"
+sha2 = "0.10"
+tar = "0.4.46"
+zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2"] }
+tempfile = "3"
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "process", "io-util", "fs"] }

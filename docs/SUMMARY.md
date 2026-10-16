@@ -8,6 +8,7 @@
 - [Concepts](concepts.md)
 - [Connecting AI agents (MCP)](mcp.md)
 - [The built-in assistant](assistant.md)
+- [Terminal agents (ACP)](agents.md)
 - [Scripting with the CLI](cli.md)
 - [Security](security.md)
 
