@@ -38,12 +38,22 @@ logged; **dangerous** commands always ask for approval first.
 | [`read_bytes`](#read_bytes) | query | safe | Read raw bytes from memory (at most 64 KiB) |
 | [`rebuild`](#rebuild) | job | mutating | Recreate the engine project from the log and report drift (job) |
 | [`rename_symbol`](#rename_symbol) | mutation | mutating | Rename a function or label |
+| [`rewrite_accept`](#rewrite_accept) | mutation | mutating | Accept a verified rewrite unit for export (users only) |
+| [`rewrite_export`](#rewrite_export) | job | mutating | Export accepted units as a Cargo workspace with an FFI shim (job) |
+| [`rewrite_function`](#rewrite_function) | job | mutating | Translate one function to Rust and verify it against the original (job) |
+| [`rewrite_plan`](#rewrite_plan) | query | safe | Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged |
+| [`rewrite_spec`](#rewrite_spec) | job | mutating | Write a cited behavioural spec of a function or the program (job) |
+| [`rewrite_status`](#rewrite_status) | query | safe | Show rewrite progress: counts per status and one row per function |
 | [`set_calling_convention`](#set_calling_convention) | mutation | mutating | Set a function's calling convention |
 | [`set_comment`](#set_comment) | mutation | mutating | Set or clear a comment at an address |
 | [`set_function_bounds`](#set_function_bounds) | mutation | mutating | Change a function's address range |
 | [`set_type`](#set_type) | mutation | mutating | Set the prototype of a function or the type of a data item |
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
+| [`tainted_clear`](#tainted_clear) | mutation | mutating | Clear the stale marker of a function after refreshing it |
+| [`tainted_list`](#tainted_list) | query | safe | List functions whose derived data is stale after an undo |
 | [`undo`](#undo) | mutation | mutating | Undo the caller's most recent edit |
+| [`undo_entry`](#undo_entry) | mutation | mutating | Undo any log entry, with the later edits that depend on it |
+| [`undo_preview`](#undo_preview) | query | safe | Show what undoing a log entry would also undo |
 | [`undo_run`](#undo_run) | mutation | mutating | Undo every edit of an agent run, newest first |
 | [`xrefs`](#xrefs) | query | safe | List cross-references to or from an address |
 
@@ -4508,6 +4518,790 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
 
 </details>
 
+## rewrite_accept
+
+Accept a verified rewrite unit for export (users only)
+
+```sh
+kraken rewrite-accept --unit <string>
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Moves a `verified` unit version to `accepted`; only accepted versions are exported. A function has one accepted version: accepting another replaces it. Unverified and failed versions are refused. Agents cannot accept; they can only produce units.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `unit` | `--unit` | string | yes | Unit id from `rewrite_function` or `rewrite_status` (`ru-...`). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `rewrite_accept`.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "Function entry."
+    },
+    "replaced_version": {
+      "description": "The version that was accepted before, if this replaced one.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "status": {
+      "description": "Always `accepted`.",
+      "type": "string"
+    },
+    "unit": {
+      "description": "The unit version.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Version number.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status",
+    "unit",
+    "address",
+    "version"
+  ],
+  "title": "RewriteAcceptOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_export
+
+Export accepted units as a Cargo workspace with an FFI shim (job)
+
+```sh
+kraken rewrite-export --dir <string> [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Writes a workspace with two crates: a library holding the accepted units, one module per function, and an FFI shim crate that exposes one `extern "C"` function per unit with the original name and signature, plus a README with the coverage and how to link the shim in place of the originals (strangler pattern: functions not yet rewritten keep running from the original binary). With `build` (the default) the workspace is built in the sandbox and its exported symbols are checked against the units; the export fails if that does not hold, leaving the files for inspection. Writing outside the project directory asks for approval first, as a dangerous command does; inside it the command is `mutating`. Only accepted units are exported.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `dir` | `--dir` | string | yes | Directory to write the Cargo workspace to. Relative paths are inside the project directory; `..` is not allowed. It must be empty, absent, or an earlier export. Writing outside the project directory asks for approval. |
+| `build` | `--build` | boolean | no | Build the generated workspace in the sandbox before reporting success (default true). |
+| `name` | `--name` | string | no | Crate name prefix (default: the binary's file name, sanitised). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_function
+
+Translate one function to Rust and verify it against the original (job)
+
+```sh
+kraken rewrite-function --address <address> [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Decompiles the function, asks the configured provider (`[provider]` in config.toml) for a Rust translation behind an explicit `extern "C"` signature, builds it and runs it against the original machine code under emulation on seeded inputs, and stores the result as a new version of the function's rewrite unit in `rewrite.sqlite`. The job result is a `RewriteFunctionResult`; a wrong translation is a `failed` unit with a minimal counterexample, not an error. The generated code is untrusted: it is built and run only inside the sandbox (read-only file system, no network, resource limits), and the command refuses to run at all when the host cannot enforce it (Linux with Landlock today). That is why it is `mutating` and not `dangerous`. It adds artifacts only and never edits the program; accepting a unit is a separate, users-only step (`rewrite_accept`). It sends decompiled code to the provider.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | The function (any address inside it). |
+| `cases` | `--cases` | integer | no | Random test cases to run (default 200, at most 2000). |
+| `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates the decompile; `spec` reimplements from the function's spec, writing it first if none is stored. |
+| `seed` | `--seed` | integer | no | Seed of the random test cases (default fixed, so runs are reproducible). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_plan
+
+Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged
+
+```sh
+kraken rewrite-plan [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Orders the program's functions so that callees come before their callers; functions that call each other form one group and are translated together. Import thunks and compiler glue are left out. Each entry lists the imports it calls and flags what the differential test cannot cover yet: `needs_stubs` (a library call the oracle does not model, directly or through a callee, so the test would be inconclusive), `uses_globals` (global data that is not an input of the test), `uses_syscalls` and `recursive`. The plan for `scope: all` is stored in `rewrite.sqlite` in the project directory (that is the only thing this command writes); pass the returned `next_cursor` to read further pages of it. `scope: function` returns one function and the callees it needs, leaves first, without storing anything. The global and syscall flags come from references and call targets, so they are a guide, not a proof.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | json | no | The function (any address inside it) for `scope: function`. |
+| `cursor` | `--cursor` | string | no | Cursor from the previous page's `next_cursor` (pages of the stored plan). |
+| `limit` | `--limit` | integer | no | Page size (default 100, at most 200). |
+| `max_functions` | `--max-functions` | integer | no | Most functions a new `all` plan examines (default 2000, at most 20000). |
+| `scope` | `--scope` | one of `function`, `all` | no | `all` (default) plans the whole program and stores the plan; `function` plans one function with the callees it needs, leaves first. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "PlanEntry": {
+      "description": "One function of a plan.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Entry address."
+        },
+        "callees": {
+          "description": "Entries of the functions it calls that are part of the program (not imports).",
+          "items": {
+            "$ref": "#/$defs/Hex64"
+          },
+          "type": "array"
+        },
+        "flags": {
+          "description": "Why it needs care.",
+          "items": {
+            "$ref": "#/$defs/PlanFlag"
+          },
+          "type": "array"
+        },
+        "group": {
+          "description": "Functions of one recursive group share a group number and are translated together.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "group_size": {
+          "description": "Number of functions in the group.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "imports": {
+          "description": "Imported library functions it calls directly.",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Function name (binary-derived)."
+        },
+        "needs_stubs": {
+          "description": "Imports, direct or through callees, that the oracle has no stub for.",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
+        },
+        "order": {
+          "description": "Position in the rewrite order, from 0: callees come before their callers.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/UnitStatus",
+          "description": "Where its rewrite unit stands."
+        }
+      },
+      "required": [
+        "order",
+        "address",
+        "name",
+        "group",
+        "group_size",
+        "callees",
+        "imports",
+        "needs_stubs",
+        "flags",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PlanFlag": {
+      "description": "Why a function needs more than a plain translation.",
+      "oneOf": [
+        {
+          "const": "needs_stubs",
+          "description": "Calls a library function the oracle has no stub for (for example `malloc`), directly or\nthrough its callees; the differential test can only be inconclusive until one exists.",
+          "type": "string"
+        },
+        {
+          "const": "uses_globals",
+          "description": "Reads or writes global data; the globals are not inputs of the test.",
+          "type": "string"
+        },
+        {
+          "const": "uses_syscalls",
+          "description": "Issues a system call directly.",
+          "type": "string"
+        },
+        {
+          "const": "recursive",
+          "description": "Part of a recursive group; the group is translated together.",
+          "type": "string"
+        }
+      ]
+    },
+    "PlanScope": {
+      "description": "What a plan or a spec covers.",
+      "oneOf": [
+        {
+          "const": "function",
+          "description": "One function (with its callees for a plan).",
+          "type": "string"
+        },
+        {
+          "const": "all",
+          "description": "Every function of the program.",
+          "type": "string"
+        }
+      ]
+    },
+    "UnitStatus": {
+      "description": "Where a rewrite unit stands (ADR 0013).",
+      "oneOf": [
+        {
+          "const": "planned",
+          "description": "In the plan; nothing translated yet.",
+          "type": "string"
+        },
+        {
+          "const": "translated",
+          "description": "Rust code exists but no passing verdict does (not run, or inconclusive).",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "The differential test passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The differential test found a difference, or the code was refused or did not compile.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "A user accepted this verified version for export.",
+          "type": "string"
+        }
+      ]
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `rewrite_plan`.",
+  "properties": {
+    "entries": {
+      "description": "This page of the plan.",
+      "items": {
+        "$ref": "#/$defs/PlanEntry"
+      },
+      "type": "array"
+    },
+    "functions_planned": {
+      "description": "Functions in the plan.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "functions_total": {
+      "description": "Functions the engine lists.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "groups": {
+      "description": "Number of groups (strongly connected components).",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "next_cursor": {
+      "description": "Cursor for the next page.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "program_sha256": {
+      "description": "SHA-256 of the analysed binary.",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/PlanScope",
+      "description": "What was planned."
+    },
+    "skipped_imports": {
+      "description": "Import thunks left out (they are the program's external calls, not code to rewrite).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skipped_runtime": {
+      "description": "Compiler and loader glue left out (`_start`, `_init`, `frame_dummy`, ...).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "truncated": {
+      "description": "True when `max_functions` cut the program short.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "scope",
+    "program_sha256",
+    "functions_total",
+    "functions_planned",
+    "skipped_imports",
+    "skipped_runtime",
+    "groups",
+    "truncated",
+    "entries"
+  ],
+  "title": "RewritePlanOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_spec
+
+Write a cited behavioural spec of a function or the program (job)
+
+```sh
+kraken rewrite-spec [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+First half of spec-then-reimplement. The provider writes Markdown with the fixed headings Purpose, Inputs, Outputs, Side effects, Invariants and Open questions; every fact must cite an address `[@0x...]` that appears in the evidence, and the reply is rejected otherwise. The spec is stored in `rewrite.sqlite` and used by `rewrite_function` with `mode: spec`. It runs no generated code. It sends decompiled code to the provider.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | json | no | The function (any address inside it) for `scope: function`. |
+| `max_functions` | `--max-functions` | integer | no | For `scope: all`, the most functions the spec is written from, in plan order (default 30, at most 100). |
+| `scope` | `--scope` | one of `function`, `all` | no | `function` for one function (with `address`), `all` for the whole program. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_status
+
+Show rewrite progress: counts per status and one row per function
+
+```sh
+kraken rewrite-status [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); functions with a unit that are not in the plan come last. `status` is one of `planned`, `translated`, `verified`, `failed`, `accepted`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `cursor` | `--cursor` | string | no | Cursor from the previous page's `next_cursor`. |
+| `limit` | `--limit` | integer | no | Page size (default 100, at most 200). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "PlanFlag": {
+      "description": "Why a function needs more than a plain translation.",
+      "oneOf": [
+        {
+          "const": "needs_stubs",
+          "description": "Calls a library function the oracle has no stub for (for example `malloc`), directly or\nthrough its callees; the differential test can only be inconclusive until one exists.",
+          "type": "string"
+        },
+        {
+          "const": "uses_globals",
+          "description": "Reads or writes global data; the globals are not inputs of the test.",
+          "type": "string"
+        },
+        {
+          "const": "uses_syscalls",
+          "description": "Issues a system call directly.",
+          "type": "string"
+        },
+        {
+          "const": "recursive",
+          "description": "Part of a recursive group; the group is translated together.",
+          "type": "string"
+        }
+      ]
+    },
+    "RewriteMode": {
+      "description": "How a function is rewritten (decision 2).",
+      "oneOf": [
+        {
+          "const": "incremental",
+          "description": "Faithful translation of the decompile, checked against the original machine code\n(strangler pattern).",
+          "type": "string"
+        },
+        {
+          "const": "spec",
+          "description": "Reimplementation from a cited behavioural spec (written first when none is stored); the\nmodel does not see the function's decompile, only the spec.",
+          "type": "string"
+        }
+      ]
+    },
+    "StatusCounts": {
+      "description": "Units per status.",
+      "properties": {
+        "accepted": {
+          "description": "Accepted for export.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed": {
+          "description": "Failed verification.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned": {
+          "description": "In the plan, nothing translated yet.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "translated": {
+          "description": "Translated, not verified.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "verified": {
+          "description": "Verified, not accepted.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "planned",
+        "translated",
+        "verified",
+        "failed",
+        "accepted"
+      ],
+      "type": "object"
+    },
+    "UnitRow": {
+      "description": "One row of `rewrite_status`.",
+      "properties": {
+        "accepted_version": {
+          "description": "Accepted version, if any.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Entry address."
+        },
+        "cases_run": {
+          "description": "Test cases that ran on both sides.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "counterexamples": {
+          "description": "Counterexamples stored with the verdict.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flags": {
+          "description": "Why it needs care, from the plan.",
+          "items": {
+            "$ref": "#/$defs/PlanFlag"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RewriteMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Mode of the newest version."
+        },
+        "model": {
+          "description": "Model that wrote the newest version.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Function name (binary-derived)."
+        },
+        "order": {
+          "description": "Position in the plan, if the function is in it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "passed": {
+          "description": "Cases that agreed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "description": "Provider that wrote the newest version.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/UnitStatus",
+          "description": "Status."
+        },
+        "verdict": {
+          "description": "Verdict of the newest version: `pass`, `fail`, `rejected` or `inconclusive`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Newest version number (0 when nothing was translated).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "name",
+        "status",
+        "version",
+        "cases_run",
+        "passed",
+        "counterexamples",
+        "flags"
+      ],
+      "type": "object"
+    },
+    "UnitStatus": {
+      "description": "Where a rewrite unit stands (ADR 0013).",
+      "oneOf": [
+        {
+          "const": "planned",
+          "description": "In the plan; nothing translated yet.",
+          "type": "string"
+        },
+        {
+          "const": "translated",
+          "description": "Rust code exists but no passing verdict does (not run, or inconclusive).",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "The differential test passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The differential test found a difference, or the code was refused or did not compile.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "A user accepted this verified version for export.",
+          "type": "string"
+        }
+      ]
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `rewrite_status`.",
+  "properties": {
+    "counts": {
+      "$ref": "#/$defs/StatusCounts",
+      "description": "Units per status over the whole program."
+    },
+    "next_cursor": {
+      "description": "Cursor for the next page.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plan_present": {
+      "description": "True when a plan is stored (rows then follow plan order).",
+      "type": "boolean"
+    },
+    "program_sha256": {
+      "description": "SHA-256 of the analysed binary.",
+      "type": "string"
+    },
+    "units": {
+      "description": "This page of rows.",
+      "items": {
+        "$ref": "#/$defs/UnitRow"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "program_sha256",
+    "plan_present",
+    "counts",
+    "units"
+  ],
+  "title": "RewriteStatusOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## set_calling_convention
 
 Set a function's calling convention
@@ -5088,6 +5882,135 @@ Values come from the binary and are returned as untrusted data, cut at 1024 char
 
 </details>
 
+## tainted_clear
+
+Clear the stale marker of a function after refreshing it
+
+```sh
+kraken tainted-clear --address <address>
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Call after the function's derived data was re-read. It is not an annotation edit and is not logged.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Address whose stale markers to clear after its derived data was refreshed. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `tainted_clear`.",
+  "properties": {
+    "cleared": {
+      "description": "Markers removed.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "cleared"
+  ],
+  "title": "TaintedClearOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## tainted_list
+
+List functions whose derived data is stale after an undo
+
+```sh
+kraken tainted-list
+```
+
+- Kind: query
+- Permission: safe
+
+Undoing a type or signature edit does not reverse what was derived from it (decompiler output, explanations); those functions are marked stale until `tainted_clear`.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "TaintedFunction": {
+      "description": "Functions whose derived data is stale because a type or signature edit was undone.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Function (or item) address."
+        },
+        "entry_id": {
+          "description": "The compensating entry that caused the marker.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keys": {
+          "description": "The entity keys marked stale there.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "description": "Why.",
+          "type": "string"
+        },
+        "ts_ms": {
+          "description": "When it was marked, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "keys",
+        "entry_id",
+        "reason",
+        "ts_ms"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `tainted_list`.",
+  "properties": {
+    "items": {
+      "description": "Stale functions, by address.",
+      "items": {
+        "$ref": "#/$defs/TaintedFunction"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "TaintedListOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## undo
 
 Undo the caller's most recent edit
@@ -5110,6 +6033,81 @@ Arguments: none.
 ```json
 {
   "$defs": {
+    "DriftEntry": {
+      "description": "One function that differs after the rebuild.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Function entry."
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value after (rebuilt engine project)."
+        },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value before (old engine project, or the log's expectation)."
+        },
+        "kind": {
+          "$ref": "#/$defs/DriftKind",
+          "description": "What differs."
+        }
+      },
+      "required": [
+        "address",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DriftKind": {
+      "description": "How a function differs after a rebuild.",
+      "oneOf": [
+        {
+          "const": "name_changed",
+          "description": "The name differs between the old and the rebuilt engine project.",
+          "type": "string"
+        },
+        {
+          "const": "signature_changed",
+          "description": "The signature differs between the old and the rebuilt engine project.",
+          "type": "string"
+        },
+        {
+          "const": "missing_after",
+          "description": "The function existed before and is gone after the rebuild.",
+          "type": "string"
+        },
+        {
+          "const": "new_after",
+          "description": "The function exists only after the rebuild.",
+          "type": "string"
+        },
+        {
+          "const": "state_name_mismatch",
+          "description": "The rebuilt engine project disagrees with the name the log says it should have.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
     "MutationStatus": {
       "description": "What a mutation did.",
       "oneOf": [
@@ -5154,11 +6152,34 @@ Arguments: none.
         "message"
       ],
       "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Result of `undo` and `undo_run`.",
   "properties": {
+    "drift": {
+      "description": "Where the engine disagrees with the log for those functions after the undo.",
+      "items": {
+        "$ref": "#/$defs/DriftEntry"
+      },
+      "type": "array"
+    },
     "entry_ids": {
       "description": "Compensating log entries, in creation order.",
       "items": {
@@ -5179,6 +6200,13 @@ Arguments: none.
       "$ref": "#/$defs/MutationStatus",
       "description": "`applied` or `queued` (analysis running)."
     },
+    "tainted": {
+      "description": "Functions whose derived data is now stale (a type or signature edit was undone); they\nwere re-decompiled and stay listed by `tainted_list` until `tainted_clear`.",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
     "undone_entry_ids": {
       "description": "Original entries that were reversed, in the same order.",
       "items": {
@@ -5196,6 +6224,561 @@ Arguments: none.
     "failed"
   ],
   "title": "UndoOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## undo_entry
+
+Undo any log entry, with the later edits that depend on it
+
+```sh
+kraken undo-entry --entry-id <integer> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Mutator`
+
+Undoes the entry with a compensating log entry, however old it is. A later edit depends on it when its read-set names a key the entry wrote (transitively). Without `cascade`, an entry with dependents is refused with `invalid_argument` and `details.dependents` (entry, author, command, keys); with `cascade` the dependents are undone first, newest first, then the entry. After undoing a type or signature edit the affected functions are re-decompiled, `drift` reports where the engine disagrees with the log, and `tainted` lists the functions whose derived data is marked stale (see `tainted_list`). Agents can only undo their own edits.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `entry_id` | `--entry-id` | integer | yes | The log entry to undo (see `history`). |
+| `cascade` | `--cascade` | boolean | no | Also undo later edits that depend on it. Without this, an entry with dependents is refused and the error lists them. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DriftEntry": {
+      "description": "One function that differs after the rebuild.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Function entry."
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value after (rebuilt engine project)."
+        },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value before (old engine project, or the log's expectation)."
+        },
+        "kind": {
+          "$ref": "#/$defs/DriftKind",
+          "description": "What differs."
+        }
+      },
+      "required": [
+        "address",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DriftKind": {
+      "description": "How a function differs after a rebuild.",
+      "oneOf": [
+        {
+          "const": "name_changed",
+          "description": "The name differs between the old and the rebuilt engine project.",
+          "type": "string"
+        },
+        {
+          "const": "signature_changed",
+          "description": "The signature differs between the old and the rebuilt engine project.",
+          "type": "string"
+        },
+        {
+          "const": "missing_after",
+          "description": "The function existed before and is gone after the rebuild.",
+          "type": "string"
+        },
+        {
+          "const": "new_after",
+          "description": "The function exists only after the rebuild.",
+          "type": "string"
+        },
+        {
+          "const": "state_name_mismatch",
+          "description": "The rebuilt engine project disagrees with the name the log says it should have.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    },
+    "UndoFailure": {
+      "description": "One edit the engine refused while pushing an undo.",
+      "properties": {
+        "code": {
+          "description": "The engine's error code.",
+          "type": "string"
+        },
+        "entry_id": {
+          "description": "The compensating log entry.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "message": {
+          "description": "The engine's reason.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry_id",
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `undo` and `undo_run`.",
+  "properties": {
+    "drift": {
+      "description": "Where the engine disagrees with the log for those functions after the undo.",
+      "items": {
+        "$ref": "#/$defs/DriftEntry"
+      },
+      "type": "array"
+    },
+    "entry_ids": {
+      "description": "Compensating log entries, in creation order.",
+      "items": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "failed": {
+      "description": "Compensations the engine refused; the model still records them as undone.",
+      "items": {
+        "$ref": "#/$defs/UndoFailure"
+      },
+      "type": "array"
+    },
+    "status": {
+      "$ref": "#/$defs/MutationStatus",
+      "description": "`applied` or `queued` (analysis running)."
+    },
+    "tainted": {
+      "description": "Functions whose derived data is now stale (a type or signature edit was undone); they\nwere re-decompiled and stay listed by `tainted_list` until `tainted_clear`.",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "undone_entry_ids": {
+      "description": "Original entries that were reversed, in the same order.",
+      "items": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "status",
+    "entry_ids",
+    "undone_entry_ids",
+    "failed"
+  ],
+  "title": "UndoOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## undo_preview
+
+Show what undoing a log entry would also undo
+
+```sh
+kraken undo-preview --entry-id <integer>
+```
+
+- Kind: query
+- Permission: safe
+
+Lists the later edits that depend on the entry (author, command, keys), the order they would be undone in and the functions that would be marked stale. Changes nothing. Fails with `invalid_argument` for an entry that is not an applied, not-yet-undone original edit.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `entry_id` | `--entry-id` | integer | yes | The log entry to preview undoing. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "AuthorView": {
+      "description": "Who made an edit.",
+      "properties": {
+        "id": {
+          "description": "User name or agent id.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`user` or `agent`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
+    },
+    "DependentView": {
+      "description": "A later edit that depends on the entry being undone.",
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/HistoryEntryView",
+          "description": "The dependent edit (author, run, command and target address are in it)."
+        },
+        "keys": {
+          "description": "The entity keys it read that were written by the entry or by another dependent.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entry",
+        "keys"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "HistoryEntryView": {
+      "description": "One log entry as shown by `history`.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hex64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Address the operation applies to."
+        },
+        "author": {
+          "$ref": "#/$defs/AuthorView",
+          "description": "Who made the edit."
+        },
+        "description": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "One-line rendering of the operation (may contain binary-derived text)."
+        },
+        "id": {
+          "description": "Entry id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "description": "Operation name such as `rename`.",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance",
+          "description": "Where the content came from."
+        },
+        "run_id": {
+          "description": "Run the edit belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/LogStatus",
+          "description": "Applied, rejected or orphaned."
+        },
+        "sync": {
+          "$ref": "#/$defs/SyncState",
+          "description": "Whether the engine has the edit."
+        },
+        "ts_ms": {
+          "description": "Creation time, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "undoes_entry_id": {
+          "description": "For a compensating entry, the entry it reverses.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "undone_by": {
+          "description": "The entry that reversed this one, if any.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "description",
+        "author",
+        "provenance",
+        "status",
+        "sync",
+        "ts_ms"
+      ],
+      "type": "object"
+    },
+    "LogStatus": {
+      "description": "Outcome of applying a log entry (decision 27).\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "The entry took effect.",
+          "properties": {
+            "kind": {
+              "const": "applied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The entry was refused.",
+          "properties": {
+            "kind": {
+              "const": "rejected",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why it was refused.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The anchor could no longer be resolved.",
+          "properties": {
+            "kind": {
+              "const": "orphaned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Provenance": {
+      "description": "Where an annotation came from (decision 61).",
+      "oneOf": [
+        {
+          "const": "user",
+          "description": "Entered by a human.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "Produced by an agent from its own reasoning.",
+          "type": "string"
+        },
+        {
+          "const": "agent_from_binary_text",
+          "description": "Produced by an agent from text found in the binary; always treated as untrusted.",
+          "type": "string"
+        }
+      ]
+    },
+    "SyncState": {
+      "description": "Whether a log entry has reached the engine (decision 57).\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "Not yet sent to the engine.",
+          "properties": {
+            "kind": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Applied by the engine.",
+          "properties": {
+            "kind": {
+              "const": "pushed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The engine refused the change.",
+          "properties": {
+            "kind": {
+              "const": "engine_rejected",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The engine's reason.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `undo_entry` would undo.",
+  "properties": {
+    "dependents": {
+      "description": "Later edits depending on it, transitively, oldest first.",
+      "items": {
+        "$ref": "#/$defs/DependentView"
+      },
+      "type": "array"
+    },
+    "entry": {
+      "$ref": "#/$defs/HistoryEntryView",
+      "description": "The entry the caller asked about."
+    },
+    "stale_functions": {
+      "description": "Functions whose derived data (decompiler output) would be marked stale.",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "undo_order": {
+      "description": "Entry ids in the order they would be undone: dependents newest first, then the entry.",
+      "items": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "entry",
+    "dependents",
+    "undo_order",
+    "stale_functions"
+  ],
+  "title": "UndoPreview",
   "type": "object"
 }
 ```
@@ -5226,6 +6809,81 @@ Reverses all applied, not yet undone edits that carry the run id in reverse orde
 ```json
 {
   "$defs": {
+    "DriftEntry": {
+      "description": "One function that differs after the rebuild.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Function entry."
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value after (rebuilt engine project)."
+        },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value before (old engine project, or the log's expectation)."
+        },
+        "kind": {
+          "$ref": "#/$defs/DriftKind",
+          "description": "What differs."
+        }
+      },
+      "required": [
+        "address",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DriftKind": {
+      "description": "How a function differs after a rebuild.",
+      "oneOf": [
+        {
+          "const": "name_changed",
+          "description": "The name differs between the old and the rebuilt engine project.",
+          "type": "string"
+        },
+        {
+          "const": "signature_changed",
+          "description": "The signature differs between the old and the rebuilt engine project.",
+          "type": "string"
+        },
+        {
+          "const": "missing_after",
+          "description": "The function existed before and is gone after the rebuild.",
+          "type": "string"
+        },
+        {
+          "const": "new_after",
+          "description": "The function exists only after the rebuild.",
+          "type": "string"
+        },
+        {
+          "const": "state_name_mismatch",
+          "description": "The rebuilt engine project disagrees with the name the log says it should have.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
     "MutationStatus": {
       "description": "What a mutation did.",
       "oneOf": [
@@ -5270,11 +6928,34 @@ Reverses all applied, not yet undone edits that carry the run id in reverse orde
         "message"
       ],
       "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Result of `undo` and `undo_run`.",
   "properties": {
+    "drift": {
+      "description": "Where the engine disagrees with the log for those functions after the undo.",
+      "items": {
+        "$ref": "#/$defs/DriftEntry"
+      },
+      "type": "array"
+    },
     "entry_ids": {
       "description": "Compensating log entries, in creation order.",
       "items": {
@@ -5294,6 +6975,13 @@ Reverses all applied, not yet undone edits that carry the run id in reverse orde
     "status": {
       "$ref": "#/$defs/MutationStatus",
       "description": "`applied` or `queued` (analysis running)."
+    },
+    "tainted": {
+      "description": "Functions whose derived data is now stale (a type or signature edit was undone); they\nwere re-decompiled and stay listed by `tainted_list` until `tainted_clear`.",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
     },
     "undone_entry_ids": {
       "description": "Original entries that were reversed, in the same order.",

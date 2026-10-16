@@ -531,6 +531,7 @@ impl KrakenApp {
             overlays::palette(&ctx, vm, &mut reqs);
             overlays::rename_dialog(&ctx, vm, &mut self.rename_focus);
             overlays::comment_dialog(&ctx, vm);
+            crate::history::dialog(&ctx, vm);
             chrome::toasts(&ctx, vm);
             assist::overlays(&ctx, vm, &mut self.state.assist);
             if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
@@ -764,6 +765,7 @@ impl eframe::App for KrakenApp {
 impl KrakenApp {
     /// Ends the sidecar of a `--no-daemon` run; a daemon outlives the window by design.
     fn stop_in_process_engine(&mut self) {
+        self.settings.infer.shutdown(self.rt.handle());
         if let Some(f) = self.services.ghidra.clone() {
             self.vm = None;
             self.rt.block_on(f.shutdown());

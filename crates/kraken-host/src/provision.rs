@@ -52,6 +52,9 @@ pub enum ProvisionError {
         "automatic setup supports Linux x86_64 only (this is {0}); install Ghidra 12.1.4 and a JDK 21 yourself and set KRAKEN_GHIDRA_HOME / KRAKEN_JAVA_HOME"
     )]
     UnsupportedPlatform(String),
+    /// No pinned build of an optional component exists for this platform.
+    #[error("{0}")]
+    NoBuild(String),
     /// A URL that is not `https://`.
     #[error("refusing to download {0}: only https is allowed")]
     NotHttps(String),

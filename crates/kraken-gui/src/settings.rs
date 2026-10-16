@@ -60,6 +60,8 @@ pub struct Settings {
     draft: Draft,
     /// The AI section.
     pub ai: crate::assist::AiSettings,
+    /// The local-model section.
+    pub infer: crate::infer::InferSettings,
     loaded_from: Option<PathBuf>,
     note: Option<Result<String, String>>,
     status: Option<Result<Value, String>>,
@@ -81,6 +83,7 @@ impl Default for Settings {
             open: false,
             draft: Draft::default(),
             ai: crate::assist::AiSettings::default(),
+            infer: crate::infer::InferSettings::default(),
             loaded_from: None,
             note: None,
             status: None,
@@ -373,6 +376,15 @@ impl Settings {
                         self.appearance(ui, dark, &mut actions);
                         ui.separator();
                         self.ai.show(ui, env.rt, env.config_path);
+                        ui.separator();
+                        self.infer.show(
+                            ui,
+                            env.rt,
+                            env.mode,
+                            env.backend,
+                            env.config_path,
+                            &mut self.ai,
+                        );
                         ui.separator();
                         self.engine(ui, env);
                         ui.separator();

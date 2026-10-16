@@ -58,3 +58,22 @@ kraken decompile --address 0x1189 || echo "failed with $?"
 ## Assistant commands
 
 Beside the registry commands, `kraken explain <address>`, `kraken overview`, `kraken auto-name [--limit N] [--dry-run]` and `kraken glossary <term>` use the built-in assistant. They are described in [The built-in assistant](assistant.md).
+
+## Rewriting
+
+The `rewrite-*` commands translate functions to Rust and check them against the original. They are described in [The rewrite pipeline](design/0013-rewrite-pipeline.md) and the [command reference](reference/commands.md).
+
+```sh
+kraken rewrite-plan                                   # callees first; flags what cannot be tested yet
+kraken rewrite-function --address 0x1189              # model call, sandboxed build, differential test
+kraken rewrite-function --address 0x1189 --mode spec  # reimplement from a cited spec instead
+kraken rewrite-status                                 # progress per function
+kraken rewrite-accept --unit ru-4a0f7dbcbe726d81      # only you can accept
+kraken rewrite-export --dir rewrite-out               # Cargo workspace with an FFI shim, built in the sandbox
+```
+
+The model comes from the `[provider]` table of `config.toml`, as for the assistant. Generated code runs only in a sandbox (Linux with Landlock); elsewhere the commands refuse.
+
+## Local models
+
+`kraken infer list|start|status|stop|logs` and `kraken infer setup llama` run a model on this computer under the daemon and can make the assistant use it (`--use`). See [Running a model on this computer](local-models.md).

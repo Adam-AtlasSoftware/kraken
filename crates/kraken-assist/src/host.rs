@@ -23,15 +23,23 @@ use tokio::time::Instant;
 use crate::ASSISTANT_ID;
 
 /// Commands never offered to the model by default: they open, create or rebuild projects (the
-/// person's decision), or are user-only decisions about the assistant's own work.
+/// person's decision), are user-only decisions about the assistant's own work, or start the
+/// rewrite pipeline's model calls, sandboxed builds and exports (`rewrite_plan` and
+/// `rewrite_status` are read-only and stay available).
 pub const DEFAULT_EXCLUDED: &[&str] = &[
     "project_create",
     "project_open",
     "rebuild",
     "undo",
     "undo_run",
+    "undo_entry",
+    "tainted_clear",
     "proposal_accept",
     "proposal_reject",
+    "rewrite_function",
+    "rewrite_spec",
+    "rewrite_export",
+    "rewrite_accept",
 ];
 
 /// How a [`RegistryToolHost`] is set up.

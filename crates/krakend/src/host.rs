@@ -17,6 +17,7 @@ use kraken_host::daemon::event_kind;
 use kraken_host::{EngineEvent, FactoryEvent, ManagedFactory};
 use kraken_ipc::Clock;
 use kraken_proto::{ErrorCode, ProtoError};
+use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{
     CallContext, JobProgress, JobStatus, Registry, Session, SessionConfig, Surface,
 };
@@ -43,6 +44,8 @@ pub struct HostConfig {
     pub session_idle: Duration,
     /// Most sessions open at once.
     pub max_sessions: usize,
+    /// The rewrite pipeline attached to every new [`Session`], if any.
+    pub rewrite: Option<Arc<dyn RewriteBackend>>,
 }
 
 impl Default for HostConfig {
@@ -51,6 +54,7 @@ impl Default for HostConfig {
             session_config: SessionConfig::default(),
             session_idle: Duration::from_secs(1800),
             max_sessions: 4,
+            rewrite: None,
         }
     }
 }
@@ -219,8 +223,11 @@ impl SessionHost {
     }
 
     fn new_entry(&self, key: &Path, dir: &Path) -> Arc<SessionEntry> {
-        let session = Session::new(self.inner.factory.clone())
+        let mut session = Session::new(self.inner.factory.clone())
             .with_config(self.inner.cfg.session_config.clone());
+        if let Some(rewrite) = &self.inner.cfg.rewrite {
+            session = session.with_rewrite(rewrite.clone());
+        }
         Arc::new(SessionEntry {
             key: key.to_path_buf(),
             dir: dir.to_path_buf(),

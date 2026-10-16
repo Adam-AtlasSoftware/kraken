@@ -21,6 +21,8 @@ use crate::validate::{clean_comment, validate_name};
 use crate::views::{MutationOutput, MutationStatus, ProposalOut, locator_parts};
 
 use super::NoArgs;
+use super::rebuild::DriftEntry;
+use super::undo_entry::refresh_after_undo;
 
 const MAX_TYPE_DEPTH: usize = 16;
 const MAX_PARAMS: usize = 64;
@@ -550,9 +552,16 @@ pub struct UndoOut {
     pub undone_entry_ids: Vec<u64>,
     /// Compensations the engine refused; the model still records them as undone.
     pub failed: Vec<UndoFailure>,
+    /// Functions whose derived data is now stale (a type or signature edit was undone); they
+    /// were re-decompiled and stay listed by `tainted_list` until `tainted_clear`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tainted: Vec<Hex64>,
+    /// Where the engine disagrees with the log for those functions after the undo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drift: Vec<DriftEntry>,
 }
 
-async fn finish_undo(
+pub(crate) async fn finish_undo(
     ctx: &CallContext,
     project: &Project,
     ids: Vec<EntryId>,
@@ -568,6 +577,11 @@ async fn finish_undo(
             .await?
     };
     let settled = mutate::settle(project, ctx, &ids).await?;
+    let (tainted, drift) = if settled.status == MutationStatus::Applied {
+        refresh_after_undo(ctx, project, &ids).await
+    } else {
+        (Vec::new(), Vec::new())
+    };
     Ok(UndoOut {
         status: settled.status,
         entry_ids: ids.iter().map(|i| i.0).collect(),
@@ -589,6 +603,8 @@ async fn finish_undo(
                 }
             })
             .collect(),
+        tainted,
+        drift,
     })
 }
 

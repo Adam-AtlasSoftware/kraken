@@ -1,4 +1,4 @@
-//! The 0.1a commands.
+//! The 0.1a commands and the `rewrite_*` commands.
 
 use kraken_proto::{Hex64, Locator, PageRequest};
 use schemars::JsonSchema;
@@ -13,6 +13,8 @@ mod jobs;
 mod project;
 mod query;
 mod rebuild;
+mod rewrite;
+mod undo_entry;
 
 pub use data::{
     CallGraphArgs, Callees, Callers, CfgArgs, CfgCommand, CfgOut, Disassemble, DisassembleArgs,
@@ -38,6 +40,18 @@ pub use query::{
     Decompile, DecompileArgs, GetFunction, GetFunctionArgs, ListFunctions, ListFunctionsArgs,
 };
 pub use rebuild::{DriftEntry, DriftKind, Rebuild, RebuildReport, ReplayFailure};
+pub use rewrite::{
+    CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanFlag, PlanScope,
+    RewriteAccept, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend, RewriteExport,
+    RewriteExportArgs, RewriteExportResult, RewriteFunction, RewriteFunctionArgs,
+    RewriteFunctionResult, RewriteMode, RewritePlan, RewritePlanArgs, RewritePlanOut, RewriteSpec,
+    RewriteSpecArgs, RewriteSpecResult, RewriteStatus, RewriteStatusArgs, RewriteStatusOut,
+    StatusCounts, UnitRow, UnitStatus, is_inside,
+};
+pub use undo_entry::{
+    DependentView, TaintedClear, TaintedClearArgs, TaintedClearOut, TaintedFunction, TaintedList,
+    TaintedListOut, UndoEntry, UndoEntryArgs, UndoPreview, UndoPreviewArgs, UndoPreviewCommand,
+};
 
 /// Arguments of a command that takes none.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -64,7 +78,7 @@ pub(crate) fn page_request(cursor: Option<String>, limit: Option<u32>, cap: u32)
     }
 }
 
-/// Registers every 0.1a command.
+/// Registers every command.
 pub fn register_all(r: &mut Registry) {
     r.register(ProjectCreate);
     r.register(ProjectOpen);
@@ -95,9 +109,19 @@ pub fn register_all(r: &mut Registry) {
     r.register(SetFunctionBounds);
     r.register(Undo);
     r.register(UndoRun);
+    r.register(UndoEntry);
+    r.register(UndoPreviewCommand);
+    r.register(TaintedList);
+    r.register(TaintedClear);
     r.register(History);
     r.register(ProposalsList);
     r.register(ProposalAccept);
     r.register(ProposalReject);
     r.register(Rebuild);
+    r.register(RewritePlan);
+    r.register(RewriteStatus);
+    r.register(RewriteFunction);
+    r.register(RewriteAccept);
+    r.register(RewriteSpec);
+    r.register(RewriteExport);
 }

@@ -10,6 +10,7 @@
 //! | `status` | none | daemon info, open sessions, engine diagnostics |
 //! | `events` | `{after_seq?, limit?}` | `{events: [...], last_seq}` (catch-up for a missed stream) |
 //! | `shutdown` | none | `{"stopping": true}` |
+//! | `infer_list` / `infer_start` / `infer_status` / `infer_stop` / `infer_logs` | see [`crate::infer`] | local model hosting |
 //!
 //! Every connected client also receives `event` notifications ([`METHOD_EVENT`]) whose params
 //! are an object with a monotonically increasing `seq`, the `project_dir` and a `kind`
@@ -356,6 +357,11 @@ impl DaemonClient {
             )
             .await
             .map_err(to_proto)
+    }
+
+    /// Calls any daemon method by name (the `infer_*` methods go through here).
+    pub async fn rpc(&self, method: &str, params: Value) -> Result<Value, ProtoError> {
+        self.client.call(method, params).await.map_err(to_proto)
     }
 
     /// Asks the daemon to exit.

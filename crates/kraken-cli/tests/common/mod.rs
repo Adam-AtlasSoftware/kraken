@@ -61,6 +61,7 @@ pub fn rig(author: CliAuthor, vars: Vec<(&'static str, String)>) -> Rig {
         interactive: false,
         session: Some(session.clone()),
         daemon: DaemonMode::Direct,
+        rewrite: None,
     };
     Rig {
         factory,
@@ -137,5 +138,6 @@ pub fn fresh_env(config: KrakenConfig, vars: Vec<(&'static str, String)>) -> Cli
         interactive: false,
         session: None,
         daemon: DaemonMode::Direct,
+        rewrite: None,
     }
 }

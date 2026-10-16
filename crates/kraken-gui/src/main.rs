@@ -6,6 +6,8 @@ mod args;
 mod assist;
 mod chrome;
 mod fonts;
+mod history;
+mod infer;
 mod overlays;
 mod panels;
 mod recent;

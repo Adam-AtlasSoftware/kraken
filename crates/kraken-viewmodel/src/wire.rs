@@ -125,6 +125,8 @@ pub(crate) struct UndoWire {
     pub undone_entry_ids: Vec<u64>,
     #[serde(default)]
     pub failed: Vec<Value>,
+    #[serde(default)]
+    pub tainted: Vec<Hex64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
