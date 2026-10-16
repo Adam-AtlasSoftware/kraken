@@ -15,6 +15,8 @@ pub mod config;
 pub mod convention;
 pub mod daemon;
 pub mod factory;
+pub mod infer;
+pub mod llama_setup;
 pub mod paths;
 pub mod provision;
 

@@ -2611,10 +2611,12 @@ dependencies = [
  "kraken-assist",
  "kraken-engine",
  "kraken-host",
+ "kraken-infer",
  "kraken-ipc",
  "kraken-mcp",
  "kraken-proto",
  "kraken-registry",
+ "kraken-rewrite",
  "krakend",
  "rmcp",
  "schemars 1.2.3",
@@ -2671,6 +2673,7 @@ dependencies = [
  "kraken-agent",
  "kraken-gui-widgets",
  "kraken-host",
+ "kraken-infer",
  "kraken-ipc",
  "kraken-model",
  "kraken-proto",
@@ -2707,6 +2710,7 @@ dependencies = [
  "filetime",
  "flate2",
  "kraken-engine",
+ "kraken-infer",
  "kraken-ipc",
  "kraken-model",
  "kraken-proto",
@@ -2813,6 +2817,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-py"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "engine-fake",
+ "kraken-engine",
+ "kraken-host",
+ "kraken-ipc",
+ "kraken-proto",
+ "kraken-registry",
+ "pyo3",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "kraken-record"
 version = "0.0.0"
 dependencies = [
@@ -2855,6 +2879,7 @@ dependencies = [
  "icicle-cpu",
  "icicle-vm",
  "kraken-agent",
+ "kraken-assist",
  "kraken-engine",
  "kraken-host",
  "kraken-proto",
@@ -2863,6 +2888,7 @@ dependencies = [
  "libc",
  "object 0.38.1",
  "pcode",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -2885,6 +2911,7 @@ dependencies = [
  "kraken-assist",
  "kraken-engine",
  "kraken-host",
+ "kraken-infer",
  "kraken-ipc",
  "kraken-model",
  "kraken-proto",
@@ -2907,10 +2934,12 @@ dependencies = [
  "engine-fake",
  "kraken-engine",
  "kraken-host",
+ "kraken-infer",
  "kraken-ipc",
  "kraken-model",
  "kraken-proto",
  "kraken-registry",
+ "kraken-rewrite",
  "serde",
  "serde_json",
  "tempfile",
@@ -3918,6 +3947,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "pyo3"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "229ca13b8a15bb0d1487b81ab975bfcd97513416499a8312011b6036e42e0de4"
+dependencies = [
+ "libc",
+ "once_cell",
+ "portable-atomic",
+ "pyo3-build-config",
+ "pyo3-ffi",
+ "pyo3-macros",
+]
+
+[[package]]
+name = "pyo3-build-config"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700"
+dependencies = [
+ "target-lexicon",
+]
+
+[[package]]
+name = "pyo3-ffi"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e7ff73c555c286d212d4ce7e5fbda845a973c4f61bd5f160f5f2c3c2a04d1c4"
+dependencies = [
+ "libc",
+ "pyo3-build-config",
+]
+
+[[package]]
+name = "pyo3-macros"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c46d2e5862c7bb8207e3b639f713dda3c499933444784154c11d013c5a691b60"
+dependencies = [
+ "proc-macro2",
+ "pyo3-macros-backend",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "pyo3-macros-backend"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38b89f066f2ae72a2aef52d1537ca2fcd104440ebfadee06e97aa90738a25b9b"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4173,6 +4259,18 @@ dependencies = [
  "log",
  "rustc-hash 2.1.3",
  "smallvec",
+]
+
+[[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

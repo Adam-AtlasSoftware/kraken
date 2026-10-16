@@ -10,7 +10,9 @@
 - [Connecting AI agents (MCP)](mcp.md)
 - [The built-in assistant](assistant.md)
 - [Terminal agents (ACP)](agents.md)
+- [Running a model on this computer](local-models.md)
 - [Scripting with the CLI](cli.md)
+- [Scripting with Python](python.md)
 - [Security](security.md)
 
 # Reference
@@ -32,3 +34,4 @@
   - [0010. GUI framework](design/0010-gui-framework.md)
   - [0011. License and dependency allowlist](design/0011-license-and-dependencies.md)
   - [0012. Milestones](design/0012-milestones.md)
+  - [0013. The rewrite pipeline](design/0013-rewrite-pipeline.md)

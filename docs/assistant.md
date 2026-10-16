@@ -106,6 +106,8 @@ The GUI has an **Assistant** tab (next to Hex) and the same features, with every
 
 Open **Settings > AI** (Ctrl+,): pick Ollama, LM Studio, llama-server, vLLM, another OpenAI-compatible server, Anthropic, OpenAI or Gemini, enter the model, and press **Test connection** (one tiny request; failures are explained in plain words) then **Save and use**. The choice is saved as the `[provider]` table of `config.toml`, so the CLI uses it too.
 
+To run a model on your own computer with KRAKEN doing the work (`kraken infer start ... --use`, or **Run a model on this computer** in the same settings section), see [Running a model on this computer](local-models.md).
+
 API keys are never written to `config.toml`. Name an environment variable (read when KRAKEN starts), or paste the key: it is stored in `secrets.toml` next to `config.toml`, created with mode 0600 so only you can read it, and `config.toml` only points at it. The CLI commands read keys from environment variables only, so a pasted key works in the GUI but `kraken explain` needs the variable.
 
 ## How it stays safe
@@ -113,7 +115,7 @@ API keys are never written to `config.toml`. Name an environment variable (read 
 The assistant reads code that came from a file you do not trust, so the same rules apply as for any agent (see [Security](security.md)):
 
 - Names, strings, comments and decompiled code reach the model only as delimited, untrusted data, and the model is told never to treat them as instructions. They are never put in the system prompt.
-- Which commands the assistant may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, and deciding on proposals are never offered. Dangerous commands are never offered either.
+- Which commands the assistant may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, deciding on proposals, and starting rewrites (translating, specs, accepting and exporting rewrite units) are never offered. Dangerous commands are never offered either.
 - Edits go through the registry's policy: additive edits are applied up to a per-run cap, overwrites become proposals.
 
 ## For developers

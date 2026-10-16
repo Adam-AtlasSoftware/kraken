@@ -10,11 +10,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kraken_host::daemon::METHOD_EVENT;
+use kraken_host::infer::{InferManager, ghidra_reservations};
 use kraken_host::{DaemonSettings, ManagedFactory};
 use kraken_ipc::transport::Listener;
 use kraken_ipc::{
     Clock, DaemonGuard, IdleMonitor, IpcError, PROTOCOL_VERSION, RuntimeDir, Server, Shutdown,
 };
+use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{Registry, SessionConfig};
 use tokio::task::JoinHandle;
 
@@ -80,6 +82,8 @@ pub struct Daemon {
     host: SessionHost,
     clients: kraken_ipc::Counter,
     jobs: kraken_ipc::Counter,
+    models: kraken_ipc::Counter,
+    infer: Arc<InferManager>,
     done: JoinHandle<()>,
 }
 
@@ -109,6 +113,16 @@ impl Daemon {
         self.jobs.get()
     }
 
+    /// Loaded local models right now, as the idle monitor sees them.
+    pub fn loaded_models(&self) -> usize {
+        self.models.get()
+    }
+
+    /// The local model manager (tests inspect it).
+    pub fn infer(&self) -> &Arc<InferManager> {
+        &self.infer
+    }
+
     /// Whether shutdown was requested.
     pub fn is_stopping(&self) -> bool {
         self.shutdown.is_triggered()
@@ -120,8 +134,35 @@ impl Daemon {
     }
 }
 
-/// Starts the daemon. Fails with [`DaemonError::AlreadyRunning`] if one is already running.
+/// Starts the daemon with the standard local-model manager (`llama-server` plus the manifests
+/// directory). Fails with [`DaemonError::AlreadyRunning`] if one is already running.
 pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
+    start_full(opts, None, Arc::new(InferManager::from_env()))
+}
+
+/// Like [`start`], with the rewrite pipeline attached to every session (`rewrite_*` commands).
+pub fn start_with(
+    opts: DaemonOptions,
+    rewrite: Option<Arc<dyn RewriteBackend>>,
+) -> Result<Daemon, DaemonError> {
+    start_full(opts, rewrite, Arc::new(InferManager::from_env()))
+}
+
+/// [`start`] with a given local-model manager (tests use the fake inference server). The model
+/// it runs counts as work for the idle monitor and is stopped when the daemon stops.
+pub fn start_with_infer(
+    opts: DaemonOptions,
+    infer: Arc<InferManager>,
+) -> Result<Daemon, DaemonError> {
+    start_full(opts, None, infer)
+}
+
+/// Starts the daemon with an optional rewrite pipeline and the given local-model manager.
+pub fn start_full(
+    opts: DaemonOptions,
+    rewrite: Option<Arc<dyn RewriteBackend>>,
+    infer: Arc<InferManager>,
+) -> Result<Daemon, DaemonError> {
     let guard = DaemonGuard::acquire(&opts.runtime_dir, PROTOCOL_VERSION, &opts.build)?;
     let listener = Listener::bind(&opts.runtime_dir).map_err(DaemonError::Listen)?;
 
@@ -136,6 +177,7 @@ pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
             session_config: opts.session_config.clone(),
             session_idle: opts.settings.session_idle(),
             max_sessions: opts.settings.max_sessions(),
+            rewrite,
         },
         opts.clock.clone(),
         hub.clone(),
@@ -148,6 +190,8 @@ pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
         idle_timeout: idle,
         started: Instant::now(),
     };
+    let factory = opts.factory.clone();
+    infer.set_reservations(move || ghidra_reservations(factory.as_ref()));
     let handler = DaemonHandler::new(
         host.clone(),
         opts.registry.clone(),
@@ -155,7 +199,8 @@ pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
         monitor.clients().clone(),
         monitor.jobs().clone(),
         shutdown.clone(),
-    );
+    )
+    .with_infer(infer.clone());
     let server = Server::with_parts(
         handler,
         guard.server_config(),
@@ -175,12 +220,14 @@ pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
     let (m, s, poll) = (monitor.clone(), shutdown.clone(), opts.poll);
     tasks.push(tokio::spawn(async move { m.run(poll, &s).await }));
 
-    // Job events, running-job count for the idle monitor, idle session sweep.
+    // Job events, running-job count and loaded models for the idle monitor, idle session sweep.
     let (h, m, s, poll) = (host.clone(), monitor.clone(), shutdown.clone(), opts.poll);
+    let i = infer.clone();
     tasks.push(tokio::spawn(async move {
         loop {
             let running = h.maintain().await;
             m.jobs().set(running);
+            m.models().set(i.loaded_models());
             tokio::select! {
                 () = tokio::time::sleep(poll) => {}
                 () = s.wait() => return,
@@ -228,18 +275,21 @@ pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
         }));
     }
 
-    let (h, s, clients, jobs) = (
+    let (h, s, clients, jobs, models) = (
         host.clone(),
         shutdown.clone(),
         monitor.clients().clone(),
         monitor.jobs().clone(),
+        monitor.models().clone(),
     );
+    let i = infer.clone();
     let done = tokio::spawn(async move {
         s.wait().await;
         for t in tasks {
             let _ = t.await;
         }
         h.close_all().await;
+        i.shutdown().await;
         // Dropping the guard removes the socket, token and info files.
         drop(guard);
         tracing::info!("krakend stopped");
@@ -250,6 +300,8 @@ pub fn start(opts: DaemonOptions) -> Result<Daemon, DaemonError> {
         host,
         clients,
         jobs,
+        models,
+        infer,
         done,
     })
 }

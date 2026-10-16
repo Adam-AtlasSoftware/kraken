@@ -13,6 +13,7 @@ engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
 filetime = "0.2"
 flate2 = "1.1.10"
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-infer = { path = "../kraken-infer", version = "0.0.0" }
 kraken-ipc = { version = "0.0.0", path = "../kraken-ipc" }
 kraken-model = { version = "0.0.0", path = "../kraken-model" }
 kraken-proto.workspace = true

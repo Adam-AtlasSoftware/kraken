@@ -14,6 +14,8 @@ pub mod logring;
 pub mod port;
 pub mod registry;
 pub mod supervisor;
+#[doc(hidden)]
+pub mod testing;
 
 pub use backend::{BackendCapabilities, GpuApi, InferenceBackend, RunningBackend};
 pub use budget::{MemoryBudget, Reservation, Verdict};

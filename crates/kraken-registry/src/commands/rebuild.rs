@@ -416,3 +416,11 @@ fn drift(before: &FnMap, after: &FnMap, state: &kraken_model::AnnotationState) -
     }
     out
 }
+
+/// Where the engine's view of `found` contradicts the log's current state.
+pub(crate) fn drift_against_log(
+    found: &FnMap,
+    state: &kraken_model::AnnotationState,
+) -> Vec<DriftEntry> {
+    drift(found, found, state)
+}

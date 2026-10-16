@@ -120,6 +120,8 @@ pub struct ViewModel {
     /// Terminal agents (Claude Code, Codex, Gemini CLI): the list, setup and the live session.
     pub agents: crate::agents::AgentsState,
     announced: std::collections::HashSet<u64>,
+    /// Undoing an older edit with the edits that depend on it, and stale functions.
+    pub undo: crate::history::UndoFlow,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
@@ -198,7 +200,7 @@ fn agent_edit_text(author: &str, op: &str, description: &str) -> String {
     }
 }
 
-fn who(a: &AuthorWire) -> String {
+pub(crate) fn who(a: &AuthorWire) -> String {
     if a.kind == "user" {
         "you".to_string()
     } else {
@@ -268,6 +270,7 @@ impl ViewModel {
             assist: crate::assist::AssistState::default(),
             agents: crate::agents::AgentsState::default(),
             announced: std::collections::HashSet::new(),
+            undo: crate::history::UndoFlow::default(),
         };
         vm.start_event_forwarder();
         vm
@@ -431,7 +434,7 @@ impl ViewModel {
         }
     }
 
-    fn toast_error(&mut self, e: &ProtoError) {
+    pub(crate) fn toast_error(&mut self, e: &ProtoError) {
         let text = plain_error(e);
         self.toast(ToastLevel::Error, text);
     }
@@ -474,6 +477,7 @@ impl ViewModel {
         self.rename = None;
         self.comment = None;
         self.history = HistoryPanel::default();
+        self.undo = crate::history::UndoFlow::default();
         self.proposals = ProposalsPanel::default();
         self.analysis = AnalysisState::default();
         self.assist.reset_for_project();
@@ -512,6 +516,7 @@ impl ViewModel {
                 self.refresh_functions();
                 self.refresh_history();
                 self.refresh_proposals();
+                self.refresh_tainted();
                 self.views_project_opened();
             }
             Err(e) => {
@@ -570,6 +575,7 @@ impl ViewModel {
         self.refresh_functions();
         self.refresh_history();
         self.refresh_proposals();
+        self.refresh_tainted();
         self.refresh_current();
     }
 
@@ -578,6 +584,7 @@ impl ViewModel {
         self.refresh_functions();
         self.refresh_history();
         self.refresh_proposals();
+        self.refresh_tainted();
         self.refresh_current();
     }
 
@@ -981,6 +988,7 @@ impl ViewModel {
                     Ok(w) => {
                         let name = cur.name.clone();
                         let d = vm.build_decompiled(addr, &name, w);
+                        vm.note_decompiled(addr);
                         if let Some(cur) = vm.current.as_mut() {
                             cur.decompiled = Load::Ready(d);
                         }
@@ -1409,12 +1417,13 @@ impl ViewModel {
         });
     }
 
-    fn undo_done(&mut self, res: Result<Value, ProtoError>, what: &str) {
+    pub(crate) fn undo_done(&mut self, res: Result<Value, ProtoError>, what: &str) {
         match res.and_then(parse::<UndoWire>) {
             Ok(u) if u.undone_entry_ids.is_empty() => {
                 self.toast(ToastLevel::Info, "There was nothing to undo.");
             }
             Ok(u) => {
+                self.undo.note_stale(&u.tainted);
                 let n = u.undone_entry_ids.len();
                 let text = if u.status == "queued" {
                     format!("Undo of {what} is queued until analysis finishes.")

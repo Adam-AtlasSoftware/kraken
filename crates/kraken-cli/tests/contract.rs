@@ -324,6 +324,13 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         assert_eq!(normalise(&a, &s), normalise(&b, &s));
     }
     step!("history", json!({}));
+    step!("undo_preview", json!({"entry_id": 2}));
+    step!("undo_preview", json!({"entry_id": 999}));
+    step!("undo_entry", json!({"entry_id": 2}));
+    step!("undo_entry", json!({"entry_id": 999, "cascade": true}));
+    step!("tainted_list", json!({}));
+    step!("tainted_clear", json!({"address": "0x401040"}));
+    step!("history", json!({}));
 
     covered.insert("rebuild".to_string());
     let rebuilt = both_job(&s, "rebuild").await;
@@ -342,6 +349,21 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         "project_open",
         json!({"project_dir": "/nonexistent/kraken-project"})
     );
+
+    // The rewrite pipeline is not attached to these sessions; every surface says so alike. Its
+    // behaviour is tested in kraken-rewrite (commands) and tests/rewrite.rs (CLI).
+    for (name, args) in [
+        ("rewrite_plan", json!({})),
+        ("rewrite_status", json!({})),
+        ("rewrite_function", json!({"address": "0x401040"})),
+        ("rewrite_spec", json!({"scope": "all"})),
+        ("rewrite_export", json!({"dir": "out"})),
+    ] {
+        let r = step!(name, args);
+        assert_eq!(r["code"], "unsupported", "{name}: {r}");
+    }
+    let denied = step!("rewrite_accept", json!({"unit": "ru-1"}));
+    assert_eq!(denied["code"], "rejected_human_priority", "{denied}");
 
     let all: Vec<String> = Registry::standard()
         .iter()

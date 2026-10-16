@@ -11,6 +11,8 @@
 //! behaviour: open the project session, run one command, save, shut the sidecar down); the output
 //! is identical either way. If the daemon cannot be started the CLI warns and runs directly.
 //! `kraken agents list|setup|run` hosts terminal agents over ACP (`kraken-acp`).
+//! `kraken infer list|start|status|stop|logs|setup llama` runs a local model under the daemon
+//! (`kraken-infer`, `docs/local-models.md`).
 //! `kraken daemon status|stop|start` controls the daemon, `kraken setup` provisions Ghidra and a
 //! JDK, and `kraken mcp --daemon` routes the MCP tools through the daemon too.
 //!
@@ -22,6 +24,7 @@ mod app;
 mod assist_cmd;
 mod daemon_cmd;
 mod exit;
+mod infer_cmd;
 pub mod render;
 pub mod schema;
 mod setup;

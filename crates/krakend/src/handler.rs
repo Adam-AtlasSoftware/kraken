@@ -9,6 +9,7 @@ use kraken_host::daemon::{
     CallParams, CallResult, METHOD_CALL, METHOD_COMMANDS, METHOD_EVENTS, METHOD_SHUTDOWN,
     METHOD_STATUS, event_kind,
 };
+use kraken_host::infer::{InferApi, InferManager, serve_rpc};
 use kraken_ipc::{ClientKind, ConnInfo, Counter, RpcHandler, Shutdown};
 use kraken_model::{AuthorKind, RunId};
 use kraken_proto::{ErrorCode, ProtoError};
@@ -43,6 +44,7 @@ pub struct DaemonHandler {
     clients: Counter,
     jobs: Counter,
     shutdown: Shutdown,
+    infer: Arc<InferManager>,
 }
 
 impl DaemonHandler {
@@ -63,7 +65,15 @@ impl DaemonHandler {
             clients,
             jobs,
             shutdown,
+            infer: Arc::new(InferManager::with_registry(Default::default())),
         }
+    }
+
+    /// Serves the `infer_*` methods with `infer` (the default manager has no engines).
+    #[must_use]
+    pub fn with_infer(mut self, infer: Arc<InferManager>) -> Self {
+        self.infer = infer;
+        self
     }
 }
 
@@ -109,7 +119,10 @@ fn events_for(
     ctx: &CallContext,
 ) -> Vec<(&'static str, Value)> {
     if kind != CommandKind::Mutation
-        || matches!(name, "project_create" | "project_open" | "job_cancel")
+        || matches!(
+            name,
+            "project_create" | "project_open" | "job_cancel" | "tainted_clear"
+        )
     {
         return Vec::new();
     }
@@ -261,6 +274,7 @@ impl DaemonHandler {
             .map(|d| json!({"engine_dir": d.engine_dir, "diagnostics": d.value}))
             .collect();
         let cfg = self.host.config();
+        let model = self.infer.status().await.ok();
         json!({
             "daemon": {
                 "pid": self.facts.pid,
@@ -273,7 +287,9 @@ impl DaemonHandler {
                 "max_sessions": cfg.max_sessions,
                 "clients": self.clients.get(),
                 "running_jobs": self.jobs.get(),
+                "loaded_models": self.infer.loaded_models(),
             },
+            "model": model,
             "sessions": self.host.session_status().await,
             "engines": engines,
             "last_event_seq": self.host.hub().last_seq(),
@@ -313,10 +329,13 @@ impl RpcHandler for DaemonHandler {
                 });
                 Ok(json!({"stopping": true}))
             }
-            other => Err(ProtoError::new(
-                ErrorCode::NotFound,
-                format!("unknown method `{other}`"),
-            )),
+            other => match serve_rpc(self.infer.as_ref(), other, params).await {
+                Some(r) => r,
+                None => Err(ProtoError::new(
+                    ErrorCode::NotFound,
+                    format!("unknown method `{other}`"),
+                )),
+            },
         }
     }
 }

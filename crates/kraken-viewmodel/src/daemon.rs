@@ -206,6 +206,11 @@ impl DaemonClientBackend {
         self.inner.client()?.status().await
     }
 
+    /// The current daemon connection, for features outside the command registry (local models).
+    pub fn daemon_client(&self) -> Result<DaemonClient, ProtoError> {
+        self.inner.client()
+    }
+
     /// Asks the daemon to exit; the backend then reconnects, which starts a fresh daemon when
     /// the connector can.
     pub async fn shutdown_daemon(&self) -> Result<(), ProtoError> {

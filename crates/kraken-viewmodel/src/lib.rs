@@ -14,6 +14,8 @@ pub mod assist;
 mod backend;
 mod errors;
 mod fuzzy;
+pub mod history;
+pub mod infer;
 mod nav;
 mod palette;
 mod state;

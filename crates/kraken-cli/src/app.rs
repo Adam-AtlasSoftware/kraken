@@ -19,6 +19,7 @@ use kraken_host::{
 use kraken_ipc::{ClientKind, RuntimeDir};
 use kraken_mcp::{KrakenMcp, McpOptions, serve_stdio};
 use kraken_proto::{ErrorCode, ProtoError};
+use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, CommandKind,
     DenyApprover, Entry, Registry, Session, Surface,
@@ -136,6 +137,9 @@ pub struct CliEnv {
     pub session: Option<Arc<Session>>,
     /// Where commands run; `--no-daemon` and `KRAKEN_NO_DAEMON` force direct mode.
     pub daemon: DaemonMode,
+    /// The rewrite pipeline attached to sessions that run in this process (`rewrite_*`
+    /// commands). Through the daemon, the daemon's own pipeline runs them.
+    pub rewrite: Option<Arc<dyn RewriteBackend>>,
 }
 
 impl CliEnv {
@@ -150,6 +154,7 @@ impl CliEnv {
             interactive: true,
             session: None,
             daemon: DaemonMode::Auto(DaemonAuto::default()),
+            rewrite: Some(kraken_rewrite::RewriteService::standard().into_backend()),
         }
     }
 
@@ -159,7 +164,12 @@ impl CliEnv {
 
     fn new_session(&self) -> Arc<Session> {
         self.session.clone().unwrap_or_else(|| {
-            Arc::new(Session::new(self.factory.clone()).with_config(self.config.session_config()))
+            let mut s =
+                Session::new(self.factory.clone()).with_config(self.config.session_config());
+            if let Some(r) = &self.rewrite {
+                s = s.with_rewrite(r.clone());
+            }
+            Arc::new(s)
         })
     }
 
@@ -553,6 +563,7 @@ pub fn build_cli(registry: &Registry) -> Command {
             )
             .subcommand(Command::new("__fake-agent").hide(true).about("Test support: a fake ACP agent on stdio")),
     )
+    .subcommand(infer_command())
     .subcommand(
         Command::new("daemon")
             .about("Inspect and control the krakend daemon")
@@ -561,6 +572,87 @@ pub fn build_cli(registry: &Registry) -> Command {
             .subcommand(Command::new("stop").about("Ask krakend to exit (it closes projects and stops Ghidra first)"))
             .subcommand(Command::new("start").about("Start krakend if it is not running")),
     )
+}
+
+/// `kraken infer ...`: run a model on this computer.
+fn infer_command() -> Command {
+    Command::new("infer")
+        .about("Run a language model on this computer (llama.cpp or another engine)")
+        .long_about(
+            "Run a model on this computer and point the assistant at it. The model runs as a \
+             supervised process of krakend and keeps running between commands; with --no-daemon \
+             it only lives as long as the command. KRAKEN never downloads models: pass a GGUF \
+             file you chose yourself. See docs/local-models.md.",
+        )
+        .subcommand_required(true)
+        .subcommand(Command::new("list").about("Show the engines this computer can run, with their settings and the memory left"))
+        .subcommand(
+            Command::new("start")
+                .about("Start a model")
+                .arg(Arg::new("engine").required(true).value_name("ENGINE").help("An id from `kraken infer list`, for example llama-server"))
+                .arg(
+                    Arg::new("model")
+                        .long("model")
+                        .short('m')
+                        .value_name("FILE")
+                        .help("Model file (sets the engine's model setting)"),
+                )
+                .arg(
+                    Arg::new("set")
+                        .long("set")
+                        .value_name("KEY=VALUE")
+                        .action(ArgAction::Append)
+                        .help("An engine setting, repeatable (see `kraken infer list`), for example --set gpu_layers=99 --set n_cpu_moe=30"),
+                )
+                .arg(
+                    Arg::new("use")
+                        .long("use")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("no-wait")
+                        .help("Make the assistant use this model: writes [provider] (openai_compatible) to config.toml once the model is ready"),
+                )
+                .arg(
+                    Arg::new("no-wait")
+                        .long("no-wait")
+                        .action(ArgAction::SetTrue)
+                        .help("Return as soon as the process is started instead of waiting until the model is loaded"),
+                )
+                .arg(
+                    Arg::new("timeout")
+                        .long("timeout")
+                        .value_name("SECONDS")
+                        .help("How long to wait for the model to load (default 900)"),
+                ),
+        )
+        .subcommand(Command::new("status").about("Show the running model and how far loading is"))
+        .subcommand(Command::new("stop").about("Stop the running model"))
+        .subcommand(
+            Command::new("logs")
+                .about("Show the model process's output")
+                .arg(Arg::new("tail").long("tail").short('n').value_name("LINES").help("Lines to show (default 100)"))
+                .arg(Arg::new("follow").long("follow").short('f').action(ArgAction::SetTrue).help("Keep printing new lines")),
+        )
+        .subcommand(
+            Command::new("setup")
+                .about("Download an engine")
+                .subcommand_required(true)
+                .subcommand(
+                    Command::new("llama")
+                        .about("Download the pinned llama.cpp release build (llama-server) into KRAKEN's data directory")
+                        .arg(
+                            Arg::new("variant")
+                                .long("variant")
+                                .value_name("VARIANT")
+                                .help("cpu, vulkan (Linux, Windows) or metal (macOS); default: the first for this computer"),
+                        )
+                        .arg(
+                            Arg::new("force")
+                                .long("force")
+                                .action(ArgAction::SetTrue)
+                                .help("Download and install again even if it is installed"),
+                        ),
+                ),
+        )
 }
 
 pub(crate) fn bad(msg: impl Into<String>) -> ProtoError {
@@ -1021,6 +1113,7 @@ pub async fn run_with_provider(
         }
         "mcp" => run_mcp(env, sm, json_out, err).await,
         "agents" => crate::agents_cmd::run_agents(env, sm, json_out, out, err).await,
+        "infer" => crate::infer_cmd::run_infer(env, sm, json_out, out, err).await,
         "setup" => crate::setup::run_setup(env, sm, json_out, out, err).await,
         "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
         "glossary" => crate::assist_cmd::run_glossary(sm, json_out, out, err),

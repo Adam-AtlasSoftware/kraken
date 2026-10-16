@@ -176,7 +176,10 @@ fn main() -> ExitCode {
         build: env!("CARGO_PKG_VERSION").to_string(),
     };
     runtime.block_on(async move {
-        let daemon = match krakend::start(opts) {
+        let daemon = match krakend::start_with(
+            opts,
+            Some(kraken_rewrite::RewriteService::standard().into_backend()),
+        ) {
             Ok(d) => d,
             Err(DaemonError::AlreadyRunning) => {
                 tracing::info!("another krakend is already running");

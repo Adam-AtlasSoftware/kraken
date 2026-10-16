@@ -27,6 +27,7 @@ kraken-ipc = { version = "0.0.0", path = "../kraken-ipc" }
 kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-rewrite = { path = "../kraken-rewrite", version = "0.0.0" }
 serde_json.workspace = true
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "signal"] }
 tracing = "0.1"
@@ -34,6 +35,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [dev-dependencies]
 engine-fake = { path = "../engine-fake", version = "0.0.0" }
+kraken-infer = { path = "../kraken-infer", version = "0.0.0" }
 krakend = { path = "../krakend", version = "0.0.0" }
 rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "transport-child-process"] }
 schemars.workspace = true

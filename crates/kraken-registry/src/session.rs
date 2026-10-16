@@ -16,6 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::commands::RewriteBackend;
 use crate::jobs::{JobId, JobTable};
 
 /// File name of the model database inside a project directory.
@@ -415,11 +416,16 @@ fn read_meta(dir: &Path) -> Result<ProjectMeta, ProtoError> {
 
 /// A session: the entry point of every surface. It holds the engine factory, the job table and,
 /// once a project is created or opened, the current [`Project`].
+///
+/// Cloning gives another handle to the same session (same project slot and job table); jobs that
+/// outlive the call that started them hold such a handle.
+#[derive(Clone)]
 pub struct Session {
     factory: Arc<dyn EngineFactory>,
     config: SessionConfig,
     jobs: JobTable,
-    project: RwLock<Option<Arc<Project>>>,
+    project: Arc<RwLock<Option<Arc<Project>>>>,
+    rewrite: Option<Arc<dyn RewriteBackend>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -435,8 +441,27 @@ impl Session {
             factory,
             config: SessionConfig::default(),
             jobs: JobTable::new(),
-            project: RwLock::new(None),
+            project: Arc::new(RwLock::new(None)),
+            rewrite: None,
         }
+    }
+
+    /// Attaches the rewrite pipeline that the `rewrite_*` commands run on (kraken-rewrite).
+    /// Without one those commands answer `unsupported`.
+    pub fn with_rewrite(mut self, backend: Arc<dyn RewriteBackend>) -> Session {
+        self.rewrite = Some(backend);
+        self
+    }
+
+    /// The attached rewrite pipeline; `unsupported` when this build or surface has none.
+    pub fn rewrite(&self) -> Result<&Arc<dyn RewriteBackend>, ProtoError> {
+        self.rewrite.as_ref().ok_or_else(|| {
+            ProtoError::new(
+                ErrorCode::Unsupported,
+                "the rewrite pipeline is not attached to this session; use the kraken CLI or \
+                 krakend, which link it",
+            )
+        })
     }
 
     /// Replaces the configuration (before a project is attached).

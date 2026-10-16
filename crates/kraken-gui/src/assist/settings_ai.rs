@@ -68,6 +68,13 @@ impl AiSettings {
         self.change.take()
     }
 
+    /// Passes on a change made elsewhere in Settings (the local-model section) and reloads the
+    /// form from the file next time.
+    pub(crate) fn push_change(&mut self, change: Change) {
+        self.change = Some(change);
+        self.reset();
+    }
+
     /// True while a connection test runs.
     pub fn testing(&self) -> bool {
         self.test.is_some()

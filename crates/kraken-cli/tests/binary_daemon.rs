@@ -243,7 +243,7 @@ async fn kraken_mcp_daemon_routes_the_tools_through_krakend() {
     )
     .expect("spawn kraken mcp --daemon");
     let client = ().serve(transport).await.expect("initialise");
-    assert_eq!(client.list_all_tools().await.expect("tools").len(), 34);
+    assert_eq!(client.list_all_tools().await.expect("tools").len(), 44);
 
     let call = |tool: &str, args: Value| {
         let client = &client;

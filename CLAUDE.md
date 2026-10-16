@@ -16,7 +16,7 @@ crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 - `engine-ghidra` + `java/kraken-ghidra`: confined Ghidra sidecar (build: `cargo xtask ghidra-ext`)
 - `engine-fake`: fixture-driven engine for tests; fixtures in `corpus/fixtures` (`kraken-record`)
 - `kraken-model`: SQLite edit log, read-sets, undo, proposals, snapshots
-- `kraken-registry`: command registry (34 commands); CLI/MCP/GUI/docs are generated from it
+- `kraken-registry`: command registry (44 commands, incl. `rewrite_*` and `undo_entry`/`undo_preview` and the `RewriteBackend` trait); CLI/MCP/GUI/docs are generated from it
 - `kraken-host`: config, Ghidra engine factory, daemon client, `kraken setup` provisioning
 - `kraken-ipc` / `krakend`: authenticated local RPC and the daemon that owns projects
 - `kraken-cli` (binary `kraken`) / `kraken-mcp` (`kraken mcp`)
@@ -24,7 +24,8 @@ crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 - `kraken-acp`: terminal-agent host over ACP (Claude Code, Codex, Gemini CLI), Node/adapter provisioning, fake ACP agent for tests
 - `kraken-infer`: supervised local inference backends (llama-server, manifest engines)
 - `kraken-layout`: CFG layout; `kraken-gui-widgets`, `kraken-viewmodel`, `kraken-gui` (binary `kraken-gui`)
-- `kraken-rewrite`: rewrite-pipeline spike: icicle-emu function oracle, Rust translation and spec tasks, sandboxed differential tests, `RewriteUnit` records (`spikes/rewrite-loop/NOTES.md`; tests need a Ghidra install for the x86 SLEIGH spec)
+- `kraken-rewrite`: rewrite pipeline core (ADR 0013): icicle-emu function oracle, Rust translation and spec tasks, sandboxed differential tests, `<project>/rewrite.sqlite` store, planner, `RewriteService` (the backend of the `rewrite_*` commands, attached by `krakend` and the CLI), strangler export; spike notes in `spikes/rewrite-loop/NOTES.md`; tests need a Ghidra install for the x86 SLEIGH spec and Landlock
+- `kraken-py` (Python module `kraken`, PyPI name `kraken-workbench`): PyO3 over the daemon client with an in-process fallback; build with maturin (`docs/python.md`); the `python` cargo feature gates PyO3 so workspace builds need no Python
 - `kraken-record`: records FakeEngine fixtures from real Ghidra; `kraken-e2e`: end-to-end tests
 
 Tests: `cargo test --workspace`; real-Ghidra tests are `#[ignore]` and need `KRAKEN_GHIDRA_HOME`,

@@ -3,7 +3,8 @@
 //! The daemon owns the project sessions and the Ghidra sidecars; the CLI, the MCP server and the
 //! GUI are clients (decision 13). It serves the command registry over `kraken-ipc`:
 //!
-//! - [`handler`]: the RPC methods (`call`, `commands`, `status`, `events`, `shutdown`).
+//! - [`handler`]: the RPC methods (`call`, `commands`, `status`, `events`, `shutdown`, and the
+//!   `infer_*` methods that host a local model; the model counts as work for the idle exit).
 //! - [`host`]: sessions per canonical project directory, opened on demand, closed when idle,
 //!   limited in number; one ordered write queue per session.
 //! - [`events`]: the change event stream (`entry_applied`, `proposal_created`, `job_progress`,
@@ -21,6 +22,8 @@ pub mod logfile;
 #[cfg(feature = "fake-engine")]
 pub mod fake;
 
-pub use daemon::{Daemon, DaemonError, DaemonOptions, start};
+pub use daemon::{
+    Daemon, DaemonError, DaemonOptions, start, start_full, start_with, start_with_infer,
+};
 pub use events::EventHub;
 pub use host::{HostConfig, SessionHost};

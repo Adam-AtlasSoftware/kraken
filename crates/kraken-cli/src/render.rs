@@ -400,6 +400,194 @@ fn decompile(v: &Value) -> Rendered {
     r
 }
 
+fn joined(v: Option<&Value>, empty: &str) -> String {
+    let items: Vec<String> = v
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(scalar).collect())
+        .unwrap_or_default();
+    if items.is_empty() {
+        empty.to_string()
+    } else {
+        items.join(",")
+    }
+}
+
+fn count(v: &Value, key: &str) -> u64 {
+    v.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// `rewrite_plan`: the rewrite order, one row per function, callees first.
+fn rewrite_plan(v: &Value) -> String {
+    let rows: Vec<Vec<String>> = v
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|e| {
+                    let group = match e.get("group_size").and_then(Value::as_u64) {
+                        Some(n) if n > 1 => format!("{} (x{n})", str_of(e.get("group"))),
+                        _ => str_of(e.get("group")),
+                    };
+                    vec![
+                        str_of(e.get("order")),
+                        str_of(e.get("address")),
+                        str_of(e.get("name")),
+                        group,
+                        str_of(e.get("status")),
+                        joined(e.get("flags"), "-"),
+                        joined(e.get("needs_stubs"), "-"),
+                    ]
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = format!(
+        "{} of {} functions planned in {} groups ({} import thunks and {} runtime functions left out{})\n",
+        count(v, "functions_planned"),
+        count(v, "functions_total"),
+        count(v, "groups"),
+        count(v, "skipped_imports"),
+        count(v, "skipped_runtime"),
+        if v.get("truncated") == Some(&Value::Bool(true)) {
+            "; the function cap cut the program short"
+        } else {
+            ""
+        },
+    );
+    out.push_str(&table(
+        &[
+            "order",
+            "address",
+            "name",
+            "group",
+            "status",
+            "flags",
+            "needs stubs",
+        ],
+        &rows,
+    ));
+    if let Some(c) = v.get("next_cursor").and_then(Value::as_str) {
+        out.push_str(&format!("more: --cursor {c}\n"));
+    }
+    out
+}
+
+/// `rewrite_status`: counts per status, then one row per function.
+fn rewrite_status(v: &Value) -> String {
+    let counts = v.get("counts").cloned().unwrap_or(Value::Null);
+    let total: u64 = ["planned", "translated", "verified", "failed", "accepted"]
+        .iter()
+        .map(|k| count(&counts, k))
+        .sum();
+    let mut out = format!(
+        "{} planned, {} translated, {} verified, {} failed, {} accepted ({total} functions{})\n",
+        count(&counts, "planned"),
+        count(&counts, "translated"),
+        count(&counts, "verified"),
+        count(&counts, "failed"),
+        count(&counts, "accepted"),
+        if v.get("plan_present") == Some(&Value::Bool(true)) {
+            ""
+        } else {
+            "; no plan stored, run rewrite-plan"
+        }
+    );
+    let rows: Vec<Vec<String>> = v
+        .get("units")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|u| {
+                    let version = match u.get("accepted_version").and_then(Value::as_u64) {
+                        Some(av) => format!("{} (accepted {av})", str_of(u.get("version"))),
+                        None => str_of(u.get("version")),
+                    };
+                    vec![
+                        str_of(u.get("order")),
+                        str_of(u.get("address")),
+                        str_of(u.get("name")),
+                        str_of(u.get("status")),
+                        version,
+                        str_of(u.get("verdict")),
+                        format!(
+                            "{}/{}",
+                            u.get("passed").and_then(Value::as_u64).unwrap_or(0),
+                            u.get("cases_run").and_then(Value::as_u64).unwrap_or(0)
+                        ),
+                        joined(u.get("flags"), "-"),
+                    ]
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.push_str(&table(
+        &[
+            "order", "address", "name", "status", "version", "verdict", "cases", "flags",
+        ],
+        &rows,
+    ));
+    if let Some(c) = v.get("next_cursor").and_then(Value::as_str) {
+        out.push_str(&format!("more: --cursor {c}\n"));
+    }
+    out
+}
+
+/// The result of a `rewrite_function` job: verdict first, the counterexample if there is one.
+fn rewrite_function(v: &Value) -> String {
+    let mut out = format!(
+        "{} {} (unit {} v{}, {} mode): {} -- {}/{} cases agreed",
+        str_of(v.get("name")),
+        str_of(v.get("address")),
+        str_of(v.get("unit")),
+        str_of(v.get("version")),
+        str_of(v.get("mode")),
+        str_of(v.get("verdict")),
+        str_of(v.get("passed")),
+        str_of(v.get("cases_run")),
+    );
+    if v.get("skipped").and_then(Value::as_u64).unwrap_or(0) > 0 {
+        out.push_str(&format!(", {} not evaluated", str_of(v.get("skipped"))));
+    }
+    out.push('\n');
+    if let Some(d) = v.get("verdict_detail").and_then(Value::as_str) {
+        out.push_str(&format!("reason: {}\n", one_line(d)));
+    }
+    out.push_str(&format!("status: {}\n", str_of(v.get("status"))));
+    out.push_str(&format!(
+        "checked at: {}\n",
+        str_of(v.get("rust_prototype"))
+    ));
+    out.push_str(&format!(
+        "model: {} {}; sandbox: {}\n",
+        str_of(v.get("provider")),
+        str_of(v.get("model")),
+        str_of(v.get("sandbox"))
+    ));
+    if let Some(c) = v.get("counterexample").filter(|c| !c.is_null()) {
+        out.push_str(&format!(
+            "counterexample args: {}\n",
+            joined(c.get("args"), "-")
+        ));
+        if let Some(ds) = c.get("differences").and_then(Value::as_array) {
+            for d in ds.iter().filter_map(Value::as_str) {
+                out.push_str(&format!("  {}\n", one_line(d)));
+            }
+        }
+    }
+    for key in ["assumptions", "unsupported"] {
+        if let Some(a) = v.get(key).and_then(Value::as_array) {
+            for x in a.iter().filter_map(Value::as_str) {
+                out.push_str(&format!("{key}: {}\n", one_line(x)));
+            }
+        }
+    }
+    out.push_str(&format!(
+        "accept it with: kraken rewrite-accept --unit {}\n",
+        str_of(v.get("unit"))
+    ));
+    out
+}
+
 fn generic(v: &Value, indent: usize, out: &mut String) {
     let pad = " ".repeat(indent);
     match v {
@@ -489,6 +677,15 @@ pub fn render(name: &str, output: &Value) -> Rendered {
         "strings" => plain(strings(&v)),
         "imports" | "exports" => plain(symbols(&v)),
         "cfg" => plain(cfg(&v)),
+        "rewrite_plan" => plain(rewrite_plan(&v)),
+        "rewrite_status" => plain(rewrite_status(&v)),
+        // A finished job prints as a job view with the command's result inside.
+        "rewrite_function"
+            if v.get("result").is_some_and(|r| r.get("verdict").is_some())
+                || v.get("verdict").is_some() =>
+        {
+            plain(rewrite_function(v.get("result").unwrap_or(&v)))
+        }
         _ => {
             let mut s = String::new();
             generic(&v, 0, &mut s);
@@ -586,6 +783,121 @@ mod tests {
         assert!(r.stdout.contains("versions:\n  k: 1\n"));
         assert!(r.stdout.contains("list:\n  A  B\n  1  x\n"));
         assert!(r.stdout.contains("none: (none)\n"));
+    }
+
+    #[test]
+    fn rewrite_plan_and_status_are_tables() {
+        let plan = json!({
+            "scope": "all", "functions_total": 9, "functions_planned": 2, "groups": 1,
+            "skipped_imports": 4, "skipped_runtime": 3, "truncated": true,
+            "entries": [
+                {"order": 0, "address": "0x10", "name": u("leaf"), "group": 0, "group_size": 1,
+                 "status": "planned", "flags": [], "needs_stubs": []},
+                {"order": 1, "address": "0x20", "name": u("even"), "group": 1, "group_size": 2,
+                 "status": "verified", "flags": ["recursive", "needs_stubs"],
+                 "needs_stubs": [u("calloc")]}
+            ],
+            "next_cursor": "2"
+        });
+        let r = render("rewrite_plan", &plan);
+        let lines: Vec<&str> = r.stdout.lines().collect();
+        assert_eq!(
+            lines[0],
+            "2 of 9 functions planned in 1 groups (4 import thunks and 3 runtime functions left \
+             out; the function cap cut the program short)"
+        );
+        let cells = |l: &str| l.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            cells(lines[1]),
+            [
+                "ORDER", "ADDRESS", "NAME", "GROUP", "STATUS", "FLAGS", "NEEDS", "STUBS"
+            ]
+        );
+        assert_eq!(
+            cells(lines[2]),
+            ["0", "0x10", "leaf", "0", "planned", "-", "-"]
+        );
+        assert_eq!(
+            cells(lines[3]),
+            [
+                "1",
+                "0x20",
+                "even",
+                "1",
+                "(x2)",
+                "verified",
+                "recursive,needs_stubs",
+                "calloc"
+            ]
+        );
+        assert_eq!(lines[4], "more: --cursor 2");
+
+        let status = json!({
+            "plan_present": false,
+            "counts": {"planned": 1, "translated": 0, "verified": 1, "failed": 0, "accepted": 2},
+            "units": [{"address": "0x10", "name": u("f"), "status": "accepted", "version": 3,
+                       "accepted_version": 2, "verdict": "pass", "passed": 5, "cases_run": 5,
+                       "flags": []}]
+        });
+        let r = render("rewrite_status", &status);
+        let lines: Vec<&str> = r.stdout.lines().collect();
+        assert_eq!(
+            lines[0],
+            "1 planned, 0 translated, 1 verified, 0 failed, 2 accepted (4 functions; no plan \
+             stored, run rewrite-plan)"
+        );
+        assert_eq!(
+            cells(lines[2]),
+            [
+                "-",
+                "0x10",
+                "f",
+                "accepted",
+                "3",
+                "(accepted",
+                "2)",
+                "pass",
+                "5/5",
+                "-"
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_function_results_lead_with_the_verdict_and_the_counterexample() {
+        let result = json!({
+            "unit": "ru-1", "address": "0x10", "name": u("cmp"), "version": 2, "mode": "spec",
+            "status": "failed", "verdict": "fail", "cases_run": 9, "passed": 7, "skipped": 2,
+            "rust_prototype": "pub unsafe extern \"C\" fn cmp()", "sandbox": "landlock-v6",
+            "provider": "p", "model": "m",
+            "counterexample": {"args": ["1", "buf[4]=00000000"],
+                               "differences": [u("return value: original Some(1), translation Some(2)")]},
+            "assumptions": [u("a record is 40 bytes")], "unsupported": []
+        });
+        let job = json!({"job_id": "job-1", "status": "succeeded", "result": result});
+        let r = render("rewrite_function", &job);
+        assert!(
+            r.stdout.starts_with(
+                "cmp 0x10 (unit ru-1 v2, spec mode): fail -- 7/9 cases agreed, 2 not evaluated\n"
+            ),
+            "{}",
+            r.stdout
+        );
+        assert!(
+            r.stdout
+                .contains("counterexample args: 1,buf[4]=00000000\n")
+        );
+        assert!(
+            r.stdout
+                .contains("  return value: original Some(1), translation Some(2)\n")
+        );
+        assert!(r.stdout.contains("assumptions: a record is 40 bytes\n"));
+        // Anything else falls back to the generic view.
+        let other = render(
+            "rewrite_function",
+            &json!({"job_id": "job-1", "status": "running"}),
+        );
+        assert!(other.stdout.contains("status: running"));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use kraken_proto::{Locator, TokenKind};
 use kraken_viewmodel::{Decompiled, FunctionItem, Load, ToastLevel, ViewModel};
 
 use crate::panels::{self, PanelState};
-use crate::style::{self, chip, clock, empty_state, medium, pal};
+use crate::style::{self, chip, empty_state, medium, pal};
 
 /// Time a call-target click waits for a possible second click (a rename) before navigating.
 pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(260);
@@ -212,7 +212,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Xrefs => panels::xrefs::show(ui, self.vm, &mut self.ui.panels),
             Tab::Strings => panels::strings::show(ui, self.vm, &mut self.ui.panels),
             Tab::Symbols => panels::symbols::show(ui, self.vm, &mut self.ui.panels),
-            Tab::History => history(ui, self.vm),
+            Tab::History => crate::history::panel(ui, self.vm),
             Tab::Proposals => proposals(ui, self.vm),
             Tab::Assistant => crate::assist::panel(ui, self.vm, self.ui),
             Tab::Agents => crate::agents::panel(ui, self.vm, self.ui),
@@ -299,6 +299,7 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     let mut selected = vm.selected.and_then(|a| vm.functions.index_of(a));
     let mut max_seen = 0usize;
     let items: &[FunctionItem] = &vm.functions.items;
+    let stale = &vm.undo.stale;
     let resp = VirtualList::new("functions", n, 22.0).show(ui, &mut selected, |ui, i, sel| {
         max_seen = max_seen.max(i);
         let f = &items[i];
@@ -314,6 +315,9 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
         }
         let r = ui.label(name);
         crate::assist::capture_function_row(ui, &r, f.address, &mut st.assist);
+        if stale.contains(&f.address) {
+            stale_marker(ui);
+        }
         if f.partial || f.signature.is_some() {
             let tip = match (&f.signature, f.partial) {
                 (Some(s), true) => format!("{s}\nStill being analyzed"),
@@ -332,6 +336,14 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
         vm.select_function(addr);
     }
     vm.ensure_loaded(max_seen + 1);
+}
+
+/// The small marker on a function whose derived data is stale after an undo.
+fn stale_marker(ui: &mut Ui) {
+    let s = style::status(style::dark(ui));
+    chip(ui, "stale", s.warning).on_hover_text(
+        "A type or signature edit was undone. What was derived from it may be out of date until this function is read again.",
+    );
 }
 
 // ---------------------------------------------------------------- decompiler
@@ -375,6 +387,9 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             {
                 chip(ui, "partial", s.warning)
                     .on_hover_text(format!("This result may change: {reason}."));
+            }
+            if vm.is_stale(cur.address) {
+                stale_marker(ui);
             }
             if cur.refreshing {
                 ui.spinner();
@@ -527,100 +542,7 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
     }
 }
 
-// ---------------------------------------------------------------- history + proposals
-
-fn history(ui: &mut Ui, vm: &mut ViewModel) {
-    let p = pal(ui);
-    let s = style::status(style::dark(ui));
-    ui.horizontal(|ui| {
-        if ui
-            .button("Undo my last change")
-            .on_hover_text("Reverses your most recent edit. Press again to step further back.")
-            .clicked()
-        {
-            vm.undo_last();
-        }
-        if ui.button("Refresh").clicked() {
-            vm.refresh_history();
-        }
-        if vm.history.loading {
-            ui.spinner();
-        }
-    });
-    if let Some(e) = &vm.history.error {
-        ui.label(RichText::new(e).color(s.danger));
-    }
-    if vm.history.entries.is_empty() && !vm.history.loading {
-        empty_state(
-            ui,
-            "No changes yet",
-            "Rename a function or add a comment and it will be listed here, with a way to undo it.",
-            None,
-        );
-        return;
-    }
-    let mut undo_run: Option<String> = None;
-    let mut want_more = false;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for e in &vm.history.entries {
-                ui.horizontal(|ui| {
-                    let dim = e.undone || e.status == "rejected";
-                    let text = |t: String| {
-                        let r = RichText::new(t).size(12.5);
-                        if dim {
-                            r.color(p.text_dim).strikethrough()
-                        } else {
-                            r.color(p.text)
-                        }
-                    };
-                    ui.label(
-                        RichText::new(clock(e.ts_ms))
-                            .monospace()
-                            .size(11.5)
-                            .color(p.text_dim),
-                    );
-                    if e.by_agent {
-                        chip(ui, &e.who, s.info);
-                    } else {
-                        chip(ui, "you", p.accent);
-                    }
-                    ui.label(text(e.description.clone()));
-                    if e.is_undo {
-                        chip(ui, "undo", p.text_dim);
-                    }
-                    if e.undone {
-                        chip(ui, "undone", p.text_dim);
-                    }
-                    if e.sync == "engine_rejected" {
-                        chip(ui, "engine refused", s.danger);
-                    } else if e.sync == "pending" {
-                        chip(ui, "waiting", s.warning);
-                    }
-                    if e.by_agent
-                        && let Some(run) = &e.run_id
-                        && !e.undone
-                        && ui
-                            .small_button("Undo run")
-                            .on_hover_text(format!("Reverse every change from run {run}"))
-                            .clicked()
-                    {
-                        undo_run = Some(run.clone());
-                    }
-                });
-            }
-            if vm.history.next_cursor.is_some() && ui.button("Load older changes").clicked() {
-                want_more = true;
-            }
-        });
-    if let Some(r) = undo_run {
-        vm.undo_run(r);
-    }
-    if want_more {
-        vm.load_more_history();
-    }
-}
+// ---------------------------------------------------------------- proposals
 
 fn proposals(ui: &mut Ui, vm: &mut ViewModel) {
     let p = pal(ui);

@@ -17,14 +17,14 @@ fn mib(bytes: u64) -> f64 {
 }
 
 /// Prints download progress to stderr: a rewritten line on a terminal, a line per 10% otherwise.
-struct Printer {
+pub(crate) struct Printer {
     tty: bool,
     last_decile: HashMap<String, u64>,
     in_line: bool,
 }
 
 impl Printer {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Printer {
             tty: std::io::stderr().is_terminal(),
             last_decile: HashMap::new(),
@@ -32,14 +32,14 @@ impl Printer {
         }
     }
 
-    fn end_line(&mut self) {
+    pub(crate) fn end_line(&mut self) {
         if self.in_line {
             let _ = writeln!(std::io::stderr());
             self.in_line = false;
         }
     }
 
-    fn show(&mut self, p: Progress) {
+    pub(crate) fn show(&mut self, p: Progress) {
         let mut e = std::io::stderr();
         match p {
             Progress::Downloading {
