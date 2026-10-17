@@ -142,6 +142,8 @@ mod real {
                     i.ext_jar.clone(),
                     plan.binary.clone(),
                 ],
+                optional_read_only: Vec::new(),
+                proc_self_read: false,
                 read_write: vec![home.to_path_buf(), plan.project_dir.clone()],
                 options: self.confinement.clone(),
             })

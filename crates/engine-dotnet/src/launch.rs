@@ -102,13 +102,14 @@ fn spawn_spec(plan: &LaunchPlan, home: &Path) -> SpawnSpec {
         ]);
     }
 
-    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
-    let mut options = plan.confinement.clone();
-    // The runtime reads cgroup limits and CPU topology from /proc and /sys.
+    let options = plan.confinement.clone();
+    // The runtime reads cgroup limits, memory and CPU topology from /proc and /sys. Grant only
+    // that: the process's own /proc/<pid>, a few global files and the CPU/cgroup views, never
+    // other processes' /proc/<pid>/cmdline.
     #[cfg(target_os = "linux")]
-    options
-        .extra_read_only
-        .extend(["/proc", "/sys"].map(PathBuf::from));
+    let optional_read_only = proc_sys_paths();
+    #[cfg(not(target_os = "linux"))]
+    let optional_read_only = Vec::new();
 
     let ext_dir = i
         .ext_dll
@@ -122,9 +123,67 @@ fn spawn_spec(plan: &LaunchPlan, home: &Path) -> SpawnSpec {
         // Only the assembly file itself is readable: references next to it are not resolved
         // (spike limitation); framework assemblies come from the runtime directory.
         read_only: vec![i.dotnet_root.clone(), ext_dir, plan.assembly.clone()],
+        optional_read_only,
+        proc_self_read: cfg!(target_os = "linux"),
         read_write: vec![home.to_path_buf()],
         options,
     }
+}
+
+/// The `/proc` and `/sys` paths the .NET runtime needs (decision: M8). Missing ones are skipped.
+#[cfg(target_os = "linux")]
+fn proc_sys_paths() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = [
+        "/proc/meminfo",
+        "/proc/cpuinfo",
+        "/proc/stat",
+        "/proc/sys/vm/max_map_count",
+        "/proc/sys/vm/overcommit_memory",
+        "/sys/devices/system/cpu",
+        "/sys/devices/system/node",
+        "/sys/kernel/mm/transparent_hugepage",
+    ]
+    .map(PathBuf::from)
+    .into();
+    let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    paths.extend(cgroup_paths(&cgroup, Path::new("/sys/fs/cgroup")));
+    paths
+}
+
+/// The cgroup v2 limit files for the process's own cgroup (`0::/a/b`): the whole directory of
+/// the cgroup itself and the limit files of each ancestor (the runtime walks upwards).
+#[cfg(target_os = "linux")]
+fn cgroup_paths(proc_cgroup: &str, mount: &Path) -> Vec<PathBuf> {
+    const LIMIT_FILES: &[&str] = &[
+        "memory.max",
+        "memory.high",
+        "memory.swap.max",
+        "cpu.max",
+        "cgroup.controllers",
+    ];
+    let Some(rel) = proc_cgroup
+        .lines()
+        .find_map(|l| l.strip_prefix("0::"))
+        .map(|p| p.trim().trim_start_matches('/'))
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut dir = mount.to_path_buf();
+    let mut dirs = vec![dir.clone()];
+    for part in rel.split('/').filter(|p| !p.is_empty() && *p != "..") {
+        dir.push(part);
+        dirs.push(dir.clone());
+    }
+    let own = dirs.len() > 1;
+    for (i, d) in dirs.iter().enumerate() {
+        if own && i == dirs.len() - 1 {
+            out.push(d.clone());
+        } else {
+            out.extend(LIMIT_FILES.iter().map(|f| d.join(f)));
+        }
+    }
+    out
 }
 
 fn prepare_home(plan: &LaunchPlan) -> Result<TempDir, DotnetError> {
@@ -204,4 +263,37 @@ pub(crate) async fn launch(_plan: LaunchPlan) -> Result<Launched, ProtoError> {
         ErrorCode::Unsupported,
         "the .NET sidecar is not supported on this platform yet",
     ))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proc_and_sys_grants_are_narrow() {
+        for p in proc_sys_paths() {
+            let p = p.to_string_lossy().into_owned();
+            assert!(p != "/proc" && p != "/sys" && p != "/sys/fs/cgroup", "{p}");
+            assert!(
+                !p.starts_with("/proc/self") && !p.contains("cmdline"),
+                "{p}"
+            );
+        }
+    }
+
+    #[test]
+    fn cgroup_grants_follow_the_own_cgroup() {
+        let m = Path::new("/sys/fs/cgroup");
+        let v = cgroup_paths("0::/user.slice/app.slice/x.scope\n", m);
+        assert!(v.contains(&m.join("user.slice/app.slice/x.scope")));
+        assert!(v.contains(&m.join("user.slice/memory.max")));
+        assert!(v.contains(&m.join("memory.max")));
+        assert!(
+            !v.contains(&m.join("user.slice")),
+            "ancestors get files only"
+        );
+        // In the root cgroup only the root's limit files are granted, never the whole tree.
+        assert!(!cgroup_paths("0::/\n", m).contains(&m.to_path_buf()));
+        assert!(cgroup_paths("garbage", m).is_empty());
+    }
 }

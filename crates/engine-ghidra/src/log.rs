@@ -38,9 +38,10 @@ impl LogSink {
         }
     }
 
-    /// Appends one line (truncated to [`MAX_LINE_BYTES`]).
+    /// Appends one line (sanitised, then truncated to [`MAX_LINE_BYTES`]). Sidecar output quotes
+    /// symbol and file names from the analysed binary, and reaches agents through error details.
     pub fn push(&self, line: impl Into<String>) {
-        let mut line = line.into();
+        let mut line = kraken_proto::sanitize(&line.into());
         if line.len() > MAX_LINE_BYTES {
             let mut cut = MAX_LINE_BYTES;
             while !line.is_char_boundary(cut) {
@@ -116,6 +117,13 @@ impl LogSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lines_are_sanitised_on_push() {
+        let sink = LogSink::default();
+        sink.push("loaded \u{1b}[31mevil\u{E0041}\u{200B}_name\u{7}");
+        assert_eq!(sink.lines(), ["loaded evil_name"]);
+    }
 
     #[test]
     fn ring_is_bounded_and_ordered() {
