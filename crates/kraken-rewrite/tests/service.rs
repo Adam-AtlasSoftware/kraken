@@ -468,7 +468,49 @@ async fn a_cassette_translation_is_verified_stored_and_listed() {
     assert_eq!(row["status"], "verified");
     assert_eq!(row["verdict"], "pass");
     assert_eq!(row["version"], 1);
+    assert_eq!(row["unit"], out["unit"], "status names the unit id");
     assert_eq!(st["counts"]["verified"], 1);
+
+    // rewrite_unit hands out the stored code, by address and by unit id.
+    let by_addr = r
+        .call(&user(), "rewrite_unit", json!({"address": "0x10124e"}))
+        .await
+        .expect("rewrite_unit by address");
+    let by_id = r
+        .call(&user(), "rewrite_unit", json!({"unit": out["unit"]}))
+        .await
+        .expect("rewrite_unit by unit");
+    assert_eq!(by_addr, by_id);
+    assert_eq!(by_addr["address"], "0x10124e");
+    let versions = by_addr["versions"].as_array().expect("versions");
+    assert_eq!(versions.len(), 1);
+    let v = &versions[0];
+    assert_eq!(v["unit"], out["unit"]);
+    assert_eq!(v["version"], 1);
+    assert_eq!(v["status"], "verified");
+    assert_eq!(v["accepted"], false);
+    assert_eq!(v["verdict"], "pass");
+    assert_eq!(v["signature"], out["rust_prototype"]);
+    assert_eq!(v["provider"], "replay");
+    assert!(
+        v["rust_code"]["value"]
+            .as_str()
+            .is_some_and(|c| c.contains("fn cmp_id("))
+    );
+    assert!(v["oracle_kind"].as_str().is_some_and(|k| !k.is_empty()));
+    assert!(v["created"].as_u64().unwrap_or(0) > 0);
+    assert!(by_addr.get("spec").is_none(), "no spec was written");
+    let e = r
+        .call(&user(), "rewrite_unit", json!({"unit": "ru-nope"}))
+        .await
+        .expect_err("unknown unit");
+    assert_eq!(e.code, ErrorCode::NotFound);
+    let none = r
+        .call(&user(), "rewrite_unit", json!({"address": "0x101000"}))
+        .await;
+    if let Ok(n) = none {
+        assert_eq!(n["versions"], json!([]));
+    }
 
     // The plan reports the same status.
     let plan = r

@@ -19,6 +19,7 @@ pub mod export;
 pub mod fetch;
 pub mod infer;
 pub mod lift;
+pub mod lint;
 pub mod native;
 pub mod oracle;
 pub mod pipeline;

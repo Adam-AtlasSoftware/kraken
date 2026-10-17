@@ -17,10 +17,9 @@
 //! under the same confinement as the differential tests (read-only file system, no network).
 
 use std::collections::BTreeSet;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use kraken_registry::commands::ExportCoverage;
 use serde::{Deserialize, Serialize};
@@ -28,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::abi::{Param, Ret, Signature};
 use crate::error::RewriteError;
 use crate::native::lint_translation;
-use crate::sandbox::{Confinement, ReadScope, confine};
+use crate::sandbox::{Confinement, ReadScope, confine, run_captured, scratch_dir, toolchain};
 use crate::unit::RewriteUnit;
 
 /// Name of the manifest file; its presence marks a directory as an earlier export.
@@ -507,80 +506,51 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), RewriteError> {
     Ok(())
 }
 
-fn capped(mut r: impl Read) -> Vec<u8> {
-    let mut out = Vec::new();
-    let _ = r.by_ref().take(OUTPUT_CAP as u64).read_to_end(&mut out);
-    let _ = std::io::copy(&mut r, &mut std::io::sink());
-    out
-}
-
-fn cargo() -> PathBuf {
-    std::env::var_os("CARGO")
-        .filter(|v| !v.is_empty())
-        .map_or_else(|| PathBuf::from("cargo"), PathBuf::from)
-}
-
 /// Builds the workspace in `dir` inside the sandbox and reads the symbols of the shared library.
 ///
 /// The workspace is copied to a scratch directory first, so the build writes nothing next to the
 /// exported files; the build runs with the file system read-only except for that scratch
-/// directory (and `/tmp` for the linker), no network, and a scrubbed environment.
+/// directory, no network, and a scrubbed environment; the scratch directory is private to the
+/// user (never under a shared `/tmp`) and the build reads only the toolchain, system libraries and
+/// that directory.
 pub fn build_in_sandbox(
     dir: &Path,
     ffi_crate: &str,
     confinement: &Confinement,
 ) -> Result<Built, RewriteError> {
-    let run = tempfile::Builder::new()
-        .prefix("kraken-export-")
-        .tempdir()
-        .map_err(|e| RewriteError::Compile(e.to_string()))?;
+    let tc = toolchain()?;
+    let run = scratch_dir("kraken-export-")?;
     let ws = run.path().join("ws");
     copy_tree(dir, &ws)?;
     let cargo_home = run.path().join("cargo-home");
     std::fs::create_dir_all(&cargo_home).map_err(|e| io("cargo-home", e))?;
     let target = run.path().join("target");
 
-    let mut cmd = Command::new(cargo());
+    let mut cmd = Command::new(&tc.cargo);
     cmd.args(["build", "--release", "--offline", "--quiet", "--target-dir"])
-        .arg(&target)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let report = confine(&mut cmd, run.path(), ReadScope::Everything, confinement)?;
+        .arg(&target);
+    let report = confine(&mut cmd, run.path(), ReadScope::Toolchain, confinement)?;
     cmd.current_dir(&ws)
         .env("CARGO_HOME", &cargo_home)
+        .env("RUSTC", &tc.rustc)
+        // No wrapper or extra flags from anywhere: the scratch directory has no ancestor config
+        // (see `scratch_dir`), and these override any other source.
+        .env("RUSTC_WRAPPER", "")
+        .env("RUSTC_WORKSPACE_WRAPPER", "")
+        .env("CARGO_ENCODED_RUSTFLAGS", "")
         .env("CARGO_TERM_COLOR", "never")
         .env("CARGO_NET_OFFLINE", "true")
         .env("TMPDIR", run.path());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| RewriteError::Compile(format!("cannot run cargo: {e}")))?;
-    let stdout = child
-        .stdout
-        .take()
-        .map(|s| std::thread::spawn(move || capped(s)));
-    let stderr = child
-        .stderr
-        .take()
-        .map(|s| std::thread::spawn(move || capped(s)));
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
-            Ok(None) if started.elapsed() > BUILD_TIMEOUT => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => return Err(RewriteError::Compile(e.to_string())),
-        }
-    };
-    let join = |h: Option<std::thread::JoinHandle<Vec<u8>>>| {
-        h.and_then(|h| h.join().ok()).unwrap_or_default()
-    };
-    let (out, err) = (join(stdout), join(stderr));
-    let Some(status) = status else {
+    let out = run_captured(
+        &mut cmd,
+        BUILD_TIMEOUT,
+        OUTPUT_CAP,
+        Duration::from_millis(20),
+    )
+    .map_err(|e| RewriteError::Compile(format!("cannot run cargo: {e}")))?;
+    let captured_status = out.status;
+    let (out, err) = (out.stdout, out.stderr);
+    let Some(status) = captured_status else {
         return Err(RewriteError::Compile(format!(
             "the build did not finish within {} s",
             BUILD_TIMEOUT.as_secs()
