@@ -1,4 +1,5 @@
 mod docs;
+mod native_sla;
 mod native_src;
 mod notices;
 mod samples;
@@ -23,6 +24,10 @@ Commands:
   native-src   Download the pinned Ghidra source archive (Ghidra_12.1.4_build, SHA-256 checked),
                and extract the decompiler C++ sources into
                ~/.cache/kraken-dev/ghidra-src/Ghidra_12.1.4_build for engine-native-sys.
+  native-sla   Build Ghidra's Sleigh compiler from the same pinned sources (CXX/CC, default
+               c++/cc) and compile the x86 and AArch64 specifications into
+               ~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, so the native engine needs no
+               Ghidra install.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
   docs         Write docs/reference/commands.md from the command registry.
@@ -41,6 +46,7 @@ fn main() -> ExitCode {
         Some("ghidra-ext-test") => ghidra_ext_test(args.get(1).map(PathBuf::from)),
         Some("dotnet-ext") => dotnet_ext(),
         Some("native-src") => native_src::native_src(),
+        Some("native-sla") => native_sla::native_sla(),
         Some("schema") => schema(),
         Some("samples") => write_samples(),
         Some("docs") => docs::write_docs(),

@@ -2,8 +2,8 @@
 //! symbols). Absent capabilities are skipped.
 
 use kraken_proto::{
-    DisasmRow, DisasmScope, ErrorCode, Hex64, Locator, MemoryBlock, Page, PageRequest, StringEntry,
-    SymbolEntry, Xref, XrefDirection, XrefKind,
+    DisasmRow, DisasmScope, ErrorCode, Hex64, Locator, MemoryBlock, Page, PageRequest,
+    StringEncoding, StringEntry, SymbolEntry, Xref, XrefDirection, XrefKind,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -377,6 +377,24 @@ async fn check_xrefs(engine: &dyn Engine, sample: &[u64]) -> Check {
                 "the call at {} is missing from the callee's incoming references",
                 call.from
             );
+            let here = XrefRequest {
+                address: call.from,
+                direction: XrefDirection::From,
+                kind: None,
+                whole_function: false,
+            };
+            let at = all_xrefs(engine, here, 500).await?;
+            ensure!(
+                at.iter().all(|x| x.from == call.from),
+                "references from {} include other addresses",
+                call.from
+            );
+            ensure!(
+                at.iter()
+                    .any(|x| x.to == call.to && x.kind == XrefKind::Call),
+                "the call at {} is missing from the references at its address",
+                call.from
+            );
             checked_to = true;
         }
     }
@@ -411,16 +429,21 @@ async fn check_cfg(engine: &dyn Engine, sample: &[u64]) -> Check {
         let cfg = call!("cfg", graph.cfg(&Locator::ram(entry), &cancel));
         ensure!(cfg.function.0 == entry, "cfg is for {}", cfg.function);
         ensure!(!cfg.blocks.is_empty(), "cfg of {entry:#x} has no blocks");
-        let mut prev = None;
+        let mut prev: Option<(Hex64, Hex64)> = None;
         let mut insns = 0u64;
         for b in &cfg.blocks {
             ensure!(b.end > b.start && b.instructions > 0, "bad block {b:?}");
             ensure!(
-                prev.is_none_or(|p| b.start > p),
+                prev.is_none_or(|(s, _)| b.start > s),
                 "blocks are not ordered at {}",
                 b.start
             );
-            prev = Some(b.start);
+            ensure!(
+                prev.is_none_or(|(_, e)| b.start >= e),
+                "block at {} overlaps the one before",
+                b.start
+            );
+            prev = Some((b.start, b.end));
             insns += u64::from(b.instructions);
         }
         ensure!(
@@ -491,6 +514,13 @@ async fn check_strings(engine: &dyn Engine) -> Check {
             s.value
         );
         ensure!(s.length > 0, "string at {} has length 0", s.address);
+        ensure!(
+            s.encoding != StringEncoding::Ascii || s.length as usize >= s.value.len(),
+            "ASCII string at {} is {} bytes long but has {} characters",
+            s.address,
+            s.length,
+            s.value.len()
+        );
     }
     if let Some(sample) = big.get(big.len() / 2) {
         let needle: String = sample.value.chars().take(3).collect();
@@ -560,6 +590,19 @@ async fn check_symbols(engine: &dyn Engine) -> Check {
     ensure!(
         exports_big.iter().all(|e| e.address.is_some()),
         "an export has no address"
+    );
+    ensure!(
+        exports_big
+            .windows(2)
+            .all(|w| (w[0].address, &w[0].name) <= (w[1].address, &w[1].name)),
+        "exports are not ordered by (address, name)"
+    );
+    let import_key = |e: &SymbolEntry| (e.address.is_none(), e.address, e.name.clone());
+    ensure!(
+        imports_big
+            .windows(2)
+            .all(|w| import_key(&w[0]) <= import_key(&w[1])),
+        "imports are not ordered by (address, name) with addressless ones last"
     );
     ensure!(
         imports_big.iter().all(|e| !e.name.is_empty()),

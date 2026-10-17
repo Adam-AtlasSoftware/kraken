@@ -4,6 +4,7 @@
 #include "engine-native-sys/shim/kraken_shim.hh"
 #include "engine-native-sys/src/lib.rs.h"
 
+#include <chrono>
 #include <cstdio>
 #include <mutex>
 #include <sstream>
@@ -14,6 +15,7 @@
 #include "architecture.hh"
 #include "fspec.hh"
 #include "funcdata.hh"
+#include "grammar.hh"
 #include "jumptable.hh"
 #include "loadimage.hh"
 #include "printc.hh"
@@ -75,6 +77,14 @@ enum FlowCode : uint8_t {
   FL_ICALL = 6,
 };
 
+// Reference kinds shared with Rust (see `RefKind` in lib.rs).
+enum RefCode : uint8_t {
+  RF_DATA = 0,  // an address-sized constant (lea, mov imm64)
+  RF_READ = 1,  // a direct or constant-pointer memory read
+  RF_WRITE = 2, // a direct or constant-pointer memory write
+  RF_IMM = 3,   // a constant narrower than an address (mov edi, imm32 in fixed-address code)
+};
+
 /// Reads program bytes through the Rust `ImageSource`.
 class CallbackLoadImage : public ghidra::LoadImage {
   rust::Box<ImageSource> image;
@@ -100,6 +110,7 @@ public:
       if (r[i + 1] > r[i])
         list.insertRange(space, r[i], r[i + 1] - 1);
   }
+  bool interrupted() const { return image->interrupted(); }
   std::string getArchType(void) const override { return "kraken"; }
   void adjustVma(long) override {}
 };
@@ -409,6 +420,8 @@ struct Session::Impl {
   std::ostringstream errs;
   std::unique_ptr<KrakenArchitecture> arch;
   KrakenPrintC *printer = nullptr;
+  // the root action of the decompile carries break points, see `breakEverywhere`
+  ghidra::Action *broken = nullptr;
 };
 
 Session::Session(std::unique_ptr<Impl> i) : impl(std::move(i)) {}
@@ -489,6 +502,7 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
     rust::Vec<InsnOut> rows;
     ghidra::Architecture *a = impl->arch.get();
     AddrSpace *ram = a->getDefaultCodeSpace();
+    AddrSpace *regs = a->getSpaceByName("register");
     uint64_t at = addr;
     for (uint32_t n = 0; n < max; ++n) {
       Address here(ram, at);
@@ -528,7 +542,10 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
         case ghidra::CPUI_BRANCHIND:
           set(5, FL_IJUMP, false);
           // `jmp [constant]` (PLT and IFUNC stubs) loads its target from a fixed slot, so it
-          // cannot be a switch
+          // cannot be a switch; Sleigh gives the slot either as a direct memory operand or as
+          // a LOAD from a constant pointer
+          if (!op.in.empty() && op.in[0].space == ram)
+            row.via_pointer = true;
           for (const auto &prev : pc.ops)
             if (prev.opc == ghidra::CPUI_LOAD && prev.has_out && !op.in.empty() &&
                 prev.out.space == op.in[0].space && prev.out.offset == op.in[0].offset &&
@@ -560,16 +577,57 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
           break;
         }
         // constants that look like addresses (lea, mov imm) and absolute memory operands
-        for (const auto &in : op.in) {
-          if (in.space->getType() == ghidra::IPTR_CONSTANT && in.size == ram->getAddrSize())
-            row.refs.push_back(in.offset);
-          else if (in.space == ram && op.opc != ghidra::CPUI_BRANCH &&
-                   op.opc != ghidra::CPUI_CBRANCH && op.opc != ghidra::CPUI_CALL)
-            row.refs.push_back(in.offset);
+        auto ref = [&](uint64_t a, uint8_t k) {
+          row.refs.push_back(a);
+          row.ref_kinds.push_back(k);
+        };
+        bool memop = op.opc == ghidra::CPUI_LOAD || op.opc == ghidra::CPUI_STORE;
+        bool flowop = op.opc == ghidra::CPUI_BRANCH || op.opc == ghidra::CPUI_CBRANCH ||
+                      op.opc == ghidra::CPUI_CALL;
+        for (size_t k = 0; k < op.in.size(); ++k) {
+          const auto &in = op.in[k];
+          if (memop && k < 2)
+            continue; // the space id and the pointer are handled below
+          if (in.space->getType() == ghidra::IPTR_CONSTANT) {
+            if (in.size == ram->getAddrSize())
+              ref(in.offset, RF_DATA);
+            else if (in.size == 4 && ram->getAddrSize() == 8 && in.offset >= 0x1000)
+              ref(in.offset, RF_IMM);
+          } else if (in.space == ram && !flowop)
+            ref(in.offset, RF_READ);
         }
-        if (op.opc == ghidra::CPUI_LOAD && op.in.size() > 1 &&
-            op.in[1].space->getType() == ghidra::IPTR_CONSTANT)
-          row.refs.push_back(op.in[1].offset);
+        if (op.has_out && op.out.space == ram)
+          ref(op.out.offset, RF_WRITE);
+        if (memop && op.in.size() > 1 && op.in[1].space->getType() == ghidra::IPTR_CONSTANT)
+          ref(op.in[1].offset, op.opc == ghidra::CPUI_LOAD ? RF_READ : RF_WRITE);
+        // registers read and written, packed as offset << 8 | size
+        for (const auto &in : op.in)
+          if (in.space == regs)
+            row.reg_reads.push_back((in.offset << 8) | (in.size & 0xff));
+        if (op.has_out && op.out.space == regs)
+          row.reg_writes.push_back((op.out.offset << 8) | (op.out.size & 0xff));
+      }
+      // A repeat prefix (`REP STOSQ`) is p-code that branches back to its own start and out to
+      // the next instruction: the instruction loops internally and then falls through.
+      uint64_t next = at + static_cast<uint64_t>(len);
+      bool self = false, toNext = false;
+      for (const auto &op : pc.ops) {
+        if ((op.opc == ghidra::CPUI_BRANCH || op.opc == ghidra::CPUI_CBRANCH) && !op.in.empty() &&
+            op.in[0].space == ram) {
+          self |= op.in[0].offset == at;
+          toNext |= op.opc == ghidra::CPUI_CBRANCH && op.in[0].offset == next;
+        }
+      }
+      if (self && toNext) {
+        rust::Vec<uint64_t> kept;
+        for (uint64_t t : row.targets)
+          if (t != at && t != next)
+            kept.push_back(t);
+        row.targets = std::move(kept);
+        if (row.targets.empty() && (row.flow == FL_JUMP || row.flow == FL_CJUMP)) {
+          row.flow = FL_FALLTHROUGH;
+          row.fallthrough = true;
+        }
       }
       rows.push_back(std::move(row));
       at += static_cast<uint64_t>(len);
@@ -615,8 +673,26 @@ rust::Vec<PcodeOpOut> Session::lift(uint64_t start, uint64_t end) {
 
 namespace {
 
-// Runs the current action group (the full decompile) on the function at `addr`.
-Funcdata *analyze(ghidra::Architecture *a, uint64_t addr) {
+// Reaches the protected action list of a group through a member pointer of a derived class,
+// which is the standard-conforming way to read a protected member.
+struct GroupPeek : ghidra::ActionGroup {
+  using ghidra::ActionGroup::list;
+};
+
+// Sets a start break point on `act` and every action below it. `Action::perform` then returns
+// -1 at the start of each action and continues where it stopped on the next call, which gives
+// the decompile a cooperative check point between actions (the decompiler's console uses the
+// same break points for stepping). Rules inside a pool are not split further.
+void breakEverywhere(ghidra::Action *act) {
+  act->setBreakPoint(ghidra::Action::break_start, act->getName());
+  if (auto *g = dynamic_cast<ghidra::ActionGroup *>(act)) {
+    std::vector<ghidra::Action *> ghidra::ActionGroup::*members = &GroupPeek::list;
+    for (ghidra::Action *child : g->*members)
+      breakEverywhere(child);
+  }
+}
+
+Funcdata *functionAt(ghidra::Architecture *a, uint64_t addr) {
   Address at(a->getDefaultCodeSpace(), addr);
   ghidra::Scope *global = a->symboltab->getGlobalScope();
   Funcdata *fd = global->queryFunction(at);
@@ -625,36 +701,28 @@ Funcdata *analyze(ghidra::Architecture *a, uint64_t addr) {
     a->nameFunction(at, name);
     fd = global->addFunction(at, name)->getFunction();
   }
-  if (fd->isProcStarted())
-    a->clearAnalysis(fd);
-  ghidra::Action *act = a->allacts.getCurrent();
-  act->reset(*fd);
-  act->perform(*fd);
   return fd;
 }
 
 } // namespace
 
-rust::Vec<uint64_t> Session::jump_targets(uint64_t addr) {
-  return guarded("jump_targets", [&]() {
+rust::Vec<JumpEdgeOut> Session::jump_tables(uint64_t addr) {
+  return guarded("jump_tables", [&]() {
     ghidra::Architecture *a = impl->arch.get();
-    Address at(a->getDefaultCodeSpace(), addr);
-    ghidra::Scope *global = a->symboltab->getGlobalScope();
-    Funcdata *fd = global->queryFunction(at);
-    if (fd == nullptr) {
-      std::string name;
-      a->nameFunction(at, name);
-      fd = global->addFunction(at, name)->getFunction();
-    }
+    Funcdata *fd = functionAt(a, addr);
     if (fd->isProcStarted())
       a->clearAnalysis(fd);
     // flow following alone recovers the jump tables (each on a partial copy of the function)
     fd->startProcessing();
-    rust::Vec<uint64_t> out;
+    rust::Vec<JumpEdgeOut> out;
     for (ghidra::int4 i = 0; i < fd->numJumpTables(); ++i) {
       ghidra::JumpTable *jt = fd->getJumpTable(i);
-      for (ghidra::int4 j = 0; j < jt->numEntries(); ++j)
-        out.push_back(jt->getAddressByIndex(j).getOffset());
+      for (ghidra::int4 j = 0; j < jt->numEntries(); ++j) {
+        JumpEdgeOut e;
+        e.op = jt->getOpAddress().getOffset();
+        e.target = jt->getAddressByIndex(j).getOffset();
+        out.push_back(e);
+      }
     }
     impl->errs.str(std::string());
     a->clearAnalysis(fd);
@@ -662,10 +730,35 @@ rust::Vec<uint64_t> Session::jump_targets(uint64_t addr) {
   });
 }
 
-DecompOut Session::decompile(uint64_t addr) {
+DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
   return guarded("decompile", [&]() {
     ghidra::Architecture *a = impl->arch.get();
-    Funcdata *fd = analyze(a, addr);
+    Funcdata *fd = functionAt(a, addr);
+    if (fd->isProcStarted())
+      a->clearAnalysis(fd);
+    ghidra::Action *act = a->allacts.getCurrent();
+    if (impl->broken != act) {
+      breakEverywhere(act);
+      impl->broken = act;
+    }
+    DecompOut out;
+    out.timed_out = false;
+    out.interrupted = false;
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    CallbackLoadImage *img = static_cast<CallbackLoadImage *>(a->loader);
+    act->reset(*fd);
+    while (act->perform(*fd) < 0) {
+      if (img->interrupted())
+        out.interrupted = true;
+      else if (timeout_ms != 0 && std::chrono::steady_clock::now() >= deadline)
+        out.timed_out = true;
+      else
+        continue;
+      impl->errs.str(std::string());
+      a->clearAnalysis(fd);
+      return out;
+    }
 
     TokenEmit *te = impl->printer->tokens();
     te->reset();
@@ -673,7 +766,6 @@ DecompOut Session::decompile(uint64_t addr) {
     impl->printer->setOutputStream(&sink);
     impl->printer->docFunction(fd);
 
-    DecompOut out;
     out.text = rust::String(te->text());
     for (auto &t : te->tokens())
       out.tokens.push_back(std::move(t));
@@ -688,6 +780,37 @@ DecompOut Session::decompile(uint64_t addr) {
     // the next decompile starts from a fresh state; the analysis is not kept
     a->clearAnalysis(fd);
     return out;
+  });
+}
+
+void Session::declare_type(rust::Str decl) {
+  guarded("declare_type", [&]() {
+    std::istringstream s{std::string(decl)};
+    ghidra::parse_C(impl->arch.get(), s);
+  });
+}
+
+void Session::set_prototype(uint64_t addr, rust::Str decl) {
+  guarded("set_prototype", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    Funcdata *fd = functionAt(a, addr);
+    ghidra::PrototypePieces pieces;
+    std::string text(decl);
+    if (text.find(';') == std::string::npos)
+      text += ';'; // the grammar wants a complete declaration
+    std::istringstream s{text};
+    ghidra::parse_protopieces(pieces, s, a);
+    if (pieces.model == nullptr)
+      pieces.model = a->defaultfp;
+    bool noreturn = fd->getFuncProto().isNoReturn();
+    fd->getFuncProto().setPieces(pieces);
+    fd->getFuncProto().setNoReturn(noreturn);
+  });
+}
+
+void Session::set_noreturn(uint64_t addr, bool noreturn) {
+  guarded("set_noreturn", [&]() {
+    functionAt(impl->arch.get(), addr)->getFuncProto().setNoReturn(noreturn);
   });
 }
 

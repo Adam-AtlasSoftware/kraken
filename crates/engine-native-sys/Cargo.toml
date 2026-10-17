@@ -15,8 +15,11 @@ build = "build.rs"
 require-native = []
 
 [dependencies]
-cxx = "1.0.150"
 thiserror.workspace = true
+
+# only Linux builds the native library (decision 95); elsewhere the stub needs no C++ toolchain
+[target.'cfg(target_os = "linux")'.dependencies]
+cxx = "1.0.150"
 
 [build-dependencies]
 cc = { version = "1.2", features = ["parallel"] }
