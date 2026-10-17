@@ -95,7 +95,7 @@ impl EngineFactory for KindFactory {
     ) -> Result<SharedEngine, ProtoError> {
         self.made.lock().unwrap().push(kind);
         Ok(Arc::new(match kind {
-            EngineKind::Ghidra => FakeEngine::new(common::tiny()),
+            EngineKind::Ghidra | EngineKind::Native => FakeEngine::new(common::tiny()),
             EngineKind::Dotnet => [
                 Cap::Analyzer,
                 Cap::Memory,
@@ -471,4 +471,49 @@ async fn managed_annotations_come_back_when_the_project_is_reopened() {
         .await
         .unwrap();
     assert_eq!(f["name"]["value"], "SayHello");
+}
+
+#[tokio::test]
+async fn the_engine_choice_is_recorded_and_reported_by_project_info() {
+    let r = Rig::new();
+    let elf = r.write("prog", b"\x7fELF native");
+
+    let dir = r.dir("auto");
+    let created = r
+        .call(
+            "project_create",
+            json!({"binary": elf, "project_dir": dir, "engine": "auto"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["engine"]["kind"], "ghidra");
+    assert_eq!(created["engine"]["choice"], "auto");
+    assert!(created["engine"]["reason"].as_str().is_some(), "{created}");
+    assert_eq!(r.meta("auto")["engine_choice"], "auto");
+    let info = r.call("project_info", json!({})).await.unwrap();
+    assert_eq!(info["engine"], created["engine"]);
+
+    // This factory has no native engine: the request is refused and leaves no project behind.
+    let e = r
+        .call(
+            "project_create",
+            json!({"binary": elf, "project_dir": r.dir("nat"), "engine": "native"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, kraken_proto::ErrorCode::Unsupported);
+    assert!(!r.tmp.path().join("nat/meta.json").exists());
+
+    // Reopening reports the recorded choice; an old project has none.
+    let path = r.tmp.path().join("auto/meta.json");
+    let mut meta: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let m = meta.as_object_mut().unwrap();
+    m.remove("engine_choice");
+    m.remove("engine_reason");
+    std::fs::write(&path, meta.to_string()).unwrap();
+    let reopened = r
+        .call("project_open", json!({"project_dir": dir}))
+        .await
+        .unwrap();
+    assert_eq!(reopened["engine"], json!({"kind": "ghidra"}));
 }

@@ -292,6 +292,43 @@ pub struct Decompiled {
     pub warnings: Vec<String>,
 }
 
+/// Where a user comment shows in decompiled C, as the decompiler's comment types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CommentSlot {
+    /// In the function header (Ghidra's plate comments).
+    Header,
+    /// Before the statement at the address (pre comments).
+    Pre,
+    /// At the statement (end-of-line comments).
+    Eol,
+    /// After the statement (post comments).
+    Post,
+}
+
+impl CommentSlot {
+    /// The decompiler's `Comment::comment_type` bit.
+    #[cfg_attr(not(kraken_native), allow(dead_code))]
+    fn code(self) -> u8 {
+        match self {
+            CommentSlot::Eol => 1,
+            CommentSlot::Pre => 2,
+            CommentSlot::Post => 4,
+            CommentSlot::Header => 8,
+        }
+    }
+}
+
+/// A user comment handed to the decompiler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserComment {
+    /// Address the comment is attached to.
+    pub addr: u64,
+    /// Where it shows.
+    pub slot: CommentSlot,
+    /// The text.
+    pub text: String,
+}
+
 /// Registers packed as `offset << 8 | size` by the shim, unpacked, sorted and deduplicated.
 #[cfg(kraken_native)]
 fn unpack_regs(packed: &[u64]) -> Vec<(u64, u32)> {
@@ -375,6 +412,12 @@ mod real {
             varnode: String,
         }
 
+        struct CommentIn {
+            addr: u64,
+            kind: u8,
+            text: String,
+        }
+
         struct DecompOut {
             text: String,
             tokens: Vec<TokenOut>,
@@ -410,6 +453,13 @@ mod real {
             fn declare_type(self: Pin<&mut Session>, decl: &str) -> Result<()>;
             fn set_prototype(self: Pin<&mut Session>, addr: u64, decl: &str) -> Result<()>;
             fn set_noreturn(self: Pin<&mut Session>, addr: u64, noreturn: bool) -> Result<()>;
+            fn remove_function(self: Pin<&mut Session>, addr: u64) -> Result<()>;
+            fn set_convention(self: Pin<&mut Session>, addr: u64, name: &str) -> Result<()>;
+            fn set_comments(
+                self: Pin<&mut Session>,
+                fad: u64,
+                comments: &[CommentIn],
+            ) -> Result<()>;
         }
     }
 
@@ -722,6 +772,58 @@ impl Session {
         #[cfg(not(kraken_native))]
         {
             let _ = (addr, noreturn);
+            Err(unavailable())
+        }
+    }
+
+    /// Removes the function symbol at `addr`, and with it its prototype and marks. A later
+    /// decompile at `addr` creates a fresh one with a default name.
+    pub fn remove_function(&mut self, addr: u64) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            let _g = lock();
+            self.pinned()?.remove_function(addr).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = addr;
+            Err(unavailable())
+        }
+    }
+
+    /// Sets and locks the calling convention (prototype model, such as `__stdcall` or `MSABI`
+    /// for x86-64) of the function at `addr`; an empty name restores the default model.
+    pub fn set_convention(&mut self, addr: u64, name: &str) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            let _g = lock();
+            self.pinned()?.set_convention(addr, name).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, name);
+            Err(unavailable())
+        }
+    }
+
+    /// Replaces the user comments of the function at `fad`; the next decompile prints them.
+    pub fn set_comments(&mut self, fad: u64, comments: &[UserComment]) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            let list: Vec<real::ffi::CommentIn> = comments
+                .iter()
+                .map(|c| real::ffi::CommentIn {
+                    addr: c.addr,
+                    kind: c.slot.code(),
+                    text: c.text.clone(),
+                })
+                .collect();
+            let _g = lock();
+            self.pinned()?.set_comments(fad, &list).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (fad, comments);
             Err(unavailable())
         }
     }

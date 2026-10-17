@@ -8,7 +8,7 @@
 //!   fills in the signature of each function that had none and counts timeouts and failures.
 //!
 //! Cancelling the job stops it between functions, and a decompile in flight at its next action
-//! break point.
+//! break point. With a state directory the finished job saves the signatures there.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,8 +35,14 @@ impl Analyzer for InProcessEngine {
     ) -> EngineResult<AnalysisJob> {
         let p = self.program()?;
         let timeout = self.config.decompile_timeout;
-        Ok(AnalysisJob::spawn(cancel, move |tx, token| {
-            run(p, req, timeout, tx, token)
+        let state = self.config.state_dir.clone();
+        Ok(AnalysisJob::spawn(cancel, move |tx, token| async move {
+            let summary = run(p.clone(), req, timeout, tx, token).await?;
+            // the signatures are the expensive part; a reopened project keeps them
+            if let Some(dir) = state {
+                blocking(move || crate::engine::persist(&p, &dir)).await?;
+            }
+            Ok(summary)
         }))
     }
 }
@@ -71,7 +77,7 @@ async fn run(
                     format!(
                         "{} memory blocks, {} functions ({} never return), {} landing pads",
                         p.loaded.blocks.len(),
-                        p.functions.len(),
+                        p.funcs().len(),
                         p.noreturn.len(),
                         p.loaded.landing_pads.values().map(Vec::len).sum::<usize>()
                     ),
@@ -94,7 +100,8 @@ async fn run(
             }
             Stage::Expensive => {
                 let todo: Vec<(u64, String)> = p
-                    .functions
+                    .funcs()
+                    .map
                     .values()
                     .map(|f| (f.entry, f.name.clone()))
                     .collect();
@@ -130,6 +137,6 @@ async fn run(
     }
     Ok(AnalysisSummary {
         stages_completed: completed,
-        function_count: p.functions.len() as u64,
+        function_count: p.funcs().len() as u64,
     })
 }

@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use kraken_proto::{CommentKind, Completeness, DecompileResult, ErrorCode, ProtoError, Untrusted};
+use kraken_registry::EngineChoice;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::runtime::Handle;
@@ -558,15 +559,27 @@ impl ViewModel {
         });
     }
 
-    /// Creates a project in `project_dir` for `binary`.
+    /// Creates a project in `project_dir` for `binary`, with the engine the configuration
+    /// names.
     pub fn create_project(&mut self, binary: impl Into<String>, project_dir: impl Into<String>) {
+        self.create_project_with(binary, project_dir, None);
+    }
+
+    /// Creates a project in `project_dir` for `binary` on the engine `engine` (`None`: the
+    /// configured default). The daemon records the engine in the project.
+    pub fn create_project_with(
+        &mut self,
+        binary: impl Into<String>,
+        project_dir: impl Into<String>,
+        engine: Option<EngineChoice>,
+    ) {
         let binary = binary.into();
         self.connection = Connection::Opening(format!("Loading {}...", file_name(&binary)));
-        self.call(
-            "project_create",
-            json!({ "binary": binary, "project_dir": project_dir.into() }),
-            |vm, res| vm.project_opened(res),
-        );
+        let mut args = json!({ "binary": binary, "project_dir": project_dir.into() });
+        if let Some(e) = engine {
+            args["engine"] = json!(e.as_str());
+        }
+        self.call("project_create", args, |vm, res| vm.project_opened(res));
     }
 
     fn project_opened(&mut self, res: Result<Value, ProtoError>) {
@@ -604,6 +617,9 @@ impl ViewModel {
             format: w.program.format,
             size: w.program.size,
             engine_build: w.engine_build,
+            engine: w.engine.kind,
+            engine_choice: w.engine.choice,
+            engine_reason: w.engine.reason,
             epoch_stale: w.epoch_stale,
             pending_entries: w.pending_entries,
             log_entries: w.log_entries,

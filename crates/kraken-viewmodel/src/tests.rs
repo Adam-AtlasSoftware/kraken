@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use kraken_proto::{CommentKind, ErrorCode, ProtoError, TokenKind};
+use kraken_registry::EngineChoice;
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
@@ -184,6 +185,44 @@ fn create_project_sends_binary_and_dir() {
         r.vm.status_text(),
         "Not analyzed yet. Run Analyze to find functions"
     );
+}
+
+#[test]
+fn create_project_sends_the_engine_choice_and_shows_the_engine() {
+    let mut project = project_json("not_started");
+    project["engine"] = json!({
+        "kind": "native",
+        "choice": "auto",
+        "reason": "auto picked native: the library and the .sla files are available",
+    });
+    let mut r = rig(base_backend().reply("project_create", project));
+    r.vm.create_project_with("/bin/ls", "/tmp/newproj", Some(EngineChoice::Auto));
+    assert!(r.vm.block_until_idle(WAIT));
+    assert_eq!(
+        r.backend.calls_to("project_create")[0],
+        json!({"binary": "/bin/ls", "project_dir": "/tmp/newproj", "engine": "auto"})
+    );
+    let p = r.vm.project.as_ref().expect("project");
+    assert_eq!(p.engine, "native");
+    assert_eq!(p.engine_choice.as_deref(), Some("auto"));
+    assert!(
+        p.engine_reason
+            .as_deref()
+            .is_some_and(|w| w.starts_with("auto picked native")),
+        "{:?}",
+        p.engine_reason
+    );
+
+    // No choice: the field is left out, so the daemon applies the configured default. A reply
+    // without engine facts (an older daemon) still opens.
+    let mut r = rig(base_backend());
+    r.vm.create_project_with("/bin/ls", "/tmp/newproj", None);
+    assert!(r.vm.block_until_idle(WAIT));
+    assert_eq!(
+        r.backend.calls_to("project_create")[0],
+        json!({"binary": "/bin/ls", "project_dir": "/tmp/newproj"})
+    );
+    assert_eq!(r.vm.project.as_ref().expect("project").engine, "");
 }
 
 #[test]

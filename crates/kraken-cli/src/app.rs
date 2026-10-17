@@ -444,13 +444,25 @@ pub fn build_cli(registry: &Registry) -> Command {
                  --force is given. KRAKEN_GHIDRA_HOME / KRAKEN_JAVA_HOME (or the config file) take \
                  precedence over this copy. With --dotnet it installs the .NET engine instead: a \
                  pinned .NET runtime and the prebuilt kraken-dotnet sidecar shipped with the \
-                 release, which open .NET assemblies.",
+                 release, which open .NET assemblies. With --native it prepares the JVM-free native \
+                 engine instead: from a source checkout it runs `cargo xtask native-src` and \
+                 `cargo xtask native-sla` (the pinned Ghidra sources and the compiled Sleigh \
+                 files); anywhere else it prints the exact commands, because the decompiler \
+                 library is linked when kraken is built. Pick the engine per project with \
+                 `kraken project-create --engine ghidra|native|auto`.",
             )
             .arg(
                 Arg::new("dotnet")
                     .long("dotnet")
                     .action(ArgAction::SetTrue)
+                    .conflicts_with("native")
                     .help("Install the .NET runtime and sidecar (for .NET assemblies) instead of Ghidra"),
+            )
+            .arg(
+                Arg::new("native")
+                    .long("native")
+                    .action(ArgAction::SetTrue)
+                    .help("Fetch the native engine's sources and compile its Sleigh files instead of installing Ghidra"),
             )
             .arg(
                 Arg::new("force")

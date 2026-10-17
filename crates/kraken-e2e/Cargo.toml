@@ -10,6 +10,7 @@ publish = false
 [dev-dependencies]
 async-trait = "0.1.89"
 engine-fake = { path = "../engine-fake", version = "0.0.0" }
+engine-native = { path = "../engine-native", version = "0.0.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
 kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }
 kraken-proto.workspace = true

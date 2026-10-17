@@ -20,6 +20,8 @@ const STATUS_REFRESH: Duration = Duration::from_secs(3);
 /// What the settings window asks the app to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsAction {
+    /// The default engine for new projects was saved.
+    DefaultEngine(kraken_registry::EngineChoice),
     /// Switch to the dark (`true`) or light theme.
     SetDark(bool),
     /// Connect to the daemon now (it was not needed until now).
@@ -48,6 +50,8 @@ enum SetupState {
 /// Text fields of the engine section.
 #[derive(Default, Clone, PartialEq, Eq)]
 struct Draft {
+    /// Engine for new projects.
+    engine: kraken_registry::EngineChoice,
     ghidra_home: String,
     java_home: String,
     max_heap_mb: String,
@@ -213,6 +217,7 @@ impl Settings {
                 .unwrap_or_default()
         };
         self.draft = Draft {
+            engine: cfg.engine.unwrap_or_default(),
             ghidra_home: show(&cfg.ghidra_home),
             java_home: show(&cfg.java_home),
             max_heap_mb: cfg.max_heap_mb.map(|m| m.to_string()).unwrap_or_default(),
@@ -226,6 +231,7 @@ impl Settings {
             let t = s.trim();
             (!t.is_empty()).then(|| PathBuf::from(t))
         };
+        cfg.engine = Some(self.draft.engine);
         cfg.ghidra_home = opt(&self.draft.ghidra_home);
         cfg.java_home = opt(&self.draft.java_home);
         let heap = self.draft.max_heap_mb.trim();
@@ -388,7 +394,7 @@ impl Settings {
                             &mut self.ai,
                         );
                         ui.separator();
-                        self.engine(ui, env);
+                        self.engine(ui, env, &mut actions);
                         ui.separator();
                         self.setup_section(ui, env, ctx);
                         ui.separator();
@@ -414,10 +420,31 @@ impl Settings {
         });
     }
 
-    fn engine(&mut self, ui: &mut Ui, env: &SettingsEnv<'_>) {
+    fn engine(&mut self, ui: &mut Ui, env: &SettingsEnv<'_>, actions: &mut Vec<SettingsAction>) {
         let p = pal(ui);
         let s = style::status(style::dark(ui));
         ui.label(medium("Analysis engine", 14.0).color(p.text_strong));
+        ui.label(
+            RichText::new(
+                "Engine for new projects. Each project keeps the engine it was made with.",
+            )
+            .size(12.0)
+            .color(p.text_dim),
+        );
+        ui.horizontal(|ui| crate::welcome::engine_choice(ui, &mut self.draft.engine));
+        ui.label(
+            RichText::new(crate::welcome::engine_help(self.draft.engine))
+                .size(12.0)
+                .color(p.text_dim),
+        );
+        if std::env::var_os("KRAKEN_ENGINE").is_some_and(|v| !v.is_empty()) {
+            ui.label(
+                RichText::new("KRAKEN_ENGINE is set and overrides the engine for projects made from the command line.")
+                    .size(12.0)
+                    .color(s.warning),
+            );
+        }
+        ui.add_space(4.0);
         ui.label(
             RichText::new("Where Ghidra and Java live. Leave a field empty to use the copy installed by setup or the one your environment names.")
                 .size(12.0)
@@ -468,6 +495,9 @@ impl Settings {
                     && let Some(path) = env.config_path
                 {
                     self.note = Some(self.save(path));
+                    if matches!(self.note, Some(Ok(_))) {
+                        actions.push(SettingsAction::DefaultEngine(self.draft.engine));
+                    }
                 }
             });
             if let Some(path) = env.config_path {
@@ -706,6 +736,7 @@ mod tests {
                 ghidra_home: ghidra.to_string_lossy().into_owned(),
                 java_home: String::new(),
                 max_heap_mb: "4096".into(),
+                engine: kraken_registry::EngineChoice::Auto,
             },
             ..Settings::default()
         };
@@ -713,6 +744,7 @@ mod tests {
         let cfg = KrakenConfig::from_file(&path).unwrap();
         assert_eq!(cfg.per_run_cap, Some(9), "other keys survive");
         assert_eq!(cfg.max_heap_mb, Some(4096));
+        assert_eq!(cfg.engine, Some(kraken_registry::EngineChoice::Auto));
         assert_eq!(cfg.ghidra_home, Some(ghidra));
 
         s.draft.max_heap_mb = "lots".into();

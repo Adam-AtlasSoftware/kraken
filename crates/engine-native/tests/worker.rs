@@ -6,9 +6,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
-use kraken_engine::{CancellationToken, Decompiler, FunctionLister, Loader, LoaderSpec, TypeStore};
+use kraken_engine::{
+    CancellationToken, Decompiler, Engine, FunctionLister, Loader, LoaderSpec, Mutator, TypeStore,
+};
 use kraken_proto::{
-    Composite, ErrorCode, Field, Locator, PageRequest, Primitive, PrimitiveClass, TypeDef, TypeRef,
+    Anchor, CommentKind, Composite, ErrorCode, Field, Hex64, Locator, LogOp, PageRequest,
+    Primitive, PrimitiveClass, TypeDef, TypeRef, VersionedLogOp,
 };
 use serde_json::Value;
 
@@ -26,6 +29,10 @@ fn options() -> WorkerOptions {
 }
 
 async fn open(opts: WorkerOptions) -> Option<NativeEngine> {
+    open_with(opts, None).await
+}
+
+async fn open_with(opts: WorkerOptions, state_dir: Option<&Path>) -> Option<NativeEngine> {
     let Some(mut c) = NativeConfig::discover() else {
         eprintln!("skipped: no Sleigh spec tree");
         return None;
@@ -35,6 +42,7 @@ async fn open(opts: WorkerOptions) -> Option<NativeEngine> {
         return None;
     }
     c.isolation = Isolation::Worker(opts);
+    c.state_dir = state_dir.map(Path::to_path_buf);
     let e = NativeEngine::new(c);
     e.open_binary(
         &root().join("corpus/bin/pie_list-O0"),
@@ -123,6 +131,7 @@ async fn worker_is_confined() {
         "tcp6_bind",
         "unix_socket",
         "read_etc_passwd",
+        "write_outside_home",
     ] {
         denied(&probe, key);
     }
@@ -244,4 +253,102 @@ async fn nothing_open_and_missing_worker_are_clean_errors() {
 
 fn libc_sigabrt() -> i32 {
     6
+}
+
+const CMP_ID: u64 = 0x10124e;
+
+fn native(at: u64) -> Anchor {
+    Anchor::Native {
+        space: "ram".into(),
+        offset: Hex64(at),
+        fn_entry: Hex64(at),
+        fn_hash: String::new(),
+    }
+}
+
+fn rename(to: &str) -> VersionedLogOp {
+    VersionedLogOp::new(LogOp::Rename {
+        anchor: native(CMP_ID),
+        old_name: None,
+        new_name: to.into(),
+    })
+}
+
+fn comment(text: &str) -> VersionedLogOp {
+    VersionedLogOp::new(LogOp::SetComment {
+        anchor: native(CMP_ID),
+        comment_kind: CommentKind::Pre,
+        old: None,
+        new: Some(text.into()),
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn edits_survive_a_crash_and_land_in_the_state_dir() {
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(e) = open_with(options(), Some(state.path())).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    assert!(e.mutator().is_some());
+    e.apply(&rename("by_id"), &c).await.expect("rename");
+    let saved = e.save(&c).await.expect("save");
+    // the program lives in the worker, so the worker wrote this
+    assert!(state.path().join("native-state.json").is_file());
+    // unsaved: a comment and a type, after the save
+    e.apply(&comment("compares by id"), &c)
+        .await
+        .expect("comment");
+    e.define_type(record(), &c).await.expect("define");
+    assert_eq!(e.stats().await.expect("stats").edits, 3);
+    // a rejected op is not recorded, so it is not replayed either
+    let err = e
+        .apply(&rename("has space"), &c)
+        .await
+        .expect_err("rejected");
+    assert_eq!(err.code, ErrorCode::InvalidArgument, "{err:?}");
+
+    let first = e.worker_pid().expect("pid");
+    let err = e.worker_test_hook("test_crash", &c).await.unwrap_err();
+    assert_eq!(err.details.expect("details")["worker"], "crashed");
+    // the restart re-opens from native-state.json (the rename) and replays the rest once
+    let f = e
+        .get_function(&Locator::ram(CMP_ID), &c)
+        .await
+        .expect("cmp_id after restart");
+    assert_ne!(e.worker_pid(), Some(first));
+    assert_eq!(e.worker_restarts(), 1);
+    assert_eq!(f.name, "by_id");
+    let stats = e.stats().await.expect("stats");
+    assert_eq!((stats.edits, stats.replay_failed), (3, 0));
+    assert_eq!(e.get_type("worker_rec", &c).await.expect("type"), record());
+    let text = e
+        .decompile(&Locator::ram(CMP_ID), &c)
+        .await
+        .expect("decompile")
+        .text;
+    assert!(text.contains("compares by id"), "{text}");
+    let mark = e.save(&c).await.expect("save again");
+    assert_ne!(saved, mark);
+
+    // a crash after the save replays nothing on top of the state file
+    e.worker_test_hook("test_crash", &c).await.unwrap_err();
+    let stats = e.stats().await.expect("stats after the second restart");
+    assert_eq!((stats.edits, stats.replay_failed), (3, 0));
+    assert_eq!(e.save(&c).await.expect("same watermark"), mark);
+    drop(e);
+
+    // a fresh engine over the same directory has everything
+    let Some(e) = open_with(options(), Some(state.path())).await else {
+        return;
+    };
+    let stats = e.stats().await.expect("stats");
+    assert_eq!((stats.edits, stats.replay_failed), (3, 0));
+    assert_eq!(
+        e.get_function(&Locator::ram(CMP_ID), &c)
+            .await
+            .expect("cmp_id")
+            .name,
+        "by_id"
+    );
 }

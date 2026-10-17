@@ -18,6 +18,7 @@ struct InsnOut;
 struct PcodeOpOut;
 struct DecompOut;
 struct JumpEdgeOut;
+struct CommentIn;
 
 // Registers the decompiler capabilities and scans `sleigh_home` (a Ghidra install root) for
 // language definitions. Idempotent; must run before `new_session`.
@@ -55,6 +56,14 @@ public:
   void set_prototype(uint64_t addr, rust::Str decl);
   // Marks the function at `addr` (created when unknown) as never returning, or clears the mark.
   void set_noreturn(uint64_t addr, bool noreturn);
+  // Removes the function symbol at `addr` (and with it any prototype); no-op when absent.
+  void remove_function(uint64_t addr);
+  // Sets the prototype model (calling convention) of the function at `addr` (created when
+  // unknown) and locks it; an empty name restores the default model. Unknown names throw.
+  void set_convention(uint64_t addr, rust::Str name);
+  // Replaces the user comments of the function at `fad` with `comments` (each an address, a
+  // decompiler comment type and the text). Warnings the decompiler adds are left alone.
+  void set_comments(uint64_t fad, rust::Slice<const CommentIn> comments);
 
 private:
   std::unique_ptr<Impl> impl;

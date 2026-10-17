@@ -12,6 +12,7 @@
 - [The built-in assistant (AI models and terminal agents)](assistant.md)
 - [Running a model on this computer](local-models.md)
 - [.NET assemblies](dotnet.md)
+- [The native engine](native-engine.md)
 - [Scripting with the CLI](cli.md)
 - [Scripting with Python](python.md)
 - [Security](security.md)

@@ -8,12 +8,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kraken_engine::{
     AnalysisJob, AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, Engine,
-    EngineCaps, EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader,
-    ProgramInfo, StringLister, StringsRequest, SymbolLister, TypeStore, XrefProvider, XrefRequest,
+    EngineCaps, EngineRejected, EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec,
+    MemoryReader, Mutator, ProgramInfo, StringLister, StringsRequest, SymbolLister, TypeStore,
+    XrefProvider, XrefRequest,
 };
 use kraken_proto::{
     BytesRead, Cfg, DecompileResult, DisasmRow, FunctionSummary, Locator, MemoryBlock, Page,
-    PageRequest, StringEntry, SymbolEntry, TypeDef, Xref,
+    PageRequest, StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 use kraken_sidecar::ConfinementReport;
 #[cfg(unix)]
@@ -194,6 +195,34 @@ impl Engine for NativeEngine {
     }
     fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         Some(self)
+    }
+    fn mutator(&self) -> Option<&dyn Mutator> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl Mutator for NativeEngine {
+    async fn apply(
+        &self,
+        op: &VersionedLogOp,
+        cancel: &CancellationToken,
+    ) -> Result<(), EngineRejected> {
+        route!(self,
+            l => l.apply(op, cancel).await,
+            w => {
+                check(cancel)?;
+                op.check_version()?;
+                Ok(w.apply(op, cancel).await?)
+            }
+        )
+    }
+
+    async fn save(&self, cancel: &CancellationToken) -> EngineResult<kraken_engine::Watermark> {
+        route!(self,
+            l => l.save(cancel).await,
+            w => w.save(cancel).await
+        )
     }
 }
 
@@ -415,17 +444,7 @@ impl TypeStore for NativeEngine {
     async fn define_type(&self, def: TypeDef, cancel: &CancellationToken) -> EngineResult<()> {
         route!(self,
             l => l.define_type(def, cancel).await,
-            w => {
-                w.call::<()>(
-                    "define_type",
-                    json!({ "def": &def }),
-                    w.request_limits(),
-                    cancel,
-                )
-                .await?;
-                w.remember_type(def);
-                Ok(())
-            }
+            w => w.define_type(def, cancel).await
         )
     }
 

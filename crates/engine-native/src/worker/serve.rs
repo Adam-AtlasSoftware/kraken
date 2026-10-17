@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use kraken_engine::{
     AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, FlowGraph, FunctionLister,
-    Loader, MemoryReader, StringLister, StringsRequest, SymbolLister, TypeStore, XrefProvider,
-    XrefRequest,
+    Loader, MemoryReader, Mutator, StringLister, StringsRequest, SymbolLister, TypeStore,
+    XrefProvider, XrefRequest,
 };
-use kraken_proto::{ErrorCode, Locator, PageRequest, ProtoError, TypeDef};
+use kraken_proto::{ErrorCode, Locator, PageRequest, ProtoError, TypeDef, VersionedLogOp};
 use kraken_sidecar::rpc::{read_frame, write_frame};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -191,6 +191,7 @@ async fn handle(
                 use_symbols: p.use_symbols,
                 decompile_timeout: p.decompile_timeout_ms.map(Duration::from_millis),
                 isolation: Isolation::InProcess,
+                state_dir: p.state_dir,
             };
             let engine = Arc::new(InProcessEngine::new(config));
             let info = engine.open_binary(&p.path, &p.spec, c).await?;
@@ -237,6 +238,14 @@ async fn dispatch(
         "get_type" => out(e.get_type(&arg::<String>(params, "name")?, c).await?),
         "define_type" => out(e.define_type(arg::<TypeDef>(params, "def")?, c).await?),
         "list_types" => out(e.list_types(&page(params)?, c).await?),
+        "apply" => {
+            let op: VersionedLogOp = arg(params, "log_op")?;
+            e.apply(&op, c)
+                .await
+                .map_err(|r| ProtoError::new(r.code, r.reason))?;
+            Ok(Value::Null)
+        }
+        "save" => out(e.save(c).await?),
         "stats" => out(e.stats()?),
         "lift" => {
             let ops = e.lift(arg(params, "start")?, arg(params, "end")?)?;
@@ -299,6 +308,12 @@ fn probe() -> Value {
         "unix_pair": res(std::os::unix::net::UnixStream::pair()),
         "read_etc_passwd": res(std::fs::read("/etc/passwd")),
         "write_tmp_home": res(std::fs::write(tmp.join("probe"), b"x")),
+        // the directory holding the worker's home is not granted
+        "write_outside_home": res(std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .and_then(|h| h.parent().map(|p| p.join("kraken-probe-outside")))
+            .ok_or_else(|| io::Error::other("no HOME"))
+            .and_then(|p| std::fs::write(p, b"x"))),
         "env": std::env::vars_os()
             .map(|(k, _)| k.to_string_lossy().into_owned())
             .collect::<Vec<_>>(),

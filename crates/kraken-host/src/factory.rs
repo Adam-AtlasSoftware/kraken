@@ -12,7 +12,7 @@ use engine_dotnet::{
 use engine_ghidra::{EngineConfig, GhidraEngine, GhidraInstall, InstallConfig, SidecarEvent};
 use kraken_engine::SharedEngine;
 use kraken_proto::{ErrorCode, ProtoError};
-use kraken_registry::{EngineFactory, EngineKind};
+use kraken_registry::{EngineChoice, EngineFactory, EngineKind, EngineSelection};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -352,21 +352,111 @@ impl EngineFactory for DotnetEngineFactory {
     }
 }
 
-/// The factory every surface uses: Ghidra for native binaries, the .NET engine for managed
-/// assemblies. [`detect_kind`](EngineFactory::detect_kind) looks at the file; a project
+/// Creates the JVM-free [`NativeEngine`](engine_native::NativeEngine): its program and
+/// decompiler live in a confined `kraken-native-worker` process (in this process only with
+/// `native_in_process`), and its state in the project's engine directory. The engine restarts its
+/// worker by itself after a crash or a timeout.
+pub struct NativeEngineFactory {
+    cfg: KrakenConfig,
+    created: Mutex<Vec<PathBuf>>,
+}
+
+impl NativeEngineFactory {
+    /// A factory using `cfg` (`native_specs`).
+    pub fn new(cfg: KrakenConfig) -> Self {
+        NativeEngineFactory {
+            cfg,
+            created: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// What this build and machine offer the native engine.
+    pub fn probe(&self) -> crate::native::NativeProbe {
+        let mut p = crate::native::NativeProbe::detect(self.cfg.native_specs.as_deref());
+        p.worker |= self.cfg.native_in_process;
+        p
+    }
+
+    /// Where the engine runs: the confined worker (with the sidecars' confinement policy), or
+    /// this process when configured.
+    pub fn isolation(&self) -> engine_native::Isolation {
+        if self.cfg.native_in_process {
+            return engine_native::Isolation::InProcess;
+        }
+        let mut opts = engine_native::WorkerOptions::default();
+        opts.confinement.allow_unconfined = self.cfg.allow_unconfined;
+        engine_native::Isolation::Worker(opts)
+    }
+
+    fn owns(&self, engine_dir: &Path) -> bool {
+        self.created
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|d| d == engine_dir)
+    }
+}
+
+#[async_trait]
+impl EngineFactory for NativeEngineFactory {
+    async fn create(&self, engine_dir: &Path) -> Result<SharedEngine, ProtoError> {
+        let engine = crate::native::open_engine(&self.probe(), engine_dir, self.isolation())?;
+        self.created
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(engine_dir.to_path_buf());
+        tracing::debug!(dir = %engine_dir.display(), "created native engine");
+        Ok(Arc::new(engine))
+    }
+}
+
+/// The factory every surface uses: Ghidra, the native engine or `auto` for native code, the
+/// .NET engine for managed assemblies. [`select_kind`](EngineFactory::select_kind) decides at
+/// project creation from the person's choice (or the `engine` setting) and the file; a project
 /// remembers its engine in `meta.json` and reopens with it.
 pub struct HostEngineFactory {
     ghidra: GhidraEngineFactory,
     dotnet: DotnetEngineFactory,
+    native: NativeEngineFactory,
+    default_choice: EngineChoice,
 }
 
 impl HostEngineFactory {
-    /// A factory using `cfg` for both engines.
+    /// A factory using `cfg` for the engines.
     pub fn new(cfg: KrakenConfig) -> Self {
         HostEngineFactory {
+            default_choice: cfg.engine.unwrap_or_default(),
             ghidra: GhidraEngineFactory::new(cfg.clone()),
-            dotnet: DotnetEngineFactory::new(cfg),
+            dotnet: DotnetEngineFactory::new(cfg.clone()),
+            native: NativeEngineFactory::new(cfg),
         }
+    }
+
+    /// The native half.
+    pub fn native(&self) -> &NativeEngineFactory {
+        &self.native
+    }
+
+    /// [`select_kind`](EngineFactory::select_kind) over an explicit native probe and binary fit.
+    pub fn select_with(
+        &self,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+        probe: &crate::native::NativeProbe,
+        fit: &crate::native::BinaryFit,
+    ) -> Result<EngineSelection, ProtoError> {
+        let choice = choice.unwrap_or(self.default_choice);
+        if crate::managed::is_managed_assembly(binary) {
+            let kind = self.detect_kind(binary)?;
+            return Ok(EngineSelection {
+                kind,
+                choice,
+                reason: "a .NET assembly: the .NET engine opens managed code whatever the \
+                         engine choice"
+                    .into(),
+            });
+        }
+        crate::native::choose(choice, probe, fit)
     }
 
     /// The Ghidra half.
@@ -402,6 +492,28 @@ impl EngineFactory for HostEngineFactory {
         Ok(EngineKind::Dotnet)
     }
 
+    fn select_kind(
+        &self,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+    ) -> Result<EngineSelection, ProtoError> {
+        let choice_now = choice.unwrap_or(self.default_choice);
+        // Only the choices that can end up native need the probe and the file header.
+        let (probe, fit) = if choice_now == EngineChoice::Ghidra {
+            (
+                crate::native::NativeProbe {
+                    library: false,
+                    specs: None,
+                    worker: false,
+                },
+                Ok(()),
+            )
+        } else {
+            (self.native.probe(), crate::native::binary_fit(binary))
+        };
+        self.select_with(binary, choice, &probe, &fit)
+    }
+
     async fn create_kind(
         &self,
         kind: EngineKind,
@@ -410,6 +522,7 @@ impl EngineFactory for HostEngineFactory {
         match kind {
             EngineKind::Ghidra => self.ghidra.create(engine_dir).await,
             EngineKind::Dotnet => self.dotnet.create(engine_dir).await,
+            EngineKind::Native => self.native.create(engine_dir).await,
         }
     }
 }
@@ -417,11 +530,21 @@ impl EngineFactory for HostEngineFactory {
 #[async_trait]
 impl ManagedFactory for HostEngineFactory {
     async fn shutdown(&self) {
+        self.native
+            .created
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         self.dotnet.shutdown_where(|_| false);
         self.ghidra.shutdown().await;
     }
 
     async fn shutdown_under(&self, project_dir: &Path) {
+        self.native
+            .created
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|d| !d.starts_with(project_dir));
         self.dotnet
             .shutdown_where(|dir| !dir.starts_with(project_dir));
         self.ghidra.shutdown_under(project_dir).await;
@@ -438,6 +561,13 @@ impl ManagedFactory for HostEngineFactory {
     }
 
     async fn restart_engine(&self, engine_dir: &Path) -> Result<(), ProtoError> {
+        if self.native.owns(engine_dir) {
+            return Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "the native engine restarts its worker by itself after a crash or a timeout; \
+                 reopen the project to start it over",
+            ));
+        }
         if self.dotnet.owns(engine_dir) {
             return Err(ProtoError::new(
                 ErrorCode::Unsupported,
@@ -545,6 +675,128 @@ mod tests {
         assert!(e.message.contains("kraken setup --dotnet"), "{}", e.message);
         assert!(f.diagnostics().is_empty());
         f.shutdown().await;
+    }
+
+    fn ready_probe() -> crate::native::NativeProbe {
+        crate::native::NativeProbe {
+            library: true,
+            specs: Some("/specs".into()),
+            worker: true,
+        }
+    }
+
+    fn elf_file(dir: &Path) -> PathBuf {
+        let p = dir.join("prog");
+        let mut head = vec![0x7f, b'E', b'L', b'F', 2, 1, 1];
+        head.resize(18, 0);
+        head.extend_from_slice(&62u16.to_le_bytes());
+        std::fs::write(&p, head).unwrap();
+        p
+    }
+
+    #[test]
+    fn the_configured_default_applies_when_no_choice_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let elf = elf_file(dir.path());
+        let probe = ready_probe();
+        let fit = crate::native::binary_fit(&elf);
+        assert!(fit.is_ok());
+
+        let none = HostEngineFactory::new(without_dotnet());
+        let s = none.select_with(&elf, None, &probe, &fit).unwrap();
+        assert_eq!(
+            (s.kind, s.choice),
+            (EngineKind::Ghidra, EngineChoice::Ghidra)
+        );
+
+        let auto = HostEngineFactory::new(KrakenConfig {
+            engine: Some(EngineChoice::Auto),
+            ..without_dotnet()
+        });
+        let s = auto.select_with(&elf, None, &probe, &fit).unwrap();
+        assert_eq!((s.kind, s.choice), (EngineKind::Native, EngineChoice::Auto));
+        assert!(s.reason.starts_with("auto picked native"), "{}", s.reason);
+
+        // An explicit choice beats the default.
+        let s = auto
+            .select_with(&elf, Some(EngineChoice::Ghidra), &probe, &fit)
+            .unwrap();
+        assert_eq!(s.kind, EngineKind::Ghidra);
+        assert_eq!(s.choice, EngineChoice::Ghidra);
+    }
+
+    #[test]
+    fn assemblies_stay_on_the_dotnet_engine_whatever_the_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dotnet");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("dotnet"), b"").unwrap();
+        let ext = dir.path().join("kraken-dotnet.dll");
+        std::fs::write(&ext, b"").unwrap();
+        let f = HostEngineFactory::new(KrakenConfig {
+            dotnet_root: Some(root),
+            dotnet_ext: Some(ext),
+            ..Default::default()
+        });
+        let dll = corpus_dll();
+        let fit = crate::native::binary_fit(&dll);
+        for choice in [
+            EngineChoice::Ghidra,
+            EngineChoice::Native,
+            EngineChoice::Auto,
+        ] {
+            let s = f
+                .select_with(&dll, Some(choice), &ready_probe(), &fit)
+                .unwrap();
+            assert_eq!(s.kind, EngineKind::Dotnet, "{choice:?}");
+            assert!(s.reason.contains(".NET assembly"), "{}", s.reason);
+        }
+    }
+
+    #[test]
+    fn native_requests_are_refused_before_the_project_directory_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let elf = elf_file(dir.path());
+        let f = HostEngineFactory::new(without_dotnet());
+        let no_specs = crate::native::NativeProbe {
+            library: true,
+            specs: None,
+            worker: true,
+        };
+        let e = f
+            .select_with(&elf, Some(EngineChoice::Native), &no_specs, &Ok(()))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::Unsupported);
+        // The same machine under auto quietly falls back, and says why.
+        let s = f
+            .select_with(&elf, Some(EngineChoice::Auto), &no_specs, &Ok(()))
+            .unwrap();
+        assert_eq!(s.kind, EngineKind::Ghidra);
+        assert!(s.reason.contains("kraken setup --native"), "{}", s.reason);
+    }
+
+    #[tokio::test]
+    async fn a_native_project_cannot_reopen_without_the_native_engine() {
+        let f = HostEngineFactory::new(KrakenConfig {
+            native_specs: Some("/nonexistent/specs".into()),
+            ..Default::default()
+        });
+        // Whatever the build, a spec tree that does not exist cannot be used.
+        if f.native().probe().specs.is_some() {
+            return;
+        }
+        let e = f
+            .create_kind(EngineKind::Native, Path::new("/tmp/kraken-x/ghidra"))
+            .await
+            .err()
+            .expect("an error");
+        assert_eq!(e.code, ErrorCode::Unsupported);
+        assert!(
+            e.message.contains("this project uses the native engine"),
+            "{}",
+            e.message
+        );
+        assert!(f.diagnostics().is_empty());
     }
 
     #[tokio::test]

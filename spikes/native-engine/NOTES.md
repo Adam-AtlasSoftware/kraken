@@ -1,4 +1,4 @@
-# Native engine, phases 1 to 3: notes
+# Native engine, phases 1 to 3 and the phase 4 mutator: notes
 
 > Status: the design and the phase plan are in [ADR 0014](../../docs/design/0014-native-engine.md). This file records how the code works, what was measured and the traps found along the way.
 
@@ -53,7 +53,6 @@ Where `cpp_shapes` sizes differ from the truth, the cause is exception landing p
 
 ## Not done yet (see the ADR's phases)
 
-- mutation (renames, comments, function create/delete) from the edit log
 - PE, Mach-O and 32-bit x86
 - DWARF types and a demangler
 - engine selection in `kraken-host`
@@ -113,3 +112,34 @@ Imports agree by name except in C++ binaries (Ghidra demangles), exports 100% on
 - **Trap: the binary path.** The worker may read only the binary itself, so the parent canonicalizes the path before opening (a symlink elsewhere would be refused by Landlock).
 - **Measured** (debug build, pie_list-O0): `native.rs` takes 0.85 s in worker mode against 1.8 s in-process on the same machine, so the process boundary adds no visible cost (each test engine gets its own worker, so the in-process run serializes on the process-wide library lock where workers do not). The probe inside the worker gets `EACCES` for TCP connect and bind, UDP, IPv6 and `socket(AF_UNIX)`, and for reading `/etc/passwd`; only the inherited channel and `socketpair(AF_UNIX)` work.
 - **Tests:** `tests/native.rs` and `tests/agreement.rs` run in worker mode (`KRAKEN_NATIVE_TEST_IN_PROCESS=1` switches `native.rs` back), and the contract suite runs in both modes. `tests/worker.rs` covers confinement, the hard deadline (with type replay), crashes (twice in a row), hard cancellation, and clean errors with nothing open or no worker binary.
+
+## Phase 4: the mutator
+
+How it works is in the ADR (Mutation). Code: `crates/engine-native/src/mutate.rs`; the shim gained `remove_function`, `set_convention` and `set_comments`.
+
+```sh
+cargo test -p engine-native --test mutate                       # every op, save, reopen and replay
+cargo test -p engine-native --test native contract_suite_subset # the contract suite, mutation included
+cargo test -p kraken-e2e --test exit_criterion_native           # the exit-criterion flow, no JVM
+```
+
+| Check | Result |
+|---|---|
+| Contract suite, mutation section | passes on `pie_list-O0` and `switch_vm-O0` (rename visible in listing, decompiler text and tokens; stale `old_name`; managed anchors and newer schemas refused; scratch function created in `.rodata` with a body, decompiled, deleted; an original function deleted; watermarks advance) |
+| `tests/mutate.rs` | rename (callers print `make_node(` for `node_new`), labels, plate/pre/end-of-line comments, `set_type` with a user struct (`int by_id(record *a,record *b)` … `a->id - b->id`), `MSABI`, a data item in `.rodata`, bounds and back, delete and create; a fresh engine over the saved state has all of it, and clearing the type goes back to `int by_id(int *param_1,int *param_2)` |
+| `exit_criterion_native.rs` | the Ghidra flow's assertions plus: the decompiler shows `exit_first(int count)`, the prototype survives a reopen, the recreated function has the found size, the rebuilt engine directory reopens with the same names and signature; about 0.6 s |
+
+- **In the worker.** Phase 4 was written against the in-process engine; on top of phase 3 the worker gained `apply` and `save`, `OpenParams` carries `state_dir`, and the confinement grants that one directory read-write. The parent's type list became a journal of ops and type definitions; after a restart it replays the entries past what `native-state.json` restored (the worker's `stats().edits` minus the count at open). `tests/worker.rs::edits_survive_a_crash_and_land_in_the_state_dir` checks a save, unsaved edits, a rejected op, two crashes and a fresh engine; `tests/mutate.rs` runs in worker mode (`KRAKEN_NATIVE_TEST_IN_PROCESS=1` for in-process).
+
+- **In the host (4b).** `kraken-host`'s `NativeEngineFactory` builds the engine in worker mode with the project's engine directory as `state_dir` (`native_in_process` / `KRAKEN_NATIVE_IN_PROCESS` for in-process); `NativeProbe` also checks that `kraken-native-worker` can be found, so `auto` falls back to Ghidra without it and `kraken setup --native` asks for a rebuild with `-p engine-native`. `kraken-cli/tests/native_engine.rs` renames through the CLI and checks the new name in a new process.
+
+### Traps
+
+- **Renaming drops the prototype.** `add_function` replaces the symbol, so the new `Funcdata` has a default prototype. Every symbol rebuild applies the function's prototype, convention and noreturn mark again; library prototypes are kept for that in `Program::locked`.
+- **Prototype names go through the C grammar.** A name with `::` or `@` (allowed for KRAKEN symbols) breaks `parse_protopieces`, so prototypes are parsed under a placeholder name; the printed name comes from the symbol.
+- **Clearing a prototype** has no API: the function symbol is removed and added again.
+- **Comment types.** The decompiler prints only the comment types its printer is told to (`setInstructionComment`); the default is `user2` (pre) and warnings. Ghidra's Java side maps end-of-line to `user1`, pre to `user2`, post to `user3` and plate to `header`; the shim shows all of them. User comments are replaced before every decompile (`clearType` on the user types only), so warnings the decompiler adds are not touched and comments follow function bodies through bounds edits.
+- **What a reopen needs.** Replaying the journal alone is not enough: the analysed signatures (the analysis job's output) would be missing, and the registry's `rebuild` reported every function as `signature_changed`. The state file keeps them, and the analysis job writes it when it ends.
+- **Undo markers.** The log undoes a `set_type` with no earlier type as `undefined`, a bounds change with no earlier bounds as the empty range at 0, and a rename with no old name as the empty name; each restores what the engine found.
+- **Type definitions are not in the log.** `define_type` is an engine call, so the journal records definitions too; otherwise a prototype over a user struct came back as `void *` after a reopen.
+

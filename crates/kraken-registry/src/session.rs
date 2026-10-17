@@ -51,11 +51,79 @@ pub trait EngineFactory: Send + Sync {
     ) -> Result<SharedEngine, ProtoError> {
         self.create(engine_dir).await
     }
+
+    /// Picks the engine for `binary` under the person's `choice` (`None`: the factory's own
+    /// default, for example the one in `config.toml`) and says why. A factory with a single
+    /// engine keeps the default, which refuses `native`. Reads the file's headers, so call it
+    /// off the async threads.
+    fn select_kind(
+        &self,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+    ) -> Result<EngineSelection, ProtoError> {
+        if choice == Some(EngineChoice::Native) {
+            return Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "this build has no native engine",
+            ));
+        }
+        Ok(EngineSelection {
+            kind: self.detect_kind(binary)?,
+            choice: choice.unwrap_or_default(),
+            reason: "this build has a single engine".into(),
+        })
+    }
+}
+
+/// What the person asked for when creating a project: an engine, or `auto`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineChoice {
+    /// The Ghidra sidecar (JVM).
+    #[default]
+    Ghidra,
+    /// The JVM-free native engine (ELF only for now).
+    Native,
+    /// Native when its library and compiled `.sla` files are available and it can open the
+    /// binary, else Ghidra.
+    Auto,
+}
+
+impl EngineChoice {
+    /// The name used in `meta.json`, `config.toml` and on the command line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EngineChoice::Ghidra => "ghidra",
+            EngineChoice::Native => "native",
+            EngineChoice::Auto => "auto",
+        }
+    }
+
+    /// Parses `ghidra`, `native` or `auto` (any case).
+    pub fn parse(s: &str) -> Option<EngineChoice> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ghidra" => Some(EngineChoice::Ghidra),
+            "native" => Some(EngineChoice::Native),
+            "auto" => Some(EngineChoice::Auto),
+            _ => None,
+        }
+    }
+}
+
+/// The outcome of [`EngineFactory::select_kind`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineSelection {
+    /// The engine that will open the binary.
+    pub kind: EngineKind,
+    /// The choice that led to it (the default applied when none was given).
+    pub choice: EngineChoice,
+    /// Why this engine, in a sentence.
+    pub reason: String,
 }
 
 /// The engine behind a project, recorded in `meta.json` so a project reopens with the engine
 /// that created it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineKind {
     /// The Ghidra sidecar: native code (PE, ELF, Mach-O and raw images).
@@ -63,6 +131,8 @@ pub enum EngineKind {
     Ghidra,
     /// The .NET sidecar (ILSpy): managed assemblies.
     Dotnet,
+    /// The JVM-free native engine (ADR 0014).
+    Native,
 }
 
 impl EngineKind {
@@ -71,6 +141,7 @@ impl EngineKind {
         match self {
             EngineKind::Ghidra => "ghidra",
             EngineKind::Dotnet => "dotnet",
+            EngineKind::Native => "native",
         }
     }
 }
@@ -137,6 +208,12 @@ pub struct ProjectMeta {
     /// Engine that opened the binary; projects written before engines were selectable are Ghidra.
     #[serde(default)]
     pub engine_kind: EngineKind,
+    /// What was asked for at creation (`ghidra`, `native` or `auto`); absent in older projects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_choice: Option<EngineChoice>,
+    /// Why `engine_kind` was picked; absent in older projects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_reason: Option<String>,
 }
 
 /// Where analysis stands.
@@ -662,6 +739,18 @@ impl Session {
         dir: &Path,
         binary: &Path,
     ) -> Result<Arc<Project>, ProtoError> {
+        self.create_project_with(dir, binary, None).await
+    }
+
+    /// [`create_project`](Self::create_project) with an engine `choice` (`None`: the factory's
+    /// default). The engine picked and the reason are recorded in `meta.json`; later opens use
+    /// the recorded engine.
+    pub async fn create_project_with(
+        &self,
+        dir: &Path,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+    ) -> Result<Arc<Project>, ProtoError> {
         let dir = dir.to_path_buf();
         let binary_path = {
             let binary = binary.to_path_buf();
@@ -693,10 +782,11 @@ impl Session {
             let p = binary_path.clone();
             blocking(move || hash_file(&p)).await?
         };
-        let kind = {
+        let selection = {
             let (factory, p) = (self.factory.clone(), binary_path.clone());
-            blocking(move || factory.detect_kind(&p)).await?
+            blocking(move || factory.select_kind(&p, choice)).await?
         };
+        let kind = selection.kind;
         let engine = self
             .factory
             .create_kind(kind, &dir.join(ENGINE_DIR))
@@ -716,6 +806,8 @@ impl Session {
             engine_dir: ENGINE_DIR.into(),
             analysis_complete: false,
             engine_kind: kind,
+            engine_choice: Some(selection.choice),
+            engine_reason: Some(selection.reason),
         };
         {
             let (dir, meta) = (dir.clone(), meta.clone());

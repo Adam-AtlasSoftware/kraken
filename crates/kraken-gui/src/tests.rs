@@ -602,6 +602,7 @@ mod live {
             Choice::NewProject {
                 binary,
                 project_dir: project.to_string_lossy().into_owned(),
+                engine: Default::default(),
             },
             &ctx,
         );
@@ -663,6 +664,7 @@ mod live {
             Choice::NewProject {
                 binary: r.tmp.path().join("nope").to_string_lossy().into_owned(),
                 project_dir: r.project().to_string_lossy().into_owned(),
+                engine: Default::default(),
             },
             &ctx,
         );

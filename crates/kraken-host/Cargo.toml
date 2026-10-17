@@ -11,6 +11,8 @@ publish = false
 async-trait = "0.1.89"
 engine-dotnet = { path = "../engine-dotnet", version = "0.0.0" }
 engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
+engine-native = { path = "../engine-native", version = "0.0.0" }
+engine-native-sys = { path = "../engine-native-sys", version = "0.0.0" }
 filetime = "0.2"
 flate2 = "1.1.10"
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }

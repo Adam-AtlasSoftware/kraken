@@ -2,21 +2,22 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use engine_native_sys::{Instruction, NativeError, Session, TokenKind as NativeKind};
 use kraken_engine::{
-    Analyzer, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineResult,
-    FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, ProgramInfo, StringLister,
-    SymbolLister, TypeStore, XrefProvider,
+    Analyzer, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected,
+    EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator,
+    ProgramInfo, StringLister, SymbolLister, TypeStore, Watermark, XrefProvider,
 };
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
-    FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, Page, PageRequest, ProtoError,
-    StringEntry, SymbolEntry, Token, TokenKind, TypeDef, hex_bytes,
+    FlowKind, FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, OperandKind, OperandToken,
+    Page, PageRequest, ProtoError, StringEntry, SymbolEntry, Token, TokenKind, TypeDef,
+    VersionedLogOp, hex_bytes,
 };
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -25,6 +26,7 @@ use crate::ctypes::{base_definitions, parse_prototype};
 use crate::discover::{Func, discover};
 use crate::elf::{Loaded, load};
 use crate::listing::{flow_kind, operands};
+use crate::mutate::{Defined, Edits, Journaled, STATE_FILE, STATE_FORMAT};
 use crate::refs::RefIndex;
 use crate::typestore::TypeModel;
 use crate::worker::Isolation;
@@ -56,6 +58,11 @@ pub struct NativeConfig {
     pub decompile_timeout: Option<Duration>,
     /// Where the decompiler runs: a confined worker process (the default) or this process.
     pub isolation: Isolation,
+    /// Where `save` and the end of an analysis write the engine's state: the applied edit-log
+    /// operations, the types defined through the type store and the analysed signatures (put
+    /// it in the engine directory of a project). Opening the same binary again restores them.
+    /// `None` keeps everything in memory only.
+    pub state_dir: Option<PathBuf>,
 }
 
 impl NativeConfig {
@@ -67,6 +74,7 @@ impl NativeConfig {
             use_symbols: true,
             decompile_timeout: Some(DEFAULT_DECOMPILE_TIMEOUT),
             isolation: Isolation::default(),
+            state_dir: None,
         }
     }
 
@@ -115,12 +123,65 @@ pub fn has_specs(root: &Path) -> bool {
         .is_file()
 }
 
+/// A function table: functions by entry, and the function each body instruction belongs to.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Funcs {
+    pub(crate) map: BTreeMap<u64, Func>,
+    /// The function each body instruction belongs to (the lowest entry when bodies share code).
+    owner: BTreeMap<u64, u64>,
+}
+
+impl Funcs {
+    pub(crate) fn new(map: BTreeMap<u64, Func>) -> Funcs {
+        let mut owner = BTreeMap::new();
+        for f in map.values() {
+            for a in &f.insns {
+                owner.entry(*a).or_insert(f.entry);
+            }
+        }
+        Funcs { map, owner }
+    }
+
+    pub(crate) fn get(&self, entry: u64) -> Option<&Func> {
+        self.map.get(&entry)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub(crate) fn containing(&self, addr: u64) -> Option<&Func> {
+        if let Some(f) = self.map.get(&addr) {
+            return Some(f);
+        }
+        if let Some(e) = self.owner.get(&addr) {
+            return self.map.get(e);
+        }
+        self.map.values().find(|f| f.contains(addr))
+    }
+
+    /// Entries of the functions named `name`.
+    pub(crate) fn named(&self, name: &str) -> Vec<u64> {
+        self.map
+            .values()
+            .filter(|f| f.name == name)
+            .map(|f| f.entry)
+            .collect()
+    }
+}
+
 pub(crate) struct Program {
     pub(crate) info: ProgramInfo,
     pub(crate) loaded: Loaded,
-    pub(crate) functions: BTreeMap<u64, Func>,
-    /// The function each body instruction belongs to (the lowest entry when bodies share code).
-    owner: BTreeMap<u64, u64>,
+    /// The current functions: the discovered ones with the mutator's edits applied.
+    funcs: RwLock<Arc<Funcs>>,
+    /// The functions as discovery found them.
+    pub(crate) discovered: Arc<Funcs>,
+    /// Edits applied through the mutator (labels, comments, prototypes, ...).
+    pub(crate) edits: Mutex<Edits>,
+    /// Prototype declarations the type store locked onto functions (library prototypes and
+    /// named function types), reapplied when a function symbol is rebuilt.
+    pub(crate) locked: Mutex<BTreeMap<u64, String>>,
     pub(crate) insns: Mutex<BTreeMap<u64, Instruction>>,
     session: Mutex<Session>,
     /// Raised to abandon the decompile in flight (see `Session::stop_flag`).
@@ -137,6 +198,8 @@ pub(crate) struct Program {
     /// Entries of functions that never return.
     pub(crate) noreturn: BTreeSet<u64>,
     pub(crate) discovery_rounds: usize,
+    /// Saved operations that did not apply again when the program was opened.
+    replay_failed: AtomicUsize,
 }
 
 impl Program {
@@ -156,7 +219,26 @@ impl Program {
         self.signatures.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    pub(crate) fn summary(&self, f: &Func) -> FunctionSummary {
+    pub(crate) fn edits(&self) -> MutexGuard<'_, Edits> {
+        self.edits.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(crate) fn locked(&self) -> MutexGuard<'_, BTreeMap<u64, String>> {
+        self.locked.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// A snapshot of the current function table.
+    pub(crate) fn funcs(&self) -> Arc<Funcs> {
+        self.funcs.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Replaces the function table (the mutator's edits).
+    pub(crate) fn set_funcs(&self, funcs: Funcs) {
+        *self.funcs.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(funcs);
+    }
+
+    /// Ghidra's function hash: SHA-256 of the body bytes in address order.
+    pub(crate) fn fn_hash(&self, f: &Func) -> String {
         let mut h = Sha256::new();
         for (s, e) in &f.ranges {
             let mut buf = vec![0u8; (e - s) as usize];
@@ -164,33 +246,35 @@ impl Program {
                 h.update(&buf);
             }
         }
+        hex_bytes(&h.finalize())
+    }
+
+    pub(crate) fn summary(&self, f: &Func) -> FunctionSummary {
         FunctionSummary {
             locator: Locator::ram(f.entry),
             name: f.name.clone(),
             size: Some(f.size()),
-            signature: self.signatures().get(&f.entry).cloned(),
-            fn_hash: Some(hex_bytes(&h.finalize())),
+            signature: self.signature(f),
+            fn_hash: Some(self.fn_hash(f)),
             completeness: Completeness::Complete,
         }
     }
 
-    pub(crate) fn function_containing(&self, addr: u64) -> Option<&Func> {
-        if let Some(f) = self.functions.get(&addr) {
-            return Some(f);
+    /// A user prototype (rendered with the current name), else the known or analysed one with
+    /// the function's current name.
+    fn signature(&self, f: &Func) -> Option<String> {
+        let user = self.edits().protos.get(&f.entry).cloned();
+        if let Some(p) = user {
+            return Some(crate::ctypes::prototype(&p, &f.name, &|_| true));
         }
-        if let Some(e) = self.owner.get(&addr) {
-            return self.functions.get(e);
-        }
-        self.functions.values().find(|f| f.contains(addr))
+        self.signatures()
+            .get(&f.entry)
+            .map(|s| crate::mutate::with_name(s, &f.name))
     }
 
     /// Entries of the functions named `name`.
     pub(crate) fn named(&self, name: &str) -> Vec<u64> {
-        self.functions
-            .values()
-            .filter(|f| f.name == name)
-            .map(|f| f.entry)
-            .collect()
+        self.funcs().named(name)
     }
 
     pub(crate) fn strings(&self, min_len: u32) -> Arc<Vec<StringEntry>> {
@@ -220,26 +304,79 @@ impl Program {
         Ok(cache.get(&addr).cloned())
     }
 
-    fn row(&self, i: &Instruction) -> DisasmRow {
-        let mut bytes = vec![0u8; i.length as usize];
-        self.loaded.image.read(i.addr, &mut bytes);
+    /// The function name and the user label at `addr`, sorted as Ghidra lists them.
+    fn labels_at(funcs: &Funcs, edits: &Edits, addr: u64) -> Vec<String> {
         let mut labels = Vec::new();
-        if let Some(f) = self.functions.get(&i.addr) {
+        if let Some(f) = funcs.get(addr) {
             labels.push(f.name.clone());
         }
+        if let Some(l) = edits.labels.get(&addr) {
+            labels.push(l.clone());
+        }
+        labels.sort();
+        labels.dedup();
+        labels
+    }
+
+    fn row(&self, funcs: &Funcs, i: &Instruction) -> DisasmRow {
+        let mut bytes = vec![0u8; i.length as usize];
+        self.loaded.image.read(i.addr, &mut bytes);
+        let edits = self.edits();
         DisasmRow {
             address: Hex64(i.addr),
             bytes: hex_bytes(&bytes),
             mnemonic: i.mnemonic.clone(),
             operands: operands(
                 &i.body,
-                |a| self.functions.get(&a).map(|f| f.name.clone()),
+                |a| {
+                    funcs
+                        .get(a)
+                        .map(|f| f.name.clone())
+                        .or_else(|| edits.labels.get(&a).cloned())
+                },
                 |a| self.mapped(a),
             ),
-            comment: None,
-            labels,
+            comment: edits.listing_comment(i.addr),
+            labels: Self::labels_at(funcs, &edits, i.addr),
             flow: flow_kind(i.flow),
         }
+    }
+
+    /// A row for a data item the mutator defined at `addr`, and its length.
+    fn data_row(&self, funcs: &Funcs, addr: u64) -> Option<(DisasmRow, u64)> {
+        let edits = self.edits();
+        let Some(Defined::Data { ty, len }) = edits.defined.get(&addr) else {
+            return None;
+        };
+        let len = (*len).clamp(1, 4096);
+        let mut bytes = vec![0u8; len as usize];
+        self.loaded.image.read(addr, &mut bytes);
+        let mnemonic = ty
+            .as_ref()
+            .map(|t| crate::ctypes::declarator(t, "", &|_| true))
+            .unwrap_or_else(|| "undefined".into());
+        let operands = match len {
+            1 | 2 | 4 | 8 => {
+                let mut v = [0u8; 8];
+                v[..len as usize].copy_from_slice(&bytes);
+                vec![OperandToken {
+                    text: format!("{:#x}", u64::from_le_bytes(v)),
+                    kind: OperandKind::Immediate,
+                    target: None,
+                }]
+            }
+            _ => Vec::new(),
+        };
+        let row = DisasmRow {
+            address: Hex64(addr),
+            bytes: hex_bytes(&bytes),
+            mnemonic,
+            operands,
+            comment: edits.listing_comment(addr),
+            labels: Self::labels_at(funcs, &edits, addr),
+            flow: FlowKind::Fallthrough,
+        };
+        Some((row, len))
     }
 
     pub(crate) fn mapped(&self, addr: u64) -> bool {
@@ -267,7 +404,20 @@ impl Program {
             stop.store(true, Ordering::Relaxed);
         });
         let p = self.clone();
-        let r = blocking(move || p.session().decompile(at, timeout).map_err(native)).await;
+        let comments = {
+            let funcs = self.funcs();
+            let edits = self.edits();
+            funcs
+                .get(at)
+                .map(|f| edits.decompiler_comments(f))
+                .unwrap_or_default()
+        };
+        let r = blocking(move || {
+            let mut s = p.session();
+            s.set_comments(at, &comments).map_err(native)?;
+            s.decompile(at, timeout).map_err(native)
+        })
+        .await;
         watcher.abort();
         self.stop.store(false, Ordering::Relaxed);
         r
@@ -275,7 +425,7 @@ impl Program {
 }
 
 /// The engine with the decompiler in the calling process: what the worker process runs, and
-/// what [`crate::NativeEngine`] uses with [`Isolation::InProcess`]. Create it with
+/// what [`crate::InProcessEngine`] uses with [`Isolation::InProcess`]. Create it with
 /// [`InProcessEngine::new`], then open a binary through [`Loader`]; the other capabilities answer
 /// `invalid_argument` until then.
 pub struct InProcessEngine {
@@ -490,16 +640,11 @@ fn build_program(
     }
     drop(by_name);
 
-    let mut owner = BTreeMap::new();
-    for f in found.functions.values() {
-        for a in &f.insns {
-            owner.entry(*a).or_insert(f.entry);
-        }
-    }
+    let funcs = Arc::new(Funcs::new(found.functions));
     // straight-line code reached only through GOT slots (the lazy PLT entries)
     let mut orphans = Vec::new();
     for at in &loaded.got_code {
-        if !loaded.is_code(*at) || owner.contains_key(at) {
+        if !loaded.is_code(*at) || funcs.owner.contains_key(at) {
             continue;
         }
         for i in session.decode(*at, 8).map_err(native)? {
@@ -510,9 +655,9 @@ fn build_program(
             }
         }
     }
-    let refs = RefIndex::build(&loaded, &found.functions, &found.insns, &orphans);
+    let refs = RefIndex::build(&loaded, &funcs.map, &found.insns, &orphans);
     let imports = crate::symbols::imports(&loaded);
-    let exports = crate::symbols::exports(&loaded, &found.functions);
+    let exports = crate::symbols::exports(&loaded, &funcs.map);
     let info = ProgramInfo {
         arch: loaded.language.id.to_string(),
         format: "elf".into(),
@@ -524,8 +669,10 @@ fn build_program(
     Ok(Program {
         info,
         loaded,
-        functions: found.functions,
-        owner,
+        discovered: funcs.clone(),
+        funcs: RwLock::new(funcs),
+        edits: Mutex::new(Edits::default()),
+        locked: Mutex::new(signatures.clone()),
         insns: Mutex::new(found.insns),
         session: Mutex::new(session),
         stop,
@@ -538,7 +685,71 @@ fn build_program(
         signatures: Mutex::new(signatures),
         noreturn,
         discovery_rounds: found.rounds,
+        replay_failed: AtomicUsize::new(0),
     })
+}
+
+/// What a state directory holds for one binary: the analysed signatures and the journal.
+#[derive(Debug, Default)]
+struct SavedState {
+    signatures: BTreeMap<u64, String>,
+    entries: Vec<Journaled>,
+}
+
+/// The saved state of `binary_sha256` in `dir`; empty when there is none (or another binary's).
+fn read_state(dir: &Path, binary_sha256: &str) -> SavedState {
+    let Ok(text) = std::fs::read_to_string(dir.join(STATE_FILE)) else {
+        return SavedState::default();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return SavedState::default();
+    };
+    if v["format"] != STATE_FORMAT || v["binary_sha256"] != binary_sha256 {
+        return SavedState::default();
+    }
+    let signatures = v["signatures"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, s)| {
+                    let at = u64::from_str_radix(k.strip_prefix("0x")?, 16).ok()?;
+                    Some((at, s.as_str()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    SavedState {
+        signatures,
+        entries: serde_json::from_value(v["entries"].clone()).unwrap_or_default(),
+    }
+}
+
+/// Writes the program's state to `dir` atomically (a temporary file renamed over the old one).
+pub(crate) fn persist(p: &Program, dir: &Path) -> EngineResult<()> {
+    let io = |what: &str, e: std::io::Error| {
+        ProtoError::new(
+            ErrorCode::Internal,
+            format!("cannot {what} the engine state in {}: {e}", dir.display()),
+        )
+    };
+    let entries = p.edits().journal.clone();
+    let signatures: serde_json::Map<String, serde_json::Value> = p
+        .signatures()
+        .iter()
+        .map(|(at, s)| (format!("{at:#x}"), serde_json::Value::String(s.clone())))
+        .collect();
+    let doc = serde_json::json!({
+        "format": STATE_FORMAT,
+        "binary_sha256": p.info.sha256,
+        "signatures": signatures,
+        "entries": entries,
+    });
+    let text = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))?;
+    std::fs::create_dir_all(dir).map_err(|e| io("create", e))?;
+    let tmp = dir.join(format!("{STATE_FILE}.tmp"));
+    std::fs::write(&tmp, text).map_err(|e| io("write", e))?;
+    std::fs::rename(&tmp, dir.join(STATE_FILE)).map_err(|e| io("replace", e))
 }
 
 impl InProcessEngine {
@@ -582,6 +793,8 @@ impl InProcessEngine {
             references: p.refs.len(),
             landing_pads: p.loaded.landing_pads.values().map(Vec::len).sum(),
             pending_types: pending,
+            edits: p.edits().journal.len(),
+            replay_failed: p.replay_failed.load(Ordering::Relaxed),
         })
     }
 }
@@ -599,6 +812,11 @@ pub struct NativeStats {
     pub landing_pads: usize,
     /// Type definitions the decompiler has not accepted yet.
     pub pending_types: Vec<String>,
+    /// Edit-log operations applied and types defined (including those replayed from the
+    /// state directory).
+    pub edits: usize,
+    /// Saved operations that did not apply again when the binary was opened.
+    pub replay_failed: usize,
 }
 
 impl Engine for InProcessEngine {
@@ -611,6 +829,7 @@ impl Engine for InProcessEngine {
                 Cap::Decompiler,
                 Cap::TypeStore,
                 Cap::FunctionLister,
+                Cap::Mutator,
                 Cap::Memory,
                 Cap::Disassembler,
                 Cap::Xrefs,
@@ -653,6 +872,9 @@ impl Engine for InProcessEngine {
     fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         Some(self)
     }
+    fn mutator(&self) -> Option<&dyn Mutator> {
+        Some(self)
+    }
 }
 
 #[async_trait]
@@ -676,11 +898,61 @@ impl Loader for InProcessEngine {
         let spec = spec.clone();
         let config = self.config.clone();
         let token = cancel.clone();
-        let program = blocking(move || build_program(&path, &spec, &config, &token)).await?;
+        let program = blocking(move || {
+            let p = build_program(&path, &spec, &config, &token)?;
+            if let Some(dir) = &config.state_dir {
+                let saved = read_state(dir, &p.info.sha256);
+                p.signatures().extend(saved.signatures);
+                for entry in saved.entries {
+                    let ok = match entry {
+                        Journaled::Op(op) => crate::mutate::apply(&p, &op).is_ok(),
+                        Journaled::TypeDef(def) => crate::data::define(&p, def).is_ok(),
+                    };
+                    if !ok {
+                        p.replay_failed.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+            Ok(p)
+        })
+        .await?;
         check(cancel)?;
         let info = program.info.clone();
         *self.program.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(program));
         Ok(info)
+    }
+}
+
+#[async_trait]
+impl Mutator for InProcessEngine {
+    async fn apply(
+        &self,
+        op: &VersionedLogOp,
+        cancel: &CancellationToken,
+    ) -> Result<(), EngineRejected> {
+        check(cancel)?;
+        op.check_version()?;
+        let p = self.program()?;
+        let op = op.clone();
+        tokio::task::spawn_blocking(move || crate::mutate::apply(&p, &op))
+            .await
+            .map_err(|e| {
+                EngineRejected::new(ErrorCode::Internal, format!("native worker failed: {e}"))
+            })?
+    }
+
+    async fn save(&self, cancel: &CancellationToken) -> EngineResult<Watermark> {
+        check(cancel)?;
+        let p = self.program()?;
+        let dir = self.config.state_dir.clone();
+        blocking(move || {
+            let mark = p.edits().watermark();
+            if let Some(dir) = dir {
+                persist(&p, &dir)?;
+            }
+            Ok(Watermark(mark))
+        })
+        .await
     }
 }
 
@@ -698,14 +970,15 @@ impl FunctionLister for InProcessEngine {
             None => 0,
         };
         let limit = page.effective_limit() as usize;
-        let mut it = p.functions.range(from..);
+        let funcs = p.funcs();
+        let mut it = funcs.map.range(from..);
         let items: Vec<FunctionSummary> =
             it.by_ref().take(limit).map(|(_, f)| p.summary(f)).collect();
         let next_cursor = it.next().map(|(a, _)| format!("{a:#x}"));
         Ok(Page {
             items,
             next_cursor,
-            total: Some(p.functions.len() as u64),
+            total: Some(funcs.len() as u64),
         })
     }
 
@@ -717,8 +990,8 @@ impl FunctionLister for InProcessEngine {
         check(cancel)?;
         let p = self.program()?;
         let at = ram_offset(locator)?;
-        p.functions
-            .get(&at)
+        p.funcs()
+            .get(at)
             .map(|f| p.summary(f))
             .ok_or_else(|| ProtoError::new(ErrorCode::NotFound, format!("no function at {at:#x}")))
     }
@@ -734,7 +1007,7 @@ impl Decompiler for InProcessEngine {
         check(cancel)?;
         let p = self.program()?;
         let at = ram_offset(locator)?;
-        if !p.functions.contains_key(&at) {
+        if p.funcs().get(at).is_none() {
             return Err(ProtoError::new(
                 ErrorCode::NotFound,
                 format!("no function at {at:#x}"),
@@ -843,7 +1116,8 @@ impl Disassembler for InProcessEngine {
         let limit = page.effective_limit() as usize;
         match req.scope {
             DisasmScope::Function => {
-                let f = p.function_containing(req.start.0).ok_or_else(|| {
+                let funcs = p.funcs();
+                let f = funcs.containing(req.start.0).ok_or_else(|| {
                     ProtoError::new(
                         ErrorCode::NotFound,
                         format!("no function contains {}", req.start),
@@ -854,7 +1128,7 @@ impl Disassembler for InProcessEngine {
                 let mut items = Vec::new();
                 for a in addrs.by_ref().take(limit) {
                     if let Some(i) = p.instruction(a)? {
-                        items.push(p.row(&i));
+                        items.push(p.row(&funcs, &i));
                     }
                 }
                 let next_cursor = addrs.next().map(|a| format!("{a:#x}"));
@@ -872,13 +1146,19 @@ impl Disassembler for InProcessEngine {
                         format!("{at:#x} is not mapped"),
                     ));
                 }
+                let funcs = p.funcs();
                 let mut items = Vec::new();
                 let mut skipped = 0;
                 while items.len() < limit && p.mapped(at) && skipped < 4096 {
+                    if let Some((row, len)) = p.data_row(&funcs, at) {
+                        items.push(row);
+                        at += len;
+                        continue;
+                    }
                     match p.instruction(at)? {
                         Some(i) => {
                             at += u64::from(i.length);
-                            items.push(p.row(&i));
+                            items.push(p.row(&funcs, &i));
                         }
                         None => {
                             // bytes that do not decode are skipped
