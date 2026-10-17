@@ -286,6 +286,9 @@ pub struct ToolCallChange {
     pub status: Option<String>,
     /// Text the tool produced.
     pub output: Option<String>,
+    /// The tool's input as JSON text, shortened, when the update carries it (agents often send
+    /// the input only after the call started).
+    pub input: Option<String>,
 }
 
 /// One step of the agent's plan.
@@ -555,6 +558,7 @@ fn translate(update: SessionUpdate) -> Option<AcpEvent> {
             title: u.fields.title.clone(),
             status: u.fields.status.as_ref().map(enum_text),
             output: content_text(&as_json),
+            input: input_text(as_json.get("rawInput")),
         })),
         SessionUpdate::Plan(p) => Some(AcpEvent::Plan {
             steps: p

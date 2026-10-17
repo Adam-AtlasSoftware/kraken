@@ -28,9 +28,12 @@ pub const SECRETS_FILE: &str = "secrets.toml";
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The kinds of model the settings window offers.
+/// The kinds of assistant the settings window offers: model APIs, and terminal agents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderKind {
+    /// A terminal agent (Claude Code, Codex, Gemini CLI): chosen by agent id, not listed in
+    /// [`ProviderKind::ALL`].
+    TerminalAgent,
     /// Ollama running on this computer.
     Ollama,
     /// LM Studio's local server.
@@ -50,7 +53,8 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
-    /// Every kind, in the order the settings list shows them.
+    /// Every model API kind, in the order the settings list shows them. Terminal agents are
+    /// listed after these, one entry per agent.
     pub const ALL: [ProviderKind; 8] = [
         ProviderKind::Ollama,
         ProviderKind::LmStudio,
@@ -73,6 +77,7 @@ impl ProviderKind {
             ProviderKind::Anthropic => "Anthropic (Claude)",
             ProviderKind::OpenAi => "OpenAI",
             ProviderKind::Gemini => "Google Gemini",
+            ProviderKind::TerminalAgent => "Terminal agent",
         }
     }
 
@@ -101,6 +106,9 @@ impl ProviderKind {
             ProviderKind::Gemini => {
                 "Cloud service. The decompiled code the assistant reads is sent to Google."
             }
+            ProviderKind::TerminalAgent => {
+                "A coding agent that runs on your computer and signs in by itself. It uses KRAKEN's tools, so what it changes shows up here and can be undone, but its own tools (shell, files) are outside KRAKEN's safety net. The code it reads is sent to the service behind the agent."
+            }
         }
     }
 
@@ -112,7 +120,10 @@ impl ProviderKind {
             ProviderKind::LlamaServer => Some("http://localhost:8080/v1"),
             ProviderKind::Vllm => Some("http://localhost:8000/v1"),
             ProviderKind::OpenAi => Some("https://api.openai.com/v1"),
-            ProviderKind::OpenAiCompatible | ProviderKind::Anthropic | ProviderKind::Gemini => None,
+            ProviderKind::OpenAiCompatible
+            | ProviderKind::Anthropic
+            | ProviderKind::Gemini
+            | ProviderKind::TerminalAgent => None,
         }
     }
 
@@ -124,7 +135,10 @@ impl ProviderKind {
             ProviderKind::OpenAi => "gpt-4.1",
             ProviderKind::Anthropic => kraken_agent::provider::anthropic::DEFAULT_MODEL,
             ProviderKind::Gemini => kraken_agent::provider::gemini::DEFAULT_MODEL,
-            ProviderKind::LmStudio | ProviderKind::Vllm | ProviderKind::OpenAiCompatible => "",
+            ProviderKind::LmStudio
+            | ProviderKind::Vllm
+            | ProviderKind::OpenAiCompatible
+            | ProviderKind::TerminalAgent => "",
         }
     }
 
@@ -176,7 +190,13 @@ impl ProviderKind {
             ProviderKind::OpenAi => "openai",
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::Gemini => "gemini",
+            ProviderKind::TerminalAgent => "terminal-agent",
         }
+    }
+
+    /// The assistant is a terminal agent.
+    pub fn is_agent(self) -> bool {
+        self == ProviderKind::TerminalAgent
     }
 }
 
@@ -189,6 +209,8 @@ pub struct ProviderBadge {
     pub model: String,
     /// True when requests stay on this computer.
     pub local: bool,
+    /// A terminal agent rather than a model API.
+    pub terminal_agent: bool,
 }
 
 impl ProviderBadge {
@@ -203,7 +225,9 @@ impl ProviderBadge {
 
     /// Where requests go, in plain words.
     pub fn privacy(&self) -> &'static str {
-        if self.local {
+        if self.terminal_agent {
+            "A coding agent running on this computer. The code the assistant reads is sent to the service behind the agent, and its own tools (shell, files) are outside KRAKEN's safety net."
+        } else if self.local {
             "Runs on this computer. Your code is not sent anywhere."
         } else {
             "Cloud service. The code the assistant reads is sent to this provider."
@@ -235,6 +259,7 @@ pub fn badge_of(cfg: &ProviderConfig) -> ProviderBadge {
             service: ProviderDraft::guess_kind(base_url).label().to_string(),
             model: model.clone(),
             local: is_local_url(base_url),
+            terminal_agent: false,
         },
         ProviderConfig::Anthropic { model, .. } => ProviderBadge {
             service: ProviderKind::Anthropic.label().to_string(),
@@ -242,6 +267,7 @@ pub fn badge_of(cfg: &ProviderConfig) -> ProviderBadge {
                 .clone()
                 .unwrap_or_else(|| ProviderKind::Anthropic.default_model().to_string()),
             local: false,
+            terminal_agent: false,
         },
         ProviderConfig::Gemini { model, .. } => ProviderBadge {
             service: ProviderKind::Gemini.label().to_string(),
@@ -249,13 +275,26 @@ pub fn badge_of(cfg: &ProviderConfig) -> ProviderBadge {
                 .clone()
                 .unwrap_or_else(|| ProviderKind::Gemini.default_model().to_string()),
             local: false,
+            terminal_agent: false,
         },
         ProviderConfig::Replay { .. } => ProviderBadge {
             service: "Recorded answers".to_string(),
             model: "replay".to_string(),
             local: true,
+            terminal_agent: false,
+        },
+        ProviderConfig::TerminalAgent { agent, model, .. } => ProviderBadge {
+            service: agent_name(agent),
+            model: model.clone().unwrap_or_default(),
+            local: false,
+            terminal_agent: true,
         },
     }
+}
+
+/// The name people know a built-in agent by; other ids are shown as they are.
+pub fn agent_name(id: &str) -> String {
+    kraken_acp::builtin_profile(id).map_or_else(|| id.to_string(), |p| p.display_name)
 }
 
 /// The settings window's form for the provider.
@@ -269,6 +308,10 @@ pub struct ProviderDraft {
     pub model: String,
     /// Name of the environment variable that holds the key.
     pub key_env: String,
+    /// The agent's id (terminal agents).
+    pub agent: String,
+    /// Extra command-line arguments for the agent, one line, split on spaces (terminal agents).
+    pub agent_args: String,
     /// A key the person pasted. Cleared once saved; never written to `config.toml`.
     pub key_paste: String,
     /// The key reference already in the file, kept when nothing new is typed.
@@ -283,8 +326,22 @@ impl ProviderDraft {
             base_url: kind.default_base_url().unwrap_or_default().to_string(),
             model: kind.default_model().to_string(),
             key_env: kind.default_key_env().unwrap_or_default().to_string(),
+            agent: if kind.is_agent() {
+                "claude".to_string()
+            } else {
+                String::new()
+            },
+            agent_args: String::new(),
             key_paste: String::new(),
             existing_key: None,
+        }
+    }
+
+    /// The starting values for the terminal agent `id`.
+    pub fn for_agent(id: &str) -> Self {
+        ProviderDraft {
+            agent: id.to_string(),
+            ..ProviderDraft::preset(ProviderKind::TerminalAgent)
         }
     }
 
@@ -335,6 +392,8 @@ impl ProviderDraft {
                 base_url: base_url.clone(),
                 model: model.clone(),
                 key_env: api_key.as_ref().map(env_of).unwrap_or_default(),
+                agent: String::new(),
+                agent_args: String::new(),
                 key_paste: String::new(),
                 existing_key: api_key.clone(),
             },
@@ -343,6 +402,8 @@ impl ProviderDraft {
                 base_url: String::new(),
                 model: model.clone().unwrap_or_default(),
                 key_env: env_of(api_key),
+                agent: String::new(),
+                agent_args: String::new(),
                 key_paste: String::new(),
                 existing_key: Some(api_key.clone()),
             },
@@ -351,10 +412,17 @@ impl ProviderDraft {
                 base_url: String::new(),
                 model: model.clone().unwrap_or_default(),
                 key_env: env_of(api_key),
+                agent: String::new(),
+                agent_args: String::new(),
                 key_paste: String::new(),
                 existing_key: Some(api_key.clone()),
             },
             ProviderConfig::Replay { .. } => ProviderDraft::preset(ProviderKind::Ollama),
+            ProviderConfig::TerminalAgent { agent, model, args } => ProviderDraft {
+                model: model.clone().unwrap_or_default(),
+                agent_args: args.join(" "),
+                ..ProviderDraft::for_agent(agent)
+            },
         }
     }
 
@@ -560,6 +628,24 @@ impl ProviderStore {
     fn configure_with(&self, d: &ProviderDraft, persist: bool) -> Result<SaveOutcome, String> {
         let model = d.model.trim().to_string();
         let mut notes = Vec::new();
+        if d.kind.is_agent() {
+            let agent = d.agent.trim();
+            if agent.is_empty() {
+                return Err("Choose which terminal agent to use.".to_string());
+            }
+            return Ok(SaveOutcome {
+                config: ProviderConfig::TerminalAgent {
+                    agent: agent.to_string(),
+                    model: (!model.is_empty()).then_some(model),
+                    args: d
+                        .agent_args
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect(),
+                },
+                notes,
+            });
+        }
         let url = d.base_url.trim().trim_end_matches('/').to_string();
         if d.kind.needs_url() {
             if url.is_empty() {
@@ -696,6 +782,29 @@ impl ProviderStore {
         let mut file = KrakenConfig::from_file(path).map_err(|e| e.to_string())?;
         file.provider = None;
         file.save(path).map_err(|e| e.to_string())
+    }
+
+    /// The badge for `cfg`; a custom agent is named as `agents.toml` (beside `config.toml`)
+    /// calls it.
+    pub fn badge(&self, cfg: &ProviderConfig) -> ProviderBadge {
+        let mut badge = badge_of(cfg);
+        if let ProviderConfig::TerminalAgent { agent, .. } = cfg
+            && let Some(dir) = self.config_path.as_deref().and_then(Path::parent)
+            && let Ok(profiles) = kraken_acp::load_catalogue(Some(dir))
+            && let Some(p) = profiles.iter().find(|p| p.id == *agent)
+        {
+            badge.service = p.display_name.clone();
+        }
+        badge
+    }
+
+    /// What `cfg` selects: the model API built from it, or the terminal agent it names. Keys
+    /// are resolved from the environment and the secrets file.
+    pub fn choice(&self, cfg: &ProviderConfig) -> Result<super::BackendChoice, String> {
+        match kraken_assist::AgentChoice::from_config(cfg) {
+            Some(agent) => Ok(super::BackendChoice::Agent(agent)),
+            None => self.build(cfg).map(super::BackendChoice::Api),
+        }
     }
 
     /// Builds the provider for `cfg`, resolving keys from the environment and the secrets

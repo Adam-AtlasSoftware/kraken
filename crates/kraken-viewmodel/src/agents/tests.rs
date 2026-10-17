@@ -1,11 +1,12 @@
-//! Agents tab tests: the real ACP host against `kraken-fake-acp-agent` (a separate process
-//! speaking raw ACP). No network, no real agents, no real daemon.
+//! The agents hub: availability, the setup flow with its consent step, the one-time notice and
+//! the connection test, against shell-script fakes for node and npm and the fake ACP agent. No
+//! network, no real agents.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use kraken_acp::{AgentPaths, AgentProfile, NoticeStore, Platform, Resolver};
@@ -13,13 +14,9 @@ use kraken_host::provision::{Fetched, Fetcher, ProvisionError};
 use tokio::runtime::Runtime;
 
 use super::*;
-use crate::demo::{demo_fixture, demo_project_with};
-use crate::state::Connection;
-use crate::vm::ViewModel;
-
-const WAIT: Duration = Duration::from_secs(20);
-
 use crate::testing::fake_agent;
+
+const WAIT: Duration = Duration::from_secs(30);
 
 fn base_env() -> Vec<(OsString, OsString)> {
     vec![
@@ -28,9 +25,12 @@ fn base_env() -> Vec<(OsString, OsString)> {
     ]
 }
 
-fn fake_profile() -> AgentProfile {
-    AgentProfile::custom("fake", "Fake agent", fake_agent().to_string_lossy(), vec![])
-        .allow_env("FAKE_ACP_*")
+fn fake_profile(extra: &[(&str, &str)]) -> AgentProfile {
+    let mut p = AgentProfile::custom("fake", "Fake agent", fake_agent().to_string_lossy(), vec![]);
+    for (k, v) in extra {
+        p = p.with_env(*k, *v);
+    }
+    p
 }
 
 fn config(dir: &Path, platform: Platform, node_dir: &Path) -> AgentsConfig {
@@ -42,7 +42,7 @@ fn config(dir: &Path, platform: Platform, node_dir: &Path) -> AgentsConfig {
     let mut c = AgentsConfig::new(resolver, Some(dir.join("config")));
     c.kraken_exe = Some(PathBuf::from("/opt/kraken/kraken"));
     c.parent_env = Some(base_env());
-    c.extra_profiles = vec![fake_profile()];
+    c.extra_profiles = vec![fake_profile(&[("FAKE_ACP_ALLOW_NO_MCP", "1")])];
     c.start_timeout = WAIT;
     c
 }
@@ -51,95 +51,48 @@ struct Rig {
     dir: tempfile::TempDir,
     node_dir: PathBuf,
     rt: Runtime,
-    vm: ViewModel,
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.vm.agents_close_session();
-        // Let the shutdown task end the agent before the runtime goes away.
-        std::thread::sleep(Duration::from_millis(300));
-    }
+    hub: AgentsHub,
 }
 
 fn rig() -> Rig {
     let rt = Runtime::new().expect("runtime");
-    let d = demo_project_with(demo_fixture(), Duration::from_millis(1)).expect("demo");
-    let mut vm = ViewModel::new(d.backend.clone(), rt.handle().clone());
-    vm.create_project(
-        d.binary.to_string_lossy().into_owned(),
-        d.project_dir.to_string_lossy().into_owned(),
-    );
-    assert!(vm.block_until_idle(WAIT));
-    assert_eq!(vm.connection, Connection::Open);
     let dir = tempfile::tempdir().expect("tempdir");
     let node_dir = dir.path().join("bin");
     std::fs::create_dir_all(&node_dir).expect("bin dir");
     let cfg = config(dir.path(), Platform::new("linux", "x86_64"), &node_dir);
-    vm.agents_configure(cfg);
+    let hub = AgentsHub::new(rt.handle().clone(), Some(cfg));
     Rig {
         dir,
         node_dir,
         rt,
-        vm,
+        hub,
     }
 }
 
 impl Rig {
+    /// Polls the hub until `cond` holds.
+    fn until(&mut self, what: &str, cond: impl Fn(&AgentsHub) -> bool) {
+        let end = Instant::now() + WAIT;
+        loop {
+            self.hub.poll();
+            if cond(&self.hub) {
+                return;
+            }
+            assert!(
+                Instant::now() < end,
+                "timed out waiting for {what}; setup {:?}, test {:?}",
+                self.hub.setup,
+                self.hub.test
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn load(&mut self) {
-        self.vm.agents.loaded = false;
-        self.vm.agents_refresh();
-        assert!(self.vm.block_until(WAIT, |vm| vm.agents.loaded));
+        self.hub.loaded = false;
+        self.hub.refresh();
+        self.until("the list", |h| h.loaded);
     }
-
-    fn session(&self) -> &AgentSession {
-        self.vm.agents.session.as_ref().expect("a session")
-    }
-
-    fn until(&mut self, what: &str, cond: impl Fn(&ViewModel) -> bool) {
-        assert!(
-            self.vm.block_until(WAIT, cond),
-            "timed out waiting for {what}; items: {:#?}",
-            self.vm
-                .agents
-                .session
-                .as_ref()
-                .map(|s| (&s.phase, &s.items))
-        );
-    }
-
-    /// Acknowledges the warning and starts the fake agent; waits until it is ready.
-    fn start_fake(&mut self) {
-        self.load();
-        self.vm.agents_start("fake");
-        assert_eq!(self.vm.agents.pending_notice.as_deref(), Some("fake"));
-        self.vm.agents_acknowledge();
-        self.until("the agent to be ready", |vm| {
-            vm.agents
-                .session
-                .as_ref()
-                .is_some_and(|s| s.phase != SessionPhase::Starting)
-        });
-        assert_eq!(self.session().phase, SessionPhase::Ready);
-    }
-
-    fn texts(&self) -> String {
-        self.session()
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                AgentItem::Text { text, .. } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect()
-    }
-}
-
-fn permission(s: &AgentSession) -> Option<&PermissionCard> {
-    s.items.iter().find_map(|i| match i {
-        AgentItem::Permission(c) => Some(c),
-        _ => None,
-    })
 }
 
 fn write_script(path: &Path, body: &str) {
@@ -153,7 +106,7 @@ fn write_script(path: &Path, body: &str) {
 #[test]
 fn availability_states_for_each_kind_of_agent() {
     let mut r = rig();
-    r.vm.agents
+    r.hub
         .config
         .as_mut()
         .expect("config")
@@ -165,15 +118,14 @@ fn availability_states_for_each_kind_of_agent() {
             vec![],
         ));
     r.load();
-    let rows = &r.vm.agents.rows;
     assert_eq!(
-        rows.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+        r.hub.rows.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
         ["claude", "codex", "gemini", "fake", "ghost"]
     );
 
     // No Node.js anywhere: the built-in agents need setup, and setup would download Node.js.
     for id in ["claude", "codex", "gemini"] {
-        let row = r.vm.agents.row(id).expect("row");
+        let row = r.hub.row(id).expect("row");
         match &row.availability {
             Availability::NeedsSetup {
                 reason,
@@ -187,34 +139,30 @@ fn availability_states_for_each_kind_of_agent() {
         assert_eq!(row.availability.label(), "Needs setup");
         assert!(row.builtin);
     }
-    let fake = r.vm.agents.row("fake").expect("fake");
+    let fake = r.hub.row("fake").expect("fake");
     assert!(fake.is_ready(), "{:?}", fake.availability);
     assert_eq!(fake.availability.label(), "Ready");
     assert!(!fake.builtin);
-    match &r.vm.agents.row("ghost").expect("ghost").availability {
+    match &r.hub.row("ghost").expect("ghost").availability {
         Availability::NotFound { reason } => assert!(reason.contains("ghost-agent"), "{reason}"),
         other => panic!("{other:?}"),
     }
-    assert_eq!(r.vm.agents.platform_note, None);
+    assert_eq!(r.hub.platform_note, None);
 
     // A Node.js on PATH: only the adapter is missing, nothing to download for Node.js.
     write_script(&r.node_dir.join("node"), "#!/bin/sh\necho v24.1.0\n");
     r.load();
-    match &r.vm.agents.row("claude").expect("claude").availability {
+    match &r.hub.row("claude").expect("claude").availability {
         Availability::NeedsSetup { downloads_node, .. } => assert!(!downloads_node),
         other => panic!("{other:?}"),
     }
 
     // A platform the adapters do not ship for.
-    let cfg = {
-        let mut c = config(r.dir.path(), Platform::new("linux", "riscv64"), &r.node_dir);
-        c.extra_profiles = vec![fake_profile()];
-        c
-    };
-    r.vm.agents_configure(cfg);
+    let cfg = config(r.dir.path(), Platform::new("linux", "riscv64"), &r.node_dir);
+    r.hub.configure(cfg);
     r.load();
     for id in ["claude", "codex", "gemini"] {
-        let row = r.vm.agents.row(id).expect("row");
+        let row = r.hub.row(id).expect("row");
         match &row.availability {
             Availability::Unsupported { reason } => assert!(reason.contains("riscv64"), "{reason}"),
             other => panic!("{id}: {other:?}"),
@@ -222,12 +170,12 @@ fn availability_states_for_each_kind_of_agent() {
         assert_eq!(row.availability.label(), "Not supported here");
     }
     assert!(
-        r.vm.agents
+        r.hub
             .platform_note
             .as_deref()
             .is_some_and(|n| n.contains("riscv64"))
     );
-    assert!(r.vm.agents.row("fake").expect("fake").is_ready());
+    assert!(r.hub.row("fake").expect("fake").is_ready());
     let _ = &r.rt;
 }
 
@@ -238,8 +186,8 @@ fn an_unreadable_agents_file_keeps_the_builtin_agents() {
     std::fs::create_dir_all(&cfg_dir).expect("config dir");
     std::fs::write(cfg_dir.join("agents.toml"), "this is = not [valid").expect("write");
     r.load();
-    assert!(r.vm.agents.catalogue_error.is_some());
-    assert!(r.vm.agents.row("claude").is_some());
+    assert!(r.hub.catalogue_error.is_some());
+    assert!(r.hub.row("claude").is_some());
 }
 
 // ------------------------------------------------------------------ setup consent
@@ -261,13 +209,13 @@ impl Fetcher for CountingFetcher {
 fn setup_asks_before_it_downloads_anything() {
     let mut r = rig();
     let fetches = Arc::new(AtomicUsize::new(0));
-    r.vm.agents.config.as_mut().expect("config").fetcher =
+    r.hub.config.as_mut().expect("config").fetcher =
         Some(Arc::new(CountingFetcher(fetches.clone())));
     r.load();
 
-    r.vm.agents_request_setup("claude");
-    let SetupState::Confirm(plan) = r.vm.agents.setup.clone() else {
-        panic!("expected the consent step, got {:?}", r.vm.agents.setup);
+    r.hub.request_setup("claude");
+    let SetupState::Confirm(plan) = r.hub.setup.clone() else {
+        panic!("expected the consent step, got {:?}", r.hub.setup);
     };
     assert_eq!(plan.agent_id, "claude");
     assert!(plan.downloads.len() == 2, "{:?}", plan.downloads);
@@ -275,576 +223,151 @@ fn setup_asks_before_it_downloads_anything() {
     assert!(plan.downloads[1].contains("claude-agent-acp"));
     assert!(plan.into_dir.ends_with("agents"), "{}", plan.into_dir);
     std::thread::sleep(Duration::from_millis(300));
-    r.vm.poll();
+    r.hub.poll();
     assert_eq!(fetches.load(Ordering::SeqCst), 0, "nothing before the yes");
 
     // Saying no leaves no trace.
-    r.vm.agents_dismiss_setup();
-    assert_eq!(r.vm.agents.setup, SetupState::Idle);
-    r.vm.agents_confirm_setup();
-    assert_eq!(r.vm.agents.setup, SetupState::Idle, "no plan, no download");
+    r.hub.dismiss_setup();
+    assert_eq!(r.hub.setup, SetupState::Idle);
+    r.hub.confirm_setup();
+    assert_eq!(r.hub.setup, SetupState::Idle, "no plan, no download");
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(fetches.load(Ordering::SeqCst), 0);
 
     // Yes: it starts, reports progress, and a failed download is explained.
-    r.vm.agents_request_setup("claude");
-    r.vm.agents_confirm_setup();
-    assert!(r.vm.agents.setup.running());
-    r.until("setup to fail", |vm| {
-        matches!(vm.agents.setup, SetupState::Failed { .. })
+    r.hub.request_setup("claude");
+    r.hub.confirm_setup();
+    assert!(r.hub.setup.running());
+    r.until("setup to fail", |h| {
+        matches!(h.setup, SetupState::Failed { .. })
     });
-    let SetupState::Failed { agent_id, message } = r.vm.agents.setup.clone() else {
+    let SetupState::Failed { agent_id, message } = r.hub.setup.clone() else {
         unreachable!()
     };
     assert_eq!(agent_id, "claude");
     assert!(message.contains("no network"), "{message}");
     assert_eq!(fetches.load(Ordering::SeqCst), 1);
-    r.vm.agents_dismiss_setup();
-    assert_eq!(r.vm.agents.setup, SetupState::Idle);
+    r.hub.dismiss_setup();
+    assert_eq!(r.hub.setup, SetupState::Idle);
 }
 
 #[test]
 fn only_agents_that_need_setup_can_be_set_up() {
     let mut r = rig();
     r.load();
-    r.vm.agents_request_setup("fake");
-    assert_eq!(r.vm.agents.setup, SetupState::Idle);
-    r.vm.agents_request_setup("nobody");
-    assert_eq!(r.vm.agents.setup, SetupState::Idle);
+    r.hub.request_setup("fake");
+    assert_eq!(r.hub.setup, SetupState::Idle);
+    r.hub.request_setup("nobody");
+    assert_eq!(r.hub.setup, SetupState::Idle);
 }
 
-// ------------------------------------------------------------------ the warning
+// ------------------------------------------------------------------ the notice
 
 #[test]
-fn the_warning_gates_the_first_run_and_is_remembered() {
+fn the_notice_is_remembered_across_windows() {
     let mut r = rig();
-    r.load();
     let store = NoticeStore::in_config_dir(&r.dir.path().join("config"));
     assert!(!store.is_acknowledged());
-    assert!(!r.vm.agents.notice.acknowledged);
+    assert!(!r.hub.notice.acknowledged);
+    assert!(!r.hub.env().expect("env").acknowledged);
 
-    r.vm.agents_start("fake");
-    assert_eq!(r.vm.agents.pending_notice.as_deref(), Some("fake"));
-    assert!(
-        r.vm.agents.session.is_none(),
-        "nothing starts before the warning"
-    );
-    assert!(!store.is_acknowledged());
-
-    // Closing the warning starts nothing.
-    r.vm.agents_cancel_notice();
-    assert_eq!(r.vm.agents.pending_notice, None);
-    assert!(r.vm.agents.session.is_none());
-
-    // The text the tab shows is the one from kraken-acp.
+    // The text the settings show is the one from kraken-acp.
     assert!(WARNING_TEXT.contains("outside") || WARNING_TEXT.contains("do not cover"));
     assert!(!WARNING_TITLE.is_empty());
 
-    r.vm.agents_start("fake");
-    r.vm.agents_acknowledge();
-    assert!(r.vm.agents.notice.acknowledged);
-    assert_eq!(r.vm.agents.notice.save_error, None);
+    r.hub.acknowledge();
+    assert!(r.hub.notice.acknowledged);
+    assert_eq!(r.hub.notice.save_error, None);
     assert!(store.is_acknowledged(), "saved in the config dir");
-    assert!(r.vm.agents.session.is_some(), "the waiting agent starts");
-    r.until("the agent to be ready", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.phase == SessionPhase::Ready)
-    });
-    r.vm.agents_close_session();
+    assert!(r.hub.env().expect("env").acknowledged);
 
     // A new window (new configuration) reads the saved acknowledgement and does not ask again.
-    let cfg = r.vm.agents.config.clone().expect("config");
-    r.vm.agents_configure(cfg);
-    assert!(r.vm.agents.notice.acknowledged);
-    r.load();
-    r.vm.agents_start("fake");
-    assert_eq!(r.vm.agents.pending_notice, None);
-    r.until("the second session", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.phase == SessionPhase::Ready)
-    });
+    let cfg = r.hub.config().expect("config");
+    r.hub.configure(cfg);
+    assert!(r.hub.notice.acknowledged);
 }
 
 #[test]
-fn a_warning_that_cannot_be_saved_still_lets_the_agent_run() {
+fn a_notice_that_cannot_be_saved_still_counts_for_this_run() {
     let mut r = rig();
     // The config dir is a file, so nothing can be written under it.
     let blocked = r.dir.path().join("blocked");
     std::fs::write(&blocked, "x").expect("file");
-    let mut cfg = r.vm.agents.config.clone().expect("config");
+    let mut cfg = r.hub.config().expect("config");
     cfg.config_dir = Some(blocked);
-    r.vm.agents_configure(cfg);
-    r.load();
-    r.vm.agents_start("fake");
-    r.vm.agents_acknowledge();
-    assert!(r.vm.agents.notice.acknowledged);
-    assert!(r.vm.agents.notice.save_error.is_some());
-    assert!(r.vm.agents.session.is_some());
-}
-
-// ------------------------------------------------------------------ starting
-
-#[test]
-fn an_agent_that_is_not_ready_does_not_start() {
-    let mut r = rig();
-    r.load();
-    r.vm.agents.notice.acknowledged = true;
-    r.vm.agents_start("claude");
-    assert!(r.vm.agents.session.is_none());
-    assert!(
-        r.vm.agents
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("Claude Code")),
-        "{:?}",
-        r.vm.agents.error
-    );
+    r.hub.configure(cfg);
+    r.hub.acknowledge();
+    assert!(r.hub.notice.acknowledged);
+    assert!(r.hub.notice.save_error.is_some());
 }
 
 #[test]
-fn starting_needs_an_open_project() {
+fn the_daemon_choice_reaches_the_agents_environment() {
     let mut r = rig();
-    r.load();
-    r.vm.agents.notice.acknowledged = true;
-    r.vm.project = None;
-    r.vm.agents_start("fake");
-    assert!(r.vm.agents.session.is_none());
-    assert!(
-        r.vm.agents
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("project"))
-    );
+    assert!(!r.hub.env().expect("env").config.use_daemon);
+    r.hub.set_daemon(true);
+    assert!(r.hub.env().expect("env").config.use_daemon);
+    r.hub.set_daemon(false);
+    assert!(!r.hub.env().expect("env").config.use_daemon);
 }
 
-#[test]
-fn the_session_header_names_the_agent_and_model() {
-    let mut r = rig();
-    r.start_fake();
-    let s = r.session();
-    assert_eq!(s.agent_name, "Fake agent");
-    assert_eq!(
-        s.agent_label.as_deref(),
-        Some("kraken-fake-acp-agent 0.0.0")
-    );
-    assert_eq!(s.model.as_deref(), Some("Fake model 1"));
-    assert!(!s.project_dir.is_empty());
-}
+// ------------------------------------------------------------------ the test button
 
 #[test]
-fn an_agent_that_needs_a_login_ends_with_a_plain_reason() {
+fn testing_an_agent_starts_it_and_reports_what_it_said() {
     let mut r = rig();
-    let mut cfg = r.vm.agents.config.clone().expect("config");
-    cfg.extra_profiles = vec![fake_profile().with_env("FAKE_ACP_REQUIRE_AUTH", "1")];
-    r.vm.agents_configure(cfg);
     r.load();
-    r.vm.agents.notice.acknowledged = true;
-    r.vm.agents_start("fake");
-    r.until("the start to fail", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| matches!(s.phase, SessionPhase::Ended(_)))
-    });
-    let SessionPhase::Ended(why) = &r.session().phase else {
-        unreachable!()
+    r.hub.acknowledge();
+    r.hub.test_agent("fake", None, &[]);
+    assert!(r.hub.test.running());
+    r.until("the test", |h| !h.test.running());
+    let AgentTestState::Passed { agent_id, message } = r.hub.test.clone() else {
+        panic!("{:?}", r.hub.test);
     };
-    assert!(why.contains("sign in"), "{why}");
-    assert!(!r.vm.agents.in_session());
-    // The ended session can be dismissed and another started.
-    r.vm.agents_close_session();
-    assert!(r.vm.agents.session.is_none());
+    assert_eq!(agent_id, "fake");
+    assert!(message.starts_with("Connected."), "{message}");
+    assert!(message.contains("Fake model 1"), "{message}");
+    assert!(message.contains("kraken-fake-acp-agent"), "{message}");
 }
 
-// ------------------------------------------------------------------ streaming and tools
-
 #[test]
-fn a_turn_streams_text_tool_calls_and_a_plan() {
+fn a_test_needs_the_notice_a_ready_agent_and_reports_a_login_problem() {
     let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("hello");
-    assert!(r.session().busy);
-    r.until("the permission request", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.waiting_permissions() == 1)
-    });
-
-    let s = r.session();
-    assert!(matches!(&s.items[0], AgentItem::User(t) if t == "hello"));
-    assert_eq!(
-        r.texts(),
-        "Hello from the fake agent. ",
-        "chunks are joined"
-    );
+    r.load();
+    r.hub.test_agent("fake", None, &[]);
     assert!(
-        s.items
-            .iter()
-            .any(|i| matches!(i, AgentItem::Thought(t) if t.contains("thinking")))
-    );
-    let tool = s
-        .items
-        .iter()
-        .find_map(|i| match i {
-            AgentItem::Tool(t) => Some(t),
-            _ => None,
-        })
-        .expect("a tool chip");
-    assert_eq!(tool.title, "Run rm -rf build");
-    assert!(!tool.is_kraken, "a shell command is the agent's own tool");
-    assert_eq!(tool.kind, "execute");
-    assert!(tool.working());
-    assert_eq!(tool.paths, ["/tmp/project/build"]);
-    let plan = s.items.iter().find_map(|i| match i {
-        AgentItem::Plan(p) => Some(p),
-        _ => None,
-    });
-    assert_eq!(plan.map(Vec::len), Some(2));
-    assert!(s.busy, "the turn waits for the person");
-
-    r.vm.agents_answer_permission(
-        permission(r.session()).expect("card").request.request_id,
-        true,
-    );
-    r.until("the turn to end", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    let s = r.session();
-    let tool = s
-        .items
-        .iter()
-        .find_map(|i| match i {
-            AgentItem::Tool(t) => Some(t),
-            _ => None,
-        })
-        .expect("tool");
-    assert_eq!(tool.status, "completed");
-    assert_eq!(tool.output.as_deref(), Some("permission granted"));
-    assert!(r.texts().ends_with("permission granted."));
-    assert!(
-        !s.items.iter().any(|i| matches!(
-            i,
-            AgentItem::Text {
-                streaming: true,
-                ..
-            }
-        )),
-        "no text is still streaming"
-    );
-}
-
-#[test]
-fn kraken_tool_calls_are_told_apart_from_the_agents_own() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("kraken");
-    r.until("the permission request", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.waiting_permissions() == 1)
-    });
-    let tools: Vec<&AgentTool> = r
-        .session()
-        .items
-        .iter()
-        .filter_map(|i| match i {
-            AgentItem::Tool(t) => Some(t),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        tools
-            .iter()
-            .map(|t| (t.name.as_str(), t.is_kraken, t.status.as_str()))
-            .collect::<Vec<_>>(),
-        [
-            ("decompile", true, "completed"),
-            ("rename_symbol", true, "completed"),
-            ("Run strings -n 8 ./sample", false, "pending"),
-        ]
-    );
-    assert_eq!(tools[0].input.as_deref(), Some(r#"{"address":"0x401340"}"#));
-    r.vm.agents_answer_permission(
-        permission(r.session()).expect("card").request.request_id,
-        false,
-    );
-    r.until("the turn to end", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-}
-
-#[test]
-fn tool_titles_are_classified() {
-    assert_eq!(
-        classify_tool("mcp__kraken__decompile"),
-        ("decompile".into(), true)
-    );
-    assert_eq!(
-        classify_tool("kraken.rename_symbol"),
-        ("rename_symbol".into(), true)
-    );
-    assert_eq!(
-        classify_tool("kraken: xrefs_to 0x401000"),
-        ("xrefs_to".into(), true)
-    );
-    assert_eq!(classify_tool("Read main.c"), ("Read main.c".into(), false));
-    assert_eq!(
-        classify_tool("mcp__other__thing"),
-        ("mcp__other__thing".into(), false)
-    );
-}
-
-// ------------------------------------------------------------------ permissions
-
-#[test]
-fn allow_once_lets_the_agent_continue() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("go");
-    r.until("the permission request", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.waiting_permissions() == 1)
-    });
-    let card = permission(r.session()).expect("card").clone();
-    assert_eq!(card.request.title, "Run rm -rf build");
-    assert_eq!(card.request.tool_kind.as_deref(), Some("execute"));
-    assert_eq!(
-        card.request
-            .options
-            .iter()
-            .map(|o| o.name.as_str())
-            .collect::<Vec<_>>(),
-        ["Allow once", "Reject"]
-    );
-    assert_eq!(card.state, PermissionState::Waiting);
-
-    // An unknown request id changes nothing.
-    r.vm.agents_answer_permission(card.request.request_id + 99, true);
-    r.vm.agents_answer_permission(card.request.request_id, true);
-    r.until("the answer", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .and_then(permission)
-            .is_some_and(|c| c.state == PermissionState::Allowed)
-    });
-    r.until("the turn to end", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    assert!(r.texts().contains("permission granted"));
-    assert_eq!(r.session().waiting_permissions(), 0);
-}
-
-#[test]
-fn deny_tells_the_agent_no() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("go");
-    r.until("the permission request", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.waiting_permissions() == 1)
-    });
-    let id = permission(r.session()).expect("card").request.request_id;
-    r.vm.agents_answer_permission(id, false);
-    r.until("the turn to end", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    let s = r.session();
-    assert_eq!(permission(s).expect("card").state, PermissionState::Denied);
-    assert!(r.texts().contains("permission denied"));
-    let failed = s
-        .items
-        .iter()
-        .any(|i| matches!(i, AgentItem::Tool(t) if t.failed()));
-    assert!(failed, "the denied tool call shows as failed");
-}
-
-// ------------------------------------------------------------------ stop
-
-#[test]
-fn stop_ends_the_turn_and_the_session_stays_usable() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("wait");
-    r.until("the first words", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| {
-            s.items.iter().any(|i| matches!(i, AgentItem::Text { text, .. } if text.contains("waiting for cancel")))
-        })
-    });
-    assert!(r.session().busy);
-    r.vm.agents_stop();
-    assert!(r.session().stopping);
-    r.until("the turn to stop", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    let s = r.session();
-    assert!(!s.stopping);
-    assert!(
-        s.items
-            .iter()
-            .any(|i| matches!(i, AgentItem::Notice(n) if n == "Stopped.")),
+        matches!(&r.hub.test, AgentTestState::Failed { message, .. } if message.contains("Read the note")),
         "{:?}",
-        s.items
+        r.hub.test
     );
-    assert_eq!(s.phase, SessionPhase::Ready);
 
-    // The same agent takes the next prompt.
-    r.vm.agents_send("report");
-    r.until("the next answer", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    assert!(r.texts().contains("mcpServers"));
-}
-
-#[test]
-fn stop_withdraws_a_waiting_permission_request() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("go");
-    r.until("the permission request", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| s.waiting_permissions() == 1)
-    });
-    r.vm.agents_stop();
-    r.until("the turn to stop", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    let s = r.session();
-    assert_eq!(
-        permission(s).expect("card").state,
-        PermissionState::Withdrawn
-    );
-    assert_eq!(s.waiting_permissions(), 0);
+    r.hub.acknowledge();
+    r.hub.test_agent("claude", None, &[]);
     assert!(
-        s.items
-            .iter()
-            .any(|i| matches!(i, AgentItem::Notice(n) if n == "Stopped."))
+        matches!(&r.hub.test, AgentTestState::Failed { message, .. } if message.contains("Set up")),
+        "{:?}",
+        r.hub.test
     );
-}
-
-#[test]
-fn stop_does_nothing_when_idle() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_stop();
-    assert!(!r.session().stopping);
-}
-
-// ------------------------------------------------------------------ the agent going away
-
-#[test]
-fn an_agent_that_exits_ends_the_session_with_a_reason() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_send("die");
-    r.until("the session to end", |vm| {
-        vm.agents
-            .session
-            .as_ref()
-            .is_some_and(|s| matches!(s.phase, SessionPhase::Ended(_)))
-    });
-    let s = r.session();
-    assert!(!s.busy);
-    let SessionPhase::Ended(why) = &s.phase else {
-        unreachable!()
-    };
+    r.hub.test_agent("nobody", None, &[]);
     assert!(
-        (why.contains("exit code 7") || why.contains("stopped")),
-        "{why}"
+        matches!(&r.hub.test, AgentTestState::Failed { message, .. } if message.contains("nobody")),
+        "{:?}",
+        r.hub.test
     );
-    assert!(s.items.iter().any(
-        |i| matches!(i, AgentItem::Error(e) if (e.contains("exit code 7") || e.contains("stopped")))
-    ));
-    // Prompts after the end are ignored.
-    let before = s.items.len();
-    r.vm.agents_send("again");
-    assert_eq!(r.session().items.len(), before);
-}
 
-#[test]
-fn only_one_session_at_a_time() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_start("fake");
+    // An agent that wants a sign-in says so in plain words.
+    let mut cfg = r.hub.config().expect("config");
+    cfg.extra_profiles = vec![fake_profile(&[
+        ("FAKE_ACP_ALLOW_NO_MCP", "1"),
+        ("FAKE_ACP_REQUIRE_AUTH", "1"),
+    ])];
+    r.hub.configure(cfg);
+    r.load();
+    r.hub.test_agent("fake", None, &[]);
+    r.until("the test", |h| !h.test.running());
     assert!(
-        r.vm.agents
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("already running"))
-    );
-}
-
-#[test]
-fn changing_project_ends_the_session() {
-    let mut r = rig();
-    r.start_fake();
-    r.vm.agents_project_changed();
-    assert!(r.vm.agents.session.is_none());
-}
-
-#[test]
-fn prompts_need_a_ready_session() {
-    let mut r = rig();
-    r.vm.agents_send("hello");
-    assert!(r.vm.agents.session.is_none());
-    r.start_fake();
-    r.vm.agents_send("   ");
-    assert!(r.session().items.is_empty(), "blank prompts are ignored");
-}
-
-// ------------------------------------------------------------------ the MCP wiring
-
-fn mcp_server_seen_by_the_agent(r: &mut Rig) -> serde_json::Value {
-    r.start_fake();
-    r.vm.agents_send("report");
-    r.until("the report", |vm| {
-        vm.agents.session.as_ref().is_some_and(|s| !s.busy)
-    });
-    let report: serde_json::Value = serde_json::from_str(&r.texts()).expect("json report");
-    report["mcpServers"][0].clone()
-}
-
-#[test]
-fn the_agent_is_given_kraken_mcp_for_the_open_project() {
-    let mut r = rig();
-    let project = r.vm.project.as_ref().expect("project").project_dir.clone();
-    let server = mcp_server_seen_by_the_agent(&mut r);
-    assert_eq!(server["name"], "kraken");
-    assert_eq!(server["command"], "/opt/kraken/kraken");
-    assert_eq!(
-        server["args"],
-        serde_json::json!(["mcp", "--project", project])
-    );
-}
-
-#[test]
-fn with_the_daemon_the_agent_joins_it_so_edits_flow_back_live() {
-    let mut r = rig();
-    let project = r.vm.project.as_ref().expect("project").project_dir.clone();
-    let mut cfg = r.vm.agents.config.clone().expect("config");
-    cfg.use_daemon = true;
-    cfg.mcp_env = vec![("KRAKEN_RUNTIME_DIR".into(), "/run/private-kraken".into())];
-    r.vm.agents_configure(cfg);
-    let server = mcp_server_seen_by_the_agent(&mut r);
-    assert_eq!(
-        server["args"],
-        serde_json::json!(["mcp", "--daemon", "--project", project])
-    );
-    let env = server["env"].to_string();
-    assert!(
-        env.contains("KRAKEN_RUNTIME_DIR") && env.contains("/run/private-kraken"),
-        "{env}"
+        matches!(&r.hub.test, AgentTestState::Failed { message, .. } if message.contains("sign in")),
+        "{:?}",
+        r.hub.test
     );
 }

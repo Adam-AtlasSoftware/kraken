@@ -1,6 +1,5 @@
 //! KRAKEN desktop GUI.
 
-mod agents;
 mod app;
 mod args;
 mod assist;
@@ -29,9 +28,10 @@ use anyhow::anyhow;
 use args::{Parsed, RendererChoice};
 
 fn main() -> anyhow::Result<()> {
-    // Hidden: act as the scripted ACP agent of the agents screenshot (see `agents::demo`).
-    if std::env::args().nth(1).as_deref() == Some(agents::FAKE_AGENT_FLAG) {
-        std::process::exit(agents::run_fake_agent());
+    // Hidden: act as the scripted ACP agent of the terminal-agent screenshot (see
+    // `assist::agent_demo`).
+    if std::env::args().nth(1).as_deref() == Some(assist::FAKE_AGENT_FLAG) {
+        std::process::exit(assist::run_fake_agent());
     }
     let opts = match args::parse(std::env::args().skip(1)) {
         Ok(Parsed::Run(o)) => o,

@@ -4,6 +4,8 @@
 //! All state lives in the view-model (`vm.assist`); this module only draws it and forwards
 //! clicks. [`AssistUi`] holds the little that is purely visual.
 
+mod agent_demo;
+mod agents_ui;
 mod chat;
 mod demo;
 mod learn;
@@ -13,6 +15,9 @@ mod settings_ai;
 mod setup;
 #[cfg(test)]
 mod tests;
+// The agent tests run the fake ACP agent, a Unix-style process.
+#[cfg(all(test, unix))]
+mod agent_tests;
 pub(crate) mod text;
 
 use egui::Ui;
@@ -20,6 +25,7 @@ use egui_dock::DockState;
 use kraken_viewmodel::ViewModel;
 use kraken_viewmodel::assist::ProviderKind;
 
+pub use agent_demo::{FAKE_AGENT_FLAG, SCENE_PROMPT, run_fake_agent, scene_backend, scene_config};
 pub use chat::{panel, suggest_names_button};
 pub use demo::{CHAT_QUESTION, provider_for};
 pub use learn::top_bar_buttons;
@@ -41,8 +47,11 @@ use crate::workspace::Tab;
 pub enum AssistRequest {
     /// Save and use the standard settings of a local provider.
     UsePreset(ProviderKind),
-    /// Open Settings on the AI section, optionally starting from a provider's settings.
+    /// Open Settings on the AI section, optionally starting from a provider's settings
+    /// (`ProviderKind::TerminalAgent` starts from a terminal agent).
     OpenSettings(Option<ProviderKind>),
+    /// The person read the one-time note about terminal agents.
+    AcknowledgeAgents,
 }
 
 /// Purely visual assistant state.
@@ -97,6 +106,31 @@ pub fn with_assistant_tab(mut dock: DockState<Tab>) -> DockState<Tab> {
         }
         at = parent;
     }
+    dock
+}
+
+/// The layout of the conversation screenshots: the Assistant tab gets a full-height column
+/// beside the code, because a chat needs the room.
+pub fn scene_dock() -> DockState<Tab> {
+    use egui_dock::NodeIndex;
+    let mut dock = DockState::new(vec![Tab::Decompiler]);
+    let surface = dock.main_surface_mut();
+    let [center, _left] = surface.split_left(NodeIndex::root(), 0.17, vec![Tab::Functions]);
+    let [center, _chat] = surface.split_right(center, 0.5, vec![Tab::Assistant]);
+    let [_code, _bottom] = surface.split_below(
+        center,
+        0.68,
+        vec![
+            Tab::Listing,
+            Tab::Graph,
+            Tab::Xrefs,
+            Tab::Hex,
+            Tab::Strings,
+            Tab::Symbols,
+            Tab::History,
+            Tab::Proposals,
+        ],
+    );
     dock
 }
 

@@ -2,10 +2,12 @@
 
 use std::sync::Arc;
 
-use kraken_agent::{Agent, AgentConfig, AgentEvent, ApprovalDecision, Message, StopReason};
+use kraken_agent::{
+    AgentConfig, AgentEvent, ApprovalDecision, ApprovalHandle, Message, StopReason,
+};
 use kraken_assist::{
-    ASSISTANT_ID, Assistant, AutoNameOptions, HostOptions, RegistryToolHost, SelectionKind, Task,
-    TaskKind, TaskOutput, TaskResult,
+    ASSISTANT_ID, AcpBackend, ApiBackend, AssistBackend, Assistant, AutoNameOptions, HostOptions,
+    Purpose, RegistryToolHost, RunSpec, SelectionKind, Task, TaskKind, TaskOutput, TaskResult,
 };
 use kraken_host::backend::CommandBackend;
 use kraken_proto::{Hex64, ProtoError, sanitize};
@@ -15,8 +17,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::review::build_review;
 use super::{
-    ActiveProvider, ActiveRun, AssistBackend, AutoNameState, ChatItem, ExplainCard, InterestingRow,
-    OverviewCard, OverviewOffer, ProposalCard, ProposalState, RunKind, ToolChip,
+    ActiveRun, AutoNameState, BackendChoice, ChatItem, ExplainCard, InterestingRow, OverviewCard,
+    OverviewOffer, PermissionCard, PermissionState, ProposalCard, ProposalState, RunKind, ToolChip,
+    VmCommands,
 };
 use crate::errors::plain_error;
 use crate::state::{Connection, ToastLevel};
@@ -188,7 +191,7 @@ impl ViewModel {
         user_line: String,
         title: String,
         address: Option<u64>,
-    ) -> Option<(u64, ActiveProvider, CancellationToken)> {
+    ) -> Option<(u64, Arc<dyn AssistBackend>, CancellationToken)> {
         self.assist.show_requested = true;
         if self.assist.run.is_some() {
             self.toast(
@@ -204,12 +207,19 @@ impl ViewModel {
             );
             return None;
         }
-        let Some(ap) = self.assist.provider.clone() else {
+        if self.assist.backend.is_none() {
             self.assist.items.push(ChatItem::Notice(
-                "No AI model is set up yet. Choose one under Settings > AI, then ask again."
+                "No AI model or terminal agent is set up yet. Choose one under Settings > AI, then ask again."
                     .to_string(),
             ));
             return None;
+        }
+        let engine = match self.assist_engine() {
+            Ok(e) => e,
+            Err(why) => {
+                self.assist.items.push(ChatItem::Error(why));
+                return None;
+            }
         };
         self.assist.seq += 1;
         let seq = self.assist.seq;
@@ -227,8 +237,141 @@ impl ViewModel {
             address,
             wrote: false,
             last_text: String::new(),
+            approvals: None,
         });
-        Some((seq, ap, cancel))
+        Some((seq, engine, cancel))
+    }
+
+    /// The running backend for the open project: the model API, or the terminal agent set up
+    /// to work on this project. Made once and kept until the project or the choice changes.
+    fn assist_engine(&mut self) -> Result<Arc<dyn AssistBackend>, String> {
+        let Some(active) = self.assist.backend.as_ref() else {
+            return Err("No AI model or terminal agent is set up yet.".to_string());
+        };
+        if let Some(e) = &active.engine {
+            return Ok(e.clone());
+        }
+        let engine: Arc<dyn AssistBackend> = match active.choice.clone() {
+            BackendChoice::Api(p) => Arc::new(ApiBackend::new(p)),
+            BackendChoice::Agent(choice) => self.agent_engine(&choice)?,
+        };
+        if let Some(active) = self.assist.backend.as_mut() {
+            active.engine = Some(engine.clone());
+        }
+        Ok(engine)
+    }
+
+    /// Prepares the terminal agent `choice` on the open project.
+    fn agent_engine(
+        &mut self,
+        choice: &kraken_assist::AgentChoice,
+    ) -> Result<Arc<dyn AssistBackend>, String> {
+        let Some(env) = self.assist.agent_env.clone() else {
+            return Err(
+                "Terminal agents are not available here: KRAKEN cannot tell where to keep agent files."
+                    .to_string(),
+            );
+        };
+        if !env.acknowledged {
+            return Err(
+                "Read the note about terminal agents first (it is shown above the chat), then ask again."
+                    .to_string(),
+            );
+        }
+        let Some(project) = self.project.as_ref().map(|p| p.project_dir.clone()) else {
+            return Err("Open a project first; the agent works on it.".to_string());
+        };
+        let cfg = env.config;
+        let Some(exe) = cfg
+            .kraken_exe
+            .clone()
+            .or_else(|| kraken_assist::find_kraken_exe(cfg.resolver.path_env.as_deref()))
+        else {
+            return Err(
+                "KRAKEN cannot find its own `kraken` command, which the agent needs to reach KRAKEN's tools. Put it next to the window or on PATH, or set KRAKEN_EXE."
+                    .to_string(),
+            );
+        };
+        let project_path = std::path::PathBuf::from(&project);
+        let mut mcp = if cfg.use_daemon {
+            kraken_acp::McpServerConfig::daemon(exe, Some(&project_path))
+        } else {
+            kraken_acp::McpServerConfig::project(exe, &project_path)
+        };
+        for (k, v) in &cfg.mcp_env {
+            mcp = mcp.with_env(k.clone(), v.clone());
+        }
+        let (profiles, _) = crate::agents::profiles(&cfg);
+        let mut settings =
+            kraken_assist::plan_agent(&cfg.resolver, &profiles, choice, &project_path, mcp)
+                .map_err(|e| e.to_string())?;
+        settings.parent_env = cfg.parent_env.clone();
+        settings.start_timeout = cfg.start_timeout;
+        Ok(Arc::new(AcpBackend::new(
+            settings,
+            self.assist.registry.clone(),
+        )))
+    }
+
+    /// Where answers to a terminal agent's permission requests go.
+    fn assist_set_approvals(&mut self, seq: u64, handle: ApprovalHandle) {
+        if let Some(run) = self.assist.run.as_mut().filter(|r| r.seq == seq) {
+            run.approvals = Some(handle);
+        }
+    }
+
+    /// Allows (`true`) or denies (`false`) what the terminal agent asked to do with one of its
+    /// own tools. KRAKEN cannot undo what an allowed tool does.
+    pub fn assist_answer_permission(&mut self, id: &str, allow: bool) {
+        let Some(card) = self.assist.items.iter_mut().find_map(|i| match i {
+            ChatItem::Permission(c) if c.id == id && c.state == PermissionState::Waiting => Some(c),
+            _ => None,
+        }) else {
+            return;
+        };
+        let Some(handle) = self.assist.run.as_ref().and_then(|r| r.approvals.clone()) else {
+            return;
+        };
+        card.state = if allow {
+            PermissionState::Allowed
+        } else {
+            PermissionState::Denied
+        };
+        handle.decide(
+            id,
+            if allow {
+                ApprovalDecision::Approve
+            } else {
+                ApprovalDecision::Deny
+            },
+        );
+    }
+
+    /// Marks permission requests that were never answered as withdrawn (the run is over).
+    fn withdraw_permissions(&mut self) {
+        for item in &mut self.assist.items {
+            if let ChatItem::Permission(c) = item
+                && c.state == PermissionState::Waiting
+            {
+                c.state = PermissionState::Withdrawn;
+            }
+        }
+    }
+
+    /// Shows what the backend wants the person to know (a terminal agent running unconfined).
+    fn assist_backend_notes(&mut self) {
+        let notes = self
+            .assist
+            .backend
+            .as_ref()
+            .and_then(|b| b.engine.as_ref())
+            .map(|e| e.take_notes())
+            .unwrap_or_default();
+        for n in notes {
+            self.assist
+                .items
+                .push(ChatItem::Notice(format!("Note: {}", sanitize(&n))));
+        }
     }
 
     /// Sends one chat message.
@@ -237,13 +380,13 @@ impl ViewModel {
         if text.is_empty() {
             return;
         }
-        let Some((seq, ap, cancel)) =
+        let Some((seq, engine, cancel)) =
             self.assist_begin(RunKind::Chat, text.to_string(), String::new(), None)
         else {
             return;
         };
         let run_id = self.assist.run_ids.next_id();
-        let backend: Arc<dyn CommandBackend> = Arc::new(AssistBackend::new(self.backend().clone()));
+        let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
         let host = Arc::new(RegistryToolHost::new(
             self.assist.registry.clone(),
             backend,
@@ -275,7 +418,14 @@ impl ViewModel {
         };
         let poster = self.poster();
         poster.runtime().clone().spawn(async move {
-            let mut run = Agent::run(messages, host, ap.provider, config);
+            let mut run = engine.start(RunSpec {
+                messages,
+                config,
+                tools: host,
+                purpose: Purpose::Chat,
+            });
+            let handle = run.approvals();
+            poster.post(move |vm| vm.assist_set_approvals(seq, handle));
             let mut stopping = false;
             loop {
                 let ev = tokio::select! {
@@ -289,10 +439,6 @@ impl ViewModel {
                 let Some(ev) = ev else {
                     break;
                 };
-                if let AgentEvent::ApprovalRequired { id, .. } = &ev {
-                    // Nothing dangerous is offered; never leave a run waiting for a person.
-                    run.approvals().decide(id.clone(), ApprovalDecision::Deny);
-                }
                 let done = matches!(ev, AgentEvent::Done { .. });
                 poster.post(move |vm| vm.assist_event(seq, ev));
                 if done {
@@ -326,7 +472,7 @@ impl ViewModel {
             }
         };
         let title = format!("Function at {address:#x}");
-        let Some((seq, ap, cancel)) = self.assist_begin(
+        let Some((seq, engine, cancel)) = self.assist_begin(
             RunKind::ExplainFunction,
             format!("Explain {who}"),
             title,
@@ -334,7 +480,7 @@ impl ViewModel {
         ) else {
             return;
         };
-        self.spawn_task(seq, ap, task, cancel);
+        self.spawn_task(seq, engine, task, cancel);
     }
 
     /// Explains a piece of code the person selected.
@@ -363,7 +509,7 @@ impl ViewModel {
             SelectionKind::Type => "this type",
             SelectionKind::Decompile => "this code",
         };
-        let Some((seq, ap, cancel)) = self.assist_begin(
+        let Some((seq, engine, cancel)) = self.assist_begin(
             RunKind::ExplainSelection,
             format!("Explain {what}: `{shown}`"),
             "Selected code".to_string(),
@@ -371,14 +517,14 @@ impl ViewModel {
         ) else {
             return;
         };
-        self.spawn_task(seq, ap, task, cancel);
+        self.spawn_task(seq, engine, task, cancel);
     }
 
     /// Starts the guided overview of the program.
     pub fn assist_overview(&mut self) {
         let task = Task::overview(&self.assist.registry);
         self.assist.overview_offer = OverviewOffer::Hidden;
-        let Some((seq, ap, cancel)) = self.assist_begin(
+        let Some((seq, engine, cancel)) = self.assist_begin(
             RunKind::Overview,
             "Give me an overview of this program".to_string(),
             "Overview".to_string(),
@@ -386,7 +532,7 @@ impl ViewModel {
         ) else {
             return;
         };
-        self.spawn_task(seq, ap, task, cancel);
+        self.spawn_task(seq, engine, task, cancel);
     }
 
     /// Dismisses the "get an overview" banner.
@@ -404,7 +550,7 @@ impl ViewModel {
                 dry_run: true,
             },
         );
-        let Some((seq, ap, cancel)) = self.assist_begin(
+        let Some((seq, engine, cancel)) = self.assist_begin(
             RunKind::AutoName,
             "Suggest names for functions that still have placeholder names".to_string(),
             "Suggested names".to_string(),
@@ -413,7 +559,7 @@ impl ViewModel {
             return;
         };
         self.assist.autoname = AutoNameState::Running;
-        self.spawn_task(seq, ap, task, cancel);
+        self.spawn_task(seq, engine, task, cancel);
     }
 
     /// Asks the run in flight to stop.
@@ -441,10 +587,20 @@ impl ViewModel {
         }
     }
 
-    fn spawn_task(&mut self, seq: u64, ap: ActiveProvider, task: Task, cancel: CancellationToken) {
-        let backend: Arc<dyn CommandBackend> = Arc::new(AssistBackend::new(self.backend().clone()));
-        let assistant = Assistant::new(self.assist.registry.clone(), backend, ap.provider)
-            .with_surface(Surface::Gui);
+    fn spawn_task(
+        &mut self,
+        seq: u64,
+        engine: Arc<dyn AssistBackend>,
+        task: Task,
+        cancel: CancellationToken,
+    ) {
+        let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
+        let approver = self.poster();
+        let assistant = Assistant::with_engine(self.assist.registry.clone(), backend, engine)
+            .with_surface(Surface::Gui)
+            .with_approver(move |handle| {
+                approver.post(move |vm| vm.assist_set_approvals(seq, handle));
+            });
         let poster = self.poster();
         let handle = poster.runtime().clone();
         let worker = poster.clone();
@@ -511,11 +667,14 @@ impl ViewModel {
                     append_text(&mut self.assist.items, &tail);
                 }
                 end_stream(&mut self.assist.items);
+                let own_tool = self.assist.backend.as_ref().is_some_and(|b| b.is_agent())
+                    && self.assist.registry.get(&name).is_none();
                 self.assist.items.push(ChatItem::Tool(ToolChip {
                     id,
                     name: sanitize(&name),
                     args_short: short_args(&arguments),
                     args: arguments,
+                    own_tool,
                     summary: None,
                     is_error: false,
                 }));
@@ -574,7 +733,33 @@ impl ViewModel {
                 self.refresh_proposals();
                 self.refresh_project();
             }
-            AgentEvent::ApprovalRequired { .. } => {}
+            AgentEvent::ApprovalRequired {
+                id,
+                name,
+                arguments,
+            } => {
+                let text = |k: &str| {
+                    arguments
+                        .get(k)
+                        .and_then(Value::as_str)
+                        .map(sanitize)
+                        .filter(|s| !s.is_empty())
+                };
+                let paths = arguments
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).map(sanitize).collect())
+                    .unwrap_or_default();
+                end_stream(&mut self.assist.items);
+                self.assist.items.push(ChatItem::Permission(PermissionCard {
+                    id,
+                    title: sanitize(&name),
+                    kind: text("kind"),
+                    input: text("input"),
+                    paths,
+                    state: PermissionState::Waiting,
+                }));
+            }
             AgentEvent::Error { message } => {
                 if kind == RunKind::Chat {
                     let text = sanitize(&message);
@@ -591,6 +776,8 @@ impl ViewModel {
                 let wrote = run.wrote;
                 let final_text = std::mem::take(&mut run.last_text);
                 self.assist.run = None;
+                self.withdraw_permissions();
+                self.assist_backend_notes();
                 if !tail.is_empty() {
                     append_text(&mut self.assist.items, &tail);
                 }
@@ -634,6 +821,8 @@ impl ViewModel {
         };
         self.assist.usage.add(result.usage);
         end_stream(&mut self.assist.items);
+        self.withdraw_permissions();
+        self.assist_backend_notes();
         let first = run.first_item.min(self.assist.items.len());
         let cancelled = result.stop == StopReason::Cancelled;
         let failed = result.stop == StopReason::Error;

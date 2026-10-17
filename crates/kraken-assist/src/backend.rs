@@ -1,0 +1,166 @@
+//! The assistant backend: what answers a run.
+//!
+//! Two implementations stand behind one trait (decision 94):
+//!
+//! - [`ApiBackend`]: a chat model API (Ollama, Anthropic, ...) driven by the `kraken-agent`
+//!   loop over a [`RegistryToolHost`](crate::RegistryToolHost).
+//! - [`AcpBackend`](crate::AcpBackend): a terminal agent (Claude Code, Codex, Gemini CLI) driven
+//!   over ACP, which reaches KRAKEN's tools through the `kraken mcp` server it is launched with.
+//!
+//! Both turn a [`RunSpec`] into an [`AgentRun`], the same stream of [`AgentEvent`]s, so tasks,
+//! chat, the CLI and the GUI do not care which one is selected.
+
+use std::sync::Arc;
+
+use kraken_agent::{Agent, AgentConfig, AgentRun, ChatProvider, Message, ProviderInfo, ToolHost};
+use serde::{Deserialize, Serialize};
+
+use crate::host::HostStats;
+
+/// Which kind of backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendKind {
+    /// A chat model API (cloud or local).
+    #[default]
+    Api,
+    /// A terminal agent over ACP.
+    TerminalAgent,
+}
+
+/// What the UI shows about the backend in use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendInfo {
+    /// Which kind.
+    pub kind: BackendKind,
+    /// Provider id (API) or agent id (terminal agent).
+    pub id: String,
+    /// Display name: the model service, or the agent ("Claude Code").
+    pub name: String,
+    /// The model, when known. A terminal agent may only say after it has started.
+    pub model: Option<String>,
+}
+
+impl BackendInfo {
+    /// `Anthropic (Claude) / claude-sonnet-5-5`, or just the name when no model is known.
+    pub fn title(&self) -> String {
+        match self.model.as_deref().filter(|m| !m.is_empty()) {
+            Some(m) => format!("{} / {m}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// What a run is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// A turn of the conversation; a terminal agent keeps its session between turns.
+    Chat,
+    /// A one-shot task in a fresh session.
+    Task {
+        /// The task must not change the project.
+        read_only: bool,
+    },
+}
+
+/// Everything a backend needs to start a run.
+pub struct RunSpec {
+    /// The conversation; the last message is the new one. A terminal agent keeps its own
+    /// history, so it only reads this to catch up when its session is new.
+    pub messages: Vec<Message>,
+    /// Budgets, the run id and the trusted instructions (`system_extra`).
+    pub config: AgentConfig,
+    /// The tools of the API loop. A terminal agent ignores it: it uses the `kraken mcp` server.
+    pub tools: Arc<dyn ToolHost>,
+    /// What the run is for.
+    pub purpose: Purpose,
+}
+
+/// Something that answers runs. Implementations must be cheap to share.
+pub trait AssistBackend: Send + Sync {
+    /// What to show about the backend.
+    fn info(&self) -> BackendInfo;
+
+    /// The facts the task results carry (`TaskResult::provider`).
+    fn provider_info(&self) -> ProviderInfo;
+
+    /// Starts a run on the current tokio runtime. The stream ends after `Done`.
+    fn start(&self, spec: RunSpec) -> AgentRun;
+
+    /// What the backend did for run `run_id`, when it saw the tool calls itself (a terminal agent
+    /// calls the tools in another process). `None`: ask the tool host.
+    fn take_stats(&self, _run_id: &str) -> Option<HostStats> {
+        None
+    }
+
+    /// Things worth telling the person that came up since the last call (the agent runs outside
+    /// KRAKEN's confinement, ...).
+    fn take_notes(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Ends anything kept between runs (a terminal agent's session).
+    fn close(&self) {}
+}
+
+/// A chat model API behind the `kraken-agent` loop.
+pub struct ApiBackend {
+    provider: Arc<dyn ChatProvider>,
+}
+
+impl ApiBackend {
+    /// A backend over `provider`.
+    pub fn new(provider: Arc<dyn ChatProvider>) -> Self {
+        ApiBackend { provider }
+    }
+}
+
+impl AssistBackend for ApiBackend {
+    fn info(&self) -> BackendInfo {
+        let i = self.provider.info();
+        BackendInfo {
+            kind: BackendKind::Api,
+            name: i.id.clone(),
+            id: i.id,
+            model: (!i.model.is_empty()).then_some(i.model),
+        }
+    }
+
+    fn provider_info(&self) -> ProviderInfo {
+        self.provider.info()
+    }
+
+    fn start(&self, spec: RunSpec) -> AgentRun {
+        Agent::run(
+            spec.messages,
+            spec.tools,
+            self.provider.clone(),
+            spec.config,
+        )
+    }
+}
+
+/// A command backend that refuses every call. A terminal agent reaches the registry through its
+/// own `kraken mcp` server, so a run on it never uses the API path's tool host; this fills the
+/// slot where an [`Assistant`](crate::Assistant) wants one.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnusedBackend;
+
+#[async_trait::async_trait]
+impl kraken_host::backend::CommandBackend for UnusedBackend {
+    async fn call(
+        &self,
+        name: &str,
+        _ctx: &kraken_registry::CallContext,
+        _args: serde_json::Value,
+    ) -> Result<serde_json::Value, kraken_proto::ProtoError> {
+        Err(kraken_proto::ProtoError::new(
+            kraken_proto::ErrorCode::Unsupported,
+            format!("`{name}` is not served here; a terminal agent uses its own KRAKEN tools"),
+        ))
+    }
+
+    fn take_warnings(&self) -> Vec<String> {
+        Vec::new()
+    }
+}

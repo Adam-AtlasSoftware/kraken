@@ -4,7 +4,8 @@ use egui::{Align, Color32, Frame, Id, Key, Layout, Margin, RichText, Sense, Stro
 use kraken_gui_widgets::Palette;
 use kraken_viewmodel::ViewModel;
 use kraken_viewmodel::assist::{
-    ChatItem, ExplainCard, OverviewCard, ProposalCard, ProposalState, ProviderKind, ToolChip,
+    ChatItem, ExplainCard, OverviewCard, PermissionCard, PermissionState, ProposalCard,
+    ProposalState, ProviderKind, ToolChip,
 };
 
 use super::text;
@@ -23,6 +24,7 @@ const STARTERS: [&str; 3] = [
 struct Acts {
     goto: Option<u64>,
     decide: Vec<(String, bool)>,
+    answer: Vec<(String, bool)>,
     rename: Option<(u64, String)>,
 }
 
@@ -33,7 +35,7 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     ui.add_space(2.0);
     ui.separator();
 
-    if vm.assist.provider.is_none() && vm.assist.items.is_empty() {
+    if vm.assist.backend.is_none() && vm.assist.items.is_empty() {
         setup_state(ui, vm, &mut st.assist);
         goto(vm, st);
         return;
@@ -83,6 +85,9 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     for (call_id, accept) in acts.decide {
         vm.assist_decide_proposal(&call_id, accept);
     }
+    for (id, allow) in acts.answer {
+        vm.assist_answer_permission(&id, allow);
+    }
     if let Some((addr, name)) = acts.rename {
         vm.begin_rename(addr, None);
         vm.set_rename_input(name);
@@ -101,18 +106,32 @@ fn goto(vm: &mut ViewModel, st: &mut UiState) {
 fn header(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
-    ui.horizontal_wrapped(|ui| match &vm.assist.provider {
-        Some(ap) => {
-            ui.label(medium(ap.badge.title(), 13.0).color(p.text_strong))
-                .on_hover_text("The AI model answering. Change it under Settings > AI.");
-            if ap.badge.local {
-                chip(ui, "on this computer", s.success).on_hover_text(ap.badge.privacy());
+    let badge = vm.assist.badge();
+    ui.horizontal_wrapped(|ui| match &badge {
+        Some(b) => {
+            ui.label(medium(b.title(), 13.0).color(p.text_strong))
+                .on_hover_text(if b.terminal_agent {
+                    "The terminal agent answering. Change it under Settings > AI."
+                } else {
+                    "The AI model answering. Change it under Settings > AI."
+                });
+            if b.terminal_agent {
+                chip(ui, "terminal agent", s.info).on_hover_text(b.privacy());
+                if b.model.is_empty() {
+                    ui.label(
+                        RichText::new("model chosen by the agent")
+                            .size(11.5)
+                            .color(p.text_dim),
+                    );
+                }
+            } else if b.local {
+                chip(ui, "on this computer", s.success).on_hover_text(b.privacy());
             } else {
-                chip(ui, "cloud service", s.warning).on_hover_text(ap.badge.privacy());
+                chip(ui, "cloud service", s.warning).on_hover_text(b.privacy());
             }
         }
         None => {
-            ui.label(medium("No AI model set up", 13.0).color(p.text_dim));
+            ui.label(medium("No AI model or agent set up", 13.0).color(p.text_dim));
         }
     });
     ui.horizontal(|ui| {
@@ -126,7 +145,7 @@ fn header(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi) {
         }
         if ui
             .add(egui::Button::new("Settings").small())
-            .on_hover_text("Choose the AI model and API key")
+            .on_hover_text("Choose the AI model or terminal agent")
             .clicked()
         {
             a.requests.push(AssistRequest::OpenSettings(None));
@@ -166,7 +185,7 @@ fn setup_state(ui: &mut Ui, vm: &ViewModel, a: &mut AssistUi) {
             ui.add_space(2.0);
             ui.label(
                 RichText::new(
-                    "The assistant reads the code for you, explains it in plain language and can suggest names for functions. It needs an AI model to talk to. Pick one to get started; you can change it any time under Settings > AI.",
+                    "The assistant reads the code for you, explains it in plain language and can suggest names for functions. It needs an AI model or a terminal agent to work with. Pick one to get started; you can change it any time under Settings > AI.",
                 )
                 .color(p.text_dim),
             );
@@ -189,6 +208,15 @@ fn setup_state(ui: &mut Ui, vm: &ViewModel, a: &mut AssistUi) {
                 preset_row(ui, a, &p, kind, false);
             }
             ui.add_space(10.0);
+            ui.label(
+                medium(
+                    "Terminal agents (Claude Code, Codex, Gemini CLI; they run on your computer)",
+                    13.0,
+                )
+                .color(p.text_strong),
+            );
+            preset_row(ui, a, &p, ProviderKind::TerminalAgent, false);
+            ui.add_space(10.0);
             if ui.button("More options in Settings").clicked() {
                 a.requests.push(AssistRequest::OpenSettings(None));
             }
@@ -201,7 +229,10 @@ fn preset_row(ui: &mut Ui, a: &mut AssistUi, p: &Palette, kind: ProviderKind, on
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(medium(kind.label(), 13.5).color(p.text_strong));
-                ui.label(RichText::new(kind.help()).size(12.0).color(p.text_dim));
+                ui.add(
+                    egui::Label::new(RichText::new(kind.help()).size(12.0).color(p.text_dim))
+                        .wrap(),
+                );
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if one_click {
@@ -238,17 +269,25 @@ fn welcome(ui: &mut Ui, vm: &mut ViewModel, p: &Palette) {
 
 fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
     let busy = vm.assist.busy();
+    let has_backend = vm.assist.backend.is_some();
+    if vm.assist.agent_notice_pending() {
+        let s = style::status(style::dark(ui));
+        if super::agents_ui::notice_card(ui, p, &s, "I understand") {
+            a.requests.push(AssistRequest::AcknowledgeAgents);
+        }
+        ui.add_space(4.0);
+    }
     ui.horizontal(|ui| {
         let w = (ui.available_width() - 70.0).max(80.0);
         let edit = egui::TextEdit::singleline(&mut a.input)
             .id(Id::new("kraken_assist_input_text"))
-            .hint_text(if vm.assist.provider.is_some() {
+            .hint_text(if has_backend {
                 "Ask about this program..."
             } else {
-                "Set up an AI model first (Settings > AI)"
+                "Set up an AI model or agent first (Settings > AI)"
             })
             .desired_width(w);
-        let r = ui.add_enabled(vm.assist.provider.is_some(), edit);
+        let r = ui.add_enabled(has_backend, edit);
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         if a.focus_input {
             a.focus_input = false;
@@ -264,7 +303,7 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
             }
         } else {
             let send = ui.add_enabled(
-                vm.assist.provider.is_some() && !a.input.trim().is_empty(),
+                has_backend && !a.input.trim().is_empty(),
                 egui::Button::new("Send"),
             );
             if send.clicked() || (enter && !a.input.trim().is_empty()) {
@@ -275,12 +314,14 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
         }
     });
     let u = vm.assist.usage;
-    let model = vm
-        .assist
-        .provider
+    let badge = vm.assist.badge();
+    let model = badge
         .as_ref()
-        .map_or_else(|| "no model".to_string(), |ap| ap.badge.title());
-    let line = if u.total() > 0 {
+        .map_or_else(|| "no model".to_string(), |b| b.title());
+    let agent = badge.as_ref().is_some_and(|b| b.terminal_agent);
+    let line = if agent {
+        format!("{model}  \u{00b7}  terminal agents do not report token use")
+    } else if u.total() > 0 {
         format!(
             "{model}  \u{00b7}  {} tokens used ({} in, {} out)",
             fmt_count(u.total()),
@@ -312,7 +353,16 @@ fn progress(ui: &mut Ui, vm: &ViewModel, p: &Palette) {
     let Some(kind) = vm.assist.running() else {
         return;
     };
+    let asking = vm
+        .assist
+        .items
+        .iter()
+        .any(|i| matches!(i, ChatItem::Permission(c) if c.state == PermissionState::Waiting));
     ui.horizontal(|ui| {
+        if asking && !vm.assist.stopping() {
+            ui.label(RichText::new("Waiting for your answer above").color(p.text_dim));
+            return;
+        }
         ui.spinner();
         let text = if vm.assist.stopping() {
             "Stopping..."
@@ -348,6 +398,7 @@ fn draw_item(ui: &mut Ui, vm: &ViewModel, p: &Palette, item: &ChatItem, acts: &m
         }
         ChatItem::Tool(c) => tool_chip(ui, p, &s, c),
         ChatItem::Proposal(c) => proposal_card(ui, p, &s, c, acts),
+        ChatItem::Permission(c) => permission_card(ui, p, &s, c, acts),
         ChatItem::Explanation(c) => explain_card(ui, vm, p, c, acts),
         ChatItem::Overview(c) => overview_card(ui, vm, p, c, acts),
         ChatItem::Notice(t) => {
@@ -426,6 +477,12 @@ fn tool_chip(ui: &mut Ui, p: &Palette, s: &style::Status, c: &ToolChip) {
             let row = ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
                 ui.painter().circle_filled(rect.center(), 3.5, dot);
+                if c.own_tool {
+                    ui.label(RichText::new("agent tool").size(10.0).color(s.warning))
+                        .on_hover_text(
+                            "One of the agent's own tools, outside KRAKEN's safety net",
+                        );
+                }
                 let (tri, _) = ui.allocate_exact_size(vec2(9.0, 14.0), Sense::hover());
                 let c0 = tri.center();
                 let points = if open {
@@ -457,17 +514,15 @@ fn tool_chip(ui: &mut Ui, p: &Palette, s: &style::Status, c: &ToolChip) {
             }
             if open {
                 ui.add_space(2.0);
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!(
-                            "The assistant asked KRAKEN to run `{}` ({state}).",
-                            c.name
-                        ))
-                        .size(12.0)
-                        .color(p.text_dim),
+                let who = if c.own_tool {
+                    format!(
+                        "The agent used one of its own tools, `{}` ({state}). KRAKEN cannot undo what it does.",
+                        c.name
                     )
-                    .wrap(),
-                );
+                } else {
+                    format!("The assistant asked KRAKEN to run `{}` ({state}).", c.name)
+                };
+                ui.add(egui::Label::new(RichText::new(who).size(12.0).color(p.text_dim)).wrap());
                 let args = serde_json::to_string_pretty(&c.args).unwrap_or_default();
                 ui.add(egui::Label::new(RichText::new(args).monospace().size(11.5)).wrap());
                 if let Some(sum) = &c.summary {
@@ -483,6 +538,79 @@ fn tool_chip(ui: &mut Ui, p: &Palette, s: &style::Status, c: &ToolChip) {
             }
         });
     ui.data_mut(|d| d.insert_temp(id, open));
+}
+
+/// A terminal agent asking to use one of its own tools.
+fn permission_card(
+    ui: &mut Ui,
+    p: &Palette,
+    s: &style::Status,
+    c: &PermissionCard,
+    acts: &mut Acts,
+) {
+    if c.state != PermissionState::Waiting {
+        let (word, color) = match c.state {
+            PermissionState::Allowed => ("Allowed", s.success),
+            PermissionState::Denied => ("Denied", s.danger),
+            _ => ("Withdrawn", p.text_dim),
+        };
+        ui.horizontal_wrapped(|ui| {
+            chip(ui, word, color);
+            ui.add(
+                egui::Label::new(RichText::new(&c.title).size(12.5).color(p.text_dim)).truncate(),
+            );
+        });
+        return;
+    }
+    Frame::new()
+        .fill(p.surface)
+        .stroke(Stroke::new(1.0, s.warning.gamma_multiply(0.7)))
+        .corner_radius(8)
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                chip(ui, "asks permission", s.warning);
+                if let Some(k) = &c.kind {
+                    ui.label(RichText::new(k).size(11.5).color(p.text_dim));
+                }
+            });
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(medium(&c.title, 13.5).color(p.text_strong)).wrap());
+            if let Some(input) = &c.input {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(input)
+                            .monospace()
+                            .size(11.5)
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+            }
+            for path in &c.paths {
+                ui.label(RichText::new(path).monospace().size(11.5).color(p.text_dim));
+            }
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "This is one of the agent's own tools. KRAKEN cannot undo what it does.",
+                    )
+                    .size(11.5)
+                    .color(p.text_dim),
+                )
+                .wrap(),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if style::primary_button(ui, "Allow once").clicked() {
+                    acts.answer.push((c.id.clone(), true));
+                }
+                if ui.button("Deny").clicked() {
+                    acts.answer.push((c.id.clone(), false));
+                }
+            });
+        });
 }
 
 fn proposal_card(ui: &mut Ui, p: &Palette, s: &style::Status, c: &ProposalCard, acts: &mut Acts) {

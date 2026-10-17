@@ -48,6 +48,6 @@ The rewrite commands (`rewrite_function`, `rewrite_export`) build and run Rust t
 - **A local model's engine is not sandboxed.** `kraken infer` runs `llama-server` (or an engine from a manifest) as your user, listening on 127.0.0.1 only, with a filtered environment (no API keys). Run only engine programs and model files you trust, and only manifests you wrote or reviewed: a manifest names a program to run. See [Running a model on this computer](local-models.md).
 - **Project folders are trusted.** Do not open a project folder from someone you do not trust.
 
-> **Warning (placeholder).** In a future release, KRAKEN's GUI will start terminal agents over ACP and show a one-time notice that they run outside KRAKEN's safety model. That feature does not exist in 0.1a.
+> **Terminal agents as the assistant.** When you choose Claude Code, Codex or Gemini CLI as the assistant (in Settings > AI or in `config.toml`), KRAKEN shows a one-time notice that the agent runs outside KRAKEN's safety model, asks before it answers an agent's permission request for one of the agent's own tools, and answers requests for KRAKEN's own tools by the registry's policy. See [The built-in assistant](assistant.md#terminal-agents).
 
 See the design decisions on [sidecar confinement](design/0007-sidecar-confinement.md) and [agent safety](design/0005-agent-safety.md).

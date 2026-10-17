@@ -124,10 +124,7 @@ fn chat_streams_text_and_shows_tool_chips_with_results() {
     assert!(text.contains("allocation failure"));
     assert!(!streaming);
     assert!(r.vm.assist.usage.total() > 0, "usage is counted");
-    assert_eq!(
-        r.vm.assist.provider.as_ref().expect("provider").badge.model,
-        "test-model"
-    );
+    assert_eq!(r.vm.assist.badge().expect("backend").model, "test-model");
     // The conversation is remembered for the next question.
     assert_eq!(r.vm.assist.history.len(), 2);
     assert!(
@@ -273,6 +270,7 @@ fn stop_cancels_a_run_that_is_waiting_for_the_model() {
             service: "Hang".into(),
             model: "never".into(),
             local: true,
+            terminal_agent: false,
         },
     );
     r.vm.assist_send("Anything?");
@@ -333,6 +331,7 @@ fn model_failures_are_explained_not_hidden() {
             service: "Broken".into(),
             model: "m".into(),
             local: false,
+            terminal_agent: false,
         },
     );
     r.vm.assist_send("hello");
@@ -707,6 +706,74 @@ fn provider_settings_round_trip_through_config_toml_and_keep_other_keys() {
             .expect("read")
             .contains("per_run_cap")
     );
+}
+
+#[test]
+fn a_terminal_agent_is_saved_in_the_same_table_and_the_cli_reads_it() {
+    let (_dir, store) = temp_store();
+    let path = store.config_path.clone().expect("path");
+    std::fs::create_dir_all(path.parent().expect("dir")).expect("mkdir");
+    std::fs::write(&path, "per_run_cap = 9\n").expect("seed");
+
+    let mut d = ProviderDraft::for_agent("codex");
+    d.model = "gpt-5".into();
+    d.agent_args = "--flag  value".into();
+    let out = store.save(&d).expect("save");
+    assert_eq!(
+        out.config,
+        kraken_agent::ProviderConfig::TerminalAgent {
+            agent: "codex".into(),
+            model: Some("gpt-5".into()),
+            args: vec!["--flag".into(), "value".into()],
+        }
+    );
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(text.contains("kind = \"terminal_agent\""), "{text}");
+    assert!(text.contains("agent = \"codex\""), "{text}");
+    assert!(
+        text.contains("per_run_cap = 9"),
+        "other keys survive\n{text}"
+    );
+    assert!(
+        !text.contains("api_key") && !text.contains("null"),
+        "{text}"
+    );
+
+    // The CLI reads the same table, and the form comes back as it was.
+    let cli = kraken_assist::load_provider_config(Some(&path)).expect("cli load");
+    assert_eq!(cli, out.config);
+    let back = ProviderDraft::from_config(&cli);
+    assert_eq!(back.kind, ProviderKind::TerminalAgent);
+    assert_eq!(back.agent, "codex");
+    assert_eq!(back.model, "gpt-5");
+    assert_eq!(back.agent_args, "--flag value");
+
+    // It is a backend choice, not a chat model, and its badge says so.
+    match store.choice(&out.config).expect("choice") {
+        BackendChoice::Agent(a) => assert_eq!(a.agent, "codex"),
+        BackendChoice::Api(_) => panic!("an agent is not a model API"),
+    }
+    let b = badge_of(&out.config);
+    assert!(b.terminal_agent && !b.local);
+    assert_eq!(b.service, "Codex");
+    assert!(b.privacy().contains("outside KRAKEN's safety net"));
+    assert!(store.build(&out.config).is_err());
+
+    // Nothing to choose, nothing to save.
+    let mut empty = ProviderDraft::for_agent("");
+    empty.agent = "  ".into();
+    assert!(store.configure(&empty).is_err());
+
+    // Switching back to a model API replaces the table.
+    let api = store
+        .save(&ProviderDraft::preset(ProviderKind::Ollama))
+        .expect("save api");
+    assert!(matches!(
+        api.config,
+        kraken_agent::ProviderConfig::OpenaiCompatible { .. }
+    ));
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(!text.contains("terminal_agent"), "{text}");
 }
 
 #[test]

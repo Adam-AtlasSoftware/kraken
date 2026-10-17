@@ -13,7 +13,7 @@ use kraken_host::KrakenConfig;
 use crate::error::AssistError;
 
 /// Example `[provider]` tables: a heading and the TOML for each supported kind.
-pub const SAMPLES: [(&str, &str); 5] = [
+pub const SAMPLES: [(&str, &str); 6] = [
     (
         "Ollama (local; run `ollama serve` and `ollama pull <model>` first)",
         "[provider]\nkind = \"openai_compatible\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"qwen3:14b\"\n",
@@ -33,6 +33,10 @@ pub const SAMPLES: [(&str, &str); 5] = [
     (
         "OpenAI (cloud)",
         "[provider]\nkind = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\nmodel = \"gpt-4.1\"\napi_key = { env = \"OPENAI_API_KEY\" }\n",
+    ),
+    (
+        "Claude Code (a terminal agent; or agent = \"codex\" or \"gemini\". Set it up with `kraken agents setup claude`; it signs in by itself)",
+        "[provider]\nkind = \"terminal_agent\"\nagent = \"claude\"\n",
     ),
 ];
 
@@ -75,7 +79,8 @@ pub fn no_provider_message(path: Option<&Path>) -> String {
          The assistant needs a chat model. Add a [provider] table to {where_} \
          (KRAKEN_CONFIG overrides the location). Pick one (keep a single [provider] table):\n\n{}\n\
          Local models (Ollama, LM Studio, llama-server) keep everything on your machine; \
-         cloud providers receive the decompiled code the assistant reads. \
+         cloud providers and terminal agents (Claude Code, Codex, Gemini CLI) send the decompiled \
+         code the assistant reads to their service. \
          Models that cannot call tools can still explain text but cannot browse the program.",
         sample_config()
     )
@@ -121,7 +126,14 @@ mod tests {
         }
         ProviderConfig::from_toml(&sample_config()).expect("the sample file");
         let msg = no_provider_message(None);
-        for name in ["Ollama", "LM Studio", "llama-server", "Anthropic", "OpenAI"] {
+        for name in [
+            "Ollama",
+            "LM Studio",
+            "llama-server",
+            "Anthropic",
+            "OpenAI",
+            "Claude Code",
+        ] {
             assert!(msg.contains(name), "{name}");
         }
     }

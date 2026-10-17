@@ -228,6 +228,31 @@ impl AgentProfile {
         self
     }
 
+    /// Applies what the person chose in the assistant settings: a model and extra arguments.
+    ///
+    /// How a model is asked for depends on the agent. Claude Code reads `ANTHROPIC_MODEL`,
+    /// Codex takes a `-c model="..."` override and Gemini CLI takes `--model`. A custom agent
+    /// has no known way, so its model is left to the agent. `extra_args` go last.
+    #[must_use]
+    pub fn with_choice(mut self, model: Option<&str>, extra_args: &[String]) -> Self {
+        if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+            match self.id.as_str() {
+                "claude" => self.env.push(("ANTHROPIC_MODEL".into(), m.into())),
+                "codex" => {
+                    self.args.push("-c".into());
+                    self.args.push(format!("model=\"{m}\""));
+                }
+                "gemini" => {
+                    self.args.push("--model".into());
+                    self.args.push(m.into());
+                }
+                _ => {}
+            }
+        }
+        self.args.extend(extra_args.iter().cloned());
+        self
+    }
+
     /// The environment the agent process gets, built from `parent`: only allowlisted variables
     /// (never `KRAKEN_*`), then the fixed variables of the profile.
     pub fn child_env(
@@ -319,6 +344,30 @@ mod tests {
         let allow = p.clone().allow_env("KRAKEN_*");
         let out = allow.child_env(env(&[("KRAKEN_RUNTIME_DIR", "/r")]));
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn the_chosen_model_and_arguments_reach_each_agent_its_own_way() {
+        let extra = vec!["--flag".to_string()];
+        let c = builtin_profile("claude")
+            .expect("claude")
+            .with_choice(Some("opus"), &extra);
+        assert!(c.env.contains(&("ANTHROPIC_MODEL".into(), "opus".into())));
+        assert_eq!(c.args, ["--flag"]);
+        let x = builtin_profile("codex")
+            .expect("codex")
+            .with_choice(Some("o4"), &[]);
+        assert_eq!(x.args, ["-c", "model=\"o4\""]);
+        let g = builtin_profile("gemini")
+            .expect("gemini")
+            .with_choice(Some(" gemini-pro "), &extra);
+        assert_eq!(g.args, ["--acp", "--model", "gemini-pro", "--flag"]);
+        let custom = AgentProfile::custom("x", "X", "x", vec![]).with_choice(Some("m"), &[]);
+        assert!(custom.args.is_empty() && custom.env.is_empty());
+        let none = builtin_profile("claude")
+            .expect("claude")
+            .with_choice(Some("  "), &[]);
+        assert!(none.env.is_empty());
     }
 
     #[test]

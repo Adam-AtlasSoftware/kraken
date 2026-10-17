@@ -32,7 +32,7 @@ pub struct Services {
     pub connector: Option<Connector>,
     /// The in-process engine factory of `--no-daemon`.
     pub ghidra: Option<Arc<HostEngineFactory>>,
-    /// Where the Agents tab finds agents (`None`: the user's directories, on first use).
+    /// Where terminal agents are found (`None`: the user's directories, on first use).
     pub agents: Option<kraken_viewmodel::agents::AgentsConfig>,
 }
 

@@ -119,8 +119,6 @@ pub struct ViewModel {
     pub views: ProgramViews,
     /// The AI assistant: chat, explanations, overview, auto-naming, learn mode.
     pub assist: crate::assist::AssistState,
-    /// Terminal agents (Claude Code, Codex, Gemini CLI): the list, setup and the live session.
-    pub agents: crate::agents::AgentsState,
     announced: std::collections::HashSet<u64>,
     /// Undoing an older edit with the edits that depend on it, and stale functions.
     pub undo: crate::history::UndoFlow,
@@ -294,7 +292,6 @@ impl ViewModel {
             link: LinkState::Connected,
             views: ProgramViews::default(),
             assist: crate::assist::AssistState::default(),
-            agents: crate::agents::AgentsState::default(),
             announced: std::collections::HashSet::new(),
             undo: crate::history::UndoFlow::default(),
             job_watch: JobWatch {
@@ -547,7 +544,6 @@ impl ViewModel {
         self.proposals = ProposalsPanel::default();
         self.analysis = AnalysisState::default();
         self.assist.reset_for_project();
-        self.agents_project_changed();
         self.detail_seq += 1;
         self.decompile_seq += 1;
         self.views.reset();

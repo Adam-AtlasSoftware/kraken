@@ -2,7 +2,7 @@
 
 KRAKEN's terminal-agent host (0.3, decisions 12, 35, 50, 69). It launches Claude Code, Codex and
 Gemini CLI (or any ACP agent) over the Agent Client Protocol, pre-connected to `kraken mcp`, and
-reports what they do as `AcpEvent`s for a chat UI. User documentation: `docs/agents.md`.
+reports what they do as `AcpEvent`s for a chat UI. User documentation: `docs/assistant.md` (terminal agents section).
 
 ## Research notes (checked 2026-10-16)
 

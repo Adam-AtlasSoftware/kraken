@@ -73,6 +73,7 @@ pub fn scripted_provider(
             service: "Demo script (offline)".to_string(),
             model: model.to_string(),
             local: true,
+            terminal_agent: false,
         },
     )
 }

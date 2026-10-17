@@ -113,6 +113,19 @@ pub enum ProviderConfig {
     },
     /// Deterministic replay of a recorded cassette file.
     Replay { cassette: PathBuf },
+    /// A terminal agent (Claude Code, Codex, Gemini CLI) driven over ACP instead of a chat API.
+    /// It is not a [`ChatProvider`]: `kraken-assist` runs it as its own backend, so
+    /// [`ProviderConfig::build`] refuses it.
+    TerminalAgent {
+        /// Agent id: `claude`, `codex`, `gemini`, or an id from `agents.toml`.
+        agent: String,
+        /// The model to ask the agent for, when the adapter supports choosing one.
+        #[serde(default)]
+        model: Option<String>,
+        /// Extra command-line arguments for the agent, appended after its own.
+        #[serde(default)]
+        args: Vec<String>,
+    },
 }
 
 fn default_anthropic_key() -> SecretRef {
@@ -192,6 +205,11 @@ impl ProviderConfig {
                     .with_context_window(*context_window),
             ),
             ProviderConfig::Replay { cassette } => Arc::new(ReplayProvider::from_path(cassette)?),
+            ProviderConfig::TerminalAgent { agent, .. } => {
+                return Err(AgentError::Unsupported(format!(
+                    "`{agent}` is a terminal agent, not a chat model API; it runs through the assistant's agent backend"
+                )));
+            }
         })
     }
 }
@@ -245,6 +263,34 @@ api_key = { env = "MY_KEY" }
             }
         ));
         assert!(ProviderConfig::from_toml("[provider]\nkind = \"nope\"").is_err());
+    }
+
+    #[test]
+    fn terminal_agent_parses_and_is_not_a_chat_provider() {
+        let c = ProviderConfig::from_toml(
+            "[provider]\nkind = \"terminal_agent\"\nagent = \"claude\"\nmodel = \"opus\"\nargs = [\"--x\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            c,
+            ProviderConfig::TerminalAgent {
+                agent: "claude".into(),
+                model: Some("opus".into()),
+                args: vec!["--x".into()],
+            }
+        );
+        let min =
+            ProviderConfig::from_toml("[provider]\nkind = \"terminal_agent\"\nagent = \"codex\"\n")
+                .unwrap();
+        assert!(matches!(
+            min,
+            ProviderConfig::TerminalAgent { model: None, ref args, .. } if args.is_empty()
+        ));
+        assert!(matches!(
+            c.build(&EnvSecrets),
+            Err(AgentError::Unsupported(_))
+        ));
+        assert!(ProviderConfig::from_toml("[provider]\nkind = \"terminal_agent\"").is_err());
     }
 
     #[test]

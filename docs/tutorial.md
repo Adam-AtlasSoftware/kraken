@@ -127,7 +127,7 @@ Put the clues together. The inputs are arithmetic expressions, one of them divid
 
 ## 9. Ask the assistant to explain a function
 
-You need a language model for this step. Open **Settings > AI** (Ctrl+,), pick a provider (a local one such as Ollama keeps everything on your computer), press **Test connection**, then **Save and use**. [The built-in assistant](assistant.md) and [Running a model on this computer](local-models.md) cover the choices.
+You need something to answer for this step: a language model, or a terminal agent such as Claude Code if you already use one. Open **Settings > AI** (Ctrl+,) and pick one from the list (a local model such as Ollama keeps everything on your computer; an agent that shows *Needs setup* has a **Set up...** button that asks before it downloads anything), press **Test connection** (or **Test agent**), then **Save and use**. Both kinds work the same way in the Assistant tab. [The built-in assistant](assistant.md) and [Running a model on this computer](local-models.md) cover the choices.
 
 **Do:** right-click a function in the list or code in the decompiler and choose **Explain this function**. The answer appears in the **Assistant** tab.
 
@@ -234,6 +234,6 @@ You went from a stripped program with no names to a map of how it works: an entr
 
 - Learn the vocabulary: [Concepts](concepts.md).
 - Script what you did: [the CLI](cli.md) and [Python](python.md).
-- Other agents (Codex, Gemini CLI) and in-app agent sessions: [Terminal agents](agents.md).
+- Use Claude Code, Codex or Gemini CLI as the assistant itself, in the same chat: [The built-in assistant](assistant.md#terminal-agents).
 - Try a harder program: `corpus/bin/cpp_shapes-O2-stripped` (C++ with virtual calls) or `corpus/bin/static_strops-O2-stripped`.
 - Use only software you are permitted to analyse, and prefer a virtual machine if you ever run an unknown program yourself. KRAKEN never runs the program you open.

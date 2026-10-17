@@ -1,24 +1,25 @@
-//! The configured model, kept by the app so it survives opening and closing projects.
+//! The configured assistant, kept by the app so it survives opening and closing projects.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use kraken_agent::ChatProvider;
 use kraken_viewmodel::ViewModel;
+use kraken_viewmodel::agents::AgentEnv;
 use kraken_viewmodel::assist::{
-    ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, badge_of,
+    BackendChoice, ProviderBadge, ProviderDraft, ProviderKind, ProviderStore,
 };
 
-/// The provider in use plus where it is saved.
+/// The backend in use (a model API or a terminal agent) plus where it is saved.
 pub struct AssistSetup {
     /// Reads and writes `[provider]` in `config.toml` and the secrets file beside it.
     pub store: ProviderStore,
-    active: Option<(Arc<dyn ChatProvider>, ProviderBadge)>,
+    active: Option<(BackendChoice, ProviderBadge)>,
     problem: Option<String>,
 }
 
 impl AssistSetup {
-    /// Loads the saved provider, if any. A saved provider that cannot be built (a missing key
+    /// Loads the saved assistant, if any. A saved provider that cannot be built (a missing key
     /// variable, a damaged file) is kept as a message for the chat panel.
     pub fn load(config_path: Option<PathBuf>) -> Self {
         let store = ProviderStore::new(config_path);
@@ -28,8 +29,8 @@ impl AssistSetup {
             problem: None,
         };
         match setup.store.load() {
-            Ok(Some(cfg)) => match setup.store.build(&cfg) {
-                Ok(p) => setup.active = Some((p, badge_of(&cfg))),
+            Ok(Some(cfg)) => match setup.store.choice(&cfg) {
+                Ok(choice) => setup.active = Some((choice, setup.store.badge(&cfg))),
                 Err(e) => setup.problem = Some(e),
             },
             Ok(None) => {}
@@ -40,13 +41,18 @@ impl AssistSetup {
         setup
     }
 
-    /// Uses `provider` (not saved).
+    /// Uses the model API `provider` (not saved).
     pub fn set(&mut self, provider: Arc<dyn ChatProvider>, badge: ProviderBadge) {
-        self.active = Some((provider, badge));
+        self.set_choice(BackendChoice::Api(provider), badge);
+    }
+
+    /// Uses `choice` (not saved).
+    pub fn set_choice(&mut self, choice: BackendChoice, badge: ProviderBadge) {
+        self.active = Some((choice, badge));
         self.problem = None;
     }
 
-    /// Forgets the provider.
+    /// Forgets the backend.
     pub fn clear(&mut self) {
         self.active = None;
         self.problem = None;
@@ -58,26 +64,41 @@ impl AssistSetup {
         self.problem = Some(problem);
     }
 
-    /// True when a model is ready to use.
+    /// True when a model or agent is ready to use.
     #[cfg(test)]
     pub fn is_ready(&self) -> bool {
         self.active.is_some()
     }
 
-    /// Gives the view-model the current provider (or tells it there is none).
-    pub fn apply(&self, vm: &mut ViewModel) {
+    /// Whether the active backend is a terminal agent.
+    #[cfg(all(test, unix))]
+    pub fn is_agent(&self) -> bool {
+        matches!(self.active, Some((BackendChoice::Agent(_), _)))
+    }
+
+    /// Gives the view-model the current backend (or tells it there is none) and where agents
+    /// are found.
+    pub fn apply(&self, vm: &mut ViewModel, agents: Option<AgentEnv>) {
         match &self.active {
-            Some((p, b)) => vm.assist.set_provider(p.clone(), b.clone()),
+            Some((c, b)) => vm.assist.set_backend(c.clone(), b.clone()),
             None => vm.assist.clear_provider(),
         }
+        vm.assist.agent_env = agents;
         vm.assist.provider_problem = self.problem.clone();
+    }
+
+    /// Tells the view-model where agents are found and whether the notice was read, without
+    /// touching the running conversation.
+    pub fn sync_agents(vm: &mut ViewModel, agents: Option<AgentEnv>) {
+        vm.assist.agent_env = agents;
     }
 
     /// One click: saves the standard settings of `kind` and starts using them.
     pub fn use_preset(&mut self, kind: ProviderKind) -> Result<(), String> {
         let out = self.store.save(&ProviderDraft::preset(kind))?;
-        let provider = self.store.build(&out.config)?;
-        self.set(provider, badge_of(&out.config));
+        let choice = self.store.choice(&out.config)?;
+        let badge = self.store.badge(&out.config);
+        self.set_choice(choice, badge);
         Ok(())
     }
 }

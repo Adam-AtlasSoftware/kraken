@@ -13,18 +13,22 @@ mod run;
 pub mod script;
 #[cfg(test)]
 mod tests;
+// The agent tests run the fake ACP agent, a Unix-style process.
+#[cfg(all(test, unix))]
+mod agent_tests;
 
 use std::sync::Arc;
 
-use kraken_agent::{ChatProvider, ProviderInfo, Usage};
-use kraken_assist::{Arch, Glossary};
+use kraken_agent::{ApprovalHandle, ChatProvider, Usage};
+use kraken_assist::{Arch, AssistBackend, Glossary};
 use kraken_host::RunIdGen;
 use kraken_registry::Registry;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-pub use adapter::AssistBackend;
-pub use kraken_assist::{Confidence, SelectionKind};
+pub use crate::agents::AgentEnv;
+pub use adapter::VmCommands;
+pub use kraken_assist::{AgentChoice, BackendInfo, BackendKind, Confidence, SelectionKind};
 pub use learn::{PANEL_HELP, PanelHelp, panel_help};
 pub use provider::{
     ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, SECRETS_FILE, SECRETS_SERVICE,
@@ -74,6 +78,9 @@ pub struct ToolChip {
     pub args: Value,
     /// Arguments on one short line.
     pub args_short: String,
+    /// One of the terminal agent's own tools (shell, files), outside KRAKEN's safety net. False
+    /// for KRAKEN's tools and for every tool of a model API.
+    pub own_tool: bool,
     /// Short result summary once the call finished.
     pub summary: Option<String>,
     /// True when the call failed.
@@ -93,6 +100,36 @@ pub enum ProposalState {
     Rejected,
     /// The decision failed (plain-language reason).
     Failed(String),
+}
+
+/// Where a permission request of a terminal agent stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionState {
+    /// Waiting for the person.
+    Waiting,
+    /// Allowed once.
+    Allowed,
+    /// Denied.
+    Denied,
+    /// Withdrawn (the run was stopped or ended).
+    Withdrawn,
+}
+
+/// A terminal agent asking to use one of its own tools. KRAKEN cannot undo what that does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionCard {
+    /// Id to answer with (`ViewModel::assist_answer_permission`).
+    pub id: String,
+    /// What the agent wants to do, in its words.
+    pub title: String,
+    /// `execute`, `edit`, `read`, ... when the agent says.
+    pub kind: Option<String>,
+    /// The tool's input, shortened.
+    pub input: Option<String>,
+    /// Files involved.
+    pub paths: Vec<String>,
+    /// Where it stands.
+    pub state: PermissionState,
 }
 
 /// A change the assistant wanted to make that needs the person's say-so.
@@ -173,6 +210,8 @@ pub enum ChatItem {
     Tool(ToolChip),
     /// A proposal to review.
     Proposal(ProposalCard),
+    /// A terminal agent asking to use one of its own tools.
+    Permission(PermissionCard),
     /// An explanation card.
     Explanation(ExplainCard),
     /// The overview card.
@@ -258,15 +297,53 @@ pub enum AutoNameState {
     Failed(String),
 }
 
-/// A provider in use.
+/// What the assistant is set to use: a model API, or a terminal agent.
 #[derive(Clone)]
-pub struct ActiveProvider {
-    /// The model client.
-    pub provider: Arc<dyn ChatProvider>,
+pub enum BackendChoice {
+    /// A chat model API (cloud or local).
+    Api(Arc<dyn ChatProvider>),
+    /// Claude Code, Codex, Gemini CLI or another agent over ACP.
+    Agent(AgentChoice),
+}
+
+/// The backend in use.
+pub struct ActiveBackend {
+    /// What was chosen.
+    pub choice: BackendChoice,
     /// What the panel shows about it.
     pub badge: ProviderBadge,
-    /// Static facts about the model.
-    pub info: ProviderInfo,
+    /// The running backend, made when the first question is asked (a terminal agent needs the
+    /// open project) and dropped when the project or the choice changes.
+    pub(crate) engine: Option<Arc<dyn AssistBackend>>,
+}
+
+impl ActiveBackend {
+    /// A terminal agent is selected.
+    pub fn is_agent(&self) -> bool {
+        matches!(self.choice, BackendChoice::Agent(_))
+    }
+
+    /// The selected agent's id.
+    pub fn agent_id(&self) -> Option<&str> {
+        match &self.choice {
+            BackendChoice::Agent(a) => Some(&a.agent),
+            BackendChoice::Api(_) => None,
+        }
+    }
+
+    /// The badge with the model the agent reported, once it has started.
+    pub fn current_badge(&self) -> ProviderBadge {
+        let mut b = self.badge.clone();
+        if let Some(m) = self
+            .engine
+            .as_ref()
+            .filter(|_| self.is_agent())
+            .and_then(|e| e.info().model)
+        {
+            b.model = m;
+        }
+        b
+    }
 }
 
 pub(crate) struct ActiveRun {
@@ -282,12 +359,17 @@ pub(crate) struct ActiveRun {
     pub(crate) wrote: bool,
     /// Text of the model's current step (history for the next question).
     pub(crate) last_text: String,
+    /// Where approval answers go (a terminal agent asking for one of its own tools).
+    pub(crate) approvals: Option<ApprovalHandle>,
 }
 
 /// Everything the assistant panels show.
 pub struct AssistState {
-    /// The model in use, if one is configured.
-    pub provider: Option<ActiveProvider>,
+    /// The backend in use, if one is configured.
+    pub backend: Option<ActiveBackend>,
+    /// Where terminal agents are found and whether the one-time notice was read. Without it a
+    /// terminal agent cannot start.
+    pub agent_env: Option<AgentEnv>,
     /// The conversation, oldest first.
     pub items: Vec<ChatItem>,
     /// Tokens used since the window opened.
@@ -314,7 +396,8 @@ pub struct AssistState {
 impl Default for AssistState {
     fn default() -> Self {
         AssistState {
-            provider: None,
+            backend: None,
+            agent_env: None,
             items: Vec::new(),
             usage: Usage::default(),
             overview_offer: OverviewOffer::Hidden,
@@ -334,19 +417,44 @@ impl Default for AssistState {
 }
 
 impl AssistState {
-    /// Uses `provider` from now on.
+    /// Uses the model API `provider` from now on.
     pub fn set_provider(&mut self, provider: Arc<dyn ChatProvider>, badge: ProviderBadge) {
-        let info = provider.info();
-        self.provider = Some(ActiveProvider {
-            provider,
+        self.set_backend(BackendChoice::Api(provider), badge);
+    }
+
+    /// Uses `choice` from now on. A running terminal agent session is ended; the conversation on
+    /// screen stays, and the new backend is caught up from it on the next question.
+    pub fn set_backend(&mut self, choice: BackendChoice, badge: ProviderBadge) {
+        self.close_engine();
+        self.backend = Some(ActiveBackend {
+            choice,
             badge,
-            info,
+            engine: None,
         });
     }
 
-    /// Forgets the provider (settings cleared).
+    /// Forgets the backend (settings cleared).
     pub fn clear_provider(&mut self) {
-        self.provider = None;
+        self.close_engine();
+        self.backend = None;
+    }
+
+    /// Ends what the backend keeps between questions (a terminal agent's session).
+    pub(crate) fn close_engine(&mut self) {
+        if let Some(e) = self.backend.as_mut().and_then(|b| b.engine.take()) {
+            e.close();
+        }
+    }
+
+    /// The badge of the backend in use, with the model a terminal agent reported.
+    pub fn badge(&self) -> Option<ProviderBadge> {
+        self.backend.as_ref().map(ActiveBackend::current_badge)
+    }
+
+    /// A terminal agent is the backend and the one-time notice has not been read yet.
+    pub fn agent_notice_pending(&self) -> bool {
+        self.backend.as_ref().is_some_and(ActiveBackend::is_agent)
+            && !self.agent_env.as_ref().is_some_and(|e| e.acknowledged)
     }
 
     /// True while a run is in flight.
@@ -370,6 +478,7 @@ impl AssistState {
             r.cancel.cancel();
         }
         self.run = None;
+        self.close_engine();
         self.items.clear();
         self.history.clear();
         self.overview_offer = OverviewOffer::Hidden;

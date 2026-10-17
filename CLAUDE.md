@@ -22,7 +22,7 @@ crate is GPL-3.0-or-later in Cargo.toml. Do not commit; the main loop commits.
 - `kraken-host`: config, engine factories (`HostEngineFactory` picks Ghidra or .NET per binary; the kind is recorded in `meta.json`), daemon client, `kraken setup [--dotnet]` provisioning
 - `kraken-ipc` / `krakend`: authenticated local RPC and the daemon that owns projects
 - `kraken-cli` (binary `kraken`) / `kraken-mcp` (`kraken mcp`)
-- `kraken-agent`: agent loop and providers; `kraken-assist`: explain/overview/auto-name, glossary
+- `kraken-agent`: agent loop and providers; `kraken-assist`: the assistant (explain/overview/auto-name, glossary) over an `AssistBackend`: a model API (`ApiBackend`) or a terminal agent (`AcpBackend`), chosen by the `[provider]` table (`kind = "terminal_agent"`); one assistant, one GUI tab, one docs page (`docs/assistant.md`)
 - `kraken-acp`: terminal-agent host over ACP (Claude Code, Codex, Gemini CLI), Node/adapter provisioning, fake ACP agent for tests
 - `kraken-infer`: supervised local inference backends (llama-server, manifest engines)
 - `kraken-layout`: CFG layout; `kraken-gui-widgets`, `kraken-viewmodel`, `kraken-gui` (binary `kraken-gui`)

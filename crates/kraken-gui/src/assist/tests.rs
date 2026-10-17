@@ -21,9 +21,9 @@ use crate::workspace::{self, Tab};
 
 const WAIT: Duration = Duration::from_secs(20);
 
-struct Harness {
-    ctx: Context,
-    app: KrakenApp,
+pub(super) struct Harness {
+    pub(super) ctx: Context,
+    pub(super) app: KrakenApp,
     _rt: Arc<tokio::runtime::Runtime>,
 }
 
@@ -41,7 +41,7 @@ fn options() -> Options {
 }
 
 impl Harness {
-    fn new(services: Services) -> Self {
+    pub(super) fn new(services: Services) -> Self {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -64,7 +64,7 @@ impl Harness {
         h
     }
 
-    fn step_with(&mut self, events: Vec<Event>) {
+    pub(super) fn step_with(&mut self, events: Vec<Event>) {
         let input = RawInput {
             screen_rect: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(1280.0, 800.0))),
             events,
@@ -75,11 +75,11 @@ impl Harness {
         out.textures_delta.clear();
     }
 
-    fn step(&mut self) {
+    pub(super) fn step(&mut self) {
         self.step_with(Vec::new());
     }
 
-    fn run_until(&mut self, what: &str, cond: impl Fn(&KrakenApp) -> bool) {
+    pub(super) fn run_until(&mut self, what: &str, cond: impl Fn(&KrakenApp) -> bool) {
         let deadline = Instant::now() + WAIT;
         while !cond(&self.app) {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -88,7 +88,7 @@ impl Harness {
         }
     }
 
-    fn settle(&mut self) {
+    pub(super) fn settle(&mut self) {
         self.run_until("the assistant to finish", |a| {
             a.view_model()
                 .is_some_and(|vm| !vm.assist.busy() && !vm.busy())
@@ -131,6 +131,7 @@ fn the_new_scenes_parse() {
         ("assistant", Scene::Assistant),
         ("explain", Scene::Explain),
         ("autoname", Scene::AutoName),
+        ("assistant-agent", Scene::AssistantAgent),
     ] {
         let args: Vec<String> = ["--demo", "--screenshot", "x.png", "--scene", name]
             .iter()
@@ -332,13 +333,9 @@ fn one_click_presets_save_to_config_toml_and_activate() {
     h.step();
     assert!(h.app.assist_setup().is_ready());
     let vm = h.app.view_model().expect("vm");
-    let ap = vm
-        .assist
-        .provider
-        .as_ref()
-        .expect("provider on the open project");
-    assert!(ap.badge.local);
-    assert_eq!(ap.badge.service, "Ollama");
+    let badge = vm.assist.badge().expect("a backend on the open project");
+    assert!(badge.local && !badge.terminal_agent);
+    assert_eq!(badge.service, "Ollama");
     let text = std::fs::read_to_string(&path).expect("config written");
     assert!(
         text.contains("[provider]") && text.contains("11434"),

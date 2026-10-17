@@ -5,8 +5,8 @@ use std::sync::Arc;
 use kraken_acp::{AgentSetup, NODE_VERSION, NodeRuntime, install_adapter, node_download_for};
 use kraken_host::provision::{Fetcher, HttpsFetcher, Progress};
 
-use super::Availability;
-use crate::vm::ViewModel;
+use super::hub::Msg;
+use super::{AgentsHub, Availability};
 
 /// What setting an agent up would download, shown before anything is fetched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,17 +67,17 @@ impl SetupState {
     }
 }
 
-impl ViewModel {
+impl AgentsHub {
     /// Shows what setting `id` up would download and waits for a yes
-    /// ([`agents_confirm_setup`](Self::agents_confirm_setup)). Nothing is fetched yet.
-    pub fn agents_request_setup(&mut self, id: &str) {
-        if self.agents.setup.running() {
+    /// ([`confirm_setup`](Self::confirm_setup)). Nothing is fetched yet.
+    pub fn request_setup(&mut self, id: &str) {
+        if self.setup.running() {
             return;
         }
-        let Some(cfg) = self.agents.config.clone() else {
+        let Some(cfg) = self.config.clone() else {
             return;
         };
-        let Some(row) = self.agents.row(id) else {
+        let Some(row) = self.row(id) else {
             return;
         };
         let Availability::NeedsSetup { downloads_node, .. } = &row.availability else {
@@ -99,7 +99,7 @@ impl ViewModel {
             "{}@{} and its dependencies from the npm registry (a pinned list with integrity hashes; install scripts are switched off)",
             spec.package, spec.version
         ));
-        self.agents.setup = SetupState::Confirm(SetupPlan {
+        self.setup = SetupState::Confirm(SetupPlan {
             agent_id: row.id.clone(),
             agent_name: row.name.clone(),
             downloads,
@@ -108,39 +108,37 @@ impl ViewModel {
     }
 
     /// The person agreed: download and install.
-    pub fn agents_confirm_setup(&mut self) {
-        let SetupState::Confirm(plan) = self.agents.setup.clone() else {
+    pub fn confirm_setup(&mut self) {
+        let SetupState::Confirm(plan) = self.setup.clone() else {
             return;
         };
-        let (Some(cfg), Some(row)) = (
-            self.agents.config.clone(),
-            self.agents.row(&plan.agent_id).cloned(),
-        ) else {
-            self.agents.setup = SetupState::Idle;
+        let (Some(cfg), Some(row)) = (self.config.clone(), self.row(&plan.agent_id).cloned())
+        else {
+            self.setup = SetupState::Idle;
             return;
         };
         let AgentSetup::NodeAdapter(spec) = row.profile.setup else {
-            self.agents.setup = SetupState::Idle;
+            self.setup = SetupState::Idle;
             return;
         };
-        self.agents.setup = SetupState::Running(SetupProgress {
+        self.setup = SetupState::Running(SetupProgress {
             agent_id: plan.agent_id.clone(),
             agent_name: plan.agent_name.clone(),
             step: "Starting...".to_string(),
             fraction: None,
         });
 
-        let post = self.poster();
-        let rt = post.runtime().clone();
+        let tx = self.tx.clone();
+        let repaint = self.repaint.clone();
         let (id, name) = (plan.agent_id, plan.agent_name);
-        rt.spawn(async move {
-            let set = |state: SetupState| {
-                post.post(move |vm| {
-                    if vm.agents.setup.running() {
-                        vm.agents.setup = state;
-                    }
-                });
+        self.rt.spawn(async move {
+            let send = move |msg: Msg| {
+                let _ = tx.send(msg);
+                if let Some(f) = &repaint {
+                    f();
+                }
             };
+            let set = |state: SetupState| send(Msg::Setup(state));
             let running = |step: &str, fraction: Option<f32>| {
                 SetupState::Running(SetupProgress {
                     agent_id: id.clone(),
@@ -178,7 +176,7 @@ impl ViewModel {
                         .unwrap_or_default();
                     set(running("Downloading Node.js", Some(0.0)));
                     let mut last = None::<u32>;
-                    let posting = |p: Progress| {
+                    let mut posting = |p: Progress| {
                         let state = match p {
                             Progress::Downloading { done, total, .. } => {
                                 let pct = total
@@ -199,7 +197,6 @@ impl ViewModel {
                         };
                         set(state);
                     };
-                    let mut posting = posting;
                     match NodeRuntime::provision(&data_dir, fetcher.as_ref(), &mut posting).await {
                         Ok(n) => n,
                         Err(e) => return set(failed(e.to_string())),
@@ -209,25 +206,19 @@ impl ViewModel {
             };
             set(running(&format!("Installing {}", spec.package), None));
             match install_adapter(&row.profile, &resolver.paths, &node).await {
-                Ok(_) => {
-                    let (id2, name2) = (id.clone(), name.clone());
-                    post.post(move |vm| {
-                        vm.agents.setup = SetupState::Done {
-                            agent_id: id2,
-                            agent_name: name2,
-                        };
-                        vm.agents_refresh();
-                    });
-                }
+                Ok(_) => send(Msg::SetupDone {
+                    id: id.clone(),
+                    name: name.clone(),
+                }),
                 Err(e) => set(failed(e.to_string())),
             }
         });
     }
 
     /// Closes the consent step, or the result of the last setup, without doing anything.
-    pub fn agents_dismiss_setup(&mut self) {
-        if !self.agents.setup.running() {
-            self.agents.setup = SetupState::Idle;
+    pub fn dismiss_setup(&mut self) {
+        if !self.setup.running() {
+            self.setup = SetupState::Idle;
         }
     }
 }

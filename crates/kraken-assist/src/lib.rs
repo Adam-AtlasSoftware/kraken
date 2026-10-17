@@ -1,5 +1,9 @@
 //! KRAKEN assistant core (decisions 12, 20, 29, 61).
 //!
+//! - [`AssistBackend`] is what answers: a model API ([`ApiBackend`], the `kraken-agent` loop over
+//!   a [`RegistryToolHost`]) or a terminal agent ([`AcpBackend`], Claude Code, Codex or Gemini CLI
+//!   over ACP, using KRAKEN's tools through the `kraken mcp` server it is launched with). Both
+//!   produce the same event stream, so every task and the chat run on either (decision 94).
 //! - [`RegistryToolHost`] exposes command-registry commands to the `kraken-agent` loop as tools,
 //!   over any [`kraken_host::backend::CommandBackend`] (an in-process session or `krakend`).
 //! - [`Task`] builders turn the beginner features into agent runs: explain a function or a
@@ -13,7 +17,9 @@
 //! results (already wrapped as untrusted by the registry) and the `<selection>` block of
 //! `explain_selection`; the system prompt never contains it.
 
+pub mod acp;
 pub mod assistant;
+pub mod backend;
 pub mod error;
 pub mod glossary;
 pub mod host;
@@ -21,7 +27,13 @@ pub mod output;
 pub mod provider;
 pub mod tasks;
 
+pub use acp::{
+    AcpBackend, AcpSettings, AgentChoice, PlanError, classify_tool, find_kraken_exe, plan_agent,
+};
 pub use assistant::{Assistant, ResultTagFilter, TaskResult, ToolCallSummary};
+pub use backend::{
+    ApiBackend, AssistBackend, BackendInfo, BackendKind, Purpose, RunSpec, UnusedBackend,
+};
 pub use error::AssistError;
 pub use glossary::{Arch, Glossary, GlossaryEntry, GlossaryKind, GlossaryMatch, MatchKind};
 pub use host::{CallRecord, DEFAULT_EXCLUDED, HostOptions, HostStats, RegistryToolHost};

@@ -9,7 +9,7 @@ If you are new, begin with the [tutorial](tutorial.md). In one session you take 
 ## What you can do with it
 
 - **Analyze.** Find functions, read the decompiled code and the instructions, see a function as a graph, follow cross-references, search strings.
-- **Use AI, safely.** The built-in [assistant](assistant.md) works with a model on your own computer or in the cloud. Terminal agents such as Claude Code work inside the app or connect from outside over [MCP](mcp.md). Agents add to your project and propose changes; they never overwrite your work on their own.
+- **Use AI, safely.** The built-in [assistant](assistant.md) works with a model on your own computer or in the cloud. Terminal agents such as Claude Code can be the assistant itself, chosen in the same settings, or connect from outside over [MCP](mcp.md). Agents add to your project and propose changes; they never overwrite your work on their own.
 - **Automate.** The command line, the MCP server, the GUI and the Python module all use the same set of commands, so what you click can be scripted: [CLI](cli.md), [Python](python.md).
 - **Rewrite.** The goal KRAKEN is built toward is Rust rewrites of binaries, one function at a time, each checked against the original ([design](design/0013-rewrite-pipeline.md)).
 
