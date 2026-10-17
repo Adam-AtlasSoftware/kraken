@@ -21,6 +21,9 @@ use crate::jobs::JobReporter;
 use crate::session::Session;
 
 use super::JobStarted;
+use super::rewrite_program::{
+    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
+};
 
 /// How a function is rewritten (decision 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
@@ -1015,6 +1018,34 @@ pub trait RewriteBackend: Send + Sync {
         request: ExportRequest,
         job: &JobReporter,
     ) -> Result<RewriteExportResult, ProtoError>;
+
+    /// The body of a `rewrite_program` job (the output directory is resolved by the backend from
+    /// the arguments; the caller is a user when `accept_verified` is set).
+    async fn program(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteProgramArgs,
+        _job: &JobReporter,
+    ) -> Result<RewriteProgramResult, ProtoError> {
+        Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            "this rewrite backend does not rewrite whole programs",
+        ))
+    }
+
+    /// `rewrite_program_status`.
+    async fn program_status(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteProgramStatusArgs,
+    ) -> Result<RewriteProgramStatusOut, ProtoError> {
+        Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            "this rewrite backend does not rewrite whole programs",
+        ))
+    }
 }
 
 impl std::fmt::Debug for dyn RewriteBackend {
@@ -1034,7 +1065,7 @@ fn to_value<T: Serialize>(v: &T) -> Result<Value, ProtoError> {
 
 /// Resolves the `dir` argument of `rewrite_export`: absolute as given, relative to the project
 /// directory otherwise; `..` is refused.
-fn resolve_export_dir(project_dir: &Path, arg: &str) -> Result<PathBuf, ProtoError> {
+pub(super) fn resolve_export_dir(project_dir: &Path, arg: &str) -> Result<PathBuf, ProtoError> {
     if arg.trim().is_empty() || arg.contains('\0') {
         return Err(invalid("`dir` must be a path"));
     }

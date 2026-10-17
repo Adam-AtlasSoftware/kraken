@@ -14,7 +14,8 @@ use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
     CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanScope, RewriteAcceptArgs,
     RewriteAcceptOut, RewriteBackend, RewriteExportResult, RewriteFunctionArgs,
-    RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut, RewriteSpecArgs,
+    RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut, RewriteProgramArgs,
+    RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteSpecArgs,
     RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
     StatusCounts, UnitRow, UnitSpecView, UnitStatus, UnitVersionView,
 };
@@ -22,7 +23,7 @@ use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 
 use crate::abi::{Arg, Signature};
 use crate::collect::{ProgramFacts, calls_of, collect, collect_closure};
-use crate::difftest::{DiffOptions, Verdict};
+use crate::difftest::{DiffOptions, InputSpec, Verdict};
 use crate::error::RewriteError;
 use crate::export::{
     ExportInfo, build_in_sandbox, check_symbols, check_target, crate_prefix, write_workspace,
@@ -31,7 +32,7 @@ use crate::fetch::FunctionContext;
 use crate::infer::{generic_inputs, generic_notes, infer_signature, rust_name};
 use crate::lift::Lift;
 use crate::oracle::{FunctionOracle, OracleConfig};
-use crate::pipeline::{VerifyPlan, verify_with};
+use crate::pipeline::{VerifyPlan, verify_compile_only, verify_with};
 use crate::plan::to_plan;
 use crate::repair::{self, Attempt, DEFAULT_ATTEMPTS};
 use crate::reuse::{self, Resolved};
@@ -41,6 +42,9 @@ use crate::store::{
 };
 use crate::task::{Budget, RewriteTask, SpecScope, SpecTask};
 use crate::unit::{RewriteUnit, sha256_hex};
+
+#[path = "service_program.rs"]
+mod program_mode;
 
 /// Default cap on functions a new whole-program plan examines.
 const DEFAULT_PLAN_FUNCTIONS: u32 = 2000;
@@ -509,12 +513,12 @@ type OracleJob = Box<dyn FnOnce(&mut Result<FunctionOracle, LoadFailure>) + Send
 /// and is slow to build, so it is built once, on first use, inside the thread, and every attempt
 /// is sent to it as a job. The thread ends when the last handle is dropped.
 #[derive(Clone)]
-struct OracleThread {
+pub(crate) struct OracleThread {
     jobs: std::sync::mpsc::Sender<OracleJob>,
 }
 
 impl OracleThread {
-    fn spawn(binary: PathBuf, cfg: OracleConfig) -> Self {
+    pub(crate) fn spawn(binary: PathBuf, cfg: OracleConfig) -> Self {
         let (jobs, rx) = std::sync::mpsc::channel::<OracleJob>();
         let _ = std::thread::Builder::new()
             .name("kraken-rewrite-oracle".into())
@@ -534,7 +538,7 @@ impl OracleThread {
     }
 
     /// Runs `f` with the oracle and returns its result.
-    async fn run<T, F>(&self, f: F) -> Result<T, RewriteError>
+    pub(crate) async fn run<T, F>(&self, f: F) -> Result<T, RewriteError>
     where
         T: Send + 'static,
         F: FnOnce(&mut FunctionOracle) -> Result<T, RewriteError> + Send + 'static,
@@ -597,6 +601,162 @@ fn function_spec_task(
         scope: SpecScope::Function,
         functions,
         budget: budget.clone(),
+    }
+}
+
+/// How a translation is checked against the original function.
+#[derive(Debug, Clone)]
+pub(crate) enum Check {
+    /// Run the original under the emulation oracle and compare.
+    Differential,
+    /// Only lint and build it (no oracle); the text says why nothing is compared.
+    CompileOnly(String),
+}
+
+/// One translation run of one function: what to ask the model, how to check it.
+pub(crate) struct Work {
+    /// The function.
+    pub function: FunctionContext,
+    /// The ABI it is checked at.
+    pub signature: Signature,
+    /// Function-level test inputs.
+    pub inputs: InputSpec,
+    /// The request (callees to translate inline, callees to call, notes).
+    pub task: RewriteTask,
+    /// The callees the code calls as Rust (`direct`) and what their code needs (`all`).
+    pub reuse: Resolved,
+    /// How the translation is made.
+    pub mode: RewriteMode,
+    /// The spec it is made from, for `spec` mode.
+    pub spec_id: Option<u64>,
+    /// How it is checked.
+    pub check: Check,
+    /// Put the runtime shim `rt` in scope of the code under test.
+    pub shim: bool,
+    /// Test settings.
+    pub opts: DiffOptions,
+    /// Most translation attempts.
+    pub max_attempts: u32,
+}
+
+impl RewriteService {
+    /// Asks for a translation, checks and stores it, and repairs it while that helps: the loop
+    /// of `rewrite_function`, shared with `rewrite_program`. `job` gets per-step progress when
+    /// given.
+    pub(crate) async fn translate(
+        &self,
+        w: Work,
+        dir: &Path,
+        binary_path: &str,
+        provider: &dyn ChatProvider,
+        oracle: &OracleThread,
+        job: Option<&JobReporter>,
+    ) -> Result<repair::RepairRun, RewriteError> {
+        let Work {
+            function: f,
+            signature: sig,
+            inputs,
+            task,
+            reuse,
+            mode,
+            spec_id,
+            check,
+            shim,
+            opts,
+            max_attempts,
+        } = w;
+        let rt = if shim {
+            crate::rt_module_source()
+        } else {
+            String::new()
+        };
+        let prelude = format!(
+            "{rt}{}",
+            reuse::prelude_with(&reuse.all, &reuse.direct, shim)
+        );
+        let (translated_with, reused_direct) = (task.callees.clone(), reuse.direct.clone());
+        let cancel = job.map(JobReporter::cancel_token).unwrap_or_default();
+        let (dir, binary_path) = (dir.to_path_buf(), binary_path.to_string());
+        repair::run(&task, provider, cancel.clone(), max_attempts, |attempt| {
+            let (f2, sig2, opts2, inputs2) = (f.clone(), sig.clone(), opts.clone(), inputs.clone());
+            let (callees2, reused2, prelude2) = (
+                translated_with.clone(),
+                reused_direct.clone(),
+                prelude.clone(),
+            );
+            let (binary_path2, check2) = (binary_path.clone(), check.clone());
+            let (oracle2, dir2, cancel2) = (oracle.clone(), dir.clone(), cancel.clone());
+            async move {
+                if cancel2.is_cancelled() {
+                    return Err(RewriteError::Cancelled);
+                }
+                if let Some(job) = job {
+                    progress(
+                        job,
+                        "verify",
+                        2,
+                        4,
+                        &format!(
+                            "building and testing attempt {} against the original",
+                            attempt.link.attempt
+                        ),
+                    );
+                }
+                let Attempt {
+                    output,
+                    provenance,
+                    link,
+                } = attempt;
+                let code = output.rust_code;
+                let mut unit = match check2 {
+                    Check::Differential => {
+                        oracle2
+                            .run(move |oracle| {
+                                let entry = oracle.elf_vaddr(f2.address, f2.image_base);
+                                let plan = VerifyPlan {
+                                    function: &f2,
+                                    callees: &callees2,
+                                    signature: &sig2,
+                                    inputs: &inputs2,
+                                    binary: &file_name(&binary_path2),
+                                    entry,
+                                    mode,
+                                    spec_id,
+                                    reused: &reused2,
+                                    prelude: &prelude2,
+                                };
+                                verify_with(&plan, &code, provenance, oracle, &opts2)
+                            })
+                            .await?
+                    }
+                    Check::CompileOnly(reason) => tokio::task::spawn_blocking(move || {
+                        let plan = VerifyPlan {
+                            function: &f2,
+                            callees: &callees2,
+                            signature: &sig2,
+                            inputs: &inputs2,
+                            binary: &file_name(&binary_path2),
+                            entry: 0,
+                            mode,
+                            spec_id,
+                            reused: &reused2,
+                            prelude: &prelude2,
+                        };
+                        verify_compile_only(&plan, &code, provenance, &reason, &opts2)
+                    })
+                    .await
+                    .map_err(|e| RewriteError::Store(format!("build task failed: {e}")))??,
+                };
+                unit.repair = Some(link);
+                if let Some(job) = job {
+                    progress(job, "store", 3, 4, "storing the unit");
+                }
+                tokio::task::spawn_blocking(move || RewriteStore::in_project(&dir2)?.put_unit(unit))
+                    .await
+                    .map_err(|e| RewriteError::Store(format!("store task failed: {e}")))?
+            }
+        })
+        .await
     }
 }
 
@@ -903,79 +1063,32 @@ impl RewriteBackend for RewriteService {
             confinement: self.cfg.confinement.clone(),
             ..defaults
         };
-        let max_attempts = args.max_attempts.unwrap_or(self.cfg.max_attempts);
-        let prelude = reuse::prelude(&reuse.all, &reuse.direct);
+        let work = Work {
+            inputs: generic_inputs(&sig),
+            function: f,
+            signature: sig,
+            task,
+            reuse,
+            mode: args.mode,
+            spec_id,
+            check: Check::Differential,
+            shim: false,
+            opts,
+            max_attempts: args.max_attempts.unwrap_or(self.cfg.max_attempts),
+        };
         let oracle = OracleThread::spawn(PathBuf::from(&binary_path), self.cfg.oracle.clone());
-        let mode = args.mode;
-        let (translated_with, reused_direct) = (task.callees.clone(), reuse.direct.clone());
-        let cancel = job.cancel_token();
-
         progress(job, "translate", 1, 4, "asking the model for a translation");
-        let run = repair::run(
-            &task,
-            provider.as_ref(),
-            cancel.clone(),
-            max_attempts,
-            |attempt| {
-                let (f2, sig2, opts2) = (f.clone(), sig.clone(), opts.clone());
-                let (callees2, reused2, prelude2) = (
-                    translated_with.clone(),
-                    reused_direct.clone(),
-                    prelude.clone(),
-                );
-                let binary_path2 = binary_path.clone();
-                let (oracle2, dir2, cancel2) = (oracle.clone(), dir.clone(), cancel.clone());
-                async move {
-                    if cancel2.is_cancelled() {
-                        return Err(RewriteError::Cancelled);
-                    }
-                    progress(
-                        job,
-                        "verify",
-                        2,
-                        4,
-                        &format!(
-                            "building and testing attempt {} against the original",
-                            attempt.link.attempt
-                        ),
-                    );
-                    let Attempt {
-                        output,
-                        provenance,
-                        link,
-                    } = attempt;
-                    let code = output.rust_code;
-                    let mut unit = oracle2
-                        .run(move |oracle| {
-                            let entry = oracle.elf_vaddr(f2.address, f2.image_base);
-                            let inputs = generic_inputs(&sig2);
-                            let plan = VerifyPlan {
-                                function: &f2,
-                                callees: &callees2,
-                                signature: &sig2,
-                                inputs: &inputs,
-                                binary: &file_name(&binary_path2),
-                                entry,
-                                mode,
-                                spec_id,
-                                reused: &reused2,
-                                prelude: &prelude2,
-                            };
-                            verify_with(&plan, &code, provenance, oracle, &opts2)
-                        })
-                        .await?;
-                    unit.repair = Some(link);
-                    progress(job, "store", 3, 4, "storing the unit");
-                    tokio::task::spawn_blocking(move || {
-                        RewriteStore::in_project(&dir2)?.put_unit(unit)
-                    })
-                    .await
-                    .map_err(|e| RewriteError::Store(format!("store task failed: {e}")))?
-                }
-            },
-        )
-        .await
-        .map_err(proto)?;
+        let run = self
+            .translate(
+                work,
+                &dir,
+                &binary_path,
+                provider.as_ref(),
+                &oracle,
+                Some(job),
+            )
+            .await
+            .map_err(proto)?;
 
         let (unit, out) = run.last();
         progress(job, "done", 4, 4, "finished");
@@ -1199,6 +1312,25 @@ impl RewriteBackend for RewriteService {
             coverage,
             readme: Untrusted::sanitized(&written.readme.display().to_string()),
         })
+    }
+
+    async fn program(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteProgramArgs,
+        job: &JobReporter,
+    ) -> Result<RewriteProgramResult, ProtoError> {
+        self.run_program(s, ctx, args, job).await
+    }
+
+    async fn program_status(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteProgramStatusArgs,
+    ) -> Result<RewriteProgramStatusOut, ProtoError> {
+        self.run_program_status(s, ctx, args).await
     }
 }
 

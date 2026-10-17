@@ -14,6 +14,7 @@ mod project;
 mod query;
 mod rebuild;
 mod rewrite;
+mod rewrite_program;
 mod undo_entry;
 
 pub use data::{
@@ -48,6 +49,12 @@ pub use rewrite::{
     RewriteSpecArgs, RewriteSpecResult, RewriteStatus, RewriteStatusArgs, RewriteStatusOut,
     RewriteUnit, RewriteUnitArgs, RewriteUnitOut, StatusCounts, UnitRow, UnitSpecView, UnitStatus,
     UnitVersionView, is_inside,
+};
+pub use rewrite_program::{
+    DEFAULT_PROGRAM_DIR, MAX_GENERATED_CASES, MAX_USER_CASES, ProgramCaseResult, ProgramCaseSpec,
+    ProgramFunctionRow, ProgramRunSummary, ProgramRunView, ProgramVerdictView, RewriteProgram,
+    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatus, RewriteProgramStatusArgs,
+    RewriteProgramStatusOut,
 };
 pub use undo_entry::{
     DependentView, TaintedClear, TaintedClearArgs, TaintedClearOut, TaintedFunction, TaintedList,
@@ -152,4 +159,6 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteAccept);
     r.register(RewriteSpec);
     r.register(RewriteExport);
+    r.register(RewriteProgram);
+    r.register(RewriteProgramStatus);
 }

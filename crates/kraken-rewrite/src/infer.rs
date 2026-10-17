@@ -141,10 +141,19 @@ fn classify_param(decl: &str) -> Result<Param, Unsupported> {
     }
 }
 
-fn classify_ret(ty: &str) -> Result<Ret, Unsupported> {
+fn classify_ret(ty: &str, allow_ptr: bool) -> Result<Ret, Unsupported> {
     let ty = ty.trim();
     if ty == "void" {
         return Ok(Ret::Void);
+    }
+    // A stripped binary's decompiler leaves a function whose result it cannot type as
+    // `undefined`; a program rewrite reads that as no result, and the program-level test finds
+    // out if the callers disagree.
+    if ty == "undefined" && allow_ptr {
+        return Ok(Ret::Void);
+    }
+    if is_pointer(ty) && allow_ptr {
+        return Ok(Ret::Ptr);
     }
     if is_pointer(ty) {
         return Err(un(
@@ -162,6 +171,25 @@ fn classify_ret(ty: &str) -> Result<Ret, Unsupported> {
 
 /// Reads `signature` (as `list_functions` renders it) into a [`Signature`] named `name`.
 pub fn infer_signature(signature: &str, name: &str) -> Result<Signature, Unsupported> {
+    infer_with(signature, name, false)
+}
+
+/// [`infer_signature`] for a program rewrite: a pointer result becomes [`Ret::Ptr`] and the
+/// second value says why the function cannot be compared against the original at function level
+/// (it can still be translated and compiled, and the program-level test covers it).
+pub fn infer_signature_for_program(
+    signature: &str,
+    name: &str,
+) -> Result<(Signature, Option<String>), Unsupported> {
+    let sig = infer_with(signature, name, true)?;
+    let note = (sig.ret == Ret::Ptr).then(|| {
+        "pointer result: addresses are not comparable between the original and the Rust build"
+            .to_string()
+    });
+    Ok((sig, note))
+}
+
+fn infer_with(signature: &str, name: &str, allow_ptr: bool) -> Result<Signature, Unsupported> {
     let sig = signature.trim();
     let open = sig
         .find('(')
@@ -183,7 +211,7 @@ pub fn infer_signature(signature: &str, name: &str) -> Result<Signature, Unsuppo
     if ret_ty.is_empty() {
         return Err(un("the signature has no result type"));
     }
-    let ret = classify_ret(ret_ty)?;
+    let ret = classify_ret(ret_ty, allow_ptr)?;
     let inner = sig[open + 1..close].trim();
     let decls = if inner.is_empty() || inner == "void" {
         Vec::new()
@@ -319,6 +347,26 @@ mod tests {
         ] {
             let e = sig(text).expect_err(text);
             assert!(e.0.contains(needle), "{text}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_program_rewrite_accepts_pointer_and_untyped_results_but_only_compiles_the_first() {
+        let (s, note) =
+            infer_signature_for_program("char * op_name(uint op)", "op_name").expect("sig");
+        assert_eq!(s.ret, Ret::Ptr);
+        assert!(note.expect("note").contains("pointer result"));
+        assert!(s.rust_prototype().ends_with("-> *const u8"));
+        let (s, note) = infer_signature_for_program("undefined FUN_00101149(long * param_1)", "f")
+            .expect("sig");
+        assert_eq!((s.ret, note), (Ret::Void, None));
+        // Everything else stays as strict as for a single function.
+        for text in [
+            "int f(double w)",
+            "int f(vec3 v)",
+            "int printf(char * f, ...)",
+        ] {
+            assert!(infer_signature_for_program(text, "f").is_err(), "{text}");
         }
     }
 

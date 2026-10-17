@@ -328,10 +328,32 @@ pub fn run_captured(
     cap: usize,
     poll: Duration,
 ) -> std::io::Result<Captured> {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    run_captured_with_input(cmd, None, timeout, cap, poll)
+}
+
+/// [`run_captured`] with `input` written to the child's standard input (then closed); `None`
+/// gives the child an empty, closed stdin. A child that stops reading early is not an error.
+pub fn run_captured_with_input(
+    cmd: &mut Command,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+    cap: usize,
+    poll: Duration,
+) -> std::io::Result<Captured> {
+    cmd.stdin(if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
+    if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&data);
+        });
+    }
     let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
     let mut readers = 0;
     if let Some(s) = child.stdout.take() {

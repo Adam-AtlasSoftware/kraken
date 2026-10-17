@@ -42,6 +42,8 @@ logged; **dangerous** commands always ask for approval first.
 | [`rewrite_export`](#rewrite_export) | job | mutating | Export accepted units as a Cargo workspace with an FFI shim (job) |
 | [`rewrite_function`](#rewrite_function) | job | mutating | Translate one function to Rust and verify it against the original (job) |
 | [`rewrite_plan`](#rewrite_plan) | query | safe | Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged |
+| [`rewrite_program`](#rewrite_program) | job | mutating | Rewrite a whole program to a standalone Rust crate and verify it against the original (job) |
+| [`rewrite_program_status`](#rewrite_program_status) | query | safe | Show a stored whole-program rewrite: functions, crate and the program-level verdict with per-case diffs |
 | [`rewrite_spec`](#rewrite_spec) | job | mutating | Write a cited behavioural spec of a function or the program (job) |
 | [`rewrite_status`](#rewrite_status) | query | safe | Show rewrite progress: counts per status and one row per function |
 | [`rewrite_unit`](#rewrite_unit) | query | safe | Show the stored Rust versions of one function, with code, verdicts and its spec |
@@ -5043,6 +5045,576 @@ Orders the program's functions so that callees come before their callers; functi
     "entries"
   ],
   "title": "RewritePlanOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_program
+
+Rewrite a whole program to a standalone Rust crate and verify it against the original (job)
+
+```sh
+kraken rewrite-program [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Plans the program bottom-up (callees first, recursive groups together), translates every non-library function the entry point reaches by direct calls with the configured provider (reusing callees that are already translated, repairing failures as `rewrite_function` does), then writes a standalone Rust binary crate: one module per function, a small runtime shim (`rt`) that maps the libc calls the corpus programs use (printf, puts, strlen, malloc, free, exit, ...) to Rust `std`, and a `main` that calls the translated entry point. The crate is built in the sandbox and the original and the rewritten program are run on the same inputs (a baseline run, cases derived from the program's source when it is a corpus program, generated and given cases), both inside the sandbox with no network. Exit status, stdout and stderr are compared; the result is a `ProgramVerdict` with the per-case differences, stored in `rewrite.sqlite` and readable with `rewrite_program_status`. A function-level verdict is evidence about one function; only the program verdict says the whole program behaves the same on the inputs tried. The original binary runs natively, confined, so this command refuses to run on hosts that cannot confine (Linux with Landlock today), and a call made for a person (an agent, MCP) asks for approval first, because it executes the binary under analysis. It sends decompiled code to the provider. It adds artifacts only; `accept_verified` (users only) additionally accepts the functions that passed their own test.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `accept_verified` | `--accept-verified` | boolean | no | Accept every function that passed its function-level test (users only). Accepted translations are reused by later runs and by `rewrite_export`. Default false. |
+| `build` | `--build` | boolean | no | Build the crate and run the program-level test (default true). With false the crate is only written. |
+| `cases` | `--cases` | integer | no | Random function-level test cases per function (default 200, at most 2000). |
+| `dir` | `--dir` | string | no | Directory to write the Rust crate to. Relative paths are inside the project directory; `..` is not allowed. It must be empty, absent, or an earlier program rewrite. Default `rewrite-program` in the project directory. Writing outside the project asks for approval.  The backend receives the resolved absolute path here. |
+| `entry` | `--entry` | json | no | The entry point (any address inside it). Default: the function named `main`, else the first argument of `__libc_start_main` in the decompile of `entry`/`_start`. |
+| `generated_cases` | `--generated-cases` | integer | no | Generated program-level cases on top of the ones derived from the corpus source (default 8, at most 200). |
+| `inputs` | `--inputs` | json | no | Extra program-level cases (at most 64). |
+| `max_attempts` | `--max-attempts` | integer | no | Most translation attempts per function (default 3, 1 to 8). |
+| `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates decompiles. `spec` is not available for programs yet. |
+| `scope` | `--scope` | one of `function`, `all` | no | `all` (the only scope today): every non-library function the entry point reaches. |
+| `seed` | `--seed` | integer | no | Seed of the random function-level and program-level cases (default fixed). |
+| `verify_functions` | `--verify-functions` | boolean | no | Run the function-level differential test (emulation oracle, needs the SLEIGH specs of a Ghidra install). Default true. With false, functions are only compiled; the program-level test is then the only evidence. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_program_status
+
+Show a stored whole-program rewrite: functions, crate and the program-level verdict with per-case diffs
+
+```sh
+kraken rewrite-program-status [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program rewrites of this binary (newest first) and shows one in full: the function table (which version was chosen, whether it was compared against the original or only compiled, which callees it reuses), where the crate is, and the program verdict. By default only the cases that differed are listed; `all_cases` adds the others. Program output is untrusted data.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `all_cases` | `--all-cases` | boolean | no | Include the cases that agreed (default: only the cases that differed, and the counts). |
+| `run` | `--run` | integer | no | The run to show (default: the newest). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "ProgramCaseResult": {
+      "description": "One program-level case with what both programs did.",
+      "properties": {
+        "agree": {
+          "description": "True when exit status, stdout and stderr all agree.",
+          "type": "boolean"
+        },
+        "argv": {
+          "description": "Arguments after `argv[0]`.",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
+        },
+        "differences": {
+          "description": "What differs (empty when `agree`).",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Label.",
+          "type": "string"
+        },
+        "origin": {
+          "description": "`baseline`, `corpus` (derived from the program's source), `generated` or `user`.",
+          "type": "string"
+        },
+        "original": {
+          "$ref": "#/$defs/ProgramRunView",
+          "description": "The original program."
+        },
+        "rewritten": {
+          "$ref": "#/$defs/ProgramRunView",
+          "description": "The rewritten program."
+        },
+        "stdin_bytes": {
+          "description": "Bytes of standard input.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "origin",
+        "argv",
+        "stdin_bytes",
+        "agree",
+        "original",
+        "rewritten",
+        "differences"
+      ],
+      "type": "object"
+    },
+    "ProgramFunctionRow": {
+      "description": "One function of a program rewrite.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Entry address."
+        },
+        "attempts": {
+          "description": "Translation attempts made in this run.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "check": {
+          "description": "`differential` (checked against the original under emulation), `compile_only` (built, not\ncompared), `stored` (an accepted unit from an earlier run, not translated again),\n`skipped` (not reachable from the entry point by direct calls, so not translated) or\n`none` (nothing could be translated; the note says why).",
+          "type": "string"
+        },
+        "check_note": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the function-level test could not compare (binary-derived), if it could not."
+        },
+        "included": {
+          "description": "True when the function is part of the generated crate (reachable from the entry through\nthe chosen translations).",
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Function name (binary-derived)."
+        },
+        "order": {
+          "description": "Position in the plan.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reused_callees": {
+          "description": "Rust names of callees this translation calls instead of translating again.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/UnitStatus",
+          "description": "Status of the chosen version, or of the last attempt when none was usable."
+        },
+        "unit": {
+          "default": "",
+          "description": "Id of the unit version chosen for this function (`ru-...`); empty when none was usable.",
+          "type": "string"
+        },
+        "verdict": {
+          "description": "Function-level verdict: `pass`, `fail`, `rejected`, `inconclusive`, or `none`.",
+          "type": "string"
+        },
+        "version": {
+          "default": 0,
+          "description": "Its version number (0 when none).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "order",
+        "address",
+        "name",
+        "status",
+        "verdict",
+        "check",
+        "attempts",
+        "included"
+      ],
+      "type": "object"
+    },
+    "ProgramRunSummary": {
+      "description": "One stored run in a listing.",
+      "properties": {
+        "cases_run": {
+          "description": "Cases run.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "crate_dir": {
+          "description": "Where the crate was written.",
+          "type": "string"
+        },
+        "created": {
+          "description": "When it finished (seconds since the Unix epoch).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entry": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Entry point."
+        },
+        "passed": {
+          "description": "Cases that agreed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "description": "Run id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "verdict": {
+          "description": "Program verdict kind.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run",
+        "created",
+        "entry",
+        "verdict",
+        "cases_run",
+        "passed",
+        "crate_dir"
+      ],
+      "type": "object"
+    },
+    "ProgramRunView": {
+      "description": "How a program ended on one input.",
+      "properties": {
+        "exit": {
+          "description": "`exit 0`, `signal 11`, `timeout`.",
+          "type": "string"
+        },
+        "stderr": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Standard error (lossy UTF-8, cut at 4 KiB; program-derived)."
+        },
+        "stderr_bytes": {
+          "description": "Bytes the program wrote to standard error.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stdout": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Standard output (lossy UTF-8, cut at 4 KiB; program-derived)."
+        },
+        "stdout_bytes": {
+          "description": "Bytes the program wrote to standard output.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "exit",
+        "stdout",
+        "stdout_bytes",
+        "stderr",
+        "stderr_bytes"
+      ],
+      "type": "object"
+    },
+    "ProgramVerdictView": {
+      "description": "The program-level verdict (ADR 0013, oracle kind `process`).",
+      "properties": {
+        "cases": {
+          "description": "Per-case results (cut to the first 200).",
+          "items": {
+            "$ref": "#/$defs/ProgramCaseResult"
+          },
+          "type": "array"
+        },
+        "cases_run": {
+          "description": "Cases run on both programs.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why, for everything but `pass` and `fail` (model- or binary-derived)."
+        },
+        "failed": {
+          "description": "Cases that differed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passed": {
+          "description": "Cases on which all three observations agreed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sandbox": {
+          "description": "How the programs were confined while they ran.",
+          "type": "string"
+        },
+        "verdict": {
+          "description": "`pass` (every case agreed), `fail` (a case differed), `incomplete` (no runnable crate: a\nfunction could not be translated or the crate does not build), `inconclusive` (no case\ncould tell), or `not_run`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "cases_run",
+        "passed",
+        "failed",
+        "cases",
+        "sandbox"
+      ],
+      "type": "object"
+    },
+    "RewriteProgramResult": {
+      "description": "Result of a finished `rewrite_program` job (the `result` of `job_status`), also what\n`rewrite_program_status` reports for a stored run.",
+      "properties": {
+        "built": {
+          "description": "True when the crate was built in the sandbox.",
+          "type": "boolean"
+        },
+        "crate_dir": {
+          "description": "Where the crate was written (empty when nothing was).",
+          "type": "string"
+        },
+        "crate_sha256": {
+          "default": "",
+          "description": "SHA-256 over the generated sources.",
+          "type": "string"
+        },
+        "created": {
+          "default": 0,
+          "description": "When the run finished (seconds since the Unix epoch).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entry": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The translated entry point."
+        },
+        "entry_name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Its name (binary-derived)."
+        },
+        "failed": {
+          "description": "Functions without a usable translation.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "functions": {
+          "description": "One row per planned function, in plan order.",
+          "items": {
+            "$ref": "#/$defs/ProgramFunctionRow"
+          },
+          "type": "array"
+        },
+        "functions_planned": {
+          "description": "Functions in the plan (translated or not).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "included": {
+          "description": "Functions in the generated crate.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "default": "",
+          "description": "Model name.",
+          "type": "string"
+        },
+        "program_sha256": {
+          "description": "SHA-256 of the analysed binary.",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "description": "Provider id of the model calls.",
+          "type": "string"
+        },
+        "reused_from_store": {
+          "description": "Functions taken from accepted units of earlier runs.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "description": "Id of this run (1, 2, ... per project).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "default": 0,
+          "description": "Functions left out because the entry point cannot reach them by direct calls (loader and\ncompiler glue in a binary without names, dead code).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "translated": {
+          "description": "Functions translated in this run.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "verdict": {
+          "$ref": "#/$defs/ProgramVerdictView",
+          "description": "The program-level verdict."
+        }
+      },
+      "required": [
+        "run",
+        "program_sha256",
+        "entry",
+        "entry_name",
+        "functions_planned",
+        "translated",
+        "reused_from_store",
+        "failed",
+        "included",
+        "functions",
+        "crate_dir",
+        "built",
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "UnitStatus": {
+      "description": "Where a rewrite unit stands (ADR 0013).",
+      "oneOf": [
+        {
+          "const": "planned",
+          "description": "In the plan; nothing translated yet.",
+          "type": "string"
+        },
+        {
+          "const": "translated",
+          "description": "Rust code exists but no passing verdict does (not run, or inconclusive).",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "The differential test passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The differential test found a difference, or the code was refused or did not compile.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "A user accepted this verified version for export.",
+          "type": "string"
+        }
+      ]
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `rewrite_program_status`.",
+  "properties": {
+    "present": {
+      "description": "True when at least one run is stored for this binary.",
+      "type": "boolean"
+    },
+    "program_sha256": {
+      "description": "SHA-256 of the analysed binary.",
+      "type": "string"
+    },
+    "run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RewriteProgramResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The selected run, in full."
+    },
+    "runs": {
+      "description": "Stored runs for this binary, newest first (at most 20).",
+      "items": {
+        "$ref": "#/$defs/ProgramRunSummary"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "program_sha256",
+    "present",
+    "runs"
+  ],
+  "title": "RewriteProgramStatusOut",
   "type": "object"
 }
 ```

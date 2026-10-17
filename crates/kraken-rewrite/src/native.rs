@@ -60,6 +60,7 @@ fn runner_source(sig: &Signature) -> String {
             "let r = {call};\n    let ret: Option<u64> = Some((r as u64) & {:#x}u64);",
             mask(bits)
         ),
+        Ret::Ptr => format!("let r = {call};\n    let ret: Option<u64> = Some(r as u64);"),
     };
     format!(
         r#"#![allow(warnings)]

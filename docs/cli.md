@@ -70,7 +70,12 @@ kraken rewrite-function --address 0x1189 --mode spec  # reimplement from a cited
 kraken rewrite-status                                 # progress per function
 kraken rewrite-accept --unit ru-4a0f7dbcbe726d81      # only you can accept
 kraken rewrite-export --dir rewrite-out               # Cargo workspace with an FFI shim, built in the sandbox
+kraken rewrite-program                                # the whole program as a standalone Rust crate, run against the original
+kraken rewrite-program --verify-functions false       # compile-only per function (no Ghidra needed); the program test still runs
+kraken rewrite-program-status --all-cases             # the last program rewrite: functions, crate, every case
 ```
+
+`rewrite-program` translates every function the entry point reaches, callees first, writes a Rust binary crate to `rewrite-program/` in the project directory (with a small runtime shim for the libc calls), builds it in the sandbox, and runs the original binary and the Rust program on the same arguments and input, both confined and without network. The verdict lists every case that differed. `--inputs '[{"name":"x","argv":["a"],"stdin":"b\n"}]'` adds cases of your own. Running the original natively is what makes this different from the other rewrite commands; see [Security](security.md).
 
 The model comes from the `[provider]` table of `config.toml`, as for the assistant. Generated code runs only in a sandbox (Linux with Landlock); elsewhere the commands refuse.
 

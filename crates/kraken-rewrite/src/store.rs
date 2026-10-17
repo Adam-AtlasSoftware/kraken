@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kraken_registry::commands::{PlanFlag, RewriteMode, UnitStatus};
+use kraken_registry::commands::{
+    PlanFlag, ProgramRunSummary, RewriteMode, RewriteProgramResult, UnitStatus,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -154,6 +156,22 @@ pub const MIGRATIONS: &[&str] = &[
         observed_at     INTEGER NOT NULL,
         PRIMARY KEY (program_sha256, address)
      );",
+    // 4: whole-program rewrites. One row per `rewrite_program` run; the result (function table,
+    // crate location, program verdict with its per-case evidence) is kept as JSON because it is
+    // written once and read whole.
+    "CREATE TABLE program_runs (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        program_sha256 TEXT NOT NULL,
+        created_at     INTEGER NOT NULL,
+        entry          TEXT NOT NULL,
+        verdict        TEXT NOT NULL,
+        cases_run      INTEGER NOT NULL,
+        passed         INTEGER NOT NULL,
+        crate_dir      TEXT NOT NULL,
+        crate_sha256   TEXT NOT NULL,
+        result_json    TEXT NOT NULL
+     );
+     CREATE INDEX program_runs_by_program ON program_runs (program_sha256, id);",
 ];
 
 /// The newest schema version.
@@ -1171,6 +1189,104 @@ impl RewriteStore {
         let tx = conn.transaction().map_err(db)?;
         observe_in(&tx, program_sha256, hashes)?;
         tx.commit().map_err(db)
+    }
+
+    /// Stores a finished program rewrite and returns it with its run id (1, 2, ... for the
+    /// project) and creation time filled in.
+    pub fn put_program_run(
+        &self,
+        program_sha256: &str,
+        mut result: RewriteProgramResult,
+    ) -> Result<RewriteProgramResult, RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(db)?;
+        let at = now();
+        tx.execute(
+            "INSERT INTO program_runs (program_sha256, created_at, entry, verdict, cases_run,
+                    passed, crate_dir, crate_sha256, result_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '')",
+            params![
+                program_sha256,
+                at,
+                format!("{:#x}", result.entry.0),
+                result.verdict.verdict,
+                result.verdict.cases_run,
+                result.verdict.passed,
+                result.crate_dir,
+                result.crate_sha256,
+            ],
+        )
+        .map_err(db)?;
+        result.run = u64::try_from(tx.last_insert_rowid()).unwrap_or(0);
+        result.created = u64::try_from(at).unwrap_or(0);
+        tx.execute(
+            "UPDATE program_runs SET result_json = ?2 WHERE id = ?1",
+            params![
+                i64::try_from(result.run).unwrap_or(0),
+                serde_json::to_string(&result).map_err(js)?
+            ],
+        )
+        .map_err(db)?;
+        tx.commit().map_err(db)?;
+        Ok(result)
+    }
+
+    /// A stored program rewrite: the run `id`, or the newest of the program.
+    pub fn program_run(
+        &self,
+        program_sha256: &str,
+        id: Option<u64>,
+    ) -> Result<Option<RewriteProgramResult>, RewriteError> {
+        let conn = self.conn();
+        let json: Option<String> = match id {
+            Some(id) => conn.query_row(
+                "SELECT result_json FROM program_runs WHERE program_sha256 = ?1 AND id = ?2",
+                params![program_sha256, i64::try_from(id).unwrap_or(-1)],
+                |r| r.get(0),
+            ),
+            None => conn.query_row(
+                "SELECT result_json FROM program_runs WHERE program_sha256 = ?1
+                 ORDER BY id DESC LIMIT 1",
+                params![program_sha256],
+                |r| r.get(0),
+            ),
+        }
+        .optional()
+        .map_err(db)?;
+        json.map(|j| serde_json::from_str(&j).map_err(js))
+            .transpose()
+    }
+
+    /// The newest `limit` program rewrites of the program, newest first.
+    pub fn program_runs(
+        &self,
+        program_sha256: &str,
+        limit: u32,
+    ) -> Result<Vec<ProgramRunSummary>, RewriteError> {
+        let conn = self.conn();
+        let mut st = conn
+            .prepare(
+                "SELECT id, created_at, entry, verdict, cases_run, passed, crate_dir
+                 FROM program_runs WHERE program_sha256 = ?1 ORDER BY id DESC LIMIT ?2",
+            )
+            .map_err(db)?;
+        st.query_map(params![program_sha256, limit], |r| {
+            let entry: String = r.get(2)?;
+            Ok(ProgramRunSummary {
+                run: u64::try_from(r.get::<_, i64>(0)?).unwrap_or(0),
+                created: u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
+                entry: kraken_proto::Hex64(
+                    u64::from_str_radix(entry.trim_start_matches("0x"), 16).unwrap_or(0),
+                ),
+                verdict: r.get(3)?,
+                cases_run: r.get(4)?,
+                passed: r.get(5)?,
+                crate_dir: r.get(6)?,
+            })
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db)
     }
 
     /// The newest decompile hash seen per function address.

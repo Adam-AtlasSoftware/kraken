@@ -369,6 +369,8 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ("rewrite_function", json!({"address": "0x401040"})),
         ("rewrite_spec", json!({"scope": "all"})),
         ("rewrite_export", json!({"dir": "out"})),
+        ("rewrite_program", json!({"scope": "all"})),
+        ("rewrite_program_status", json!({})),
     ] {
         let r = step!(name, args);
         assert_eq!(r["code"], "unsupported", "{name}: {r}");

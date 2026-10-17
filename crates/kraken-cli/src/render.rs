@@ -676,6 +676,165 @@ fn rewrite_function(v: &Value) -> String {
     out
 }
 
+/// One program-level case: what it ran with, then what differed.
+fn program_case(c: &Value, out: &mut String) {
+    let argv = joined(c.get("argv"), "(no arguments)");
+    out.push_str(&format!(
+        "  case {} ({}): arguments {argv}, {} bytes of input -- {}\n",
+        str_of(c.get("name")),
+        str_of(c.get("origin")),
+        count(c, "stdin_bytes"),
+        if c.get("agree") == Some(&Value::Bool(true)) {
+            "agreed"
+        } else {
+            "DIFFERED"
+        }
+    ));
+    if let Some(ds) = c.get("differences").and_then(Value::as_array) {
+        for d in ds.iter().filter_map(Value::as_str) {
+            out.push_str(&format!("    {}\n", one_line(d)));
+        }
+    }
+}
+
+/// The result of a `rewrite_program` job, or one stored run of `rewrite_program_status`: the
+/// function table, the crate, and the program-level verdict with the cases that differed.
+fn rewrite_program(v: &Value) -> String {
+    let verdict = v.get("verdict").cloned().unwrap_or(Value::Null);
+    let mut out = format!(
+        "run {}: entry {} {} -- {} functions planned ({} not reached from the entry), {} translated, \
+         {} taken from accepted units, {} without a usable translation, {} in the crate\n",
+        str_of(v.get("run")),
+        str_of(v.get("entry_name")),
+        str_of(v.get("entry")),
+        count(v, "functions_planned"),
+        count(v, "skipped"),
+        count(v, "translated"),
+        count(v, "reused_from_store"),
+        count(v, "failed"),
+        count(v, "included"),
+    );
+    let crate_dir = v.get("crate_dir").and_then(Value::as_str).unwrap_or("");
+    if crate_dir.is_empty() {
+        out.push_str("crate: not written\n");
+    } else {
+        out.push_str(&format!(
+            "crate: {crate_dir} ({})\n",
+            if v.get("built") == Some(&Value::Bool(true)) {
+                "built in the sandbox"
+            } else {
+                "not built"
+            }
+        ));
+    }
+    out.push_str(&format!(
+        "model: {} {}\n",
+        str_of(v.get("provider")),
+        str_of(v.get("model"))
+    ));
+    let rows: Vec<Vec<String>> = v
+        .get("functions")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|f| {
+                    vec![
+                        str_of(f.get("order")),
+                        str_of(f.get("address")),
+                        str_of(f.get("name")),
+                        str_of(f.get("status")),
+                        str_of(f.get("verdict")),
+                        str_of(f.get("check")),
+                        str_of(f.get("attempts")),
+                        joined(f.get("reused_callees"), "-"),
+                        if f.get("included") == Some(&Value::Bool(true)) {
+                            "yes".to_string()
+                        } else {
+                            "no".to_string()
+                        },
+                    ]
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.push_str(&table(
+        &[
+            "order", "address", "name", "status", "verdict", "check", "tries", "calls", "in crate",
+        ],
+        &rows,
+    ));
+    for f in v
+        .get("functions")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
+        if let Some(n) = f.get("check_note").and_then(Value::as_str) {
+            out.push_str(&format!("  {}: {}\n", str_of(f.get("name")), one_line(n)));
+        }
+    }
+    out.push_str(&format!(
+        "\nprogram verdict: {} -- {}/{} cases agreed",
+        str_of(verdict.get("verdict")),
+        count(&verdict, "passed"),
+        count(&verdict, "cases_run"),
+    ));
+    let sandbox = str_of(verdict.get("sandbox"));
+    if sandbox != "-" && !sandbox.is_empty() {
+        out.push_str(&format!(" (sandbox {sandbox})"));
+    }
+    out.push('\n');
+    if let Some(d) = verdict.get("detail").and_then(Value::as_str) {
+        out.push_str(&format!("reason: {}\n", one_line(d)));
+    }
+    let cases = verdict
+        .get("cases")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let differing: Vec<&Value> = cases
+        .iter()
+        .filter(|c| c.get("agree") != Some(&Value::Bool(true)))
+        .collect();
+    if differing.is_empty() && count(&verdict, "failed") == 0 {
+        return out;
+    }
+    for c in differing.iter().take(20) {
+        program_case(c, &mut out);
+    }
+    if differing.len() > 20 {
+        out.push_str(&format!("  ... and {} more\n", differing.len() - 20));
+    }
+    out
+}
+
+/// `rewrite_program_status`: the stored runs, then the selected one in full.
+fn rewrite_program_status(v: &Value) -> String {
+    let runs = v
+        .get("runs")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if runs.is_empty() {
+        return "no program rewrite is stored for this binary; run rewrite-program\n".to_string();
+    }
+    let rows: Vec<Vec<String>> = runs
+        .iter()
+        .map(|r| {
+            vec![
+                str_of(r.get("run")),
+                str_of(r.get("entry")),
+                str_of(r.get("verdict")),
+                format!("{}/{}", count(r, "passed"), count(r, "cases_run")),
+                str_of(r.get("crate_dir")),
+            ]
+        })
+        .collect();
+    let mut out = table(&["run", "entry", "verdict", "cases", "crate"], &rows);
+    if let Some(run) = v.get("run").filter(|r| !r.is_null()) {
+        out.push('\n');
+        out.push_str(&rewrite_program(run));
+    }
+    out
+}
+
 fn generic(v: &Value, indent: usize, out: &mut String) {
     let pad = " ".repeat(indent);
     match v {
@@ -768,6 +927,14 @@ pub fn render(name: &str, output: &Value) -> Rendered {
         "rewrite_plan" => plain(rewrite_plan(&v)),
         "rewrite_status" => plain(rewrite_status(&v)),
         "rewrite_unit" => plain(rewrite_unit(&v)),
+        "rewrite_program_status" => plain(rewrite_program_status(&v)),
+        "rewrite_program"
+            if v.get("result")
+                .is_some_and(|r| r.get("functions").is_some())
+                || v.get("functions").is_some() =>
+        {
+            plain(rewrite_program(v.get("result").unwrap_or(&v)))
+        }
         // A finished job prints as a job view with the command's result inside.
         "rewrite_function"
             if v.get("result").is_some_and(|r| r.get("verdict").is_some())
@@ -1017,6 +1184,79 @@ mod tests {
             &json!({"job_id": "job-1", "status": "running"}),
         );
         assert!(other.stdout.contains("status: running"));
+    }
+
+    #[test]
+    fn rewrite_program_results_show_the_functions_and_only_the_differing_cases() {
+        let result = json!({
+            "run": 2, "entry": "0x101707", "entry_name": u("main"), "functions_planned": 2,
+            "translated": 2, "reused_from_store": 0, "failed": 0, "included": 2,
+            "crate_dir": "/p/rewrite-program", "built": true, "provider": "replay",
+            "model": "cassette",
+            "functions": [
+                {"order": 0, "address": "0x101194", "name": u("push"), "status": "verified",
+                 "verdict": "pass", "check": "differential", "attempts": 1, "included": true},
+                {"order": 1, "address": "0x101707", "name": u("main"), "status": "translated",
+                 "verdict": "inconclusive", "check": "compile_only", "attempts": 1,
+                 "reused_callees": ["push"], "included": true,
+                 "check_note": u("pointer result")}
+            ],
+            "verdict": {"verdict": "fail", "cases_run": 3, "passed": 2, "failed": 1,
+                "sandbox": "landlock-v6+netns",
+                "cases": [
+                    {"name": "gen-1", "origin": "generated", "argv": [u("a b")], "stdin_bytes": 4,
+                     "agree": false, "differences": [u("stdout: 3 bytes vs 4 bytes, first difference at byte 2")]},
+                    {"name": "baseline", "origin": "baseline", "argv": [], "stdin_bytes": 0,
+                     "agree": true, "differences": []}
+                ]}
+        });
+        let job = json!({"job_id": "job-1", "status": "succeeded", "result": result});
+        let r = render("rewrite_program", &job);
+        let lines: Vec<&str> = r.stdout.lines().collect();
+        assert!(
+            lines[0].starts_with("run 2: entry main 0x101707 -- 2 functions planned (0 not reached from the entry), 2 translated"),
+            "{}",
+            r.stdout
+        );
+        assert!(
+            r.stdout
+                .contains("crate: /p/rewrite-program (built in the sandbox)\n")
+        );
+        assert!(r.stdout.contains("main"), "{}", r.stdout);
+        assert!(r.stdout.contains("  main: pointer result\n"));
+        assert!(
+            r.stdout.contains(
+                "program verdict: fail -- 2/3 cases agreed (sandbox landlock-v6+netns)\n"
+            )
+        );
+        assert!(
+            r.stdout.contains(
+                "  case gen-1 (generated): arguments a b, 4 bytes of input -- DIFFERED\n"
+            )
+        );
+        assert!(
+            r.stdout
+                .contains("    stdout: 3 bytes vs 4 bytes, first difference at byte 2\n")
+        );
+        assert!(
+            !r.stdout.contains("case baseline"),
+            "agreeing cases are not listed"
+        );
+
+        let none = render(
+            "rewrite_program_status",
+            &json!({"present": false, "runs": []}),
+        );
+        assert!(none.stdout.starts_with("no program rewrite is stored"));
+        let status = render(
+            "rewrite_program_status",
+            &json!({"present": true,
+                "runs": [{"run": 2, "entry": "0x101707", "verdict": "fail", "cases_run": 3,
+                          "passed": 2, "crate_dir": "/p/c"}],
+                "run": result}),
+        );
+        assert!(status.stdout.starts_with("RUN  ENTRY"), "{}", status.stdout);
+        assert!(status.stdout.contains("program verdict: fail"));
     }
 
     #[test]

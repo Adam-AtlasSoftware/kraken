@@ -9,8 +9,6 @@
 
 use std::collections::BTreeSet;
 
-use kraken_registry::commands::UnitStatus;
-
 use crate::error::RewriteError;
 use crate::fetch::FunctionContext;
 use crate::store::RewriteStore;
@@ -75,11 +73,30 @@ pub struct Resolved {
     pub remaining: Vec<FunctionContext>,
 }
 
+/// How a reusable unit is found: the unit to call for the function at an address (`0x...`), if
+/// there is one. [`resolve`] looks at accepted units; a program run passes the units it chose.
+pub type Lookup<'a> = &'a dyn Fn(&str) -> Result<Option<RewriteUnit>, RewriteError>;
+
 /// Looks up `callees` in the store: those whose accepted unit was made from the callee's current
 /// decompile (and whose own reused callees are still accepted) are reused; the others stay in
 /// `remaining`. `own_address` is never reused (a recursive call stays part of the unit).
 pub fn resolve(
     store: &RewriteStore,
+    program_sha256: &str,
+    own_address: u64,
+    callees: &[FunctionContext],
+) -> Result<Resolved, RewriteError> {
+    resolve_with(
+        &|address| store.accepted(program_sha256, address),
+        program_sha256,
+        own_address,
+        callees,
+    )
+}
+
+/// [`resolve`] with another way to find the unit to call.
+pub fn resolve_with(
+    lookup: Lookup<'_>,
     program_sha256: &str,
     own_address: u64,
     callees: &[FunctionContext],
@@ -92,7 +109,7 @@ pub fn resolve(
             continue;
         }
         let mut chain = Vec::new();
-        match reusable(store, program_sha256, c, &mut chain, 0)? {
+        match reusable(lookup, program_sha256, c, &mut chain, 0)? {
             Some(top) => {
                 for r in chain {
                     if seen.insert(r.address) {
@@ -114,24 +131,24 @@ const MAX_DEPTH: usize = 8;
 
 /// The reusable form of `c`; its dependencies are pushed to `chain` (dependencies first).
 fn reusable(
-    store: &RewriteStore,
+    lookup: Lookup<'_>,
     sha: &str,
     c: &FunctionContext,
     chain: &mut Vec<ReusedCallee>,
     depth: usize,
 ) -> Result<Option<ReusedCallee>, RewriteError> {
     let address = format!("{:#x}", c.address);
-    let Some(unit) = store.accepted(sha, &address)? else {
+    let Some(unit) = lookup(&address)? else {
         return Ok(None);
     };
-    if unit.status != UnitStatus::Accepted || unit.source_decompile_hash != c.decompile_hash {
+    if unit.source_decompile_hash != c.decompile_hash {
         return Ok(None);
     }
-    from_unit(store, sha, &unit, c, chain, depth)
+    from_unit(lookup, sha, &unit, c, chain, depth)
 }
 
 fn from_unit(
-    store: &RewriteStore,
+    lookup: Lookup<'_>,
     sha: &str,
     unit: &RewriteUnit,
     c: &FunctionContext,
@@ -144,7 +161,7 @@ fn from_unit(
     let mut requires = Vec::new();
     for dep in unit.callees.iter().filter(|d| d.reused.is_some()) {
         let a = parse_addr(&dep.address);
-        let Some(dep_unit) = store.accepted(sha, &dep.address)? else {
+        let Some(dep_unit) = lookup(&dep.address)? else {
             return Ok(None);
         };
         if dep_unit.source_decompile_hash != dep.decompile_hash {
@@ -160,7 +177,7 @@ fn from_unit(
             image_base: c.image_base,
         };
         let mut sub = Vec::new();
-        let Some(r) = from_unit(store, sha, &dep_unit, &ctx, &mut sub, depth + 1)? else {
+        let Some(r) = from_unit(lookup, sha, &dep_unit, &ctx, &mut sub, depth + 1)? else {
             return Ok(None);
         };
         chain.extend(sub);
@@ -185,9 +202,18 @@ fn from_unit(
 /// The source that goes in front of the new translation when it is compiled: every reused
 /// callee in its own module, then `use` lines for the ones the translation calls directly.
 pub fn prelude(all: &[ReusedCallee], direct: &[ReusedCallee]) -> String {
+    prelude_with(all, direct, false)
+}
+
+/// [`prelude`], and with `shim` every callee module can use the runtime shim `rt` that the caller
+/// puts in front (`use super::rt;`).
+pub fn prelude_with(all: &[ReusedCallee], direct: &[ReusedCallee], shim: bool) -> String {
     let mut s = String::new();
     for r in all {
         s.push_str(&format!("mod {} {{\n", r.module()));
+        if shim {
+            s.push_str("use super::rt;\n");
+        }
         for (addr, sym) in &r.requires {
             s.push_str(&format!("use super::{}::{sym};\n", module_name(*addr)));
         }

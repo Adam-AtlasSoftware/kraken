@@ -23,6 +23,10 @@ pub enum Ret {
     Void,
     /// An integer in RAX.
     Int { bits: u8, signed: bool },
+    /// A pointer in RAX. Addresses are not comparable between the original (emulated or native)
+    /// and the Rust build, so a function with this result cannot be compared by the function-level
+    /// differential test; it is only compiled (see `Check::CompileOnly` in the service).
+    Ptr,
 }
 
 /// The ABI of one function: the C-level view, which the Rust `extern "C"` signature must map to.
@@ -51,6 +55,7 @@ impl Signature {
         let ret = match self.ret {
             Ret::Void => String::new(),
             Ret::Int { bits, signed } => format!(" -> {}", int_ty(bits, signed)),
+            Ret::Ptr => " -> *const u8".to_string(),
         };
         format!(
             "pub unsafe extern \"C\" fn {}({}){ret}",
