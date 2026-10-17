@@ -165,6 +165,7 @@ pub fn c_prototype(sig: &Signature) -> String {
     let ret = match sig.ret {
         Ret::Void => "void".to_string(),
         Ret::Int { bits, signed } => c_type(bits, signed),
+        Ret::Ptr => "const void *".to_string(),
     };
     let params = if sig.params.is_empty() {
         "void".to_string()
@@ -194,6 +195,7 @@ fn shim_fn(sig: &Signature, path: &str) -> String {
             "(unsafe {{ {call} }}) as {}",
             crate::abi::int_ty(bits, signed)
         ),
+        Ret::Ptr => format!("(unsafe {{ {call} }}) as *const u8"),
     };
     format!(
         "#[unsafe(no_mangle)]\n{} {{\n    {body}\n}}\n",
@@ -535,6 +537,38 @@ pub fn build_in_sandbox(
     ffi_crate: &str,
     confinement: &Confinement,
 ) -> Result<Built, RewriteError> {
+    let b = cargo_build(dir, confinement, "the exported workspace")?;
+    let lib = b
+        .target
+        .join("release")
+        .join(format!("lib{}.so", ffi_crate.replace('-', "_")));
+    let symbols = exported_symbols(&lib)?;
+    Ok(Built {
+        sandbox: b.sandbox,
+        symbols,
+    })
+}
+
+/// A finished sandboxed `cargo build --release`.
+#[derive(Debug)]
+pub struct CargoBuild {
+    /// Scratch directory holding the copy that was built and its target directory; the build
+    /// products live until this is dropped.
+    pub run: tempfile::TempDir,
+    /// The target directory (`release/` is inside it).
+    pub target: PathBuf,
+    /// How the build was confined.
+    pub sandbox: String,
+}
+
+/// Copies the Cargo project at `dir` into a private scratch directory and builds it in release
+/// mode, offline, under the sandbox (read-only file system outside the scratch directory, no
+/// network). `what` names the project in error messages.
+pub fn cargo_build(
+    dir: &Path,
+    confinement: &Confinement,
+    what: &str,
+) -> Result<CargoBuild, RewriteError> {
     let tc = toolchain()?;
     let run = scratch_dir("kraken-export-")?;
     let ws = run.path().join("ws");
@@ -580,17 +614,14 @@ pub fn build_in_sandbox(
             String::from_utf8_lossy(&out)
         );
         return Err(RewriteError::Compile(format!(
-            "the exported workspace does not build:\n{}",
+            "{what} does not build:\n{}",
             text.lines().take(30).collect::<Vec<_>>().join("\n")
         )));
     }
-    let lib = target
-        .join("release")
-        .join(format!("lib{}.so", ffi_crate.replace('-', "_")));
-    let symbols = exported_symbols(&lib)?;
-    Ok(Built {
+    Ok(CargoBuild {
+        run,
+        target,
         sandbox: report.label(),
-        symbols,
     })
 }
 

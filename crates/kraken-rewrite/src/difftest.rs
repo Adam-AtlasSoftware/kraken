@@ -455,6 +455,7 @@ pub fn run_differential(
     };
     report.sandbox = runner.build_confinement.label();
     check_shapes(sig, spec)?;
+    let mut faults = 0usize;
     for args in spec.cases(opts.seed, opts.random_cases) {
         let orig = oracle.call(entry, sig, &args)?;
         if let Termination::Unsupported { .. } = orig.termination {
@@ -463,6 +464,9 @@ pub fn run_differential(
         }
         let native = runner.run(&args)?;
         report.cases_run += 1;
+        if matches!(orig.termination, Termination::Fault { .. }) {
+            faults += 1;
+        }
         let differences = compare(&orig, &native);
         if differences.is_empty() {
             report.passed += 1;
@@ -498,9 +502,49 @@ pub fn run_differential(
                 report.skipped + report.cases_run
             ),
         }
+    } else if faults * 10 >= report.cases_run * 9 {
+        // Both sides crashed on (nearly) every input: they agree, but nothing about the
+        // function's logic was compared. Typical for a struct with pointers inside, which random
+        // bytes cannot build.
+        Verdict::Inconclusive {
+            reason: format!(
+                "the original faulted on {faults} of {} cases, so the inputs do not reach the \
+                 function's logic; it needs a curated input generator",
+                report.cases_run
+            ),
+        }
     } else {
         Verdict::Pass
     };
+    Ok(report)
+}
+
+/// Lints and builds `rust_code` at `sig` without running a single case, for functions the oracle
+/// cannot compare (or when the caller did not ask for the comparison). The verdict is `Rejected`
+/// when the code is refused or does not compile and `Inconclusive` with `reason` when it builds:
+/// compiling is not evidence that it is right.
+pub fn compile_only(
+    sig: &Signature,
+    rust_code: &str,
+    opts: &DiffOptions,
+    reason: &str,
+) -> Result<DiffReport, RewriteError> {
+    let mut report = DiffReport {
+        verdict: Verdict::Inconclusive {
+            reason: reason.to_string(),
+        },
+        seed: opts.seed,
+        cases_run: 0,
+        passed: 0,
+        skipped: 0,
+        counterexamples: Vec::new(),
+        cases: Vec::new(),
+        sandbox: String::new(),
+    };
+    match build(sig, rust_code, &opts.confinement)? {
+        Build::Ready(r) => report.sandbox = r.build_confinement.label(),
+        Build::Rejected(reason) => report.verdict = Verdict::Rejected { reason },
+    }
     Ok(report)
 }
 

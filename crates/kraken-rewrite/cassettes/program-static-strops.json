@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "94f3150d30347c9fafe2ee750d1a85b273f47a1b021f202b7c01b0d113c57136",
+        "key": "f2feaf20ce4b9e0f94f99b4b686aa21aa700447acf0151f91b206304a29da1ab"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `hash_str` (corpus/src/static_strops.c): djb2 xor variant.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn hash_str(s: *const u8) -> u64 {\n    let mut h: u64 = 5381;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            h = h.wrapping_shl(5).wrapping_add(h) ^ u64::from(*p);\n            p = p.add(1);\n        }\n    }\n    h\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "062b9a2f8444fe0d1e1165710f87f2e79fe5221321fe969327c4b1270d239305",
+        "key": "d736010927e71e88fb8e1fd7d29e5d26039e036e07e7dfb6a61e0d1ab4f32544"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_reverse`: reverses a C string in place.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_reverse(s: *mut u8) {\n    unsafe {\n        let n = rt::strlen(s);\n        let mut i = 0usize;\n        while i < n / 2 {\n            let t = *s.add(i);\n            *s.add(i) = *s.add(n - 1 - i);\n            *s.add(n - 1 - i) = t;\n            i += 1;\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "0ba70d43df82db50284ff0745d26c77891277c162bf17ad8fcddc0b31b630dc4",
+        "key": "e2398d174dc52619bdbfa9cc01346b5594dc731c113d3628f3267afcfd5907a2"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_count_char`: occurrences of `c` in a C string.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_count_char(s: *const u8, c: i8) -> i32 {\n    let mut count: i32 = 0;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p as i8 == c {\n                count += 1;\n            }\n            p = p.add(1);\n        }\n    }\n    count\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "088ed1af4dec5e20c85c1d0e0c69a02901f58cc8cf0e757e60a9902efebebb29",
+        "key": "d2155c9683feffe52c0714ca59106a0200d518c6c51eab5782d1ec3064720012"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_upper`: ASCII upper-casing in place.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_upper(s: *mut u8) {\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p >= b'a' && *p <= b'z' {\n                *p = *p - b'a' + b'A';\n            }\n            p = p.add(1);\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "73000b4f5743ddcaf7f07e524339516e9511a6f5bbbd4ef2420cf756490ffc84",
+        "key": "46db3f5e3e740d55117cfe7e0da581d7c29923a4989af2e00f79f65cd1ea5284"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `is_palindrome`.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn is_palindrome(s: *const u8) -> i32 {\n    unsafe {\n        let n = rt::strlen(s);\n        let mut i = 0usize;\n        while i < n / 2 {\n            if *s.add(i) != *s.add(n - 1 - i) {\n                return 0;\n            }\n            i += 1;\n        }\n    }\n    1\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "c28f964856d4efcda58f63ebb905056542cf2396e3e4eae69eeeaa1dc7a8d40a",
+        "key": "8771f888ae48417de8e96d1cc8df73b72cc0b78f55ffd5cca8d6f723758c4c72"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `caesar`: shifts lower-case letters, returns how many.\n// C `%` keeps the sign of the dividend, as Rust's does.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn caesar(s: *mut u8, shift: i32) -> i32 {\n    let mut changed: i32 = 0;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p >= b'a' && *p <= b'z' {\n                let v = (i32::from(*p) - i32::from(b'a')).wrapping_add(shift) % 26;\n                *p = i32::from(b'a').wrapping_add(v) as u8;\n                changed += 1;\n            }\n            p = p.add(1);\n        }\n    }\n    changed\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "4d0ce808ce1611618db07d3e5e1d36a138b3015fae831fa531780e0a587279d4",
+        "key": "7769a848450ef0509556da66334c6d57a3372986c92a80c188da4babb38100ce"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `join_words`: joins `n` words with `sep` into `out`\n// (capacity `cap`); returns the length, or -1 when it would not fit.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn join_words(\n    out: *mut u8,\n    cap: u64,\n    words: *const *const u8,\n    n: i32,\n    sep: i8,\n) -> i32 {\n    let cap = cap as usize;\n    let mut used: usize = 0;\n    let mut i: i32 = 0;\n    unsafe {\n        while i < n {\n            let w = *words.add(i as usize);\n            let wl = rt::strlen(w);\n            if used.wrapping_add(wl).wrapping_add(2) > cap {\n                return -1;\n            }\n            rt::memcpy(out.add(used), w, wl);\n            used += wl;\n            if i + 1 < n {\n                *out.add(used) = sep as u8;\n                used += 1;\n            }\n            i += 1;\n        }\n        *out.add(used) = 0;\n    }\n    used as i32\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "ced1efc87748ab2599441066a2eb7399fb2ef07f09e6ff5da6dcd7e9f90e7aff",
+        "key": "1c915afb99a4cfce65773bbe3249a8da11576f9e61f8f57ca2f21b5dfbb8af87"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `main`; the entry point of the program. Calls the\n// translated helpers and prints through the runtime shim.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn fn_401a5e() -> i32 {\n    let words: [*const u8; 5] = [\n        b\"static\\0\".as_ptr(),\n        b\"linking\\0\".as_ptr(),\n        b\"keeps\\0\".as_ptr(),\n        b\"libc\\0\".as_ptr(),\n        b\"inside\\0\".as_ptr(),\n    ];\n    let mut buf = [0u8; 128];\n    let mut tmp = [0u8; 128];\n    let mut total: u64 = 0;\n    unsafe {\n        let len = join_words(buf.as_mut_ptr() as _, 128, words.as_ptr() as _, 5, 32);\n        if len < 0 {\n            return 1;\n        }\n        rt::printf(\n            b\"joined: %s (%d)\\n\\0\".as_ptr(),\n            &[rt::Arg::Ptr(buf.as_ptr()), rt::Arg::Int(i64::from(len))],\n        );\n        total = total.wrapping_add(hash_str(buf.as_ptr() as _));\n\n        rt::strcpy(tmp.as_mut_ptr(), buf.as_ptr());\n        str_reverse(tmp.as_mut_ptr() as _);\n        rt::printf(b\"reversed: %s\\n\\0\".as_ptr(), &[rt::Arg::Ptr(tmp.as_ptr())]);\n        total = total.wrapping_add(hash_str(tmp.as_ptr() as _));\n\n        str_upper(tmp.as_mut_ptr() as _);\n        rt::printf(b\"upper: %s\\n\\0\".as_ptr(), &[rt::Arg::Ptr(tmp.as_ptr())]);\n        rt::printf(\n            b\"count of i: %d\\n\\0\".as_ptr(),\n            &[rt::Arg::Int(i64::from(str_count_char(\n                buf.as_ptr() as _,\n                b'i' as _,\n            )))],\n        );\n        rt::printf(\n            b\"palindrome(level)=%d palindrome(buf)=%d\\n\\0\".as_ptr(),\n            &[\n                rt::Arg::Int(i64::from(is_palindrome(b\"level\\0\".as_ptr() as _))),\n                rt::Arg::Int(i64::from(is_palindrome(buf.as_ptr() as _))),\n            ],\n        );\n\n        let ch = caesar(buf.as_mut_ptr() as _, 3);\n        rt::printf(\n            b\"caesar changed %d chars: %s\\n\\0\".as_ptr(),\n            &[rt::Arg::Int(i64::from(ch)), rt::Arg::Ptr(buf.as_ptr())],\n        );\n\n        let heap = rt::malloc(64);\n        if heap.is_null() {\n            return 2;\n        }\n        rt::snprintf(\n            heap,\n            64,\n            b\"hash=%lu\\0\".as_ptr(),\n            &[rt::Arg::UInt(total % 100_000)],\n        );\n        rt::printf(b\"%s\\n\\0\".as_ptr(), &[rt::Arg::Ptr(heap)]);\n        rt::free(heap);\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    }
+  ]
+}

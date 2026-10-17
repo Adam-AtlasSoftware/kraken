@@ -387,3 +387,134 @@ fn gen_calc(rng: &mut Rng) -> Vec<Arg> {
     }
     calc_case(&s)
 }
+
+// ----- curated function-level inputs for program rewrites -----
+
+/// Function-level test inputs worth more than the generic ones, for a function of a corpus
+/// program.
+#[derive(Debug, Clone)]
+pub struct Curated {
+    /// The inputs.
+    pub inputs: InputSpec,
+    /// Layout notes for the prompt (trusted operator text).
+    pub notes: String,
+}
+
+const VM_STATE_NOTES: &str = "enum { STACK_MAX = 32 };\n\
+struct vm { int32_t stack[32]; int sp; unsigned pc; unsigned long steps; };\n\
+sizeof(struct vm) == 144: stack at 0, sp at 128, pc at 132, steps at 136.\n\
+vm_fail(msg, pc) prints `vm error at pc=%u: %s` and a newline to stderr and calls exit(42).";
+
+fn vm_buffer_gen(sp_hi: i64) -> ParamGen {
+    let mut fields: Vec<FieldGen> = (0..32)
+        .map(|i| FieldGen {
+            offset: i * 4,
+            value: IntGen::full(32, true),
+        })
+        .collect();
+    fields.push(FieldGen {
+        offset: 128,
+        value: IntGen {
+            bits: 32,
+            signed: true,
+            range: Some((0, sp_hi)),
+        },
+    });
+    fields.push(FieldGen {
+        offset: 132,
+        value: IntGen::full(32, false),
+    });
+    ParamGen::Struct { size: 144, fields }
+}
+
+fn push_inputs() -> InputSpec {
+    let at = |sp: usize, v: i32| {
+        let stack: Vec<i32> = (0..sp as i32).collect();
+        vec![
+            vm_state(sp, &stack, 3, 9),
+            Arg::Int {
+                value: i64::from(v) as u64,
+            },
+        ]
+    };
+    InputSpec {
+        fixed: vec![at(0, 5), at(1, -1), at(31, i32::MAX), at(32, 7), at(33, 7)],
+        generator: Generator::Params(vec![
+            vm_buffer_gen(33),
+            ParamGen::Int(IntGen::full(32, true)),
+        ]),
+    }
+}
+
+fn pop_inputs() -> InputSpec {
+    let at = |sp: usize| {
+        let stack: Vec<i32> = (0..sp as i32).map(|i| i * 3 - 7).collect();
+        vec![vm_state(sp, &stack, 5, 11)]
+    };
+    InputSpec {
+        fixed: vec![at(0), at(1), at(2), at(31), at(32)],
+        generator: Generator::Params(vec![vm_buffer_gen(32)]),
+    }
+}
+
+fn vm_fail_inputs() -> InputSpec {
+    let msg = |text: &str, pc: u32| {
+        let mut data = text.as_bytes().to_vec();
+        data.extend_from_slice(&[0; 8]);
+        vec![
+            Arg::Buf { data },
+            Arg::Int {
+                value: u64::from(pc),
+            },
+        ]
+    };
+    InputSpec {
+        fixed: vec![
+            msg("stack overflow", 0),
+            msg("stack underflow", 17),
+            msg("pc out of range", u32::MAX),
+            msg("bad opcode", 255),
+            msg("", 1),
+        ],
+        generator: Generator::Params(vec![
+            ParamGen::Bytes {
+                min_len: 1,
+                max_len: 24,
+                alphabet: Some((b' '..=b'~').collect()),
+                terminator: true,
+                pad: 8,
+            },
+            ParamGen::Int(IntGen::full(32, false)),
+        ]),
+    }
+}
+
+/// Curated inputs for `function` of the corpus binary named `binary_file` (for example
+/// `switch_vm-O0`), if there are some: the targets of [`targets`] plus the helpers of
+/// `switch_vm` whose struct argument needs a valid shape. Functions whose arguments hold
+/// pointers (the `stripped_calc` parser) have none: the generic inputs cannot build them and
+/// the function-level test says so (see `Verdict::Inconclusive`).
+pub fn curated(binary_file: &str, function: &str) -> Option<Curated> {
+    if let Some(t) = targets()
+        .into_iter()
+        .find(|t| t.binary == binary_file && t.function == function)
+    {
+        return Some(Curated {
+            inputs: t.inputs,
+            notes: t.layout_notes.to_string(),
+        });
+    }
+    if binary_file != "switch_vm-O0" {
+        return None;
+    }
+    let inputs = match function {
+        "push" => push_inputs(),
+        "pop" => pop_inputs(),
+        "vm_fail" => vm_fail_inputs(),
+        _ => return None,
+    };
+    Some(Curated {
+        inputs,
+        notes: VM_STATE_NOTES.to_string(),
+    })
+}

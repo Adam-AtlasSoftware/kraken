@@ -36,6 +36,8 @@ const EXPECTED: &[&str] = &[
     "rewrite_export",
     "rewrite_function",
     "rewrite_plan",
+    "rewrite_program",
+    "rewrite_program_status",
     "rewrite_spec",
     "rewrite_status",
     "rewrite_unit",

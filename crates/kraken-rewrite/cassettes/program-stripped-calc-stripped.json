@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "1290ccf99d7431edb5bb8e5b3ec6131d6053434aa21a8e472977e0703ff67231",
+        "key": "eaa594c94b351f76c7a1f848b5dfaf426c0c1b49a0e6bd647f80ea63bfa265cd"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `FUN_00101149` (corpus/src/stripped_calc.c), written by hand\n// and checked against the C source; program mode (the runtime shim `rt` is in scope).\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// Advances `ps.p` past C-locale whitespace.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_00101149(ps: *mut Parser) {\n    unsafe {\n        while rt::isspace(i32::from(*(*ps).p)) != 0 {\n            (*ps).p = (*ps).p.add(1);\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "30b7729a0fa8388e67b93d2575175fc96f0f8b26436a0acc2cc77f646f6dde41",
+        "key": "3592803926b6007deee663eeb2125b2f59d3cdb2e5d8c4699476cdc38bf0b5c1"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `FUN_00101197`; calls the translated `FUN_00101149`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// Reads decimal digits (after whitespace); sets `err` when there are none.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_00101197(ps: *mut Parser) -> i64 {\n    let mut v: i64 = 0;\n    let mut any = false;\n    unsafe {\n        FUN_00101149(ps as _);\n        while rt::isdigit(i32::from(*(*ps).p)) != 0 {\n            v = v\n                .wrapping_mul(10)\n                .wrapping_add(i64::from(*(*ps).p - b'0'));\n            (*ps).p = (*ps).p.add(1);\n            any = true;\n        }\n        if !any {\n            (*ps).err = 1;\n        }\n    }\n    v\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "c2d876add8268e895b7c43f471d47bda01be1fa1d10a58c66cf270841e43a2ab",
+        "key": "b218f62178867de9aa153ce56053744792c94fb8fe4a5e7f83dd0c20b4544d78"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `FUN_00101247`. FUN_00101247, FUN_0010130d and FUN_001013cf\n// call each other, so this translation carries the other two as private helpers; it calls the\n// translated `FUN_00101149` and `FUN_00101197`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\nunsafe fn cur(ps: *mut Parser) -> u8 {\n    unsafe { *(*ps).p }\n}\n\nunsafe fn advance(ps: *mut Parser) {\n    unsafe { (*ps).p = (*ps).p.add(1) }\n}\n\nunsafe fn FUN_0010130d(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = FUN_00101247(ps);\n        loop {\n            FUN_00101149(ps as _);\n            let op = cur(ps);\n            if op != b'*' && op != b'/' && op != b'%' {\n                return v;\n            }\n            advance(ps);\n            let r = FUN_00101247(ps);\n            if op == b'*' {\n                v = v.wrapping_mul(r);\n            } else if r == 0 {\n                (*ps).err = 1;\n            } else {\n                v = if op == b'/' { v / r } else { v % r };\n            }\n        }\n    }\n}\n\nunsafe fn FUN_001013cf(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = FUN_0010130d(ps);\n        loop {\n            FUN_00101149(ps as _);\n            let op = cur(ps);\n            if op != b'+' && op != b'-' {\n                return v;\n            }\n            advance(ps);\n            let r = FUN_0010130d(ps);\n            v = if op == b'+' {\n                v.wrapping_add(r)\n            } else {\n                v.wrapping_sub(r)\n            };\n        }\n    }\n}\n\n/// atom = '(' expr ')' | '-' atom | number\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_00101247(ps: *mut Parser) -> i64 {\n    unsafe {\n        FUN_00101149(ps as _);\n        if cur(ps) == b'(' {\n            advance(ps);\n            let v = FUN_001013cf(ps);\n            FUN_00101149(ps as _);\n            if cur(ps) != b')' {\n                (*ps).err = 1;\n            } else {\n                advance(ps);\n            }\n            return v;\n        }\n        if cur(ps) == b'-' {\n            advance(ps);\n            return FUN_00101247(ps).wrapping_neg();\n        }\n        FUN_00101197(ps as _)\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "f797346e07ff8155c18dff54f6d022bd497b0548459580b9f174ee8693e77bf4",
+        "key": "d9c14f0124f0be79d2733d0762f6407b91345b666985b0c22a48849b7eb99ca7"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `FUN_0010130d`; calls the translated `FUN_00101149` and\n// `FUN_00101247`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// term = atom (('*' | '/' | '%') atom)*; division by zero sets `err` and keeps the value.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_0010130d(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = FUN_00101247(ps as _);\n        loop {\n            FUN_00101149(ps as _);\n            let op = *(*ps).p;\n            if op != b'*' && op != b'/' && op != b'%' {\n                return v;\n            }\n            (*ps).p = (*ps).p.add(1);\n            let r = FUN_00101247(ps as _);\n            if op == b'*' {\n                v = v.wrapping_mul(r);\n            } else if r == 0 {\n                (*ps).err = 1;\n            } else {\n                v = if op == b'/' { v / r } else { v % r };\n            }\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "0f9fc864a65016b7e78851a757cf0981eac45b87341e9b30fe6f6687559e05bd",
+        "key": "a9316b2beef32beaa433e1841ea23a72332bb04be7231f5ecb4fa284f53c8e0a"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `FUN_001013cf`; calls the translated `FUN_00101149` and\n// `FUN_0010130d`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// expr = term (('+' | '-') term)*\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_001013cf(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = FUN_0010130d(ps as _);\n        loop {\n            FUN_00101149(ps as _);\n            let op = *(*ps).p;\n            if op != b'+' && op != b'-' {\n                return v;\n            }\n            (*ps).p = (*ps).p.add(1);\n            let r = FUN_0010130d(ps as _);\n            v = if op == b'+' {\n                v.wrapping_add(r)\n            } else {\n                v.wrapping_sub(r)\n            };\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "70616451977dacbd8aa44d4fa787b933dbb062f752c599c17f30407ffe3e4d01",
+        "key": "436a955ae117410e0889beb26fc36ac6251d9367128728c5586820dfd7fcd714"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `FUN_0010145b`; calls the translated `FUN_001013cf` and\n// `FUN_00101149`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// Evaluates the NUL-terminated `text`; stores the value in `*out` and returns 0, or returns -1\n/// (leaving `*out` alone) on a syntax error, trailing text or division by zero.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_0010145b(text: *const u8, out: *mut i64) -> i32 {\n    let mut ps = Parser { p: text, err: 0 };\n    unsafe {\n        let v = FUN_001013cf(&mut ps as *mut Parser as _);\n        FUN_00101149(&mut ps as *mut Parser as _);\n        if ps.err != 0 || *ps.p != 0 {\n            return -1;\n        }\n        *out = v;\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "320b11a7dfc273227da31ec47308ec629024aba5ed1939cd7563c7069cb3bb11",
+        "key": "a4540eb305c6287717aa86667d97ccc912c5754a0be70f86beeb6d1553848d99"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `main`; the entry point of the program. Calls the\n// translated `FUN_0010145b` and prints through the runtime shim.\n\n/// Evaluates seven fixed expressions and prints each result or `error`, then the error count.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn FUN_001014c1() -> i32 {\n    const CASES: [&[u8]; 7] = [\n        b\"1 + 2 * 3\\0\",\n        b\"(1 + 2) * 3\\0\",\n        b\"100 / (5 - 5)\\0\",\n        b\"-(4 + 6) % 7\\0\",\n        b\"2 * (3 + 4) * 5\\0\",\n        b\"12 +\\0\",\n        b\"((7))\\0\",\n    ];\n    let mut bad: i32 = 0;\n    for case in CASES.iter() {\n        let mut v: i64 = 0;\n        unsafe {\n            if FUN_0010145b(case.as_ptr() as _, &mut v as *mut i64 as _) == 0 {\n                rt::printf(\n                    b\"%-18s = %ld\\n\\0\".as_ptr(),\n                    &[rt::Arg::Ptr(case.as_ptr()), rt::Arg::Int(v)],\n                );\n            } else {\n                rt::printf(\n                    b\"%-18s : error\\n\\0\".as_ptr(),\n                    &[rt::Arg::Ptr(case.as_ptr())],\n                );\n                bad += 1;\n            }\n        }\n    }\n    unsafe {\n        rt::printf(b\"errors: %d\\n\\0\".as_ptr(), &[rt::Arg::Int(i64::from(bad))]);\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    }
+  ]
+}

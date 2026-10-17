@@ -36,3 +36,4 @@
   - [0011. License and dependency allowlist](design/0011-license-and-dependencies.md)
   - [0012. Milestones](design/0012-milestones.md)
   - [0013. The rewrite pipeline](design/0013-rewrite-pipeline.md)
+  - [0014. The native engine](design/0014-native-engine.md)

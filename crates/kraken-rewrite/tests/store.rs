@@ -392,8 +392,8 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
     }
 
     let st = RewriteStore::open(&path).expect("open migrates");
-    assert_eq!(st.schema_version().expect("version"), 3);
-    assert_eq!(SCHEMA_VERSION, 3);
+    assert_eq!(st.schema_version().expect("version"), 4);
+    assert_eq!(SCHEMA_VERSION, 4);
 
     // The old unit reads back intact, with the new column empty.
     let u = st.get("ru-old").expect("get").expect("unit");
@@ -435,7 +435,7 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
 
     // Opening again changes nothing.
     let again = RewriteStore::open(&path).expect("reopen");
-    assert_eq!(again.schema_version().expect("version"), 3);
+    assert_eq!(again.schema_version().expect("version"), 4);
     assert_eq!(again.versions("ab12", "0x10").expect("versions").len(), 2);
 }
 

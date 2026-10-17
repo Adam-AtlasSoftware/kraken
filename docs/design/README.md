@@ -17,3 +17,4 @@ These records explain why KRAKEN is built the way it is. Each one states the con
 | [0011](0011-license-and-dependencies.md) | License and dependency allowlist |
 | [0012](0012-milestones.md) | Milestones |
 | [0013](0013-rewrite-pipeline.md) | The rewrite pipeline |
+| [0014](0014-native-engine.md) | The native engine |

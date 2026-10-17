@@ -11,10 +11,12 @@ use engine_fake::{FakeEngine, FixtureFile};
 use kraken_engine::SharedEngine;
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
-    ExportCoverage, ExportRequest, PlanScope, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend,
-    RewriteExportResult, RewriteFunctionArgs, RewriteFunctionResult, RewriteMode, RewritePlanArgs,
-    RewritePlanOut, RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut,
-    RewriteUnitArgs, RewriteUnitOut, StatusCounts, UnitStatus,
+    ExportCoverage, ExportRequest, PlanScope, ProgramVerdictView, RewriteAcceptArgs,
+    RewriteAcceptOut, RewriteBackend, RewriteExportResult, RewriteFunctionArgs,
+    RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut, RewriteProgramArgs,
+    RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteSpecArgs,
+    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
+    StatusCounts, UnitStatus,
 };
 use kraken_registry::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, CommandKind,
@@ -40,6 +42,7 @@ struct Mock {
     sandbox: bool,
     calls: Mutex<Vec<String>>,
     exports: Mutex<Vec<ExportRequest>>,
+    programs: Mutex<Vec<RewriteProgramArgs>>,
 }
 
 impl Mock {
@@ -209,6 +212,64 @@ impl RewriteBackend for Mock {
             readme: kraken_proto::Untrusted(String::new()),
         })
     }
+
+    async fn program(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteProgramArgs,
+        _job: &JobReporter,
+    ) -> Result<RewriteProgramResult, ProtoError> {
+        self.log("program");
+        self.programs.lock().expect("programs").push(args);
+        Ok(program_result())
+    }
+
+    async fn program_status(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteProgramStatusArgs,
+    ) -> Result<RewriteProgramStatusOut, ProtoError> {
+        self.log(&format!("program_status {:?} {}", args.run, args.all_cases));
+        Ok(RewriteProgramStatusOut {
+            program_sha256: "ab".into(),
+            present: true,
+            runs: vec![],
+            run: Some(program_result()),
+        })
+    }
+}
+
+fn program_result() -> RewriteProgramResult {
+    RewriteProgramResult {
+        run: 1,
+        program_sha256: "ab".into(),
+        entry: Hex64(0x10),
+        entry_name: Untrusted("main".into()),
+        functions_planned: 1,
+        skipped: 0,
+        translated: 1,
+        reused_from_store: 0,
+        failed: 0,
+        included: 1,
+        functions: vec![],
+        crate_dir: "/tmp/crate".into(),
+        built: true,
+        crate_sha256: "cd".into(),
+        provider: "mock".into(),
+        model: "mock".into(),
+        created: 0,
+        verdict: ProgramVerdictView {
+            verdict: "pass".into(),
+            detail: None,
+            cases_run: 3,
+            passed: 3,
+            failed: 0,
+            cases: vec![],
+            sandbox: "landlock-v6".into(),
+        },
+    }
 }
 
 struct Rig {
@@ -284,6 +345,12 @@ fn kinds_and_permissions_of_the_rewrite_commands() {
         ),
         ("rewrite_spec", CommandKind::Job, Permission::Mutating),
         ("rewrite_export", CommandKind::Job, Permission::Mutating),
+        ("rewrite_program", CommandKind::Job, Permission::Mutating),
+        (
+            "rewrite_program_status",
+            CommandKind::Query,
+            Permission::Safe,
+        ),
     ];
     for (name, kind, permission) in expect {
         let spec = r.get(name).unwrap_or_else(|| panic!("{name}")).spec();
@@ -605,4 +672,169 @@ fn the_enums_use_the_names_the_surfaces_show() {
         serde_json::to_value(UnitStatus::Accepted).expect("json"),
         json!("accepted")
     );
+}
+
+#[tokio::test]
+async fn program_runs_as_a_job_with_the_directory_resolved_and_arguments_checked() {
+    let r = rig(true).await;
+    let agent = CallContext::agent("bot", "run-1", Surface::Test);
+    // An agent acts for a person, who approves running the original program.
+    let approved = agent.clone().with_approval(Arc::new(AutoApprove));
+    let denied = r
+        .call(&agent, "rewrite_program", json!({"scope": "all"}))
+        .await
+        .expect_err("running the original needs approval");
+    assert_eq!(denied.code, ErrorCode::Unsupported);
+    assert_eq!(
+        denied.details.as_ref().map(|d| d["approval"].clone()),
+        Some(json!("denied"))
+    );
+    assert!(r.mock.calls().is_empty(), "denied before the backend");
+    let out = r
+        .job(
+            &approved,
+            "rewrite_program",
+            json!({"scope": "all", "cases": 10}),
+        )
+        .await
+        .expect("job");
+    assert_eq!(out["verdict"]["verdict"], "pass");
+    assert_eq!(out["entry_name"]["value"], "main");
+    r.job(
+        &user(),
+        "rewrite_program",
+        json!({
+            "dir": "out/prog", "accept_verified": true, "verify_functions": false,
+            "generated_cases": 3,
+            "inputs": [{"name": "a", "argv": ["x"], "stdin": "y"}]
+        }),
+    )
+    .await
+    .expect("job with options");
+    {
+        let seen = r.mock.programs.lock().expect("programs");
+        // The backend always gets an absolute directory inside (or approved outside) the project.
+        assert_eq!(
+            seen[0].dir.as_deref(),
+            r.dir.join("rewrite-program").to_str()
+        );
+        assert_eq!(seen[1].dir.as_deref(), r.dir.join("out/prog").to_str());
+        assert_eq!(seen[1].accept_verified, Some(true));
+        assert_eq!(seen[1].inputs.len(), 1);
+        assert_eq!(seen[1].inputs[0].stdin.as_deref(), Some("y"));
+    }
+
+    for (args, why) in [
+        (json!({"scope": "function"}), "scope"),
+        (json!({"mode": "spec"}), "spec mode"),
+        (json!({"cases": 5000}), "cases"),
+        (json!({"max_attempts": 0}), "attempts"),
+        (json!({"generated_cases": 201}), "generated"),
+        (json!({"dir": "../escape"}), "dir"),
+        (json!({"inputs": [{"name": " ", "argv": []}]}), "unnamed"),
+        (json!({"inputs": [{"name": "n", "argv": ["a\0b"]}]}), "NUL"),
+        (json!({"unknown": 1}), "unknown field"),
+    ] {
+        let e = r
+            .call(&user(), "rewrite_program", args)
+            .await
+            .expect_err(why);
+        assert_eq!(e.code, ErrorCode::InvalidArgument, "{why}");
+    }
+    let too_many: Vec<Value> = (0..65)
+        .map(|i| json!({"name": format!("c{i}"), "argv": []}))
+        .collect();
+    let e = r
+        .call(&user(), "rewrite_program", json!({"inputs": too_many}))
+        .await
+        .expect_err("too many cases");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    assert_eq!(
+        r.mock.calls(),
+        ["program", "program"],
+        "rejected before the backend"
+    );
+
+    // Accepting is a person's decision, also here.
+    let e = r
+        .call(&agent, "rewrite_program", json!({"accept_verified": true}))
+        .await
+        .expect_err("agents cannot accept");
+    assert_eq!(e.code, ErrorCode::RejectedHumanPriority);
+    r.job(
+        &approved,
+        "rewrite_program",
+        json!({"accept_verified": false}),
+    )
+    .await
+    .expect("an agent may say no");
+    // Without a build nothing is executed, so nothing is asked.
+    r.job(&agent, "rewrite_program", json!({"build": false}))
+        .await
+        .expect("no build, no approval needed");
+
+    // The status query is safe for everyone.
+    let st = r
+        .call(
+            &agent,
+            "rewrite_program_status",
+            json!({"run": 1, "all_cases": true}),
+        )
+        .await
+        .expect("status");
+    assert_eq!(st["run"]["crate_dir"], "/tmp/crate");
+    assert_eq!(
+        r.mock.calls().last().map(String::as_str),
+        Some("program_status Some(1) true")
+    );
+}
+
+#[tokio::test]
+async fn program_needs_the_sandbox_and_asks_before_writing_outside_the_project() {
+    let r = rig(false).await;
+    let e = r
+        .call(&user(), "rewrite_program", json!({}))
+        .await
+        .expect_err("no sandbox");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert!(e.message.contains("no sandbox here"));
+    // The status query reads only.
+    r.call(&user(), "rewrite_program_status", json!({}))
+        .await
+        .expect("status needs no sandbox");
+
+    let r = rig(true).await;
+    let asker = Arc::new(Counting {
+        asked: AtomicUsize::new(0),
+        last: Mutex::new(None),
+        allow: false,
+    });
+    let ctx = user().with_approval(asker.clone());
+    let outside = tempfile::tempdir().expect("tempdir");
+    let target = outside.path().join("crate");
+    let e = r
+        .call(
+            &ctx,
+            "rewrite_program",
+            json!({"dir": target.to_str().expect("utf8")}),
+        )
+        .await
+        .expect_err("denied");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert!(e.message.contains("not today"));
+    let asked = asker.last.lock().expect("last").clone().expect("request");
+    assert_eq!(asked.command, "rewrite_program");
+    assert!(asked.summary.contains("outside the project directory"));
+    assert!(r.mock.programs.lock().expect("programs").is_empty());
+    let yes = user().with_approval(Arc::new(AutoApprove));
+    r.job(
+        &yes,
+        "rewrite_program",
+        json!({"dir": target.to_str().expect("utf8"), "build": false}),
+    )
+    .await
+    .expect("approved");
+    let seen = r.mock.programs.lock().expect("programs");
+    assert_eq!(seen[0].dir.as_deref(), target.to_str());
+    assert_eq!(seen[0].build, Some(false));
 }

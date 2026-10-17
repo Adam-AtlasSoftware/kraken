@@ -9,7 +9,7 @@ use kraken_registry::commands::RewriteMode;
 use tokio_util::sync::CancellationToken;
 
 use crate::abi::Signature;
-use crate::difftest::{DiffOptions, InputSpec, run_differential};
+use crate::difftest::{DiffOptions, DiffReport, InputSpec, compile_only, run_differential};
 use crate::error::RewriteError;
 use crate::fetch::{FunctionContext, fetch_function};
 use crate::oracle::FunctionOracle;
@@ -110,21 +110,57 @@ pub fn verify_with(
     oracle: &mut FunctionOracle,
     opts: &DiffOptions,
 ) -> Result<RewriteUnit, RewriteError> {
-    let composed;
-    let tested = if plan.prelude.is_empty() {
-        rust_code
-    } else {
-        composed = format!("{}\n{rust_code}", plan.prelude);
-        &composed
-    };
+    let tested = composed(plan, rust_code);
     let report = run_differential(
         oracle,
         plan.entry,
         plan.signature,
-        tested,
+        &tested,
         plan.inputs,
         opts,
     )?;
+    Ok(record(plan, rust_code, provenance, report, ORACLE_KIND))
+}
+
+/// Oracle kind of a record that was only compiled.
+pub const COMPILE_ONLY_KIND: &str = "compile-only";
+
+/// Builds `rust_code` without comparing it to the original (no oracle needed) and returns the
+/// (unstored) record: `failed` when it is refused or does not compile, otherwise `translated`
+/// with an `inconclusive` verdict that says `reason`.
+pub fn verify_compile_only(
+    plan: &VerifyPlan<'_>,
+    rust_code: &str,
+    provenance: Provenance,
+    reason: &str,
+    opts: &DiffOptions,
+) -> Result<RewriteUnit, RewriteError> {
+    let tested = composed(plan, rust_code);
+    let report = compile_only(plan.signature, &tested, opts, reason)?;
+    Ok(record(
+        plan,
+        rust_code,
+        provenance,
+        report,
+        COMPILE_ONLY_KIND,
+    ))
+}
+
+fn composed(plan: &VerifyPlan<'_>, rust_code: &str) -> String {
+    if plan.prelude.is_empty() {
+        rust_code.to_string()
+    } else {
+        format!("{}\n{rust_code}", plan.prelude)
+    }
+}
+
+fn record(
+    plan: &VerifyPlan<'_>,
+    rust_code: &str,
+    provenance: Provenance,
+    report: DiffReport,
+    oracle_kind: &str,
+) -> RewriteUnit {
     let callees = plan
         .callees
         .iter()
@@ -136,7 +172,7 @@ pub fn verify_with(
         })
         .chain(plan.reused.iter().map(ReusedCallee::callee_ref))
         .collect();
-    Ok(RewriteUnit::from_run(
+    RewriteUnit::from_run(
         UnitSource {
             mode: plan.mode,
             spec_id: plan.spec_id,
@@ -146,7 +182,7 @@ pub fn verify_with(
             signature: plan.signature.clone(),
             provenance,
             oracle: OracleInfo {
-                kind: ORACLE_KIND.to_string(),
+                kind: oracle_kind.to_string(),
                 emulator: EMULATOR_PIN.to_string(),
                 binary: plan.binary.to_string(),
                 elf_vaddr: plan.entry,
@@ -154,7 +190,7 @@ pub fn verify_with(
         },
         rust_code.to_string(),
         report,
-    ))
+    )
 }
 
 /// Differential-tests `rust_code` for `job` against the original and returns the (unstored)
