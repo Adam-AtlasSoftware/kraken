@@ -112,6 +112,16 @@ pub enum ApprovalDecision {
 pub struct ApprovalHandle(mpsc::UnboundedSender<(String, ApprovalDecision)>);
 
 impl ApprovalHandle {
+    /// A handle and the receiver a run that is not the built-in loop (a terminal agent) reads
+    /// decisions from.
+    pub fn channel() -> (
+        ApprovalHandle,
+        mpsc::UnboundedReceiver<(String, ApprovalDecision)>,
+    ) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (ApprovalHandle(tx), rx)
+    }
+
     pub fn decide(&self, call_id: impl Into<String>, decision: ApprovalDecision) {
         let _ = self.0.send((call_id.into(), decision));
     }
@@ -125,6 +135,21 @@ pub struct AgentRun {
 }
 
 impl AgentRun {
+    /// A run whose events come from somewhere other than the built-in loop: `events` carries
+    /// the stream (ending after [`AgentEvent::Done`]), `approvals` is the handle given to the
+    /// caller and `cancel` is cancelled by [`AgentRun::cancel`] and when the run is dropped.
+    pub fn from_parts(
+        events: mpsc::Receiver<AgentEvent>,
+        approvals: ApprovalHandle,
+        cancel: CancellationToken,
+    ) -> Self {
+        AgentRun {
+            events,
+            approvals,
+            cancel,
+        }
+    }
+
     pub fn approvals(&self) -> ApprovalHandle {
         self.approvals.clone()
     }

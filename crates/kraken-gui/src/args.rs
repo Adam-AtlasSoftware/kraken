@@ -28,8 +28,8 @@ pub enum Scene {
     Explain,
     /// The name-review window (hidden).
     AutoName,
-    /// The Agents tab with a scripted agent session (hidden).
-    Agents,
+    /// The Assistant tab with a scripted terminal agent selected (hidden).
+    AssistantAgent,
     /// The Rewrite tab over the demo's scripted pipeline.
     Rewrite,
 }
@@ -117,7 +117,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     Some("assistant") => Scene::Assistant,
                     Some("explain") => Scene::Explain,
                     Some("autoname") => Scene::AutoName,
-                    Some("agents") => Scene::Agents,
+                    Some("assistant-agent") => Scene::AssistantAgent,
                     Some("rewrite") => Scene::Rewrite,
                     other => {
                         return Err(format!(

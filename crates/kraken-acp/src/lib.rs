@@ -11,7 +11,7 @@
 //!   npm adapters from a pinned lockfile with `--ignore-scripts`.
 //! - [`notice`]: the one-time "agents work outside KRAKEN's safety net" warning (decision 50).
 //!
-//! See `crates/kraken-acp/README.md` for the protocol research and `docs/agents.md` for users.
+//! See `crates/kraken-acp/README.md` for the protocol research and `docs/assistant.md` for users.
 
 pub mod adapter;
 pub mod agents;

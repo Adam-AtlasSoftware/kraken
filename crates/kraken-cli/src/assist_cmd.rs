@@ -6,14 +6,16 @@
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::ArgMatches;
+use kraken_acp::McpServerConfig;
 use kraken_agent::{AgentEvent, ChatProvider, EnvSecrets, StopReason};
 use kraken_assist::{
-    Arch, Assistant, AutoNameOptions, AutoNameReport, Explanation, Glossary, GlossaryMatch,
-    Outcome, Overview, ResultTagFilter, Task, TaskOutput, TaskResult, load_provider_config,
-    provider_config_path,
+    AcpBackend, AgentChoice, ApiBackend, Arch, AssistBackend, Assistant, AutoNameOptions,
+    AutoNameReport, Explanation, Glossary, GlossaryMatch, Outcome, Overview, ResultTagFilter, Task,
+    TaskOutput, TaskResult, UnusedBackend, load_provider_config, plan_agent, provider_config_path,
 };
 use kraken_engine::CancellationToken;
 use kraken_proto::{ErrorCode, ProtoError};
@@ -22,11 +24,85 @@ use serde_json::json;
 
 use crate::app::{CliEnv, bad, emit, fail, save};
 
-fn provider_from_config(env: &CliEnv) -> Result<Arc<dyn ChatProvider>, ProtoError> {
+/// What the `[provider]` table selects.
+enum Selection {
+    /// A chat model API.
+    Api(Arc<dyn ChatProvider>),
+    /// A terminal agent (`kind = "terminal_agent"`).
+    Agent(AgentChoice),
+}
+
+fn selection_from_config(env: &CliEnv) -> Result<Selection, ProtoError> {
     let path = provider_config_path(&|k| env.var(k).map(OsString::from));
     let cfg = load_provider_config(path.as_deref()).map_err(|e| bad(e.to_string()))?;
+    if let Some(choice) = AgentChoice::from_config(&cfg) {
+        return Ok(Selection::Agent(choice));
+    }
     cfg.build(&EnvSecrets)
+        .map(Selection::Api)
         .map_err(|e| bad(format!("provider: {e}")))
+}
+
+/// Builds the terminal-agent backend for `choice` on the project directory `project`, after the
+/// one-time notice.
+fn agent_backend(
+    env: &CliEnv,
+    sm: &ArgMatches,
+    choice: &AgentChoice,
+    project: Option<&str>,
+    err: &mut dyn Write,
+) -> Result<Arc<dyn AssistBackend>, ProtoError> {
+    let dir = match project {
+        Some(p) => std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p)),
+        None => env
+            .session
+            .as_ref()
+            .and_then(|s| s.project().ok())
+            .map(|p| p.dir().to_path_buf())
+            .ok_or_else(|| bad("no project: pass --project <dir> or set KRAKEN_PROJECT"))?,
+    };
+    if !dir.is_dir() {
+        return Err(ProtoError::new(
+            ErrorCode::NotFound,
+            format!("project directory {} does not exist", dir.display()),
+        ));
+    }
+    let profiles = crate::agents_cmd::catalogue(env)?;
+    let resolver = crate::agents_cmd::resolver(env)?;
+    let exe = env
+        .var("KRAKEN_EXE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .ok_or_else(|| ProtoError::new(ErrorCode::Internal, "cannot find the kraken executable"))?;
+    let use_daemon = !env.no_daemon(sm)
+        && env.session.is_none()
+        && !matches!(env.daemon, crate::app::DaemonMode::Direct);
+    let mut mcp = if use_daemon {
+        McpServerConfig::daemon(exe, Some(&dir))
+    } else {
+        McpServerConfig::project(exe, &dir)
+    };
+    for key in ["KRAKEN_RUNTIME_DIR", "KRAKEN_NO_DAEMON"] {
+        if let Some(v) = env.var(key) {
+            mcp = mcp.with_env(key, v);
+        }
+    }
+    // The agent is not given `XDG_RUNTIME_DIR`, so its MCP server is told where the daemon is.
+    if use_daemon
+        && env.var("KRAKEN_RUNTIME_DIR").is_none()
+        && let Some((k, v)) = kraken_host::daemon::mcp_runtime_env()
+    {
+        mcp = mcp.with_env(k, v);
+    }
+    let settings = plan_agent(&resolver, &profiles, choice, &dir, mcp).map_err(|e| {
+        let code = match e {
+            kraken_assist::PlanError::NeedsSetup { .. } => ErrorCode::InvalidArgument,
+            kraken_assist::PlanError::Unavailable { .. } => ErrorCode::Unsupported,
+        };
+        ProtoError::new(code, e.to_string())
+    })?;
+    crate::agents_cmd::show_notice_once(env, err);
+    Ok(Arc::new(AcpBackend::new(settings, env.registry.clone())))
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -77,10 +153,10 @@ pub(crate) async fn run_assist(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    let provider = match provider {
-        Some(p) => p,
-        None => match provider_from_config(env) {
-            Ok(p) => p,
+    let selection = match provider {
+        Some(p) => Selection::Api(p),
+        None => match selection_from_config(env) {
+            Ok(s) => s,
             Err(e) => return fail(&e, json_out, err),
         },
     };
@@ -99,22 +175,56 @@ pub(crate) async fn run_assist(
             err,
         );
     }
-    let (backend, local_session) = match env
-        .backend(project.as_deref(), env.no_daemon(sm), err)
-        .await
-    {
-        Ok(b) => b,
-        Err(e) => {
-            env.factory.shutdown().await;
-            return fail(&e, json_out, err);
+    // A terminal agent reaches the project through its own `kraken mcp` server, so this process
+    // does not open it; a model API runs its tools through this process's backend.
+    let (engine, backend, local_session): (
+        Arc<dyn AssistBackend>,
+        Arc<dyn kraken_host::backend::CommandBackend>,
+        _,
+    ) = match selection {
+        Selection::Api(p) => {
+            let (backend, session) = match env
+                .backend(project.as_deref(), env.no_daemon(sm), err)
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    env.factory.shutdown().await;
+                    return fail(&e, json_out, err);
+                }
+            };
+            (Arc::new(ApiBackend::new(p)), backend, session)
+        }
+        Selection::Agent(choice) => {
+            match agent_backend(env, sm, &choice, project.as_deref(), err) {
+                Ok(engine) => (engine, Arc::new(UnusedBackend), None),
+                Err(e) => return fail(&e, json_out, err),
+            }
         }
     };
 
-    let info = provider.info();
-    emit(err, &format!("provider: {} ({})\n", info.id, info.model));
+    let info = engine.info();
+    match info.kind {
+        kraken_assist::BackendKind::Api => emit(
+            err,
+            &format!(
+                "provider: {} ({})\n",
+                info.id,
+                info.model.as_deref().unwrap_or("")
+            ),
+        ),
+        kraken_assist::BackendKind::TerminalAgent => emit(
+            err,
+            &format!(
+                "terminal agent: {} ({})\n",
+                info.name,
+                info.model.as_deref().unwrap_or("model chosen by the agent")
+            ),
+        ),
+    }
     let writes = !task.read_only;
-    let assistant =
-        Assistant::new(env.registry.clone(), backend.clone(), provider).with_surface(Surface::Cli);
+    let assistant = Assistant::with_engine(env.registry.clone(), backend.clone(), engine.clone())
+        .with_surface(Surface::Cli);
 
     let cancel = CancellationToken::new();
     let ctrl_c = env.interactive.then(|| {
@@ -167,6 +277,15 @@ pub(crate) async fn run_assist(
                 let tag = if *is_error { "error" } else { "ok" };
                 emit(err, &format!("    {tag}: {}\n", clip(summary, 100)));
             }
+            AgentEvent::ApprovalRequired { name, .. } => {
+                emit(
+                    err,
+                    &format!(
+                        "  ! the agent asked to use its own tool ({}): declined, because this command runs unattended\n",
+                        clip(name, 80)
+                    ),
+                );
+            }
             AgentEvent::ProposalCreated { tool, proposal, .. } => {
                 emit(
                     err,
@@ -194,6 +313,7 @@ pub(crate) async fn run_assist(
     for w in backend.take_warnings() {
         emit(err, &format!("warning: {w}\n"));
     }
+    engine.close();
     env.factory.shutdown().await;
     code
 }
@@ -233,13 +353,15 @@ fn finish(
                 ),
             );
         }
+        let used = match r.backend {
+            kraken_assist::BackendKind::Api => format!("{} tokens", r.usage.total()),
+            kraken_assist::BackendKind::TerminalAgent => "token use not reported".to_string(),
+        };
         emit(
             err,
             &format!(
-                "run {} ({} tokens). Undo this run's edits with `kraken undo-run --run-id {}`.\n",
-                r.run_id,
-                r.usage.total(),
-                r.run_id
+                "run {} ({used}). Undo this run's edits with `kraken undo-run --run-id {}`.\n",
+                r.run_id, r.run_id
             ),
         );
     }

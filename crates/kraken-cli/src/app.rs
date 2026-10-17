@@ -425,6 +425,13 @@ pub fn build_cli(registry: &Registry) -> Command {
                     .long("daemon")
                     .action(ArgAction::SetTrue)
                     .help("Route the commands through krakend (started on demand)"),
+            )
+            .arg(
+                Arg::new("run-id")
+                    .long("run-id")
+                    .value_name("ID")
+                    .hide(true)
+                    .help("Log this connection's edits under this run id (set by the assistant when it launches a terminal agent, so `undo-run` finds them)"),
             ),
     )
     .subcommand(
@@ -455,11 +462,11 @@ pub fn build_cli(registry: &Registry) -> Command {
     )
     .subcommand(
         Command::new("explain")
-            .about("Explain a function in plain language (needs an AI provider)")
+            .about("Explain a function in plain language (needs an AI model or terminal agent)")
             .long_about(
                 "Explain the function at ADDRESS in plain language: what it does, its key \
                  behaviours and names worth considering. The assistant reads the function through \
-                 the same commands as everyone else and changes nothing. Needs a [provider] table \
+                 the same commands as everyone else and changes nothing. Needs a [provider] table (an AI model or a terminal agent) \
                  in config.toml; see docs/assistant.md. Text streams to stdout, tool calls to \
                  stderr; --json prints one structured result instead.",
             )
@@ -476,12 +483,12 @@ pub fn build_cli(registry: &Registry) -> Command {
             .long_about(
                 "A guided first look at the open project: what the program appears to be, its main \
                  parts, which functions to open first and why, and what to do next. Reads only. \
-                 Needs an AI provider; see docs/assistant.md.",
+                 Needs an AI model or terminal agent; see docs/assistant.md.",
             ),
     )
     .subcommand(
         Command::new("auto-name")
-            .about("Suggest names and comments for default-named functions (needs an AI provider)")
+            .about("Suggest names and comments for default-named functions (needs an AI model or terminal agent)")
             .long_about(
                 "Look at functions that still have default names (FUN_...) and suggest names and \
                  comments with the evidence for each. Without --dry-run the suggestions are \
@@ -534,7 +541,7 @@ pub fn build_cli(registry: &Registry) -> Command {
                 "Run terminal coding agents over the Agent Client Protocol, pre-connected to \
                  KRAKEN's MCP server so they can use KRAKEN's tools. The agents also bring their \
                  own shell and file tools, which are outside KRAKEN's safety model; a warning is \
-                 shown on first use. See docs/agents.md.",
+                 shown on first use. See the terminal agents section of docs/assistant.md.",
             )
             .subcommand_required(true)
             .subcommand(Command::new("list").about("Show which agents are detected, available, missing or unsupported"))
@@ -997,6 +1004,7 @@ async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Wr
     // project_open for the agent to point the engine elsewhere).
     let options = McpOptions {
         bound_project: project.is_some(),
+        run_id: sm.get_one::<String>("run-id").cloned(),
         ..McpOptions::default()
     };
     if sm.get_flag("daemon") {

@@ -225,7 +225,7 @@ fn tool_error(e: ProtoError) -> ToolError {
 
 /// Gives a proposed write the top-level `"proposal"` field `kraken-agent` looks for, keeping the
 /// registry's own fields.
-fn shape_output(mut v: Value) -> Value {
+pub(crate) fn shape_output(mut v: Value) -> Value {
     if v.get("status").and_then(Value::as_str) == Some("proposed")
         && let Some(obj) = v.as_object_mut()
     {

@@ -1,5 +1,5 @@
 //! `kraken agents list | setup | run`: terminal agents over the Agent Client Protocol
-//! (see the `kraken-acp` crate and `docs/agents.md`).
+//! (see the `kraken-acp` crate and the terminal agents section of `docs/assistant.md`).
 
 use std::ffi::OsString;
 use std::io::{BufRead, IsTerminal, Write};
@@ -20,16 +20,16 @@ use serde_json::json;
 
 use crate::app::{CliEnv, bad, emit, fail};
 
-fn os_env(env: &CliEnv) -> impl Fn(&str) -> Option<OsString> + '_ {
+pub(crate) fn os_env(env: &CliEnv) -> impl Fn(&str) -> Option<OsString> + '_ {
     move |k| env.var(k).map(OsString::from)
 }
 
-fn catalogue(env: &CliEnv) -> Result<Vec<AgentProfile>, ProtoError> {
+pub(crate) fn catalogue(env: &CliEnv) -> Result<Vec<AgentProfile>, ProtoError> {
     let dir = config_dir_with(&os_env(env));
     load_catalogue(dir.as_deref()).map_err(|e| bad(e.to_string()))
 }
 
-fn resolver(env: &CliEnv) -> Result<Resolver, ProtoError> {
+pub(crate) fn resolver(env: &CliEnv) -> Result<Resolver, ProtoError> {
     let paths = AgentPaths::from_env_with(&os_env(env)).ok_or_else(|| {
         ProtoError::new(
             ErrorCode::Internal,
@@ -272,6 +272,23 @@ async fn setup(
     Ok(0)
 }
 
+/// Decision 50: warn once, do not block. Shows the "agents work outside KRAKEN's safety net"
+/// notice the first time any terminal agent is used, and remembers that it was shown.
+pub(crate) fn show_notice_once(env: &CliEnv, err: &mut dyn Write) {
+    let store = config_dir_with(&os_env(env)).map(|d| NoticeStore::in_config_dir(&d));
+    if !store.as_ref().is_some_and(NoticeStore::is_acknowledged) {
+        emit(err, &format!("{WARNING_TITLE}\n\n{WARNING_TEXT}\n\n"));
+        if let Some(s) = &store
+            && let Err(e) = s.acknowledge()
+        {
+            emit(
+                err,
+                &format!("warning: cannot remember that this was shown: {e}\n"),
+            );
+        }
+    }
+}
+
 /// Asks on the terminal. Without a terminal it declines.
 struct TerminalPermission;
 
@@ -394,19 +411,7 @@ async fn run_agent(
         ));
     }
 
-    // Decision 50: warn once, do not block.
-    let store = config_dir_with(&os_env(env)).map(|d| NoticeStore::in_config_dir(&d));
-    if !store.as_ref().is_some_and(NoticeStore::is_acknowledged) {
-        emit(err, &format!("{WARNING_TITLE}\n\n{WARNING_TEXT}\n\n"));
-        if let Some(s) = &store
-            && let Err(e) = s.acknowledge()
-        {
-            emit(
-                err,
-                &format!("warning: cannot remember that this was shown: {e}\n"),
-            );
-        }
-    }
+    show_notice_once(env, err);
 
     let exe = env
         .var("KRAKEN_EXE")

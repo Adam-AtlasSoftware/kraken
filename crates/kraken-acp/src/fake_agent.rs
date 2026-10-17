@@ -16,8 +16,15 @@
 //!   waiting for permission
 //! - `die`: exits with status 7 without answering
 //!
+//! A prompt that contains `<kraken-result>` is an assistant task (explain, overview, auto-name):
+//! the agent reads through KRAKEN tool calls and answers with prose and a result block shaped
+//! for that task, like a real agent following the task prompt. `FAKE_ACP_TASK_PERMISSION=1`
+//! makes such a turn ask for permission to run a shell command first.
+//!
 //! `FAKE_ACP_SCRIPT=kraken` makes every other prompt play the `kraken` turn.
 //! `FAKE_ACP_REQUIRE_AUTH=1` makes `session/new` fail with an authentication error.
+//! `FAKE_ACP_ALLOW_NO_MCP=1` lets `session/new` succeed without the KRAKEN MCP server (the
+//! settings' connection test starts agents without KRAKEN's tools).
 //! `FAKE_ACP_RECORD=<file>` appends every message received, one JSON document per line.
 
 use std::fs::OpenOptions;
@@ -183,6 +190,8 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             return self.fail(id, -32000, "Authentication required");
         }
         let servers = params.get("mcpServers").cloned().unwrap_or(Value::Null);
+        let none_needed = std::env::var_os("FAKE_ACP_ALLOW_NO_MCP").is_some()
+            && servers.as_array().is_some_and(Vec::is_empty);
         let kraken = servers.as_array().and_then(|a| {
             a.iter()
                 .find(|s| s.get("name").and_then(Value::as_str) == Some("kraken"))
@@ -197,7 +206,7 @@ impl<R: BufRead, W: Write> Fake<R, W> {
                     .and_then(Value::as_str)
                     == Some("mcp")
         });
-        if !ok {
+        if !ok && !none_needed {
             return self.fail(
                 id,
                 -32602,
@@ -290,6 +299,7 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             }
             "die" => std::process::exit(7),
             "kraken" => self.kraken_turn(id),
+            _ if text.contains("<kraken-result>") => self.task_turn(id, &text),
             _ if std::env::var("FAKE_ACP_SCRIPT").as_deref() == Ok("kraken") => {
                 self.kraken_turn(id)
             }
@@ -426,6 +436,146 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             "\n\nUnderstood, I did not run the command."
         })?;
         self.end(id, if cancelled { "cancelled" } else { "end_turn" })
+    }
+
+    /// An assistant task: KRAKEN tool calls, then prose and the `<kraken-result>` block.
+    fn task_turn(&mut self, id: &Value, prompt: &str) -> io::Result<()> {
+        if std::env::var_os("FAKE_ACP_TASK_PERMISSION").is_some() {
+            let (answer, cancelled) = self.ask(
+                "session/request_permission",
+                json!({
+                    "sessionId": SESSION_ID,
+                    "toolCall": {
+                        "toolCallId": "own1",
+                        "title": "Run strings ./sample",
+                        "kind": "execute",
+                        "rawInput": {"command": "strings ./sample"}
+                    },
+                    "options": [
+                        {"optionId": "allow", "name": "Allow once", "kind": "allow_once"},
+                        {"optionId": "reject", "name": "Deny", "kind": "reject_once"}
+                    ]
+                }),
+            )?;
+            let granted = answer["result"]["outcome"]["optionId"].as_str() == Some("allow");
+            self.chunk(if granted {
+                "(shell allowed) "
+            } else {
+                "(shell denied) "
+            })?;
+            if cancelled {
+                return self.end(id, "cancelled");
+            }
+        }
+        self.chunk("Let me look at the program. ")?;
+        let (prose, result) = if prompt.contains("Task: explain one function") {
+            self.tool(
+                "t1",
+                "mcp__kraken__get_function",
+                json!({"address": "0x401000"}),
+                "{\"name\":\"FUN_00401000\"}",
+            )?;
+            self.tool(
+                "t2",
+                "mcp__kraken__decompile",
+                json!({"address": "0x401000"}),
+                "int FUN_00401000(int argc) { return helper(argc); }",
+            )?;
+            (
+                "This is the program's starting function.",
+                json!({
+                    "summary": "It calls a helper and returns its answer.",
+                    "key_behaviours": ["calls helper with its first argument", "returns the result"],
+                    "suggested_names": [{"name": "program_main", "reason": "takes argc"}],
+                    "caveats": []
+                }),
+            )
+        } else if prompt.contains("Task: explain a selection") {
+            (
+                "The selection calls a helper.",
+                json!({
+                    "summary": "It calls helper and stores the result in x.",
+                    "key_behaviours": ["calls helper"],
+                    "suggested_names": [],
+                    "caveats": ["only the selection was read"]
+                }),
+            )
+        } else if prompt.contains("Task: give a first overview") {
+            self.tool(
+                "t1",
+                "mcp__kraken__project_info",
+                json!({}),
+                "{\"analysis\":\"complete\"}",
+            )?;
+            self.tool(
+                "t2",
+                "mcp__kraken__list_functions",
+                json!({"limit": 50}),
+                "{\"items\":[]}",
+            )?;
+            (
+                "A tiny test program.",
+                json!({
+                    "what_it_is": "A small command-line program.",
+                    "components": [{"name": "entry", "description": "starts the program"}],
+                    "interesting_functions": [
+                        {"address": "0x401000", "name": "FUN_00401000", "reason": "takes argc and argv"}
+                    ],
+                    "next_steps": ["Ask for an explanation of the first function"]
+                }),
+            )
+        } else {
+            self.tool(
+                "t1",
+                "mcp__kraken__list_functions",
+                json!({"name_filter": "FUN_"}),
+                "{\"items\":[]}",
+            )?;
+            self.tool(
+                "t2",
+                "mcp__kraken__decompile",
+                json!({"address": "0x401000"}),
+                "int FUN_00401000(int argc) { return helper(argc); }",
+            )?;
+            if !prompt.contains("This is a dry run") {
+                self.tool(
+                    "t3",
+                    "mcp__kraken__rename_symbol",
+                    json!({"address": "0x401000", "new_name": "program_main"}),
+                    "{\"status\":\"applied\",\"entry_id\":1}",
+                )?;
+                self.tool(
+                    "t4",
+                    "mcp__kraken__set_comment",
+                    json!({"address": "0x401000", "kind": "plate", "text": "Program entry."}),
+                    "{\"status\":\"applied\",\"entry_id\":2}",
+                )?;
+                self.tool(
+                    "t5",
+                    "mcp__kraken__rename_symbol",
+                    json!({"address": "0x401040", "new_name": "assistant_guess"}),
+                    "{\"status\":\"proposed\",\"proposal_id\":7,\"key\":\"name@0x401040\",\"reason\":\"overwrites a user edit\"}",
+                )?;
+            }
+            (
+                "Named one function.",
+                json!({"suggestions": [
+                    {"address": "0x401000", "current_name": "FUN_00401000",
+                     "new_name": "program_main", "comment": "Program entry.",
+                     "evidence": [
+                        {"kind": "string", "detail": "usage text"},
+                        {"kind": "import", "detail": "puts"},
+                        {"kind": "caller", "detail": "called from the entry stub"}
+                     ]},
+                    {"address": "0x401040", "new_name": "assistant_guess",
+                     "evidence": [{"kind": "decompile", "detail": "short body"}]}
+                ]}),
+            )
+        };
+        self.chunk(&format!("{prose}\n<krak"))?;
+        self.chunk(&format!("en-result>{result}</kraken-"))?;
+        self.chunk("result>")?;
+        self.end(id, "end_turn")
     }
 
     fn end(&mut self, id: &Value, reason: &str) -> io::Result<()> {

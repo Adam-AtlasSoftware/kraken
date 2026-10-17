@@ -9,6 +9,7 @@ use egui::{Frame, Key, Margin, Modifiers, Ui, ViewportCommand};
 use egui_dock::DockState;
 use kraken_gui_widgets::KrakenTheme;
 use kraken_host::ManagedFactory;
+use kraken_viewmodel::agents::{AgentEnv, AgentsHub};
 use kraken_viewmodel::demo::demo_project;
 use kraken_viewmodel::{
     AnalysisPhase, ApprovalBroker, Backend, BackendOptions, Connection, DaemonClientBackend,
@@ -16,7 +17,6 @@ use kraken_viewmodel::{
 };
 use tokio::runtime::Runtime;
 
-use crate::agents;
 use crate::args::{Options, Scene};
 use crate::assist::{self, AssistRequest, AssistSetup, Change};
 use crate::recent::{self, Prefs};
@@ -150,7 +150,7 @@ impl KrakenApp {
             vm: None,
             welcome: Welcome::new(services.cfg.clone()),
             services,
-            dock: agents::with_agents_tab(assist::with_assistant_tab(workspace::initial_dock())),
+            dock: assist::with_assistant_tab(workspace::initial_dock()),
             state: UiState::default(),
             theme: if dark {
                 KrakenTheme::DARK
@@ -175,6 +175,24 @@ impl KrakenApp {
                 tweaks: ShotTweaks::from_env(),
             }),
         };
+        // The terminal agents the settings list; they need no open project.
+        let mut hub = AgentsHub::new(app.rt.handle().clone(), None);
+        {
+            let ctx = ctx.clone();
+            hub.set_repaint(Arc::new(move || ctx.request_repaint()));
+        }
+        if opts.screenshot.is_some() && opts.scene == Scene::AssistantAgent {
+            // The scripted agent of the screenshot, with the note counted as read.
+            if let Some(cfg) = assist::scene_config() {
+                hub.configure(cfg);
+            }
+            hub.notice.acknowledged = true;
+            let (choice, badge) = assist::scene_backend();
+            app.assist.set_choice(choice, badge);
+        } else if let Some(cfg) = app.services.agents.clone() {
+            hub.configure(cfg);
+        }
+        app.settings.ai.set_hub(hub);
         if opts.screenshot.is_some()
             && let Some((p, b)) = assist::provider_for(opts.scene)
         {
@@ -226,6 +244,11 @@ impl KrakenApp {
         &self.settings
     }
 
+    #[cfg(all(test, unix))]
+    pub fn settings_mut(&mut self) -> &mut Settings {
+        &mut self.settings
+    }
+
     #[cfg(test)]
     pub fn prefs(&self) -> &Prefs {
         &self.prefs
@@ -249,32 +272,24 @@ impl KrakenApp {
         let mut vm = ViewModel::new(backend, self.rt.handle().clone());
         let ctx = ctx.clone();
         vm.set_repaint(Arc::new(move || ctx.request_repaint()));
-        self.assist.apply(&mut vm);
-        if self.shot.as_ref().is_some_and(|s| s.scene == Scene::Agents) {
-            // The scripted agent of the screenshot, with the warning counted as read.
-            if let Some(cfg) = agents::scene_config() {
-                vm.agents_configure(cfg);
-            }
-            vm.agents.notice.acknowledged = true;
-        } else if let Some(cfg) = self.services.agents.clone() {
-            vm.agents_configure(cfg);
-        }
+        let agents = self.agent_env();
+        self.assist.apply(&mut vm, agents);
         vm
     }
 
     pub fn start_demo(&mut self, ctx: &egui::Context) {
         match demo_project() {
             Ok(d) => {
+                // The demo's engine lives in this process, so an agent cannot join it (see
+                // `agent_env`).
+                self.is_demo = true;
                 let mut vm = self.new_vm(d.backend, ctx);
-                // The demo's engine lives in this process, so an agent cannot join it.
-                vm.agents_set_daemon(false);
                 vm.create_project(
                     d.binary.to_string_lossy().into_owned(),
                     d.project_dir.to_string_lossy().into_owned(),
                 );
                 self.vm = Some(vm);
                 self.auto_analyze = true;
-                self.is_demo = true;
                 self.recorded = false;
                 self.welcome.error = None;
                 self.welcome.busy = Some("Opening the demo project...".into());
@@ -359,6 +374,7 @@ impl KrakenApp {
     }
 
     fn launch(&mut self, choice: Choice, backend: Arc<dyn Backend>, ctx: &egui::Context) {
+        self.is_demo = false;
         let mut vm = self.new_vm(backend, ctx);
         match choice {
             Choice::OpenProject(dir) => vm.open_project(dir),
@@ -372,7 +388,6 @@ impl KrakenApp {
             Choice::Demo => return,
         }
         self.vm = Some(vm);
-        self.is_demo = false;
         self.recorded = false;
         self.welcome.error = None;
         self.welcome.busy = Some("Opening...".into());
@@ -500,14 +515,31 @@ impl KrakenApp {
         }
         if let Some(change) = self.settings.ai.take_change() {
             match change {
-                Change::Use(p, b) => self.assist.set(p, b),
+                Change::Use(choice, b) => self.assist.set_choice(choice, b),
                 Change::Clear => self.assist.clear(),
                 Change::Problem(why) => self.assist.set_problem(why),
             }
+            let agents = self.agent_env();
             if let Some(vm) = self.vm.as_mut() {
-                self.assist.apply(vm);
+                self.assist.apply(vm, agents);
+            }
+        } else if self.settings.ai.take_agents_dirty() {
+            let agents = self.agent_env();
+            if let Some(vm) = self.vm.as_mut() {
+                AssistSetup::sync_agents(vm, agents);
             }
         }
+    }
+
+    /// Where terminal agents are found and whether the note about them was read.
+    fn agent_env(&mut self) -> Option<AgentEnv> {
+        let demo = self.is_demo;
+        let mut env = self.settings.ai.hub_mut().and_then(AgentsHub::env)?;
+        if demo {
+            // The demo's engine lives in this process, so an agent cannot join it.
+            env.config.use_daemon = false;
+        }
+        Some(env)
     }
 
     /// Runs what the assistant panels asked for: one-click presets and opening the AI settings.
@@ -525,9 +557,11 @@ impl KrakenApp {
                         self.settings.ai.preset(k);
                     }
                 }
+                AssistRequest::AcknowledgeAgents => self.settings.ai.acknowledge_agents(),
             }
+            let agents = self.agent_env();
             if let Some(vm) = self.vm.as_mut() {
-                self.assist.apply(vm);
+                self.assist.apply(vm, agents);
             }
         }
     }
@@ -605,6 +639,7 @@ impl KrakenApp {
         for r in reqs {
             self.handle(r, &ctx);
         }
+        self.settings.ai.poll();
         self.assist_requests();
         self.settings_window(&ctx);
         overlays::approval_dialog(&ctx, &self.approvals);
@@ -706,8 +741,10 @@ impl KrakenApp {
                         } else {
                             shot.stage = ShotStage::Settling;
                         }
-                    } else if matches!(shot.scene, Scene::AutoName | Scene::Agents | Scene::Rewrite)
-                    {
+                    } else if matches!(
+                        shot.scene,
+                        Scene::AutoName | Scene::AssistantAgent | Scene::Rewrite
+                    ) {
                         // Leave the placeholder names alone so there is something to suggest.
                         shot.stage = ShotStage::Settling;
                     } else {
@@ -735,7 +772,7 @@ impl KrakenApp {
                         Scene::Assistant
                             | Scene::Explain
                             | Scene::AutoName
-                            | Scene::Agents
+                            | Scene::AssistantAgent
                             | Scene::Rewrite
                     ));
                     let ids: Vec<u64> = vm.toasts.iter().rev().skip(keep).map(|t| t.id).collect();
@@ -750,17 +787,18 @@ impl KrakenApp {
                         Scene::Rename => vm.begin_rename_current(),
                         Scene::Graph => self.dock = workspace::graph_dock(),
                         Scene::Assistant => {
-                            self.dock = agents::scene_dock(Tab::Assistant);
+                            self.dock = assist::scene_dock();
                             vm.assist_send(assist::CHAT_QUESTION);
                         }
                         Scene::Explain => {
-                            self.dock = agents::scene_dock(Tab::Assistant);
+                            self.dock = assist::scene_dock();
                             vm.assist_explain_function(0x4011a0);
                         }
                         Scene::AutoName => vm.assist_auto_name(10),
-                        Scene::Agents => {
-                            self.dock = agents::scene_dock(Tab::Agents);
-                            self.state.bring_to_front = Some(Tab::Agents);
+                        Scene::AssistantAgent => {
+                            self.dock = assist::scene_dock();
+                            self.state.bring_to_front = Some(Tab::Assistant);
+                            vm.assist_send(assist::SCENE_PROMPT);
                         }
                         Scene::Rewrite => {
                             self.dock = crate::rewrite::scene_dock();
@@ -784,22 +822,6 @@ impl KrakenApp {
                     }
                     vm.assist_dismiss_offer();
                 }
-                if shot.scene == Scene::Agents && shot.settle > 12 {
-                    vm.agents_ensure_loaded();
-                    if vm.agents.loaded && vm.agents.session.is_none() && vm.agents.error.is_none()
-                    {
-                        vm.agents_start("demo");
-                    }
-                }
-                if shot.scene == Scene::Agents
-                    && shot.settle > 12
-                    && vm.agents.session.as_ref().is_some_and(|s| {
-                        s.phase == kraken_viewmodel::agents::SessionPhase::Ready
-                            && s.items.is_empty()
-                    })
-                {
-                    vm.agents_send(agents::SCENE_PROMPT);
-                }
                 let views_ready = match shot.scene {
                     Scene::Rewrite => {
                         vm.rewrite.loaded
@@ -807,16 +829,26 @@ impl KrakenApp {
                                 d.c.is_some() && !d.loading && !d.versions().is_empty()
                             })
                     }
-                    Scene::Agents => vm
-                        .agents
-                        .session
-                        .as_ref()
-                        .is_some_and(|s| s.waiting_permissions() == 1),
+                    Scene::AssistantAgent => vm
+                        .assist
+                        .items
+                        .iter()
+                        .filter(|i| {
+                            matches!(
+                                i,
+                                kraken_viewmodel::assist::ChatItem::Permission(c)
+                                    if c.state == kraken_viewmodel::assist::PermissionState::Waiting
+                            )
+                        })
+                        .count()
+                        == 1,
                     Scene::Graph => vm.views.graph.data.is_some(),
                     Scene::Main => vm.views.listing.loaded && !vm.views.listing.loading,
                     _ => true,
                 };
-                if shot.settle > 18 && !vm.busy() && !vm.assist.busy() && views_ready {
+                // The agent scene ends with the agent waiting for an answer, so a busy run is fine.
+                let assist_quiet = !vm.assist.busy() || shot.scene == Scene::AssistantAgent;
+                if shot.settle > 18 && !vm.busy() && assist_quiet && views_ready {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
                     shot.stage = ShotStage::Waiting;
                 }

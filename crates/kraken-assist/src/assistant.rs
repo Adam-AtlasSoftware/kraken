@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use kraken_agent::{Agent, AgentEvent, ChatProvider, Message, ProviderInfo, StopReason, Usage};
+use kraken_agent::{
+    AgentEvent, ApprovalHandle, ChatProvider, Message, ProviderInfo, StopReason, Usage,
+};
 use kraken_host::RunIdGen;
 use kraken_host::backend::CommandBackend;
 use kraken_proto::sanitize;
@@ -12,6 +14,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::ASSISTANT_ID;
+use crate::backend::{ApiBackend, AssistBackend, BackendKind, Purpose, RunSpec};
 use crate::host::{HostOptions, RegistryToolHost};
 use crate::output::{
     RESULT_OPEN, TaskOutput, build_autoname, parse_explanation, parse_overview, split_result,
@@ -38,8 +41,11 @@ pub struct TaskResult {
     pub task: TaskKind,
     /// The run id edits were logged under (`undo_run` takes it).
     pub run_id: String,
-    /// The provider and model that answered.
+    /// The provider and model that answered (for a terminal agent: the agent and its model).
     pub provider: ProviderInfo,
+    /// Which kind of backend answered.
+    #[serde(default)]
+    pub backend: BackendKind,
     /// The answer text without the machine-readable block.
     pub text: String,
     /// The parsed result, when the model produced one.
@@ -60,31 +66,62 @@ pub struct TaskResult {
     pub proposals: Vec<Value>,
 }
 
-/// Runs tasks with one provider against one backend.
+/// Called with each run's approval handle, so the caller can answer approval requests.
+type Approver = Arc<dyn Fn(ApprovalHandle) + Send + Sync>;
+
+/// Runs tasks with one assistant backend (a model API or a terminal agent) against one command
+/// backend.
 pub struct Assistant {
     registry: Arc<Registry>,
     backend: Arc<dyn CommandBackend>,
-    provider: Arc<dyn ChatProvider>,
+    engine: Arc<dyn AssistBackend>,
     surface: Surface,
     agent_id: String,
     run_ids: RunIdGen,
+    approver: Option<Approver>,
 }
 
 impl Assistant {
-    /// An assistant that calls registry commands through `backend`.
+    /// An assistant that calls registry commands through `backend`, answered by the model API
+    /// `provider`.
     pub fn new(
         registry: Arc<Registry>,
         backend: Arc<dyn CommandBackend>,
         provider: Arc<dyn ChatProvider>,
     ) -> Self {
+        Self::with_engine(registry, backend, Arc::new(ApiBackend::new(provider)))
+    }
+
+    /// An assistant answered by `engine`: a model API ([`ApiBackend`]) or a terminal agent
+    /// ([`AcpBackend`](crate::AcpBackend)). `backend` serves the API path's tools; a terminal
+    /// agent reaches the registry through its own MCP server instead.
+    pub fn with_engine(
+        registry: Arc<Registry>,
+        backend: Arc<dyn CommandBackend>,
+        engine: Arc<dyn AssistBackend>,
+    ) -> Self {
         Assistant {
             registry,
             backend,
-            provider,
+            engine,
             surface: Surface::Cli,
             agent_id: ASSISTANT_ID.to_string(),
             run_ids: RunIdGen::new(),
+            approver: None,
         }
+    }
+
+    /// Hands every run's approval handle to `f` and leaves approval requests to it. Without
+    /// this, requests are denied (a terminal agent asking to run one of its own tools in a
+    /// read-only task, for example).
+    pub fn with_approver(mut self, f: impl Fn(ApprovalHandle) + Send + Sync + 'static) -> Self {
+        self.approver = Some(Arc::new(f));
+        self
+    }
+
+    /// What the backend shows about itself.
+    pub fn backend_info(&self) -> crate::BackendInfo {
+        self.engine.info()
     }
 
     /// Sets the surface reported to the registry (default `Cli`).
@@ -127,12 +164,17 @@ impl Assistant {
     ) -> TaskResult {
         let run_id = self.run_ids.next_id();
         let host = Arc::new(self.host_for(&task));
-        let mut run = Agent::run(
-            vec![Message::user(task.goal.clone())],
-            host.clone(),
-            self.provider.clone(),
-            task.agent_config(&run_id),
-        );
+        let mut run = self.engine.start(RunSpec {
+            messages: vec![Message::user(task.goal.clone())],
+            config: task.agent_config(&run_id),
+            tools: host.clone(),
+            purpose: Purpose::Task {
+                read_only: task.read_only,
+            },
+        });
+        if let Some(approver) = &self.approver {
+            approver(run.approvals());
+        }
         let mut full = String::new();
         let mut last_step = String::new();
         let mut after_tool = false;
@@ -196,9 +238,13 @@ impl Assistant {
                     break;
                 }
                 AgentEvent::ApprovalRequired { id, .. } => {
-                    // Nothing dangerous is ever offered, but never leave a run hanging.
-                    run.approvals()
-                        .decide(id, kraken_agent::ApprovalDecision::Deny);
+                    // Nothing dangerous is offered to a model API, and a terminal agent asking
+                    // for one of its own tools has nobody to ask unless an approver is set:
+                    // never leave a run hanging.
+                    if self.approver.is_none() {
+                        run.approvals()
+                            .decide(id, kraken_agent::ApprovalDecision::Deny);
+                    }
                 }
             }
         }
@@ -210,8 +256,16 @@ impl Assistant {
             &last_step
         };
         let (prose, json) = split_result(answer);
-        let stats = host.stats();
+        let stats = self
+            .engine
+            .take_stats(&run_id)
+            .unwrap_or_else(|| host.stats());
         let mut warnings = Vec::new();
+        if task.read_only && stats.calls.iter().any(|c| c.is_write && c.ok) {
+            warnings.push(format!(
+                "the agent changed the project during a read-only task; undo it with `undo_run` ({run_id})"
+            ));
+        }
         let (output, text) =
             if matches!(stop, StopReason::Error | StopReason::Cancelled) && json.is_none() {
                 (None, prose)
@@ -244,11 +298,16 @@ impl Assistant {
         TaskResult {
             task: task.kind,
             run_id,
-            provider: self.provider.info(),
+            provider: self.engine.provider_info(),
+            backend: self.engine.info().kind,
             text: sanitize(&text),
             output,
             warnings,
-            notes: task.notes,
+            notes: {
+                let mut notes = task.notes;
+                notes.extend(self.engine.take_notes());
+                notes
+            },
             stop,
             error,
             usage,

@@ -13,19 +13,19 @@ use crate::backend::{Backend, CallAs};
 /// A [`CommandBackend`] over a view-model [`Backend`]. Calls keep the identity of the context
 /// they were made with, so the assistant's edits are logged under its agent id and run id and
 /// never as the person.
-pub struct AssistBackend {
+pub struct VmCommands {
     inner: Arc<dyn Backend>,
 }
 
-impl AssistBackend {
+impl VmCommands {
     /// Wraps the backend the GUI already uses (in-process or the daemon client).
     pub fn new(inner: Arc<dyn Backend>) -> Self {
-        AssistBackend { inner }
+        VmCommands { inner }
     }
 }
 
 #[async_trait]
-impl CommandBackend for AssistBackend {
+impl CommandBackend for VmCommands {
     async fn call(&self, name: &str, ctx: &CallContext, args: Value) -> Result<Value, ProtoError> {
         let who = CallAs {
             agent: ctx.author.kind == kraken_model::AuthorKind::Agent,

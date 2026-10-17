@@ -404,7 +404,10 @@ impl InferSettings {
         }
         match store.build(&cfg) {
             Ok(provider) => {
-                ai.push_change(Change::Use(provider, badge_of(&cfg)));
+                ai.push_change(Change::Use(
+                    kraken_viewmodel::assist::BackendChoice::Api(provider),
+                    badge_of(&cfg),
+                ));
                 self.notice = Some(Ok("Saved. The assistant uses this model now.".into()));
             }
             Err(e) => {
