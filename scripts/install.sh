@@ -71,8 +71,9 @@ check_archive_entries() {
   if printf '%s\n' "$list" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
     die "archive contains unsafe paths; nothing was installed"
   fi
-  # `tar -tv` starts each line with the entry type: l = symlink, h = hard link.
-  if tar -tvzf "$1" | grep -E '^[lh]' >/dev/null; then
+  # GNU tar -tv starts each line with the entry type (l = symlink, h = hard link); BSD tar
+  # (macOS) marks hard links with "link to" and symlinks with " -> ".
+  if tar -tvzf "$1" | grep -E '^[lh]| link to | -> ' >/dev/null; then
     die "archive contains links; nothing was installed"
   fi
 }
