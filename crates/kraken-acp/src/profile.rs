@@ -29,7 +29,6 @@ pub const BASE_ENV_ALLOWLIST: &[&str] = &[
     "XDG_DATA_HOME",
     "XDG_CACHE_HOME",
     "XDG_STATE_HOME",
-    "XDG_RUNTIME_DIR",
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "ALL_PROXY",
@@ -304,6 +303,22 @@ mod tests {
             ("HOME", "/h"),
         ]));
         assert_eq!(names(&out), ["HOME", "OPENAI_API_KEY"]);
+    }
+
+    #[test]
+    fn the_runtime_directory_is_not_handed_to_agents() {
+        // `XDG_RUNTIME_DIR` holds KRAKEN's daemon socket and tokens; an agent finds the daemon
+        // only through the MCP server it is given, which gets the agent credential.
+        let p = builtin_profile("claude").expect("claude");
+        let out = p.child_env(env(&[
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("KRAKEN_RUNTIME_DIR", "/r"),
+            ("HOME", "/h"),
+        ]));
+        assert_eq!(names(&out), ["HOME"]);
+        let allow = p.clone().allow_env("KRAKEN_*");
+        let out = allow.child_env(env(&[("KRAKEN_RUNTIME_DIR", "/r")]));
+        assert!(out.is_empty());
     }
 
     #[test]

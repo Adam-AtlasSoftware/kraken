@@ -22,7 +22,7 @@ struct Surfaces {
     cli_dir: String,
     mcp_session: Arc<kraken_registry::Session>,
     mcp_dir: String,
-    client: rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    client: rmcp::service::RunningService<rmcp::RoleClient, ApprovingClient>,
     _work: Workdir,
     binary: String,
 }
@@ -46,13 +46,14 @@ async fn surfaces() -> Surfaces {
         McpOptions {
             agent_id: Some("bot".into()),
             run_id: Some(MCP_RUN.into()),
+            ..McpOptions::default()
         },
     );
     let (c, s) = tokio::io::duplex(1 << 20);
     tokio::spawn(async move {
         let _ = serve_transport(server, s).await;
     });
-    let client = ().serve(c).await.expect("client connects");
+    let client = ApprovingClient.serve(c).await.expect("client connects");
     Surfaces {
         cli,
         cli_dir: work
@@ -111,7 +112,8 @@ async fn mcp_call(s: &Surfaces, tool: &str, args: &Value) -> (bool, Value) {
 
 async fn cli_call(s: &Surfaces, tool: &str, args: &Value, extra: &[&str]) -> (bool, Value) {
     let text = args.to_string();
-    let mut argv = vec!["--json", "--project", "/nonexistent-never-used"];
+    // The rig runs the CLI as an agent author; a person approves its project_create with --yes.
+    let mut argv = vec!["--json", "--yes", "--project", "/nonexistent-never-used"];
     let sub = kebab(tool);
     argv.push(&sub);
     argv.extend_from_slice(extra);
@@ -350,16 +352,20 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         assert!(a_ok && b_ok, "{a} {b}");
         assert_eq!(normalise(&a, &s), normalise(&b, &s));
     }
-    step!(
-        "project_open",
-        json!({"project_dir": "/nonexistent/kraken-project"})
-    );
+    // A directory that does not exist, under the (normalised) work dir so the path is valid
+    // and absolute on every platform.
+    let missing = std::path::Path::new(&s.cli_dir)
+        .join("no-such-project")
+        .to_string_lossy()
+        .into_owned();
+    step!("project_open", json!({"project_dir": missing}));
 
     // The rewrite pipeline is not attached to these sessions; every surface says so alike. Its
     // behaviour is tested in kraken-rewrite (commands) and tests/rewrite.rs (CLI).
     for (name, args) in [
         ("rewrite_plan", json!({})),
         ("rewrite_status", json!({})),
+        ("rewrite_unit", json!({"address": "0x401040"})),
         ("rewrite_function", json!({"address": "0x401040"})),
         ("rewrite_spec", json!({"scope": "all"})),
         ("rewrite_export", json!({"dir": "out"})),

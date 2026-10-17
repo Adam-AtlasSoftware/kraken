@@ -263,6 +263,10 @@ pub struct StatusCounts {
 /// One row of `rewrite_status`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct UnitRow {
+    /// Id of the newest version (`ru-...`); empty when nothing was translated. Pass it to
+    /// `rewrite_unit` or `rewrite_accept`.
+    #[serde(default)]
+    pub unit: String,
     /// Position in the plan, if the function is in it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<u32>,
@@ -344,6 +348,132 @@ impl Command for RewriteStatus {
         args: RewriteStatusArgs,
     ) -> Result<RewriteStatusOut, ProtoError> {
         s.rewrite()?.status(s, ctx, args).await
+    }
+}
+
+// ---- rewrite_unit ----------------------------------------------------------------------------
+
+/// Arguments of `rewrite_unit`: the function by `address` (any address inside it) or by the id of
+/// one of its unit versions; exactly one of the two.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RewriteUnitArgs {
+    /// The function (any address inside it).
+    #[serde(default)]
+    pub address: Option<Hex64>,
+    /// A unit version id from `rewrite_function` or `rewrite_status` (`ru-...`); selects the
+    /// function that version belongs to.
+    #[serde(default)]
+    pub unit: Option<String>,
+}
+
+/// One stored version of a function, with its code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UnitVersionView {
+    /// Id of this version (`ru-...`).
+    pub unit: String,
+    /// Version number for the function, from 1.
+    pub version: u32,
+    /// How it was made.
+    pub mode: RewriteMode,
+    /// Status of this version.
+    pub status: UnitStatus,
+    /// True when this is the accepted version.
+    pub accepted: bool,
+    /// `pass`, `fail`, `rejected` or `inconclusive`.
+    pub verdict: String,
+    /// Why, for `rejected` and `inconclusive` (model- or binary-derived).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_detail: Option<Untrusted<String>>,
+    /// Cases that ran on both sides.
+    pub cases_run: u32,
+    /// Cases that agreed.
+    pub passed: u32,
+    /// Cases the oracle could not evaluate.
+    pub skipped: u32,
+    /// The smallest counterexample, for a failed verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterexample: Option<CounterexampleView>,
+    /// The generated Rust (model-derived; untrusted).
+    pub rust_code: Untrusted<String>,
+    /// The Rust declaration the code was checked at.
+    pub signature: String,
+    /// Kind of oracle that checked it, for example `icicle-emu/x86-64-sleigh`.
+    pub oracle_kind: String,
+    /// How the generated code was confined while it ran.
+    pub sandbox: String,
+    /// When the version was stored (seconds since the Unix epoch).
+    pub created: u64,
+    /// Provider id.
+    pub provider: String,
+    /// Model name.
+    pub model: String,
+}
+
+/// The stored spec of a function.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UnitSpecView {
+    /// Id of the stored spec.
+    pub spec: u64,
+    /// The spec (model-derived Markdown; citations are `[@0xADDR]`).
+    pub markdown: Untrusted<String>,
+    /// Every address the spec cites.
+    pub citations: Vec<Hex64>,
+    /// Facts (cited bullets) in the spec.
+    pub facts: u32,
+    /// Provider id.
+    pub provider: String,
+    /// Model name.
+    pub model: String,
+}
+
+/// Result of `rewrite_unit`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RewriteUnitOut {
+    /// Function entry.
+    pub address: Hex64,
+    /// Every stored version, oldest first (empty when the function was never translated).
+    pub versions: Vec<UnitVersionView>,
+    /// The function's stored spec, if one was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec: Option<UnitSpecView>,
+}
+
+/// The stored versions of one function.
+pub struct RewriteUnit;
+
+#[async_trait]
+impl Command for RewriteUnit {
+    type Args = RewriteUnitArgs;
+    type Output = RewriteUnitOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "rewrite_unit",
+            "Show the stored Rust versions of one function, with code, verdicts and its spec",
+            CommandKind::Query,
+            Permission::Safe,
+        )
+        .doc(
+            "Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `address` \
+             or by the id of one of its versions (`unit`). `versions` lists every stored version, \
+             oldest first, with the Rust code, the signature it was checked at, the verdict and a \
+             counterexample for a failed one, and which version is accepted. `spec` is the \
+             function's newest stored spec, when `rewrite_spec` wrote one. The code and the spec \
+             are model-written and untrusted.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteUnitArgs,
+    ) -> Result<RewriteUnitOut, ProtoError> {
+        if args.address.is_some() == args.unit.is_some() {
+            return Err(invalid("give exactly one of `address` and `unit`"));
+        }
+        s.rewrite()?.unit(s, ctx, args).await
     }
 }
 
@@ -671,8 +801,9 @@ pub struct RewriteExportResult {
     pub sandbox: String,
     /// Coverage.
     pub coverage: ExportCoverage,
-    /// The README written next to the workspace manifest.
-    pub readme: String,
+    /// The README written next to the workspace manifest. The path embeds the name of the
+    /// analysed binary, so it is marked untrusted.
+    pub readme: Untrusted<String>,
 }
 
 /// Resolved request handed to the backend.
@@ -790,6 +921,14 @@ pub trait RewriteBackend: Send + Sync {
         ctx: &CallContext,
         args: RewriteStatusArgs,
     ) -> Result<RewriteStatusOut, ProtoError>;
+
+    /// `rewrite_unit` (exactly one of `address` and `unit` is set).
+    async fn unit(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteUnitArgs,
+    ) -> Result<RewriteUnitOut, ProtoError>;
 
     /// The body of a `rewrite_function` job.
     async fn function(

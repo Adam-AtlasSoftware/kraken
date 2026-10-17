@@ -3,13 +3,15 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use kraken_proto::{PageRequest, ProtoError, sanitize};
+use kraken_proto::{PageRequest, ProtoError, Untrusted, sanitize};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::session::{AnalysisPhase, Epoch, Project, Session};
+use crate::session::{AnalysisPhase, Epoch, Project, Session, peek_binary};
+use crate::trust;
 use crate::views::ProgramView;
 
 use super::NoArgs;
@@ -27,7 +29,7 @@ pub struct AnalysisView {
     pub job_id: Option<String>,
     /// Why the last run failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<Untrusted<String>>,
 }
 
 /// Facts about the open project.
@@ -35,8 +37,9 @@ pub struct AnalysisView {
 pub struct ProjectInfoOut {
     /// Project directory.
     pub project_dir: String,
-    /// Absolute path of the analysed binary.
-    pub binary_path: String,
+    /// Absolute path of the analysed binary. The file name is chosen by whoever supplied the
+    /// binary, so it is marked untrusted.
+    pub binary_path: Untrusted<String>,
     /// SHA-256 of the binary recorded at creation.
     pub binary_sha256: String,
     /// What the engine reported when loading it.
@@ -83,7 +86,7 @@ pub(crate) async fn info_of(project: &Project) -> Result<ProjectInfoOut, ProtoEr
     let a = project.analysis();
     Ok(ProjectInfoOut {
         project_dir: project.dir().to_string_lossy().into_owned(),
-        binary_path: meta.binary_path.clone(),
+        binary_path: Untrusted::sanitized(&meta.binary_path),
         binary_sha256: meta.binary_sha256.clone(),
         program: (&project.program()).into(),
         engine_build: sanitize(&caps.handshake.build),
@@ -95,12 +98,59 @@ pub(crate) async fn info_of(project: &Project) -> Result<ProjectInfoOut, ProtoEr
             phase: a.phase,
             function_count: a.function_count,
             job_id: a.job.map(|j| j.0),
-            error: a.error.as_deref().map(sanitize),
+            error: a.error.as_deref().map(Untrusted::sanitized),
         },
         pending_entries: pending,
         log_entries,
         open_proposals,
     })
+}
+
+/// The policy and approval an agent (or the MCP surface) must pass before `project_create` or
+/// `project_open` may run (H3): the engine reads the file it is pointed at and the model sees
+/// it through `read_bytes`, so credentials by location are refused and a person approves the
+/// rest. People on the CLI and GUI pass untouched, and so does a call that already went through
+/// the gate (the daemon runs it before it creates a session; [`CallContext::gate_passed`]).
+///
+/// `args` are the command's arguments (`binary` and `project_dir`, or `project_dir`).
+pub async fn project_gate(
+    command: &str,
+    args: &serde_json::Value,
+    ctx: &CallContext,
+) -> Result<(), ProtoError> {
+    if !ctx.needs_user_approval() || ctx.gate_passed {
+        return Ok(());
+    }
+    let text = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or_default();
+    let dir = trust::check_agent_path("project_dir", Path::new(text("project_dir")))?;
+    let shown = |p: &Path| sanitize(&p.display().to_string());
+    if command == "project_create" {
+        let binary = trust::check_agent_path("binary", Path::new(text("binary")))?;
+        ctx.require_approval(
+            command,
+            format!(
+                "create a project in {} for the binary {}",
+                shown(&dir),
+                shown(&binary)
+            ),
+            json!({"binary": shown(&binary), "project_dir": shown(&dir)}),
+        )
+        .await
+    } else {
+        // The metadata inside the project, which an agent can write, names the file read.
+        let binary = peek_binary(&dir).await?;
+        let binary = trust::check_agent_path("the project's binary", Path::new(&binary))?;
+        ctx.require_approval(
+            command,
+            format!(
+                "open the project in {} (it analyses {})",
+                shown(&dir),
+                shown(&binary)
+            ),
+            json!({"project_dir": shown(&dir), "binary": shown(&binary)}),
+        )
+        .await
+    }
 }
 
 /// Arguments of `project_create`.
@@ -138,9 +188,15 @@ impl Command for ProjectCreate {
     async fn run(
         &self,
         s: &Session,
-        _ctx: &CallContext,
+        ctx: &CallContext,
         args: ProjectCreateArgs,
     ) -> Result<ProjectInfoOut, ProtoError> {
+        project_gate(
+            "project_create",
+            &json!({"binary": args.binary, "project_dir": args.project_dir}),
+            ctx,
+        )
+        .await?;
         let project = s
             .create_project(Path::new(&args.project_dir), Path::new(&args.binary))
             .await?;
@@ -181,9 +237,15 @@ impl Command for ProjectOpen {
     async fn run(
         &self,
         s: &Session,
-        _ctx: &CallContext,
+        ctx: &CallContext,
         args: ProjectOpenArgs,
     ) -> Result<ProjectInfoOut, ProtoError> {
+        project_gate(
+            "project_open",
+            &json!({"project_dir": args.project_dir}),
+            ctx,
+        )
+        .await?;
         let project = s.open_project(Path::new(&args.project_dir)).await?;
         info_of(&project).await
     }

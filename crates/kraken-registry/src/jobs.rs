@@ -191,11 +191,11 @@ impl JobTable {
                 }
                 Err(e) if e.code == ErrorCode::Cancelled => {
                     s.status = JobStatus::Cancelled;
-                    s.error = Some(e);
+                    s.error = Some(e.sanitized());
                 }
                 Err(e) => {
                     s.status = JobStatus::Failed;
-                    s.error = Some(e);
+                    s.error = Some(e.sanitized());
                 }
             });
         });

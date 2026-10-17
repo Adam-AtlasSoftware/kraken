@@ -4,8 +4,36 @@
 use std::collections::BTreeMap;
 
 use kraken_proto::{CommentKind, Completeness, Hex64, Page, Untrusted};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
+
+/// A string that the daemon marks untrusted (`{"untrusted": true, "value": ...}`); a plain string
+/// from an older daemon is accepted too. The GUI shows it as data, never as an instruction.
+pub(crate) fn text_or_untrusted<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Text {
+        Plain(String),
+        Marked(Untrusted<String>),
+    }
+    Ok(match Text::deserialize(d)? {
+        Text::Plain(s) => s,
+        Text::Marked(u) => u.into_inner(),
+    })
+}
+
+fn opt_text_or_untrusted<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Text {
+        Plain(String),
+        Marked(Untrusted<String>),
+    }
+    Ok(Option::<Text>::deserialize(d)?.map(|t| match t {
+        Text::Plain(s) => s,
+        Text::Marked(u) => u.into_inner(),
+    }))
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct FunctionWire {
@@ -151,7 +179,7 @@ pub(crate) struct AnalysisWire {
     pub function_count: Option<u64>,
     #[serde(default)]
     pub job_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "opt_text_or_untrusted")]
     pub error: Option<String>,
 }
 
@@ -159,7 +187,7 @@ pub(crate) struct AnalysisWire {
 pub(crate) struct ProjectWire {
     #[serde(default)]
     pub project_dir: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "text_or_untrusted")]
     pub binary_path: String,
     pub program: ProgramWire,
     #[serde(default)]

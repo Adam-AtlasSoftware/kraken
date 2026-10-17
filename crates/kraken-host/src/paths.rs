@@ -129,10 +129,13 @@ mod tests {
 
     #[test]
     fn a_clean_xdg_data_home_is_used() {
-        let env = env_of(&[("HOME", "/home/u"), ("XDG_DATA_HOME", "/data")]);
+        // `/data` is not absolute on Windows, where it would be ignored.
+        let data = if cfg!(windows) { "C:\\data" } else { "/data" };
+        let pairs = [("HOME", "/home/u"), ("XDG_DATA_HOME", data)];
+        let env = env_of(&pairs);
         assert_eq!(
             projects_root_with(&KrakenConfig::default(), &env).unwrap(),
-            PathBuf::from("/data/kraken/projects")
+            PathBuf::from(data).join("kraken/projects")
         );
     }
 

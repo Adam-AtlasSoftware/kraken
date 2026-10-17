@@ -555,7 +555,7 @@ fn export_goes_into_the_project_by_default_and_asks_before_leaving_it() {
         "rewrite_export",
         json!({"dir": "/home/me/elsewhere", "crates": ["demo", "demo_shim"],
                "symbols": ["checksum", "xor_len"], "built": true, "sandbox": "landlock",
-               "coverage": {"accepted": 2, "planned": 3, "functions_total": 21}, "readme": "README.md"}),
+               "coverage": {"accepted": 2, "planned": 3, "functions_total": 21}, "readme": {"untrusted": true, "value": "README.md"}}),
     ));
     r.until("export", |vm| vm.rewrite.export.result.is_some());
     let s = r.vm.rewrite.export.result.clone().expect("summary");

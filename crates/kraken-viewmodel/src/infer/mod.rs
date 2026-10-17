@@ -19,4 +19,4 @@ pub use form::{Field, FieldKind, SettingsForm};
 pub use kraken_host::infer::{
     BackendInfo, InferApi, InferListReply, InferManager, LogEntry, StatusReply,
 };
-pub use panel::{HintLevel, InferPanel, MemoryHint};
+pub use panel::{HintLevel, InferPanel, LOCAL_INFER_ACCOUNT, MemoryHint};

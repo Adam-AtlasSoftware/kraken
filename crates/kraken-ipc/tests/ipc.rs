@@ -342,3 +342,207 @@ async fn live_pid_socket_is_not_removed_or_respawned() {
     assert!(matches!(err, EnsureError::Timeout));
     assert!(dir.socket_path().exists());
 }
+
+// ---- credential classes and limits
+
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+struct Probe;
+
+#[async_trait]
+impl RpcHandler for Probe {
+    async fn call(
+        &self,
+        conn: &ConnInfo,
+        method: &str,
+        _params: Value,
+    ) -> Result<Value, ProtoError> {
+        match method {
+            "who" => Ok(json!({"class": conn.class, "kind": conn.client_kind})),
+            "gauge" => {
+                let now = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+                PEAK.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                CURRENT.fetch_sub(1, Ordering::SeqCst);
+                Ok(json!(now))
+            }
+            _ => Err(ProtoError::new(ErrorCode::NotFound, "no such method")),
+        }
+    }
+}
+
+struct ProbeRunning {
+    server: Server<Probe>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ProbeRunning {
+    async fn stop(self) {
+        self.server.shutdown().trigger();
+        let _ = self.task.await;
+    }
+}
+
+fn start_probe(dir: &RuntimeDir, tune: impl FnOnce(&mut kraken_ipc::ServerConfig)) -> ProbeRunning {
+    let guard = DaemonGuard::acquire(dir, PROTOCOL_VERSION, "test-build").unwrap();
+    let listener = Listener::bind(dir).unwrap();
+    let mut cfg = guard.server_config();
+    tune(&mut cfg);
+    let server = Server::new(Probe, cfg);
+    let s = server.clone();
+    let task = tokio::spawn(async move {
+        let _guard = guard;
+        let _ = s.serve(listener).await;
+    });
+    ProbeRunning { server, task }
+}
+
+#[tokio::test]
+async fn the_token_decides_the_credential_class_not_the_hello() {
+    let (_t, dir) = runtime_dir();
+    let r = start_probe(&dir, |_| {});
+    assert_ne!(
+        std::fs::read_to_string(dir.token_path()).unwrap(),
+        std::fs::read_to_string(dir.agent_token_path()).unwrap()
+    );
+    // An MCP client reads the agent token on its own.
+    let mcp = Client::connect(&dir, &ClientHello::new(ClientKind::Mcp, "b"))
+        .await
+        .unwrap();
+    assert_eq!(
+        mcp.call("who", Value::Null).await.unwrap(),
+        json!({"class": "agent", "kind": "mcp"})
+    );
+    // The GUI and CLI use the user token.
+    let gui = Client::connect(&dir, &ClientHello::new(ClientKind::Gui, "b"))
+        .await
+        .unwrap();
+    assert_eq!(
+        gui.call("who", Value::Null).await.unwrap(),
+        json!({"class": "user", "kind": "gui"})
+    );
+    // Presenting the agent token while claiming to be the GUI changes nothing.
+    let agent_token = kraken_ipc::token::read_token(&dir.agent_token_path()).unwrap();
+    let stream = UnixStream::connect(dir.socket_path()).await.unwrap();
+    let liar = Client::from_stream(stream, &ClientHello::new(ClientKind::Gui, "b"), agent_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        liar.call("who", Value::Null).await.unwrap(),
+        json!({"class": "agent", "kind": "mcp"})
+    );
+    // Presenting the user token as an MCP client keeps the user class.
+    let user_token = kraken_ipc::token::read_token(&dir.token_path()).unwrap();
+    let stream = UnixStream::connect(dir.socket_path()).await.unwrap();
+    let c = Client::from_stream(stream, &ClientHello::new(ClientKind::Mcp, "b"), user_token)
+        .await
+        .unwrap();
+    assert_eq!(c.call("who", Value::Null).await.unwrap()["class"], "user");
+    r.stop().await;
+    assert!(!dir.agent_token_path().exists(), "removed with the daemon");
+}
+
+#[tokio::test]
+async fn an_unauthenticated_frame_is_capped_far_below_the_frame_limit() {
+    let (_t, dir) = runtime_dir();
+    let r = start_probe(&dir, |_| {});
+    let mut s = UnixStream::connect(dir.socket_path()).await.unwrap();
+    // 1 MiB announced before any hello: refused without reading the body.
+    s.write_all(&(1024u32 * 1024).to_be_bytes()).await.unwrap();
+    let mut buf = [0u8; 1];
+    let n = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::io::AsyncReadExt::read(&mut s, &mut buf),
+    )
+    .await
+    .expect("the daemon closes the connection promptly")
+    .unwrap_or(0);
+    assert_eq!(n, 0, "closed without a reply");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn connections_beyond_the_limit_are_closed_on_accept() {
+    let (_t, dir) = runtime_dir();
+    let r = start_probe(&dir, |cfg| {
+        cfg.limits.max_connections = 2;
+        cfg.limits.max_unauthenticated = 8;
+    });
+    let a = Client::connect(&dir, &hello()).await.unwrap();
+    let b = Client::connect(&dir, &hello()).await.unwrap();
+    a.call("who", Value::Null).await.unwrap();
+    b.call("who", Value::Null).await.unwrap();
+    // The third finds the door shut: the daemon drops it before the hello.
+    let third = Client::connect(&dir, &hello()).await;
+    assert!(third.is_err(), "a third connection must not be served");
+    // Once one leaves, there is room again.
+    drop(a);
+    let mut ok = false;
+    for _ in 0..100 {
+        if let Ok(c) = Client::connect(&dir, &hello()).await
+            && c.call("who", Value::Null).await.is_ok()
+        {
+            ok = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(ok, "a freed slot is reused");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn unauthenticated_connections_are_limited_separately() {
+    let (_t, dir) = runtime_dir();
+    let r = start_probe(&dir, |cfg| cfg.limits.max_unauthenticated = 2);
+    // Two silent connections hold the two pre-hello slots.
+    let _s1 = UnixStream::connect(dir.socket_path()).await.unwrap();
+    let _s2 = UnixStream::connect(dir.socket_path()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // A real client is turned away while they idle.
+    assert!(Client::connect(&dir, &hello()).await.is_err());
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn requests_in_flight_per_connection_are_bounded() {
+    let (_t, dir) = runtime_dir();
+    CURRENT.store(0, Ordering::SeqCst);
+    PEAK.store(0, Ordering::SeqCst);
+    let r = start_probe(&dir, |cfg| {
+        cfg.limits.max_inflight_per_connection = 3;
+    });
+    let c = Client::connect(&dir, &hello()).await.unwrap();
+    let mut joins = Vec::new();
+    for _ in 0..12 {
+        let c = c.clone();
+        joins.push(tokio::spawn(
+            async move { c.call("gauge", Value::Null).await },
+        ));
+    }
+    for j in joins {
+        j.await.unwrap().unwrap();
+    }
+    assert_eq!(PEAK.load(Ordering::SeqCst), 3);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn an_mcp_client_meeting_an_older_daemon_is_told_to_restart_it() {
+    let (_t, dir) = runtime_dir();
+    // What a daemon without credential classes leaves behind: only `daemon.token`.
+    kraken_ipc::token::write_token(&dir.token_path(), "old").unwrap();
+    let err = Client::connect(&dir, &ClientHello::new(ClientKind::Mcp, "b"))
+        .await
+        .err()
+        .unwrap();
+    assert!(err.restart_required(), "{err:?}");
+    // With no daemon at all the error stays a plain "not there yet".
+    std::fs::remove_file(dir.token_path()).unwrap();
+    let err = Client::connect(&dir, &ClientHello::new(ClientKind::Mcp, "b"))
+        .await
+        .err()
+        .unwrap();
+    assert!(!err.restart_required(), "{err:?}");
+}

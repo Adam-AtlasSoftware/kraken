@@ -10,7 +10,15 @@
 //! | `status` | none | daemon info, open sessions, engine diagnostics |
 //! | `events` | `{after_seq?, limit?}` | `{events: [...], last_seq}` (catch-up for a missed stream) |
 //! | `shutdown` | none | `{"stopping": true}` |
+//! | `approvals` | none | `{pending: [PendingApproval]}` (user credential only) |
+//! | `approval_decide` | `{id, allow}` | `{decided: bool}` (user credential only) |
 //! | `infer_list` / `infer_start` / `infer_status` / `infer_stop` / `infer_logs` | see [`crate::infer`] | local model hosting |
+//!
+//! A connection is either user-class (GUI, CLI: the `daemon.token`) or agent-class (MCP servers:
+//! the `agent.token`). The daemon takes author kind, surface and approval from that class: an
+//! agent-class connection always acts as an agent on the MCP surface, its `approved` claim is
+//! ignored, it may only use `call`, `commands` and `events`, and what needs a person's approval
+//! waits on the daemon's approval list, which only a user-class connection can answer.
 //!
 //! Every connected client also receives `event` notifications ([`METHOD_EVENT`]) whose params
 //! are an object with a monotonically increasing `seq`, the `project_dir` and a `kind`
@@ -43,6 +51,10 @@ pub const METHOD_STATUS: &str = "status";
 pub const METHOD_EVENTS: &str = "events";
 /// Ask the daemon to exit.
 pub const METHOD_SHUTDOWN: &str = "shutdown";
+/// List the approvals waiting for a person (user credential only).
+pub const METHOD_APPROVALS: &str = "approvals";
+/// Answer a waiting approval (user credential only).
+pub const METHOD_APPROVAL_DECIDE: &str = "approval_decide";
 /// Notification method of change events.
 pub const METHOD_EVENT: &str = "event";
 
@@ -64,6 +76,11 @@ pub mod event_kind {
     pub const SESSION_OPENED: &str = "session_opened";
     /// A project session was closed (idle or evicted).
     pub const SESSION_CLOSED: &str = "session_closed";
+    /// An agent asks for something that needs a person's approval; answer with
+    /// `approval_decide`.
+    pub const APPROVAL_REQUESTED: &str = "approval_requested";
+    /// A waiting approval ended (`allowed`, `denied`, `timed_out` or `abandoned`).
+    pub const APPROVAL_RESOLVED: &str = "approval_resolved";
 }
 
 /// Params of the `call` method.
@@ -77,7 +94,8 @@ pub struct CallParams {
     /// Command arguments; `null` means none.
     #[serde(default)]
     pub args: Value,
-    /// Who the edit is attributed to.
+    /// Who the edit is attributed to. A user-class connection may label its calls `agent` (the
+    /// assistant does); an agent-class connection is always an agent whatever this says.
     pub author_kind: AuthorKind,
     /// User name or agent id; defaults from the connection when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,10 +103,12 @@ pub struct CallParams {
     /// Agent run the call belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
-    /// Surface the call comes from; defaults from the connection's client kind.
+    /// Surface the call comes from; defaults from the connection's client kind (always `mcp`
+    /// for an agent-class connection).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<Surface>,
-    /// True when the client already asked its user to approve a dangerous command.
+    /// True when the client already asked its user to approve a dangerous command. Honoured on a
+    /// user-class connection only; the daemon ignores it from an agent.
     #[serde(default)]
     pub approved: bool,
 }
@@ -386,6 +406,18 @@ pub async fn wait_until_stopped(dir: &RuntimeDir, timeout: Duration) -> bool {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+}
+
+/// The `KRAKEN_RUNTIME_DIR` setting to give the MCP server of a terminal agent that talks to
+/// the daemon. The agent itself is not given the runtime directory (see `kraken-acp`), so the
+/// MCP server it starts needs it spelled out; the server connects with the agent credential,
+/// which cannot approve anything. `None` when no runtime directory can be resolved.
+pub fn mcp_runtime_env() -> Option<(String, String)> {
+    let dir = RuntimeDir::resolve().ok()?;
+    Some((
+        kraken_ipc::ENV_RUNTIME_DIR.to_string(),
+        dir.path().to_string_lossy().into_owned(),
+    ))
 }
 
 /// Makes `p` absolute against the current directory (no symlink resolution).

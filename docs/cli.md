@@ -74,6 +74,10 @@ kraken rewrite-export --dir rewrite-out               # Cargo workspace with an 
 
 The model comes from the `[provider]` table of `config.toml`, as for the assistant. Generated code runs only in a sandbox (Linux with Landlock); elsewhere the commands refuse.
 
+## The daemon and agent approvals
+
+`kraken daemon status|start|stop` control `krakend`. `kraken daemon approvals` lists what agents wait to do until you approve it (opening a project, working on one you have not opened yourself) and answers: `kraken daemon approvals --approve 3` or `--deny 3`. The KRAKEN window shows the same questions as a dialog. See [Security](security.md).
+
 ## Local models
 
 `kraken infer list|start|status|stop|logs` and `kraken infer setup llama` run a model on this computer under the daemon and can make the assistant use it (`--use`). See [Running a model on this computer](local-models.md).

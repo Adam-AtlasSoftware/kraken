@@ -93,12 +93,31 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connects to the daemon in `dir`, reading the token from `daemon.token`.
+    /// Connects to the daemon in `dir`. MCP clients present the agent credential
+    /// (`agent.token`); every other kind presents the user credential (`daemon.token`).
     pub async fn connect(dir: &RuntimeDir, hello: &ClientHello) -> Result<Client, ClientError> {
-        let token = crate::token::read_token(&dir.token_path()).map_err(|e| match e {
-            crate::error::IpcError::Io(io) => ClientError::Io(io),
-            other => ClientError::Token(other.to_string()),
-        })?;
+        let path = match hello.client_kind {
+            ClientKind::Mcp => dir.agent_token_path(),
+            ClientKind::Cli | ClientKind::Gui => dir.token_path(),
+        };
+        let token = match crate::token::read_token(&path) {
+            Ok(t) => t,
+            Err(crate::error::IpcError::Io(io)) => {
+                // A daemon from before the credential classes publishes only `daemon.token`.
+                if hello.client_kind == ClientKind::Mcp
+                    && io.kind() == std::io::ErrorKind::NotFound
+                    && dir.token_path().exists()
+                {
+                    return Err(ClientError::Proto(crate::wire::protocol_mismatch(
+                        0,
+                        PROTOCOL_VERSION,
+                        "an older build without agent credentials",
+                    )));
+                }
+                return Err(ClientError::Io(io));
+            }
+            Err(other) => return Err(ClientError::Token(other.to_string())),
+        };
         let stream = crate::transport::connect(dir).await?;
         Client::from_stream(stream, hello, token).await
     }

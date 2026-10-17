@@ -203,6 +203,8 @@ pub struct Project {
     pub(crate) write_lock: tokio::sync::Mutex<()>,
     analysis: Mutex<AnalysisState>,
     epoch_mismatch: Vec<String>,
+    /// Auto-applied agent edits counted per quota key (see `CallContext::quota_key`).
+    quota: Mutex<std::collections::HashMap<String, u64>>,
 }
 
 impl std::fmt::Debug for Project {
@@ -217,6 +219,16 @@ impl Project {
     /// The project directory.
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// Edits auto-applied so far under quota `key`.
+    pub(crate) fn quota_used(&self, key: &str) -> u64 {
+        lock(&self.quota).get(key).copied().unwrap_or(0)
+    }
+
+    /// Counts one more auto-applied edit under quota `key`.
+    pub(crate) fn quota_add(&self, key: &str) {
+        *lock(&self.quota).entry(key.to_string()).or_insert(0) += 1;
     }
 
     /// A copy of the project metadata.
@@ -403,6 +415,30 @@ fn write_meta(dir: &Path, meta: &ProjectMeta) -> Result<(), ProtoError> {
     std::fs::rename(&tmp, &dest).map_err(|e| io_err("cannot write", &dest, e))
 }
 
+/// `engine_dir` of a project's metadata must stay inside the project directory: the metadata is
+/// a file anyone with write access to the directory can craft.
+fn check_engine_dir(engine_dir: &str) -> Result<(), ProtoError> {
+    let p = Path::new(engine_dir);
+    let escapes = engine_dir.is_empty()
+        || p.is_absolute()
+        || p.components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)));
+    if escapes {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "the project metadata names an engine directory outside the project",
+        ));
+    }
+    Ok(())
+}
+
+/// The binary path recorded in the metadata of the project in `dir` (for the approval prompt of
+/// `project_open`: the project decides which file the engine reads).
+pub async fn peek_binary(dir: &Path) -> Result<String, ProtoError> {
+    let dir = dir.to_path_buf();
+    blocking(move || read_meta(&dir).map(|m| m.binary_path)).await
+}
+
 fn read_meta(dir: &Path) -> Result<ProjectMeta, ProtoError> {
     let path = dir.join(META_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| io_err("cannot read", &path, e))?;
@@ -537,7 +573,11 @@ impl Session {
         let binary_path = {
             let binary = binary.to_path_buf();
             blocking(move || {
-                std::fs::canonicalize(&binary).map_err(|e| io_err("cannot open binary", &binary, e))
+                let p = std::fs::canonicalize(&binary)
+                    .map_err(|e| io_err("cannot open binary", &binary, e))?;
+                // A FIFO or device would block the hash or feed the engine endless data.
+                crate::trust::ensure_regular_file(&p)?;
+                Ok(p)
             })
             .await?
         };
@@ -595,9 +635,14 @@ impl Session {
             blocking(move || read_meta(&dir)).await?
         };
         let binary_path = PathBuf::from(&meta.binary_path);
+        check_engine_dir(&meta.engine_dir)?;
         let current_hash = {
             let p = binary_path.clone();
-            blocking(move || hash_file(&p)).await?
+            blocking(move || {
+                crate::trust::ensure_regular_file(&p)?;
+                hash_file(&p)
+            })
+            .await?
         };
         let engine_dir = dir.join(&meta.engine_dir);
         {
@@ -666,6 +711,7 @@ impl Session {
                 error: None,
             }),
             epoch_mismatch,
+            quota: Mutex::default(),
         }
     }
 }

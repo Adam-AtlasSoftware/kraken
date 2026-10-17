@@ -13,6 +13,7 @@ use crate::client::{Client, ClientError, ClientHello};
 use crate::error::IpcError;
 use crate::info::{DaemonInfo, pid_alive};
 use crate::paths::RuntimeDir;
+use crate::server::Limits;
 use crate::server::ServerConfig;
 use crate::token::{generate_token, write_token};
 
@@ -34,6 +35,7 @@ pub struct DaemonGuard {
     _lock: File,
     dir: RuntimeDir,
     token: String,
+    agent_token: String,
     info: DaemonInfo,
 }
 
@@ -54,6 +56,9 @@ impl DaemonGuard {
             Err(e) => return Err(e.into()),
         }
         let token = generate_token()?;
+        let agent_token = generate_token()?;
+        // Agent token first: a client that finds `daemon.token` can rely on `agent.token`.
+        write_token(&dir.agent_token_path(), &agent_token)?;
         write_token(&dir.token_path(), &token)?;
         let info = DaemonInfo::for_current_process(protocol, build)?;
         info.write(&dir.info_path())?;
@@ -61,13 +66,19 @@ impl DaemonGuard {
             _lock: lock,
             dir: dir.clone(),
             token,
+            agent_token,
             info,
         })
     }
 
-    /// The token clients must present.
+    /// The token a person's clients (GUI, CLI) present.
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    /// The token agent-side clients (MCP servers) present.
+    pub fn agent_token(&self) -> &str {
+        &self.agent_token
     }
 
     /// The published daemon info.
@@ -79,6 +90,8 @@ impl DaemonGuard {
     pub fn server_config(&self) -> ServerConfig {
         ServerConfig {
             token: self.token.clone(),
+            agent_token: Some(self.agent_token.clone()),
+            limits: Limits::default(),
             protocol: self.info.protocol,
             build: self.info.build.clone(),
             pid: self.info.pid,
@@ -91,6 +104,7 @@ impl Drop for DaemonGuard {
         let _ = std::fs::remove_file(self.dir.socket_path());
         let _ = std::fs::remove_file(self.dir.info_path());
         let _ = std::fs::remove_file(self.dir.token_path());
+        let _ = std::fs::remove_file(self.dir.agent_token_path());
     }
 }
 

@@ -4,8 +4,9 @@ use kraken_proto::{ErrorCode, ProtoError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// IPC protocol version spoken by this crate.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// IPC protocol version spoken by this crate. 2: user and agent credential classes (the daemon
+/// also publishes `agent.token`), approval methods, connection limits.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Reserved method name of the handshake request.
 pub const HELLO_METHOD: &str = "hello";
@@ -20,6 +21,18 @@ pub enum ClientKind {
     Gui,
     /// MCP server.
     Mcp,
+}
+
+/// What a connection's token entitles it to. The daemon derives it from the token presented in
+/// the hello, never from anything else the client says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialClass {
+    /// The person: GUI and CLI. May approve, and may act as a user.
+    User,
+    /// An agent: MCP servers and terminal-agent children. Always acts as an agent, and can
+    /// neither approve anything nor use the user-only methods.
+    Agent,
 }
 
 /// Params of the hello request.

@@ -17,7 +17,7 @@ use egui::{RichText, Ui};
 use kraken_host::infer::InferManager;
 use kraken_viewmodel::DaemonClientBackend;
 use kraken_viewmodel::assist::{ProviderStore, badge_of};
-use kraken_viewmodel::infer::{DaemonInfer, HintLevel, InferApi, InferPanel};
+use kraken_viewmodel::infer::{DaemonInfer, HintLevel, InferApi, InferPanel, LOCAL_INFER_ACCOUNT};
 use tokio::runtime::Handle;
 
 use crate::assist::{AiSettings, Change};
@@ -391,6 +391,13 @@ impl InferSettings {
             return;
         };
         let store = ProviderStore::new(Some(path.clone()));
+        // The per-run key goes into the private (0600) secrets file; config.toml only refers to it.
+        if let (Some(key), Some(secrets)) = (panel.api_key(), store.secrets())
+            && let Err(e) = secrets.set_secret(LOCAL_INFER_ACCOUNT, key)
+        {
+            self.notice = Some(Err(e));
+            return;
+        }
         if let Err(e) = store.write_config(path, &cfg) {
             self.notice = Some(Err(e));
             return;

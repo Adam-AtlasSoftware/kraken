@@ -157,6 +157,10 @@ pub struct StartReply {
     pub port: u16,
     /// Process id.
     pub pid: Option<u32>,
+    /// Per-run bearer token the server requires; send it as the provider's API key. Only
+    /// authenticated clients of this user's daemon ever see it; never log it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
     /// Memory warnings.
     #[serde(default)]
     pub warnings: Vec<String>,
@@ -185,6 +189,9 @@ pub struct StatusReply {
     pub pid: Option<u32>,
     /// Seconds since the start.
     pub uptime_secs: Option<u64>,
+    /// Per-run bearer token the server requires (see [`StartReply::api_key`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
 }
 
 impl StatusReply {
@@ -200,6 +207,7 @@ impl StatusReply {
             restarts: 0,
             pid: None,
             uptime_secs: None,
+            api_key: None,
         }
     }
 
@@ -726,6 +734,7 @@ impl InferManager {
             restarts: p.restarts,
             pid: p.pid,
             uptime_secs: Some(a.started.elapsed().as_secs()),
+            api_key: a.running.api_key().map(str::to_string),
         }
     }
 
@@ -875,6 +884,7 @@ impl InferApi for InferManager {
             model: running.model().map(str::to_string),
             port: running.port(),
             pid: running.status().pid,
+            api_key: running.api_key().map(str::to_string),
             warnings,
         };
         *lock(&self.active) = Some(Arc::new(Active {
@@ -927,14 +937,27 @@ impl InferApi for InferManager {
     }
 }
 
-/// The `[provider]` table that makes the assistant talk to a local server.
-pub fn provider_table(base_url: &str, model: Option<&str>, supports_tools: bool) -> Value {
-    json!({
+/// Environment variable `kraken infer start --use` points the provider's key at.
+pub const LOCAL_KEY_ENV: &str = "KRAKEN_LOCAL_API_KEY";
+
+/// The `[provider]` table that makes the assistant talk to a local server. When the server
+/// requires a per-run key, the table names [`LOCAL_KEY_ENV`] rather than embedding the key.
+pub fn provider_table(
+    base_url: &str,
+    model: Option<&str>,
+    supports_tools: bool,
+    needs_key: bool,
+) -> Value {
+    let mut t = json!({
         "kind": "openai_compatible",
         "base_url": base_url,
         "model": model.unwrap_or("local"),
         "supports_tools": supports_tools,
-    })
+    });
+    if needs_key {
+        t["api_key"] = json!({ "env": LOCAL_KEY_ENV });
+    }
+    t
 }
 
 /// Makes `table` the `[provider]` table of the configuration file at `path`, keeping the other

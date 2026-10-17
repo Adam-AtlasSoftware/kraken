@@ -83,11 +83,32 @@ impl ProtoError {
         self.details = Some(details);
         self
     }
+
+    /// The error with its message and every string in its details (recursively) run through
+    /// [`sanitize`](crate::sanitize): engine reasons and log tails quote binary-derived text.
+    #[must_use]
+    pub fn sanitized(mut self) -> Self {
+        self.message = crate::sanitize_capped(&self.message, crate::MAX_UNTRUSTED_LEN);
+        self.details = self.details.take().map(crate::sanitize_value);
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitized_cleans_message_and_nested_details() {
+        let e = ProtoError::new(ErrorCode::Internal, "bad\u{200B} name\u{1b}[31m")
+            .with_details(serde_json::json!({"log_tail": ["sym\u{E0041}x"], "n": 1}))
+            .sanitized();
+        assert_eq!(e.message, "bad name");
+        assert_eq!(
+            e.details,
+            Some(serde_json::json!({"log_tail": ["symx"], "n": 1}))
+        );
+    }
 
     #[test]
     fn codes_serialize_to_stable_strings() {

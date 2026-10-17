@@ -683,34 +683,52 @@ fn pins_match_the_nightly_drift_workflow() {
     assert_eq!(JDK_SHA256.len(), 64);
 }
 
+/// An absolute path on every platform: `/x` on Unix, `C:\x` on Windows.
+fn abs(rest: &str) -> PathBuf {
+    let root = if cfg!(windows) { "C:\\" } else { "/" };
+    PathBuf::from(format!("{root}{rest}"))
+}
+
 #[test]
 fn layout_follows_xdg_data_home() {
-    let env_of = |pairs: Vec<(&'static str, &'static str)>| {
-        move |k: &str| {
-            pairs
-                .iter()
-                .find(|(n, _)| *n == k)
-                .map(|(_, v)| OsString::from(*v))
-        }
+    let env_of = |pairs: Vec<(&'static str, OsString)>| {
+        move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())
     };
-    let l = Layout::from_env_with(&env_of(vec![("XDG_DATA_HOME", "/x"), ("HOME", "/h")])).unwrap();
-    assert_eq!(l.root(), Path::new("/x/kraken/runtime"));
-    let l = Layout::from_env_with(&env_of(vec![("HOME", "/h")])).unwrap();
-    assert_eq!(l.root(), Path::new("/h/.local/share/kraken/runtime"));
+    let x = abs("x").into_os_string();
+    let h = abs("h").into_os_string();
+    let l = Layout::from_env_with(&env_of(vec![
+        ("XDG_DATA_HOME", x.clone()),
+        ("HOME", h.clone()),
+    ]))
+    .unwrap();
+    assert_eq!(l.root(), abs("x").join("kraken").join("runtime"));
+    let l = Layout::from_env_with(&env_of(vec![("HOME", h)])).unwrap();
+    assert_eq!(
+        l.root(),
+        abs("h").join(".local/share").join("kraken").join("runtime")
+    );
     assert!(Layout::from_env_with(&env_of(vec![])).is_none());
 }
 
 #[test]
 fn javac_argument_file_quotes_paths_and_lists_sources() {
+    let jar_ab = abs("a b").join("x.jar");
+    let jar_c = abs("c.jar");
+    let out_dir = abs("out dir");
+    let src = abs("src").join("A.java");
     let args = javac_args(
-        &[PathBuf::from("/a b/x.jar"), PathBuf::from("/c.jar")],
-        Path::new("/out dir"),
-        &[PathBuf::from("/src/A.java")],
+        &[jar_ab.clone(), jar_c.clone()],
+        &out_dir,
+        std::slice::from_ref(&src),
     );
+    // The file escapes backslashes and quotes, exactly as javac reads it.
+    let q = |s: String| format!("\"{}\"", s.replace('\\', "\\\\"));
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let cp = format!("{}{sep}{}", jar_ab.display(), jar_c.display());
     assert!(args.contains("--release\n21\n"));
-    assert!(args.contains("\"/a b/x.jar:/c.jar\""));
-    assert!(args.contains("-d\n\"/out dir\"\n"));
-    assert!(args.trim_end().ends_with("\"/src/A.java\""));
+    assert!(args.contains(&q(cp)), "{args}");
+    assert!(args.contains(&format!("-d\n{}\n", q(out_dir.display().to_string()))));
+    assert!(args.trim_end().ends_with(&q(src.display().to_string())));
 }
 
 /// Compiles the real extension with a real JDK and Ghidra. Needs the dev environment:
@@ -784,4 +802,22 @@ async fn a_missing_bundled_jar_falls_back_to_building() {
         .await
         .unwrap();
     assert!(steps.contains(&Progress::BuildingExtension));
+}
+
+#[cfg(unix)]
+#[test]
+fn tar_extraction_masks_group_and_other_write_bits() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tmp();
+    let gz = tar_gz(|b| {
+        tar_file(b, "top/open.txt", b"x", 0o666);
+        tar_file(b, "top/bin/run", b"#!/bin/sh\n", 0o777);
+    });
+    let a = write(t.path(), "a.tar.gz", &gz);
+    let dest = t.path().join("out");
+    extract_tar_gz(&a, &dest).unwrap();
+    let m = |p: &str| fs::metadata(dest.join(p)).unwrap().permissions().mode() & 0o777;
+    assert_eq!(m("top/open.txt") & 0o022, 0);
+    assert_eq!(m("top/bin/run") & 0o022, 0);
+    assert_eq!(m("top/bin/run") & 0o111, 0o111, "exec bit kept");
 }

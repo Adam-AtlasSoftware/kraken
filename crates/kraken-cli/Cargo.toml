@@ -37,7 +37,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 engine-fake = { path = "../engine-fake", version = "0.0.0" }
 kraken-infer = { path = "../kraken-infer", version = "0.0.0" }
 krakend = { path = "../krakend", version = "0.0.0" }
-rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "transport-child-process"] }
+rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "transport-child-process", "elicitation"] }
 schemars.workspace = true
 serde.workspace = true
 tempfile = "3"

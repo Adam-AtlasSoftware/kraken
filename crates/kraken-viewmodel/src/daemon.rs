@@ -15,7 +15,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use kraken_host::daemon::{
-    CallParams, DaemonClient, METHOD_EVENT, StartOptions, absolute, event_kind,
+    CallParams, DaemonClient, METHOD_APPROVAL_DECIDE, METHOD_APPROVALS, METHOD_EVENT, StartOptions,
+    absolute, event_kind,
 };
 use kraken_ipc::{ClientKind, RuntimeDir};
 use kraken_model::AuthorKind;
@@ -252,9 +253,14 @@ impl Inner {
         self: Arc<Self>,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<kraken_ipc::Notification>,
     ) {
+        self.clone().pull_pending_approvals();
         loop {
             while let Some(n) = rx.recv().await {
                 if n.method != METHOD_EVENT {
+                    continue;
+                }
+                if str_field(&n.params, "kind") == Some(event_kind::APPROVAL_REQUESTED) {
+                    self.clone().ask_about(&n.params);
                     continue;
                 }
                 let key = lock(&self.project).as_ref().map(|(_, k)| k.clone());
@@ -276,7 +282,57 @@ impl Inner {
                 }
             };
             self.emit(BackendEvent::Reconnected);
+            self.clone().pull_pending_approvals();
         }
+    }
+
+    /// An agent waits for the person (it asked to open a project, or to work on one the person
+    /// has not opened): shows the question through the approver and sends the answer to the
+    /// daemon. Without an approver nothing is answered, and the daemon denies on timeout.
+    fn ask_about(self: Arc<Self>, ev: &Value) {
+        let Some(id) = ev
+            .get("approval_id")
+            .or_else(|| ev.get("id"))
+            .and_then(Value::as_u64)
+        else {
+            return;
+        };
+        let Some(approver) = lock(&self.approver).clone() else {
+            return;
+        };
+        let prompt = ApprovalPrompt {
+            command: str_field(ev, "command").unwrap_or_default().to_string(),
+            summary: format!(
+                "An agent ({}) asks: {}",
+                str_field(ev, "author_id").unwrap_or("unknown"),
+                str_field(ev, "summary").unwrap_or_default()
+            ),
+            args: ev.get("args").cloned().unwrap_or(Value::Null),
+        };
+        tokio::spawn(async move {
+            let allow = approver.approve(prompt).await;
+            if let Ok(client) = self.client() {
+                let _ = client
+                    .rpc(
+                        METHOD_APPROVAL_DECIDE,
+                        serde_json::json!({"id": id, "allow": allow}),
+                    )
+                    .await;
+            }
+        });
+    }
+
+    /// Questions that were already waiting when this window connected.
+    fn pull_pending_approvals(self: Arc<Self>) {
+        tokio::spawn(async move {
+            let Ok(client) = self.client() else { return };
+            let Ok(v) = client.rpc(METHOD_APPROVALS, Value::Null).await else {
+                return;
+            };
+            for p in v["pending"].as_array().cloned().unwrap_or_default() {
+                self.clone().ask_about(&p);
+            }
+        });
     }
 
     fn permission(&self, command: &str) -> Option<(Permission, String)> {

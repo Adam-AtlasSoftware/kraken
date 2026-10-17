@@ -441,3 +441,79 @@ fn dangerous_commands_need_the_approver() {
     let reached = rig.rt.block_on(task).expect("join").unwrap_err();
     assert_eq!(reached.code, ErrorCode::NotFound, "{reached:?}");
 }
+
+#[test]
+fn an_agent_opening_a_project_is_put_to_the_person_in_the_window() {
+    let rig = Rig::new();
+    let backend = rig.backend();
+    let broker = ApprovalBroker::new();
+    backend.set_approver(Arc::new(broker.clone()));
+    let agent = rig.other_client(ClientKind::Mcp);
+    let project = rig.tmp.path().join("agent-project");
+    let params = CallParams {
+        project_dir: project.to_string_lossy().into_owned(),
+        command: "project_create".into(),
+        args: json!({"binary": rig.binary(), "project_dir": project}),
+        author_kind: AuthorKind::User,
+        author_id: Some("claude".into()),
+        run_id: None,
+        surface: None,
+        approved: true,
+    };
+    let call = {
+        let agent = agent.clone();
+        rig.rt.spawn(async move { agent.call(&params).await })
+    };
+    let deadline = std::time::Instant::now() + WAIT;
+    let (id, prompt) = loop {
+        if let Some(q) = broker.current() {
+            break q;
+        }
+        assert!(std::time::Instant::now() < deadline, "no approval asked");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(prompt.command, "project_create");
+    assert!(prompt.summary.contains("claude"), "{}", prompt.summary);
+    assert!(prompt.summary.contains("prog.bin"), "{}", prompt.summary);
+    assert!(!project.exists(), "nothing happens before the answer");
+    broker.respond(id, true);
+    let out = rig.rt.block_on(call).expect("join").expect("created");
+    assert_eq!(out.result["program"]["format"], "elf");
+    assert!(project.exists());
+}
+
+#[test]
+fn a_refusal_in_the_window_reaches_the_agent() {
+    let rig = Rig::new();
+    let backend = rig.backend();
+    let broker = ApprovalBroker::new();
+    backend.set_approver(Arc::new(broker.clone()));
+    let agent = rig.other_client(ClientKind::Mcp);
+    let project = rig.tmp.path().join("agent-project");
+    let params = CallParams {
+        project_dir: project.to_string_lossy().into_owned(),
+        command: "project_create".into(),
+        args: json!({"binary": rig.binary(), "project_dir": project}),
+        author_kind: AuthorKind::Agent,
+        author_id: Some("claude".into()),
+        run_id: None,
+        surface: None,
+        approved: false,
+    };
+    let call = {
+        let agent = agent.clone();
+        rig.rt.spawn(async move { agent.call(&params).await })
+    };
+    let deadline = std::time::Instant::now() + WAIT;
+    let (id, _) = loop {
+        if let Some(q) = broker.current() {
+            break q;
+        }
+        assert!(std::time::Instant::now() < deadline, "no approval asked");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    broker.respond(id, false);
+    let err = rig.rt.block_on(call).expect("join").unwrap_err();
+    assert_eq!(err.details, Some(json!({"approval": "denied"})), "{err:?}");
+    assert!(!project.exists());
+}

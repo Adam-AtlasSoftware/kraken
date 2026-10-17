@@ -284,9 +284,7 @@ pub fn demo_project_with(
     let session =
         kraken_registry::Session::new(Arc::new(DemoEngineFactory::new(fixture, stage_delay)))
             .with_rewrite(Arc::new(rewrite.clone()));
-    let backend = InProcessBackend::with_session(session)
-        .with_extra_query(rewrite.unit_query())
-        .with_keepalive(Box::new(tmp));
+    let backend = InProcessBackend::with_session(session).with_keepalive(Box::new(tmp));
     Ok(DemoProject {
         backend: Arc::new(backend),
         binary,

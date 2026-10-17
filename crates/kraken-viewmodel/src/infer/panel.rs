@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use kraken_agent::ProviderConfig;
+use kraken_agent::{ProviderConfig, SecretRef};
 use kraken_host::infer::{
     BackendInfo, InferApi, InferListReply, LogEntry, LogsParams, LogsReply, StartReply,
     StatusReply, StopReply, gib, model_ram_hint,
@@ -22,6 +22,9 @@ use tokio::runtime::Handle;
 use super::form::SettingsForm;
 
 /// How many log lines the panel keeps.
+/// Account name of the local server's per-run API key in the secrets file.
+pub const LOCAL_INFER_ACCOUNT: &str = "local-infer";
+
 const MAX_LOG_LINES: usize = 2000;
 /// Status refresh while a model is loading or running.
 const POLL_BUSY: Duration = Duration::from_millis(800);
@@ -121,6 +124,7 @@ impl InferPanel {
                 restarts: 0,
                 pid: None,
                 uptime_secs: None,
+                api_key: None,
             },
             logs: Vec::new(),
             last_seq: None,
@@ -363,6 +367,7 @@ impl InferPanel {
                                 restarts: 0,
                                 pid: s.pid,
                                 uptime_secs: Some(0),
+                                api_key: s.api_key,
                             };
                             self.last_poll = None;
                         }
@@ -525,6 +530,12 @@ impl InferPanel {
         Some(MemoryHint { level, text })
     }
 
+    /// The per-run API key of the running server, to store under [`LOCAL_INFER_ACCOUNT`] in the
+    /// secrets file before [`provider_config`](Self::provider_config) is saved.
+    pub fn api_key(&self) -> Option<&str> {
+        self.status.api_key.as_deref()
+    }
+
     /// The `[provider]` that makes the assistant use the running model; `None` until it is ready.
     pub fn provider_config(&self) -> Option<ProviderConfig> {
         if !self.is_ready() {
@@ -544,7 +555,10 @@ impl InferPanel {
         Some(ProviderConfig::OpenaiCompatible {
             base_url: url,
             model: self.status.model.clone().unwrap_or_else(|| "local".into()),
-            api_key: None,
+            api_key: self.status.api_key.as_ref().map(|_| SecretRef::Keyring {
+                service: crate::assist::SECRETS_SERVICE.to_string(),
+                account: LOCAL_INFER_ACCOUNT.to_string(),
+            }),
             supports_tools: backend.is_none_or(|b| b.capabilities.supports_tool_calls),
             context_window: ctx,
         })

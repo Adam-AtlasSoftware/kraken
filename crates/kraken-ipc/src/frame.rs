@@ -35,6 +35,16 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
 /// Reads one frame. `Ok(None)` is a clean EOF at a frame boundary. An oversize length is rejected
 /// before any payload is read or allocated.
 pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Result<Option<Vec<u8>>, FrameError> {
+    read_frame_limited(r, MAX_FRAME_LEN).await
+}
+
+/// [`read_frame`] with a lower limit. Used before authentication, where a peer must not be able
+/// to make the daemon buffer megabytes.
+pub async fn read_frame_limited<R: AsyncRead + Unpin>(
+    r: &mut R,
+    max: usize,
+) -> Result<Option<Vec<u8>>, FrameError> {
+    let max = max.min(MAX_FRAME_LEN);
     let mut hdr = [0u8; 4];
     let mut got = 0;
     while got < 4 {
@@ -48,11 +58,16 @@ pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Result<Option<Vec<u8
         got += n;
     }
     let len = u32::from_be_bytes(hdr) as usize;
-    if len > MAX_FRAME_LEN {
+    if len > max {
         return Err(FrameError::TooLarge(len));
     }
-    let mut payload = vec![0u8; len];
-    r.read_exact(&mut payload).await?;
+    // Grow with the bytes that actually arrive: a peer that announces 16 MiB and sends nothing
+    // costs no memory.
+    let mut payload = Vec::with_capacity(len.min(64 * 1024));
+    let got = r.take(len as u64).read_to_end(&mut payload).await?;
+    if got != len {
+        return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+    }
     Ok(Some(payload))
 }
 
@@ -103,6 +118,27 @@ mod tests {
             write_frame(&mut a, &big).await,
             Err(FrameError::TooLarge(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_lower_limit_rejects_before_reading_the_body() {
+        let (mut a, mut b) = duplex(64);
+        a.write_all(&100_000u32.to_be_bytes()).await.unwrap();
+        assert!(matches!(
+            read_frame_limited(&mut b, 64 * 1024).await,
+            Err(FrameError::TooLarge(100_000))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_announced_but_unsent_body_is_not_preallocated() {
+        let (mut a, mut b) = duplex(64);
+        a.write_all(&(MAX_FRAME_LEN as u32).to_be_bytes())
+            .await
+            .unwrap();
+        a.write_all(b"abc").await.unwrap();
+        drop(a);
+        assert!(matches!(read_frame(&mut b).await, Err(FrameError::Io(_))));
     }
 
     #[tokio::test]

@@ -12,7 +12,7 @@ Platforms: Linux x86_64 is supported today. macOS (Apple silicon) and Windows (x
 curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Adam-AtlasSoftware/kraken/main/scripts/install.sh | bash
 ```
 
-The script finds the latest release for your platform, downloads it over HTTPS, checks the archive against the release's `SHA256SUMS` and only then installs. It never uses `sudo`: programs go to `~/.local/bin` and the bundled Ghidra extension to `~/.local/share/kraken`. Read it first if you like, it is short: [`scripts/install.sh`](https://github.com/Adam-AtlasSoftware/kraken/blob/main/scripts/install.sh).
+The script finds the latest release for your platform, downloads it over HTTPS, checks the archive against the release's `SHA256SUMS` and only then installs. The script can also verify a detached minisign signature (`SHA256SUMS.minisig`) of `SHA256SUMS`. That check is built but dormant: it switches on, and then becomes mandatory, once the project owner generates a release signing key and pastes its public key into `KRAKEN_MINISIGN_PUBKEY` in the script. Until then `SHA256SUMS` only guards against corruption, because it comes from the same place as the archive. It never uses `sudo`: programs go to `~/.local/bin` and the bundled Ghidra extension to `~/.local/share/kraken`. Read it first if you like, it is short: [`scripts/install.sh`](https://github.com/Adam-AtlasSoftware/kraken/blob/main/scripts/install.sh).
 
 Set `KRAKEN_VERSION=v0.1.0` to pick a release, or `KRAKEN_PREFIX=/some/dir` to install somewhere other than `~/.local`. If `~/.local/bin` is not on your `PATH`, the script says so.
 

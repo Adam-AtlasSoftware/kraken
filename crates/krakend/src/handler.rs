@@ -1,23 +1,31 @@
 //! The RPC methods of the daemon (see `kraken_host::daemon` for the table).
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use kraken_host::daemon::{
-    CallParams, CallResult, METHOD_CALL, METHOD_COMMANDS, METHOD_EVENTS, METHOD_SHUTDOWN,
-    METHOD_STATUS, event_kind,
+    CallParams, CallResult, METHOD_APPROVAL_DECIDE, METHOD_APPROVALS, METHOD_CALL, METHOD_COMMANDS,
+    METHOD_EVENTS, METHOD_SHUTDOWN, METHOD_STATUS, event_kind,
 };
 use kraken_host::infer::{InferApi, InferManager, serve_rpc};
-use kraken_ipc::{ClientKind, ConnInfo, Counter, RpcHandler, Shutdown};
+use kraken_ipc::{ClientKind, ConnInfo, Counter, CredentialClass, RpcHandler, Shutdown};
 use kraken_model::{AuthorKind, RunId};
-use kraken_proto::{ErrorCode, ProtoError};
-use kraken_registry::{AutoApprove, CallContext, CommandKind, DenyApprover, Registry, Surface};
+use kraken_proto::{ErrorCode, ProtoError, sanitize_capped};
+use kraken_registry::commands::project_gate;
+use kraken_registry::{
+    ApprovalRequest, AutoApprove, CallContext, CommandKind, DenyApprover, Registry, Surface,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::approvals::{ApprovalBoard, BoardApprover};
 use crate::host::{SessionHost, canonical_key};
+
+/// The quota every agent-class connection shares: reconnecting does not start a new budget.
+const AGENT_QUOTA_KEY: &str = "agent-credential";
 
 /// Facts about the running daemon for the `status` method.
 #[derive(Debug, Clone)]
@@ -45,6 +53,10 @@ pub struct DaemonHandler {
     jobs: Counter,
     shutdown: Shutdown,
     infer: Arc<InferManager>,
+    approvals: ApprovalBoard,
+    /// Projects a person has worked on or approved for agents. Agent-class connections reach
+    /// only these, or ask first.
+    granted: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl DaemonHandler {
@@ -58,6 +70,7 @@ impl DaemonHandler {
         jobs: Counter,
         shutdown: Shutdown,
     ) -> Self {
+        let approvals = ApprovalBoard::new(host.hub().clone());
         DaemonHandler {
             host,
             registry,
@@ -66,7 +79,28 @@ impl DaemonHandler {
             jobs,
             shutdown,
             infer: Arc::new(InferManager::with_registry(Default::default())),
+            approvals,
+            granted: Arc::default(),
         }
+    }
+
+    /// The approvals waiting for a person.
+    pub fn approvals(&self) -> &ApprovalBoard {
+        &self.approvals
+    }
+
+    fn is_granted(&self, key: &Path) -> bool {
+        self.granted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(key)
+    }
+
+    fn grant(&self, key: &Path) {
+        self.granted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key.to_path_buf());
     }
 
     /// Serves the `infer_*` methods with `infer` (the default manager has no engines).
@@ -93,22 +127,74 @@ fn surface_for(kind: ClientKind) -> Surface {
     }
 }
 
-fn context(p: &CallParams, conn: &ConnInfo) -> CallContext {
-    let surface = p.surface.unwrap_or_else(|| surface_for(conn.client_kind));
-    let id = p.author_id.clone().unwrap_or_else(|| match p.author_kind {
-        AuthorKind::User => "user".to_string(),
-        AuthorKind::Agent => format!("{:?}-client", conn.client_kind).to_lowercase(),
-    });
-    let mut ctx = match p.author_kind {
-        AuthorKind::User => CallContext::user(id, surface),
-        AuthorKind::Agent => CallContext::agent(id, "", surface),
+/// An id taken from a client: no invisible or control characters, short.
+fn clean_id(raw: &str) -> String {
+    let s: String = sanitize_capped(raw, 64)
+        .chars()
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .collect();
+    s.trim().to_string()
+}
+
+/// Who a call is made as, and who may approve it. Everything that matters here comes from the
+/// credential the connection presented: an agent-class connection is an agent on the MCP surface
+/// whatever its `author_kind`, `surface` and `approved` say, and its approvals go to the board
+/// where only a person's connection can answer them. A user-class connection (GUI, CLI) is
+/// trusted for those fields, since it holds the user's token.
+fn context(
+    p: &CallParams,
+    conn: &ConnInfo,
+    board: &ApprovalBoard,
+    project_dir: &Path,
+) -> CallContext {
+    let claimed = p
+        .author_id
+        .as_deref()
+        .map(clean_id)
+        .filter(|s| !s.is_empty());
+    let mut ctx = match conn.class {
+        CredentialClass::Agent => {
+            let id = claimed.unwrap_or_else(|| "mcp-client".to_string());
+            let approver = BoardApprover::new(board.clone(), project_dir.to_path_buf(), id.clone());
+            CallContext::agent(id, "", Surface::Mcp)
+                .with_approval(Arc::new(approver))
+                .with_quota_key(AGENT_QUOTA_KEY)
+        }
+        CredentialClass::User => {
+            let surface = p.surface.unwrap_or_else(|| surface_for(conn.client_kind));
+            let id = claimed.unwrap_or_else(|| match p.author_kind {
+                AuthorKind::User => "user".to_string(),
+                AuthorKind::Agent => format!("{:?}-client", conn.client_kind).to_lowercase(),
+            });
+            let ctx = match p.author_kind {
+                AuthorKind::User => CallContext::user(id, surface),
+                AuthorKind::Agent => CallContext::agent(id, "", surface),
+            };
+            ctx.with_approval(if p.approved {
+                Arc::new(AutoApprove)
+            } else {
+                Arc::new(DenyApprover)
+            })
+        }
     };
-    ctx.run_id = p.run_id.clone().map(RunId);
-    ctx.with_approval(if p.approved {
-        Arc::new(AutoApprove)
-    } else {
-        Arc::new(DenyApprover)
-    })
+    ctx.run_id = p.run_id.as_deref().map(|r| RunId(clean_id(r)));
+    ctx
+}
+
+fn denied_to_agents(method: &str) -> ProtoError {
+    ProtoError::new(
+        ErrorCode::Unsupported,
+        format!(
+            "`{method}` is not available on an agent connection; it is for the person's GUI \
+             and CLI"
+        ),
+    )
+    .with_details(json!({"reason": "agent_credential"}))
+}
+
+fn approval_denied(reason: &str) -> ProtoError {
+    ProtoError::new(ErrorCode::Unsupported, format!("approval denied: {reason}"))
+        .with_details(json!({"approval": "denied"}))
 }
 
 /// Events caused by a successful command.
@@ -187,8 +273,39 @@ impl DaemonHandler {
             )));
         }
         let key = canonical_key(&dir)?;
+        let mut ctx = context(&p, conn, &self.approvals, &key);
+        let creating = matches!(p.command.as_str(), "project_create" | "project_open");
+        let agent = conn.class == CredentialClass::Agent;
+        // Before any session is created for a directory the client named: a person's own work
+        // makes a project available to agents; for anything else an agent has to ask.
+        if agent {
+            let granted = self.is_granted(&key);
+            if creating && !(p.command == "project_open" && granted) {
+                project_gate(&p.command, &p.args, &ctx).await?;
+                ctx = ctx.with_gate_passed();
+            } else if !creating && !granted {
+                let decision = ctx
+                    .approval
+                    .request(ApprovalRequest {
+                        command: p.command.clone(),
+                        summary: format!(
+                            "let the agent work on the project in {}",
+                            kraken_proto::sanitize(&key.display().to_string())
+                        ),
+                        args: json!({"project_dir": kraken_proto::sanitize(&key.display().to_string())}),
+                        author: ctx.author.clone(),
+                        surface: ctx.surface,
+                    })
+                    .await;
+                if let kraken_registry::ApprovalDecision::Deny { reason } = decision {
+                    return Err(approval_denied(&reason));
+                }
+                self.grant(&key);
+            }
+        } else {
+            self.grant(&key);
+        }
         let lease = self.host.acquire(&key, &dir).await?;
-        let ctx = context(&p, conn);
         let queued = matches!(spec.kind, CommandKind::Mutation | CommandKind::Job)
             && spec.name != "job_cancel";
         let queue_guard = if queued {
@@ -200,13 +317,21 @@ impl DaemonHandler {
         let mut name = p.command.clone();
         let mut args = p.args.clone();
         let mut warnings = Vec::new();
-        if name == "project_open" && lease.entry().session().project().is_ok() {
+        if name == "project_open"
+            && lease.entry().session().project().is_ok()
+            && (!agent || self.is_granted(&key))
+        {
             // Already open here: report instead of reopening (which would restart the sidecar).
             name = "project_info".into();
             args = Value::Null;
         } else if !matches!(name.as_str(), "project_create" | "project_open") {
             match self.host.ensure_open(&lease).await {
-                Ok(w) => warnings = w,
+                Ok(w) => {
+                    warnings = w
+                        .iter()
+                        .map(|m| kraken_proto::sanitize_capped(m, kraken_proto::MAX_UNTRUSTED_LEN))
+                        .collect();
+                }
                 Err(e) => {
                     self.host.discard_if_unopened(&lease);
                     return Err(e);
@@ -220,7 +345,6 @@ impl DaemonHandler {
         let guard = (spec.kind == CommandKind::Query).then(|| cancel.drop_guard());
         let host = self.host.clone();
         let kind = spec.kind;
-        let creating = matches!(p.command.as_str(), "project_create" | "project_open");
         let task = tokio::spawn(async move {
             let _queue = queue_guard;
             let entry = lease.entry().clone();
@@ -246,6 +370,10 @@ impl DaemonHandler {
             g.disarm();
         }
         let result = result?;
+        if creating {
+            // The person approved it (or is the person): agents may work on it from now on.
+            self.grant(&key);
+        }
         serde_json::to_value(CallResult { result, warnings })
             .map_err(|e| internal(format!("cannot encode the reply: {e}")))
     }
@@ -305,9 +433,28 @@ impl RpcHandler for DaemonHandler {
         method: &str,
         params: Value,
     ) -> Result<Value, ProtoError> {
+        if conn.class == CredentialClass::Agent
+            && !matches!(method, METHOD_CALL | METHOD_COMMANDS | METHOD_EVENTS)
+        {
+            return Err(denied_to_agents(method));
+        }
         match method {
-            METHOD_CALL => self.call_command(conn, params).await,
+            METHOD_CALL => self
+                .call_command(conn, params)
+                .await
+                .map_err(ProtoError::sanitized),
             METHOD_COMMANDS => Ok(self.commands()),
+            METHOD_APPROVALS => Ok(json!({"pending": self.approvals.pending()})),
+            METHOD_APPROVAL_DECIDE => {
+                #[derive(Deserialize)]
+                struct Decide {
+                    id: u64,
+                    allow: bool,
+                }
+                let d: Decide = serde_json::from_value(params)
+                    .map_err(|e| invalid(format!("bad params: {e}")))?;
+                Ok(json!({"decided": self.approvals.decide(d.id, d.allow)}))
+            }
             METHOD_STATUS => Ok(self.status().await),
             METHOD_EVENTS => {
                 let p: EventsParams = if params.is_null() {

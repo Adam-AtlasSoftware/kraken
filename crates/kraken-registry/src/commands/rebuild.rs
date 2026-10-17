@@ -65,8 +65,8 @@ pub struct ReplayFailure {
     pub entry_id: u64,
     /// The engine's error code.
     pub code: String,
-    /// The engine's reason.
-    pub message: String,
+    /// The engine's reason; it can quote names from the binary.
+    pub message: Untrusted<String>,
 }
 
 /// Result of a finished `rebuild` job (the `result` of `job_status`).
@@ -252,7 +252,7 @@ async fn rebuild(
             Err(rej) => failed.push(ReplayFailure {
                 entry_id: e.id.0,
                 code: rej.code.as_str().to_string(),
-                message: sanitize(&rej.reason),
+                message: Untrusted::sanitized(&rej.reason),
             }),
         }
     }

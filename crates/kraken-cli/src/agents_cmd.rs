@@ -423,6 +423,13 @@ async fn run_agent(
             mcp = mcp.with_env(key, v);
         }
     }
+    // The agent is not given `XDG_RUNTIME_DIR`, so its MCP server is told where the daemon is.
+    if m.get_flag("daemon")
+        && env.var("KRAKEN_RUNTIME_DIR").is_none()
+        && let Some((k, v)) = kraken_host::daemon::mcp_runtime_env()
+    {
+        mcp = mcp.with_env(k, v);
+    }
     let mut cfg = HostConfig::new(profile.clone(), launch, project, Some(mcp));
     cfg.permission = PermissionPolicy::Handler(if m.get_flag("auto-approve") {
         Arc::new(AllowAll)
