@@ -3,9 +3,13 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use kraken_registry::SessionConfig;
+use kraken_registry::{EngineChoice, SessionConfig};
 use serde::{Deserialize, Serialize};
 
+/// Environment variable overriding `engine`.
+pub const ENV_ENGINE: &str = "KRAKEN_ENGINE";
+/// Environment variable overriding `native_in_process` (`1`, `true`, `yes` enable it).
+pub const ENV_NATIVE_IN_PROCESS: &str = "KRAKEN_NATIVE_IN_PROCESS";
 /// Environment variable overriding `max_heap_mb`.
 pub const ENV_MAX_HEAP_MB: &str = "KRAKEN_MAX_HEAP_MB";
 /// Environment variable overriding `allow_unconfined` (`1`, `true`, `yes` enable it).
@@ -110,6 +114,16 @@ pub struct KrakenConfig {
     pub dotnet_root: Option<PathBuf>,
     /// `kraken-dotnet.dll`, the .NET engine's sidecar (default: the provisioned copy).
     pub dotnet_ext: Option<PathBuf>,
+    /// Engine for new projects of native code when none is asked for: `ghidra` (the default),
+    /// `native` or `auto` (native when its library and compiled `.sla` files are installed).
+    pub engine: Option<EngineChoice>,
+    /// Directory laid out like a Ghidra install holding the compiled Sleigh files for the native
+    /// engine (default: `KRAKEN_NATIVE_SPECS`, then the tree `kraken setup --native` builds).
+    pub native_specs: Option<PathBuf>,
+    /// Run the native engine's decompiler inside this process instead of its confined worker
+    /// (`kraken-native-worker`). A decompiler crash then takes the process down; for hosts
+    /// without the worker. Default false.
+    pub native_in_process: bool,
     /// Upper bound of the sidecar JVM heap in MiB.
     pub max_heap_mb: Option<u64>,
     /// Run the sidecar without Landlock confinement when the host lacks it (default false).
@@ -202,6 +216,19 @@ impl KrakenConfig {
         if let Some(v) = get("KRAKEN_DOTNET_EXT_DLL") {
             self.dotnet_ext = Some(v.into());
         }
+        if let Some(v) = get(ENV_ENGINE) {
+            let s = v.to_string_lossy().into_owned();
+            self.engine = Some(EngineChoice::parse(&s).ok_or(ConfigError::Env {
+                var: ENV_ENGINE,
+                value: s,
+            })?);
+        }
+        if let Some(v) = get("KRAKEN_NATIVE_SPECS") {
+            self.native_specs = Some(v.into());
+        }
+        if let Some(v) = get(ENV_NATIVE_IN_PROCESS) {
+            self.native_in_process = parse_bool(ENV_NATIVE_IN_PROCESS, &v)?;
+        }
         if let Some(v) = get(ENV_PROJECTS_ROOT) {
             self.projects_root = Some(v.into());
         }
@@ -236,17 +263,7 @@ impl KrakenConfig {
             })?);
         }
         if let Some(v) = get(ENV_ALLOW_UNCONFINED) {
-            let s = v.to_string_lossy().to_ascii_lowercase();
-            self.allow_unconfined = match s.as_str() {
-                "1" | "true" | "yes" | "on" => true,
-                "0" | "false" | "no" | "off" => false,
-                _ => {
-                    return Err(ConfigError::Env {
-                        var: ENV_ALLOW_UNCONFINED,
-                        value: s,
-                    });
-                }
-            };
+            self.allow_unconfined = parse_bool(ENV_ALLOW_UNCONFINED, &v)?;
         }
         Ok(())
     }
@@ -282,6 +299,16 @@ impl KrakenConfig {
             s.per_run_cap = cap;
         }
         s
+    }
+}
+
+/// A boolean environment value: `1`, `true`, `yes`, `on` or their opposites.
+fn parse_bool(var: &'static str, v: &std::ffi::OsStr) -> Result<bool, ConfigError> {
+    let s = v.to_string_lossy().to_ascii_lowercase();
+    match s.as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError::Env { var, value: s }),
     }
 }
 
@@ -412,5 +439,50 @@ mod tests {
     fn missing_file_is_an_empty_config() {
         let c = KrakenConfig::from_file(Path::new("/nonexistent/kraken/config.toml")).unwrap();
         assert_eq!(c, KrakenConfig::default());
+    }
+
+    #[test]
+    fn the_engine_default_reads_from_the_file_and_the_environment() {
+        let cfg = KrakenConfig::from_toml("engine = \"auto\"\nnative_specs = \"/s\"\n").unwrap();
+        assert_eq!(cfg.engine, Some(EngineChoice::Auto));
+        assert_eq!(cfg.native_specs, Some(PathBuf::from("/s")));
+        assert!(KrakenConfig::from_toml("engine = \"fast\"").is_err());
+
+        let mut cfg = cfg;
+        cfg.apply_env(&env_of(&[("KRAKEN_ENGINE", "Native")]))
+            .unwrap();
+        assert_eq!(cfg.engine, Some(EngineChoice::Native));
+        let e = cfg
+            .apply_env(&env_of(&[("KRAKEN_ENGINE", "fast")]))
+            .unwrap_err();
+        assert!(matches!(
+            e,
+            ConfigError::Env {
+                var: "KRAKEN_ENGINE",
+                ..
+            }
+        ));
+
+        let text = KrakenConfig {
+            engine: Some(EngineChoice::Auto),
+            ..Default::default()
+        }
+        .to_toml()
+        .unwrap();
+        assert!(text.contains("engine = \"auto\""), "{text}");
+    }
+
+    #[test]
+    fn native_in_process_is_off_unless_asked() {
+        assert!(!KrakenConfig::default().native_in_process);
+        let mut cfg = KrakenConfig::from_toml("native_in_process = true\n").unwrap();
+        assert!(cfg.native_in_process);
+        cfg.apply_env(&env_of(&[("KRAKEN_NATIVE_IN_PROCESS", "no")]))
+            .unwrap();
+        assert!(!cfg.native_in_process);
+        assert!(
+            cfg.apply_env(&env_of(&[("KRAKEN_NATIVE_IN_PROCESS", "maybe")]))
+                .is_err()
+        );
     }
 }

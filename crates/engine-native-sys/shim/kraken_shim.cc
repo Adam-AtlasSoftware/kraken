@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "architecture.hh"
+#include "comment.hh"
 #include "fspec.hh"
 #include "funcdata.hh"
 #include "grammar.hh"
@@ -475,6 +476,11 @@ std::unique_ptr<Session> new_session(rust::Str language_id, rust::Str compiler_i
     impl->arch->printlist.push_back(printer);
     impl->arch->print = printer;
     printer->adjustTypeOperators();
+    // user comments: pre (user2) as Ghidra shows by default, plus end-of-line (user1) and post
+    // (user3); plate comments are header comments
+    printer->setInstructionComment(ghidra::Comment::user1 | ghidra::Comment::user2 |
+                                   ghidra::Comment::user3 | ghidra::Comment::warning);
+    printer->setHeaderComment(ghidra::Comment::header | ghidra::Comment::warningheader);
     impl->printer = printer;
     return std::make_unique<Session>(std::move(impl));
   });
@@ -811,6 +817,47 @@ void Session::set_prototype(uint64_t addr, rust::Str decl) {
 void Session::set_noreturn(uint64_t addr, bool noreturn) {
   guarded("set_noreturn", [&]() {
     functionAt(impl->arch.get(), addr)->getFuncProto().setNoReturn(noreturn);
+  });
+}
+
+void Session::remove_function(uint64_t addr) {
+  guarded("remove_function", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    Address at(a->getDefaultCodeSpace(), addr);
+    ghidra::Scope *global = a->symboltab->getGlobalScope();
+    Funcdata *fd = global->queryFunction(at);
+    if (fd != nullptr)
+      global->removeSymbol(fd->getSymbol());
+  });
+}
+
+void Session::set_convention(uint64_t addr, rust::Str name) {
+  guarded("set_convention", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    std::string nm(name);
+    ghidra::ProtoModel *model = a->defaultfp;
+    if (!nm.empty()) {
+      if (!a->hasModel(nm))
+        throw std::runtime_error("unknown calling convention " + nm);
+      model = a->getModel(nm);
+    }
+    Funcdata *fd = functionAt(a, addr);
+    fd->getFuncProto().setModel(model);
+    fd->getFuncProto().setModelLock(!nm.empty());
+  });
+}
+
+void Session::set_comments(uint64_t fad, rust::Slice<const CommentIn> comments) {
+  guarded("set_comments", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    AddrSpace *ram = a->getDefaultCodeSpace();
+    Address f(ram, fad);
+    const ghidra::uint4 user = ghidra::Comment::user1 | ghidra::Comment::user2 |
+                               ghidra::Comment::user3 | ghidra::Comment::header;
+    a->commentdb->clearType(f, user);
+    for (const CommentIn &c : comments)
+      a->commentdb->addCommentNoDuplicate(c.kind & user, f, Address(ram, c.addr),
+                                          std::string(c.text));
   });
 }
 

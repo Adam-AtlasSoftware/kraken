@@ -3240,7 +3240,7 @@ Arguments: none.
 Create a project for a binary and make it the current project
 
 ```sh
-kraken project-create --binary <string> --project-dir <string>
+kraken project-create --binary <string> --project-dir <string> [options]
 ```
 
 - Kind: mutation
@@ -3250,12 +3250,13 @@ Starts a project for a binary and loads it. Analysis is separate: run `analyze` 
 
 Example: `project_create {"binary": "./a.out", "project_dir": "./a.kraken"}`
 
-Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary.
+Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary. `engine` picks the engine and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `binary` | `--binary` | string | yes | Path of the binary to analyse. |
 | `project_dir` | `--project-dir` | string | yes | Directory for the new project; created if missing and must not hold a project yet. |
+| `engine` | `--engine` | json | no | Engine for native code: `ghidra`, `native` (JVM-free, ELF only) or `auto` (native when installed, else Ghidra). Default: the `engine` setting, else `ghidra`. .NET assemblies always use the .NET engine. |
 
 <details>
 <summary>Output schema</summary>
@@ -3330,6 +3331,77 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
       },
       "required": [
         "phase"
+      ],
+      "type": "object"
+    },
+    "EngineChoice": {
+      "description": "What the person asked for when creating a project: an engine, or `auto`.",
+      "oneOf": [
+        {
+          "const": "ghidra",
+          "description": "The Ghidra sidecar (JVM).",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "The JVM-free native engine (ELF only for now).",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Native when its library and compiled `.sla` files are available and it can open the\nbinary, else Ghidra.",
+          "type": "string"
+        }
+      ]
+    },
+    "EngineKind": {
+      "description": "The engine behind a project, recorded in `meta.json` so a project reopens with the engine\nthat created it.",
+      "oneOf": [
+        {
+          "const": "ghidra",
+          "description": "The Ghidra sidecar: native code (PE, ELF, Mach-O and raw images).",
+          "type": "string"
+        },
+        {
+          "const": "dotnet",
+          "description": "The .NET sidecar (ILSpy): managed assemblies.",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "The JVM-free native engine (ADR 0014).",
+          "type": "string"
+        }
+      ]
+    },
+    "EngineView": {
+      "description": "Which engine a project uses and why.",
+      "properties": {
+        "choice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What was asked for at creation (`ghidra`, `native` or `auto`); absent for projects made\nbefore the choice existed."
+        },
+        "kind": {
+          "$ref": "#/$defs/EngineKind",
+          "description": "The engine in use: `ghidra`, `native` or `dotnet`."
+        },
+        "reason": {
+          "description": "Why this engine was picked (for `auto`, what decided it).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object"
     },
@@ -3435,6 +3507,10 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
       },
       "type": "array"
     },
+    "engine": {
+      "$ref": "#/$defs/EngineView",
+      "description": "The engine behind the project and why it was picked."
+    },
     "engine_build": {
       "description": "Engine build identifier (includes the Ghidra version).",
       "type": "string"
@@ -3486,6 +3562,7 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
     "binary_path",
     "binary_sha256",
     "program",
+    "engine",
     "engine_build",
     "capabilities",
     "epoch",
@@ -3596,6 +3673,77 @@ Arguments: none.
       ],
       "type": "object"
     },
+    "EngineChoice": {
+      "description": "What the person asked for when creating a project: an engine, or `auto`.",
+      "oneOf": [
+        {
+          "const": "ghidra",
+          "description": "The Ghidra sidecar (JVM).",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "The JVM-free native engine (ELF only for now).",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Native when its library and compiled `.sla` files are available and it can open the\nbinary, else Ghidra.",
+          "type": "string"
+        }
+      ]
+    },
+    "EngineKind": {
+      "description": "The engine behind a project, recorded in `meta.json` so a project reopens with the engine\nthat created it.",
+      "oneOf": [
+        {
+          "const": "ghidra",
+          "description": "The Ghidra sidecar: native code (PE, ELF, Mach-O and raw images).",
+          "type": "string"
+        },
+        {
+          "const": "dotnet",
+          "description": "The .NET sidecar (ILSpy): managed assemblies.",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "The JVM-free native engine (ADR 0014).",
+          "type": "string"
+        }
+      ]
+    },
+    "EngineView": {
+      "description": "Which engine a project uses and why.",
+      "properties": {
+        "choice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What was asked for at creation (`ghidra`, `native` or `auto`); absent for projects made\nbefore the choice existed."
+        },
+        "kind": {
+          "$ref": "#/$defs/EngineKind",
+          "description": "The engine in use: `ghidra`, `native` or `dotnet`."
+        },
+        "reason": {
+          "description": "Why this engine was picked (for `auto`, what decided it).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
     "Epoch": {
       "description": "What a cached engine project depends on (decision 56).",
       "properties": {
@@ -3698,6 +3846,10 @@ Arguments: none.
       },
       "type": "array"
     },
+    "engine": {
+      "$ref": "#/$defs/EngineView",
+      "description": "The engine behind the project and why it was picked."
+    },
     "engine_build": {
       "description": "Engine build identifier (includes the Ghidra version).",
       "type": "string"
@@ -3749,6 +3901,7 @@ Arguments: none.
     "binary_path",
     "binary_sha256",
     "program",
+    "engine",
     "engine_build",
     "capabilities",
     "epoch",
@@ -3863,6 +4016,77 @@ Opens the project database and the engine cache. `epoch_stale` means the engine 
       ],
       "type": "object"
     },
+    "EngineChoice": {
+      "description": "What the person asked for when creating a project: an engine, or `auto`.",
+      "oneOf": [
+        {
+          "const": "ghidra",
+          "description": "The Ghidra sidecar (JVM).",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "The JVM-free native engine (ELF only for now).",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Native when its library and compiled `.sla` files are available and it can open the\nbinary, else Ghidra.",
+          "type": "string"
+        }
+      ]
+    },
+    "EngineKind": {
+      "description": "The engine behind a project, recorded in `meta.json` so a project reopens with the engine\nthat created it.",
+      "oneOf": [
+        {
+          "const": "ghidra",
+          "description": "The Ghidra sidecar: native code (PE, ELF, Mach-O and raw images).",
+          "type": "string"
+        },
+        {
+          "const": "dotnet",
+          "description": "The .NET sidecar (ILSpy): managed assemblies.",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "The JVM-free native engine (ADR 0014).",
+          "type": "string"
+        }
+      ]
+    },
+    "EngineView": {
+      "description": "Which engine a project uses and why.",
+      "properties": {
+        "choice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What was asked for at creation (`ghidra`, `native` or `auto`); absent for projects made\nbefore the choice existed."
+        },
+        "kind": {
+          "$ref": "#/$defs/EngineKind",
+          "description": "The engine in use: `ghidra`, `native` or `dotnet`."
+        },
+        "reason": {
+          "description": "Why this engine was picked (for `auto`, what decided it).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
     "Epoch": {
       "description": "What a cached engine project depends on (decision 56).",
       "properties": {
@@ -3965,6 +4189,10 @@ Opens the project database and the engine cache. `epoch_stale` means the engine 
       },
       "type": "array"
     },
+    "engine": {
+      "$ref": "#/$defs/EngineView",
+      "description": "The engine behind the project and why it was picked."
+    },
     "engine_build": {
       "description": "Engine build identifier (includes the Ghidra version).",
       "type": "string"
@@ -4016,6 +4244,7 @@ Opens the project database and the engine cache. `epoch_stale` means the engine 
     "binary_path",
     "binary_sha256",
     "program",
+    "engine",
     "engine_build",
     "capabilities",
     "epoch",

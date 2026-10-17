@@ -188,6 +188,16 @@ pub(crate) struct AnalysisWire {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(crate) struct EngineWire {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub choice: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ProjectWire {
     #[serde(default)]
@@ -195,6 +205,8 @@ pub(crate) struct ProjectWire {
     #[serde(default, deserialize_with = "text_or_untrusted")]
     pub binary_path: String,
     pub program: ProgramWire,
+    #[serde(default)]
+    pub engine: EngineWire,
     #[serde(default)]
     pub engine_build: String,
     #[serde(default)]

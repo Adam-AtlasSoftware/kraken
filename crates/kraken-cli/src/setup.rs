@@ -1,5 +1,6 @@
 //! `kraken setup`: provision Ghidra, a JDK and the extension (see `kraken_host::provision`), or
-//! with `--dotnet` the .NET runtime and sidecar (see `kraken_host::dotnet_setup`).
+//! with `--dotnet` the .NET runtime and sidecar (see `kraken_host::dotnet_setup`), with
+//! `--native` the native engine's sources and Sleigh files (see `kraken_host::native`).
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
@@ -134,6 +135,9 @@ pub(crate) async fn run_setup(
     if sm.try_get_one::<bool>("dotnet").ok().flatten().copied() == Some(true) {
         return run_setup_dotnet(sm, json_out, out, err).await;
     }
+    if sm.try_get_one::<bool>("native").ok().flatten().copied() == Some(true) {
+        return run_setup_native(sm, json_out, out, err).await;
+    }
     let specs = match pinned() {
         Ok(s) => s,
         Err(e) => return fail(&to_proto(e), json_out, err),
@@ -264,5 +268,133 @@ async fn run_setup_dotnet(
             0
         }
         Err(e) => fail(&to_proto(e), json_out, err),
+    }
+}
+
+/// `kraken setup --native`: makes the native engine usable. The decompiler library is linked at
+/// build time, so a binary can only fetch the pinned sources and compile the Sleigh files
+/// (`cargo xtask native-src` / `native-sla`) when it can find the source checkout it was built
+/// from; otherwise it prints the exact commands.
+pub(crate) async fn run_setup_native(
+    sm: &ArgMatches,
+    json_out: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    use kraken_host::native::{self, SetupPlan, SetupStep};
+
+    let force = sm.try_get_one::<bool>("force").ok().flatten().copied() == Some(true);
+    let configured = kraken_host::KrakenConfig::load()
+        .ok()
+        .and_then(|c| c.native_specs);
+    let probe = native::NativeProbe::detect(configured.as_deref());
+    let plan = native::plan_setup(
+        &probe,
+        native::sources_dir().is_some(),
+        native::find_checkout(),
+        force,
+    );
+    match plan {
+        SetupPlan::Ready => {
+            let specs = probe.specs.map(|p| p.display().to_string());
+            if json_out {
+                emit(
+                    out,
+                    &format!(
+                        "{}\n",
+                        json!({"ready": true, "library": true, "specs": specs})
+                    ),
+                );
+            } else {
+                emit(
+                    out,
+                    &format!(
+                        "The native engine is ready.\nSleigh files: {}\nUse it with `kraken project-create --engine native` (or `auto`).\n",
+                        specs.unwrap_or_default()
+                    ),
+                );
+            }
+            0
+        }
+        SetupPlan::Instructions(cmds) => {
+            let msg = format!(
+                "this kraken was not built from a source checkout reachable from here, and the \
+                 native engine's decompiler is linked at build time. In a checkout of the \
+                 repository run:\n  {}",
+                cmds.join("\n  ")
+            );
+            fail(&ProtoError::new(ErrorCode::Unsupported, msg), json_out, err)
+        }
+        SetupPlan::InCheckout { root, steps } => {
+            for step in steps {
+                let SetupStep::Xtask(task) = step else {
+                    continue;
+                };
+                let _ = writeln!(err, "running `cargo xtask {task}` in {}", root.display());
+                if let Err(e) = run_xtask(&root, task).await {
+                    return fail(&ProtoError::new(ErrorCode::Internal, e), json_out, err);
+                }
+            }
+            let after = native::NativeProbe::detect(configured.as_deref());
+            let specs = after.specs.as_ref().map(|p| p.display().to_string());
+            let cmd = native::SETUP_COMMANDS[2];
+            if json_out {
+                emit(
+                    out,
+                    &format!(
+                        "{}\n",
+                        json!({
+                            "ready": after.problem().is_none(),
+                            "library": after.library,
+                            "specs": specs,
+                            "rebuild": (!after.library).then_some(cmd),
+                        })
+                    ),
+                );
+            } else if after.library {
+                emit(
+                    out,
+                    &format!(
+                        "Sleigh files: {}\nThe native engine is ready.\n",
+                        specs.unwrap_or_default()
+                    ),
+                );
+            } else {
+                emit(
+                    out,
+                    &format!(
+                        "Sleigh files: {}\nThis kraken still links the stub decompiler. Rebuild it so the library is compiled in:\n  {cmd}\n",
+                        specs.unwrap_or_default()
+                    ),
+                );
+            }
+            0
+        }
+    }
+}
+
+/// Runs `cargo xtask <task>` in `root`, its output going to stderr.
+async fn run_xtask(root: &std::path::Path, task: &'static str) -> Result<(), String> {
+    use std::os::fd::AsFd;
+    let dir = root.to_path_buf();
+    let status = tokio::task::spawn_blocking(move || {
+        let to_err = std::io::stderr()
+            .as_fd()
+            .try_clone_to_owned()
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(|_| std::process::Stdio::null());
+        std::process::Command::new("cargo")
+            .args(["xtask", task])
+            .current_dir(dir)
+            .stdout(to_err)
+            .status()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("cannot run `cargo xtask {task}`: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("`cargo xtask {task}` failed ({status})"))
     }
 }

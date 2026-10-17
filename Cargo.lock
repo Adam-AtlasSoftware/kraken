@@ -2746,6 +2746,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "engine-fake",
+ "engine-native",
  "kraken-engine",
  "kraken-mcp",
  "kraken-proto",
@@ -2841,6 +2842,8 @@ dependencies = [
  "async-trait",
  "engine-dotnet",
  "engine-ghidra",
+ "engine-native",
+ "engine-native-sys",
  "filetime",
  "flate2",
  "kraken-engine",

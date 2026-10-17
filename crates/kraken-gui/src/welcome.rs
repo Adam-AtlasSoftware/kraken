@@ -5,6 +5,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use egui::{Align, Layout, RichText, Ui, vec2};
 use kraken_host::KrakenConfig;
+use kraken_registry::EngineChoice;
 use tokio::runtime::Handle;
 
 use crate::recent::{self, RecentProject};
@@ -18,7 +19,11 @@ pub enum Choice {
     /// An existing project folder.
     OpenProject(String),
     /// A binary to start a project from, and the folder the project goes in.
-    NewProject { binary: String, project_dir: String },
+    NewProject {
+        binary: String,
+        project_dir: String,
+        engine: EngineChoice,
+    },
 }
 
 /// Something the welcome screen asks the app for.
@@ -43,6 +48,8 @@ pub struct Welcome {
     pub binary_path: String,
     /// Folder of the project a new binary gets.
     pub project_dir: String,
+    /// Engine for the new project; starts as the default from the settings.
+    pub engine: EngineChoice,
     /// The person typed or chose the folder, so a new binary no longer overwrites it.
     dir_edited: bool,
     /// Why the last attempt failed.
@@ -80,6 +87,36 @@ pub fn default_project_dir(cfg: &KrakenConfig, binary: &str) -> String {
     candidate.to_string_lossy().into_owned()
 }
 
+/// The label of an engine choice.
+pub fn engine_label(e: EngineChoice) -> &'static str {
+    match e {
+        EngineChoice::Ghidra => "Ghidra",
+        EngineChoice::Native => "Native",
+        EngineChoice::Auto => "Automatic",
+    }
+}
+
+/// One sentence on what an engine choice means.
+pub fn engine_help(e: EngineChoice) -> &'static str {
+    match e {
+        EngineChoice::Ghidra => "Ghidra with Java: every format, and renames and comments.",
+        EngineChoice::Native => "No Java, fast start. 64-bit ELF programs only for now.",
+        EngineChoice::Auto => "Native when it is installed and can open the program, else Ghidra.",
+    }
+}
+
+/// The three engines as radio buttons.
+pub fn engine_choice(ui: &mut Ui, engine: &mut EngineChoice) {
+    for e in [
+        EngineChoice::Ghidra,
+        EngineChoice::Native,
+        EngineChoice::Auto,
+    ] {
+        ui.radio_value(engine, e, engine_label(e))
+            .on_hover_text(engine_help(e));
+    }
+}
+
 /// Why `dir` cannot hold a project, if so.
 pub fn project_dir_problem(dir: &str) -> Option<String> {
     let dir = dir.trim();
@@ -106,6 +143,7 @@ impl Welcome {
             open_path: String::new(),
             binary_path: String::new(),
             project_dir: String::new(),
+            engine: cfg.engine.unwrap_or_default(),
             dir_edited: false,
             error: None,
             busy: None,
@@ -318,6 +356,14 @@ pub fn show(
                                 w.pick(rt, &ctx, PickWhat::ProjectFolder);
                             }
                         });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Engine").size(12.0).color(p.text_dim));
+                            engine_choice(ui, &mut w.engine);
+                        });
+                        ui.label(
+                            RichText::new(engine_help(w.engine)).size(12.0).color(p.text_dim),
+                        );
                         let have_binary = !w.binary_path.trim().is_empty();
                         let problem = have_binary.then(|| project_dir_problem(&w.project_dir)).flatten();
                         if let Some(msg) = &problem {
@@ -337,6 +383,7 @@ pub fn show(
                                 actions.push(WelcomeAction::Choose(Choice::NewProject {
                                     binary: w.binary_path.trim().to_string(),
                                     project_dir: w.project_dir.trim().to_string(),
+                                    engine: w.engine,
                                 }));
                             }
                         });

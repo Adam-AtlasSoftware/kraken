@@ -2,12 +2,13 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use kraken_engine::Watermark;
 use kraken_engine::{AnalysisSummary, Progress, ProgressSender, Stage};
-use kraken_proto::{ErrorCode, ProtoError, TypeDef};
+use kraken_proto::{ErrorCode, ProtoError, TypeDef, VersionedLogOp};
 use kraken_sidecar::rpc::{JobSubscription, SIDECAR_EXITED, WireProgress};
 use kraken_sidecar::sandbox::Sandbox;
 use kraken_sidecar::{ConfinementReport, LogSink, RpcClient, SpawnSpec};
@@ -17,7 +18,8 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
 use super::{CORE_DUMPS_ARG, OpenParams, TEST_HOOKS_ARG, WorkerOptions, duration_ms};
-use crate::engine::{NativeConfig, cancelled};
+use crate::engine::{NativeConfig, NativeStats, cancelled};
+use crate::mutate::Journaled;
 
 /// How long a new worker may take to report ready.
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -58,8 +60,15 @@ pub(crate) struct WorkerEngine {
     opts: WorkerOptions,
     live: tokio::sync::Mutex<Option<Arc<Live>>>,
     program: Mutex<Option<OpenParams>>,
-    /// Type definitions accepted so far, replayed into a restarted worker.
-    types: Mutex<Vec<TypeDef>>,
+    /// Edit-log operations and type definitions the worker accepted since the program was
+    /// opened, in order; the worker's journal is the `base` entries it replayed from the state
+    /// directory followed by these.
+    journal: Mutex<Vec<Journaled>>,
+    /// Journal entries the first worker restored from `native-state.json` when the program was
+    /// opened.
+    base: AtomicUsize,
+    /// Serializes edits and saves, so the journal here and the worker's stay in the same order.
+    edit_gate: tokio::sync::Mutex<()>,
     next_op: AtomicU64,
     restarts: AtomicU64,
     report: Mutex<Option<ConfinementReport>>,
@@ -79,7 +88,9 @@ impl WorkerEngine {
             opts,
             live: tokio::sync::Mutex::new(None),
             program: Mutex::new(None),
-            types: Mutex::new(Vec::new()),
+            journal: Mutex::new(Vec::new()),
+            base: AtomicUsize::new(0),
+            edit_gate: tokio::sync::Mutex::new(()),
             next_op: AtomicU64::new(0),
             restarts: AtomicU64::new(0),
             report: Mutex::new(None),
@@ -140,11 +151,14 @@ impl WorkerEngine {
             spec_root: self.config.spec_root.clone(),
             use_symbols: self.config.use_symbols,
             decompile_timeout_ms: self.config.decompile_timeout.map(duration_ms),
+            state_dir: self.state_dir()?,
         };
+        let _gate = self.edit_gate.lock().await;
         let mut slot = self.live.lock().await;
         drop(slot.take());
-        lock(&self.types).clear();
-        let (live, info) = self.start(&open, cancel).await?;
+        lock(&self.journal).clear();
+        *lock(&self.program) = None;
+        let (live, info) = self.start(&open, true, cancel).await?;
         *lock(&self.program) = Some(open);
         *slot = Some(live);
         Ok(info)
@@ -164,7 +178,7 @@ impl WorkerEngine {
             ));
         };
         let had = slot.take().is_some();
-        let (live, _) = self.start(&open, cancel).await?;
+        let (live, _) = self.start(&open, false, cancel).await?;
         if had {
             self.restarts.fetch_add(1, Ordering::SeqCst);
         }
@@ -172,10 +186,30 @@ impl WorkerEngine {
         Ok(live)
     }
 
-    /// Spawns a worker, opens the program in it and replays the type definitions.
+    /// The state directory, created (the confinement can only grant an existing directory) and
+    /// resolved.
+    fn state_dir(&self) -> Result<Option<PathBuf>, ProtoError> {
+        let Some(dir) = &self.config.state_dir else {
+            return Ok(None);
+        };
+        std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::canonicalize(dir))
+            .map(Some)
+            .map_err(|e| {
+                internal(format!(
+                    "cannot create the engine state directory {}: {e}",
+                    dir.display()
+                ))
+            })
+    }
+
+    /// Spawns a worker and opens the program in it, which replays the saved state. A first open
+    /// records how many entries that restored; a restart replays the entries accepted since that
+    /// the state file does not hold yet.
     async fn start(
         &self,
         open: &OpenParams,
+        first: bool,
         cancel: &CancellationToken,
     ) -> Result<(Arc<Live>, kraken_engine::ProgramInfo), ProtoError> {
         let live = Arc::new(self.spawn(open).await?);
@@ -192,16 +226,26 @@ impl WorkerEngine {
             )
             .await?;
         let info = decode("open", info)?;
-        let defs = lock(&self.types).clone();
-        for def in defs {
-            self.exec(
-                &live,
-                "define_type",
-                json!({ "def": def }),
-                self.request_limits(),
-                cancel,
-            )
-            .await?;
+        let restored = decode::<NativeStats>(
+            "stats",
+            self.exec(&live, "stats", json!({}), self.request_limits(), cancel)
+                .await?,
+        )?
+        .edits;
+        if first {
+            self.base.store(restored, Ordering::SeqCst);
+            return Ok((live, info));
+        }
+        // the state file holds the opening entries plus the first `saved` of ours
+        let saved = restored.saturating_sub(self.base.load(Ordering::SeqCst));
+        let pending: Vec<Journaled> = lock(&self.journal).iter().skip(saved).cloned().collect();
+        for entry in pending {
+            let (method, params) = match entry {
+                Journaled::Op(op) => ("apply", json!({ "log_op": op })),
+                Journaled::TypeDef(def) => ("define_type", json!({ "def": def })),
+            };
+            self.exec(&live, method, params, self.request_limits(), cancel)
+                .await?;
         }
         Ok((live, info))
     }
@@ -211,6 +255,7 @@ impl WorkerEngine {
         let opts = self.opts.clone();
         let spec_root = open.spec_root.clone();
         let binary = open.path.clone();
+        let state_dir = open.state_dir.clone();
         let (sandbox, home, log, channel) = tokio::task::spawn_blocking(move || {
             let root = opts.temp_root.clone().unwrap_or_else(std::env::temp_dir);
             let home = tempfile::Builder::new()
@@ -244,7 +289,10 @@ impl WorkerEngine {
                 read_only: vec![program, spec_root, binary],
                 optional_read_only: vec!["/etc/ld.so.cache".into()],
                 proc_self_read: false,
-                read_write: vec![home.path().to_path_buf()],
+                // besides its home, the worker may write the engine directory and nothing else
+                read_write: std::iter::once(home.path().to_path_buf())
+                    .chain(state_dir)
+                    .collect(),
                 options: opts.confinement.clone(),
             };
             let log = LogSink::default();
@@ -331,9 +379,47 @@ impl WorkerEngine {
         decode("analyze", v)
     }
 
-    /// Records a definition the worker accepted, for replay after a restart.
-    pub(crate) fn remember_type(&self, def: TypeDef) {
-        lock(&self.types).push(def);
+    /// Defines a type in the worker and records it for replay after a restart.
+    pub(crate) async fn define_type(
+        &self,
+        def: TypeDef,
+        cancel: &CancellationToken,
+    ) -> Result<(), ProtoError> {
+        let _gate = self.edit_gate.lock().await;
+        self.call::<()>(
+            "define_type",
+            json!({ "def": &def }),
+            self.request_limits(),
+            cancel,
+        )
+        .await?;
+        lock(&self.journal).push(Journaled::TypeDef(def));
+        Ok(())
+    }
+
+    /// Applies an edit-log operation in the worker and records it for replay after a restart.
+    pub(crate) async fn apply(
+        &self,
+        op: &VersionedLogOp,
+        cancel: &CancellationToken,
+    ) -> Result<(), ProtoError> {
+        let _gate = self.edit_gate.lock().await;
+        self.call::<()>(
+            "apply",
+            json!({ "log_op": op }),
+            self.request_limits(),
+            cancel,
+        )
+        .await?;
+        lock(&self.journal).push(Journaled::Op(op.clone()));
+        Ok(())
+    }
+
+    /// Saves the worker's journal to the state directory (when there is one).
+    pub(crate) async fn save(&self, cancel: &CancellationToken) -> Result<Watermark, ProtoError> {
+        let _gate = self.edit_gate.lock().await;
+        self.call("save", json!({}), self.request_limits(), cancel)
+            .await
     }
 
     /// Sends one request to `live` under the watchdog.

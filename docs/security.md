@@ -11,7 +11,7 @@ Ghidra parses the binary, and parsers have bugs. On Linux, KRAKEN runs Ghidra in
 - **A scrubbed environment.** API keys and tokens in your shell are not passed on.
 - **A private channel.** KRAKEN talks to the sidecar over a socketpair, not over files or the network.
 
-If the kernel cannot enforce Landlock at all, KRAKEN refuses to start the sidecar. Setting `allow_unconfined = true` overrides this; do it only on machines and samples you can afford to lose.
+The native engine's decompiler runs in the same kind of confined process (`kraken-native-worker`), which may write only its scratch directory and the project's engine directory. If the kernel cannot enforce Landlock at all, KRAKEN refuses to start the sidecar. Setting `allow_unconfined = true` overrides this; do it only on machines and samples you can afford to lose.
 
 ## Agents and the daemon
 

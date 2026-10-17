@@ -56,8 +56,11 @@ All keys are optional, and unknown keys are an error (so typos do not go unnotic
 | `ext_jar` | `KRAKEN_GHIDRA_EXT_JAR` | Path of `kraken-ghidra.jar`; default is the `cargo xtask ghidra-ext` output |
 | `dotnet_root` | `KRAKEN_DOTNET_ROOT` | Directory with the `dotnet` host for [.NET assemblies](dotnet.md); default is the copy `kraken setup --dotnet` installed |
 | `dotnet_ext` | `KRAKEN_DOTNET_EXT_DLL` | Path of `kraken-dotnet.dll`; default is the installed copy |
+| `engine` | `KRAKEN_ENGINE` | Engine for new projects: `ghidra` (default), `native` or `auto`; see [the native engine](native-engine.md) |
+| `native_specs` | `KRAKEN_NATIVE_SPECS` | Directory with the compiled Sleigh files of the native engine; default is the tree `kraken setup --native` builds |
+| `native_in_process` | `KRAKEN_NATIVE_IN_PROCESS` | Run the native engine's decompiler inside KRAKEN instead of its confined worker (`kraken-native-worker`). Default `false` |
 | `max_heap_mb` | `KRAKEN_MAX_HEAP_MB` | Upper bound for Ghidra's memory, in MiB |
-| `allow_unconfined` | `KRAKEN_ALLOW_UNCONFINED` | Run Ghidra without Landlock when the kernel lacks it. Default `false`. Leave it off unless you understand the risk |
+| `allow_unconfined` | `KRAKEN_ALLOW_UNCONFINED` | Run Ghidra (and the native engine's worker) without Landlock when the kernel lacks it. Default `false`. Leave it off unless you understand the risk |
 | `per_run_cap` | `KRAKEN_PER_RUN_CAP` | How many edits an AI agent may apply on its own per run before the rest become proposals (default 200) |
 | `projects_root` | `KRAKEN_PROJECTS_ROOT` | Where projects go when you do not give a directory |
 

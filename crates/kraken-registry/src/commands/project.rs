@@ -10,7 +10,9 @@ use serde_json::json;
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::session::{AnalysisPhase, Epoch, Project, Session, peek_binary};
+use crate::session::{
+    AnalysisPhase, EngineChoice, EngineKind, Epoch, Project, Session, peek_binary,
+};
 use crate::trust;
 use crate::views::ProgramView;
 
@@ -32,6 +34,20 @@ pub struct AnalysisView {
     pub error: Option<Untrusted<String>>,
 }
 
+/// Which engine a project uses and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EngineView {
+    /// The engine in use: `ghidra`, `native` or `dotnet`.
+    pub kind: EngineKind,
+    /// What was asked for at creation (`ghidra`, `native` or `auto`); absent for projects made
+    /// before the choice existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<EngineChoice>,
+    /// Why this engine was picked (for `auto`, what decided it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// Facts about the open project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectInfoOut {
@@ -44,6 +60,8 @@ pub struct ProjectInfoOut {
     pub binary_sha256: String,
     /// What the engine reported when loading it.
     pub program: ProgramView,
+    /// The engine behind the project and why it was picked.
+    pub engine: EngineView,
     /// Engine build identifier (includes the Ghidra version).
     pub engine_build: String,
     /// Engine capabilities such as `decompiler`.
@@ -89,6 +107,11 @@ pub(crate) async fn info_of(project: &Project) -> Result<ProjectInfoOut, ProtoEr
         binary_path: Untrusted::sanitized(&meta.binary_path),
         binary_sha256: meta.binary_sha256.clone(),
         program: (&project.program()).into(),
+        engine: EngineView {
+            kind: meta.engine_kind,
+            choice: meta.engine_choice,
+            reason: meta.engine_reason.as_deref().map(sanitize),
+        },
         engine_build: sanitize(&caps.handshake.build),
         capabilities: caps.present.iter().map(|c| c.name().to_string()).collect(),
         epoch: meta.epoch.clone(),
@@ -161,6 +184,11 @@ pub struct ProjectCreateArgs {
     pub binary: String,
     /// Directory for the new project; created if missing and must not hold a project yet.
     pub project_dir: String,
+    /// Engine for native code: `ghidra`, `native` (JVM-free, ELF only) or `auto` (native when
+    /// installed, else Ghidra). Default: the `engine` setting, else `ghidra`. .NET assemblies
+    /// always use the .NET engine.
+    #[serde(default)]
+    pub engine: Option<EngineChoice>,
 }
 
 /// Creates a project for a binary.
@@ -186,7 +214,8 @@ impl Command for ProjectCreate {
         )
         .details(
             "Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, \
-             `meta.json`), starts the engine and loads the binary.",
+             `meta.json`), starts the engine and loads the binary. `engine` picks the engine \
+             and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it.",
         )
     }
 
@@ -203,7 +232,11 @@ impl Command for ProjectCreate {
         )
         .await?;
         let project = s
-            .create_project(Path::new(&args.project_dir), Path::new(&args.binary))
+            .create_project_with(
+                Path::new(&args.project_dir),
+                Path::new(&args.binary),
+                args.engine,
+            )
             .await?;
         info_of(&project).await
     }

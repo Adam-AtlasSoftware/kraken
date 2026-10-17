@@ -10,7 +10,9 @@
 //! The parent side ([`client`]) is a watchdog: every request has a hard deadline, past which the
 //! worker is killed and the request fails with a structured `timeout`; a worker that dies fails
 //! its requests with a structured `internal` error. Either way the next request starts a new
-//! worker, which re-opens the program and replays the type definitions made so far.
+//! worker, which re-opens the program (replaying the `native-state.json` of the state
+//! directory) and then replays the edit-log operations and type definitions the worker had
+//! accepted but not yet saved.
 //!
 //! Only Unix has the worker; elsewhere [`Isolation::Worker`] runs in-process.
 
@@ -160,6 +162,9 @@ pub(crate) struct OpenParams {
     pub spec_root: PathBuf,
     pub use_symbols: bool,
     pub decompile_timeout_ms: Option<u64>,
+    /// [`crate::NativeConfig::state_dir`]: the one directory the worker may write besides its
+    /// home; opening replays the `native-state.json` saved there.
+    pub state_dir: Option<PathBuf>,
 }
 
 /// [`engine_native_sys::Varnode`] on the wire.

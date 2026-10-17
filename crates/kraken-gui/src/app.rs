@@ -381,8 +381,9 @@ impl KrakenApp {
             Choice::NewProject {
                 binary,
                 project_dir,
+                engine,
             } => {
-                vm.create_project(binary, project_dir);
+                vm.create_project_with(binary, project_dir, Some(engine));
                 self.auto_analyze = true;
             }
             Choice::Demo => return,
@@ -511,6 +512,7 @@ impl KrakenApp {
                     self.prefs.set_dark(dark);
                 }
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
+                SettingsAction::DefaultEngine(engine) => self.welcome.engine = engine,
             }
         }
         if let Some(change) = self.settings.ai.take_change() {

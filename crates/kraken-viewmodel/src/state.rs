@@ -118,6 +118,12 @@ pub struct ProjectInfo {
     pub size: u64,
     /// Engine build string.
     pub engine_build: String,
+    /// The engine behind the project: `ghidra`, `native` or `dotnet` (empty when unknown).
+    pub engine: String,
+    /// What was asked for at creation: `ghidra`, `native` or `auto`.
+    pub engine_choice: Option<String>,
+    /// Why that engine was picked, when the project recorded it.
+    pub engine_reason: Option<String>,
     /// The engine cache no longer matches the project.
     pub epoch_stale: bool,
     /// Edits waiting to reach the engine.

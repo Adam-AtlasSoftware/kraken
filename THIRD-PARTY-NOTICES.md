@@ -129,7 +129,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-587 crates in 30 license groups.
+593 crates in 30 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -9312,6 +9312,10 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
 - crc32fast 1.5.2 (<https://github.com/srijs/rust-crc32fast>)
 - crossbeam-utils 0.8.23 (<https://github.com/crossbeam-rs/crossbeam>)
 - crypto-common 0.1.7 (<https://github.com/RustCrypto/traits>)
+- cxx 1.0.205 (<https://github.com/dtolnay/cxx>)
+- cxx-build 1.0.205 (<https://github.com/dtolnay/cxx>)
+- cxxbridge-flags 1.0.205 (<https://github.com/dtolnay/cxx>)
+- cxxbridge-macro 1.0.205 (<https://github.com/dtolnay/cxx>)
 - defmt 1.2.0 (<https://github.com/knurling-rs/defmt>)
 - defmt-macros 1.2.0 (<https://github.com/knurling-rs/defmt>)
 - defmt-parser 1.1.0 (<https://github.com/knurling-rs/defmt>)
@@ -9395,6 +9399,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
 - landlock 0.4.7 (<https://github.com/landlock-lsm/rust-landlock>)
 - lazy_static 1.5.1 (<https://github.com/rust-lang-nursery/lazy-static.rs>)
 - libc 0.2.190 (<https://github.com/rust-lang/libc>)
+- link-cplusplus 1.0.12 (<https://github.com/dtolnay/link-cplusplus>)
 - litrs 1.0.1 (<https://github.com/LukasKalbertodt/litrs>)
 - lock_api 0.4.14 (<https://github.com/Amanieu/parking_lot>)
 - log 0.4.34 (<https://github.com/rust-lang/log>)
@@ -9452,6 +9457,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
 - rustversion 1.0.23 (<https://github.com/dtolnay/rustversion>)
 - scoped-tls 1.0.1 (<https://github.com/alexcrichton/scoped-tls>)
 - scopeguard 1.2.0 (<https://github.com/bluss/scopeguard>)
+- scratch 1.0.9 (<https://github.com/dtolnay/scratch>)
 - semver 1.0.28 (<https://github.com/dtolnay/semver>)
 - serde 1.0.229 (<https://github.com/serde-rs/serde>)
 - serde_core 1.0.229 (<https://github.com/serde-rs/serde>)
@@ -11755,7 +11761,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
        See the License for the specific language governing permissions and
        limitations under the License.
 
-**LICENSE-APACHE** — allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, dyn-clone 1.0.20, itoa 1.0.18, libc 0.2.190, litrs 1.0.1, paste 1.0.15, pastey 0.2.3, proc-macro2 1.0.107, proc-macro2-diagnostics 0.10.1, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, serde_urlencoded 0.7.1, syn 2.0.119, syn 3.0.9, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, wasm-streams 0.4.2
+**LICENSE-APACHE** — allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, cxx 1.0.205, cxx-build 1.0.205, cxxbridge-flags 1.0.205, cxxbridge-macro 1.0.205, dyn-clone 1.0.20, itoa 1.0.18, libc 0.2.190, link-cplusplus 1.0.12, litrs 1.0.1, paste 1.0.15, pastey 0.2.3, proc-macro2 1.0.107, proc-macro2-diagnostics 0.10.1, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustversion 1.0.23, scratch 1.0.9, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, serde_urlencoded 0.7.1, syn 2.0.119, syn 3.0.9, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, wasm-streams 0.4.2
 
                                   Apache License
                             Version 2.0, January 2004
@@ -19091,7 +19097,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
 
     MIT OR Apache-2.0
 
-**LICENSE-MIT** — allocator-api2 0.2.21, anyhow 1.0.104, async-recursion 1.2.0, async-trait 0.1.92, displaydoc 0.2.7, dyn-clone 1.0.20, hermit-abi 0.5.3, itoa 1.0.18, khronos-egl 6.0.0, lazy_static 1.5.1, once_cell 1.21.4, ordered-stream 0.2.0, paste 1.0.15, pastey 0.2.3, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, smol_str 0.2.2, syn 2.0.119, syn 3.0.9, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, wasm-streams 0.4.2
+**LICENSE-MIT** — allocator-api2 0.2.21, anyhow 1.0.104, async-recursion 1.2.0, async-trait 0.1.92, cxx 1.0.205, cxx-build 1.0.205, cxxbridge-flags 1.0.205, cxxbridge-macro 1.0.205, displaydoc 0.2.7, dyn-clone 1.0.20, hermit-abi 0.5.3, itoa 1.0.18, khronos-egl 6.0.0, lazy_static 1.5.1, link-cplusplus 1.0.12, once_cell 1.21.4, ordered-stream 0.2.0, paste 1.0.15, pastey 0.2.3, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustversion 1.0.23, scratch 1.0.9, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, smol_str 0.2.2, syn 2.0.119, syn 3.0.9, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, wasm-streams 0.4.2
 
     Permission is hereby granted, free of charge, to any
     person obtaining a copy of this software and associated

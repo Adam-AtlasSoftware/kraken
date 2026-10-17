@@ -4,8 +4,8 @@
 //! Definitions the decompiler cannot take yet (one naming a type that is not defined yet) wait
 //! in a pending set and are retried after every successful definition. A pointer to a type the
 //! decompiler does not know becomes `void *`, so recursive structs still go in. Redefining a
-//! composite that the decompiler already has changes the stored definition only; replacing
-//! types in the decompiler belongs to the mutator (ADR 0014, phase 4).
+//! composite that the decompiler already has changes the stored definition only. Prototypes set
+//! on single functions through the mutator (`set_type`) are kept by the mutator, not here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -61,6 +61,12 @@ impl TypeModel {
     /// Definitions ordered by name.
     pub fn all(&self) -> Vec<TypeDef> {
         self.defs.values().cloned().collect()
+    }
+
+    /// Whether the decompiler knows the type named `name` (a core type or an accepted
+    /// definition).
+    pub fn knows(&self, name: &str) -> bool {
+        CORE.contains(&name) || self.declared.contains(name)
     }
 
     /// Names that are stored but not in the decompiler yet.

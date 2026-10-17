@@ -102,8 +102,8 @@ pub struct Discovery {
     pub rounds: usize,
 }
 
-/// Where a function's name comes from.
-fn default_name(entry: u64) -> String {
+/// The default name of a function without a symbol (`FUN_` and the entry), as Ghidra names it.
+pub fn default_name(entry: u64) -> String {
     format!("FUN_{entry:08x}")
 }
 
@@ -384,6 +384,32 @@ fn propagate(
             return added;
         }
     }
+}
+
+/// The body of one function at `entry` by the same recursive descent discovery uses (switch
+/// tables included), for a function created after discovery. `names` are the known function
+/// entries (a jump to one is a tail call) and `noreturn` the functions that never return;
+/// `insns` is the shared instruction cache, which keeps what the walk decodes.
+pub fn walk_function(
+    loaded: &Loaded,
+    session: &mut Session,
+    names: BTreeMap<u64, String>,
+    noreturn: BTreeSet<u64>,
+    insns: &mut BTreeMap<u64, Instruction>,
+    entry: u64,
+) -> NativeResult<Func> {
+    let mut w = Walker {
+        loaded,
+        session,
+        names,
+        noreturn,
+        insns: std::mem::take(insns),
+        tables: BTreeMap::new(),
+        sites: Vec::new(),
+    };
+    let r = w.walk(entry);
+    *insns = std::mem::take(&mut w.insns);
+    r.map(|walk| walk.func)
 }
 
 /// Discovers the functions of `loaded`. With `use_symbols` false the symbol table is ignored
