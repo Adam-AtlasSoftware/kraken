@@ -253,7 +253,115 @@ The assistant reads code that came from a file you do not trust, so the same rul
 - Which commands a model may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, deciding on proposals, and starting rewrites (translating, specs, accepting and exporting rewrite units) are never offered. Dangerous commands are never offered either. A terminal agent is told the same task rules, but it holds KRAKEN's tool server rather than a list KRAKEN chose: in a read-only task KRAKEN refuses its permission requests for KRAKEN tools that write, and the result calls out any change made anyway. The project's own `kraken mcp` server is bound to the project (it cannot open another).
 - Edits go through the registry's policy: additive edits are applied up to a per-run cap, overwrites become proposals.
 
+## Measuring the assistant (`kraken eval`)
+
+Which model, or which agent, is good enough? `kraken eval` answers that with numbers. It runs scripted tasks over KRAKEN's test corpus (small programs built with debug information, so the right answers are known), asks the assistant you configured, scores what comes back, and writes a report.
+
+| Kind | What is asked | How it is scored |
+| --- | --- | --- |
+| `name_functions` | Name 6 to 8 functions of a stripped program | For each function, the F1 of the words in your name and the words in the real (DWARF) name: `parse_header` and `header_parse` score 1, `parse_file` scores 0.5. Plural `s` and filler words (`fn`, `do`, `the`) are ignored. The task score is the mean |
+| `find_function` | "Which function reverses a string in place?", "Which function uses the string `stack underflow`?" | 1 if the address answered lies inside the right function, else 0 |
+| `question` | "Does the program import `strcmp`?", "List every imported function that does not start with an underscore", "What format string prints the final result?" | Yes/no and text are right or wrong; a list scores the F1 of its members |
+
+There are 27 tasks over four programs (a bytecode VM, an expression evaluator, a linked list with function pointers, a statically linked string toolbox). The programs are the stripped builds, so names cannot be read off. The questions describe behaviour, never the answer, and nothing from a binary is put in a prompt. `kraken eval list` shows all of them.
+
+The assistant gets the same read-only tools it has everywhere else and a fixed answer format: its reply ends with a block such as `<kraken-answer>{"address": "0x101255"}</kraken-answer>`. A reply with no readable block scores 0 and the report says why. The tasks are read-only: a model is not offered the commands that write, and a terminal agent is told not to and has its write requests refused.
+
+### Run it
+
+```sh
+kraken eval run --out results/qwen3-14b
+```
+
+This uses whatever the `[provider]` table of `config.toml` selects, an AI model or a terminal agent, exactly like `kraken explain`. For each program in the corpus it creates and analyses a project under the output folder (this needs the engine, so run `kraken setup` first, or use the offline modes below), then asks every task of that program in turn. Progress goes to standard error, one line per task.
+
+Useful options:
+
+- `--task find/ --task name/switch_vm` runs only the tasks whose id starts with one of these. `--kind question` runs one kind. `--limit 5` stops after five.
+- `--timeout 300` cancels a task that runs longer than five minutes (default 900 seconds); it scores 0 with the reason.
+- `--price-in 3 --price-out 15` (dollars per million tokens) adds a cost estimate for a paid API. Leave them out for a local model.
+- `--min-score 0.6` makes the command exit with status 1 when the mean score is lower, so a script or a CI job can gate on it.
+- `--json` prints the whole report on standard output.
+- `--corpus DIR` points at the repository's `corpus/` folder when `kraken` is not run from inside a checkout (or set `KRAKEN_CORPUS`).
+
+### Against a local model (Ollama, llama-server)
+
+Point the provider at the server, as in [AI models](#ai-models), and run the evaluation. The model has to call tools; for llama-server start it with `--jinja`.
+
+```toml
+# ~/.config/kraken/config.toml
+[provider]
+kind = "openai_compatible"
+base_url = "http://localhost:11434/v1"   # Ollama; llama-server is http://localhost:8080/v1
+model = "qwen3:14b"
+```
+
+```sh
+ollama serve &              # in another terminal
+ollama pull qwen3:14b
+kraken eval run --out results/qwen3-14b --timeout 600
+```
+
+Local models are slow and the tasks are many small conversations, so start with `--limit 6` or `--kind find_function`. To compare models, change `model` and run again with another `--out`; the numbers in `report.json` line up task by task. Tokens are counted when the server reports usage (most OpenAI-compatible servers do; the report says "not reported" when one does not), and a local model has no price. To measure a model KRAKEN runs for you, start it first with `kraken infer start ... --use` ([Running a model on this computer](local-models.md)) and then run the same command.
+
+### Against Claude Code (or another terminal agent)
+
+```toml
+[provider]
+kind = "terminal_agent"
+agent = "claude"
+# model = "..."          # optional; see Terminal agents
+```
+
+```sh
+kraken agents setup claude          # once
+kraken eval run --out results/claude-code
+```
+
+KRAKEN starts the agent once per task in the task's project, with the `kraken mcp` server attached, and sends it the task. The agent and `kraken eval` share the daemon (the default), so run without `--no-daemon`. Three things to know:
+
+- **The agent's own tools are outside KRAKEN's safety net** (see [Terminal agents](#terminal-agents)). Nothing is there to answer a permission request during an evaluation, so requests for the agent's shell or file tools are denied, and a task that insists on them scores what it can. Run evaluations on the corpus, not on a program you are worried about.
+- **Tokens and cost are not reported** for a terminal agent (ACP does not carry them), so the report says so; look at the agent's own usage page for the bill.
+- A strong agent is not a deterministic one. Run twice when two results are close.
+
+### The report
+
+`--out` receives:
+
+- `report.json`: backend, mode, engine, totals (mean score, by kind, tokens, cost, tool calls) and one entry per task with its score, the expected and given answer, the reply, stop reason, tokens, tool calls and the full transcript. The format is versioned (`schema_version`).
+- `report.md`: the same as a readable summary with a table of tasks and, for each miss, what was expected and what was answered (for names, a table of address, real name, your name and F1).
+- `transcripts/<task>.md`: what the assistant was asked, what it said, every tool call with a short result. Read the weakest ones first.
+- `projects/`: the projects made for the run. Delete the folder when done.
+
+### Offline and deterministic: the CI modes
+
+Two modes need no model, no network and no decompiler, and give the same report every time (timings are left out):
+
+```sh
+kraken eval run --backend ci-replay --out /tmp/eval-replay   # replays a cassette through ReplayProvider
+kraken eval run --backend ci-agent  --out /tmp/eval-agent    # runs the scripted fake terminal agent
+```
+
+The tools run on `engine-fake` over the corpus fixtures (recordings of a real Ghidra), and the answers come from a script written by a deterministic **stand-in**: it answers from the ground truth and gets some tasks wrong on purpose (one name in three right, one half right, one wrong; every fourth function answer off by one; one question left unanswered), so every kind of score and every failure shows up. `ci-replay` feeds that script to the API path as a cassette; `ci-agent` feeds the same script to the fake ACP agent (the `kraken` binary itself, via its hidden `agents __fake-agent`) over the real ACP host. Both produce the same scores.
+
+A CI score proves the harness, the scoring and both backends work. It says nothing about any model. The cassette and script live in `crates/kraken-eval/data/`; after a change to the suite, run the `kraken-eval` tests with `KRAKEN_EVAL_BLESS=1` to rewrite them (the tests fail with that advice when they are out of date).
+
+### Recording a real model for replay
+
+```sh
+kraken eval run --out results/run1 --record results/run1/cassette.json
+kraken eval run --backend ci-replay --cassette results/run1/cassette.json --out results/replay1
+```
+
+`--record` saves every exchange of a model API as an eval cassette: the responses of each task's model calls, in order. Replaying it runs the same tasks against the fixtures with the recorded answers, so a scoring change can be checked on real answers without paying for them again. A cassette is keyed by task id and call number, not by a hash of the request, so changing a tool description does not invalidate it. If the tools would have behaved differently, the replay shows it.
+
+### Your own tasks
+
+A suite is a JSON file passed with `--suite`. Each task has an `id`, a `kind`, a corpus `binary`, a `question` and an `expect` (`function`, `yes_no`, `set` or `text`); naming tasks need only a `sample` size. See `crates/kraken-eval/data/corpus.json`. Names are only a test on a stripped binary, so `name_functions` refuses an unstripped one.
+
 ## For developers
+
+The `kraken-eval` crate is the harness: `Suite` and `TaskDef` (tasks and the truth they resolve to), `score` (answer reading and scoring), `Runner` over an `Environment` (opens the corpus binaries: `ci::FixtureEnvironment` offline, the CLI's live environment otherwise) and an `AssistantSource` (`ApiSource`, `RecordingSource`, `ReplaySource`, `FakeAgentSource`, or a closure), and `Report`. It asks through `kraken_assist::Assistant` with a `Task::custom`, so a model API and a terminal agent are measured the same way.
 
 The `kraken-assist` crate holds the logic and has no GUI dependencies:
 

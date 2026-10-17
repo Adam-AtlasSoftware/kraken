@@ -18,8 +18,15 @@
 //!   (`kraken mcp --daemon`). Output is identical either way.
 //! - Without a project only `project_create` and `project_open` can succeed; everything else
 //!   answers `not_found` until one is opened.
+//! - Prompts ([`prompts`]): `getting-started`, `explain-function`, `name-components` and
+//!   `prepare-rewrite` start a terminal agent with good instructions and the program's own
+//!   context attached.
+//! - Resources ([`resources`]): the open program's summary, the GUI selection (when a GUI shares
+//!   the daemon), a function's decompile by URI and the glossary.
 
 mod approval;
+pub mod prompts;
+pub mod resources;
 mod server;
 mod tools;
 

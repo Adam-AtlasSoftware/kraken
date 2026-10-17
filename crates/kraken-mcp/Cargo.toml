@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
+kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }

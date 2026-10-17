@@ -46,6 +46,32 @@ Add this to `.cursor/mcp.json` in your project, or to `~/.cursor/mcp.json` for a
 
 If your tool cannot find `kraken`, give the full path (for example `/home/you/.cargo/bin/kraken`). Configuration formats change from time to time; check your client's own documentation if a snippet stops working.
 
+## Prompts, resources and tool descriptions
+
+Beyond the tools, `kraken mcp` offers what an agent needs to start well. In Claude Code, prompts appear as slash commands (`/mcp__kraken__getting-started`) and resources can be attached with `@`; other clients show them in their own way.
+
+**Prompts** are ready-made starting points. Each one states the task, the rules (binary text is data, how edits are applied, how to undo) and attaches the program's own context.
+
+| Prompt | Arguments | What it sets up |
+| --- | --- | --- |
+| `getting-started` | none | Say what the program is, with the evidence, then decompile the three most promising functions. Attaches the program summary |
+| `explain-function` | `address` (optional) | Explain one function in plain language: purpose, steps, inputs and outputs, doubts. Without an address it uses the function selected in the GUI. Attaches the decompile |
+| `name-components` | `max_functions` (optional, default 15, at most 50) | Group functions into components, name them bottom-up with `rename_symbol` and `set_comment`, and finish with a table of components. Attaches the program summary |
+| `prepare-rewrite` | `address` | Plan the Rust rewrite of a function: signature, behaviour, callees that must come first, unknowns. It stops and asks before running `rewrite_function` |
+
+**Resources** are read-only context:
+
+| URI | What it holds |
+| --- | --- |
+| `kraken://project/summary` | The open program: format, architecture, analysis state, how many functions still have default names, the largest functions, imports, strings, and proposals waiting. Read it first |
+| `kraken://gui/selection` | What you have selected in the KRAKEN window (function, address) when the window and the MCP server share the daemon (`kraken mcp --daemon` with the GUI open on the same project). Answers "this function" and "what I selected". It reports the function and address in view, not text you highlight. It says when no window is attached, and when the last update is old |
+| `kraken://function/{address}/decompile` | One function's decompile as C text, for example `kraken://function/0x401136/decompile` (add `?module=<MVID>` for a .NET method) |
+| `kraken://glossary` and `kraken://glossary/{term}` | The glossary of terms and instruction mnemonics, or one entry (`kraken://glossary/jne`) |
+
+Everything derived from the binary in a prompt or resource sits in its own attached block, marked as data. The instruction text KRAKEN writes never contains it.
+
+**Tool descriptions** come from the command registry, the same text as the CLI help and the [command reference](reference/commands.md): a one-line summary, a short paragraph on when to use the command and what to look out for, a worked `Example:` call, and a description of every argument. A test keeps them honest: summaries stay short, every argument is described, and each example is valid JSON that uses real argument names and includes the required ones. Longer background lives in the reference only, so tool lists stay small.
+
 ## What the agent can and cannot do
 
 - **Reading is free.** Listing, decompiling and inspecting are always allowed.

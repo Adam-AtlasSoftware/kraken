@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "name": "corpus",
+  "tasks": [
+    { "id": "name/switch_vm", "kind": "name_functions", "binary": "switch_vm-O0-stripped", "sample": 6 },
+    { "id": "name/stripped_calc", "kind": "name_functions", "binary": "stripped_calc-O0-stripped", "sample": 7 },
+    { "id": "name/pie_list", "kind": "name_functions", "binary": "pie_list-O0-stripped", "sample": 8 },
+    { "id": "name/static_strops", "kind": "name_functions", "binary": "static_strops-O0-stripped", "sample": 8 },
+
+    {
+      "id": "find/vm-interpreter", "kind": "find_function", "binary": "switch_vm-O0-stripped",
+      "question": "Which function is the bytecode interpreter: the loop that fetches an opcode byte and dispatches on it with a large switch?",
+      "expect": { "type": "function", "name": "vm_run" }
+    },
+    {
+      "id": "find/vm-fatal", "kind": "find_function", "binary": "switch_vm-O0-stripped",
+      "question": "Which function prints an error message that includes the program counter to standard error and then terminates the process?",
+      "expect": { "type": "function", "name": "vm_fail" }
+    },
+    {
+      "id": "find/vm-pop", "kind": "find_function", "binary": "switch_vm-O0-stripped",
+      "question": "Which function removes the top value from the VM's value stack and returns it, failing when the stack is empty?",
+      "expect": { "type": "function", "name": "pop" }
+    },
+    {
+      "id": "find/calc-number", "kind": "find_function", "binary": "stripped_calc-O0-stripped",
+      "question": "Which function reads a run of decimal digits from the text and returns the number they spell?",
+      "expect": { "type": "function", "name": "parse_number" }
+    },
+    {
+      "id": "find/calc-whitespace", "kind": "find_function", "binary": "stripped_calc-O0-stripped",
+      "question": "Which small function moves the text pointer past whitespace characters?",
+      "expect": { "type": "function", "name": "skip_ws" }
+    },
+    {
+      "id": "find/calc-evaluate", "kind": "find_function", "binary": "stripped_calc-O0-stripped",
+      "question": "Which function parses a whole expression text, rejects trailing garbage, and returns 0 on success or -1 on failure with the value stored through a pointer?",
+      "expect": { "type": "function", "name": "evaluate" }
+    },
+    {
+      "id": "find/list-free", "kind": "find_function", "binary": "pie_list-O0-stripped",
+      "question": "Which function releases every node of the linked list and resets its count to zero?",
+      "expect": { "type": "function", "name": "list_free" }
+    },
+    {
+      "id": "find/list-cmp-name", "kind": "find_function", "binary": "pie_list-O0-stripped",
+      "question": "Which function is the callback that compares two records by their name text with strcmp?",
+      "expect": { "type": "function", "name": "cmp_name" }
+    },
+    {
+      "id": "find/list-sort", "kind": "find_function", "binary": "pie_list-O0-stripped",
+      "question": "Which function sorts the linked list in place by calling a comparison function it receives as an argument?",
+      "expect": { "type": "function", "name": "list_sort" }
+    },
+    {
+      "id": "find/strops-reverse", "kind": "find_function", "binary": "static_strops-O0-stripped",
+      "question": "Among the program's own functions (not the C library), which one reverses a string in place?",
+      "expect": { "type": "function", "name": "str_reverse" }
+    },
+    {
+      "id": "find/strops-palindrome", "kind": "find_function", "binary": "static_strops-O0-stripped",
+      "question": "Among the program's own functions (not the C library), which one tests whether a string reads the same forwards and backwards?",
+      "expect": { "type": "function", "name": "is_palindrome" }
+    },
+    {
+      "id": "find/strops-hash", "kind": "find_function", "binary": "static_strops-O0-stripped",
+      "question": "Among the program's own functions (not the C library), which one computes a hash of a string, starting from the constant 5381?",
+      "expect": { "type": "function", "name": "hash_str" }
+    },
+    {
+      "id": "find/strops-join", "kind": "find_function", "binary": "static_strops-O0-stripped",
+      "question": "Among the program's own functions (not the C library), which one copies several words into a buffer with a separator character between them and fails when the buffer is too small?",
+      "expect": { "type": "function", "name": "join_words" }
+    },
+    {
+      "id": "find/string-underflow", "kind": "find_function", "binary": "switch_vm-O0-stripped",
+      "question": "Which function uses the string \"stack underflow\"?",
+      "expect": { "type": "function", "name": "pop" },
+      "check": { "string": "stack underflow" }
+    },
+    {
+      "id": "find/string-errors", "kind": "find_function", "binary": "stripped_calc-O0-stripped",
+      "question": "Which function uses the string \"errors: %d\\n\"?",
+      "expect": { "type": "function", "name": "main" },
+      "check": { "string": "errors: %d\n" }
+    },
+
+    {
+      "id": "qa/imports-strcmp", "kind": "question", "binary": "pie_list-O0-stripped",
+      "question": "Does the program import the C library function strcmp?",
+      "expect": { "type": "yes_no", "value": true },
+      "check": { "imports_contain": "strcmp" }
+    },
+    {
+      "id": "qa/imports-socket", "kind": "question", "binary": "switch_vm-O0-stripped",
+      "question": "Does the program import socket, connect or any other function that opens a network connection?",
+      "expect": { "type": "yes_no", "value": false },
+      "check": { "imports_contain": "socket" }
+    },
+    {
+      "id": "qa/imports-vm", "kind": "question", "binary": "switch_vm-O0-stripped",
+      "question": "List every imported function whose name does not start with an underscore.",
+      "expect": { "type": "set", "items": ["exit", "fprintf", "printf"] },
+      "check": { "imports_without_prefix": "_" }
+    },
+    {
+      "id": "qa/imports-list", "kind": "question", "binary": "pie_list-O0-stripped",
+      "question": "List every imported function whose name does not start with an underscore.",
+      "expect": { "type": "set", "items": ["calloc", "exit", "free", "printf", "strcmp", "strncpy"] },
+      "check": { "imports_without_prefix": "_" }
+    },
+    {
+      "id": "qa/imports-calc", "kind": "question", "binary": "stripped_calc-O0-stripped",
+      "question": "List every imported function whose name does not start with an underscore.",
+      "expect": { "type": "set", "items": ["printf"] },
+      "check": { "imports_without_prefix": "_" }
+    },
+    {
+      "id": "qa/string-vm-result", "kind": "question", "binary": "switch_vm-O0-stripped",
+      "question": "What format string does the program use to print its final result line (the one that shows the result, the step count and the name of the first opcode)? Give the exact text, writing a newline as \\n.",
+      "expect": { "type": "text", "text": "result=%d steps=%lu first=%s\n" },
+      "check": { "string": "result=%d steps=%lu first=%s\n" }
+    },
+    {
+      "id": "qa/string-list-total", "kind": "question", "binary": "pie_list-O0-stripped",
+      "question": "What format string does the program use for its last summary line, the one that shows a count and a total? Give the exact text, writing a newline as \\n.",
+      "expect": { "type": "text", "text": "count=%d total=%.2f\n" },
+      "check": { "string": "count=%d total=%.2f\n" }
+    },
+    {
+      "id": "qa/string-strops-joined", "kind": "question", "binary": "static_strops-O0-stripped",
+      "question": "What format string does the program use to print the line that starts with the word \"joined\"? Give the exact text, writing a newline as \\n.",
+      "expect": { "type": "text", "text": "joined: %s (%d)\n" },
+      "check": { "string": "joined: %s (%d)\n" }
+    }
+  ]
+}

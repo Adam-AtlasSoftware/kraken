@@ -102,11 +102,16 @@ impl Command for Rebuild {
             Permission::Mutating,
         )
         .doc(
-            "Creates a fresh engine project through the engine factory, re-runs analysis, replays \
-             the applied log in order and compares every function's name and signature with the \
-             previous engine project and with the log. The job result is a `RebuildReport` with \
-             `drifted` entries. Edits wait until the rebuild is done; the old engine directory is \
-             kept on disk.",
+            "Repairs a stale engine cache (`epoch_stale` in `project_info`): builds a fresh \
+             engine project, re-analyses and replays the edit log, then reports any `drifted` \
+             names or signatures. Returns a `job_id`; edits wait until it is done.\n\
+             Example: rebuild {}",
+        )
+        .details(
+            "Creates the fresh engine project through the engine factory, replays the applied \
+             log in order and compares every function's name and signature with the previous \
+             engine project and with the log. The job result is a `RebuildReport`. The old \
+             engine directory is kept on disk.",
         )
         .needs(&[
             Cap::Analyzer,

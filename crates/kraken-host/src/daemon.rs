@@ -12,7 +12,9 @@
 //! | `shutdown` | none | `{"stopping": true}` |
 //! | `approvals` | none | `{pending: [PendingApproval]}` (user credential only) |
 //! | `approval_decide` | `{id, allow}` | `{decided: bool}` (user credential only) |
-//! | `infer_list` / `infer_start` / `infer_status` / `infer_stop` / `infer_logs` | see [`crate::infer`] | local model hosting |
+//! | `gui_selection_set` | [`GuiSelectionSetParams`] | `{stored: bool}` (user credential only) |
+//! | `gui_selection` | `{project_dir}` | [`GuiSelectionReply`] |
+//! | `infer_list` /`infer_start` / `infer_status` / `infer_stop` / `infer_logs` | see [`crate::infer`] | local model hosting |
 //!
 //! A connection is either user-class (GUI, CLI: the `daemon.token`) or agent-class (MCP servers:
 //! the `agent.token`). The daemon takes author kind, surface and approval from that class: an
@@ -55,8 +57,62 @@ pub const METHOD_SHUTDOWN: &str = "shutdown";
 pub const METHOD_APPROVALS: &str = "approvals";
 /// Answer a waiting approval (user credential only).
 pub const METHOD_APPROVAL_DECIDE: &str = "approval_decide";
+/// Publish what the person has selected in the GUI (user credential only).
+pub const METHOD_GUI_SELECTION_SET: &str = "gui_selection_set";
+/// Read what the person has selected in the GUI (any credential).
+pub const METHOD_GUI_SELECTION: &str = "gui_selection";
 /// Notification method of change events.
 pub const METHOD_EVENT: &str = "event";
+
+/// How long a GUI selection counts as fresh. After this the daemon still returns it, marked
+/// `stale`: a person can look at one function for a long time.
+pub const GUI_SELECTION_FRESH_SECS: u64 = 600;
+
+/// What the GUI shows the person: published by the GUI, read by agents through the MCP resource
+/// `kraken://gui/selection`. Names and text come from the binary, so the daemon treats every
+/// string as untrusted (it sanitises and caps them).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuiSelection {
+    /// `function`, `instruction`, `decompile` or `type`.
+    pub kind: String,
+    /// Entry address of the function in view, as `0x...`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    /// Name of that function.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function_name: Option<String>,
+    /// The selected address, as `0x...`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    /// The selected text (a decompiler range, an instruction, a type).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// Params of `gui_selection_set`: `selection: null` clears it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuiSelectionSetParams {
+    /// Absolute project directory the selection belongs to.
+    pub project_dir: String,
+    /// The selection, or `None` when the GUI shows nothing.
+    pub selection: Option<GuiSelection>,
+}
+
+/// Result of `gui_selection`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuiSelectionReply {
+    /// True when a GUI has published a selection for this project and not cleared it.
+    pub attached: bool,
+    /// True when it was published more than [`GUI_SELECTION_FRESH_SECS`] ago.
+    #[serde(default)]
+    pub stale: bool,
+    /// Seconds since it was published.
+    #[serde(default)]
+    pub age_secs: u64,
+    /// The selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<GuiSelection>,
+}
 
 /// Names of the `kind` field of change events.
 pub mod event_kind {
@@ -376,6 +432,52 @@ impl DaemonClient {
                 json!({"after_seq": after_seq, "limit": limit}),
             )
             .await
+            .map_err(to_proto)
+    }
+
+    /// What the person has selected in the GUI for the project in `project_dir`. An older daemon
+    /// does not know the method; that reads as "no GUI attached".
+    pub async fn gui_selection(&self, project_dir: &Path) -> Result<GuiSelectionReply, ProtoError> {
+        let params = json!({"project_dir": absolute(project_dir).to_string_lossy()});
+        match self.client.call(METHOD_GUI_SELECTION, params).await {
+            Ok(v) => serde_json::from_value(v).map_err(|e| {
+                ProtoError::new(
+                    ErrorCode::Internal,
+                    format!("malformed reply from krakend: {e}"),
+                )
+            }),
+            Err(e) => {
+                let e = to_proto(e);
+                if e.code == ErrorCode::NotFound {
+                    Ok(GuiSelectionReply {
+                        attached: false,
+                        stale: false,
+                        age_secs: 0,
+                        selection: None,
+                    })
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// Publishes (or with `None` clears) the GUI's selection for the project in `project_dir`.
+    /// The daemon accepts this from a user-credential connection only.
+    pub async fn set_gui_selection(
+        &self,
+        project_dir: &Path,
+        selection: Option<GuiSelection>,
+    ) -> Result<(), ProtoError> {
+        let params = serde_json::to_value(GuiSelectionSetParams {
+            project_dir: absolute(project_dir).to_string_lossy().into_owned(),
+            selection,
+        })
+        .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))?;
+        self.client
+            .call(METHOD_GUI_SELECTION_SET, params)
+            .await
+            .map(|_| ())
             .map_err(to_proto)
     }
 

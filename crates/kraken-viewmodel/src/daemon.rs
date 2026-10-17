@@ -432,6 +432,22 @@ impl Backend for DaemonClientBackend {
         self.send(command, args, who, false).await
     }
 
+    async fn publish_selection(&self, selection: Option<Value>) -> Result<(), ProtoError> {
+        let Some(dir) = self.current_project() else {
+            return Ok(());
+        };
+        let selection = match selection {
+            Some(v) => Some(serde_json::from_value(v).map_err(|e| {
+                ProtoError::new(ErrorCode::InvalidArgument, format!("bad selection: {e}"))
+            })?),
+            None => None,
+        };
+        self.inner
+            .client()?
+            .set_gui_selection(&dir, selection)
+            .await
+    }
+
     fn commands(&self) -> Vec<CommandInfo> {
         lock(&self.inner.commands).clone()
     }

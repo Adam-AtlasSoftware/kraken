@@ -23,6 +23,7 @@ mod agents_cmd;
 mod app;
 mod assist_cmd;
 mod daemon_cmd;
+mod eval_cmd;
 mod exit;
 mod infer_cmd;
 pub mod render;

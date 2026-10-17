@@ -92,9 +92,11 @@ impl Command for RenameSymbol {
             Permission::Mutating,
         )
         .doc(
-            "Agents auto-apply renames only on symbols that still have a default name \
-             (`FUN_...`); anything else becomes a proposal. Result `status`: `applied`, \
-             `queued` (analysis running) or `proposed`.",
+            "Gives a function or label a meaningful name. An agent's rename applies at once only \
+             on a default name (`FUN_...`); renaming anything else becomes a proposal for a \
+             person. `status` is `applied`, `queued` (analysis running) or `proposed`. Name \
+             what the code does, e.g. `parse_header`.\n\
+             Example: rename_symbol {\"address\": \"0x401136\", \"new_name\": \"parse_header\"}",
         )
         .doc_expect()
         .needs(&[Cap::Mutator])
@@ -157,9 +159,12 @@ impl Command for SetComment {
             Permission::Mutating,
         )
         .doc(
-            "Agents auto-apply only new comments; replacing or clearing one becomes a proposal. \
-             Control and escape characters are stripped from the text.",
+            "Adds a comment that shows in the listing and decompile. An agent's new comment \
+             applies at once; replacing or clearing one becomes a proposal. Use `plate` for a \
+             function header, `eol` for one line. Empty `text` clears it.\n\
+             Example: set_comment {\"address\": \"0x401136\", \"kind\": \"plate\", \"text\": \"Parses the config file\"}",
         )
+        .details("Control and escape characters are stripped from the text.")
         .doc_expect()
         .needs(&[Cap::Mutator])
     }
@@ -262,9 +267,15 @@ impl Command for SetType {
             Permission::Mutating,
         )
         .doc(
-            "Give exactly one of `prototype` (a neutral function prototype: return_type, params, \
-             calling_convention, varargs, noreturn) or `type_name`. Agents auto-apply only on \
-             items that have no type recorded yet.",
+            "Fixes what the decompiler shows for a function's signature or a data item. Give \
+             exactly one of `prototype` or `type_name`. An agent applies it at once only where \
+             no type is recorded yet; otherwise it becomes a proposal.\n\
+             Example: set_type {\"address\": \"0x404040\", \"type_name\": \"config_t\"}",
+        )
+        .details(
+            "A prototype is the neutral function model: `return_type`, `params` (each with \
+             `name` and `type`), `calling_convention`, `varargs`, `noreturn`; types are tagged \
+             with `kind` (`primitive`, `named`, `pointer`, `array`, `function`).",
         )
         .doc_expect()
         .needs(&[Cap::Mutator])
@@ -332,6 +343,12 @@ impl Command for SetCallingConvention {
             CommandKind::Mutation,
             Permission::Mutating,
         )
+        .doc(
+            "Changes how the decompiler reads arguments and the return value, when a signature \
+             looks wrong (a register argument missing, for instance). Re-run `decompile` to see \
+             the effect.\n\
+             Example: set_calling_convention {\"address\": \"0x401136\", \"convention\": \"__stdcall\"}",
+        )
         .doc_expect()
         .needs(&[Cap::Mutator])
     }
@@ -395,7 +412,11 @@ impl Command for CreateFunction {
             CommandKind::Mutation,
             Permission::Mutating,
         )
-        .doc("Structural edit: agents' creations always become proposals for a user to accept.")
+        .doc(
+            "Marks code the analysis missed as a function. A structural edit: an agent's \
+             version always becomes a proposal for a person to accept.\n\
+             Example: create_function {\"address\": \"0x401800\", \"name\": \"handler\"}",
+        )
         .doc_expect()
         .needs(&[Cap::Mutator])
     }
@@ -455,7 +476,11 @@ impl Command for DeleteFunction {
             CommandKind::Mutation,
             Permission::Mutating,
         )
-        .doc("Structural edit: agents' deletions always become proposals for a user to accept.")
+        .doc(
+            "Removes a wrongly detected function; the code stays. A structural edit: an agent's \
+             version always becomes a proposal for a person to accept.\n\
+             Example: delete_function {\"address\": \"0x401800\"}",
+        )
         .doc_expect()
         .needs(&[Cap::Mutator])
     }
@@ -512,7 +537,12 @@ impl Command for SetFunctionBounds {
             CommandKind::Mutation,
             Permission::Mutating,
         )
-        .doc("Structural edit: agents' changes always become proposals for a user to accept.")
+        .doc(
+            "Corrects where a function starts or ends when the analysis cut it wrong. A \
+             structural edit: an agent's version always becomes a proposal for a person to \
+             accept.\n\
+             Example: set_function_bounds {\"address\": \"0x401136\", \"start\": \"0x401136\", \"end\": \"0x401180\"}",
+        )
         .doc_expect()
         .needs(&[Cap::Mutator])
     }
@@ -641,9 +671,14 @@ impl Command for Undo {
             Permission::Mutating,
         )
         .doc(
-            "Appends a compensating log entry and pushes it to the engine. Each author undoes \
-             only their own edits; run it again to step further back. Derived data (decompiler \
-             output) is re-read on demand and may be stale until then.",
+            "Reverses your own latest edit; call again to step further back. You cannot undo \
+             someone else's edit this way. To undo one specific edit or a whole run, use \
+             `undo_entry` or `undo_run`.\n\
+             Example: undo {}",
+        )
+        .details(
+            "Appends a compensating log entry and pushes it to the engine. Derived data \
+             (decompiler output) is re-read on demand and may be stale until then.",
         )
         .needs(&[Cap::Mutator])
     }
@@ -686,9 +721,9 @@ impl Command for UndoRun {
             Permission::Mutating,
         )
         .doc(
-            "Reverses all applied, not yet undone edits that carry the run id in reverse order, \
-             as compensating entries authored by the caller. Open proposals of the run are left \
-             alone.",
+            "Reverses everything one agent run changed (find the `run_id` in `history`), newest \
+             edit first. Open proposals of the run are left alone.\n\
+             Example: undo_run {\"run_id\": \"run-7f3a\"}",
         )
         .needs(&[Cap::Mutator])
     }
@@ -745,8 +780,9 @@ impl Command for ProposalAccept {
             Permission::Mutating,
         )
         .doc(
-            "Applies the proposed edit as a user edit under the proposal's run id, then marks the \
-             proposal accepted. If the engine refuses it the proposal stays open.",
+            "People only. Applies a proposal from `proposals_list` as the person's own edit. If \
+             the engine refuses it, the proposal stays open.\n\
+             Example: proposal_accept {\"id\": 3}",
         )
         .needs(&[Cap::Mutator])
     }
@@ -790,6 +826,10 @@ impl Command for ProposalReject {
             CommandKind::Mutation,
             Permission::Mutating,
         )
+        .doc(
+            "People only. Declines a proposal from `proposals_list`; nothing is applied.\n\
+             Example: proposal_reject {\"id\": 3}",
+        )
     }
 
     async fn run(
@@ -811,12 +851,12 @@ trait SpecExt {
 }
 
 impl SpecExt for CommandSpec {
-    /// Appends the shared `expect_versions` note to the long doc.
+    /// Appends the shared `expect_versions` note to the reference text.
     fn doc_expect(mut self) -> Self {
-        if !self.doc.is_empty() {
-            self.doc.push_str("\n\n");
+        if !self.details.is_empty() {
+            self.details.push_str("\n\n");
         }
-        self.doc.push_str(EXPECT_DOC);
+        self.details.push_str(EXPECT_DOC);
         self
     }
 }

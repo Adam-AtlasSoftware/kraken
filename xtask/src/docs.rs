@@ -77,6 +77,18 @@ pub fn render(registry: &Registry) -> String {
     out
 }
 
+/// The command's short doc, with its `Example:` line set apart as a code span.
+fn render_doc(doc: &str) -> String {
+    doc.trim()
+        .lines()
+        .map(|l| match l.strip_prefix("Example: ") {
+            Some(call) => format!("\nExample: `{call}`"),
+            None => l.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn cell(text: &str) -> String {
     text.replace('|', "\\|").replace('\n', " ")
 }
@@ -117,7 +129,10 @@ fn render_entry(out: &mut String, e: &Entry) {
     }
     out.push('\n');
     if !s.doc.trim().is_empty() {
-        let _ = writeln!(out, "{}\n", s.doc.trim());
+        let _ = writeln!(out, "{}\n", render_doc(&s.doc));
+    }
+    if !s.details.trim().is_empty() {
+        let _ = writeln!(out, "{}\n", s.details.trim());
     }
     if args.is_empty() {
         out.push_str("Arguments: none.\n\n");

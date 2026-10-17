@@ -1,0 +1,709 @@
+{
+  "version": 1,
+  "recorded_with": "kraken-eval stand-in (scripted, not a model)",
+  "tasks": {
+    "find/calc-evaluate": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x10145b\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x10145b\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/calc-number": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101197\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101247\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/calc-whitespace": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101149\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101149\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/list-cmp-name": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x10126c\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101299\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/list-free": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x10148c\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x10148c\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/list-sort": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x1012ff\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1012ff\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/string-errors": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x1014c1\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1014c1\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/string-underflow": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x1011f3\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1011f3\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/strops-hash": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x401725\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x401774\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/strops-join": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x40196d\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x40196d\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/strops-palindrome": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x40187e\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x40187e\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/strops-reverse": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x401774\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x401774\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/vm-fatal": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101159\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101159\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/vm-interpreter": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101255\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101255\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "find/vm-pop": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x1011f3\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1011f3\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "name/pie_list": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101189\"}"
+        },
+        {
+          "type": "tool_call_delta",
+          "index": 1,
+          "id": "call_1",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101214\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x101189\":\"node_new\",\"0x101214\":\"list_helper\",\"0x10126c\":\"handle_input\",\"0x101299\":\"cmp_dist\",\"0x1012ff\":\"list_helper\",\"0x1013ba\":\"handle_input\",\"0x101406\":\"print_rec\",\"0x101460\":\"sum_helper\"}}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "name/static_strops": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x401725\"}"
+        },
+        {
+          "type": "tool_call_delta",
+          "index": 1,
+          "id": "call_1",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x401774\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x401725\":\"hash_str\",\"0x401774\":\"str_helper\",\"0x4017fd\":\"handle_input\",\"0x401838\":\"str_upper\",\"0x40187e\":\"is_helper\",\"0x4018ec\":\"handle_input\",\"0x40196d\":\"join_words\",\"0x401a5e\":\"main_helper\"}}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "name/stripped_calc": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101149\"}"
+        },
+        {
+          "type": "tool_call_delta",
+          "index": 1,
+          "id": "call_1",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101197\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x101149\":\"skip_ws\",\"0x101197\":\"parse_helper\",\"0x101247\":\"handle_input\",\"0x10130d\":\"parse_term\",\"0x1013cf\":\"parse_helper\",\"0x10145b\":\"handle_input\",\"0x1014c1\":\"main\"}}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "name/switch_vm": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101159\"}"
+        },
+        {
+          "type": "tool_call_delta",
+          "index": 1,
+          "id": "call_1",
+          "name": "decompile",
+          "arguments": "{\"address\":\"0x101194\"}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x101159\":\"vm_fail\",\"0x101194\":\"push_helper\",\"0x1011f3\":\"handle_input\",\"0x101255\":\"vm_run\",\"0x101640\":\"op_helper\",\"0x101707\":\"handle_input\"}}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/imports-calc": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "imports",
+          "arguments": "{\"limit\":100}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "The imports I could see.\n<kraken-answer>{\"items\":[\"printf\"]}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/imports-list": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "imports",
+          "arguments": "{\"limit\":100}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "The imports I could see.\n<kraken-answer>{\"items\":[\"exit\",\"free\",\"printf\",\"strcmp\",\"strncpy\",\"puts\"]}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/imports-socket": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "imports",
+          "arguments": "{}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "From the imports.\n<kraken-answer>{\"answer\":\"yes\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/imports-strcmp": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "imports",
+          "arguments": "{}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "From the imports.\n<kraken-answer>{\"answer\":\"yes\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/imports-vm": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "imports",
+          "arguments": "{\"limit\":100}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "The imports I could see.\n<kraken-answer>{\"items\":[\"exit\",\"fprintf\",\"printf\"]}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/string-list-total": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "strings",
+          "arguments": "{\"min_len\":6}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "Found it among the strings.\n<kraken-answer>{\"text\":\"count=%d total=%.2f\\\\n\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/string-strops-joined": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "strings",
+          "arguments": "{\"min_len\":6}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "I could not find that string."
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "qa/string-vm-result": [
+      [
+        {
+          "type": "tool_call_delta",
+          "index": 0,
+          "id": "call_0",
+          "name": "strings",
+          "arguments": "{\"min_len\":6}"
+        },
+        {
+          "type": "finish",
+          "reason": "tool_calls"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "Found it among the strings.\n<kraken-answer>{\"text\":\"result=%d steps=%lu first=%s\\\\n\"}</kraken-answer>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ]
+  }
+}

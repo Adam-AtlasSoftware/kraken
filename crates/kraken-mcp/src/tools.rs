@@ -16,11 +16,7 @@ fn object_schema(v: &Value) -> Option<JsonObject> {
 /// The tool definition of one command.
 pub fn tool_for(entry: &Entry) -> Tool {
     let spec = entry.spec();
-    let description = if spec.doc.trim().is_empty() {
-        spec.summary.clone()
-    } else {
-        format!("{}\n\n{}", spec.summary, spec.doc)
-    };
+    let description = spec.tool_description();
     let input = object_schema(entry.args_schema()).unwrap_or_else(|| {
         let mut m = JsonObject::new();
         m.insert("type".into(), Value::String("object".into()));

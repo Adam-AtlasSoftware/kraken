@@ -237,7 +237,7 @@ impl CliEnv {
         }
     }
 
-    fn context(&self, yes: bool) -> CallContext {
+    pub(crate) fn context(&self, yes: bool) -> CallContext {
         let ctx = match &self.author {
             CliAuthor::User(id) => CallContext::user(id.clone(), Surface::Cli),
             CliAuthor::Agent { id, run_id } => {
@@ -324,11 +324,10 @@ fn flags_of(entry: &Entry) -> Vec<FlagSpec> {
 fn sub_for(entry: &Entry) -> Command {
     let spec = entry.spec();
     let mut sub = Command::new(kebab(&spec.name)).about(spec.summary.clone());
-    let long = if spec.doc.trim().is_empty() {
-        spec.summary.clone()
-    } else {
-        format!("{}\n\n{}", spec.summary, spec.doc)
-    };
+    let mut long = spec.tool_description();
+    if !spec.details.trim().is_empty() {
+        long = format!("{long}\n\n{}", spec.details.trim());
+    }
     sub = sub.long_about(long);
     for f in flags_of(entry) {
         let mut a = Arg::new(f.prop.clone())
@@ -512,6 +511,7 @@ pub fn build_cli(registry: &Registry) -> Command {
                     .help("Only suggest; write nothing"),
             ),
     )
+    .subcommand(crate::eval_cmd::command())
     .subcommand(
         Command::new("glossary")
             .about("Look up a reverse-engineering term or an instruction mnemonic")
@@ -1165,6 +1165,7 @@ pub async fn run_with_provider(
         "setup" => crate::setup::run_setup(env, sm, json_out, out, err).await,
         "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
         "glossary" => crate::assist_cmd::run_glossary(sm, json_out, out, err),
+        "eval" => crate::eval_cmd::run_eval(env, sm, json_out, provider, out, err).await,
         "explain" | "overview" | "auto-name" => {
             crate::assist_cmd::run_assist(env, sub, sm, json_out, provider, out, err).await
         }

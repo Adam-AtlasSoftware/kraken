@@ -457,3 +457,63 @@ async fn reconnecting_does_not_reset_the_auto_apply_budget() {
     assert_eq!(statuses, ["applied", "applied", "proposed"]);
     r.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gui_selection_is_published_by_a_person_and_readable_by_an_agent() {
+    use kraken_host::daemon::GuiSelection;
+
+    let r = Rig::new(200);
+    let user = r.client(ClientKind::Gui).await;
+    let agent = r.client(ClientKind::Mcp).await;
+    let p = r.project("watched");
+    call(
+        &user,
+        &p,
+        "project_create",
+        json!({"binary": r.binary, "project_dir": p}),
+    )
+    .await
+    .expect("create");
+
+    // Nothing selected yet.
+    let none = agent.gui_selection(&p).await.expect("reply");
+    assert!(!none.attached && none.selection.is_none());
+
+    // Only a person's connection can publish.
+    let sel = GuiSelection {
+        kind: "function".into(),
+        function: Some("0x401000".into()),
+        function_name: Some("main\u{7}\u{1b}[31m".into()),
+        address: Some("0x401004".into()),
+        text: Some("x".repeat(20_000)),
+    };
+    let e = agent
+        .set_gui_selection(&p, Some(sel.clone()))
+        .await
+        .expect_err("an agent cannot publish a selection");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    user.set_gui_selection(&p, Some(sel))
+        .await
+        .expect("publish");
+
+    let got = agent.gui_selection(&p).await.expect("reply");
+    assert!(got.attached && !got.stale);
+    let s = got.selection.expect("selection");
+    assert_eq!(s.function.as_deref(), Some("0x401000"));
+    assert!(
+        !s.function_name.as_deref().unwrap().contains('\u{1b}'),
+        "control characters are stripped"
+    );
+    assert!(
+        s.text.as_deref().unwrap().len() <= 8 * 1024,
+        "text is capped"
+    );
+
+    // An agent sees it only for a project it may use.
+    let other = r.project("never-opened");
+    assert!(!agent.gui_selection(&other).await.expect("reply").attached);
+
+    user.set_gui_selection(&p, None).await.expect("clear");
+    assert!(!agent.gui_selection(&p).await.expect("reply").attached);
+    r.stop().await;
+}

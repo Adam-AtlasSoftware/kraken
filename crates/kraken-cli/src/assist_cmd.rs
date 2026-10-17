@@ -25,14 +25,14 @@ use serde_json::json;
 use crate::app::{CliEnv, bad, emit, fail, save};
 
 /// What the `[provider]` table selects.
-enum Selection {
+pub(crate) enum Selection {
     /// A chat model API.
     Api(Arc<dyn ChatProvider>),
     /// A terminal agent (`kind = "terminal_agent"`).
     Agent(AgentChoice),
 }
 
-fn selection_from_config(env: &CliEnv) -> Result<Selection, ProtoError> {
+pub(crate) fn selection_from_config(env: &CliEnv) -> Result<Selection, ProtoError> {
     let path = provider_config_path(&|k| env.var(k).map(OsString::from));
     let cfg = load_provider_config(path.as_deref()).map_err(|e| bad(e.to_string()))?;
     if let Some(choice) = AgentChoice::from_config(&cfg) {
@@ -45,7 +45,7 @@ fn selection_from_config(env: &CliEnv) -> Result<Selection, ProtoError> {
 
 /// Builds the terminal-agent backend for `choice` on the project directory `project`, after the
 /// one-time notice.
-fn agent_backend(
+pub(crate) fn agent_backend(
     env: &CliEnv,
     sm: &ArgMatches,
     choice: &AgentChoice,

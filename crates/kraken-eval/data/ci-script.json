@@ -1,0 +1,319 @@
+{
+  "find/calc-evaluate": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x10145b"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x10145b\"}</kraken-answer>"
+  },
+  "find/calc-number": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101197"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101247\"}</kraken-answer>"
+  },
+  "find/calc-whitespace": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101149"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101149\"}</kraken-answer>"
+  },
+  "find/list-cmp-name": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x10126c"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101299\"}</kraken-answer>"
+  },
+  "find/list-free": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x10148c"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x10148c\"}</kraken-answer>"
+  },
+  "find/list-sort": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x1012ff"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1012ff\"}</kraken-answer>"
+  },
+  "find/string-errors": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x1014c1"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1014c1\"}</kraken-answer>"
+  },
+  "find/string-underflow": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x1011f3"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1011f3\"}</kraken-answer>"
+  },
+  "find/strops-hash": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x401725"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x401774\"}</kraken-answer>"
+  },
+  "find/strops-join": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x40196d"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x40196d\"}</kraken-answer>"
+  },
+  "find/strops-palindrome": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x40187e"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x40187e\"}</kraken-answer>"
+  },
+  "find/strops-reverse": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x401774"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x401774\"}</kraken-answer>"
+  },
+  "find/vm-fatal": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101159"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101159\"}</kraken-answer>"
+  },
+  "find/vm-interpreter": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101255"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x101255\"}</kraken-answer>"
+  },
+  "find/vm-pop": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x1011f3"
+        }
+      }
+    ],
+    "answer": "This looks like the one.\n<kraken-answer>{\"address\":\"0x1011f3\"}</kraken-answer>"
+  },
+  "name/pie_list": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101189"
+        }
+      },
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101214"
+        }
+      }
+    ],
+    "answer": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x101189\":\"node_new\",\"0x101214\":\"list_helper\",\"0x10126c\":\"handle_input\",\"0x101299\":\"cmp_dist\",\"0x1012ff\":\"list_helper\",\"0x1013ba\":\"handle_input\",\"0x101406\":\"print_rec\",\"0x101460\":\"sum_helper\"}}</kraken-answer>"
+  },
+  "name/static_strops": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x401725"
+        }
+      },
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x401774"
+        }
+      }
+    ],
+    "answer": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x401725\":\"hash_str\",\"0x401774\":\"str_helper\",\"0x4017fd\":\"handle_input\",\"0x401838\":\"str_upper\",\"0x40187e\":\"is_helper\",\"0x4018ec\":\"handle_input\",\"0x40196d\":\"join_words\",\"0x401a5e\":\"main_helper\"}}</kraken-answer>"
+  },
+  "name/stripped_calc": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101149"
+        }
+      },
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101197"
+        }
+      }
+    ],
+    "answer": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x101149\":\"skip_ws\",\"0x101197\":\"parse_helper\",\"0x101247\":\"handle_input\",\"0x10130d\":\"parse_term\",\"0x1013cf\":\"parse_helper\",\"0x10145b\":\"handle_input\",\"0x1014c1\":\"main\"}}</kraken-answer>"
+  },
+  "name/switch_vm": {
+    "tools": [
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101159"
+        }
+      },
+      {
+        "name": "decompile",
+        "arguments": {
+          "address": "0x101194"
+        }
+      }
+    ],
+    "answer": "These are my best names after reading the code.\n<kraken-answer>{\"names\":{\"0x101159\":\"vm_fail\",\"0x101194\":\"push_helper\",\"0x1011f3\":\"handle_input\",\"0x101255\":\"vm_run\",\"0x101640\":\"op_helper\",\"0x101707\":\"handle_input\"}}</kraken-answer>"
+  },
+  "qa/imports-calc": {
+    "tools": [
+      {
+        "name": "imports",
+        "arguments": {
+          "limit": 100
+        }
+      }
+    ],
+    "answer": "The imports I could see.\n<kraken-answer>{\"items\":[\"printf\"]}</kraken-answer>"
+  },
+  "qa/imports-list": {
+    "tools": [
+      {
+        "name": "imports",
+        "arguments": {
+          "limit": 100
+        }
+      }
+    ],
+    "answer": "The imports I could see.\n<kraken-answer>{\"items\":[\"exit\",\"free\",\"printf\",\"strcmp\",\"strncpy\",\"puts\"]}</kraken-answer>"
+  },
+  "qa/imports-socket": {
+    "tools": [
+      {
+        "name": "imports",
+        "arguments": {}
+      }
+    ],
+    "answer": "From the imports.\n<kraken-answer>{\"answer\":\"yes\"}</kraken-answer>"
+  },
+  "qa/imports-strcmp": {
+    "tools": [
+      {
+        "name": "imports",
+        "arguments": {}
+      }
+    ],
+    "answer": "From the imports.\n<kraken-answer>{\"answer\":\"yes\"}</kraken-answer>"
+  },
+  "qa/imports-vm": {
+    "tools": [
+      {
+        "name": "imports",
+        "arguments": {
+          "limit": 100
+        }
+      }
+    ],
+    "answer": "The imports I could see.\n<kraken-answer>{\"items\":[\"exit\",\"fprintf\",\"printf\"]}</kraken-answer>"
+  },
+  "qa/string-list-total": {
+    "tools": [
+      {
+        "name": "strings",
+        "arguments": {
+          "min_len": 6
+        }
+      }
+    ],
+    "answer": "Found it among the strings.\n<kraken-answer>{\"text\":\"count=%d total=%.2f\\\\n\"}</kraken-answer>"
+  },
+  "qa/string-strops-joined": {
+    "tools": [
+      {
+        "name": "strings",
+        "arguments": {
+          "min_len": 6
+        }
+      }
+    ],
+    "answer": "I could not find that string."
+  },
+  "qa/string-vm-result": {
+    "tools": [
+      {
+        "name": "strings",
+        "arguments": {
+          "min_len": 6
+        }
+      }
+    ],
+    "answer": "Found it among the strings.\n<kraken-answer>{\"text\":\"result=%d steps=%lu first=%s\\\\n\"}</kraken-answer>"
+  }
+}

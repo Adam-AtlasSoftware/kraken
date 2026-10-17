@@ -1,14 +1,16 @@
 //! The RPC methods of the daemon (see `kraken_host::daemon` for the table).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use kraken_host::daemon::{
-    CallParams, CallResult, METHOD_APPROVAL_DECIDE, METHOD_APPROVALS, METHOD_CALL, METHOD_COMMANDS,
-    METHOD_EVENTS, METHOD_SHUTDOWN, METHOD_STATUS, event_kind,
+    CallParams, CallResult, GUI_SELECTION_FRESH_SECS, GuiSelection, GuiSelectionReply,
+    GuiSelectionSetParams, METHOD_APPROVAL_DECIDE, METHOD_APPROVALS, METHOD_CALL, METHOD_COMMANDS,
+    METHOD_EVENTS, METHOD_GUI_SELECTION, METHOD_GUI_SELECTION_SET, METHOD_SHUTDOWN, METHOD_STATUS,
+    event_kind,
 };
 use kraken_host::infer::{InferApi, InferManager, serve_rpc};
 use kraken_ipc::{ClientKind, ConnInfo, Counter, CredentialClass, RpcHandler, Shutdown};
@@ -57,6 +59,8 @@ pub struct DaemonHandler {
     /// Projects a person has worked on or approved for agents. Agent-class connections reach
     /// only these, or ask first.
     granted: Arc<Mutex<HashSet<PathBuf>>>,
+    /// What the GUI shows, per project, and when it said so.
+    gui_selection: Mutex<HashMap<PathBuf, (GuiSelection, Instant)>>,
 }
 
 impl DaemonHandler {
@@ -81,6 +85,7 @@ impl DaemonHandler {
             infer: Arc::new(InferManager::with_registry(Default::default())),
             approvals,
             granted: Arc::default(),
+            gui_selection: Mutex::default(),
         }
     }
 
@@ -179,6 +184,17 @@ fn context(
     };
     ctx.run_id = p.run_id.as_deref().map(|r| RunId(clean_id(r)));
     ctx
+}
+
+/// Everything in a selection comes from the GUI's view of the binary: clean it and bound it.
+fn clean_selection(mut s: GuiSelection) -> GuiSelection {
+    let clean = |v: Option<String>, max: usize| v.map(|t| sanitize_capped(&t, max));
+    s.kind = sanitize_capped(&s.kind, 32);
+    s.function = clean(s.function, 32);
+    s.function_name = clean(s.function_name, 256);
+    s.address = clean(s.address, 32);
+    s.text = clean(s.text, 8 * 1024);
+    s
 }
 
 fn denied_to_agents(method: &str) -> ProtoError {
@@ -378,6 +394,64 @@ impl DaemonHandler {
             .map_err(|e| internal(format!("cannot encode the reply: {e}")))
     }
 
+    fn set_gui_selection(&self, params: Value) -> Result<Value, ProtoError> {
+        let p: GuiSelectionSetParams =
+            serde_json::from_value(params).map_err(|e| invalid(format!("bad params: {e}")))?;
+        let key = canonical_key(Path::new(&p.project_dir))?;
+        let mut map = self
+            .gui_selection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match p.selection {
+            Some(sel) => {
+                map.insert(key, (clean_selection(sel), Instant::now()));
+            }
+            None => {
+                map.remove(&key);
+            }
+        }
+        Ok(json!({"stored": true}))
+    }
+
+    fn gui_selection(&self, conn: &ConnInfo, params: Value) -> Result<Value, ProtoError> {
+        #[derive(Deserialize)]
+        struct P {
+            project_dir: String,
+        }
+        let p: P =
+            serde_json::from_value(params).map_err(|e| invalid(format!("bad params: {e}")))?;
+        let key = canonical_key(Path::new(&p.project_dir))?;
+        // An agent sees the selection only of a project it may work on.
+        let visible = conn.class != CredentialClass::Agent || self.is_granted(&key);
+        let entry = visible
+            .then(|| {
+                self.gui_selection
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .get(&key)
+                    .cloned()
+            })
+            .flatten();
+        let reply = match entry {
+            Some((selection, at)) => {
+                let age = at.elapsed().as_secs();
+                GuiSelectionReply {
+                    attached: true,
+                    stale: age > GUI_SELECTION_FRESH_SECS,
+                    age_secs: age,
+                    selection: Some(selection),
+                }
+            }
+            None => GuiSelectionReply {
+                attached: false,
+                stale: false,
+                age_secs: 0,
+                selection: None,
+            },
+        };
+        serde_json::to_value(reply).map_err(|e| internal(e.to_string()))
+    }
+
     fn commands(&self) -> Value {
         Value::Array(
             self.registry
@@ -434,7 +508,10 @@ impl RpcHandler for DaemonHandler {
         params: Value,
     ) -> Result<Value, ProtoError> {
         if conn.class == CredentialClass::Agent
-            && !matches!(method, METHOD_CALL | METHOD_COMMANDS | METHOD_EVENTS)
+            && !matches!(
+                method,
+                METHOD_CALL | METHOD_COMMANDS | METHOD_EVENTS | METHOD_GUI_SELECTION
+            )
         {
             return Err(denied_to_agents(method));
         }
@@ -444,6 +521,8 @@ impl RpcHandler for DaemonHandler {
                 .await
                 .map_err(ProtoError::sanitized),
             METHOD_COMMANDS => Ok(self.commands()),
+            METHOD_GUI_SELECTION_SET => self.set_gui_selection(params),
+            METHOD_GUI_SELECTION => self.gui_selection(conn, params),
             METHOD_APPROVALS => Ok(json!({"pending": self.approvals.pending()})),
             METHOD_APPROVAL_DECIDE => {
                 #[derive(Deserialize)]
