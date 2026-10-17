@@ -10,4 +10,5 @@ publish = false
 kraken-proto.workspace = true
 kraken-registry = { path = "../crates/kraken-registry", version = "0.0.0" }
 serde.workspace = true
+sha2 = "0.10"
 serde_json.workspace = true

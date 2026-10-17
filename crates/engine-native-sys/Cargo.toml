@@ -1,0 +1,23 @@
+[package]
+name = "engine-native-sys"
+description = "Builds Ghidra's C++ decompiler and Sleigh (Apache-2.0) as a static library and binds a KRAKEN shim over them with cxx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+links = "kraken_decomp"
+build = "build.rs"
+
+[features]
+# Fail the build when the Ghidra decompiler sources are missing instead of building the stub
+# (which reports the library as unavailable at run time).
+require-native = []
+
+[dependencies]
+cxx = "1.0.150"
+thiserror.workspace = true
+
+[build-dependencies]
+cc = { version = "1.2", features = ["parallel"] }
+cxx-build = "1.0.150"
