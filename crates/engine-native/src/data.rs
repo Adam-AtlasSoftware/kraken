@@ -11,7 +11,7 @@ use kraken_proto::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::{NativeEngine, Program, blocking, check, check_cursor, page_of, ram_offset};
+use crate::engine::{InProcessEngine, Program, blocking, check, check_cursor, page_of, ram_offset};
 use crate::refs::Ref;
 
 fn xref(p: &Program, r: &Ref, from_function: Option<u64>) -> Xref {
@@ -35,7 +35,7 @@ fn xref(p: &Program, r: &Ref, from_function: Option<u64>) -> Xref {
 }
 
 #[async_trait]
-impl XrefProvider for NativeEngine {
+impl XrefProvider for InProcessEngine {
     async fn xrefs(
         &self,
         req: &XrefRequest,
@@ -79,7 +79,7 @@ impl XrefProvider for NativeEngine {
 }
 
 #[async_trait]
-impl FlowGraph for NativeEngine {
+impl FlowGraph for InProcessEngine {
     async fn cfg(&self, function: &Locator, cancel: &CancellationToken) -> EngineResult<Cfg> {
         check(cancel)?;
         let p = self.program()?;
@@ -101,7 +101,7 @@ impl FlowGraph for NativeEngine {
 }
 
 #[async_trait]
-impl StringLister for NativeEngine {
+impl StringLister for InProcessEngine {
     async fn strings(
         &self,
         req: &StringsRequest,
@@ -130,7 +130,7 @@ impl StringLister for NativeEngine {
 }
 
 #[async_trait]
-impl SymbolLister for NativeEngine {
+impl SymbolLister for InProcessEngine {
     async fn imports(
         &self,
         page: &PageRequest,
@@ -151,7 +151,7 @@ impl SymbolLister for NativeEngine {
 }
 
 #[async_trait]
-impl TypeStore for NativeEngine {
+impl TypeStore for InProcessEngine {
     async fn get_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<TypeDef> {
         check(cancel)?;
         let p = self.program()?;

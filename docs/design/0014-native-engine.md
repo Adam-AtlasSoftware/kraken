@@ -1,6 +1,6 @@
 # 0014. The native engine
 
-Status: Accepted (phase 1 done; phase 2 done for x86-64 ELF)
+Status: Accepted (phase 1 done; phase 2 done for x86-64 ELF; phase 3 done on Linux)
 Date: 2026-10-17
 
 ## Context
@@ -69,17 +69,22 @@ Agreement with the Ghidra fixtures (`tests/agreement.rs`, recall over what Ghidr
 - `pie_list-O0` and `switch_vm-O0` (guarded by the test): functions, bodies, CFGs (blocks, edges and kinds), callers, strings, imports and exports 100%; outgoing references 100% of those that point into the image (Ghidra's other references point into its synthetic `EXTERNAL` block), at 100% and 90% precision.
 - All 20 fixtures (1100 functions): functions 98.3%, bodies 94.4%, identical CFGs 90.0% (edges 95.0%), references into the image 93.1% (precision 91.6%), callers 99.3%, strings 97.1% (precision 98.4%).
 
-### In-process now, confined child later
+### The confined worker (phase 3)
 
-Phase 1 runs the decompiler in the engine's process (in practice, `krakend`). The library keeps global state and is not thread-safe, so every call takes one process-wide lock in `engine-native-sys`, and the engine runs calls on blocking threads.
+The library keeps global state and is not thread-safe, so every call takes one process-wide lock in `engine-native-sys`, and the engine runs calls on blocking threads. Phases 1 and 2 ran it in the engine's process (in practice, `krakend`); phase 3 moves it out.
 
-The design keeps a later move cheap. The engine only uses the `Session` API (bytes in through a callback, plain values out), and the engine traits are the boundary everyone else sees. Phase 3 moves `Session` behind the sidecar plumbing that `kraken-sidecar` already provides: socketpair JSON-RPC, Landlock, seccomp, netns, and supervision. The image callback then becomes a request back to the parent, or a read-only shared mapping.
+`NativeEngine` now runs the program in a child process, `kraken-native-worker` (a binary of `engine-native`), by default. The split is above `Session`, not at it: the worker runs the whole in-process engine (`InProcessEngine`: loader, discovery, reference index, type store, decompiler) and answers one JSON-RPC method per capability call, so the image callback never crosses the process boundary and no query pays a round trip per instruction. The parent keeps only what it needs to rebuild a worker: the open binary and its loader spec, and the type definitions accepted so far.
+
+- **Confinement** is the Ghidra sidecar's, through `kraken-sidecar`'s spawner: a scrubbed environment (`HOME`, `TMPDIR`, `LANG` only), Landlock (read-only: the worker executable, the spec tree, the binary, the system library directories; read-write: a private temporary home), TCP denial and scoping, the seccomp filter that refuses `socket(2)` and every non-`AF_UNIX` `socketpair(2)`, a user and network namespace when the host allows it, and `PR_SET_PDEATHSIG`. The protocol is the sidecar framing on the socketpair that is the worker's stdin. Spawning fails unless the confinement is available, as for the other sidecars.
+- **Watchdog.** Every request has a hard deadline: the decompile limit plus a grace period for `decompile`, a longer one for `open`, a default for the rest, and for an analysis job the gap between two progress events. Past it the parent kills the worker and answers `timeout` with details `{worker: "killed", method, deadline_ms}`. A worker that dies answers its requests with `internal` and details `{worker: "crashed", method, exit_code, signal, log_tail}`. Either way the next request starts a new worker, which re-opens the binary and replays the type definitions. A cancelled request is cancelled in the worker (`cancel {op}`); if it has not stopped within a grace period the worker is killed too, so cancellation is hard as well.
+- **Core dumps.** The worker marks itself non-dumpable unless asked (`WorkerOptions::core_dumps`): on a host with `systemd-coredump` writing the core keeps the dying process, and so its channel, open for seconds, which would turn a crash into a timeout.
+- `Isolation::InProcess` keeps the old behaviour for tests and for hosts without the worker binary; non-Unix platforms always run in-process for now.
 
 ## Phases
 
 1. **Done:** source fetch and build, shim, ELF loader, discovery, decompile with tokens, disassembly, memory, Sleigh lifting (`NativeEngine::lift`), and the contract-suite subset. x86-64, with AArch64 working on a hand-built binary.
 2. **Feature parity for the read side.** Done for x86-64 ELF: xrefs, CFG, strings, imports and exports, the type store fed to the decompiler, library prototypes, landing pads, noreturn propagation, the analyzer job, the decompile limit, and the `.sla` compiled from the pinned sources. The whole contract suite except mutation passes. Left for a phase 2b: PE and Mach-O loaders through `object`, 32-bit x86, DWARF types, a demangler (Ghidra shows demangled C++ names), and decompiler options beyond the limit.
-3. **Confinement:** `Session` moves into a confined child process (`kraken-native-worker`) under the existing sidecar spawner. A crash or hang in C++ then costs one decompile, not the daemon. A watchdog gives real timeouts and cancellation.
+3. **Confinement. Done on Linux:** the engine runs in a confined child process (`kraken-native-worker`) under the existing sidecar spawner. A crash or hang in C++ costs one request, not the daemon. A watchdog gives hard timeouts and cancellation, and restarts the worker. Analysis results that only live in the worker (signatures the analyzer filled in) are lost on a restart; the program is re-opened and the type definitions replayed.
 4. **Mutation and the host:** `Mutator` (renames, comments, function create/delete, types) applied from the edit log as the .NET engine does, plus `kraken-host` engine selection with Ghidra/native/auto per project recorded in `meta.json`. `THIRD-PARTY-NOTICES.md` gains the Ghidra decompiler (Apache-2.0) and zlib notices once a shipped binary links the library.
 5. **Windows:** build with MSVC or clang-cl (the `cc` crate already handles that; Ghidra's own build has the flags), then decide whether the native engine becomes the default.
 
@@ -87,7 +92,7 @@ The design keeps a later move cheap. The engine only uses the `Session` API (byt
 
 - KRAKEN can load, analyze, list, disassemble and decompile ELF binaries, and answer xref, CFG, string, symbol and type queries, with no JVM and no Ghidra install. Decompiling is fast: the 375 functions of `cpp_shapes-O0` take under 0.4 s.
 - Building the library takes about 40 s of parallel C++ compilation once per profile. CI without the cached sources builds the stub and skips the native tests.
-- Until phase 3, a decompiler crash takes the process with it. A cancelled or overlong decompile stops at the next action break point, not at once. Decompiles are serialized process-wide.
+- A decompiler crash or hang costs one request and a worker restart (re-opening the program; a second or more for static binaries), not the daemon. Decompiles are serialized per worker. In-process mode keeps the old limits: a crash takes the process with it, and a cancelled or overlong decompile stops at the next action break point.
 - Without DWARF, local functions show inferred types (`int *param_1`) until a prototype is defined in the type store; library calls are typed from the prototype table.
 - Where the native engine and Ghidra disagree on the corpus, it is mostly by design or a Ghidra artifact: Ghidra gives imports addresses in a synthetic `EXTERNAL` block, makes no operand references in code its switch analysis reaches late, leaves landing pads out of C++ bodies, and shows demangled names.
 - Static binaries open slowly: about 10 s each in a debug build, almost all of it spent in the decompiler's switch recovery for glibc functions.

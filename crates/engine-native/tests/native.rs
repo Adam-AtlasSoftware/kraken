@@ -1,11 +1,14 @@
 //! The native engine against the corpus. Needs the native build (`cargo xtask native-src`) and a
 //! Ghidra install for its `.sla` files (`KRAKEN_GHIDRA_HOME` or `~/.cache/kraken-dev/ghidra`); no
 //! JVM. Each test returns early with a "skipped" note when either is missing.
+//!
+//! The engines run in the confined worker process (`kraken-native-worker`, the default);
+//! `KRAKEN_NATIVE_TEST_IN_PROCESS=1` runs them in-process instead. The contract suite runs both.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use engine_native::{NativeConfig, NativeEngine};
+use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
 use kraken_engine::testing::{ExpectedFunction, FixtureExpectations, run_contract_suite};
 use kraken_engine::{
     AnalyzeRequest, Analyzer, CancellationToken, Decompiler, DisasmRequest, Disassembler,
@@ -32,7 +35,22 @@ fn config(use_symbols: bool) -> Option<NativeConfig> {
         return None;
     }
     c.use_symbols = use_symbols;
+    c.isolation = isolation();
     Some(c)
+}
+
+fn isolation() -> Isolation {
+    if std::env::var_os("KRAKEN_NATIVE_TEST_IN_PROCESS").is_some_and(|v| v == "1") {
+        Isolation::InProcess
+    } else {
+        isolation_worker()
+    }
+}
+
+fn isolation_worker() -> Isolation {
+    Isolation::Worker(WorkerOptions::with_program(env!(
+        "CARGO_BIN_EXE_kraken-native-worker"
+    )))
 }
 
 async fn open(binary: &str, use_symbols: bool) -> Option<(NativeEngine, ProgramInfo)> {
@@ -46,6 +64,11 @@ async fn open(binary: &str, use_symbols: bool) -> Option<(NativeEngine, ProgramI
         )
         .await
         .expect("open_binary");
+    // the program really lives in a worker unless in-process was asked for
+    assert_eq!(
+        e.worker_pid().is_some(),
+        matches!(isolation(), Isolation::Worker(_))
+    );
     Some((e, info))
 }
 
@@ -366,11 +389,21 @@ async fn contract_suite_subset() {
             // .rodata holds no function
             scratch: Locator::ram(0x102000),
         };
-        // the suite opens the binary again through the loader, on a fresh engine
+        // the suite opens the binary again through the loader, on a fresh engine, once in each
+        // isolation mode
         let fresh = NativeEngine::new(config(true).expect("config"));
         run_contract_suite(&fresh, &exp)
             .await
             .unwrap_or_else(|e| panic!("{binary}: {e}"));
+        let mut c = config(true).expect("config");
+        c.isolation = match c.isolation {
+            Isolation::InProcess => isolation_worker(),
+            Isolation::Worker(_) => Isolation::InProcess,
+        };
+        let other = NativeEngine::new(c);
+        run_contract_suite(&other, &exp)
+            .await
+            .unwrap_or_else(|e| panic!("{binary} (other isolation mode): {e}"));
     }
 }
 
@@ -456,7 +489,7 @@ async fn library_prototypes_type_call_sites() {
     }
     // `exit` never returns, by the table and by discovery
     let exit = fns.iter().find(|f| f.name == "exit").expect("exit stub");
-    let stats = e.stats().expect("stats");
+    let stats = e.stats().await.expect("stats");
     assert!(stats.noreturn.contains(&offset(&exit.locator)));
 
     // a user-defined struct and prototype change the output of a local function
@@ -521,7 +554,7 @@ async fn library_prototypes_type_call_sites() {
     // Ghidra with DWARF: `int cmp_id(record *a,record *b) { return a->id - b->id; }`
     assert!(r.text.contains("cmp_id(record *a,record *b)"), "{}", r.text);
     assert!(r.text.contains("a->id - b->id"), "{}", r.text);
-    assert!(e.stats().expect("stats").pending_types.is_empty());
+    assert!(e.stats().await.expect("stats").pending_types.is_empty());
 }
 
 /// The analyzer reports every stage, fills in signatures from the decompiler and stops when
@@ -621,6 +654,7 @@ async fn switches_landing_pads_and_noreturn() {
     let vm_fail = fns.iter().find(|f| f.name == "vm_fail").expect("vm_fail");
     assert!(
         e.stats()
+            .await
             .expect("stats")
             .noreturn
             .contains(&offset(&vm_fail.locator))
@@ -647,7 +681,7 @@ async fn switches_landing_pads_and_noreturn() {
 
     // C++: exception landing pads are part of the bodies, so sizes match the symbol table
     let (cpp, info) = open("cpp_shapes-O0", true).await.expect("open cpp");
-    assert!(cpp.stats().expect("stats").landing_pads > 0);
+    assert!(cpp.stats().await.expect("stats").landing_pads > 0);
     let cpp_truth = truth("cpp_shapes-O0", info.base.0);
     let found: BTreeMap<u64, FunctionSummary> = listing(&cpp)
         .await
