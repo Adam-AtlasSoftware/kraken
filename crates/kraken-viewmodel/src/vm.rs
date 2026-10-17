@@ -1022,6 +1022,27 @@ impl ViewModel {
             refreshing: false,
         });
         self.request_current();
+        self.publish_selection();
+    }
+
+    /// Tells agents (through the daemon; the MCP resource `kraken://gui/selection`) which
+    /// function and address the person is looking at. Fire and forget: a backend without a
+    /// daemon ignores it, and a failure changes nothing on screen.
+    pub(crate) fn publish_selection(&self) {
+        let Some(cur) = &self.current else {
+            return;
+        };
+        let address = self.views.cursor.unwrap_or(cur.address);
+        let selection = json!({
+            "kind": "function",
+            "function": hex(cur.address),
+            "function_name": cur.name,
+            "address": hex(address),
+        });
+        let backend = self.backend.clone();
+        self.rt.spawn(async move {
+            let _ = backend.publish_selection(Some(selection)).await;
+        });
     }
 
     /// Reloads the detail and decompilation of the function being viewed.

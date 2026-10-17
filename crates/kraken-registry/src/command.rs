@@ -46,8 +46,14 @@ pub struct CommandSpec {
     pub name: String,
     /// One-line summary for listings and help.
     pub summary: String,
-    /// Long documentation (markdown allowed).
+    /// What a caller needs to use the command: when to use it, the arguments that matter and a
+    /// call example (`Example: name {"arg": 1}`). Short, because tool lists carry it for every
+    /// command: MCP clients and the assistant send it to the model.
     pub doc: String,
+    /// Background for people reading the reference: limits, internals, the full behaviour. Not
+    /// part of the tool description a model sees.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub details: String,
     /// Command kind.
     pub kind: CommandKind,
     /// Permission class.
@@ -68,6 +74,7 @@ impl CommandSpec {
             name: name.to_string(),
             summary: summary.to_string(),
             doc: String::new(),
+            details: String::new(),
             kind,
             permission,
             needs: Vec::new(),
@@ -78,6 +85,22 @@ impl CommandSpec {
     pub fn doc(mut self, doc: &str) -> Self {
         self.doc = doc.to_string();
         self
+    }
+
+    /// Sets the background text of the reference (see [`CommandSpec::details`]).
+    pub fn details(mut self, details: &str) -> Self {
+        self.details = details.to_string();
+        self
+    }
+
+    /// The text a model sees as the tool description: the summary and the short doc. One
+    /// definition for the MCP server and the assistant's own tool host.
+    pub fn tool_description(&self) -> String {
+        if self.doc.trim().is_empty() {
+            self.summary.clone()
+        } else {
+            format!("{}\n\n{}", self.summary, self.doc.trim())
+        }
     }
 
     /// Sets the engine capabilities the command needs.

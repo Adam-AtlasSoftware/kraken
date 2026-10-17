@@ -15,7 +15,7 @@ use kraken_registry::{
 };
 use serde_json::Value;
 
-use crate::daemon::{CallParams, DaemonClient, absolute};
+use crate::daemon::{CallParams, DaemonClient, GuiSelectionReply, absolute};
 
 /// A place commands run.
 #[async_trait]
@@ -25,6 +25,17 @@ pub trait CommandBackend: Send + Sync {
 
     /// Takes the non-fatal notices collected so far (a stale engine cache, ...).
     fn take_warnings(&self) -> Vec<String>;
+
+    /// What the person has selected in a GUI attached to the same daemon. Only a daemon can know
+    /// this; an in-process backend has no GUI beside it and reports none.
+    async fn gui_selection(&self) -> Result<GuiSelectionReply, ProtoError> {
+        Ok(GuiSelectionReply {
+            attached: false,
+            stale: false,
+            age_secs: 0,
+            selection: None,
+        })
+    }
 }
 
 fn is_project_command(name: &str) -> bool {
@@ -264,6 +275,11 @@ impl CommandBackend for DaemonBackend {
 
     fn take_warnings(&self) -> Vec<String> {
         self.warnings.take()
+    }
+
+    async fn gui_selection(&self) -> Result<GuiSelectionReply, ProtoError> {
+        let dir = self.current_project().ok_or_else(no_project)?;
+        self.client.gui_selection(&dir).await
     }
 }
 

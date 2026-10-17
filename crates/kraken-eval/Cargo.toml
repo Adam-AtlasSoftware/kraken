@@ -1,0 +1,28 @@
+[package]
+name = "kraken-eval"
+description = "KRAKEN evaluation harness: scripted tasks over the corpus with ground truth, scored for any assistant backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+engine-fake = { path = "../engine-fake", version = "0.0.0" }
+kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
+kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-proto.workspace = true
+kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros"] }
+tokio-util = { version = "0.7.16", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }

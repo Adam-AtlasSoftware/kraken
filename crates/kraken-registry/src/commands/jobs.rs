@@ -52,10 +52,15 @@ impl Command for Analyze {
             Permission::Mutating,
         )
         .doc(
-            "Runs the staged analysis (load, core, expensive) as a job; poll with `job_status` or \
-             `job_await`. Results are partial until it finishes. Edits made meanwhile are logged \
-             and reported as `queued`; they are pushed to the engine when analysis completes. If \
-             an analysis is already running its job is returned.",
+            "Finds the functions, types and references of the binary. Returns a `job_id`: wait \
+             with `job_await`. Run it once after opening a new project; other tools give partial \
+             results until it finishes. If it is already running, that job is returned.\n\
+             Example: analyze {}",
+        )
+        .details(
+            "Runs the staged analysis (load, core, expensive) as a job. Edits made meanwhile are \
+             logged and reported as `queued`; they are pushed to the engine when analysis \
+             completes.",
         )
         .needs(&[Cap::Analyzer])
     }
@@ -221,6 +226,12 @@ impl Command for JobStatus {
             CommandKind::Query,
             Permission::Safe,
         )
+        .doc(
+            "Looks at a job without waiting: `status` is `running`, `succeeded`, `failed` \
+             or `cancelled`, with `progress` while it runs and the `result` once it succeeded. \
+             To block until it ends use `job_await`.\n\
+             Example: job_status {\"job_id\": \"job-1\"}",
+        )
     }
 
     async fn run(
@@ -260,8 +271,9 @@ impl Command for JobAwait {
             Permission::Safe,
         )
         .doc(
-            "Returns the job as soon as it ends, or after `timeout_ms` with `timed_out: true` \
-             and the job still running; call again to keep waiting.",
+            "Blocks until the job ends and returns it. After `timeout_ms` it returns early with \
+             `timed_out: true` and the job still running: call again to keep waiting.\n\
+             Example: job_await {\"job_id\": \"job-1\", \"timeout_ms\": 60000}",
         )
     }
 
@@ -298,7 +310,11 @@ impl Command for JobCancel {
             CommandKind::Mutation,
             Permission::Mutating,
         )
-        .doc("Cancellation is cooperative; use `job_await` to see the job end as `cancelled`.")
+        .doc(
+            "Asks a running job to stop. It stops cooperatively: `job_await` shows when it ends \
+             as `cancelled`.\n\
+             Example: job_cancel {\"job_id\": \"job-1\"}",
+        )
     }
 
     async fn run(

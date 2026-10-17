@@ -200,6 +200,13 @@ pub trait Backend: Send + Sync {
         ))
     }
 
+    /// Tells agents what the person is looking at (a `GuiSelection` as JSON, or `None` for
+    /// nothing). Only a backend that reaches a daemon can; others ignore it.
+    async fn publish_selection(&self, selection: Option<Value>) -> Result<(), ProtoError> {
+        let _ = selection;
+        Ok(())
+    }
+
     /// The commands this backend offers.
     fn commands(&self) -> Vec<CommandInfo>;
 

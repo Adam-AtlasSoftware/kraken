@@ -21,6 +21,10 @@
 //! for that task, like a real agent following the task prompt. `FAKE_ACP_TASK_PERMISSION=1`
 //! makes such a turn ask for permission to run a shell command first.
 //!
+//! A prompt that contains `<kraken-eval id="...">` is an evaluation task (`kraken eval`): the
+//! agent replays the tool calls and the answer the JSON file named by `FAKE_ACP_EVAL_ANSWERS`
+//! holds for that id.
+//!
 //! `FAKE_ACP_SCRIPT=kraken` makes every other prompt play the `kraken` turn.
 //! `FAKE_ACP_REQUIRE_AUTH=1` makes `session/new` fail with an authentication error.
 //! `FAKE_ACP_ALLOW_NO_MCP=1` lets `session/new` succeed without the KRAKEN MCP server (the
@@ -299,6 +303,7 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             }
             "die" => std::process::exit(7),
             "kraken" => self.kraken_turn(id),
+            _ if text.contains("<kraken-eval id=\"") => self.eval_turn(id, &text),
             _ if text.contains("<kraken-result>") => self.task_turn(id, &text),
             _ if std::env::var("FAKE_ACP_SCRIPT").as_deref() == Ok("kraken") => {
                 self.kraken_turn(id)
@@ -436,6 +441,39 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             "\n\nUnderstood, I did not run the command."
         })?;
         self.end(id, if cancelled { "cancelled" } else { "end_turn" })
+    }
+
+    /// An evaluation task (`kraken eval`): the prompt names its task in
+    /// `<kraken-eval id="...">`, and the answer comes from the JSON file named by
+    /// `FAKE_ACP_EVAL_ANSWERS`: `{"<id>": {"tools": [{"name": "decompile", "arguments": {...}}],
+    /// "answer": "text"}}`. A task the file does not know gets a reply with no answer block, as
+    /// an agent that gave up would.
+    fn eval_turn(&mut self, id: &Value, prompt: &str) -> io::Result<()> {
+        let task = prompt
+            .split_once("<kraken-eval id=\"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(task, _)| task.to_string())
+            .unwrap_or_default();
+        let script: Value = std::env::var_os("FAKE_ACP_EVAL_ANSWERS")
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(Value::Null);
+        let entry = &script[task.as_str()];
+        self.chunk("Let me look at the program. ")?;
+        for (i, call) in entry["tools"].as_array().into_iter().flatten().enumerate() {
+            let name = call["name"].as_str().unwrap_or("project_info");
+            self.tool(
+                &format!("e{i}"),
+                &format!("mcp__kraken__{name}"),
+                call["arguments"].clone(),
+                "ok",
+            )?;
+        }
+        match entry["answer"].as_str() {
+            Some(answer) => self.chunk(answer)?,
+            None => self.chunk("I could not work this out.")?,
+        }
+        self.end(id, "end_turn")
     }
 
     /// An assistant task: KRAKEN tool calls, then prose and the `<kraken-result>` block.

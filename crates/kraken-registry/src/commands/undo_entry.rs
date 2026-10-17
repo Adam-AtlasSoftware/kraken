@@ -255,14 +255,19 @@ impl Command for UndoEntry {
             Permission::Mutating,
         )
         .doc(
-            "Undoes the entry with a compensating log entry, however old it is. A later edit \
-             depends on it when its read-set names a key the entry wrote (transitively). Without \
-             `cascade`, an entry with dependents is refused with `invalid_argument` and \
-             `details.dependents` (entry, author, command, keys); with `cascade` the dependents \
-             are undone first, newest first, then the entry. After undoing a type or signature \
-             edit the affected functions are re-decompiled, `drift` reports where the engine \
-             disagrees with the log, and `tainted` lists the functions whose derived data is \
-             marked stale (see `tainted_list`). Agents can only undo their own edits.",
+            "Reverses one edit from `history`, however old. If later edits build on it the call \
+             is refused and lists them; pass `cascade: true` to undo those first. Agents can \
+             only undo their own edits. Check with `undo_preview` first.\n\
+             Example: undo_entry {\"entry_id\": 12, \"cascade\": false}",
+        )
+        .details(
+            "Undoes the entry with a compensating log entry. A later edit depends on it when \
+             its read-set names a key the entry wrote (transitively). Without `cascade` an entry \
+             with dependents is refused with `invalid_argument` and `details.dependents` \
+             (entry, author, command, keys); with it the dependents are undone first, newest \
+             first. After undoing a type or signature edit the affected functions are \
+             re-decompiled, `drift` reports where the engine disagrees with the log, and \
+             `tainted` lists the functions whose derived data is marked stale.",
         )
         .needs(&[Cap::Mutator])
     }
@@ -305,10 +310,10 @@ impl Command for UndoPreviewCommand {
             Permission::Safe,
         )
         .doc(
-            "Lists the later edits that depend on the entry (author, command, keys), the order \
-             they would be undone in and the functions that would be marked stale. Changes \
-             nothing. Fails with `invalid_argument` for an entry that is not an applied, \
-             not-yet-undone original edit.",
+            "Dry run of `undo_entry`: lists the later edits that depend on the entry, the order \
+             they would be undone in and the functions that would become stale. Changes \
+             nothing. Fails for an entry that is not an applied, not yet undone edit.\n\
+             Example: undo_preview {\"entry_id\": 12}",
         )
     }
 
@@ -341,9 +346,9 @@ impl Command for TaintedList {
             Permission::Safe,
         )
         .doc(
-            "Undoing a type or signature edit does not reverse what was derived from it \
-             (decompiler output, explanations); those functions are marked stale until \
-             `tainted_clear`.",
+            "Functions whose decompile or explanation may be out of date because a type or \
+             signature edit was undone. Re-read them (`decompile`), then `tainted_clear`.\n\
+             Example: tainted_list {}",
         )
     }
 
@@ -376,7 +381,11 @@ impl Command for TaintedClear {
             CommandKind::Mutation,
             Permission::Mutating,
         )
-        .doc("Call after the function's derived data was re-read. It is not an annotation edit and is not logged.")
+        .doc(
+            "Marks a function from `tainted_list` as up to date, after you re-read its \
+             decompile. Not an annotation edit; it is not logged.\n\
+             Example: tainted_clear {\"address\": \"0x401136\"}",
+        )
     }
 
     async fn run(

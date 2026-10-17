@@ -22,6 +22,7 @@ clap = { version = "4", default-features = false, features = ["std", "help", "us
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-eval = { path = "../kraken-eval", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
 kraken-ipc = { version = "0.0.0", path = "../kraken-ipc" }
 kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }

@@ -282,6 +282,7 @@ impl Assistant {
                         warnings.extend(w);
                         (Some(TaskOutput::Overview(o)), prose)
                     }
+                    TaskKind::Custom => (None, prose),
                     TaskKind::AutoName => {
                         let opts = task.autoname.unwrap_or_default();
                         let (r, w) = build_autoname(json, &stats, opts.dry_run, opts.limit);

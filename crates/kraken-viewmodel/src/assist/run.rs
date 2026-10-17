@@ -870,6 +870,8 @@ impl ViewModel {
                     "The assistant did not produce an overview. Try again.".to_string(),
                 )),
             },
+            // Not started from the GUI; whatever streamed stays as the answer.
+            TaskKind::Custom => {}
             TaskKind::AutoName => {
                 drop_prose(&mut self.assist.items);
                 let review = build_review(self, &result);

@@ -26,6 +26,10 @@ A loaded model's lifetime is independent of the daemon's idle timer. The UI alwa
 
 **Licensing.** Any inference backend is license-reviewed before it joins the default build. CUDA is never bundled.
 
+**Context for agents (MCP prompts and resources).** The MCP server offers prompts (`getting-started`, `explain-function`, `name-components`, `prepare-rewrite`) and read-only resources (the program summary, a function's decompile by URI, the glossary, and what the GUI shows) so an agent starts with the program's context instead of discovering it call by call. Instruction text is written by KRAKEN; anything from the binary is attached as a separate block marked as data. The GUI selection travels GUI to daemon (`gui_selection_set`, user credential only) to MCP server (`gui_selection`, any credential, for projects the agent may use). Tool descriptions are the registry's: a short `doc` with a worked `Example:` that tests check, and a longer `details` text that only the CLI help and the reference carry.
+
+**Measuring the assistants.** `kraken eval` (crate `kraken-eval`) runs scripted tasks over the corpus (naming stripped functions against the DWARF names, finding functions, questions about strings and imports) through the same `Assistant` for a model API and for a terminal agent, and scores the answers without a model. Its CI mode replays a cassette through `ReplayProvider` and drives the fake ACP agent from the same script, over recorded fixtures: deterministic, offline, and a test of the harness rather than of any model.
+
 ## Consequences
 
 - Users choose how they use AI.

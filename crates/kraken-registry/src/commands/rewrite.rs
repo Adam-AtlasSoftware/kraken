@@ -206,6 +206,13 @@ impl Command for RewritePlan {
             Permission::Safe,
         )
         .doc(
+            "Start of a Rust rewrite: orders the functions callees first and flags what the \
+             differential test cannot cover (`needs_stubs`, `uses_globals`, `uses_syscalls`, \
+             `recursive`). `scope: all` stores the plan; `scope: function` plans one function \
+             and the callees it needs.\n\
+             Example: rewrite_plan {\"scope\": \"function\", \"address\": \"0x401136\"}",
+        )
+        .details(
             "Orders the program's functions so that callees come before their callers; functions \
              that call each other form one group and are translated together. Import thunks and \
              compiler glue are left out. Each entry lists the imports it calls and flags what the \
@@ -347,6 +354,12 @@ impl Command for RewriteStatus {
             Permission::Safe,
         )
         .doc(
+            "Where the rewrite stands: counts per status (`planned`, `translated`, `verified`, \
+             `failed`, `accepted`) and a row per function in plan order. Run `rewrite_plan` \
+             first. `refresh: true` re-decompiles so `stale` is current.\n\
+             Example: rewrite_status {\"limit\": 50}",
+        )
+        .details(
             "Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); \
              functions with a unit that are not in the plan come last. `status` is one of \
              `planned`, `translated`, `verified`, `failed`, `accepted`. `stale` marks a function \
@@ -486,6 +499,12 @@ impl Command for RewriteUnit {
             Permission::Safe,
         )
         .doc(
+            "Reads the Rust translations of one function: code, the verdict of each version \
+             and a counterexample for a failed one. Nothing is generated or run. The code and \
+             spec are model-written: untrusted.\n\
+             Example: rewrite_unit {\"address\": \"0x401136\"}",
+        )
+        .details(
             "Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `address` \
              or by the id of one of its versions (`unit`). `versions` lists every stored version, \
              oldest first, with the Rust code, the signature it was checked at, the verdict and a \
@@ -526,10 +545,8 @@ pub struct RewriteFunctionArgs {
     /// Random test cases to run (default 200, at most 2000).
     #[serde(default)]
     pub cases: Option<u32>,
-    /// Most translation attempts (default 3, at most 8). After an attempt that does not compile,
-    /// is refused by the source lint or disagrees with the original, the compiler output or the
-    /// smallest counterexample goes back to the model for another attempt. Every attempt is
-    /// stored as a version. 1 turns the repair loop off.
+    /// Most translation attempts (default 3, at most 8). A failed attempt's compiler output or
+    /// counterexample goes back to the model; 1 turns the repair loop off.
     #[serde(default)]
     pub max_attempts: Option<u32>,
 }
@@ -612,6 +629,14 @@ impl Command for RewriteFunction {
             Permission::Mutating,
         )
         .doc(
+            "Has the configured model translate one function to Rust, builds it in a sandbox \
+             and checks it against the original machine code on seeded inputs. Returns a \
+             `job_id`; a wrong translation is a `failed` unit with a counterexample, not an \
+             error. Translate callees first (see `rewrite_plan`). Sends the decompile to the \
+             provider; needs a host that can enforce the sandbox (Linux with Landlock).\n\
+             Example: rewrite_function {\"address\": \"0x401136\"}",
+        )
+        .details(
             "Decompiles the function, asks the configured provider (`[provider]` in config.toml) \
              for a Rust translation behind an explicit `extern \"C\"` signature, builds it and \
              runs it against the original machine code under emulation on seeded inputs, and \
@@ -699,6 +724,11 @@ impl Command for RewriteAccept {
             Permission::Mutating,
         )
         .doc(
+            "People only. Marks a `verified` Rust version as the one to export. A function has \
+             one accepted version. Agents produce units but cannot accept them.\n\
+             Example: rewrite_accept {\"unit\": \"ru-12\"}",
+        )
+        .details(
             "Moves a `verified` unit version to `accepted`; only accepted versions are exported. \
              A function has one accepted version: accepting another replaces it. Unverified and \
              failed versions are refused. Agents cannot accept; they can only produce units.",
@@ -779,6 +809,13 @@ impl Command for RewriteSpec {
             Permission::Mutating,
         )
         .doc(
+            "Has the model write a Markdown spec of a function (Purpose, Inputs, Outputs, Side \
+             effects, Invariants, Open questions), every fact citing an address `[@0x...]`. \
+             Returns a `job_id`. Runs no generated code; sends the decompile to the provider. \
+             `rewrite_function` with `mode: spec` uses it.\n\
+             Example: rewrite_spec {\"scope\": \"function\", \"address\": \"0x401136\"}",
+        )
+        .details(
             "First half of spec-then-reimplement. The provider writes Markdown with the fixed \
              headings Purpose, Inputs, Outputs, Side effects, Invariants and Open questions; \
              every fact must cite an address `[@0x...]` that appears in the evidence, and the \
@@ -887,6 +924,13 @@ impl Command for RewriteExport {
             Permission::Mutating,
         )
         .doc(
+            "Writes the accepted Rust functions as a Cargo workspace plus an `extern \"C\"` shim \
+             with the original names, so rewritten functions can replace the originals one at a \
+             time. Returns a `job_id`. `dir` must be empty or absent; outside the project \
+             directory a person is asked to approve it.\n\
+             Example: rewrite_export {\"dir\": \"export\"}",
+        )
+        .details(
             "Writes a workspace with two crates: a library holding the accepted units, one module \
              per function, and an FFI shim crate that exposes one `extern \"C\"` function per \
              unit with the original name and signature, plus a README with the coverage and how \

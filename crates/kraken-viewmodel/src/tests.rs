@@ -379,6 +379,29 @@ fn back_and_forward_walk_the_history() {
 }
 
 #[test]
+fn the_function_in_view_is_published_for_agents() {
+    let mut r = opened(base_backend());
+    assert!(r.backend.selections().is_empty(), "nothing is selected yet");
+    r.vm.select_function(0x401040);
+    assert!(r.vm.block_until_idle(WAIT));
+    // The publication is fire and forget on the runtime; wait for it to land.
+    let start = Instant::now();
+    while r.backend.selections().is_empty() && start.elapsed() < WAIT {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let last = r
+        .backend
+        .selections()
+        .pop()
+        .flatten()
+        .expect("a published selection");
+    assert_eq!(last["kind"], "function");
+    assert_eq!(last["function"], "0x401040");
+    assert_eq!(last["function_name"], "helper");
+    assert_eq!(last["address"], "0x401040");
+}
+
+#[test]
 fn a_slow_earlier_decompile_cannot_overwrite_a_newer_one() {
     let gate = Arc::new(AtomicUsize::new(0));
     let g = gate.clone();

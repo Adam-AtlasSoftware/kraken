@@ -227,6 +227,39 @@ fn calls_and_commands_go_through_the_daemon() {
 }
 
 #[test]
+fn what_the_window_shows_reaches_an_agent_through_the_daemon() {
+    let rig = Rig::new();
+    let backend = rig.backend();
+    let mut vm = rig.analyzed_vm(&backend);
+    let (addr, name) = first_function(&vm);
+    let agent = rig.other_client(ClientKind::Mcp);
+    let nothing = rig
+        .rt
+        .block_on(agent.gui_selection(&rig.project_dir()))
+        .expect("reply");
+    assert!(!nothing.attached);
+
+    vm.select_function(addr);
+    let mut seen = None;
+    let start = std::time::Instant::now();
+    while start.elapsed() < WAIT {
+        let r = rig
+            .rt
+            .block_on(agent.gui_selection(&rig.project_dir()))
+            .expect("reply");
+        if r.attached {
+            seen = r.selection;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let sel = seen.expect("the window published its selection");
+    assert_eq!(sel.kind, "function");
+    assert_eq!(sel.function, Some(format!("{addr:#x}")));
+    assert_eq!(sel.function_name.as_deref(), Some(name.as_str()));
+}
+
+#[test]
 fn an_agent_edit_from_a_second_client_refreshes_the_gui_with_an_undo() {
     let rig = Rig::new();
     let backend = rig.backend();

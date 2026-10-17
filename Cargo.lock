@@ -2717,6 +2717,7 @@ dependencies = [
  "kraken-agent",
  "kraken-assist",
  "kraken-engine",
+ "kraken-eval",
  "kraken-host",
  "kraken-infer",
  "kraken-ipc",
@@ -2761,6 +2762,27 @@ dependencies = [
  "kraken-proto",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "kraken-eval"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "engine-fake",
+ "kraken-acp",
+ "kraken-agent",
+ "kraken-assist",
+ "kraken-engine",
+ "kraken-host",
+ "kraken-proto",
+ "kraken-registry",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
@@ -2882,6 +2904,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "engine-fake",
+ "kraken-assist",
  "kraken-engine",
  "kraken-host",
  "kraken-proto",

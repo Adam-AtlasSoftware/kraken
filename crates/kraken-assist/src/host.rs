@@ -244,11 +244,7 @@ pub(crate) fn shape_output(mut v: Value) -> Value {
 }
 
 fn description(spec: &CommandSpec) -> String {
-    if spec.doc.trim().is_empty() {
-        spec.summary.clone()
-    } else {
-        format!("{}\n\n{}", spec.summary, spec.doc)
-    }
+    spec.tool_description()
 }
 
 fn input_schema(schema: &Value) -> Value {

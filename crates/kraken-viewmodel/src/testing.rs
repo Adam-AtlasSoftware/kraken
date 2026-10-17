@@ -24,6 +24,7 @@ struct Script {
 /// fails with `unsupported`.
 pub struct FakeBackend {
     script: Mutex<Script>,
+    selections: Mutex<Vec<Option<Value>>>,
     commands: Vec<CommandInfo>,
     events: broadcast::Sender<BackendEvent>,
 }
@@ -40,6 +41,7 @@ impl FakeBackend {
         let (events, _) = broadcast::channel(64);
         FakeBackend {
             script: Mutex::new(Script::default()),
+            selections: Mutex::new(Vec::new()),
             commands: Vec::new(),
             events,
         }
@@ -96,6 +98,14 @@ impl FakeBackend {
             .collect()
     }
 
+    /// Every selection the view-model published, oldest first.
+    pub fn selections(&self) -> Vec<Option<Value>> {
+        self.selections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// Sends a backend event to subscribers.
     pub fn emit(&self, ev: BackendEvent) {
         let _ = self.events.send(ev);
@@ -119,6 +129,14 @@ impl Backend for FakeBackend {
                 format!("no scripted reply for `{command}`"),
             )),
         }
+    }
+
+    async fn publish_selection(&self, selection: Option<Value>) -> Result<(), ProtoError> {
+        self.selections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(selection);
+        Ok(())
     }
 
     fn commands(&self) -> Vec<CommandInfo> {

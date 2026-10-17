@@ -101,6 +101,7 @@ impl ViewModel {
             v.hex.block = Some(i);
         }
         v.hex.scroll_to = Some(addr);
+        self.publish_selection();
     }
 
     /// Shows data at `addr` in the hex view.
