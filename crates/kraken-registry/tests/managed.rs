@@ -98,7 +98,6 @@ impl EngineFactory for KindFactory {
             EngineKind::Ghidra => FakeEngine::new(common::tiny()),
             EngineKind::Dotnet => [
                 Cap::Analyzer,
-                Cap::Mutator,
                 Cap::Memory,
                 Cap::Disassembler,
                 Cap::Xrefs,
@@ -310,9 +309,10 @@ async fn commands_the_dotnet_engine_lacks_answer_unsupported() {
         ("disassemble", json!({"address": "0x6000001"})),
         ("strings", json!({})),
         (
-            "rename_symbol",
-            json!({"address": "0x6000001", "new_name": "Entry"}),
+            "set_type",
+            json!({"address": "0x6000001", "type_name": "int"}),
         ),
+        ("create_function", json!({"address": "0x6000010"})),
     ] {
         let e = r.call(cmd, args).await.unwrap_err();
         assert!(
@@ -320,4 +320,155 @@ async fn commands_the_dotnet_engine_lacks_answer_unsupported() {
             "{cmd} should be unsupported, got {e}"
         );
     }
+}
+
+async fn net_project(r: &Rig) -> String {
+    let dll = r.write("app.dll", b"MZ managed");
+    let dir = r.dir("net");
+    r.call("project_create", json!({"binary": dll, "project_dir": dir}))
+        .await
+        .unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn managed_methods_can_be_renamed_commented_and_undone() {
+    let r = Rig::new();
+    net_project(&r).await;
+
+    let out = r
+        .call(
+            "rename_symbol",
+            json!({"address": "0x6000002", "module": MVID, "new_name": "SayHello"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out["status"], "applied", "{out}");
+    assert_eq!(out["key"], format!("managed:{MVID}:0x6000002:name"));
+
+    let f = r
+        .call(
+            "get_function",
+            json!({"address": "0x6000002", "module": MVID}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f["name"]["value"], "SayHello");
+    assert_eq!(f["versions"][format!("managed:{MVID}:0x6000002:name")], 1);
+    let d = r
+        .call("decompile", json!({"address": "0x6000002", "module": MVID}))
+        .await
+        .unwrap();
+    assert!(d["text"]["value"].as_str().unwrap().contains("SayHello"));
+
+    // A second rename sees the first name as the old one; a stale expectation is refused.
+    let e = r
+        .call(
+            "rename_symbol",
+            json!({"address": "0x6000002", "module": MVID, "new_name": "Hi",
+                   "expect_versions": {format!("managed:{MVID}:0x6000002:name"): 0}}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::ConflictStaleRead, "{e}");
+
+    r.call(
+        "set_comment",
+        json!({"address": "0x6000002", "module": MVID, "kind": "plate", "text": "greets"}),
+    )
+    .await
+    .unwrap();
+    let f = r
+        .call(
+            "get_function",
+            json!({"address": "0x6000002", "module": MVID}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f["comments"][0]["kind"], "plate");
+    assert_eq!(f["comments"][0]["text"]["value"], "greets");
+
+    let h = r.call("history", json!({})).await.unwrap();
+    let entries = h["items"].as_array().unwrap();
+    // The stale rename stays in the log as rejected.
+    assert_eq!(entries.len(), 3, "{h}");
+    assert_eq!(entries[0]["address"], "0x6000002", "{h}");
+
+    r.call("undo", json!({})).await.unwrap();
+    r.call("undo", json!({})).await.unwrap();
+    let f = r
+        .call(
+            "get_function",
+            json!({"address": "0x6000002", "module": MVID}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f["name"]["value"], "Greet");
+    assert!(f["comments"].as_array().is_none_or(Vec::is_empty), "{f}");
+}
+
+#[tokio::test]
+async fn managed_edits_need_a_module_and_a_supported_operation() {
+    let r = Rig::new();
+    net_project(&r).await;
+
+    // A native-style address in a .NET project is explained, not logged.
+    let e = r
+        .call(
+            "rename_symbol",
+            json!({"address": "0x6000001", "new_name": "Entry"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::Unsupported, "{e}");
+    assert!(e.message.contains("module"), "{e}");
+
+    let e = r
+        .call(
+            "set_calling_convention",
+            json!({"address": "0x6000001", "convention": "stdcall"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::Unsupported, "{e}");
+
+    let e = r
+        .call(
+            "rename_symbol",
+            json!({"address": "0x6000001", "module": "not-a-guid", "new_name": "Entry"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::InvalidArgument, "{e}");
+
+    let h = r.call("history", json!({})).await.unwrap();
+    assert!(
+        h["items"].as_array().unwrap().is_empty(),
+        "nothing is logged: {h}"
+    );
+}
+
+#[tokio::test]
+async fn managed_annotations_come_back_when_the_project_is_reopened() {
+    let r = Rig::new();
+    let dir = net_project(&r).await;
+    r.call(
+        "rename_symbol",
+        json!({"address": "0x6000002", "module": MVID, "new_name": "SayHello"}),
+    )
+    .await
+    .unwrap();
+
+    // The factory builds a fresh engine that knows nothing; the log gives the rename back.
+    r.call("project_open", json!({"project_dir": dir}))
+        .await
+        .unwrap();
+    let f = r
+        .call(
+            "get_function",
+            json!({"address": "0x6000002", "module": MVID}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f["name"]["value"], "SayHello");
 }

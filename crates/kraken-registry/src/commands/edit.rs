@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::mutate::{self, Resolved, anchor_for, engine_rejected, submit, submit_as};
+use crate::mutate::{
+    self, Resolved, anchor_for, engine_rejected, managed_anchor_for, submit, submit_as,
+};
 use crate::session::{Project, Session};
 use crate::validate::{clean_comment, validate_name};
 use crate::views::{MutationOutput, MutationStatus, ProposalOut, locator_parts};
@@ -62,8 +64,13 @@ fn invalid(msg: impl Into<String>) -> ProtoError {
 pub struct RenameSymbolArgs {
     /// Address of the function (or label), as `0x...`.
     pub address: Hex64,
-    /// The new name. Agents: `[A-Za-z_][A-Za-z0-9_:.$@<>~]*`, at most 200 characters.
+    /// The new name. Agents: `[A-Za-z_][A-Za-z0-9_:.$@<>~]*`, at most 200 characters. In a .NET
+    /// assembly the name must be a plain C# identifier.
     pub new_name: String,
+    /// Module id (MVID) of a .NET entity; `address` is then its metadata token (method, type,
+    /// field or parameter). Leave out for native code.
+    #[serde(default)]
+    pub module: Option<String>,
     /// Entity versions the edit is based on; see `get_function`.
     #[serde(default)]
     pub expect_versions: Option<BTreeMap<String, u64>>,
@@ -101,7 +108,10 @@ impl Command for RenameSymbol {
     ) -> Result<MutationOutput, ProtoError> {
         let project = s.project()?;
         let name = validate_name("new_name", &args.new_name, ctx.author.kind)?;
-        let r = anchor_for(&project, ctx, args.address).await?;
+        let r = match args.module.as_deref() {
+            Some(m) => managed_anchor_for(&project, ctx, args.address, m).await?,
+            None => anchor_for(&project, ctx, args.address).await?,
+        };
         let old_name = function_at(&r, args.address).map(|f| f.name.clone());
         let op = LogOp::Rename {
             anchor: r.anchor,
@@ -122,6 +132,10 @@ pub struct SetCommentArgs {
     pub kind: CommentKind,
     /// Comment text, at most 4096 characters; empty clears the comment.
     pub text: String,
+    /// Module id (MVID) of a .NET method; `address` is then its metadata token. Leave out for
+    /// native code.
+    #[serde(default)]
+    pub module: Option<String>,
     /// Entity versions the edit is based on; see `get_function`.
     #[serde(default)]
     pub expect_versions: Option<BTreeMap<String, u64>>,
@@ -158,7 +172,10 @@ impl Command for SetComment {
     ) -> Result<MutationOutput, ProtoError> {
         let project = s.project()?;
         let clean = clean_comment(&args.text)?;
-        let r = anchor_for(&project, ctx, args.address).await?;
+        let r = match args.module.as_deref() {
+            Some(m) => managed_anchor_for(&project, ctx, args.address, m).await?,
+            None => anchor_for(&project, ctx, args.address).await?,
+        };
         let mut op = LogOp::SetComment {
             anchor: r.anchor,
             comment_kind: args.kind,

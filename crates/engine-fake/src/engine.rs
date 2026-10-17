@@ -509,6 +509,19 @@ fn rename_in_listing(functions: &mut BTreeMap<FnKey, FixtureFunction>, old: &str
     }
 }
 
+fn anchor_of(op: &LogOp) -> &kraken_proto::Anchor {
+    match op {
+        LogOp::Rename { anchor, .. }
+        | LogOp::SetType { anchor, .. }
+        | LogOp::SetComment { anchor, .. }
+        | LogOp::CreateFunction { anchor, .. }
+        | LogOp::DeleteFunction { anchor, .. }
+        | LogOp::SetFunctionBounds { anchor, .. }
+        | LogOp::SetCodeData { anchor, .. }
+        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+    }
+}
+
 fn valid_name(n: &str) -> bool {
     !n.is_empty() && !n.chars().any(|c| c.is_whitespace() || c.is_control())
 }
@@ -524,7 +537,60 @@ fn check_hash(f: &FixtureFunction, anchor_hash: &str) -> Result<(), EngineReject
 }
 
 impl State {
+    /// Renames and comments on managed anchors (`<module>:<0xtoken>`) for fixtures of methods
+    /// with managed locators; anything else on a managed anchor is unsupported.
+    fn apply_managed_op(
+        &mut self,
+        op: &LogOp,
+        module: &str,
+        token: u32,
+    ) -> Result<(), EngineRejected> {
+        let f = self
+            .functions
+            .get_mut(&(format!("managed:{module}"), u64::from(token)))
+            .ok_or_else(|| not_found(format!("method {token:#x} of module {module}")))?;
+        match op {
+            LogOp::Rename {
+                old_name, new_name, ..
+            } => {
+                if !valid_name(new_name) {
+                    return Err(EngineRejected::new(
+                        ErrorCode::InvalidArgument,
+                        "invalid function name",
+                    ));
+                }
+                let current = f.summary.name.clone();
+                if &current == new_name {
+                    return Ok(());
+                }
+                if old_name.as_ref().is_some_and(|o| *o != current) {
+                    return Err(EngineRejected::new(
+                        ErrorCode::ConflictStaleRead,
+                        format!("method is named {current}"),
+                    ));
+                }
+                rename_in_result(&mut f.decompile, &current, new_name);
+                f.summary.signature = f
+                    .summary
+                    .signature
+                    .as_ref()
+                    .map(|s| replace_word(s, &current, new_name));
+                f.summary.name = new_name.clone();
+                rename_in_listing(&mut self.functions, &current, new_name);
+                Ok(())
+            }
+            LogOp::SetComment { .. } => Ok(()),
+            _ => Err(EngineRejected::new(
+                ErrorCode::Unsupported,
+                "the fake takes renames and comments on managed anchors only",
+            )),
+        }
+    }
+
     fn apply_op(&mut self, op: &LogOp) -> Result<(), EngineRejected> {
+        if let Some((module, token)) = anchor_of(op).managed_parts() {
+            return self.apply_managed_op(op, module, token);
+        }
         match op {
             LogOp::Rename {
                 anchor,

@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use async_trait::async_trait;
 use kraken_engine::{CancellationToken, LoaderSpec, ProgramInfo, SharedEngine, unsupported};
-use kraken_model::{EntryId, Store};
-use kraken_proto::{ErrorCode, ProtoError};
+use kraken_model::{EntryId, StateValue, Store};
+use kraken_proto::{Anchor, CommentKind, ErrorCode, LogOp, ProtoError, VersionedLogOp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -433,6 +433,24 @@ impl Project {
         })
     }
 
+    /// Feeds the current renames and comments of the log to an engine that holds them in memory
+    /// only (the .NET engine). Entries the engine no longer accepts, such as those of an earlier
+    /// build of the assembly, are skipped. Callers hold the write lock.
+    pub(crate) async fn restore_annotations(&self, cancel: &CancellationToken) {
+        let Ok(state) = self.with_store(|s| s.current_state()).await else {
+            return;
+        };
+        let engine = self.engine();
+        let Some(mutator) = engine.mutator() else {
+            return;
+        };
+        for (key, value) in state {
+            if let Some(op) = op_from_state(&key, &value) {
+                let _ = mutator.apply(&VersionedLogOp::new(op), cancel).await;
+            }
+        }
+    }
+
     /// Saves the engine and records `last` as the push watermark saved with it.
     pub(crate) async fn checkpoint(
         &self,
@@ -444,6 +462,40 @@ impl Project {
         let mark = mutator.save(cancel).await?;
         self.with_store(move |s| s.set_watermark(last, &mark.0))
             .await
+    }
+}
+
+/// The op that sets a managed entity's state entry again: `managed:<mvid>:0x<token>:name` or
+/// `...:comment:<slot>`.
+fn op_from_state(key: &str, value: &StateValue) -> Option<LogOp> {
+    let rest = key.strip_prefix("managed:")?;
+    let mut parts = rest.splitn(3, ':');
+    let (module, token, aspect) = (parts.next()?, parts.next()?, parts.next()?);
+    let token = u32::from_str_radix(token.strip_prefix("0x")?, 16).ok()?;
+    let anchor = Anchor::managed(module, token);
+    match (aspect, value) {
+        ("name", StateValue::Name { name }) => Some(LogOp::Rename {
+            anchor,
+            old_name: None,
+            new_name: name.clone(),
+        }),
+        (a, StateValue::Comment { text }) => {
+            let comment_kind = match a.strip_prefix("comment:")? {
+                "plate" => CommentKind::Plate,
+                "pre" => CommentKind::Pre,
+                "eol" => CommentKind::Eol,
+                "post" => CommentKind::Post,
+                "repeatable" => CommentKind::Repeatable,
+                _ => return None,
+            };
+            Some(LogOp::SetComment {
+                anchor,
+                comment_kind,
+                old: None,
+                new: Some(text.clone()),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -726,6 +778,11 @@ impl Session {
         }
         let project = Arc::new(self.build_project(dir, meta, engine, program, store, mismatch));
         self.attach(project.clone());
+        if project.meta().engine_kind == EngineKind::Dotnet {
+            // The .NET engine keeps no database: it gets its annotations back from the log.
+            let _guard = project.write_lock.lock().await;
+            project.restore_annotations(&CancellationToken::new()).await;
+        }
         if project.epoch_mismatch().is_empty() {
             let _guard = project.write_lock.lock().await;
             // Entries left pending by an earlier session are retried; failures stay pending.

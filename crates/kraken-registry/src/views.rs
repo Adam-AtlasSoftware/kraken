@@ -217,9 +217,12 @@ fn op_kind(op: &LogOp) -> &'static str {
 }
 
 fn op_address(op: &LogOp) -> Option<Hex64> {
-    match kraken_model::op_anchor(op).native() {
+    let anchor = kraken_model::op_anchor(op);
+    match anchor.native() {
         Ok((_, offset, _, _)) => Some(offset),
-        Err(_) => None,
+        Err(_) => anchor
+            .managed_parts()
+            .map(|(_, token)| Hex64(u64::from(token))),
     }
 }
 

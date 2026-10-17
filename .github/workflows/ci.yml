@@ -193,6 +193,8 @@ jobs:
   # macOS arm64 and Windows x86_64 are tier 1 from 0.2.x. Real-Ghidra tests stay Linux-only
   # until the sidecar sandbox exists on these platforms (decision 71).
   test-other-os:
+    # Non-blocking for now: Linux first (decision 95).
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
