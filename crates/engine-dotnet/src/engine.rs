@@ -1,17 +1,20 @@
-//! [`DotnetEngine`]: Loader, FunctionLister, Decompiler and a read-only TypeStore over the sidecar.
+//! [`DotnetEngine`]: Loader, FunctionLister, Decompiler, a read-only TypeStore and a Mutator over
+//! the sidecar. The Mutator keeps renames and comments in memory (ILSpy cannot write them); the
+//! engine applies them to the names and C# the sidecar returns. KRAKEN's edit log is the store.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use kraken_engine::{
-    CancellationToken, Cap, Decompiler, Engine, EngineCaps, EngineResult, FunctionLister, Loader,
-    LoaderSpec, ProgramInfo, TypeStore, unsupported,
+    CancellationToken, Cap, Decompiler, Engine, EngineCaps, EngineRejected, EngineResult,
+    FunctionLister, Loader, LoaderSpec, Mutator, ProgramInfo, TypeStore, Watermark, unsupported,
 };
 use kraken_proto::{
-    DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, PROTOCOL_VERSION, Page,
-    PageRequest, ProtoError, TypeDef,
+    DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, LogOp, PROTOCOL_VERSION, Page,
+    PageRequest, ProtoError, TypeDef, VersionedLogOp,
 };
 use kraken_sidecar::LogSink;
 use kraken_sidecar::rpc::RpcClient;
@@ -20,6 +23,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
+use crate::annotate::{self, Annotations};
 use crate::install::DotnetInstall;
 use crate::launch::{Guard, LaunchPlan, launch};
 
@@ -163,6 +167,8 @@ pub struct Diagnostics {
 pub struct DotnetEngine {
     config: EngineConfig,
     running: Mutex<Option<Arc<Running>>>,
+    annotations: Mutex<Annotations>,
+    applied: AtomicU64,
 }
 
 fn page_params(page: &PageRequest) -> Value {
@@ -175,7 +181,16 @@ impl DotnetEngine {
         DotnetEngine {
             config,
             running: Mutex::new(None),
+            annotations: Mutex::new(Annotations::new()),
+            applied: AtomicU64::new(0),
         }
+    }
+
+    fn notes(&self) -> Annotations {
+        self.annotations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn running(&self) -> EngineResult<Arc<Running>> {
@@ -256,6 +271,22 @@ impl DotnetEngine {
             .map_err(|e| r.enrich(e))
     }
 
+    /// The method as the assembly names it, without annotations.
+    async fn raw_function(
+        &self,
+        locator: &Locator,
+        cancel: &CancellationToken,
+    ) -> EngineResult<FunctionSummary> {
+        let locator = self.require_managed(locator)?;
+        self.call(
+            "get_function",
+            json!({"locator": locator}),
+            self.config.deadlines.default,
+            cancel,
+        )
+        .await
+    }
+
     fn require_managed<'a>(&self, locator: &'a Locator) -> EngineResult<&'a Locator> {
         match locator {
             Locator::Managed { .. } => Ok(locator),
@@ -282,6 +313,7 @@ impl Engine for DotnetEngine {
                 Cap::Decompiler,
                 Cap::TypeStore,
                 Cap::FunctionLister,
+                Cap::Mutator,
             ],
         )
     }
@@ -299,6 +331,10 @@ impl Engine for DotnetEngine {
     }
 
     fn function_lister(&self) -> Option<&dyn FunctionLister> {
+        Some(self)
+    }
+
+    fn mutator(&self) -> Option<&dyn Mutator> {
         Some(self)
     }
 }
@@ -358,6 +394,10 @@ impl Loader for DotnetEngine {
         })?;
 
         self.shutdown();
+        *self
+            .annotations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Annotations::new();
         let launched = launch(LaunchPlan {
             install: self.config.install.clone(),
             assembly: assembly.clone(),
@@ -429,13 +469,24 @@ impl FunctionLister for DotnetEngine {
         page: &PageRequest,
         cancel: &CancellationToken,
     ) -> EngineResult<Page<FunctionSummary>> {
-        self.call(
-            "list_functions",
-            page_params(page),
-            self.config.deadlines.default,
-            cancel,
-        )
-        .await
+        let mut p: Page<FunctionSummary> = self
+            .call(
+                "list_functions",
+                page_params(page),
+                self.config.deadlines.default,
+                cancel,
+            )
+            .await?;
+        let notes = self.notes();
+        if !notes.is_empty() {
+            let mvid = self.module_mvid()?;
+            p.items = p
+                .items
+                .into_iter()
+                .map(|f| notes.apply_summary(f, &mvid))
+                .collect();
+        }
+        Ok(p)
     }
 
     async fn get_function(
@@ -443,14 +494,8 @@ impl FunctionLister for DotnetEngine {
         locator: &Locator,
         cancel: &CancellationToken,
     ) -> EngineResult<FunctionSummary> {
-        let locator = self.require_managed(locator)?;
-        self.call(
-            "get_function",
-            json!({"locator": locator}),
-            self.config.deadlines.default,
-            cancel,
-        )
-        .await
+        let f = self.raw_function(locator, cancel).await?;
+        Ok(self.notes().apply_summary(f, &self.module_mvid()?))
     }
 }
 
@@ -475,6 +520,8 @@ impl Decompiler for DotnetEngine {
                 cancel,
             )
             .await?;
+        result.validate_tokens()?;
+        let result = self.notes().apply_decompile(result, &self.module_mvid()?);
         result.validate_tokens()?;
         Ok(result)
     }
@@ -510,6 +557,163 @@ impl TypeStore for DotnetEngine {
             cancel,
         )
         .await
+    }
+}
+
+fn parse_anchor(anchor: &kraken_proto::Anchor, mvid: &str) -> Result<u32, EngineRejected> {
+    let Some((module, token)) = anchor.managed_parts() else {
+        return Err(EngineRejected::new(
+            ErrorCode::Unsupported,
+            "the .NET engine takes managed anchors only (use the `module` argument)",
+        ));
+    };
+    if module != mvid {
+        return Err(EngineRejected::new(
+            ErrorCode::NotFound,
+            format!("module {module} is not the open assembly ({mvid})"),
+        ));
+    }
+    Ok(token)
+}
+
+#[async_trait]
+impl Mutator for DotnetEngine {
+    async fn apply(
+        &self,
+        op: &VersionedLogOp,
+        cancel: &CancellationToken,
+    ) -> Result<(), EngineRejected> {
+        op.check_version()?;
+        let mvid = self.module_mvid()?;
+        match &op.op {
+            LogOp::Rename {
+                anchor,
+                old_name,
+                new_name,
+            } => {
+                let token = parse_anchor(anchor, &mvid)?;
+                if !annotate::is_renamable(token) {
+                    return Err(EngineRejected::new(
+                        ErrorCode::InvalidArgument,
+                        format!("token {token:#x} is not a type, member or parameter"),
+                    ));
+                }
+                let listed = match annotate::table_of(token) {
+                    0x06 => Some(
+                        self.raw_function(&Locator::managed(&mvid, token), cancel)
+                            .await?
+                            .name,
+                    ),
+                    _ => None,
+                };
+                if listed.as_deref().is_some_and(annotate::is_constructor) {
+                    return Err(EngineRejected::new(
+                        ErrorCode::InvalidArgument,
+                        "a constructor is named after its type; rename the type instead",
+                    ));
+                }
+                let original = listed.as_deref().map(annotate::ident_of);
+                let mut notes = self
+                    .annotations
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                let current = notes.name(token).or(original).map(str::to_string);
+                // The edit log holds the listed name (`Ns.Type.Method`) or the bare identifier.
+                let is_current = |name: &str| {
+                    current.as_deref().is_some_and(|c| {
+                        name == c
+                            || listed
+                                .as_deref()
+                                .is_some_and(|l| name == annotate::display_name(l, c))
+                    })
+                };
+                if let Some(old) = old_name
+                    && current.is_some()
+                    && !is_current(old)
+                    && !is_current(new_name)
+                {
+                    return Err(EngineRejected::new(
+                        ErrorCode::ConflictStaleRead,
+                        format!("the name is not `{old}`"),
+                    ));
+                }
+                // Undo hands back the listed name; anything else must be a plain identifier.
+                let new_ident = listed
+                    .as_deref()
+                    .and_then(|l| l.rsplit_once('.'))
+                    .and_then(|(prefix, _)| new_name.strip_prefix(prefix))
+                    .and_then(|r| r.strip_prefix('.'))
+                    .unwrap_or(new_name);
+                if new_name.is_empty() || original == Some(new_ident) {
+                    notes.set_name(token, None);
+                } else {
+                    annotate::validate_identifier(new_ident)?;
+                    notes.set_name(token, Some(new_ident.to_string()));
+                }
+            }
+            LogOp::SetComment {
+                anchor,
+                comment_kind,
+                old,
+                new,
+            } => {
+                let token = parse_anchor(anchor, &mvid)?;
+                if annotate::table_of(token) != 0x06 {
+                    return Err(EngineRejected::new(
+                        ErrorCode::Unsupported,
+                        "comments attach to methods only in the .NET engine",
+                    ));
+                }
+                self.raw_function(&Locator::managed(&mvid, token), cancel)
+                    .await?;
+                let mut notes = self
+                    .annotations
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                let cur = notes.comment(token, *comment_kind).map(str::to_string);
+                if let (Some(old), Some(cur)) = (old.as_deref(), cur.as_deref())
+                    && old != cur
+                    && new.as_deref() != Some(cur)
+                {
+                    return Err(EngineRejected::new(
+                        ErrorCode::ConflictStaleRead,
+                        "the comment changed since it was read",
+                    ));
+                }
+                notes.set_comment(token, *comment_kind, new.clone());
+            }
+            other => {
+                return Err(EngineRejected::new(
+                    ErrorCode::Unsupported,
+                    format!(
+                        "{} is not supported for .NET assemblies; only renames and comments are",
+                        op_name(other)
+                    ),
+                ));
+            }
+        }
+        self.applied.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn save(&self, _cancel: &CancellationToken) -> EngineResult<Watermark> {
+        Ok(Watermark(format!(
+            "dotnet-{}",
+            self.applied.load(Ordering::Relaxed)
+        )))
+    }
+}
+
+fn op_name(op: &LogOp) -> &'static str {
+    match op {
+        LogOp::Rename { .. } => "rename",
+        LogOp::SetType { .. } => "set_type",
+        LogOp::SetComment { .. } => "set_comment",
+        LogOp::CreateFunction { .. } => "create_function",
+        LogOp::DeleteFunction { .. } => "delete_function",
+        LogOp::SetFunctionBounds { .. } => "set_function_bounds",
+        LogOp::SetCodeData { .. } => "set_code_data",
+        LogOp::SetCallingConvention { .. } => "set_calling_convention",
     }
 }
 

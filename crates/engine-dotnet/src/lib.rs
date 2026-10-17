@@ -7,11 +7,13 @@
 //! lists types read-only. It reuses `kraken-sidecar`'s framing, RPC multiplexing and confined
 //! spawner.
 
+pub mod annotate;
 pub mod engine;
 pub mod error;
 pub mod install;
 mod launch;
 
+pub use annotate::Annotations;
 pub use engine::{
     AssemblyInfo, Deadlines, Diagnostics, DotnetEngine, EngineConfig, LANGUAGE_CSHARP,
     REQUIRED_SIDECAR_CAPABILITIES,

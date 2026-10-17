@@ -156,6 +156,33 @@ public sealed class LoadedAssembly
         return mvid.Length == 0 ? null : Locator(mvid, MetadataTokens.GetToken(e.MetadataToken));
     }
 
+    /// <summary>
+    /// A locator for the Param row behind a parameter variable of a method of this assembly; null for
+    /// locals, `this` and parameters of other modules.
+    /// </summary>
+    public JsonObject? ParameterLocatorOf(ICSharpCode.Decompiler.IL.ILVariable v)
+    {
+        if (v.Kind != ICSharpCode.Decompiler.IL.VariableKind.Parameter || v.Index is not int index || index < 0)
+        {
+            return null;
+        }
+        var method = v.Function?.Method;
+        if (method is null || method.MetadataToken.IsNil || method.MetadataToken.Kind != HandleKind.MethodDefinition
+            || !string.Equals(MvidOfModule(method.ParentModule), Mvid, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var def = _md.GetMethodDefinition((MethodDefinitionHandle)method.MetadataToken);
+        foreach (var ph in def.GetParameters())
+        {
+            if (_md.GetParameter(ph).SequenceNumber == index + 1)
+            {
+                return Locator(ph);
+            }
+        }
+        return null;
+    }
+
     public MethodDefinitionHandle ParseMethod(JsonNode? locator)
     {
         if (locator is not JsonObject o || o["kind"]?.GetValue<string>() != "managed")
