@@ -15,7 +15,8 @@ use kraken_registry::commands::{
     CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanScope, RewriteAcceptArgs,
     RewriteAcceptOut, RewriteBackend, RewriteExportResult, RewriteFunctionArgs,
     RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut, RewriteSpecArgs,
-    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, StatusCounts, UnitRow, UnitStatus,
+    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
+    StatusCounts, UnitRow, UnitSpecView, UnitStatus, UnitVersionView,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 
@@ -293,6 +294,38 @@ fn function_result(unit: &RewriteUnit, out: &crate::task::RewriteOutput) -> Rewr
     }
 }
 
+fn unit_version(unit: &RewriteUnit, created: u64) -> UnitVersionView {
+    let (verdict, detail) = verdict_name(&unit.verdict);
+    let u32_of = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    UnitVersionView {
+        unit: unit.id.clone(),
+        version: unit.version,
+        mode: unit.mode,
+        status: unit.status,
+        accepted: unit.status == UnitStatus::Accepted,
+        verdict: verdict.to_string(),
+        verdict_detail: detail.map(Untrusted::sanitized),
+        cases_run: u32_of(unit.summary.cases_run),
+        passed: u32_of(unit.summary.passed),
+        skipped: u32_of(unit.summary.skipped),
+        counterexample: unit.counterexamples.first().map(|c| CounterexampleView {
+            args: c.args.iter().map(render_arg).collect(),
+            differences: c
+                .differences
+                .iter()
+                .map(|d| Untrusted::sanitized(d))
+                .collect(),
+        }),
+        rust_code: Untrusted::sanitized(&unit.rust_code),
+        signature: unit.rust_prototype.clone(),
+        oracle_kind: unit.oracle.kind.clone(),
+        sandbox: unit.summary.sandbox.clone(),
+        created,
+        provider: unit.provenance.provider.clone().unwrap_or_default(),
+        model: unit.provenance.model.clone().unwrap_or_default(),
+    }
+}
+
 fn file_name(path: &str) -> String {
     Path::new(path).file_name().map_or_else(
         || "program".to_string(),
@@ -474,7 +507,8 @@ impl RewriteBackend for RewriteService {
             Ok(())
         } else {
             Err(unsupported(
-                "this host cannot confine generated code (it needs Linux with Landlock); \
+                "this host cannot confine generated code (it needs Linux with Landlock ABI 4+, kernel \
+                 6.7, and a network or seccomp barrier); \
                  rewrite_function and the sandboxed build of rewrite_export refuse to run \
                  model-written code unconfined",
             ))
@@ -606,6 +640,70 @@ impl RewriteBackend for RewriteService {
             counts,
             units: rows.into_iter().skip(start).take(n).collect(),
             next_cursor: next_cursor(start, n, total),
+        })
+    }
+
+    async fn unit(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteUnitArgs,
+    ) -> Result<RewriteUnitOut, ProtoError> {
+        let project = s.project()?;
+        let lift = Lift::new(s, ctx);
+        let (sha, _) = lift.program().map_err(proto)?;
+        // The function: by address (any address inside it) or by one of its version ids.
+        let (entry, by_id) = match (args.address, args.unit) {
+            (Some(a), None) => (lift.listed(a.0).await.map_err(proto)?.address, None),
+            (None, Some(id)) => (0, Some(id)),
+            _ => return Err(invalid("give exactly one of `address` and `unit`")),
+        };
+        let sha2 = sha.clone();
+        let (address, units, times, spec) = with_store(project.dir().to_path_buf(), move |st| {
+            let address = match by_id {
+                Some(id) => {
+                    let Some(u) = st.get(&id)? else {
+                        return Err(RewriteError::Command(ProtoError::new(
+                            ErrorCode::NotFound,
+                            format!("no rewrite unit `{id}`"),
+                        )));
+                    };
+                    if u.anchor.program_sha256 != sha2 {
+                        return Err(RewriteError::Command(invalid(
+                            "that unit was made for a different binary",
+                        )));
+                    }
+                    u.anchor.address
+                }
+                None => format!("{entry:#x}"),
+            };
+            let units = st.versions(&sha2, &address)?;
+            let times = st.created_times(&sha2, &address)?;
+            let spec = st.latest_spec(&sha2, Some(&address))?;
+            Ok((address, units, times, spec))
+        })
+        .await?;
+        let versions = units
+            .iter()
+            .map(|u| {
+                let created = times
+                    .iter()
+                    .find(|(id, _)| *id == u.id)
+                    .map_or(0, |(_, t)| u64::try_from(*t).unwrap_or(0));
+                unit_version(u, created)
+            })
+            .collect();
+        Ok(RewriteUnitOut {
+            address: Hex64(hex(&address)),
+            versions,
+            spec: spec.map(|sp| UnitSpecView {
+                spec: sp.id,
+                markdown: Untrusted::sanitized(&sp.markdown),
+                citations: sp.citations.iter().map(|a| Hex64(*a)).collect(),
+                facts: sp.facts,
+                provider: sp.provider,
+                model: sp.model,
+            }),
         })
     }
 
@@ -921,7 +1019,7 @@ impl RewriteBackend for RewriteService {
             built: build,
             sandbox,
             coverage,
-            readme: written.readme.display().to_string(),
+            readme: Untrusted::sanitized(&written.readme.display().to_string()),
         })
     }
 }
@@ -935,6 +1033,7 @@ fn row(
 ) -> UnitRow {
     match unit {
         Some(u) => UnitRow {
+            unit: u.unit.clone(),
             order,
             address: Hex64(address),
             name: Untrusted::sanitized(name),
@@ -951,6 +1050,7 @@ fn row(
             flags,
         },
         None => UnitRow {
+            unit: String::new(),
             order,
             address: Hex64(address),
             name: Untrusted::sanitized(name),

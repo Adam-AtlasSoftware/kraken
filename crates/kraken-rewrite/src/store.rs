@@ -193,6 +193,8 @@ fn verdict_from(kind: &str, detail: Option<String>) -> Result<Verdict, RewriteEr
 /// One row of the per-function table with the newest version's verdict, for listings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitSummary {
+    /// Id of the newest version (`ru-...`).
+    pub unit: String,
     /// Entry address, `0x...`.
     pub address: String,
     /// Name when the newest version was made.
@@ -646,6 +648,28 @@ impl RewriteStore {
         Ok((unit, replaced))
     }
 
+    /// When each stored version of the function was written: (version id, seconds since the
+    /// Unix epoch), oldest first.
+    pub fn created_times(
+        &self,
+        program_sha256: &str,
+        address: &str,
+    ) -> Result<Vec<(String, i64)>, RewriteError> {
+        let conn = self.conn();
+        let mut st = conn
+            .prepare(
+                "SELECT id, created_at FROM unit_versions
+                 WHERE program_sha256 = ?1 AND address = ?2 ORDER BY version",
+            )
+            .map_err(db)?;
+        st.query_map(params![program_sha256, address], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db)
+    }
+
     /// Status transitions of a function, oldest first: (version, from, to, actor, note).
     #[allow(clippy::type_complexity)]
     pub fn events(
@@ -677,7 +701,7 @@ impl RewriteStore {
             .prepare(
                 "SELECT u.address, u.name, u.mode, u.status, u.current_version, u.accepted_version,
                         d.verdict, d.cases_run, d.passed, d.counterexamples_json,
-                        v.provider, v.model
+                        v.provider, v.model, v.id
                  FROM units u
                  JOIN unit_versions v ON v.program_sha256 = u.program_sha256
                       AND v.address = u.address AND v.version = u.current_version
@@ -700,6 +724,7 @@ impl RewriteStore {
                     r.get::<_, String>(9)?,
                     r.get::<_, Option<String>>(10)?,
                     r.get::<_, Option<String>>(11)?,
+                    r.get::<_, String>(12)?,
                 ))
             })
             .map_err(db)?
@@ -720,10 +745,12 @@ impl RewriteStore {
                     cx,
                     provider,
                     model,
+                    unit,
                 )| {
                     let counterexamples = serde_json::from_str::<Vec<serde_json::Value>>(&cx)
                         .map_or(0, |v| u32::try_from(v.len()).unwrap_or(u32::MAX));
                     Ok(UnitSummary {
+                        unit,
                         address,
                         name,
                         mode: mode_of(&mode),

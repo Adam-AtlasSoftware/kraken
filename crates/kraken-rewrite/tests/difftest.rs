@@ -190,16 +190,13 @@ fn translations_that_reach_for_the_system_are_refused_before_building() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn the_runner_is_confined_by_landlock() {
+fn the_alias_that_defeated_the_old_lint_is_refused() {
     use kraken_rewrite::native::{Build, build};
     use kraken_rewrite::sandbox::Confinement;
 
-    // `std::fs` is refused by the lint; spelling the path in two parts gets past it, so this
-    // checks the sandbox itself: the file exists, but the runner must not be able to read it.
-    assert!(
-        std::fs::read("/etc/passwd").is_ok(),
-        "test needs /etc/passwd"
-    );
+    // `std::fs` used to be refused only by substring, so this alias got through. The runner's own
+    // confinement (it cannot read the password file) is exercised without the lint by the probe
+    // tests in `sandbox::tests`.
     let code = r#"
 use std as s;
 #[unsafe(no_mangle)]
@@ -208,20 +205,8 @@ pub unsafe extern "C" fn cmp_id(_a: *const u8, _b: *const u8) -> i32 {
 }
 "#;
     let tgt = t("cmp_id");
-    let Build::Ready(runner) = build(&tgt.signature, code, &Confinement::default()).expect("build")
-    else {
-        panic!("should compile");
-    };
-    assert!(
-        runner.build_confinement.landlock_abi > 0,
-        "Landlock must be enforced here"
-    );
-    let obs = runner
-        .run(&[
-            Arg::Buf { data: vec![0; 40] },
-            Arg::Buf { data: vec![0; 40] },
-        ])
-        .expect("run");
-    assert_eq!(obs.termination, Termination::Returned);
-    assert_eq!(obs.ret, Some(0), "the runner could read /etc/passwd");
+    match build(&tgt.signature, code, &Confinement::default()).expect("build") {
+        Build::Rejected(why) => assert!(why.contains("not allowed"), "{why}"),
+        Build::Ready(_) => panic!("the alias must be refused by the lint"),
+    }
 }

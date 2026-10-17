@@ -150,9 +150,16 @@ fn align_down(v: u64) -> u64 {
     v & !(PAGE - 1)
 }
 
-fn align_up(v: u64) -> u64 {
-    (v + PAGE - 1) & !(PAGE - 1)
+fn checked_align_up(v: u64) -> Option<u64> {
+    Some(v.checked_add(PAGE - 1)? & !(PAGE - 1))
 }
+
+/// Highest address a segment may end at (the x86-64 user half).
+const MAX_ADDRESS: u64 = 1 << 47;
+/// Most memory the emulated image may take.
+const MAX_IMAGE_BYTES: u64 = 256 << 20;
+/// Most dynamic relocations processed.
+const MAX_RELOCATIONS: usize = 1 << 20;
 
 impl FunctionOracle {
     /// Loads the ELF at `path` and builds the emulator.
@@ -164,7 +171,6 @@ impl FunctionOracle {
 
     /// Loads an ELF from memory.
     pub fn from_bytes(data: &[u8], cfg: &OracleConfig) -> Result<Self, RewriteError> {
-        let processors = find_processors(cfg)?;
         let file = ElfFile64::<object::Endianness>::parse(data)
             .map_err(|e| RewriteError::Image(e.to_string()))?;
         let endian = file.endian();
@@ -191,9 +197,26 @@ impl FunctionOracle {
             return Err(RewriteError::Image("no PT_LOAD segments".into()));
         }
         loads.sort_by_key(|l| l.0);
+        let bad = |m: &str| RewriteError::Image(m.to_string());
         let mut ranges: Vec<(u64, u64, bool)> = Vec::new();
-        for &(vaddr, _, _, memsz, w) in &loads {
-            let (s, e) = (align_down(vaddr), align_up(vaddr + memsz));
+        for &(vaddr, off, filesz, memsz, w) in &loads {
+            if filesz > memsz {
+                return Err(bad("segment file size exceeds its memory size"));
+            }
+            if off
+                .checked_add(filesz)
+                .is_none_or(|e| e > data.len() as u64)
+            {
+                return Err(bad("segment beyond end of file"));
+            }
+            let end = vaddr
+                .checked_add(memsz)
+                .and_then(checked_align_up)
+                .ok_or_else(|| bad("segment address range overflows"))?;
+            if end > MAX_ADDRESS || bias.checked_add(end).is_none() {
+                return Err(bad("segment lies beyond the 47-bit address space"));
+            }
+            let (s, e) = (align_down(vaddr), end);
             match ranges.last_mut() {
                 Some(last) if s <= last.1 => {
                     last.1 = last.1.max(e);
@@ -202,27 +225,46 @@ impl FunctionOracle {
                 _ => ranges.push((s, e, w)),
             }
         }
-        let mut regions: Vec<Region> = ranges
+        // The emulated image is bounded: a hostile program header must not make the daemon
+        // allocate gigabytes (or abort on a failed allocation).
+        let total = ranges
             .iter()
-            .map(|&(s, e, _)| Region {
+            .try_fold(0u64, |acc, r| acc.checked_add(r.1 - r.0));
+        if total.is_none_or(|t| t > MAX_IMAGE_BYTES) {
+            return Err(bad("the loadable segments need more than 256 MiB"));
+        }
+        let mut regions: Vec<Region> = Vec::with_capacity(ranges.len());
+        for &(s, e, _) in &ranges {
+            let len = usize::try_from(e - s).map_err(|_| bad("segment too large"))?;
+            let mut bytes = Vec::new();
+            bytes
+                .try_reserve_exact(len)
+                .map_err(|_| bad("cannot allocate the segment"))?;
+            bytes.resize(len, 0);
+            regions.push(Region {
                 addr: bias + s,
-                bytes: vec![0; usize::try_from(e - s).unwrap_or(0)],
+                bytes,
                 writable: false,
-            })
-            .collect();
+            });
+        }
         for &(vaddr, off, filesz, _, w) in &loads {
             let idx = ranges
                 .iter()
                 .position(|r| r.0 <= vaddr && vaddr < r.1)
-                .ok_or_else(|| RewriteError::Image("segment outside its range".into()))?;
+                .ok_or_else(|| bad("segment outside its range"))?;
             let start = usize::try_from(vaddr - ranges[idx].0).map_err(emu)?;
+            let (lo, hi) = (
+                usize::try_from(off).map_err(emu)?,
+                usize::try_from(off + filesz).map_err(emu)?,
+            );
             let src = data
-                .get(
-                    usize::try_from(off).map_err(emu)?
-                        ..usize::try_from(off + filesz).map_err(emu)?,
-                )
-                .ok_or_else(|| RewriteError::Image("segment beyond end of file".into()))?;
-            regions[idx].bytes[start..start + src.len()].copy_from_slice(src);
+                .get(lo..hi)
+                .ok_or_else(|| bad("segment beyond end of file"))?;
+            let dst = start
+                .checked_add(src.len())
+                .and_then(|e| regions[idx].bytes.get_mut(start..e))
+                .ok_or_else(|| bad("segment data does not fit its range"))?;
+            dst.copy_from_slice(src);
             regions[idx].writable |= w;
         }
 
@@ -240,22 +282,26 @@ impl FunctionOracle {
         // Relocations: every import slot gets a stub address.
         let mut stub_names: Vec<String> = Vec::new();
         let mut patches: Vec<(u64, u64)> = Vec::new(); // runtime address, value
-        let dynsyms = file.dynamic_symbol_table();
+        // Symbol names by index, built once (a lookup per relocation would be quadratic).
+        let dyn_names: std::collections::HashMap<_, String> = file
+            .dynamic_symbols()
+            .filter_map(|s| s.name().ok().map(|n| (s.index(), n.to_string())))
+            .collect();
         if let Some(relocs) = file.dynamic_relocations() {
             for (offset, rel) in relocs {
                 let RelocationFlags::Elf { r_type } = rel.flags() else {
                     continue;
                 };
                 let name = match rel.target() {
-                    RelocationTarget::Symbol(idx) => dynsyms
-                        .as_ref()
-                        .and_then(|_| file.dynamic_symbols().find(|s| s.index() == idx))
-                        .and_then(|s| s.name().ok())
-                        .unwrap_or("")
-                        .to_string(),
+                    RelocationTarget::Symbol(idx) => {
+                        dyn_names.get(&idx).cloned().unwrap_or_default()
+                    }
                     _ => String::new(),
                 };
-                let slot = bias + offset;
+                if patches.len() >= MAX_RELOCATIONS {
+                    return Err(bad("too many relocations"));
+                }
+                let slot = bias.wrapping_add(offset);
                 match r_type {
                     elf::R_X86_64_RELATIVE => {
                         patches.push((slot, bias.wrapping_add(rel.addend() as u64)));
@@ -285,13 +331,22 @@ impl FunctionOracle {
         for (addr, value) in patches {
             let region = regions
                 .iter_mut()
-                .find(|r| r.addr <= addr && addr + 8 <= r.addr + r.bytes.len() as u64)
+                .find(|r| {
+                    addr.checked_add(8).is_some_and(|end| {
+                        r.addr <= addr && end <= r.addr.saturating_add(r.bytes.len() as u64)
+                    })
+                })
                 .ok_or_else(|| RewriteError::Image(format!("relocation at {addr:#x} unmapped")))?;
             let off = usize::try_from(addr - region.addr).map_err(emu)?;
-            region.bytes[off..off + 8].copy_from_slice(&value.to_le_bytes());
+            region
+                .bytes
+                .get_mut(off..off + 8)
+                .ok_or_else(|| bad("relocation outside its segment"))?
+                .copy_from_slice(&value.to_le_bytes());
         }
 
         // The emulator.
+        let processors = find_processors(cfg)?;
         let mut config = Config::from_target_triple("x86_64-none");
         config.enable_jit = false;
         config.enable_shadow_stack = false;
@@ -438,7 +493,7 @@ impl FunctionOracle {
                         return Err(RewriteError::Unsupported("buffer over 1 MiB".into()));
                     }
                     let addr = BUFFER_BASE + BUFFER_STRIDE * buffers.len() as u64;
-                    let len = align_up(data.len().max(1) as u64);
+                    let len = checked_align_up(data.len().max(1) as u64).unwrap_or(PAGE);
                     // Flush the data against the end of the mapping so reads past it fault.
                     let at = addr + len - data.len() as u64;
                     let rwx = perm::READ | perm::WRITE;
@@ -782,5 +837,80 @@ impl FunctionOracle {
         self.vm.cpu.write_reg(self.regs.rsp, sp.wrapping_add(8));
         self.vm.cpu.write_pc(u64::from_le_bytes(b));
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal x86-64 ELF with one PT_LOAD program header.
+    fn elf_with_load(vaddr: u64, off: u64, filesz: u64, memsz: u64) -> Vec<u8> {
+        let mut b = vec![0u8; 64 + 56 + 16];
+        b[0..4].copy_from_slice(b"\x7fELF");
+        b[4] = 2; // 64-bit
+        b[5] = 1; // little endian
+        b[6] = 1;
+        b[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+        b[18..20].copy_from_slice(&62u16.to_le_bytes()); // x86-64
+        b[20..24].copy_from_slice(&1u32.to_le_bytes());
+        b[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
+        b[52..54].copy_from_slice(&64u16.to_le_bytes()); // e_ehsize
+        b[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        b[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+        let ph = 64;
+        b[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+        b[ph + 4..ph + 8].copy_from_slice(&5u32.to_le_bytes()); // R+X
+        b[ph + 8..ph + 16].copy_from_slice(&off.to_le_bytes());
+        b[ph + 16..ph + 24].copy_from_slice(&vaddr.to_le_bytes());
+        b[ph + 24..ph + 32].copy_from_slice(&vaddr.to_le_bytes());
+        b[ph + 32..ph + 40].copy_from_slice(&filesz.to_le_bytes());
+        b[ph + 40..ph + 48].copy_from_slice(&memsz.to_le_bytes());
+        b[ph + 48..ph + 56].copy_from_slice(&0x1000u64.to_le_bytes());
+        b
+    }
+
+    /// Loading must fail cleanly (no panic, no abort, no huge allocation) before the emulator or
+    /// its SLEIGH specs are needed.
+    fn refused(vaddr: u64, off: u64, filesz: u64, memsz: u64) -> String {
+        let cfg = OracleConfig {
+            ghidra_home: Some(PathBuf::from("/nonexistent")),
+            ..OracleConfig::default()
+        };
+        match FunctionOracle::from_bytes(&elf_with_load(vaddr, off, filesz, memsz), &cfg) {
+            Err(RewriteError::Image(m)) => m,
+            Err(other) => panic!("unexpected error kind: {other}"),
+            Ok(_) => panic!("hostile ELF was accepted"),
+        }
+    }
+
+    #[test]
+    fn a_huge_memsz_is_refused_not_allocated() {
+        let m = refused(0x1000, 0, 16, 1 << 46);
+        assert!(m.contains("256 MiB") || m.contains("47-bit"), "{m}");
+        let m = refused(0x1000, 0, 16, 300 << 20);
+        assert!(m.contains("256 MiB"), "{m}");
+    }
+
+    #[test]
+    fn address_arithmetic_overflow_is_refused() {
+        let m = refused(u64::MAX - 8, 0, 0, 0x2000);
+        assert!(m.contains("overflow") || m.contains("47-bit"), "{m}");
+        let m = refused(0x1000, 0, 0, u64::MAX);
+        assert!(m.contains("overflow") || m.contains("47-bit"), "{m}");
+        let m = refused(0x1000, u64::MAX - 4, 16, 16);
+        assert!(m.contains("beyond end of file"), "{m}");
+    }
+
+    #[test]
+    fn filesz_beyond_memsz_is_refused_instead_of_panicking() {
+        let m = refused(0x1000, 0, 64, 16);
+        assert!(m.contains("exceeds"), "{m}");
+    }
+
+    #[test]
+    fn a_segment_reaching_past_the_file_is_refused() {
+        let m = refused(0x1000, 100, 1 << 20, 1 << 20);
+        assert!(m.contains("beyond end of file"), "{m}");
     }
 }
