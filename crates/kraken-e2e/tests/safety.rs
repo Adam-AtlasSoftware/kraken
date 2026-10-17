@@ -211,6 +211,7 @@ async fn rig(o: RigOpts) -> Rig {
         McpOptions {
             agent_id: None,
             run_id: Some("run-e2e-1".into()),
+            ..McpOptions::default()
         },
     );
     let (c, s) = tokio::io::duplex(1 << 20);
@@ -232,13 +233,11 @@ async fn rig(o: RigOpts) -> Rig {
         patches,
         _dir: dir,
     };
-    let created = rig
-        .call(
-            "project_create",
-            json!({"binary": binary, "project_dir": rig._dir.path().join("p")}),
-        )
-        .await;
-    assert_ne!(created.is_error, Some(true), "{created:?}");
+    // The person opens the project (as `kraken mcp --project` does); an agent could not.
+    rig.session
+        .create_project(&rig._dir.path().join("p"), &binary)
+        .await
+        .expect("project opens");
     rig
 }
 
