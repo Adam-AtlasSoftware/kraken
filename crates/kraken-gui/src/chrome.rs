@@ -54,10 +54,16 @@ pub fn top_bar(ui: &mut Ui, vm: &mut ViewModel, reqs: &mut Vec<UiRequest>) {
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             crate::assist::top_bar_buttons(ui, vm);
-            let theme = if style::dark(ui) { "Light" } else { "Dark" };
+            let theme = if style::dark(ui) {
+                "Light theme"
+            } else {
+                "Dark theme"
+            };
             if ui
                 .button(theme)
-                .on_hover_text("Switch between the dark and light look")
+                .on_hover_text(
+                    "Switch between the dark and light look  (your choice is remembered)",
+                )
                 .clicked()
             {
                 reqs.push(UiRequest::ToggleTheme);
@@ -89,9 +95,9 @@ fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
                 |pr| format!("Analyzing: {}", pr.phase),
             );
             let bar = egui::ProgressBar::new(vm.analysis.fraction().unwrap_or(0.0))
-                .desired_width(190.0)
-                .fill(p.accent)
-                .text(RichText::new(text).size(12.0).color(Color32::WHITE))
+                .desired_width(240.0)
+                .fill(p.accent.gamma_multiply(0.55))
+                .text(RichText::new(text).size(12.0).color(p.text_strong))
                 .animate(true);
             ui.add(bar).on_hover_text(
                 "KRAKEN is finding functions in the program. You can keep working; edits wait until it finishes.",
@@ -122,10 +128,20 @@ fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
     }
 }
 
+/// `No changes yet`, `1 change`, `5 changes`: the size of the edit log in plain words.
+pub fn changes_text(entries: u64) -> String {
+    match entries {
+        0 => "No changes yet".into(),
+        1 => "1 change".into(),
+        n => format!("{n} changes"),
+    }
+}
+
 /// The strip along the bottom.
 pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
     let p = pal(ui);
     ui.horizontal_centered(|ui| {
+        ui.add_space(6.0);
         if vm.analysis.running() || vm.busy() {
             ui.spinner();
         }
@@ -141,19 +157,21 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if let Some(info) = &vm.project {
                 ui.label(
-                    RichText::new(format!(
-                        "{} edit{}",
-                        info.log_entries,
-                        if info.log_entries == 1 { "" } else { "s" }
-                    ))
-                    .size(12.0)
-                    .color(p.text_dim),
+                    RichText::new(changes_text(info.log_entries))
+                        .size(12.0)
+                        .color(p.text_dim),
+                )
+                .on_hover_text(
+                    "Renames, comments and other changes made in this project, by you or by agents. Open the History tab to review or undo them.",
                 );
                 if info.open_proposals > 0 {
                     chip(
                         ui,
                         &format!("{} to review", info.open_proposals),
                         style::status(style::dark(ui)).info,
+                    )
+                    .on_hover_text(
+                        "Suggested changes waiting for your decision. Open the Proposals tab to accept or reject them.",
                     );
                 }
             }
@@ -222,5 +240,17 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
     }
     for id in dismiss {
         vm.dismiss_toast(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::changes_text;
+
+    #[test]
+    fn the_change_count_reads_as_words() {
+        assert_eq!(changes_text(0), "No changes yet");
+        assert_eq!(changes_text(1), "1 change");
+        assert_eq!(changes_text(12), "12 changes");
     }
 }

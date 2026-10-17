@@ -200,6 +200,32 @@ enum PickWhat {
     ProjectFolder,
 }
 
+/// The "Try the demo" card; the main button when the person is new.
+fn demo_card(ui: &mut Ui, busy: bool, primary: bool, actions: &mut Vec<WelcomeAction>) {
+    let p = pal(ui);
+    card().fill(p.surface).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(medium("Try the demo", 16.0).color(p.text_strong));
+        ui.label(
+            RichText::new(
+                "A small built-in program, ready to explore. No files needed. Start here if you are new.",
+            )
+            .color(p.text_dim),
+        );
+        ui.add_space(6.0);
+        ui.add_enabled_ui(!busy, |ui| {
+            let clicked = if primary {
+                style::primary_button(ui, "Open demo project").clicked()
+            } else {
+                ui.button("Open demo project").clicked()
+            };
+            if clicked {
+                actions.push(WelcomeAction::Choose(Choice::Demo));
+            }
+        });
+    });
+}
+
 pub fn show(
     ui: &mut Ui,
     w: &mut Welcome,
@@ -213,6 +239,8 @@ pub fn show(
     let ctx = ui.ctx().clone();
     let mut actions = Vec::new();
     let busy = w.busy.is_some();
+    // Nothing opened before: point a newcomer at the demo first.
+    let first_run = recents.is_empty();
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -224,6 +252,14 @@ pub fn show(
                     RichText::new("Take a program apart and understand it. With a helping hand.")
                         .size(15.0)
                         .color(p.text_dim),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "A project holds one program and everything you learn about it: names, comments and notes.",
+                    )
+                    .size(12.5)
+                    .color(p.text_dim),
                 );
                 ui.add_space(18.0);
 
@@ -245,6 +281,10 @@ pub fn show(
                         ui.add_space(10.0);
                     }
 
+                    if first_run {
+                        demo_card(ui, busy, true, &mut actions);
+                        ui.add_space(10.0);
+                    }
                     card().fill(p.surface).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(medium("New project from a program", 16.0).color(p.text_strong));
@@ -284,8 +324,16 @@ pub fn show(
                             ui.label(RichText::new(msg).size(12.0).color(s.warning));
                         }
                         ui.add_space(4.0);
-                        ui.add_enabled_ui(!busy && have_binary && problem.is_none(), |ui| {
-                            if style::primary_button(ui, "Create project and analyze").clicked() {
+                        let ready = !busy && have_binary && problem.is_none();
+                        ui.add_enabled_ui(ready, |ui| {
+                            if style::primary_button(ui, "Create project and analyze")
+                                .on_disabled_hover_text(if have_binary {
+                                    "Fix the folder problem above first."
+                                } else {
+                                    "Choose a program above first."
+                                })
+                                .clicked()
+                            {
                                 actions.push(WelcomeAction::Choose(Choice::NewProject {
                                     binary: w.binary_path.trim().to_string(),
                                     project_dir: w.project_dir.trim().to_string(),
@@ -360,22 +408,10 @@ pub fn show(
                     });
                     ui.add_space(10.0);
 
-                    card().fill(p.surface).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(medium("Try the demo", 16.0).color(p.text_strong));
-                        ui.label(
-                            RichText::new(
-                                "A small built-in program, ready to explore. No files needed. Start here if you are new.",
-                            )
-                            .color(p.text_dim),
-                        );
-                        ui.add_space(6.0);
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if ui.button("Open demo project").clicked() {
-                                actions.push(WelcomeAction::Choose(Choice::Demo));
-                            }
-                        });
-                    });
+                    if !first_run {
+                        demo_card(ui, busy, false, &mut actions);
+                        ui.add_space(10.0);
+                    }
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         ui.label(
