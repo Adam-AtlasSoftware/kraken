@@ -19,10 +19,59 @@ pub const URL: &str =
 /// SHA-256 of the archive at [`URL`], recorded 2026-10-16.
 pub const SHA256: &str = "2a858300c350f05ae2e729dff86b4f584d0b9a6b398879c55025574e67696cec";
 
-const PREFIX: &str = "ghidra-Ghidra_12.1.4_build";
+/// Top-level directory of the archive.
+pub const PREFIX: &str = "ghidra-Ghidra_12.1.4_build";
 const DECOMPILE: &str = "Ghidra/Features/Decompiler/src/decompile";
 
+/// Where the sources are extracted: `~/.cache/kraken-dev/ghidra-src/<TAG>`.
+pub fn source_root() -> Result<PathBuf> {
+    Ok(cache_dir()
+        .ok_or("HOME is not set")?
+        .join("ghidra-src")
+        .join(TAG))
+}
+
 pub fn native_src() -> Result<()> {
+    let root = cache_dir().ok_or("HOME is not set")?.join("ghidra-src");
+    let archive = fetch_archive()?;
+    let dest = root.join(TAG);
+    let staging = root.join(format!("{TAG}.staging"));
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(staging.join("decompile"))
+        .map_err(|e| format!("cannot create {}: {e}", staging.display()))?;
+    for sub in ["cpp", "zlib"] {
+        extract(
+            &archive,
+            &staging.join("decompile"),
+            &format!("{PREFIX}/{DECOMPILE}/{sub}"),
+            6,
+        )?;
+    }
+    extract(&archive, &staging, &format!("{PREFIX}/LICENSE"), 1)?;
+    fs::write(
+        staging.join("SOURCE.txt"),
+        format!(
+            "Extracted by `cargo xtask native-src` from\n{URL}\nsha256 {SHA256}\nmembers: \
+             {DECOMPILE}/cpp, {DECOMPILE}/zlib, LICENSE (Apache-2.0; zlib under its own license)\n"
+        ),
+    )
+    .map_err(|e| format!("cannot write SOURCE.txt: {e}"))?;
+    if !staging.join("decompile/cpp/sleigh.cc").is_file() {
+        return Err("the archive did not contain the decompiler sources".into());
+    }
+    let _ = fs::remove_dir_all(&dest);
+    fs::rename(&staging, &dest).map_err(|e| format!("cannot move into place: {e}"))?;
+    println!(
+        "native-src: sources in {} (KRAKEN_GHIDRA_SRC={})",
+        dest.display(),
+        dest.join("decompile").display()
+    );
+    Ok(())
+}
+
+/// The pinned archive in `~/.cache/kraken-dev/ghidra-src/dl`, downloaded first if it is missing
+/// or does not match [`SHA256`].
+pub fn fetch_archive() -> Result<PathBuf> {
     let root = cache_dir().ok_or("HOME is not set")?.join("ghidra-src");
     let dl = root.join("dl");
     fs::create_dir_all(&dl).map_err(|e| format!("cannot create {}: {e}", dl.display()))?;
@@ -60,43 +109,10 @@ pub fn native_src() -> Result<()> {
         fs::rename(&part, &archive).map_err(|e| format!("cannot move archive: {e}"))?;
     }
     println!("native-src: {} sha256 {SHA256} ok", archive.display());
-
-    let dest = root.join(TAG);
-    let staging = root.join(format!("{TAG}.staging"));
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(staging.join("decompile"))
-        .map_err(|e| format!("cannot create {}: {e}", staging.display()))?;
-    for sub in ["cpp", "zlib"] {
-        extract(
-            &archive,
-            &staging.join("decompile"),
-            &format!("{PREFIX}/{DECOMPILE}/{sub}"),
-            6,
-        )?;
-    }
-    extract(&archive, &staging, &format!("{PREFIX}/LICENSE"), 1)?;
-    fs::write(
-        staging.join("SOURCE.txt"),
-        format!(
-            "Extracted by `cargo xtask native-src` from\n{URL}\nsha256 {SHA256}\nmembers: \
-             {DECOMPILE}/cpp, {DECOMPILE}/zlib, LICENSE (Apache-2.0; zlib under its own license)\n"
-        ),
-    )
-    .map_err(|e| format!("cannot write SOURCE.txt: {e}"))?;
-    if !staging.join("decompile/cpp/sleigh.cc").is_file() {
-        return Err("the archive did not contain the decompiler sources".into());
-    }
-    let _ = fs::remove_dir_all(&dest);
-    fs::rename(&staging, &dest).map_err(|e| format!("cannot move into place: {e}"))?;
-    println!(
-        "native-src: sources in {} (KRAKEN_GHIDRA_SRC={})",
-        dest.display(),
-        dest.join("decompile").display()
-    );
-    Ok(())
+    Ok(archive)
 }
 
-fn extract(archive: &Path, into: &Path, member: &str, strip: u32) -> Result<()> {
+pub fn extract(archive: &Path, into: &Path, member: &str, strip: u32) -> Result<()> {
     let status = Command::new("tar")
         .arg("-xzf")
         .arg(archive)

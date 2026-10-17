@@ -1,26 +1,32 @@
 //! The engine: capability traits over the loaded program, Sleigh and the decompiler.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use engine_native_sys::{Instruction, NativeError, Session, TokenKind as NativeKind};
 use kraken_engine::{
-    Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineResult, FunctionLister,
-    Loader, LoaderSpec, MemoryReader, ProgramInfo,
+    Analyzer, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineResult,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, ProgramInfo, StringLister,
+    SymbolLister, TypeStore, XrefProvider,
 };
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
-    FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, Page, PageRequest, ProtoError, Token,
-    TokenKind, hex_bytes,
+    FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, Page, PageRequest, ProtoError,
+    StringEntry, SymbolEntry, Token, TokenKind, TypeDef, hex_bytes,
 };
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+use crate::ctypes::{base_definitions, parse_prototype};
 use crate::discover::{Func, discover};
 use crate::elf::{Loaded, load};
 use crate::listing::{flow_kind, operands};
+use crate::refs::RefIndex;
+use crate::typestore::TypeModel;
 
 /// Build id in the handshake.
 pub const BUILD: &str = concat!(
@@ -29,56 +35,107 @@ pub const BUILD: &str = concat!(
     " ghidra-12.1.4"
 );
 
+/// The Ghidra source tag the library and the compiled `.sla` files come from.
+pub const SOURCE_TAG: &str = "Ghidra_12.1.4_build";
+
+/// Default limit for one decompile.
+pub const DEFAULT_DECOMPILE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Where the engine finds what it needs at run time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeConfig {
-    /// A Ghidra install root; only its `Ghidra/Processors/*/data/languages` (`.ldefs`, `.pspec`,
-    /// `.cspec`, precompiled `.sla`) are read. No JVM is started.
-    pub ghidra_home: PathBuf,
+    /// A directory laid out like a Ghidra install (`Ghidra/Processors/*/data/languages` with
+    /// `.ldefs`, `.pspec`, `.cspec` and compiled `.sla` files): the tree `cargo xtask native-sla`
+    /// compiles from the pinned sources, or an actual Ghidra install. No JVM is started.
+    pub spec_root: PathBuf,
     /// Seed discovery with the symbol table. Off approximates a stripped binary.
     pub use_symbols: bool,
+    /// Limit for one decompile, checked at the decompiler's action break points; `None` for no
+    /// limit.
+    pub decompile_timeout: Option<Duration>,
 }
 
 impl NativeConfig {
-    /// `KRAKEN_GHIDRA_HOME`, else the newest install under `~/.cache/kraken-dev/ghidra` that has
-    /// the x86-64 `.sla`.
-    pub fn discover() -> Option<NativeConfig> {
-        let home = match std::env::var_os("KRAKEN_GHIDRA_HOME") {
-            Some(p) => PathBuf::from(p),
-            None => {
-                let dir = PathBuf::from(std::env::var_os("HOME")?).join(".cache/kraken-dev/ghidra");
-                let mut kids: Vec<PathBuf> = std::fs::read_dir(dir)
-                    .ok()?
-                    .filter_map(|e| e.ok().map(|e| e.path()))
-                    .filter(|p| has_specs(p))
-                    .collect();
-                kids.sort();
-                kids.pop()?
-            }
-        };
-        Some(NativeConfig {
-            ghidra_home: home,
+    /// A config over `spec_root` with symbols on and the default decompile limit.
+    pub fn new(spec_root: impl Into<PathBuf>) -> NativeConfig {
+        NativeConfig {
+            spec_root: spec_root.into(),
             use_symbols: true,
-        })
+            decompile_timeout: Some(DEFAULT_DECOMPILE_TIMEOUT),
+        }
+    }
+
+    /// The first usable spec tree of: `KRAKEN_NATIVE_SPECS`, the tree compiled by `cargo xtask
+    /// native-sla` (`~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build`), `KRAKEN_GHIDRA_HOME`,
+    /// and the newest Ghidra install under `~/.cache/kraken-dev/ghidra`.
+    pub fn discover() -> Option<NativeConfig> {
+        if let Some(p) = std::env::var_os("KRAKEN_NATIVE_SPECS") {
+            return Some(NativeConfig::new(p));
+        }
+        if let Some(p) = compiled_specs_dir().filter(|p| has_specs(p)) {
+            return Some(NativeConfig::new(p));
+        }
+        Self::discover_ghidra()
+    }
+
+    /// Like [`NativeConfig::discover`] but only a Ghidra install (`KRAKEN_GHIDRA_HOME`, else the
+    /// newest one under `~/.cache/kraken-dev/ghidra`), for comparing against its `.sla` files.
+    pub fn discover_ghidra() -> Option<NativeConfig> {
+        if let Some(p) = std::env::var_os("KRAKEN_GHIDRA_HOME") {
+            return Some(NativeConfig::new(p));
+        }
+        let dir = PathBuf::from(std::env::var_os("HOME")?).join(".cache/kraken-dev/ghidra");
+        let mut kids: Vec<PathBuf> = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| has_specs(p))
+            .collect();
+        kids.sort();
+        kids.pop().map(NativeConfig::new)
     }
 }
 
-/// Whether `home` holds the x86-64 Sleigh specification.
-pub fn has_specs(home: &Path) -> bool {
-    home.join("Ghidra/Processors/x86/data/languages/x86-64.sla")
+/// Where `cargo xtask native-sla` puts the spec tree it compiles.
+pub fn compiled_specs_dir() -> Option<PathBuf> {
+    Some(
+        PathBuf::from(std::env::var_os("HOME")?)
+            .join(".cache/kraken-dev/native-sla")
+            .join(SOURCE_TAG),
+    )
+}
+
+/// Whether `root` holds the x86-64 Sleigh specification.
+pub fn has_specs(root: &Path) -> bool {
+    root.join("Ghidra/Processors/x86/data/languages/x86-64.sla")
         .is_file()
 }
 
-struct Program {
-    info: ProgramInfo,
-    loaded: Loaded,
-    functions: BTreeMap<u64, Func>,
-    insns: Mutex<BTreeMap<u64, Instruction>>,
+pub(crate) struct Program {
+    pub(crate) info: ProgramInfo,
+    pub(crate) loaded: Loaded,
+    pub(crate) functions: BTreeMap<u64, Func>,
+    /// The function each body instruction belongs to (the lowest entry when bodies share code).
+    owner: BTreeMap<u64, u64>,
+    pub(crate) insns: Mutex<BTreeMap<u64, Instruction>>,
     session: Mutex<Session>,
+    /// Raised to abandon the decompile in flight (see `Session::stop_flag`).
+    stop: Arc<AtomicBool>,
+    /// One decompile at a time, so a cancellation only stops its own decompile.
+    decompile_slot: tokio::sync::Mutex<()>,
+    pub(crate) refs: RefIndex,
+    pub(crate) imports: Vec<SymbolEntry>,
+    pub(crate) exports: Vec<SymbolEntry>,
+    strings: Mutex<BTreeMap<u32, Arc<Vec<StringEntry>>>>,
+    pub(crate) types: Mutex<TypeModel>,
+    /// Rendered prototypes: known ones at load, the decompiler's after analysis.
+    pub(crate) signatures: Mutex<BTreeMap<u64, String>>,
+    /// Entries of functions that never return.
+    pub(crate) noreturn: BTreeSet<u64>,
+    pub(crate) discovery_rounds: usize,
 }
 
 impl Program {
-    fn session(&self) -> MutexGuard<'_, Session> {
+    pub(crate) fn session(&self) -> MutexGuard<'_, Session> {
         self.session.lock().unwrap_or_else(|p| p.into_inner())
     }
 
@@ -86,7 +143,15 @@ impl Program {
         self.insns.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn summary(&self, f: &Func) -> FunctionSummary {
+    pub(crate) fn types(&self) -> MutexGuard<'_, TypeModel> {
+        self.types.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(crate) fn signatures(&self) -> MutexGuard<'_, BTreeMap<u64, String>> {
+        self.signatures.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(crate) fn summary(&self, f: &Func) -> FunctionSummary {
         let mut h = Sha256::new();
         for (s, e) in &f.ranges {
             let mut buf = vec![0u8; (e - s) as usize];
@@ -98,17 +163,44 @@ impl Program {
             locator: Locator::ram(f.entry),
             name: f.name.clone(),
             size: Some(f.size()),
-            signature: None,
+            signature: self.signatures().get(&f.entry).cloned(),
             fn_hash: Some(hex_bytes(&h.finalize())),
             completeness: Completeness::Complete,
         }
     }
 
-    fn function_containing(&self, addr: u64) -> Option<&Func> {
+    pub(crate) fn function_containing(&self, addr: u64) -> Option<&Func> {
         if let Some(f) = self.functions.get(&addr) {
             return Some(f);
         }
+        if let Some(e) = self.owner.get(&addr) {
+            return self.functions.get(e);
+        }
         self.functions.values().find(|f| f.contains(addr))
+    }
+
+    /// Entries of the functions named `name`.
+    pub(crate) fn named(&self, name: &str) -> Vec<u64> {
+        self.functions
+            .values()
+            .filter(|f| f.name == name)
+            .map(|f| f.entry)
+            .collect()
+    }
+
+    pub(crate) fn strings(&self, min_len: u32) -> Arc<Vec<StringEntry>> {
+        let mut cache = self.strings.lock().unwrap_or_else(|p| p.into_inner());
+        cache
+            .entry(min_len)
+            .or_insert_with(|| {
+                Arc::new(crate::strings::scan(
+                    &self.loaded.image,
+                    &self.loaded.blocks,
+                    min_len,
+                    &self.refs.data_targets(),
+                ))
+            })
+            .clone()
     }
 
     fn instruction(&self, addr: u64) -> EngineResult<Option<Instruction>> {
@@ -145,18 +237,42 @@ impl Program {
         }
     }
 
-    fn mapped(&self, addr: u64) -> bool {
+    pub(crate) fn mapped(&self, addr: u64) -> bool {
         self.loaded
             .blocks
             .iter()
             .any(|b| b.start.0 <= addr && addr < b.end.0)
+    }
+
+    /// Decompiles `at` on a blocking thread; a cancelled `cancel` abandons it at the next action
+    /// break point through the stop flag.
+    pub(crate) async fn decompile(
+        self: &Arc<Self>,
+        at: u64,
+        timeout: Option<Duration>,
+        cancel: &CancellationToken,
+    ) -> EngineResult<engine_native_sys::Decompiled> {
+        let _slot = self.decompile_slot.lock().await;
+        check(cancel)?;
+        self.stop.store(false, Ordering::Relaxed);
+        let stop = self.stop.clone();
+        let token = cancel.clone();
+        let watcher = tokio::spawn(async move {
+            token.cancelled().await;
+            stop.store(true, Ordering::Relaxed);
+        });
+        let p = self.clone();
+        let r = blocking(move || p.session().decompile(at, timeout).map_err(native)).await;
+        watcher.abort();
+        self.stop.store(false, Ordering::Relaxed);
+        r
     }
 }
 
 /// The native engine. Create it with [`NativeEngine::new`], then open a binary through
 /// [`Loader`]; the other capabilities answer `invalid_argument` until then.
 pub struct NativeEngine {
-    config: NativeConfig,
+    pub(crate) config: NativeConfig,
     program: Mutex<Option<Arc<Program>>>,
 }
 
@@ -168,18 +284,23 @@ impl std::fmt::Debug for NativeEngine {
     }
 }
 
-fn native(e: NativeError) -> ProtoError {
+pub(crate) fn native(e: NativeError) -> ProtoError {
     match e {
         NativeError::Unavailable(m) => ProtoError::new(ErrorCode::Unsupported, m),
         NativeError::Native(m) => ProtoError::new(ErrorCode::Internal, m),
+        NativeError::Timeout(d) => ProtoError::new(
+            ErrorCode::Timeout,
+            format!("decompile timed out after {d:?}"),
+        ),
+        NativeError::Interrupted => cancelled(),
     }
 }
 
-fn cancelled() -> ProtoError {
+pub(crate) fn cancelled() -> ProtoError {
     ProtoError::new(ErrorCode::Cancelled, "cancelled")
 }
 
-fn check(cancel: &CancellationToken) -> EngineResult<()> {
+pub(crate) fn check(cancel: &CancellationToken) -> EngineResult<()> {
     if cancel.is_cancelled() {
         Err(cancelled())
     } else {
@@ -187,7 +308,7 @@ fn check(cancel: &CancellationToken) -> EngineResult<()> {
     }
 }
 
-fn ram_offset(l: &Locator) -> EngineResult<u64> {
+pub(crate) fn ram_offset(l: &Locator) -> EngineResult<u64> {
     match l {
         Locator::Native { space, offset } if space == "ram" => Ok(offset.0),
         Locator::Native { space, .. } => Err(ProtoError::new(
@@ -207,6 +328,44 @@ fn parse_cursor(c: &str) -> EngineResult<u64> {
         .ok_or_else(|| ProtoError::new(ErrorCode::InvalidArgument, format!("bad cursor {c:?}")))
 }
 
+/// A page of `all` from an offset cursor (`"@<n>"`).
+pub(crate) fn page_of<T: Clone>(all: &[T], page: &PageRequest) -> EngineResult<Page<T>> {
+    let from = match page.cursor.as_deref() {
+        None => 0,
+        Some(c) => c
+            .strip_prefix('@')
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|n| *n <= all.len())
+            .ok_or_else(|| {
+                ProtoError::new(ErrorCode::InvalidArgument, format!("bad cursor {c:?}"))
+            })?,
+    };
+    let limit = page.effective_limit() as usize;
+    let end = (from + limit).min(all.len());
+    Ok(Page {
+        items: all[from..end].to_vec(),
+        next_cursor: (end < all.len()).then(|| format!("@{end}")),
+        total: Some(all.len() as u64),
+    })
+}
+
+/// Fails with `invalid_argument` when `page` has a malformed offset cursor.
+pub(crate) fn check_cursor(page: &PageRequest) -> EngineResult<()> {
+    match page.cursor.as_deref() {
+        Some(c)
+            if c.strip_prefix('@')
+                .and_then(|n| n.parse::<usize>().ok())
+                .is_none() =>
+        {
+            Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!("bad cursor {c:?}"),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn token_kind(k: NativeKind) -> TokenKind {
     match k {
         NativeKind::Keyword => TokenKind::Keyword,
@@ -221,12 +380,158 @@ fn token_kind(k: NativeKind) -> TokenKind {
     }
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> EngineResult<T> + Send + 'static,
 ) -> EngineResult<T> {
     tokio::task::spawn_blocking(f)
         .await
         .map_err(|e| ProtoError::new(ErrorCode::Internal, format!("native worker failed: {e}")))?
+}
+
+/// The declaration line of decompiled C, such as `int cmp_id(int *param_1,int *param_2)`.
+pub(crate) fn signature_of(text: &str, name: &str) -> Option<String> {
+    let head = &text[..text.find('{')?];
+    let start = head.find(&format!("{name}("))?;
+    let line_start = head[..start].rfind('\n').map_or(0, |i| i + 1);
+    let end = head.rfind(')')? + 1;
+    let sig: String = head[line_start..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!sig.is_empty()).then_some(sig)
+}
+
+/// Loads, discovers and prepares a program (blocking).
+fn build_program(
+    path: &Path,
+    spec: &LoaderSpec,
+    config: &NativeConfig,
+    token: &CancellationToken,
+) -> EngineResult<Program> {
+    let data = std::fs::read(path).map_err(|e| {
+        ProtoError::new(
+            ErrorCode::NotFound,
+            format!("cannot read {}: {e}", path.display()),
+        )
+    })?;
+    let loaded = load(&data, spec.base.map(|b| b.0))?;
+    if let Some(a) = spec.arch.as_deref()
+        && a != loaded.language.id
+    {
+        return Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!(
+                "language override {a:?} differs from the detected {}",
+                loaded.language.id
+            ),
+        ));
+    }
+    engine_native_sys::start(&config.spec_root).map_err(native)?;
+    if !engine_native_sys::has_language(loaded.language.id).map_err(native)? {
+        return Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!(
+                "no Sleigh specification for {} under {}",
+                loaded.language.id,
+                config.spec_root.display()
+            ),
+        ));
+    }
+    let mut session = Session::new(
+        loaded.language.id,
+        loaded.language.compiler,
+        loaded.image.clone(),
+    )
+    .map_err(native)?;
+    let Some(found) = discover(&loaded, &mut session, config.use_symbols, token).map_err(native)?
+    else {
+        return Err(cancelled());
+    };
+    for f in found.functions.values() {
+        session.add_function(f.entry, &f.name).map_err(native)?;
+    }
+
+    // types: the base typedefs, then the prototypes of known library functions present here
+    let mut by_name: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
+    for f in found.functions.values() {
+        by_name.entry(f.name.as_str()).or_default().push(f.entry);
+    }
+    let named = |n: &str| by_name.get(n).cloned().unwrap_or_default();
+    let mut types = TypeModel::default();
+    let mut signatures = BTreeMap::new();
+    for d in base_definitions() {
+        types.define(d, &mut session, &named)?;
+    }
+    let mut noreturn: BTreeSet<u64> = found
+        .functions
+        .values()
+        .filter(|f| f.noreturn)
+        .map(|f| f.entry)
+        .collect();
+    for src in crate::libc::PROTOTYPES {
+        let (name, proto) =
+            parse_prototype(src).map_err(|e| ProtoError::new(ErrorCode::Internal, e))?;
+        if !by_name.contains_key(name.as_str()) {
+            continue;
+        }
+        if proto.noreturn {
+            noreturn.extend(named(&name));
+        }
+        for (at, text) in types.define(TypeDef::Function(proto), &mut session, &named)? {
+            signatures.insert(at, text);
+        }
+    }
+    drop(by_name);
+
+    let mut owner = BTreeMap::new();
+    for f in found.functions.values() {
+        for a in &f.insns {
+            owner.entry(*a).or_insert(f.entry);
+        }
+    }
+    // straight-line code reached only through GOT slots (the lazy PLT entries)
+    let mut orphans = Vec::new();
+    for at in &loaded.got_code {
+        if !loaded.is_code(*at) || owner.contains_key(at) {
+            continue;
+        }
+        for i in session.decode(*at, 8).map_err(native)? {
+            let last = i.flow != engine_native_sys::Flow::Fallthrough;
+            orphans.push(i);
+            if last {
+                break;
+            }
+        }
+    }
+    let refs = RefIndex::build(&loaded, &found.functions, &found.insns, &orphans);
+    let imports = crate::symbols::imports(&loaded);
+    let exports = crate::symbols::exports(&loaded, &found.functions);
+    let info = ProgramInfo {
+        arch: loaded.language.id.to_string(),
+        format: "elf".into(),
+        base: Hex64(loaded.base),
+        sha256: hex_bytes(&Sha256::digest(&data)),
+        size: data.len() as u64,
+    };
+    let stop = session.stop_flag();
+    Ok(Program {
+        info,
+        loaded,
+        functions: found.functions,
+        owner,
+        insns: Mutex::new(found.insns),
+        session: Mutex::new(session),
+        stop,
+        decompile_slot: tokio::sync::Mutex::new(()),
+        refs,
+        imports,
+        exports,
+        strings: Mutex::new(BTreeMap::new()),
+        types: Mutex::new(types),
+        signatures: Mutex::new(signatures),
+        noreturn,
+        discovery_rounds: found.rounds,
+    })
 }
 
 impl NativeEngine {
@@ -240,10 +545,10 @@ impl NativeEngine {
 
     /// Whether this build has the native decompiler and `config` points at usable specs.
     pub fn is_usable(config: &NativeConfig) -> bool {
-        engine_native_sys::available() && has_specs(&config.ghidra_home)
+        engine_native_sys::available() && has_specs(&config.spec_root)
     }
 
-    fn program(&self) -> EngineResult<Arc<Program>> {
+    pub(crate) fn program(&self) -> EngineResult<Arc<Program>> {
         self.program
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -257,6 +562,36 @@ impl NativeEngine {
         let ops = p.session().lift(start, end).map_err(native)?;
         Ok(ops)
     }
+
+    /// Facts about the open program that the traits do not carry: functions that never return
+    /// (entries), discovery rounds, reference count and type names still waiting for the
+    /// decompiler.
+    pub fn stats(&self) -> EngineResult<NativeStats> {
+        let p = self.program()?;
+        let pending = p.types().pending().map(str::to_string).collect();
+        Ok(NativeStats {
+            noreturn: p.noreturn.iter().copied().collect(),
+            discovery_rounds: p.discovery_rounds,
+            references: p.refs.len(),
+            landing_pads: p.loaded.landing_pads.values().map(Vec::len).sum(),
+            pending_types: pending,
+        })
+    }
+}
+
+/// See [`NativeEngine::stats`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeStats {
+    /// Entries of functions that never return, ascending.
+    pub noreturn: Vec<u64>,
+    /// Discovery rounds (more than one when noreturn propagation changed bodies).
+    pub discovery_rounds: usize,
+    /// Number of cross-references.
+    pub references: usize,
+    /// Number of exception landing pads found in `.gcc_except_table`.
+    pub landing_pads: usize,
+    /// Type definitions the decompiler has not accepted yet.
+    pub pending_types: Vec<String>,
 }
 
 impl Engine for NativeEngine {
@@ -265,17 +600,29 @@ impl Engine for NativeEngine {
             BUILD,
             [
                 Cap::Loader,
+                Cap::Analyzer,
                 Cap::Decompiler,
+                Cap::TypeStore,
                 Cap::FunctionLister,
                 Cap::Memory,
                 Cap::Disassembler,
+                Cap::Xrefs,
+                Cap::Cfg,
+                Cap::Strings,
+                Cap::Symbols,
             ],
         )
     }
     fn loader(&self) -> Option<&dyn Loader> {
         Some(self)
     }
+    fn analyzer(&self) -> Option<&dyn Analyzer> {
+        Some(self)
+    }
     fn decompiler(&self) -> Option<&dyn Decompiler> {
+        Some(self)
+    }
+    fn type_store(&self) -> Option<&dyn TypeStore> {
         Some(self)
     }
     fn function_lister(&self) -> Option<&dyn FunctionLister> {
@@ -285,6 +632,18 @@ impl Engine for NativeEngine {
         Some(self)
     }
     fn disassembler(&self) -> Option<&dyn Disassembler> {
+        Some(self)
+    }
+    fn xref_provider(&self) -> Option<&dyn XrefProvider> {
+        Some(self)
+    }
+    fn flow_graph(&self) -> Option<&dyn FlowGraph> {
+        Some(self)
+    }
+    fn string_lister(&self) -> Option<&dyn StringLister> {
+        Some(self)
+    }
+    fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         Some(self)
     }
 }
@@ -310,66 +669,7 @@ impl Loader for NativeEngine {
         let spec = spec.clone();
         let config = self.config.clone();
         let token = cancel.clone();
-        let program = blocking(move || {
-            let data = std::fs::read(&path).map_err(|e| {
-                ProtoError::new(
-                    ErrorCode::NotFound,
-                    format!("cannot read {}: {e}", path.display()),
-                )
-            })?;
-            let loaded = load(&data, spec.base.map(|b| b.0))?;
-            if let Some(a) = spec.arch.as_deref()
-                && a != loaded.language.id
-            {
-                return Err(ProtoError::new(
-                    ErrorCode::Unsupported,
-                    format!(
-                        "language override {a:?} differs from the detected {}",
-                        loaded.language.id
-                    ),
-                ));
-            }
-            engine_native_sys::start(&config.ghidra_home).map_err(native)?;
-            if !engine_native_sys::has_language(loaded.language.id).map_err(native)? {
-                return Err(ProtoError::new(
-                    ErrorCode::Unsupported,
-                    format!(
-                        "no Sleigh specification for {} under {}",
-                        loaded.language.id,
-                        config.ghidra_home.display()
-                    ),
-                ));
-            }
-            let mut session = Session::new(
-                loaded.language.id,
-                loaded.language.compiler,
-                loaded.image.clone(),
-            )
-            .map_err(native)?;
-            let Some(found) =
-                discover(&loaded, &mut session, config.use_symbols, &token).map_err(native)?
-            else {
-                return Err(cancelled());
-            };
-            for f in found.functions.values() {
-                session.add_function(f.entry, &f.name).map_err(native)?;
-            }
-            let info = ProgramInfo {
-                arch: loaded.language.id.to_string(),
-                format: "elf".into(),
-                base: Hex64(loaded.base),
-                sha256: hex_bytes(&Sha256::digest(&data)),
-                size: data.len() as u64,
-            };
-            Ok(Program {
-                info,
-                loaded,
-                functions: found.functions,
-                insns: Mutex::new(found.insns),
-                session: Mutex::new(session),
-            })
-        })
-        .await?;
+        let program = blocking(move || build_program(&path, &spec, &config, &token)).await?;
         check(cancel)?;
         let info = program.info.clone();
         *self.program.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(program));
@@ -433,8 +733,9 @@ impl Decompiler for NativeEngine {
                 format!("no function at {at:#x}"),
             ));
         }
-        // the C++ decompiler cannot be interrupted; cancellation is checked around it
-        let d = blocking(move || p.session().decompile(at).map_err(native)).await?;
+        let d = p
+            .decompile(at, self.config.decompile_timeout, cancel)
+            .await?;
         check(cancel)?;
         Ok(DecompileResult {
             function: Locator::ram(at),
@@ -587,5 +888,37 @@ impl Disassembler for NativeEngine {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signature_is_the_declaration() {
+        let text = "\nint cmp_id(int *param_1,\n  int *param_2)\n\n{\n  return 0;\n}\n";
+        assert_eq!(
+            signature_of(text, "cmp_id").as_deref(),
+            Some("int cmp_id(int *param_1, int *param_2)")
+        );
+        assert_eq!(signature_of("no body", "f"), None);
+    }
+
+    #[test]
+    fn offset_cursors_page_and_reject_garbage() {
+        let all: Vec<u32> = (0..5).collect();
+        let req = |cursor: Option<&str>, limit| PageRequest {
+            cursor: cursor.map(str::to_string),
+            limit: Some(limit),
+        };
+        let p = page_of(&all, &req(None, 2)).expect("first");
+        assert_eq!(p.items, vec![0, 1]);
+        let p = page_of(&all, &req(p.next_cursor.as_deref(), 2)).expect("second");
+        assert_eq!(p.items, vec![2, 3]);
+        let p = page_of(&all, &req(p.next_cursor.as_deref(), 2)).expect("last");
+        assert_eq!((p.items, p.next_cursor), (vec![4], None));
+        assert!(page_of(&all, &req(Some("not-a-cursor"), 2)).is_err());
+        assert!(page_of(&all, &req(Some("@9"), 2)).is_err());
     }
 }

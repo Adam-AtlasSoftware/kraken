@@ -17,6 +17,7 @@ struct ImageSource;
 struct InsnOut;
 struct PcodeOpOut;
 struct DecompOut;
+struct JumpEdgeOut;
 
 // Registers the decompiler capabilities and scans `sleigh_home` (a Ghidra install root) for
 // language definitions. Idempotent; must run before `new_session`.
@@ -39,11 +40,21 @@ public:
   rust::Vec<InsnOut> decode(uint64_t addr, uint32_t max);
   // Raw p-code of the instructions in [start, end).
   rust::Vec<PcodeOpOut> lift(uint64_t start, uint64_t end);
-  // Decompiles the function at `addr` (created with a default name when unknown).
-  DecompOut decompile(uint64_t addr);
+  // Decompiles the function at `addr` (created with a default name when unknown). With a
+  // non-zero `timeout_ms` the decompile gives up at the first action break point after the
+  // deadline; it also gives up when the image source reports an interrupt. Either sets the
+  // matching flag in the result and leaves the text empty.
+  DecompOut decompile(uint64_t addr, uint32_t timeout_ms);
   // Follows the flow of the function at `addr` with the decompiler (which recovers switch jump
-  // tables) and returns the targets of every jump table it found.
-  rust::Vec<uint64_t> jump_targets(uint64_t addr);
+  // tables) and returns every (BRANCHIND address, target) pair of the tables it found.
+  rust::Vec<JumpEdgeOut> jump_tables(uint64_t addr);
+  // Parses one C declaration (typedef, struct, union or enum) into the type factory.
+  void declare_type(rust::Str decl);
+  // Parses a C prototype such as `int printf(char *format,...)` and locks it onto the function
+  // at `addr` (created when unknown), so call sites use its parameter and return types.
+  void set_prototype(uint64_t addr, rust::Str decl);
+  // Marks the function at `addr` (created when unknown) as never returning, or clears the mark.
+  void set_noreturn(uint64_t addr, bool noreturn);
 
 private:
   std::unique_ptr<Impl> impl;

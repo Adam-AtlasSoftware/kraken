@@ -3,7 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use engine_native_sys::{Flow, Image, Segment, Session, TokenKind};
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+use engine_native_sys::{Flow, Image, NativeError, RefKind, Segment, Session, TokenKind};
 
 fn ghidra_home() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("KRAKEN_GHIDRA_HOME") {
@@ -60,7 +63,7 @@ fn decodes_and_decompiles_cmp_id() {
     let ops = s.lift(0x124e, 0x124e + 30).expect("lift");
     assert!(ops.iter().any(|o| o.opcode == "INT_SUB"), "{ops:#?}");
 
-    let d = s.decompile(0x124e).expect("decompile");
+    let d = s.decompile(0x124e, None).expect("decompile");
     eprintln!("{}", d.text);
     assert!(d.text.contains("cmp_id"));
     assert!(d.text.contains("return"));
@@ -76,7 +79,7 @@ fn decodes_and_decompiles_cmp_id() {
     assert_eq!(f.symbol.as_deref(), Some("cmp_id"));
     assert_eq!(f.target, Some(0x124e));
     // twice in a row works (analysis state is cleared between runs)
-    let again = s.decompile(0x124e).expect("decompile again");
+    let again = s.decompile(0x124e, None).expect("decompile again");
     assert_eq!(again.text, d.text);
 }
 
@@ -85,9 +88,73 @@ fn two_sessions_coexist() {
     let (Some(mut a), Some(mut b)) = (session(), session()) else {
         return;
     };
-    let x = a.decompile(0x124e).expect("a");
-    let y = b.decompile(0x124e).expect("b");
+    let x = a.decompile(0x124e, None).expect("a");
+    let y = b.decompile(0x124e, None).expect("b");
     assert_eq!(x.text, y.text);
     drop(a);
-    assert!(b.decompile(0x126c).is_ok());
+    assert!(b.decompile(0x126c, None).is_ok());
+}
+
+#[test]
+fn references_are_typed() {
+    let Some(mut s) = session() else { return };
+    // main of pie_list (linked at 0): `movsd xmm0, [rip+..]` reads a double from .rodata and
+    // `lea rax, [rip+..]` takes the address of the string "gamma"
+    let insns = s.decode(0x14da, 64).expect("decode");
+    let refs: Vec<_> = insns.iter().flat_map(|i| i.refs.iter().copied()).collect();
+    assert!(
+        refs.iter()
+            .any(|r| r.addr == 0x2070 && r.kind == RefKind::Read),
+        "{refs:x?}"
+    );
+    assert!(
+        refs.iter()
+            .any(|r| r.addr == 0x2021 && r.kind == RefKind::Data),
+        "{refs:x?}"
+    );
+}
+
+#[test]
+fn stop_flag_and_timeout_abandon_a_decompile() {
+    let Some(mut s) = session() else { return };
+    let stop = s.stop_flag();
+    stop.store(true, Ordering::Relaxed);
+    assert_eq!(
+        s.decompile(0x14da, None).unwrap_err(),
+        NativeError::Interrupted
+    );
+    stop.store(false, Ordering::Relaxed);
+    // the abandoned analysis leaves no state behind
+    let full = s
+        .decompile(0x14da, None)
+        .expect("decompile after an interrupt");
+    assert!(full.text.contains("return"), "{}", full.text);
+    // main takes several milliseconds, far more than the limit
+    let r = s.decompile(0x14da, Some(Duration::from_millis(1)));
+    assert!(matches!(r, Err(NativeError::Timeout(_))), "{r:?}");
+    assert_eq!(s.decompile(0x14da, None).expect("again").text, full.text);
+}
+
+#[test]
+fn prototypes_and_types_reach_the_output() {
+    let Some(mut s) = session() else { return };
+    s.add_function(0x124e, "cmp_id").expect("symbol");
+    s.add_function(0x1050, "printf").expect("symbol");
+    s.declare_type("struct record { int id; char name[12]; };")
+        .expect("struct");
+    s.declare_type("typedef record record_t;").expect("typedef");
+    s.set_prototype(0x124e, "int cmp_id(record_t *a,record_t *b)")
+        .expect("prototype");
+    let d = s.decompile(0x124e, None).expect("decompile");
+    assert!(d.text.contains("record_t *a"), "{}", d.text);
+    assert!(d.text.contains("->id"), "{}", d.text);
+
+    s.set_prototype(0x1050, "int printf(char *format,...)")
+        .expect("printf");
+    let main = s.decompile(0x14da, None).expect("main");
+    assert!(main.text.contains("printf(\""), "{}", main.text);
+    assert!(
+        s.set_prototype(0x1050, "int printf(no_such_type x)")
+            .is_err()
+    );
 }

@@ -9,8 +9,13 @@
 //! and every call returns [`NativeError::Unavailable`].
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+#[cfg(kraken_native)]
+use std::sync::atomic::Ordering;
 #[cfg(kraken_native)]
 use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 /// Errors from the native library.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -21,6 +26,12 @@ pub enum NativeError {
     /// The C++ side raised an error.
     #[error("{0}")]
     Native(String),
+    /// A decompile ran past its time limit and was abandoned at an action break point.
+    #[error("decompile timed out after {0:?}")]
+    Timeout(Duration),
+    /// A decompile was abandoned because the session's stop flag was raised.
+    #[error("decompile interrupted")]
+    Interrupted,
 }
 
 /// Result of native calls.
@@ -135,8 +146,56 @@ pub struct Instruction {
     pub via_pointer: bool,
     /// Branch and call targets in the default code space.
     pub targets: Vec<u64>,
-    /// Address-sized constants and absolute memory operands (candidate references), deduplicated.
-    pub refs: Vec<u64>,
+    /// Constants and absolute memory operands (candidate references), one per address, sorted.
+    pub refs: Vec<Reference>,
+    /// Registers the instruction's p-code reads, as (offset in the register space, size),
+    /// sorted and deduplicated.
+    pub reg_reads: Vec<(u64, u32)>,
+    /// Registers the instruction's p-code writes, as (offset, size), sorted and deduplicated.
+    pub reg_writes: Vec<(u64, u32)>,
+}
+
+/// What an instruction does with an address it mentions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RefKind {
+    /// A constant narrower than an address (`mov edi, imm32`); weak evidence.
+    Immediate,
+    /// An address-sized constant (`lea`, `mov r64, imm64`): the address is taken.
+    Data,
+    /// The instruction reads memory at the address.
+    Read,
+    /// The instruction writes memory at the address (possibly reading it too).
+    Write,
+}
+
+impl RefKind {
+    #[cfg(kraken_native)]
+    fn from_code(c: u8) -> RefKind {
+        match c {
+            1 => RefKind::Read,
+            2 => RefKind::Write,
+            3 => RefKind::Immediate,
+            _ => RefKind::Data,
+        }
+    }
+}
+
+/// An address an instruction mentions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Reference {
+    /// The address.
+    pub addr: u64,
+    /// How it is used.
+    pub kind: RefKind,
+}
+
+/// One entry of a recovered jump table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct JumpEdge {
+    /// Address of the computed jump.
+    pub op: u64,
+    /// One of its targets.
+    pub target: u64,
 }
 
 /// A p-code varnode.
@@ -233,6 +292,15 @@ pub struct Decompiled {
     pub warnings: Vec<String>,
 }
 
+/// Registers packed as `offset << 8 | size` by the shim, unpacked, sorted and deduplicated.
+#[cfg(kraken_native)]
+fn unpack_regs(packed: &[u64]) -> Vec<(u64, u32)> {
+    let mut v: Vec<(u64, u32)> = packed.iter().map(|p| (p >> 8, (p & 0xff) as u32)).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 #[cfg(kraken_native)]
 static LOCK: Mutex<()> = Mutex::new(());
 
@@ -245,8 +313,8 @@ fn lock() -> MutexGuard<'static, ()> {
 mod real {
     use super::*;
 
-    /// Rust side of the load image callback.
-    pub struct ImageSource(pub Image);
+    /// Rust side of the load image callback, plus the stop flag decompiles poll.
+    pub struct ImageSource(pub Image, pub Arc<AtomicBool>);
 
     impl ImageSource {
         fn load_fill(&self, addr: u64, buf: &mut [u8]) -> bool {
@@ -254,6 +322,9 @@ mod real {
         }
         fn readonly_ranges(&self) -> Vec<u64> {
             self.0.readonly_pairs()
+        }
+        fn interrupted(&self) -> bool {
+            self.1.load(Ordering::Relaxed)
         }
     }
 
@@ -269,6 +340,14 @@ mod real {
             via_pointer: bool,
             targets: Vec<u64>,
             refs: Vec<u64>,
+            ref_kinds: Vec<u8>,
+            reg_reads: Vec<u64>,
+            reg_writes: Vec<u64>,
+        }
+
+        struct JumpEdgeOut {
+            op: u64,
+            target: u64,
         }
 
         struct VarnodeOut {
@@ -300,12 +379,15 @@ mod real {
             text: String,
             tokens: Vec<TokenOut>,
             warnings: Vec<String>,
+            timed_out: bool,
+            interrupted: bool,
         }
 
         extern "Rust" {
             type ImageSource;
             fn load_fill(self: &ImageSource, addr: u64, buf: &mut [u8]) -> bool;
             fn readonly_ranges(self: &ImageSource) -> Vec<u64>;
+            fn interrupted(self: &ImageSource) -> bool;
         }
 
         unsafe extern "C++" {
@@ -323,8 +405,11 @@ mod real {
             fn add_function(self: Pin<&mut Session>, addr: u64, name: &str) -> Result<()>;
             fn decode(self: Pin<&mut Session>, addr: u64, max: u32) -> Result<Vec<InsnOut>>;
             fn lift(self: Pin<&mut Session>, start: u64, end: u64) -> Result<Vec<PcodeOpOut>>;
-            fn decompile(self: Pin<&mut Session>, addr: u64) -> Result<DecompOut>;
-            fn jump_targets(self: Pin<&mut Session>, addr: u64) -> Result<Vec<u64>>;
+            fn decompile(self: Pin<&mut Session>, addr: u64, timeout_ms: u32) -> Result<DecompOut>;
+            fn jump_tables(self: Pin<&mut Session>, addr: u64) -> Result<Vec<JumpEdgeOut>>;
+            fn declare_type(self: Pin<&mut Session>, decl: &str) -> Result<()>;
+            fn set_prototype(self: Pin<&mut Session>, addr: u64, decl: &str) -> Result<()>;
+            fn set_noreturn(self: Pin<&mut Session>, addr: u64, noreturn: bool) -> Result<()>;
         }
     }
 
@@ -388,6 +473,7 @@ fn unavailable() -> NativeError {
 pub struct Session {
     #[cfg(kraken_native)]
     inner: cxx::UniquePtr<real::ffi::Session>,
+    stop: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Session {
@@ -403,22 +489,30 @@ impl Session {
         #[cfg(kraken_native)]
         {
             let _g = lock();
+            let stop = Arc::new(AtomicBool::new(false));
             let inner = real::ffi::new_session(
                 language_id,
                 compiler_id,
-                Box::new(real::ImageSource(image)),
+                Box::new(real::ImageSource(image, stop.clone())),
             )
             .map_err(real::err)?;
             if inner.is_null() {
                 return Err(NativeError::Native("new_session returned null".into()));
             }
-            Ok(Session { inner })
+            Ok(Session { inner, stop })
         }
         #[cfg(not(kraken_native))]
         {
             let _ = (language_id, compiler_id, image);
             Err(unavailable())
         }
+    }
+
+    /// The flag a running decompile polls at every action break point; raising it abandons the
+    /// decompile with [`NativeError::Interrupted`]. It is not lowered automatically. The flag
+    /// can be raised from any thread while another holds the session.
+    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+        self.stop.clone()
     }
 
     /// Adds a function symbol, or renames the one at `addr`.
@@ -445,9 +539,18 @@ impl Session {
             Ok(rows
                 .into_iter()
                 .map(|r| {
-                    let mut refs = r.refs;
-                    refs.sort_unstable();
-                    refs.dedup();
+                    let mut refs: Vec<Reference> = r
+                        .refs
+                        .iter()
+                        .zip(r.ref_kinds.iter().chain(std::iter::repeat(&0)))
+                        .map(|(a, k)| Reference {
+                            addr: *a,
+                            kind: RefKind::from_code(*k),
+                        })
+                        .collect();
+                    // one entry per address, keeping the strongest use
+                    refs.sort_unstable_by(|a, b| a.addr.cmp(&b.addr).then(b.kind.cmp(&a.kind)));
+                    refs.dedup_by_key(|r| r.addr);
                     Instruction {
                         addr: r.addr,
                         length: r.length,
@@ -458,6 +561,8 @@ impl Session {
                         via_pointer: r.via_pointer,
                         targets: r.targets,
                         refs,
+                        reg_reads: unpack_regs(&r.reg_reads),
+                        reg_writes: unpack_regs(&r.reg_writes),
                     }
                 })
                 .collect())
@@ -498,12 +603,22 @@ impl Session {
         }
     }
 
-    /// Decompiles the function at `addr` to C with token spans.
-    pub fn decompile(&mut self, addr: u64) -> NativeResult<Decompiled> {
+    /// Decompiles the function at `addr` to C with token spans. With a `timeout`, the decompile
+    /// is abandoned at the first action break point past it ([`NativeError::Timeout`]); a single
+    /// long action is not interrupted. The stop flag ([`Session::stop_flag`]) abandons it the
+    /// same way.
+    pub fn decompile(&mut self, addr: u64, timeout: Option<Duration>) -> NativeResult<Decompiled> {
         #[cfg(kraken_native)]
         {
+            let ms = timeout.map_or(0, |t| t.as_millis().clamp(1, u128::from(u32::MAX)) as u32);
             let _g = lock();
-            let out = self.pinned()?.decompile(addr).map_err(real::err)?;
+            let out = self.pinned()?.decompile(addr, ms).map_err(real::err)?;
+            if out.interrupted {
+                return Err(NativeError::Interrupted);
+            }
+            if out.timed_out {
+                return Err(NativeError::Timeout(timeout.unwrap_or_default()));
+            }
             let opt = |s: String| (!s.is_empty()).then_some(s);
             Ok(Decompiled {
                 text: out.text,
@@ -524,18 +639,27 @@ impl Session {
         }
         #[cfg(not(kraken_native))]
         {
-            let _ = addr;
+            let _ = (addr, timeout);
             Err(unavailable())
         }
     }
 
     /// Runs the decompiler's flow and switch analysis on the function at `addr` and returns the
-    /// targets of the jump tables it recovered, sorted and deduplicated.
-    pub fn jump_targets(&mut self, addr: u64) -> NativeResult<Vec<u64>> {
+    /// entries of the jump tables it recovered, sorted and deduplicated.
+    pub fn jump_tables(&mut self, addr: u64) -> NativeResult<Vec<JumpEdge>> {
         #[cfg(kraken_native)]
         {
             let _g = lock();
-            let mut t = self.pinned()?.jump_targets(addr).map_err(real::err)?;
+            let mut t: Vec<JumpEdge> = self
+                .pinned()?
+                .jump_tables(addr)
+                .map_err(real::err)?
+                .into_iter()
+                .map(|e| JumpEdge {
+                    op: e.op,
+                    target: e.target,
+                })
+                .collect();
             t.sort_unstable();
             t.dedup();
             Ok(t)
@@ -543,6 +667,61 @@ impl Session {
         #[cfg(not(kraken_native))]
         {
             let _ = addr;
+            Err(unavailable())
+        }
+    }
+
+    /// The targets of [`Session::jump_tables`], sorted and deduplicated.
+    pub fn jump_targets(&mut self, addr: u64) -> NativeResult<Vec<u64>> {
+        let mut t: Vec<u64> = self.jump_tables(addr)?.iter().map(|e| e.target).collect();
+        t.sort_unstable();
+        t.dedup();
+        Ok(t)
+    }
+
+    /// Parses one C declaration (a typedef, struct, union or enum, in Ghidra's type names such
+    /// as `uint` and `undefined8`) into the decompiler's type factory.
+    pub fn declare_type(&mut self, decl: &str) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            let _g = lock();
+            self.pinned()?.declare_type(decl).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = decl;
+            Err(unavailable())
+        }
+    }
+
+    /// Parses a C prototype (`int printf(char *format,...)`) and locks it onto the function at
+    /// `addr`, which is created when unknown. Callers then decompile with its parameter types.
+    pub fn set_prototype(&mut self, addr: u64, decl: &str) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            let _g = lock();
+            self.pinned()?.set_prototype(addr, decl).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, decl);
+            Err(unavailable())
+        }
+    }
+
+    /// Marks the function at `addr` as never returning (or clears the mark), so the decompiler
+    /// ends flow after calls to it.
+    pub fn set_noreturn(&mut self, addr: u64, noreturn: bool) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            let _g = lock();
+            self.pinned()?
+                .set_noreturn(addr, noreturn)
+                .map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, noreturn);
             Err(unavailable())
         }
     }

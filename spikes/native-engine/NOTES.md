@@ -1,4 +1,4 @@
-# Native engine, phase 1: notes
+# Native engine, phases 1 and 2: notes
 
 > Status: the design and the phase plan are in [ADR 0014](../../docs/design/0014-native-engine.md). This file records how the code works, what was measured and the traps found along the way.
 
@@ -10,12 +10,16 @@ Code: `crates/engine-native-sys` (build, shim, bridge) and `crates/engine-native
 
 ```sh
 cargo xtask native-src                 # once: ~80 MB download, SHA-256 checked, cpp/ + zlib/ extracted
+cargo xtask native-sla                 # once: builds the Sleigh compiler, compiles x86 + AArch64 (~50 s)
 cargo test -p engine-native-sys -p engine-native
-cargo test -p engine-native -- --ignored          # the whole-corpus sweep (about 40 s)
+cargo test -p engine-native --test native -- --ignored     # the whole-corpus sweep (about a minute)
+cargo test -p engine-native --test agreement -- --ignored --nocapture   # agreement with Ghidra, all 20
+KRAKEN_AGREEMENT_DIFF=1 KRAKEN_AGREEMENT_BINARIES=switch_vm-O0 \
+  cargo test -p engine-native --test agreement -- --ignored --nocapture # and every disagreement
 KRAKEN_NATIVE_AARCH64_BIN=/path/to/aarch64.elf cargo test -p engine-native aarch64
 ```
 
-- **Inputs:** the tests need the cached sources (a build-time input) and a Ghidra install for the `.sla` and spec files: `KRAKEN_GHIDRA_HOME`, else the newest copy under `~/.cache/kraken-dev/ghidra`.
+- **Inputs:** the tests need the cached sources (a build-time input) and a Sleigh spec tree: the one `cargo xtask native-sla` compiles (`~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build`), `KRAKEN_NATIVE_SPECS`, `KRAKEN_GHIDRA_HOME`, or the newest Ghidra install under `~/.cache/kraken-dev/ghidra`, in that order.
 - **Missing inputs:** if either is missing the tests print `skipped: …` and pass, the same way the sys crate builds a stub without its sources. `KRAKEN_NATIVE_STUB=1` forces the stub. The `require-native` feature makes missing sources a build error.
 - **Build time:** the first build compiles about 80 Ghidra C++ files, which takes about 40 s on 16 threads. The C++ is always built at `-O2`, so debug test runs decompile at full speed.
 
@@ -47,12 +51,56 @@ Where `cpp_shapes` sizes differ from the truth, the cause is exception landing p
 - **GCC 16 warnings.** cc's `-Wall -Wextra` floods the output with Ghidra header warnings. Ghidra's directory is included as `-isystem` for the shim, warnings are off for Ghidra's own files, and a `-Wmaybe-uninitialized` false positive in cxx's generated `Vec` constructors is silenced.
 - **The source archive layout.** GitHub's tarball has a `ghidra-Ghidra_12.1.4_build/` prefix, so `decompile/cpp` needs `--strip-components=6`. GitHub may regenerate archives. A hash mismatch stops `native-src` with instructions, and it never updates the pin silently.
 
-## Not done in phase 1 (see the ADR's phases)
+## Not done yet (see the ADR's phases)
 
-- xrefs, CFG, strings, imports and exports, types, mutation and the analyzer job
+- mutation (renames, comments, function create/delete) from the edit log
 - PE, Mach-O and 32-bit x86
-- exception landing pads and noreturn propagation
-- decompiler timeouts
-- the confined worker process
+- DWARF types and a demangler
+- the confined worker process (hard timeouts, crash isolation)
 - engine selection in `kraken-host`
-- compiling the `.sla` files ourselves
+
+Phase 1 also listed xrefs, CFG, strings, symbols, types, the analyzer job, landing pads, noreturn propagation, decompiler timeouts and compiling the `.sla` files; phase 2 below covers them.
+
+## Phase 2: how it works
+
+- **References** (`refs.rs`) are built once at load from every body instruction. The shim tags each address an instruction mentions: an address-sized constant (`lea`, `mov r64, imm64`) is `data`, a direct or constant-pointer memory input is `read`, an output is `write`, and a 32-bit constant in a fixed-address image is weak `data`. Branch targets give `jump`, call targets `call`, a jump to another function's entry `call`, and switch entries `jump` from the computed jump. Ghidra's constant propagation also refers to an address from the instruction that next copies or addresses through the register it was loaded into (`lea rax,[s]; mov rsi,rax`); the shim reports each instruction's register reads and writes so the index does the same within a block (copies and memory operands only, not compares). Relocated pointer slots in data are `data` references, and the straight-line PLT code the GOT points at before binding (`push n; jmp PLT0`) is indexed too, which gives PLT0 its callers.
+- **CFGs** (`cfg.rs`) copy `SimpleBlockModel`: calls end blocks, a recovered switch's computed jump gets a block of its own, landing pads start blocks, and an instruction that branches to itself (Sleigh's `HLT`) has no self-edge.
+- **Strings** (`strings.rs`): ASCII/UTF-8 and UTF-16LE (two-byte aligned, plain text only), zero-terminated, in initialized non-executable blocks. `.dynstr` entries are `utf8`, as Ghidra's ELF loader defines them. At a data-reference target any 7-bit run counts, which finds the bytecode program `switch_vm` passes around, as Ghidra's defined data does.
+- **Imports and exports** (`symbols.rs`): an import's address is its PLT stub (Ghidra uses a synthetic `EXTERNAL` block for the others; we leave them addressless). Exports are global and weak definitions plus the entry and the init/fini functions; the name at an address is its first typed symbol in symbol-table order (`completed.0` over `__TMC_END__`, `data_start` over `__data_start`), with version suffixes (`stderr@GLIBC_2.2.5`) dropped.
+- **Types** (`typestore.rs`, `ctypes.rs`, `libc.rs`): the decompiler's own C grammar does the parsing, so the Rust side only renders C in the decompiler's core type names. Two quirks of that grammar: it has no `unsigned` (so `uint`, `ulong`), and `struct name` does not refer back to a struct from an earlier declaration, so composites are referred to by plain name. A prototype must end in `;`.
+- **The decompile limit** uses `Action::setBreakPoint(break_start, name)` on every action of the `decompile` root (the action list is reached through a member pointer of a derived class). The `jumptable` root used by switch recovery is a separate clone and keeps no break points, since its caller does not resume partial runs. After an abandoned run `clearAnalysis` and the next `reset` leave no state behind (the smoke test decompiles again and compares).
+- **Cancellation** raises the session's stop flag (an `AtomicBool` the load-image callback object owns) from a watcher task; one decompile runs per program at a time, so the flag only stops its own.
+
+## Phase 2: what was measured
+
+| Check | Result |
+|---|---|
+| Truth recall, all 20 corpus binaries | 100% on every one, stripped and `-O2` included (phase 1: 75–100% on `-O2` stripped) |
+| `cpp_shapes-O0` sizes against the symbol table | all 330 equal, landing pads included |
+| `switch_vm-O2` `vm_run` | 1025 of 1112 bytes (phase 1: 114) once `vm_fail` is known not to return; the rest is alignment padding inside the function |
+| Compiled `.sla` vs Ghidra 12.1.4's | byte-identical, all five (x86, x86-64, AARCH64, AARCH64BE, AppleSilicon) |
+| `cmp_id` with a user prototype | `int cmp_id(record *a,record *b)` … `return a->id - b->id;`, Ghidra-with-DWARF's shape |
+| Decompile limit of 1 ms on `vm_run` | `timeout`; the next decompile is complete |
+| Contract suite | passes with every capability but mutation, on `pie_list-O0` and `switch_vm-O0` |
+
+Agreement with the Ghidra fixtures (recall over Ghidra's recorded data, precision over ours in brackets):
+
+| Fixtures | Functions | Bodies | CFG identical | CFG edges | Xrefs into the image | Callers | Strings |
+|---|---|---|---|---|---|---|---|
+| `pie_list-O0` | 100% | 100% | 100% | 100% | 100% (100%) | 100% | 100% |
+| `switch_vm-O0` | 100% | 100% | 100% | 100% | 100% (90%) | 100% | 100% |
+| `cpp_shapes-O0` | 100% | 92% | 92% | 99.8% | 100% (88.5%) | 100% | 100% |
+| `static_strops-O0-stripped` | 96.9% | 95.7% | 84.9% | 88.9% | 83.8% (95.7%) | 98.9% | 96% |
+| all 20 (1100 functions) | 98.3% | 94.4% | 90.0% | 95.0% | 93.1% (91.6%) | 99.3% | 97.1% (98.4%) |
+
+Imports agree by name except in C++ binaries (Ghidra demangles), exports 100% on the C binaries and low on C++ and static ones (demangled names; Ghidra lists more entry points in static glibc). The `cpp_shapes` body differences are the landing pads Ghidra leaves out; the stripped static gap is mostly references from code Ghidra reaches later (IFUNC resolvers, switch bodies).
+
+## Phase 2: traps
+
+- **Switch recovery before noreturn is known.** With `vm_fail` not yet marked, the decompiler followed flow past its call into `op_name` and returned `op_name`'s table for `vm_run`, and `vm_run`'s own table failed ("too many branches"). Jump tables of callers are now recovered again when a callee becomes noreturn.
+- **`REP STOSQ` looks like a jump.** Sleigh models the repeat as a `CBRANCH` to the next instruction and a `BRANCH` back to itself. An instruction with both is now a fall-through, which fixed a CFG and xref mismatch.
+- **`jmp [rip+X]` has no `LOAD`.** Sleigh gives the slot as a direct memory operand, so stubs were taken for switches and sent to the (expensive) switch analysis. A `BRANCHIND` through a memory operand is now a stub.
+- **The return address a call pushes** is an address-sized constant in p-code (`STORE [RSP], inst_next`), and was reported as a data reference.
+- **Static PLT entries** carry IRELATIVE relocations, not symbols, sit 8 bytes apart, and live in `.rela.plt` outside the dynamic relocations. They are named after the IFUNC symbol at the resolver, as Ghidra names them, so jumps to them are tail calls instead of growing the caller's body.
+- **Noreturn without names.** A stripped static binary has no `exit` to start from. Ghidra's discovered-noreturn evidence (a call followed by another function's entry) needs no names and took the stripped static bodies from 58% to 96% agreement.
+- **Ghidra artifacts in the fixtures**, not engine errors: imports in a synthetic `EXTERNAL` block at the end of the image; no operand references in code its switch analysis reached late (`switch_vm` case bodies), where we have them; C++ landing pads left out of bodies; demangled names on C++ exports; references to addresses between sections (`__TMC_END__` in `switch_vm`).

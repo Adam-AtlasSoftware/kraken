@@ -12,6 +12,7 @@ async-trait = "0.1.89"
 engine-native-sys = { path = "../engine-native-sys", version = "0.0.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
 kraken-proto.workspace = true
+gimli = { version = "0.33", default-features = false, features = ["read", "std"] }
 object = { version = "0.39", default-features = false, features = ["read_core", "elf", "std"] }
 sha2 = "0.10"
 thiserror.workspace = true

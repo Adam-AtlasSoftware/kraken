@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use engine_native::{NativeConfig, NativeEngine};
 use kraken_engine::testing::{ExpectedFunction, FixtureExpectations, run_contract_suite};
 use kraken_engine::{
-    CancellationToken, Decompiler, DisasmRequest, Disassembler, FunctionLister, Loader, LoaderSpec,
-    ProgramInfo,
+    AnalyzeRequest, Analyzer, CancellationToken, Decompiler, DisasmRequest, Disassembler,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, ProgramInfo, Stage, TypeStore,
 };
 use kraken_proto::{
-    DisasmScope, FlowKind, FunctionSummary, Hex64, Locator, PageRequest, TokenKind,
+    CfgEdgeKind, Composite, DisasmScope, ErrorCode, Field, FlowKind, FunctionPrototype,
+    FunctionSummary, Hex64, Locator, PageRequest, Param, Primitive, PrimitiveClass, TokenKind,
+    TypeDef, TypeRef,
 };
 use serde_json::Value;
 
@@ -376,7 +378,7 @@ async fn contract_suite_subset() {
 /// dynamically linked ones decompiles with valid token spans. Slow (the static binaries run the
 /// switch analysis on hundreds of libc functions): `cargo test -p engine-native -- --ignored`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "slow corpus sweep (about 40 s)"]
+#[ignore = "slow corpus sweep (about a minute)"]
 async fn whole_corpus() {
     let mut names: Vec<String> = std::fs::read_dir(root().join("corpus/truth"))
         .expect("truth dir")
@@ -392,8 +394,9 @@ async fn whole_corpus() {
         let Some((r, _)) = recall(&binary, true).await else {
             return;
         };
-        let floor = if binary.contains("-O2") { 0.75 } else { 0.95 };
-        assert!(r >= floor, "{binary}: recall {r:.2}");
+        // FDE starts, landing pads and noreturn evidence find every truth function, stripped
+        // and optimized builds included
+        assert_eq!(r, 1.0, "{binary}: recall {r:.2}");
         if binary.starts_with("static_") {
             continue;
         }
@@ -416,6 +419,291 @@ async fn whole_corpus() {
             "{binary}: decompiled {} functions in {:?}",
             fns.len(),
             started.elapsed()
+        );
+    }
+}
+
+/// Library prototypes reach the decompiler: `printf`'s `char *format` turns the constant at the
+/// call site into a string literal, and the prototype is in the type store and the listing.
+#[tokio::test(flavor = "multi_thread")]
+async fn library_prototypes_type_call_sites() {
+    let Some((e, _)) = open("pie_list-O0", true).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let fns = listing(&e).await;
+    let main = fns.iter().find(|f| f.name == "main").expect("main");
+    let r = e
+        .decompile(&main.locator, &c)
+        .await
+        .expect("decompile main");
+    assert!(r.text.contains("printf(\""), "{}", r.text);
+    let printf = fns
+        .iter()
+        .find(|f| f.name == "printf")
+        .expect("printf stub");
+    assert_eq!(
+        printf.signature.as_deref(),
+        Some("int printf(char *format,...)")
+    );
+    match e.get_type("printf", &c).await.expect("printf prototype") {
+        TypeDef::Function(p) => assert!(p.varargs && p.params.len() == 1),
+        other => panic!("printf is {other:?}"),
+    }
+    match e.get_type("size_t", &c).await.expect("size_t") {
+        TypeDef::Typedef(t) => assert_eq!(t.name, "size_t"),
+        other => panic!("size_t is {other:?}"),
+    }
+    // `exit` never returns, by the table and by discovery
+    let exit = fns.iter().find(|f| f.name == "exit").expect("exit stub");
+    let stats = e.stats().expect("stats");
+    assert!(stats.noreturn.contains(&offset(&exit.locator)));
+
+    // a user-defined struct and prototype change the output of a local function
+    e.define_type(
+        TypeDef::Struct(Composite {
+            name: "record".into(),
+            size: 16,
+            align: 4,
+            fields: vec![Field {
+                name: "id".into(),
+                offset: 0,
+                ty: TypeRef::Primitive(Primitive {
+                    class: PrimitiveClass::Int,
+                    size: 4,
+                    signed: true,
+                }),
+                bitfield: None,
+            }],
+        }),
+        &c,
+    )
+    .await
+    .expect("struct");
+    let rec = || TypeRef::Pointer {
+        target: Box::new(TypeRef::Named {
+            name: "record".into(),
+        }),
+        size: 8,
+    };
+    e.define_type(
+        TypeDef::Function(FunctionPrototype {
+            name: Some("cmp_id".into()),
+            return_type: Box::new(TypeRef::Primitive(Primitive {
+                class: PrimitiveClass::Int,
+                size: 4,
+                signed: true,
+            })),
+            params: vec![
+                Param {
+                    name: Some("a".into()),
+                    ty: rec(),
+                    storage: None,
+                },
+                Param {
+                    name: Some("b".into()),
+                    ty: rec(),
+                    storage: None,
+                },
+            ],
+            calling_convention: String::new(),
+            varargs: false,
+            noreturn: false,
+        }),
+        &c,
+    )
+    .await
+    .expect("prototype");
+    let r = e
+        .decompile(&Locator::ram(0x10124e), &c)
+        .await
+        .expect("cmp_id");
+    // Ghidra with DWARF: `int cmp_id(record *a,record *b) { return a->id - b->id; }`
+    assert!(r.text.contains("cmp_id(record *a,record *b)"), "{}", r.text);
+    assert!(r.text.contains("a->id - b->id"), "{}", r.text);
+    assert!(e.stats().expect("stats").pending_types.is_empty());
+}
+
+/// The analyzer reports every stage, fills in signatures from the decompiler and stops when
+/// cancelled.
+#[tokio::test(flavor = "multi_thread")]
+async fn analyzer_fills_signatures() {
+    let Some((e, _)) = open("switch_vm-O0", true).await else {
+        return;
+    };
+    let mut job = e
+        .analyze(AnalyzeRequest::default(), CancellationToken::new())
+        .await
+        .expect("analyze");
+    let mut last = None;
+    while let Some(p) = job.next_progress().await {
+        assert!(p.done <= p.total);
+        last = Some(p);
+    }
+    let summary = job.wait().await.expect("analysis");
+    assert_eq!(summary.stages_completed, Stage::ALL);
+    let last = last.expect("progress");
+    assert_eq!(last.stage, Stage::Expensive);
+    assert!(
+        last.message.contains("0 timed out, 0 failed"),
+        "{}",
+        last.message
+    );
+    let fns = listing(&e).await;
+    let op_name = fns.iter().find(|f| f.name == "op_name").expect("op_name");
+    let sig = op_name
+        .signature
+        .as_deref()
+        .expect("signature after analysis");
+    assert!(sig.contains("op_name("), "{sig}");
+    assert!(
+        fns.iter().all(|f| f.signature.is_some()),
+        "every function has one"
+    );
+}
+
+/// A decompile that runs past its limit fails with `timeout` and leaves the engine usable.
+#[tokio::test(flavor = "multi_thread")]
+async fn decompile_timeout() {
+    let Some(mut c) = config(true) else { return };
+    c.decompile_timeout = Some(std::time::Duration::from_millis(1));
+    let e = NativeEngine::new(c);
+    let cancel = CancellationToken::new();
+    e.open_binary(
+        &root().join("corpus/bin/switch_vm-O0"),
+        &LoaderSpec::default(),
+        &cancel,
+    )
+    .await
+    .expect("open");
+    let vm_run = listing(&e)
+        .await
+        .into_iter()
+        .find(|f| f.name == "vm_run")
+        .expect("vm_run");
+    let err = e.decompile(&vm_run.locator, &cancel).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout, "{err}");
+    // the next decompile starts clean
+    let fresh = NativeEngine::new(config(true).expect("config"));
+    fresh
+        .open_binary(
+            &root().join("corpus/bin/switch_vm-O0"),
+            &LoaderSpec::default(),
+            &cancel,
+        )
+        .await
+        .expect("open");
+    let r = fresh
+        .decompile(&vm_run.locator, &cancel)
+        .await
+        .expect("full");
+    assert!(r.text.contains("switch"), "{}", r.text);
+}
+
+/// Switch tables become switch edges, landing pads join C++ bodies, and a function that only
+/// ends in calls that never return is marked the same way.
+#[tokio::test(flavor = "multi_thread")]
+async fn switches_landing_pads_and_noreturn() {
+    let Some((e, _)) = open("switch_vm-O0", true).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let fns = listing(&e).await;
+    let vm_run = fns.iter().find(|f| f.name == "vm_run").expect("vm_run");
+    let cfg = e.cfg(&vm_run.locator, &c).await.expect("cfg");
+    let switches = cfg
+        .edges
+        .iter()
+        .filter(|x| x.kind == CfgEdgeKind::Switch)
+        .count();
+    assert_eq!(switches, 15, "{cfg:?}");
+    // vm_fail calls exit only, so it never returns
+    let vm_fail = fns.iter().find(|f| f.name == "vm_fail").expect("vm_fail");
+    assert!(
+        e.stats()
+            .expect("stats")
+            .noreturn
+            .contains(&offset(&vm_fail.locator))
+    );
+
+    // in switch_vm-O2, knowing that vm_fail never returns keeps op_name out of vm_run and lets
+    // the decompiler recover vm_run's own jump table
+    let (o2, info) = open("switch_vm-O2", true).await.expect("open O2");
+    let o2_truth = truth("switch_vm-O2", info.base.0);
+    let fns = listing(&o2).await;
+    let vm_run = fns.iter().find(|f| f.name == "vm_run").expect("vm_run");
+    let want = o2_truth
+        .values()
+        .find(|(n, _)| n == "vm_run")
+        .map(|(_, s)| *s)
+        .expect("truth");
+    assert!(
+        vm_run.size.unwrap_or(0) * 10 >= want * 9,
+        "vm_run is {:?} bytes, truth {want}",
+        vm_run.size
+    );
+    let cfg = o2.cfg(&vm_run.locator, &c).await.expect("cfg");
+    assert!(cfg.edges.iter().any(|x| x.kind == CfgEdgeKind::Switch));
+
+    // C++: exception landing pads are part of the bodies, so sizes match the symbol table
+    let (cpp, info) = open("cpp_shapes-O0", true).await.expect("open cpp");
+    assert!(cpp.stats().expect("stats").landing_pads > 0);
+    let cpp_truth = truth("cpp_shapes-O0", info.base.0);
+    let found: BTreeMap<u64, FunctionSummary> = listing(&cpp)
+        .await
+        .into_iter()
+        .map(|f| (offset(&f.locator), f))
+        .collect();
+    let same = cpp_truth
+        .iter()
+        .filter(|(a, (_, size))| found.get(a).is_some_and(|f| f.size == Some(*size)))
+        .count();
+    assert_eq!(same, cpp_truth.len(), "sizes agree with the symbol table");
+}
+
+/// The specification tree `cargo xtask native-sla` compiles from the pinned sources replaces a
+/// Ghidra install: the engine decompiles with it alone, and its x86-64 `.sla` is byte-identical
+/// to the one Ghidra ships (when an install is around to compare with).
+#[tokio::test(flavor = "multi_thread")]
+async fn compiled_specs_replace_a_ghidra_install() {
+    let Some(dir) = engine_native::compiled_specs_dir().filter(|d| engine_native::has_specs(d))
+    else {
+        eprintln!("skipped: no compiled spec tree (cargo xtask native-sla)");
+        return;
+    };
+    let c = NativeConfig::new(&dir);
+    if !NativeEngine::is_usable(&c) {
+        eprintln!("skipped: engine-native-sys was built without the decompiler sources");
+        return;
+    }
+    assert!(dir.join("SOURCE.txt").is_file() && dir.join("LICENSE").is_file());
+    let e = NativeEngine::new(c);
+    e.open_binary(
+        &root().join("corpus/bin/pie_list-O0"),
+        &LoaderSpec::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("open with the compiled specs");
+    let r = e
+        .decompile(&Locator::ram(0x10124e), &CancellationToken::new())
+        .await
+        .expect("decompile");
+    assert!(
+        r.text.contains("cmp_id") && r.text.contains(" - "),
+        "{}",
+        r.text
+    );
+    if let Some(g) =
+        NativeConfig::discover_ghidra().filter(|g| engine_native::has_specs(&g.spec_root))
+    {
+        let rel = "Ghidra/Processors/x86/data/languages/x86-64.sla";
+        let ours = std::fs::read(dir.join(rel)).expect("ours");
+        let theirs = std::fs::read(g.spec_root.join(rel)).expect("theirs");
+        assert!(
+            ours == theirs,
+            "x86-64.sla differs from {}",
+            g.spec_root.display()
         );
     }
 }
