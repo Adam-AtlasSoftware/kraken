@@ -29,28 +29,29 @@ daemon changes, or a larger redesign).
 6. **Disabled "Create project and analyze" gave no reason.** FIXED: hover text says whether a program
    or a folder fix is missing.
 7. **Function list mixes imports and thunks with real functions (real project).** `free`, `printf`,
-   `_init` and PLT stubs sit among program code with nothing to separate them. OPEN: needs a
-   per-function kind (external/thunk) in the view model data; the list could group or dim them, and
-   offer "hide library stubs".
+   `_init` and PLT stubs sit among program code with nothing to separate them. FIXED: the view model marks library stubs
+   (`FunctionItem::stub`, by name, signature and size, since the engine reports no kind yet); the
+   list dims them, adds a "Hide library stubs" checkbox, and the hover text says what they are.
 8. **Long decompiler lines are clipped with no cue (real project, the "WARNING: Unknown calling
-   convention" comment).** OPEN: wrap comment lines or show a horizontal scroll indicator; this is a
-   widget change in `kraken-gui-widgets` token text.
+   convention" comment).** FIXED: a line that runs past the pane edge ends in an accent ellipsis mark;
+   scrolling sideways reveals the rest (`kraken-gui-widgets` token text).
 9. **Callers (0) is the tab shown by default and is often empty.** The empty message is good ("Nothing
-   calls this function") but a newcomer sees an apparent dead end while Calls has entries. OPEN:
-   default to whichever side has entries.
-10. **Toasts cover the bottom of the listing and hex views** until dismissed or timed out. OPEN:
-    anchor them above the status bar over the least used panel, or shift upward when the right dock
-    is bottom-aligned.
+   calls this function") but a newcomer sees an apparent dead end while Calls has entries. FIXED:
+   a newly selected function opens on Calls when nothing calls it, until the person picks a tab.
+10. **Toasts cover the bottom of the listing and hex views** until dismissed or timed out. FIXED:
+    toasts sit bottom-left above the status bar, over the Functions list, and shrink on narrow
+    windows.
 11. **Duplicate entry points for the assistant** (top-bar button and an Assistant tab) and for
     rewrite ("Rewrite in Rust" button, Rewrite tab, plus palette commands). Consistent enough, but
     the tab and button have different labels in the agents scene. OPEN: pick one wording.
 12. **Keyboard.** The palette (Ctrl+K), rename (N), back/forward (Alt+Arrows), filter (Ctrl+L),
     cross-references (X) and settings (Ctrl+,) are all reachable and tested; Escape closes dialogs.
-    Gaps, OPEN: no visible focus ring distinction on the tab strip, and the dock tabs cannot be
-    switched from the keyboard (suggest Ctrl+Tab and Ctrl+1..n).
+    Dock tabs now switch from the keyboard: FIXED, Ctrl+Tab and Ctrl+Shift+Tab step through the
+    focused pane (the busiest one before anything is clicked), Ctrl+1..9 jump to the nth tab. Still
+    OPEN: no visible focus ring distinction on the tab strip.
 13. **Contrast.** Dark theme is fine. Light theme dim text (`text_dim` on `surface`) is near 4.5:1 for
     11 px captions such as the hex column heads; acceptable for body text, borderline for the
-    smallest captions. OPEN: raise `text_dim` slightly in the light palette.
+    smallest captions. FIXED: light `text_dim` is now `#4a5f68`, at least 4.5:1 on every light surface (tested).
 14. **Empty states are good and consistent** (title, plain sentence, an accent tip). No change; this
     is the pattern the welcome and palette fixes follow.
 

@@ -10,7 +10,7 @@ use kraken_gui_widgets::ByteSource;
 use kraken_viewmodel::{AnalysisPhase, ByteState, Connection, Load, Reveal, XrefWhich};
 
 use super::hex::CacheSource;
-use super::space_target;
+use super::{cycled, space_target};
 use crate::app::KrakenApp;
 use crate::args::{Options, RendererChoice, Scene};
 use crate::fonts;
@@ -292,4 +292,78 @@ fn strings_and_imports_tabs_load_their_lists() {
     let vm = h.app.view_model().unwrap();
     assert!(vm.views.strings.loaded, "{:?}", vm.views.strings.error);
     assert!(vm.views.imports.loaded, "{:?}", vm.views.imports.error);
+}
+
+/// The tabs of the focused pane, in order, and which one is in front.
+fn focused_pane(dock: &DockState<Tab>) -> (Vec<Tab>, usize) {
+    let node = super::target_pane(dock).expect("a pane");
+    let leaf = dock[node.surface][node.node].get_leaf().expect("a leaf");
+    (leaf.tabs.clone(), leaf.active.0)
+}
+
+fn ctrl() -> Modifiers {
+    Modifiers {
+        ctrl: true,
+        command: true,
+        ..Modifiers::NONE
+    }
+}
+
+impl Harness {
+    fn press_with(&mut self, key: Key, modifiers: Modifiers) {
+        for pressed in [true, false] {
+            self.step_with(vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed,
+                repeat: false,
+                modifiers,
+            }]);
+        }
+    }
+}
+
+#[test]
+fn tab_switching_wraps_around() {
+    assert_eq!(cycled(4, 0, false), 1);
+    assert_eq!(cycled(4, 3, false), 0);
+    assert_eq!(cycled(4, 0, true), 3);
+    assert_eq!(cycled(4, 2, true), 1);
+    assert_eq!(cycled(0, 0, true), 0);
+}
+
+#[test]
+fn ctrl_tab_and_ctrl_number_switch_dock_tabs() {
+    let mut h = Harness::demo();
+    h.settle();
+    let (tabs, active) = focused_pane(h.app.dock());
+    assert!(
+        tabs.len() > 2,
+        "the focused pane has several tabs: {tabs:?}"
+    );
+
+    h.press_with(Key::Tab, ctrl());
+    let (_, now) = focused_pane(h.app.dock());
+    assert_eq!(now, cycled(tabs.len(), active, false), "Ctrl+Tab goes on");
+
+    h.press_with(
+        Key::Tab,
+        Modifiers {
+            shift: true,
+            ..ctrl()
+        },
+    );
+    let (_, back) = focused_pane(h.app.dock());
+    assert_eq!(back, active, "Ctrl+Shift+Tab goes back");
+
+    h.press_with(Key::Num2, ctrl());
+    assert_eq!(focused_pane(h.app.dock()).1, 1, "Ctrl+2 is the second tab");
+    h.press_with(Key::Num1, ctrl());
+    assert_eq!(focused_pane(h.app.dock()).1, 0, "Ctrl+1 is the first tab");
+    h.press_with(Key::Num9, ctrl());
+    assert_eq!(
+        focused_pane(h.app.dock()).1,
+        0,
+        "a number past the last tab does nothing"
+    );
 }

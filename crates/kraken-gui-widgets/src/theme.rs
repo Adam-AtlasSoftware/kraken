@@ -148,7 +148,7 @@ impl KrakenTheme {
                 border: rgb(0xc3d5dc),
                 text: rgb(0x2b3e47),
                 text_strong: rgb(0x0e1c22),
-                text_dim: rgb(0x566c75),
+                text_dim: rgb(0x4a5f68),
                 accent: rgb(0x0b8577),
                 selection: Color32::from_rgba_unmultiplied(0x0b, 0x85, 0x77, 52),
                 row_hover: Color32::from_rgba_unmultiplied(0x00, 0x30, 0x40, 14),
@@ -291,6 +291,37 @@ mod tests {
             for b in &kinds[i + 1..] {
                 assert_ne!(s.color(*a), s.color(*b), "{a:?} vs {b:?}");
             }
+        }
+    }
+
+    fn luminance(c: Color32) -> f32 {
+        let lin = |v: u8| {
+            let v = f32::from(v) / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn dim_captions_stay_readable_in_the_light_theme() {
+        let p = KrakenTheme::LIGHT.palette();
+        for (name, bg) in [
+            ("bg", p.bg),
+            ("panel", p.panel),
+            ("surface", p.surface),
+            ("surface_hover", p.surface_hover),
+        ] {
+            let c = contrast(p.text_dim, bg);
+            assert!(c >= 4.5, "text_dim on {name} is {c:.2}:1");
         }
     }
 

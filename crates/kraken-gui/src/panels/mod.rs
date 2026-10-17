@@ -64,6 +64,7 @@ pub fn global_keys(
     vm: &mut ViewModel,
     st: &mut PanelState,
 ) {
+    switch_tab_by_key(ctx, dock);
     let typing = ctx.egui_wants_keyboard_input();
     let (space, x) = if typing {
         (false, false)
@@ -99,6 +100,81 @@ pub fn global_keys(
         && let Some(path) = dock.find_tab(&tab)
     {
         let _ = dock.set_active_tab(path);
+    }
+}
+
+/// Where Ctrl+Tab / Ctrl+Shift+Tab lands from tab `cur` among `len` tabs, wrapping around.
+pub fn cycled(len: usize, cur: usize, backwards: bool) -> usize {
+    if len == 0 {
+        0
+    } else if backwards {
+        (cur + len - 1) % len
+    } else {
+        (cur + 1) % len
+    }
+}
+
+const NUMBER_KEYS: [Key; 9] = [
+    Key::Num1,
+    Key::Num2,
+    Key::Num3,
+    Key::Num4,
+    Key::Num5,
+    Key::Num6,
+    Key::Num7,
+    Key::Num8,
+    Key::Num9,
+];
+
+/// The pane the tab keys act on: the focused one, or before anything was clicked the pane that
+/// holds the most tabs.
+pub fn target_pane(dock: &DockState<Tab>) -> Option<egui_dock::NodePath> {
+    dock.focused_leaf().or_else(|| {
+        let mut count: std::collections::BTreeMap<(usize, usize), (usize, egui_dock::NodePath)> =
+            std::collections::BTreeMap::new();
+        for (p, _) in dock.iter_all_tabs() {
+            let n = p.node_path();
+            count.entry((p.surface.0, n.node.0)).or_insert((0, n)).0 += 1;
+        }
+        count.into_values().max_by_key(|(n, _)| *n).map(|(_, p)| p)
+    })
+}
+
+/// Ctrl+Tab and Ctrl+Shift+Tab step through the tabs of the focused dock pane; Ctrl+1 to Ctrl+9
+/// jump to the nth one.
+fn switch_tab_by_key(ctx: &Context, dock: &mut DockState<Tab>) {
+    let (next, prev, nth) = ctx.input_mut(|i| {
+        // The shifted chord first: a plain Ctrl+Tab pattern also matches it.
+        let prev = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
+        let next = i.consume_key(Modifiers::COMMAND, Key::Tab);
+        let nth = NUMBER_KEYS
+            .iter()
+            .position(|k| i.consume_key(Modifiers::COMMAND, *k));
+        (next, prev, nth)
+    });
+    if !(next || prev || nth.is_some()) {
+        return;
+    }
+    let Some(node) = target_pane(dock) else {
+        return;
+    };
+    let tabs: Vec<_> = dock
+        .iter_all_tabs()
+        .filter(|(p, _)| p.node_path() == node)
+        .map(|(p, t)| (p, *t))
+        .collect();
+    let active = dock.find_active_focused().map(|(_, t)| *t);
+    let cur = active
+        .and_then(|a| tabs.iter().position(|(_, t)| *t == a))
+        .unwrap_or(0);
+    let target = match nth {
+        Some(n) if n < tabs.len() => n,
+        Some(_) => return,
+        None => cycled(tabs.len(), cur, prev),
+    };
+    if let Some((path, _)) = tabs.get(target) {
+        let _ = dock.set_active_tab(*path);
+        dock.set_focused_node_and_surface(node);
     }
 }
 

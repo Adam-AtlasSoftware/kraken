@@ -20,7 +20,44 @@ pub struct FunctionItem {
     pub signature: Option<String>,
     /// True when analysis behind this row is incomplete.
     pub partial: bool,
+    /// A library stub: an import thunk, PLT entry or C runtime startup stub, not program code.
+    pub stub: bool,
 }
+
+/// True for functions that are plumbing rather than program code: import thunks, PLT entries
+/// and the C runtime's `_init` / `_fini`. The engine reports no kind yet, so this goes by name,
+/// signature and size.
+pub fn is_library_stub(name: &str, size: Option<u64>, signature: Option<&str>) -> bool {
+    let n = name.trim_start_matches('_');
+    if matches!(n, "init" | "fini") {
+        return true;
+    }
+    if ["thunk_", "j_", "imp_", "plt_"]
+        .iter()
+        .any(|p| n.starts_with(p))
+        || name.ends_with("@plt")
+        || name.ends_with("@PLT")
+    {
+        return true;
+    }
+    if signature.is_some_and(|s| s.to_ascii_lowercase().contains("thunk")) {
+        return true;
+    }
+    // The size of a jump stub and the name of a runtime or libc entry: an import's PLT slot.
+    // A tiny function with any other name may well be the program's own (a getter, say).
+    size.is_some_and(|s| (1..=16).contains(&s))
+        && (name.starts_with("__") || COMMON_IMPORTS.contains(&name))
+}
+
+/// Imports that show up as PLT stubs in most native programs.
+const COMMON_IMPORTS: [&str; 48] = [
+    "abort", "atoi", "calloc", "close", "exit", "fclose", "fflush", "fgets", "fopen", "fprintf",
+    "fputs", "fread", "free", "fwrite", "getenv", "malloc", "memchr", "memcmp", "memcpy",
+    "memmove", "memset", "open", "perror", "printf", "putchar", "puts", "qsort", "read", "realloc",
+    "recv", "send", "snprintf", "socket", "sprintf", "strcat", "strchr", "strcmp", "strcpy",
+    "strdup", "strlen", "strncmp", "strncpy", "strrchr", "strstr", "strtol", "usleep", "write",
+    "sleep",
+];
 
 /// The paged, filterable function list.
 #[derive(Debug, Clone, Default)]
@@ -49,6 +86,13 @@ impl FunctionList {
     /// Position of `address` among the loaded rows.
     pub fn index_of(&self, address: u64) -> Option<usize> {
         self.items.iter().position(|f| f.address == address)
+    }
+
+    /// Indices of the rows to show, in order; with `hide_stubs` the library stubs are left out.
+    pub fn visible(&self, hide_stubs: bool) -> Vec<usize> {
+        (0..self.items.len())
+            .filter(|&i| !(hide_stubs && self.items[i].stub))
+            .collect()
     }
 
     /// Looks a loaded row up by address.

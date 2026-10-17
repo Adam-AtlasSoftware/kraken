@@ -179,7 +179,18 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
     });
 }
 
-/// Notifications in the bottom-right corner.
+/// Where toasts sit: the bottom-left corner above the status bar, over the Functions list, the
+/// panel read least while something is being worked on. Returns the anchor, its offset and the
+/// width, which shrinks on narrow windows.
+pub fn toast_placement(screen_width: f32) -> (Align2, egui::Vec2, f32) {
+    (
+        Align2::LEFT_BOTTOM,
+        vec2(16.0, -40.0),
+        (screen_width * 0.25).clamp(240.0, 360.0),
+    )
+}
+
+/// Notifications in the bottom-left corner.
 pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
     if vm.toasts.is_empty() {
         return;
@@ -188,11 +199,12 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
     let p = kraken_gui_widgets::KrakenTheme { dark }.palette();
     let mut dismiss = Vec::new();
     let mut act = Vec::new();
+    let (anchor, offset, width) = toast_placement(ctx.content_rect().width());
     egui::Area::new(egui::Id::new("kraken_toasts"))
-        .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -40.0))
+        .anchor(anchor, offset)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            ui.set_width(360.0);
+            ui.set_width(width);
             for t in &vm.toasts {
                 let color = level_color(t.level, dark);
                 Frame::new()
@@ -245,7 +257,18 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
 
 #[cfg(test)]
 mod tests {
-    use super::changes_text;
+    use super::{changes_text, toast_placement};
+    use egui::Align2;
+
+    #[test]
+    fn toasts_sit_bottom_left_above_the_status_bar() {
+        let (anchor, offset, width) = toast_placement(1440.0);
+        assert_eq!(anchor, Align2::LEFT_BOTTOM);
+        assert!(offset.x > 0.0 && offset.y < 0.0, "inset from the corner");
+        assert!((240.0..=360.0).contains(&width));
+        assert_eq!(toast_placement(300.0).2, 240.0);
+        assert_eq!(toast_placement(4000.0).2, 360.0);
+    }
 
     #[test]
     fn the_change_count_reads_as_words() {

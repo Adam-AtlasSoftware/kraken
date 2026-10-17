@@ -128,6 +128,8 @@ pub fn graph_dock() -> DockState<Tab> {
 pub struct UiState {
     pub filter_text: String,
     pub focus_filter: bool,
+    /// Leave import thunks and PLT stubs out of the Functions list.
+    pub hide_stubs: bool,
     /// A call-target click waiting out the double-click window.
     pub pending_nav: Option<(u64, Instant)>,
     /// Symbol highlighted when the decompiler first draws (screenshot mode).
@@ -276,6 +278,12 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             crate::assist::suggest_names_button(ui, vm);
         });
     });
+    if vm.functions.items.iter().any(|f| f.stub) {
+        ui.checkbox(&mut st.hide_stubs, "Hide library stubs")
+            .on_hover_text(
+                "Import thunks and PLT entries such as free or printf are not program code. They are dimmed, and this hides them.",
+            );
+    }
     ui.add_space(2.0);
 
     if let Some(err) = vm.functions.error.clone() {
@@ -310,39 +318,56 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
         return;
     }
 
-    let mut selected = vm.selected.and_then(|a| vm.functions.index_of(a));
+    let visible = vm.functions.visible(st.hide_stubs);
+    let mut selected = vm
+        .selected
+        .and_then(|a| vm.functions.index_of(a))
+        .and_then(|i| visible.iter().position(|&v| v == i));
     let mut max_seen = 0usize;
     let items: &[FunctionItem] = &vm.functions.items;
     let stale = &vm.undo.stale;
-    let resp = VirtualList::new("functions", n, 22.0).show(ui, &mut selected, |ui, i, sel| {
-        max_seen = max_seen.max(i);
-        let f = &items[i];
-        let addr = RichText::new(format!("{:08x}", f.address))
-            .monospace()
-            .size(12.0)
-            .color(p.address);
-        ui.label(addr);
-        let color = if sel { p.text_strong } else { p.text };
-        let mut name = RichText::new(&f.name).monospace().size(12.5).color(color);
-        if f.partial {
-            name = name.italics();
-        }
-        let r = ui.label(name);
-        crate::assist::capture_function_row(ui, &r, f.address, &mut st.assist);
-        if stale.contains(&f.address) {
-            stale_marker(ui);
-        }
-        if f.partial || f.signature.is_some() {
-            let tip = match (&f.signature, f.partial) {
-                (Some(s), true) => format!("{s}\nStill being analyzed"),
-                (Some(s), false) => s.clone(),
-                (None, _) => "Still being analyzed".to_string(),
+    let resp =
+        VirtualList::new("functions", visible.len(), 22.0).show(ui, &mut selected, |ui, i, sel| {
+            let i = visible[i];
+            max_seen = max_seen.max(i);
+            let f = &items[i];
+            let addr = RichText::new(format!("{:08x}", f.address))
+                .monospace()
+                .size(12.0)
+                .color(p.address);
+            ui.label(addr);
+            let color = match (sel, f.stub) {
+                (true, _) => p.text_strong,
+                (false, true) => p.text_dim,
+                (false, false) => p.text,
             };
-            r.on_hover_text(tip);
-        }
-    });
+            let mut name = RichText::new(&f.name).monospace().size(12.5).color(color);
+            if f.partial {
+                name = name.italics();
+            }
+            let r = ui.label(name);
+            crate::assist::capture_function_row(ui, &r, f.address, &mut st.assist);
+            if stale.contains(&f.address) {
+                stale_marker(ui);
+            }
+            if f.partial || f.stub || f.signature.is_some() {
+                let mut tip = match (&f.signature, f.partial) {
+                    (Some(s), true) => format!("{s}\nStill being analyzed"),
+                    (Some(s), false) => s.clone(),
+                    (None, true) => "Still being analyzed".to_string(),
+                    (None, false) => String::new(),
+                };
+                if f.stub {
+                    if !tip.is_empty() {
+                        tip.push('\n');
+                    }
+                    tip.push_str("Library stub, not program code");
+                }
+                r.on_hover_text(tip);
+            }
+        });
     if resp.changed
-        && let Some(i) = selected
+        && let Some(&i) = selected.as_ref().and_then(|v| visible.get(*v))
         && let Some(f) = vm.functions.items.get(i)
     {
         let addr = f.address;
