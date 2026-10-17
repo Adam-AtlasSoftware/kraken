@@ -1438,6 +1438,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "engine-native-sys",
+ "gimli",
  "kraken-engine",
  "kraken-proto",
  "object 0.39.1",

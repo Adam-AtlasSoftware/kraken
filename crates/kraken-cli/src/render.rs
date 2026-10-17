@@ -786,6 +786,42 @@ fn rewrite_program(v: &Value) -> String {
     if let Some(d) = verdict.get("detail").and_then(Value::as_str) {
         out.push_str(&format!("reason: {}\n", one_line(d)));
     }
+    if let Some(rounds) = v.get("repairs").and_then(Value::as_array) {
+        for r in rounds {
+            let after = str_of(r.get("verdict_after"));
+            out.push_str(&format!(
+                "repair round {}: {} {} (v{} -> v{}){}\n",
+                count(r, "round"),
+                str_of(r.get("name")),
+                str_of(r.get("outcome")),
+                count(r, "version_before"),
+                count(r, "version_after"),
+                if after == "-" || after.is_empty() {
+                    String::new()
+                } else {
+                    format!(", then {after}")
+                }
+            ));
+            let at = str_of(r.get("at"));
+            if at != "-" && !at.is_empty() {
+                let stack = r
+                    .get("stack")
+                    .and_then(Value::as_array)
+                    .map(|s| {
+                        s.iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(" <- ")
+                    })
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "no call stack".to_string());
+                out.push_str(&format!(
+                    "  case {}: the Rust program was {at}, inside {stack}\n",
+                    str_of(r.get("case"))
+                ));
+            }
+        }
+    }
     let cases = verdict
         .get("cases")
         .and_then(Value::as_array)
@@ -1201,6 +1237,10 @@ mod tests {
                  "reused_callees": ["push"], "included": true,
                  "check_note": u("pointer result")}
             ],
+            "repairs": [{"round": 1, "address": "0x101707", "name": u("main"), "case": "gen-1",
+                "at": "writing byte 2 of its standard output", "stack": ["push", "fn_101707"],
+                "why": u("it was running"), "outcome": "replaced", "version_before": 1,
+                "version_after": 2, "verdict_after": "fail"}],
             "verdict": {"verdict": "fail", "cases_run": 3, "passed": 2, "failed": 1,
                 "sandbox": "landlock-v6+netns",
                 "cases": [
@@ -1229,6 +1269,15 @@ mod tests {
                 "program verdict: fail -- 2/3 cases agreed (sandbox landlock-v6+netns)\n"
             )
         );
+        assert!(
+            r.stdout
+                .contains("repair round 1: main replaced (v1 -> v2), then fail\n"),
+            "{}",
+            r.stdout
+        );
+        assert!(r.stdout.contains(
+            "  case gen-1: the Rust program was writing byte 2 of its standard output, inside push <- fn_101707\n"
+        ));
         assert!(
             r.stdout.contains(
                 "  case gen-1 (generated): arguments a b, 4 bytes of input -- DIFFERED\n"

@@ -7,8 +7,11 @@
 //! (integer arguments in registers, a sentinel return address). Stubs are handled by the host
 //! when the program counter reaches them (a breakpoint), never emulated.
 //!
-//! What it deliberately does not do: run `main`, the dynamic loader or libc; floating point and
-//! SSE arguments; stack-passed arguments; threads; syscalls (a `syscall` instruction faults).
+//! What it passes: integers and pointers in the integer registers, `double`s in `xmm0` to `xmm7`,
+//! pointer graphs placed where the native runner places them, and two host callbacks for
+//! function-pointer parameters (see `abi`). What it deliberately does not do: run `main`, the
+//! dynamic loader or libc; single-precision floats and vector arguments; stack-passed arguments;
+//! threads; syscalls (a `syscall` instruction faults); floating-point `printf`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,7 +23,10 @@ use object::elf;
 use object::read::elf::{ElfFile64, ProgramHeader};
 use object::{Object, ObjectSymbol, RelocationFlags, RelocationTarget};
 
-use crate::abi::{Arg, GlobalWrite, Observation, Param, Ret, Signature, Termination, mask};
+use crate::abi::{
+    Arg, Callback, GlobalWrite, Observation, Param, Ret, Signature, Termination, callback_tag,
+    check_graph, mask, place_object,
+};
 use crate::clib::{ctype_b_table, format_printf};
 use crate::error::RewriteError;
 
@@ -29,6 +35,8 @@ const STACK_BASE: u64 = 0x7ffd_0000_0000;
 const STACK_SIZE: u64 = 0x1_0000;
 const STUB_BASE: u64 = 0x7ffe_0000_0000;
 const RETURN_ADDR: u64 = STUB_BASE + 0xff0;
+/// The host callbacks a function pointer parameter can be given (`Callback::index` apart).
+const CALLBACK_BASE: u64 = STUB_BASE + 0xfd0;
 const STUB_DATA: u64 = STUB_BASE + 0x1_0000;
 const CTYPE_PTR_CELL: u64 = STUB_DATA;
 const STDOUT_CELL: u64 = STUB_DATA + 0x10;
@@ -37,8 +45,6 @@ const CTYPE_TABLE: u64 = STUB_DATA + 0x100;
 /// The `FILE *` values `stdout` and `stderr` hold inside the oracle.
 const STDOUT_FILE: u64 = STUB_DATA + 0x20;
 const STDERR_FILE: u64 = STUB_DATA + 0x30;
-const BUFFER_BASE: u64 = 0x6000_0000_0000;
-const BUFFER_STRIDE: u64 = 0x100_0000;
 const MAX_BUFFER: usize = 0x10_0000;
 
 /// Imports the oracle models (everything else a function calls ends the case as unsupported).
@@ -104,6 +110,17 @@ pub fn find_processors(cfg: &OracleConfig) -> Result<PathBuf, RewriteError> {
         .ok_or(RewriteError::NoProcessors)
 }
 
+/// Where a call's arguments went.
+#[derive(Default)]
+struct Laid {
+    /// Integer register arguments in order.
+    ints: Vec<u64>,
+    /// `double` arguments as bit patterns, in order.
+    doubles: Vec<u64>,
+    /// Every object: address and length.
+    buffers: Vec<(u64, usize)>,
+}
+
 struct Region {
     /// Runtime address of the first byte.
     addr: u64,
@@ -113,6 +130,7 @@ struct Region {
 }
 
 struct Regs {
+    xmm: [pcode::VarNode; 8],
     rax: pcode::VarNode,
     rsp: pcode::VarNode,
     args: [pcode::VarNode; 6],
@@ -130,6 +148,10 @@ pub struct FunctionOracle {
     regions: Vec<Region>,
     max_instructions: u64,
     stdout: Vec<u8>,
+    /// The objects of the call in progress (base address and length), for callback tags.
+    objects: Vec<(u64, usize)>,
+    /// Callback calls of the call in progress.
+    callbacks: Vec<String>,
     stderr: Vec<u8>,
 }
 
@@ -360,6 +382,16 @@ impl FunctionOracle {
                 .ok_or_else(|| RewriteError::Emulator(format!("no register {n}")))
         };
         let regs = Regs {
+            xmm: [
+                var(&vm, "XMM0")?,
+                var(&vm, "XMM1")?,
+                var(&vm, "XMM2")?,
+                var(&vm, "XMM3")?,
+                var(&vm, "XMM4")?,
+                var(&vm, "XMM5")?,
+                var(&vm, "XMM6")?,
+                var(&vm, "XMM7")?,
+            ],
             rax: var(&vm, "RAX")?,
             rsp: var(&vm, "RSP")?,
             args: [
@@ -417,6 +449,9 @@ impl FunctionOracle {
         w(&mut vm, STDOUT_CELL, &STDOUT_FILE.to_le_bytes())?;
         w(&mut vm, STDERR_CELL, &STDERR_FILE.to_le_bytes())?;
         vm.add_breakpoint(RETURN_ADDR);
+        for cb in Callback::ALL {
+            vm.add_breakpoint(CALLBACK_BASE + 0x10 * cb.index());
+        }
         for i in 0..stub_names.len() {
             vm.add_breakpoint(STUB_BASE + 0x10 * (i as u64 + 1));
         }
@@ -430,6 +465,8 @@ impl FunctionOracle {
             stub_names,
             regions,
             max_instructions: cfg.max_instructions,
+            objects: Vec::new(),
+            callbacks: Vec::new(),
             stdout: Vec::new(),
             stderr: Vec::new(),
         })
@@ -465,9 +502,16 @@ impl FunctionOracle {
         sig: &Signature,
         args: &[Arg],
     ) -> Result<Observation, RewriteError> {
-        if sig.params.len() > 6 {
+        let doubles = sig
+            .params
+            .iter()
+            .filter(|p| matches!(p, Param::Double))
+            .count();
+        if sig.params.len() - doubles > 6 || doubles > 8 {
             return Err(RewriteError::Unsupported(
-                "more than six parameters (stack arguments are not modelled)".into(),
+                "more than six integer or eight floating-point parameters (stack arguments are \
+                 not modelled)"
+                    .into(),
             ));
         }
         if sig.params.len() != args.len() {
@@ -480,41 +524,88 @@ impl FunctionOracle {
         self.reset_memory()?;
         self.stdout.clear();
         self.stderr.clear();
+        self.callbacks.clear();
+        self.objects.clear();
 
-        // Buffers get their own regions, page padded, with unmapped space around them.
         let mut mapped: Vec<(u64, u64)> = Vec::new();
-        let mut values: Vec<u64> = Vec::new();
-        let mut buffers: Vec<(u64, usize)> = Vec::new();
+        let result = self
+            .lay_out(args, sig, &mut mapped)
+            .and_then(|laid| self.run_call(entry, sig, &laid.ints, &laid.doubles, &laid.buffers));
+        self.objects.clear();
+        for (addr, len) in mapped {
+            self.vm.cpu.mem.unmap_memory_len(addr, len);
+        }
+        result
+    }
+
+    /// Maps one object into its own region, page padded with unmapped space around it, the data
+    /// flush against the end (rounded down to 8 bytes) so a read past it faults. Returns where the data starts.
+    fn map_object(
+        &mut self,
+        data: &[u8],
+        mapped: &mut Vec<(u64, u64)>,
+        n: usize,
+    ) -> Result<u64, RewriteError> {
+        if data.len() > MAX_BUFFER {
+            return Err(RewriteError::Unsupported("buffer over 1 MiB".into()));
+        }
+        let (addr, len, at) = place_object(n, data.len());
+        let rw = perm::READ | perm::WRITE;
+        if !self
+            .vm
+            .cpu
+            .mem
+            .map_memory_len(addr, len, Mapping { perm: rw, value: 0 })
+        {
+            return Err(emu("cannot map buffer"));
+        }
+        mapped.push((addr, len));
+        self.vm
+            .cpu
+            .mem
+            .write_bytes(at, data, perm::NONE)
+            .map_err(|e| emu(format!("{e:?}")))?;
+        Ok(at)
+    }
+
+    fn lay_out(
+        &mut self,
+        args: &[Arg],
+        sig: &Signature,
+        mapped: &mut Vec<(u64, u64)>,
+    ) -> Result<Laid, RewriteError> {
+        let mut laid = Laid::default();
         for (i, (p, a)) in sig.params.iter().zip(args).enumerate() {
             match (p, a) {
-                (Param::Int { bits, .. }, Arg::Int { value }) => values.push(value & mask(*bits)),
+                (Param::Int { bits, .. }, Arg::Int { value }) => {
+                    laid.ints.push(value & mask(*bits));
+                }
+                (Param::Double, Arg::Double { bits }) => laid.doubles.push(*bits),
+                (Param::FnPtr, Arg::FnPtr { callback }) => {
+                    laid.ints.push(CALLBACK_BASE + 0x10 * callback.index());
+                }
                 (Param::Buf, Arg::Buf { data }) => {
-                    if data.len() > MAX_BUFFER {
-                        return Err(RewriteError::Unsupported("buffer over 1 MiB".into()));
+                    let at = self.map_object(data, mapped, laid.buffers.len())?;
+                    laid.buffers.push((at, data.len()));
+                    laid.ints.push(at);
+                }
+                (Param::Buf, Arg::Graph { objects, links }) => {
+                    check_graph(objects, links).map_err(RewriteError::Unsupported)?;
+                    let first = laid.buffers.len();
+                    for o in objects {
+                        let at = self.map_object(o, mapped, laid.buffers.len())?;
+                        laid.buffers.push((at, o.len()));
                     }
-                    let addr = BUFFER_BASE + BUFFER_STRIDE * buffers.len() as u64;
-                    let len = checked_align_up(data.len().max(1) as u64).unwrap_or(PAGE);
-                    // Flush the data against the end of the mapping so reads past it fault.
-                    let at = addr + len - data.len() as u64;
-                    let rwx = perm::READ | perm::WRITE;
-                    if !self.vm.cpu.mem.map_memory_len(
-                        addr,
-                        len,
-                        Mapping {
-                            perm: rwx,
-                            value: 0,
-                        },
-                    ) {
-                        return Err(emu("cannot map buffer"));
+                    for l in links {
+                        let target = laid.buffers[first + l.to].0 + l.to_offset as u64;
+                        let at = laid.buffers[first + l.from].0 + l.offset as u64;
+                        self.vm
+                            .cpu
+                            .mem
+                            .write_bytes(at, &target.to_le_bytes(), perm::NONE)
+                            .map_err(|e| emu(format!("{e:?}")))?;
                     }
-                    mapped.push((addr, len));
-                    self.vm
-                        .cpu
-                        .mem
-                        .write_bytes(at, data, perm::NONE)
-                        .map_err(|e| emu(format!("{e:?}")))?;
-                    buffers.push((at, data.len()));
-                    values.push(at);
+                    laid.ints.push(laid.buffers[first].0);
                 }
                 _ => {
                     return Err(RewriteError::Unsupported(format!(
@@ -523,11 +614,8 @@ impl FunctionOracle {
                 }
             }
         }
-        let obs = self.run_call(entry, sig, &values, &buffers);
-        for (addr, len) in mapped {
-            self.vm.cpu.mem.unmap_memory_len(addr, len);
-        }
-        obs
+        self.objects = laid.buffers.clone();
+        Ok(laid)
     }
 
     fn reset_memory(&mut self) -> Result<(), RewriteError> {
@@ -551,13 +639,20 @@ impl FunctionOracle {
         entry: u64,
         sig: &Signature,
         values: &[u64],
+        doubles: &[u64],
         buffers: &[(u64, usize)],
     ) -> Result<Observation, RewriteError> {
         let cpu = &mut self.vm.cpu;
         for reg in [self.regs.rax].iter().chain(&self.regs.args) {
             cpu.write_reg(*reg, 0);
         }
+        for reg in &self.regs.xmm {
+            cpu.write_reg(*reg, 0);
+        }
         for (reg, v) in self.regs.args.iter().zip(values) {
+            cpu.write_reg(*reg, *v);
+        }
+        for (reg, v) in self.regs.xmm.iter().zip(doubles) {
             cpu.write_reg(*reg, *v);
         }
         // Entry stack alignment: (rsp + 8) % 16 == 0 after the return address is pushed.
@@ -576,6 +671,16 @@ impl FunctionOracle {
                     let pc = self.vm.cpu.read_pc();
                     if pc == RETURN_ADDR {
                         break Termination::Returned;
+                    }
+                    if let Some(cb) = pc
+                        .checked_sub(CALLBACK_BASE)
+                        .filter(|d| d % 0x10 == 0 && d / 0x10 < Callback::ALL.len() as u64)
+                        .map(|d| Callback::ALL[(d / 0x10) as usize])
+                    {
+                        if let Some(end) = self.run_callback(cb) {
+                            break end;
+                        }
+                        continue;
                     }
                     let idx = pc
                         .checked_sub(STUB_BASE + 0x10)
@@ -614,9 +719,14 @@ impl FunctionOracle {
         obs.stdout = self.stdout.clone();
         obs.stderr = self.stderr.clone();
         obs.global_writes = self.global_writes()?;
+        obs.callbacks = self.callbacks.clone();
         if termination == Termination::Returned {
-            if let Ret::Int { bits, .. } = sig.ret {
-                obs.ret = Some(self.vm.cpu.read_reg(self.regs.rax) & mask(bits));
+            match sig.ret {
+                Ret::Int { bits, .. } => {
+                    obs.ret = Some(self.vm.cpu.read_reg(self.regs.rax) & mask(bits));
+                }
+                Ret::Double => obs.ret = Some(self.vm.cpu.read_reg(self.regs.xmm[0])),
+                Ret::Void | Ret::Ptr => {}
             }
             for &(addr, len) in buffers {
                 let mut b = vec![0u8; len];
@@ -629,6 +739,37 @@ impl FunctionOracle {
             }
         }
         Ok(obs)
+    }
+
+    /// A call of the function under test to one of the host callbacks: records it, answers it as
+    /// [`Callback::result`] says and returns to the caller. `None` means the call goes on.
+    fn run_callback(&mut self, cb: Callback) -> Option<Termination> {
+        let (a, b) = (self.stub_arg(0), self.stub_arg(1));
+        let objects = self.objects.clone();
+        let cpu = &mut self.vm.cpu;
+        let mut read32 = |addr: u64| {
+            let mut w = [0u8; 4];
+            cpu.mem
+                .read_bytes(addr, &mut w, perm::NONE)
+                .ok()
+                .map(|_| i32::from_le_bytes(w))
+        };
+        let (ta, tb) = (
+            callback_tag(a, &objects, &mut read32),
+            callback_tag(b, &objects, &mut read32),
+        );
+        let both = [a, b].iter().all(|v| {
+            objects
+                .iter()
+                .any(|&(base, len)| *v >= base && *v < base + len as u64)
+        });
+        let ret = match (both, read32(a), read32(b)) {
+            (true, Some(x), Some(y)) => cb.result(x, y),
+            _ => 0,
+        };
+        self.callbacks
+            .push(format!("cb{}({ta},{tb})={:x}", cb.index(), ret as u64));
+        self.return_from_stub(ret as u64)
     }
 
     fn global_writes(&mut self) -> Result<Vec<GlobalWrite>, RewriteError> {
@@ -782,11 +923,22 @@ impl FunctionOracle {
             "strcmp" => {
                 let (a, b) = (self.stub_arg(0), self.stub_arg(1));
                 match (self.read_cstr(a), self.read_cstr(b)) {
-                    (Some(x), Some(y)) => match x.cmp(&y) {
-                        std::cmp::Ordering::Less => -1i64 as u64,
-                        std::cmp::Ordering::Equal => 0,
-                        std::cmp::Ordering::Greater => 1,
-                    },
+                    // The difference of the first differing bytes, as glibc's x86-64 strcmp
+                    // returns it (and `rt::strcmp` does), not just its sign.
+                    (Some(x), Some(y)) => {
+                        let mut d = 0i64;
+                        for i in 0..=x.len().max(y.len()) {
+                            let (p, q) = (
+                                x.get(i).copied().unwrap_or(0),
+                                y.get(i).copied().unwrap_or(0),
+                            );
+                            if p != q {
+                                d = i64::from(p) - i64::from(q);
+                                break;
+                            }
+                        }
+                        d as u64
+                    }
                     _ => return unsupported("strcmp of unreadable pointer".into()),
                 }
             }
@@ -825,7 +977,11 @@ impl FunctionOracle {
             "__ctype_b_loc" => CTYPE_PTR_CELL,
             other => return unsupported(format!("call to import `{other}`")),
         };
-        // Return to the caller: pop the return address.
+        self.return_from_stub(ret)
+    }
+
+    /// Returns to the caller of a stub with `ret` in RAX: pops the return address.
+    fn return_from_stub(&mut self, ret: u64) -> Option<Termination> {
         let sp = self.vm.cpu.read_reg(self.regs.rsp);
         let mut b = [0u8; 8];
         if self.vm.cpu.mem.read_bytes(sp, &mut b, perm::NONE).is_err() {

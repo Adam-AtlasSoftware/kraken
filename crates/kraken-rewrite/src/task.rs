@@ -274,6 +274,7 @@ impl RewriteTask {
                     "compile" => "it does not compile",
                     "rejected" => "the source lint refused it",
                     "counterexample" => "it behaves differently from the original",
+                    "program" => "the program built from it behaves differently from the original",
                     _ => "the reply could not be used",
                 },
                 code = round.previous_code.trim_end(),

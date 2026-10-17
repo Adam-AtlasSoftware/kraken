@@ -237,6 +237,25 @@ pub fn export_uses(
     unit: &RewriteUnit,
     exported: &dyn Fn(u64) -> Option<ExportedUnit>,
 ) -> Result<String, RewriteError> {
+    uses_with(unit, exported, true)
+}
+
+/// [`export_uses`] for a program crate: a callee that was translated again by the program-level
+/// repair is a newer version than the one its callers were tested against, and that is allowed
+/// (the program-level test runs on the crate as assembled); a missing callee, or one with another
+/// symbol, is not.
+pub fn program_uses(
+    unit: &RewriteUnit,
+    exported: &dyn Fn(u64) -> Option<ExportedUnit>,
+) -> Result<String, RewriteError> {
+    uses_with(unit, exported, false)
+}
+
+fn uses_with(
+    unit: &RewriteUnit,
+    exported: &dyn Fn(u64) -> Option<ExportedUnit>,
+    same_version: bool,
+) -> Result<String, RewriteError> {
     let mut s = String::new();
     for c in unit.callees.iter().filter(|c| c.reused.is_some()) {
         let Some(r) = &c.reused else { continue };
@@ -249,7 +268,9 @@ pub fn export_uses(
         };
         match exported(parse_addr(&c.address)) {
             None => return Err(fail("that callee is not among the accepted units".into())),
-            Some((_, version, symbol)) if version != r.version || symbol != r.symbol => {
+            Some((_, version, symbol))
+                if (same_version && version != r.version) || symbol != r.symbol =>
+            {
                 return Err(fail(format!(
                     "the accepted version of that callee is now {version} ({symbol}), not {} ({})",
                     r.version, r.symbol

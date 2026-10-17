@@ -13,11 +13,13 @@ use crate::workspace::Tab;
 
 mod detail;
 mod export;
+mod program;
 mod spec_view;
 #[cfg(test)]
 mod tests;
 
 pub use export::dialog as export_dialog;
+pub use program::ProgramUi;
 
 /// The function the `--scene rewrite` screenshot opens: `checksum`, which the demo script has
 /// failed twice.
@@ -42,9 +44,23 @@ pub enum DetailView {
     Spec,
 }
 
+/// The two halves of the tab.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum Section {
+    /// The plan and one function at a time.
+    #[default]
+    Functions,
+    /// The whole program: the function table, the crate and the program-level cases.
+    Program,
+}
+
 /// GUI-only state of the tab.
 #[derive(Default)]
 pub struct RewriteUi {
+    /// Functions or the whole program.
+    pub section: Section,
+    /// The Program view.
+    pub program: ProgramUi,
     /// Only this status is listed.
     pub filter: Option<UnitStatus>,
     /// Code or spec.
@@ -98,6 +114,19 @@ pub(crate) fn chip_button(ui: &mut Ui, text: &str, color: Color32, active: bool)
 /// The Rewrite tab.
 pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut RewriteUi, front: &mut Option<Tab>) {
     vm.rewrite_ensure_loaded();
+    section_switch(ui, vm, st);
+    if st.section == Section::Program {
+        if let Some(note) = vm.rewrite.blocked_note() {
+            blocked_banner(
+                ui,
+                note,
+                matches!(vm.rewrite.availability, Availability::NoConfinement(_)),
+            );
+        }
+        jobs_strip(ui, vm);
+        program::panel(ui, vm, &mut st.program, front);
+        return;
+    }
     let mut acts = Acts::default();
     header(ui, vm, st, &mut acts);
     if let Some(note) = vm.rewrite.blocked_note() {
@@ -121,6 +150,41 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut RewriteUi, front: &mut Op
         detail::show(ui, vm, st, &mut acts);
     }
     apply(vm, st, acts, front);
+}
+
+/// "Functions | Program" at the top of the tab.
+fn section_switch(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi) {
+    let p = pal(ui);
+    ui.horizontal(|ui| {
+        for (s, label, tip) in [
+            (
+                Section::Functions,
+                "Functions",
+                "The plan, one function at a time: its C, the Rust KRAKEN wrote and how they compared.",
+            ),
+            (
+                Section::Program,
+                "Whole program",
+                "Rewrite the entire program as one crate and compare it with the original binary.",
+            ),
+        ] {
+            if ui
+                .selectable_label(st.section == s, label)
+                .on_hover_text(tip)
+                .clicked()
+            {
+                st.section = s;
+            }
+        }
+        if let Some(d) = vm.rewrite.program.detail.as_ref().filter(|_| st.section == Section::Functions)
+        {
+            ui.label(
+                RichText::new(format!("Last whole-program run: {}", d.verdict.verdict))
+                    .size(11.5)
+                    .color(p.text_dim),
+            );
+        }
+    });
 }
 
 fn apply(vm: &mut ViewModel, st: &mut RewriteUi, acts: Acts, front: &mut Option<Tab>) {

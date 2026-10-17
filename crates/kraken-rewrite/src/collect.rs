@@ -107,6 +107,21 @@ impl ProgramFacts {
         }
     }
 
+    /// True when `address` is in a block that can hold a table of function pointers: `.data*`
+    /// and `.rodata*` (not code, unwind tables or the dynamic-linking sections).
+    pub fn is_pointer_table_block(&self, address: u64) -> bool {
+        self.block_of(address)
+            .is_some_and(|b| b.name.starts_with(".data") || b.name.starts_with(".rodata"))
+    }
+
+    /// True when both addresses are in the same memory block.
+    pub fn same_block(&self, a: u64, b: u64) -> bool {
+        match (self.block_of(a), self.block_of(b)) {
+            (Some(x), Some(y)) => x.start == y.start,
+            _ => false,
+        }
+    }
+
     /// True when `address` is in a writable data block that holds program globals.
     pub fn is_global(&self, address: u64) -> bool {
         !self.stdio_cells.contains(&address)
@@ -201,6 +216,85 @@ pub async fn collect(
         });
     }
     Ok(out)
+}
+
+/// How far past a data address a function takes (a table it indexes) a pointer stored in the
+/// table still counts as taken by that function.
+const TABLE_REACH: u64 = 0x80;
+
+/// The functions whose address each program function takes: `F -> {G}` when `F` stores `G`'s
+/// entry (a data reference to the entry from `F`), or when `G`'s entry sits in a data table that
+/// `F` references (the pointer is stored at a location with no function, within
+/// [`TABLE_REACH`] bytes after an address `F` refers to). This is how functions that are only
+/// ever called through a pointer, as `qsort` callbacks and dispatch tables are, join the call
+/// graph.
+pub async fn address_taken(
+    lift: &Lift<'_>,
+    facts: &ProgramFacts,
+    program: &BTreeMap<u64, String>,
+) -> Result<BTreeMap<u64, BTreeSet<u64>>, RewriteError> {
+    // What each function refers to (read, written or address-taken data).
+    let mut data_to: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+    let mut taken: BTreeMap<u64, BTreeSet<u64>> = BTreeMap::new();
+    for f in program.keys() {
+        let refs = lift.data_refs(*f).await?;
+        for r in &refs {
+            if let Some((g, _)) = &r.to_function
+                && program.contains_key(g)
+                && g != f
+            {
+                taken.entry(*f).or_default().insert(*g);
+            }
+        }
+        data_to.insert(*f, refs.iter().map(|r| r.to).collect());
+    }
+    for g in program.keys() {
+        for (from, in_function) in lift.data_refs_to(*g).await? {
+            // A table of pointers lives in a data block; the unwind tables and the like next to
+            // it also point at every function entry and are not uses.
+            if in_function.is_some() || !facts.is_pointer_table_block(from) {
+                continue;
+            }
+            for (f, targets) in &data_to {
+                if f != g
+                    && targets.iter().any(|d| {
+                        *d <= from
+                            && from < d.saturating_add(TABLE_REACH)
+                            && facts.same_block(*d, from)
+                    })
+                {
+                    taken.entry(*f).or_default().insert(*g);
+                }
+            }
+        }
+    }
+    Ok(taken)
+}
+
+/// [`collect`] for a whole-program rewrite: the call graph plus the functions whose address a
+/// function takes (see [`address_taken`]) as edges, so they are translated before the function
+/// that passes them on and the program run reaches them. The second value says which edges
+/// those are.
+pub async fn collect_program(
+    s: &Session,
+    ctx: &CallContext,
+    cap: usize,
+) -> Result<(Collected, BTreeMap<u64, BTreeSet<u64>>), RewriteError> {
+    let mut out = collect(s, ctx, cap).await?;
+    let lift = Lift::new(s, ctx);
+    let program: BTreeMap<u64, String> = out
+        .nodes
+        .iter()
+        .map(|n| (n.address, n.name.clone()))
+        .collect();
+    let facts = ProgramFacts::load(&lift).await?;
+    let taken = address_taken(&lift, &facts, &program).await?;
+    for n in &mut out.nodes {
+        if let Some(gs) = taken.get(&n.address) {
+            n.callees.extend(gs.iter().copied());
+        }
+    }
+    Ok((out, taken))
 }
 
 /// Reads the part of the call graph reachable from `entry` (callees, transitively; at most `cap`

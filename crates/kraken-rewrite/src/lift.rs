@@ -258,6 +258,43 @@ impl<'a> Lift<'a> {
         Ok(out)
     }
 
+    /// Data-like references (reads, addresses taken, other) that point at `address`, with the
+    /// function each one sits in, if any: `(from, from_function entry)`.
+    pub async fn data_refs_to(
+        &self,
+        address: u64,
+    ) -> Result<Vec<(u64, Option<u64>)>, RewriteError> {
+        let mut out = Vec::new();
+        let mut cursor = None;
+        for _ in 0..MAX_REF_PAGES {
+            let page = Xrefs
+                .run(
+                    self.s,
+                    self.ctx,
+                    XrefsArgs {
+                        address: Hex64(address),
+                        direction: XrefDirection::To,
+                        kind: None,
+                        whole_function: false,
+                        cursor: cursor.clone(),
+                        limit: Some(200),
+                    },
+                )
+                .await
+                .map_err(cmd)?;
+            for x in page.items {
+                if matches!(x.kind, XrefKind::Read | XrefKind::Data | XrefKind::Other) {
+                    out.push((x.from.0, x.from_function.map(|f| f.address.0)));
+                }
+            }
+            match page.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
     /// Data references (reads, writes, addresses taken) out of the function containing `address`.
     pub async fn data_refs(&self, address: u64) -> Result<Vec<OutRef>, RewriteError> {
         let mut out = Vec::new();

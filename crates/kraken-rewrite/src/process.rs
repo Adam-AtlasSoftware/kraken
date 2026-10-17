@@ -110,6 +110,16 @@ pub fn run_case(
     case: &ProgramCase,
     confinement: &Confinement,
 ) -> Result<(Outcome, ConfinementReport), RewriteError> {
+    run_case_with_env(exe, case, confinement, &[])
+}
+
+/// [`run_case`] with extra environment variables (the environment is otherwise empty).
+pub fn run_case_with_env(
+    exe: &Path,
+    case: &ProgramCase,
+    confinement: &Confinement,
+    env: &[(&str, String)],
+) -> Result<(Outcome, ConfinementReport), RewriteError> {
     let dir = scratch_dir("kraken-prog-")?;
     let copy = dir.path().join("prog");
     std::fs::copy(exe, &copy)
@@ -127,6 +137,7 @@ pub fn run_case(
         ReadScope::SystemLibraries,
         confinement,
     )?;
+    cmd.envs(env.iter().map(|(k, v)| (*k, v.as_str())));
     // Another thread's fork can briefly hold the freshly written copy open for writing, which
     // makes exec fail with ETXTBSY; it lets go as soon as that child has exec'd.
     let mut tries = 0;

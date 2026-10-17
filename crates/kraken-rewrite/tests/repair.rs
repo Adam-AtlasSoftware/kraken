@@ -89,6 +89,7 @@ fn counterexample() -> Counterexample {
         buffers: Vec::new(),
         stdout: Vec::new(),
         stderr: Vec::new(),
+        callbacks: Vec::new(),
         global_writes: Vec::new(),
         instructions: 0,
     };

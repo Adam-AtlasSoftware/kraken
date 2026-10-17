@@ -9,7 +9,7 @@ use kraken_viewmodel::demo::{demo_fixture, demo_project_with};
 use kraken_viewmodel::rewrite::{Availability, DirCheck, RewriteMode, platform_note};
 
 use super::detail::split_difference;
-use super::{DetailView, RewriteUi, export_dialog, panel};
+use super::{DetailView, RewriteUi, Section, export_dialog, panel};
 use crate::fonts;
 use crate::workspace::Tab;
 
@@ -20,6 +20,7 @@ struct Rig {
     ctx: Context,
     vm: ViewModel,
     ui: RewriteUi,
+    demo: Arc<kraken_viewmodel::InProcessBackend>,
     front: Option<Tab>,
     _rt: Arc<tokio::runtime::Runtime>,
 }
@@ -51,6 +52,7 @@ impl Rig {
             ctx,
             vm,
             ui: RewriteUi::default(),
+            demo: demo.backend.clone(),
             front: None,
             _rt: rt,
         }
@@ -263,4 +265,155 @@ fn a_difference_line_splits_into_what_original_and_rust() {
         Some(("stdout", "\"a\"", "\"b\""))
     );
     assert_eq!(split_difference("the Rust version panicked"), None);
+}
+
+// ---------------------------------------------------------------- the Program view
+
+fn program_rig() -> (Rig, kraken_viewmodel::ApprovalBroker) {
+    let mut r = Rig::new();
+    let broker = kraken_viewmodel::ApprovalBroker::new();
+    // The window installs its broker on the backend; the headless rig does the same.
+    r.demo.set_approver(Arc::new(broker.clone()));
+    r.ui.section = Section::Program;
+    (r, broker)
+}
+
+#[test]
+fn the_program_view_shows_the_function_table_the_crate_and_the_diff_of_a_failing_case() {
+    let (mut r, _b) = program_rig();
+    let t = r.settle(|vm| vm.rewrite.program.detail.is_some());
+    assert!(has(&t, "Rewrite the whole program"), "{t:?}");
+    // The verdict and what it means.
+    assert!(has(&t, "Run 1"));
+    assert!(has(&t, "fail"));
+    assert!(has(
+        &t,
+        "The rewritten program differs from the original on 2 of 3 cases."
+    ));
+    // The crate: a path to copy or open.
+    assert!(has(&t, "/work/demo/rewrite-program"), "{t:?}");
+    assert!(has(&t, "Copy path") && has(&t, "Open folder"));
+    assert!(has(&t, "built"));
+    // The function table: names, statuses, how each was checked.
+    for name in ["FUN_00401440", "checksum", "process_packet"] {
+        assert!(has(&t, name), "{name}");
+    }
+    assert!(has(&t, "compared with the original") && has(&t, "compiled only"));
+    assert!(has(&t, "verified") && has(&t, "translated"));
+    assert!(
+        has(&t, "never compared with the original on their own"),
+        "{t:?}"
+    );
+    // Cases: the differing ones, and the first is open with a diff of each stream.
+    assert!(has(&t, "differing only"));
+    assert!(has(&t, "baseline") && has(&t, "-v"));
+    assert!(has(&t, "Exit status") && has(&t, "Standard output") && has(&t, "Standard error"));
+    assert!(has(&t, "- status: 2 handled"), "{t:?}");
+    assert!(has(&t, "+ status:  2 handled"));
+    assert!(has(&t, "only the original, + only the rewritten program"));
+}
+
+#[test]
+fn a_function_of_the_table_opens_its_notes_and_the_agreeing_cases_can_be_listed() {
+    let (mut r, _b) = program_rig();
+    r.settle(|vm| vm.rewrite.program.detail.is_some());
+    r.vm.rewrite_program_select_function(Some(0x4011a0));
+    let t = r.frame();
+    assert!(
+        has(
+            &t,
+            "calls fprintf, which the function-level test does not model"
+        ),
+        "{t:?}"
+    );
+    assert!(has(&t, "Calls the translations of"));
+    r.vm.rewrite_program_set_all_cases(true);
+    let t = r.settle(|vm| {
+        vm.rewrite
+            .program
+            .detail
+            .as_ref()
+            .is_some_and(|d| d.verdict.cases.len() == 3)
+    });
+    assert!(has(&t, "generated-1") && has(&t, "all cases"), "{t:?}");
+    r.vm.rewrite_program_select_case(2);
+    let t = r.frame();
+    assert!(has(&t, "same"), "{t:?}");
+    assert!(has(&t, "prog \"x y\""));
+}
+
+#[test]
+fn the_run_button_asks_first_and_the_new_run_shows_the_repair_that_fixed_it() {
+    let (mut r, broker) = program_rig();
+    r.settle(|vm| vm.rewrite.program.detail.is_some());
+    r.vm.rewrite_program_run();
+    // The dialog's question, as the window's approval dialog would show it.
+    let (id, prompt) = loop {
+        r.frame();
+        if let Some(q) = broker.current() {
+            break q;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(prompt.command, "rewrite_program");
+    assert!(prompt.summary.contains("run the original program natively"));
+    // While the question is open the job has not produced anything.
+    assert_eq!(r.vm.rewrite.program.runs.len(), 1);
+    broker.respond(id, true);
+    let t = r.settle(|vm| vm.rewrite.program.runs.len() == 2 && !vm.rewrite_program_running());
+    assert!(has(&t, "Run 2"), "{t:?}");
+    assert!(has(
+        &t,
+        "The rewritten program did the same as the original on all 3 cases."
+    ));
+    // The repair round: which function, where the output went wrong, the call stack.
+    assert!(
+        has(&t, "1 repair round: 1 function translated again"),
+        "{t:?}"
+    );
+    r.ui.program.repairs_open = true;
+    let t = r.frame();
+    assert!(has(&t, "process_packet"), "{t:?}");
+    assert!(has(&t, "replaced"));
+    assert!(
+        has(
+            &t,
+            "writing byte 29 of its standard output, inside process_packet <- main"
+        ),
+        "{t:?}"
+    );
+    assert!(has(&t, "then pass"));
+}
+
+#[test]
+fn a_run_that_is_not_allowed_says_so_and_changes_nothing() {
+    let (mut r, broker) = program_rig();
+    r.settle(|vm| vm.rewrite.program.detail.is_some());
+    r.vm.rewrite_program_run();
+    let (id, _) = loop {
+        r.frame();
+        if let Some(q) = broker.current() {
+            break q;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    broker.respond(id, false);
+    let t = r.settle(|vm| vm.rewrite.program.declined.is_some());
+    assert!(has(&t, "Not run."), "{t:?}");
+    assert!(has(&t, "you did not allow that"));
+    assert_eq!(r.vm.rewrite.program.runs.len(), 1);
+}
+
+#[test]
+fn a_computer_that_cannot_confine_code_turns_the_run_button_off_in_this_view_too() {
+    let (mut r, _b) = program_rig();
+    r.settle(|vm| vm.rewrite.program.detail.is_some());
+    r.vm.rewrite.availability =
+        Availability::NoConfinement(platform_note("macos").expect("macos cannot confine"));
+    let t = r.frame();
+    assert!(has(&t, "Rewriting is off on this computer"), "{t:?}");
+    r.vm.rewrite_program_run();
+    assert!(r.vm.rewrite.jobs.is_empty());
+    // Reading the stored runs still works.
+    assert!(has(&t, "Run 1"));
 }

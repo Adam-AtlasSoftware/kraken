@@ -73,7 +73,7 @@ Build the book with `mdbook build docs`. The command reference is generated: run
 
 ## Safety model
 
-Binaries you analyse are untrusted. Ghidra runs in a separate process confined with Landlock on Linux: no network, writes only to a throwaway home and the project folder, and a scrubbed environment. KRAKEN never runs the program you open. Everything that comes from the file (names, strings, comments, decompiled text) is handed to AI models only as clearly marked, untrusted data, never as instructions. Agent writes are additive or proposals: an agent may add a name to something still called `FUN_...` or add a comment, within a per-run cap, while anything that would overwrite your work waits for you to accept it. Code a model writes for the rewrite pipeline builds and runs only in a sandbox, and only you can accept it. See [Security](docs/security.md).
+Binaries you analyse are untrusted. Ghidra runs in a separate process confined with Landlock on Linux: no network, writes only to a throwaway home and the project folder, and a scrubbed environment. KRAKEN runs the program you open only when you ask for a whole-program rewrite, confined like the rest and after asking you. Everything that comes from the file (names, strings, comments, decompiled text) is handed to AI models only as clearly marked, untrusted data, never as instructions. Agent writes are additive or proposals: an agent may add a name to something still called `FUN_...` or add a comment, within a per-run cap, while anything that would overwrite your work waits for you to accept it. Code a model writes for the rewrite pipeline builds and runs only in a sandbox, and only you can accept it. See [Security](docs/security.md).
 
 ## License
 

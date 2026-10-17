@@ -338,7 +338,7 @@ impl ViewModel {
 
     // ---------------------------------------------------------------- jobs
 
-    fn rewrite_start_job(
+    pub(super) fn rewrite_start_job(
         &mut self,
         kind: JobKind,
         label: String,
@@ -388,6 +388,20 @@ impl ViewModel {
         let Some(idx) = self.rewrite.jobs.iter().position(|j| j.seq == seq) else {
             return;
         };
+        let denied = e
+            .details
+            .as_ref()
+            .and_then(|d| d.get("approval"))
+            .and_then(Value::as_str)
+            == Some("denied");
+        if denied && self.rewrite.jobs[idx].kind == JobKind::Program {
+            // The person said no to running the original: not an error, nothing to report.
+            let job = &mut self.rewrite.jobs[idx];
+            job.state = JobState::Cancelled;
+            job.outcome = Some("Not run: not allowed.".into());
+            self.rewrite_program_declined();
+            return;
+        }
         self.rewrite_job_failed(idx, e);
     }
 
@@ -472,6 +486,12 @@ impl ViewModel {
                 self.rewrite.export.error = Some(why.clone());
             }
             JobKind::Spec { .. } => {}
+            JobKind::Program => {
+                if cannot_confine {
+                    self.rewrite.availability = Availability::NoConfinement(why.clone());
+                }
+                self.rewrite.program.error = Some(why.clone());
+            }
         }
         if !cannot_confine {
             self.toast(ToastLevel::Error, format!("{label} failed. {why}"));
@@ -485,6 +505,7 @@ impl ViewModel {
             JobKind::Function { address, .. } => self.rewrite_function_done(address, result),
             JobKind::Spec { address } => self.rewrite_spec_done(address, result),
             JobKind::Export => self.rewrite_export_done(result),
+            JobKind::Program => self.rewrite_program_done(result),
         };
         match outcome {
             Ok(text) => self.rewrite.jobs[idx].outcome = Some(text),

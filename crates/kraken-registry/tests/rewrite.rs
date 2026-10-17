@@ -269,6 +269,7 @@ fn program_result() -> RewriteProgramResult {
             cases: vec![],
             sandbox: "landlock-v6".into(),
         },
+        repairs: vec![],
     }
 }
 

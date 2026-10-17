@@ -22,6 +22,7 @@ pub use spec::{Inline, SpecBlock, citations, parse_spec};
 
 mod flow;
 mod highlight;
+mod program;
 mod spec;
 #[cfg(test)]
 mod tests;
@@ -33,6 +34,11 @@ pub mod demo;
 mod demo_tests;
 
 pub use highlight::highlight_rust;
+pub use program::{
+    DEFAULT_REPAIR_ROUNDS, DiffKind, DiffLine, MAX_REPAIR_ROUNDS, ProgramCaseItem,
+    ProgramFunctionItem, ProgramRepairItem, ProgramRunDetail, ProgramRunItem, ProgramState,
+    ProgramVerdictItem, RunSide, line_diff, verdict_line,
+};
 
 /// Rows loaded into the plan view at most (the daemon pages 200 at a time).
 pub(crate) const MAX_ROWS: usize = 5000;
@@ -366,6 +372,8 @@ pub enum JobKind {
     },
     /// `rewrite_export`.
     Export,
+    /// `rewrite_program`.
+    Program,
 }
 
 /// A job started from the tab.
@@ -592,6 +600,8 @@ pub struct RewriteState {
     pub program_spec: Option<SpecDoc>,
     /// The export dialog.
     pub export: ExportState,
+    /// The Program view.
+    pub program: ProgramState,
     pub(crate) generation: u64,
     pub(crate) next_seq: u64,
     pub(crate) stash: Vec<(String, crate::backend::JobInfo)>,
@@ -619,6 +629,7 @@ impl Default for RewriteState {
             specs: HashMap::new(),
             program_spec: None,
             export: ExportState::default(),
+            program: ProgramState::default(),
             generation: 0,
             next_seq: 1,
             stash: Vec::new(),

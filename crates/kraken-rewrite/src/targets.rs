@@ -4,8 +4,10 @@
 //! The reference Rust is hand-written from the C in `corpus/src` (and checked against the
 //! decompile); it is what the cassette-backed tasks return so tests are deterministic.
 
-use crate::abi::{Arg, Param, Ret, Signature};
-use crate::difftest::{FieldGen, Generator, InputSpec, IntGen, ParamGen, Rng};
+use crate::abi::{Arg, Callback, Link, Param, Ret, Signature};
+use crate::difftest::{
+    FieldGen, Generator, InputSpec, IntGen, ObjectGen, ParamGen, Rng, SlotGen, TextGen,
+};
 
 /// One function the spike handles.
 #[derive(Debug, Clone)]
@@ -489,12 +491,279 @@ fn vm_fail_inputs() -> InputSpec {
     }
 }
 
+// ----- pointer-aware inputs: structs that hold pointers -----
+
+const PARSER_NOTES: &str = "struct parser { const char *p; int err; };\n\
+sizeof(struct parser) == 16: `p` at 0 points into NUL-terminated text and is advanced as the \
+parser consumes it; `err` at 8 is set to 1 on a syntax error and otherwise left alone. The \
+grammar is the usual one: expr = term (('+'|'-') term)*, term = atom (('*'|'/'|'%') atom)*, \
+atom = '(' expr ')' | '-' atom | number. Whitespace is skipped with isspace (C locale), digits \
+with isdigit. The checks pass a parser whose `p` points at generated text.";
+
+const LIST_NOTES: &str = "struct record { int id; char name[16]; struct point { int x, y; } pos; \
+double weight; };  (40 bytes: id at 0, name at 4, pos.x at 20, pos.y at 24, weight at 32)\n\
+struct node { struct record rec; struct node *next; };  (48 bytes: rec at 0, next at 40)\n\
+struct list { struct node *head; int count; };  (16 bytes: head at 0, count at 8)\n\
+The checks pass lists of 0 to 5 nodes, linked through `next`, with `count` set to the length. \
+A comparison callback receives `&node->rec` twice and a visit callback `&node->rec` and the \
+`ctx` pointer.";
+
+/// A parser struct (`p` at 0 pointing at `text`, `err` at 8) as a pointer graph.
+fn parser_case(text: &str, err: i32) -> Arg {
+    let mut t = text.as_bytes().to_vec();
+    t.extend_from_slice(&[0; 16]);
+    let mut ps = vec![0u8; 32];
+    ps[8..12].copy_from_slice(&err.to_le_bytes());
+    Arg::Graph {
+        objects: vec![ps, t],
+        links: vec![Link {
+            from: 0,
+            offset: 0,
+            to: 1,
+            to_offset: 0,
+        }],
+    }
+}
+
+fn parser_gen() -> ParamGen {
+    // Digits are common so that numbers, not just errors, get parsed.
+    let alphabet = b"0123456789012345678901234567 \t+-*/%()x".to_vec();
+    ParamGen::Graph(ObjectGen {
+        size: 16,
+        pad: 16,
+        fields: vec![FieldGen {
+            offset: 8,
+            value: IntGen {
+                bits: 32,
+                signed: true,
+                range: Some((0, 1)),
+            },
+        }],
+        doubles: Vec::new(),
+        slots: vec![(
+            0,
+            SlotGen::Text(TextGen {
+                min_len: 0,
+                max_len: 14,
+                alphabet: Some(alphabet),
+                pad: 16,
+            }),
+        )],
+        count_at: None,
+    })
+}
+
+fn parser_inputs() -> InputSpec {
+    let fixed = [
+        ("1 + 2 * 3", 0),
+        ("  42", 0),
+        ("(1 + 2) * 3", 0),
+        ("-(4 + 6) % 7", 0),
+        ("12 +", 0),
+        ("(7", 0),
+        ("", 0),
+        ("x", 0),
+        ("100 / (5 - 5)", 0),
+        ("  7", 1),
+        ("2 3", 0),
+    ]
+    .iter()
+    .map(|(t, e)| vec![parser_case(t, *e)])
+    .collect();
+    InputSpec {
+        fixed,
+        generator: Generator::Params(vec![parser_gen()]),
+    }
+}
+
+/// The `stripped_calc` functions by role; the stripped binary names them `FUN_<address>`.
+fn calc_role(binary_file: &str, function: &str) -> Option<&'static str> {
+    let by_name = [
+        "skip_ws",
+        "parse_number",
+        "parse_atom",
+        "parse_term",
+        "parse_expr",
+    ];
+    match binary_file {
+        "stripped_calc-O0" => by_name.into_iter().find(|n| *n == function),
+        "stripped_calc-O0-stripped" => match function {
+            "FUN_00101149" => Some("skip_ws"),
+            "FUN_00101197" => Some("parse_number"),
+            "FUN_00101247" => Some("parse_atom"),
+            "FUN_0010130d" => Some("parse_term"),
+            "FUN_001013cf" => Some("parse_expr"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn record_obj() -> ObjectGen {
+    let mut fields = vec![
+        FieldGen {
+            offset: 0,
+            value: IntGen {
+                bits: 32,
+                signed: true,
+                range: Some((-4, 4)),
+            },
+        },
+        FieldGen {
+            offset: 20,
+            value: IntGen {
+                bits: 32,
+                signed: true,
+                range: Some((-50, 50)),
+            },
+        },
+        FieldGen {
+            offset: 24,
+            value: IntGen {
+                bits: 32,
+                signed: true,
+                range: Some((-50, 50)),
+            },
+        },
+    ];
+    // A name of a few distinct letters, so equal prefixes are common; the last byte stays NUL.
+    fields.extend((4..19).map(|o| FieldGen {
+        offset: o,
+        value: IntGen {
+            bits: 8,
+            signed: false,
+            range: Some((0, 2)),
+        },
+    }));
+    ObjectGen {
+        size: 40,
+        pad: 16,
+        fields,
+        doubles: vec![32],
+        slots: Vec::new(),
+        count_at: None,
+    }
+}
+
+fn node_obj() -> ObjectGen {
+    ObjectGen {
+        size: 48,
+        ..record_obj()
+    }
+}
+
+fn list_obj(max: usize) -> ObjectGen {
+    ObjectGen {
+        size: 16,
+        pad: 16,
+        fields: Vec::new(),
+        doubles: Vec::new(),
+        slots: vec![(
+            0,
+            SlotGen::Chain {
+                node: Box::new(node_obj()),
+                next_offset: 40,
+                min: 0,
+                max,
+            },
+        )],
+        count_at: Some(8),
+    }
+}
+
+fn ctx_gen() -> ParamGen {
+    ParamGen::Bytes {
+        min_len: 8,
+        max_len: 16,
+        alphabet: None,
+        terminator: false,
+        pad: 16,
+    }
+}
+
+/// Inputs for the list functions of `pie_list`, by function.
+fn list_inputs(function: &str) -> Option<InputSpec> {
+    let generator = match function {
+        "list_push" => vec![ParamGen::Graph(list_obj(3)), ParamGen::Graph(node_obj())],
+        "list_sort" => vec![ParamGen::Graph(list_obj(5)), ParamGen::FnPtr],
+        "list_each" => vec![ParamGen::Graph(list_obj(4)), ParamGen::FnPtr, ctx_gen()],
+        "sum_weight" => vec![
+            ParamGen::Graph(record_obj()),
+            ParamGen::Graph(ObjectGen {
+                size: 8,
+                pad: 8,
+                fields: Vec::new(),
+                doubles: vec![0],
+                slots: Vec::new(),
+                count_at: None,
+            }),
+        ],
+        "cmp_name" => vec![ParamGen::Graph(record_obj()), ParamGen::Graph(record_obj())],
+        "list_free" => vec![ParamGen::Graph(list_obj(3))],
+        _ => return None,
+    };
+    // A sorted list, a reversed one and an empty one are the cases a sort is judged on.
+    let node = |id: i32| {
+        let mut n = vec![0u8; 48 + 16];
+        n[0..4].copy_from_slice(&id.to_le_bytes());
+        n
+    };
+    let list_of = |ids: &[i32]| {
+        let mut l = vec![0u8; 32];
+        l[8..12].copy_from_slice(&(ids.len() as i32).to_le_bytes());
+        let mut objects = vec![l];
+        let mut links = Vec::new();
+        for (k, id) in ids.iter().enumerate() {
+            objects.push(node(*id));
+            links.push(Link {
+                from: k,
+                offset: if k == 0 { 0 } else { 40 },
+                to: k + 1,
+                to_offset: 0,
+            });
+        }
+        Arg::Graph { objects, links }
+    };
+    let fixed = if function == "list_sort" {
+        [
+            vec![3, 1, 4, 1, 5],
+            vec![1, 2, 3],
+            vec![3, 2, 1],
+            vec![],
+            vec![7],
+        ]
+        .iter()
+        .flat_map(|ids| Callback::ALL.map(|cb| vec![list_of(ids), Arg::FnPtr { callback: cb }]))
+        .collect()
+    } else {
+        Vec::new()
+    };
+    Some(InputSpec {
+        fixed,
+        generator: Generator::Params(generator),
+    })
+}
+
 /// Curated inputs for `function` of the corpus binary named `binary_file` (for example
-/// `switch_vm-O0`), if there are some: the targets of [`targets`] plus the helpers of
-/// `switch_vm` whose struct argument needs a valid shape. Functions whose arguments hold
-/// pointers (the `stripped_calc` parser) have none: the generic inputs cannot build them and
-/// the function-level test says so (see `Verdict::Inconclusive`).
+/// `switch_vm-O0`), if there are some: the targets of [`targets`], the helpers of `switch_vm`
+/// whose struct argument needs a valid shape, the parser functions of `stripped_calc` (a struct
+/// that holds a pointer into text) and the list functions of `pie_list` (pointer graphs and
+/// callbacks).
 pub fn curated(binary_file: &str, function: &str) -> Option<Curated> {
+    if calc_role(binary_file, function).is_some() {
+        return Some(Curated {
+            inputs: parser_inputs(),
+            notes: PARSER_NOTES.to_string(),
+        });
+    }
+    if binary_file == "pie_list-O0"
+        && let Some(inputs) = list_inputs(function)
+    {
+        return Some(Curated {
+            inputs,
+            notes: LIST_NOTES.to_string(),
+        });
+    }
     if let Some(t) = targets()
         .into_iter()
         .find(|t| t.binary == binary_file && t.function == function)

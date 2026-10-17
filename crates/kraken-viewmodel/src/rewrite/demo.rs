@@ -14,8 +14,10 @@ use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::{
     ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend, RewriteExportResult,
-    RewriteFunctionArgs, RewriteFunctionResult, RewritePlanArgs, RewritePlanOut, RewriteSpecArgs,
-    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
+    RewriteFunctionArgs, RewriteFunctionResult, RewritePlanArgs, RewritePlanOut,
+    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
+    RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs,
+    RewriteUnitOut,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 use serde::de::DeserializeOwned;
@@ -178,6 +180,8 @@ struct Inner {
     specs: BTreeMap<u64, (u64, String)>,
     program_spec: Option<(u64, String)>,
     next_spec: u64,
+    /// Stored whole-program runs, oldest first.
+    program_runs: Vec<Value>,
 }
 
 /// The scripted pipeline. Clones share state.
@@ -220,6 +224,87 @@ pub unsafe extern \"C\" fn checksum(buf: *const u8, len: usize) -> u32 {
 }
 ";
 
+/// The demo's whole-program run `n`: run 1 is a first attempt whose `main` prints a second space
+/// (a program-level difference the function-level checks could not see); run 2 is the same program
+/// after one repair round fixed it.
+fn demo_program_run(n: u64) -> Value {
+    let obj = |s: &str| json!({"untrusted": true, "value": s});
+    let fixed = n >= 2;
+    let funcs: Vec<Value> = FUNCS
+        .iter()
+        .take(9)
+        .enumerate()
+        .map(|(i, f)| {
+            let compare = f.flags.is_empty() && f.callees.len() < 2;
+            let repaired = fixed && f.name == "process_packet";
+            json!({
+                "order": i, "address": format!("{:#x}", f.addr), "name": obj(f.name),
+                "unit": unit_id(f.addr, 1 + u32::from(repaired)), "version": 1 + u32::from(repaired),
+                "status": if compare { "verified" } else { "translated" },
+                "verdict": if compare { "pass" } else { "inconclusive" },
+                "check": if compare { "differential" } else { "compile_only" },
+                "check_note": if compare { Value::Null } else {
+                    obj("calls fprintf, which the function-level test does not model")
+                },
+                "attempts": 1 + u32::from(repaired),
+                "reused_callees": f.callees.iter().filter_map(|c| FUNCS.iter().find(|g| g.addr == *c))
+                    .map(|g| g.name).collect::<Vec<_>>(),
+                "included": true,
+            })
+        })
+        .collect();
+    let case = |name: &str, origin: &str, argv: &[&str], agree: bool, rewritten: &str| {
+        let original = "packet ok\nchecksum=0x3a7f\nstatus: 2 handled\n";
+        let side = |out: &str| {
+            json!({"exit": "exit 0", "stdout": obj(out), "stdout_bytes": out.len(),
+                   "stderr": obj(""), "stderr_bytes": 0})
+        };
+        json!({
+            "name": name, "origin": origin, "argv": argv.iter().map(|a| obj(a)).collect::<Vec<_>>(),
+            "stdin_bytes": 0, "agree": agree,
+            "original": side(original), "rewritten": side(rewritten),
+            "differences": if agree { vec![] } else {
+                vec![obj("stdout: 44 bytes vs 45 bytes, first difference at byte 29: original `status: 2`, rewritten `status:  2`")]
+            },
+        })
+    };
+    let wrong = "packet ok\nchecksum=0x3a7f\nstatus:  2 handled\n";
+    let right = "packet ok\nchecksum=0x3a7f\nstatus: 2 handled\n";
+    let cases = if fixed {
+        vec![
+            case("baseline", "baseline", &[], true, right),
+            case("-v", "corpus", &["-v"], true, right),
+            case("generated-1", "generated", &["x y"], true, right),
+        ]
+    } else {
+        vec![
+            case("baseline", "baseline", &[], false, wrong),
+            case("-v", "corpus", &["-v"], false, wrong),
+            case("generated-1", "generated", &["x y"], true, right),
+        ]
+    };
+    let failed = cases.iter().filter(|c| c["agree"] == false).count();
+    json!({
+        "run": n, "program_sha256": "00", "entry": "0x401500", "entry_name": obj("main"),
+        "functions_planned": funcs.len(), "skipped": 0, "translated": funcs.len(),
+        "reused_from_store": 0, "failed": 0, "included": funcs.len(), "functions": funcs,
+        "crate_dir": "/work/demo/rewrite-program", "built": true,
+        "crate_sha256": "5c0f9a4e1b7d2368a4f10c93e5d7b1aa80c2e4f6", "provider": PROVIDER,
+        "model": MODEL, "created": 1_760_000_000u64 + n * 600,
+        "verdict": {
+            "verdict": if failed == 0 { "pass" } else { "fail" }, "cases_run": cases.len(),
+            "passed": cases.len() - failed, "failed": failed, "cases": cases,
+            "sandbox": "landlock-v6+netns",
+        },
+        "repairs": if fixed { json!([{
+            "round": 1, "address": "0x4011a0", "name": obj("process_packet"), "case": "baseline",
+            "at": "writing byte 29 of its standard output", "stack": ["process_packet", "main"],
+            "why": obj("it was running when the first differing output was produced; it has no passing function-level test"),
+            "outcome": "replaced", "version_before": 1, "version_after": 2, "verdict_after": "pass",
+        }]) } else { json!([]) },
+    })
+}
+
 fn unit_id(addr: u64, version: u32) -> String {
     format!("ru-demo{addr:06x}{version:02x}")
 }
@@ -236,6 +321,7 @@ impl DemoRewrite {
     pub fn new() -> DemoRewrite {
         let mut inner = Inner {
             next_spec: 1,
+            program_runs: vec![demo_program_run(1)],
             ..Inner::default()
         };
         let ver = |addr: u64, version: u32, status, verdict, run: u32, pass: u32, skip: u32| Ver {
@@ -690,6 +776,76 @@ impl RewriteBackend for DemoRewrite {
                 typed(j)
             }
         }
+    }
+
+    async fn program(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteProgramArgs,
+        job: &JobReporter,
+    ) -> Result<RewriteProgramResult, ProtoError> {
+        let phases = [
+            ("translate", "Translating the functions, callees first"),
+            ("build", "Building the crate in the sandbox"),
+            ("verify", "Running both programs on the same inputs"),
+            (
+                "repair",
+                "Translating the function the first difference points to again",
+            ),
+            ("verify", "Running both programs again"),
+        ];
+        for (i, (phase, message)) in phases.iter().enumerate() {
+            job.progress(JobProgress {
+                phase: (*phase).into(),
+                done: i as u64,
+                total: phases.len() as u64,
+                message: (*message).into(),
+            });
+            tokio::time::sleep(STEP).await;
+        }
+        let run = {
+            let mut st = self.lock();
+            let n = st.program_runs.len() as u64 + 1;
+            let run = demo_program_run(n.max(2));
+            let mut stored = run.clone();
+            stored["run"] = json!(n);
+            st.program_runs.push(stored.clone());
+            stored
+        };
+        typed(run)
+    }
+
+    async fn program_status(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteProgramStatusArgs,
+    ) -> Result<RewriteProgramStatusOut, ProtoError> {
+        let st = self.lock();
+        let runs: Vec<Value> = st
+            .program_runs
+            .iter()
+            .rev()
+            .map(|r| {
+                json!({"run": r["run"], "created": r["created"], "entry": r["entry"],
+                       "verdict": r["verdict"]["verdict"], "cases_run": r["verdict"]["cases_run"],
+                       "passed": r["verdict"]["passed"], "crate_dir": r["crate_dir"]})
+            })
+            .collect();
+        let mut shown = match args.run {
+            Some(n) => st.program_runs.iter().find(|r| r["run"] == n).cloned(),
+            None => st.program_runs.last().cloned(),
+        };
+        if let Some(r) = shown.as_mut()
+            && !args.all_cases
+            && let Some(cases) = r["verdict"]["cases"].as_array_mut()
+        {
+            cases.retain(|c| c["agree"] == false);
+        }
+        typed(json!({
+            "program_sha256": "00", "present": !runs.is_empty(), "runs": runs, "run": shown,
+        }))
     }
 
     async fn export(
