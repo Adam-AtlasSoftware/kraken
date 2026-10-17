@@ -34,6 +34,9 @@ pub struct SpawnSpec {
     pub env: Vec<(OsString, OsString)>,
     /// Working directory.
     pub cwd: PathBuf,
+    /// Runs the program in the Linux sandbox of [`crate::confine`] when set. Starting fails
+    /// when the sandbox cannot be created; callers check [`crate::confine::probe`] first.
+    pub confine: Option<crate::confine::Confinement>,
 }
 
 /// How the child ended.
@@ -210,6 +213,14 @@ fn spawner_main(
                 Ok(())
             });
         }
+    }
+    // After the parent-death hook above: this hook forks, and the agent's parent is then not
+    // the spawner.
+    if let Some(c) = &spec.confine
+        && let Err(e) = crate::confine::install(&mut command, c)
+    {
+        let _ = ready_tx.send(Err(e));
+        return;
     }
     let mut child = match command.spawn() {
         Ok(c) => c,
@@ -408,6 +419,7 @@ mod tests {
             args: vec![OsString::from("-c"), OsString::from(script)],
             env: vec![(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))],
             cwd: std::env::temp_dir(),
+            confine: None,
         }
     }
 
