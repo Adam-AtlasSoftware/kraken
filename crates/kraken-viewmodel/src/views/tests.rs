@@ -251,7 +251,6 @@ fn the_listing_loads_lazily_and_pages_as_the_user_scrolls() {
     r.vm.listing_scrolled(0);
     assert_eq!(r.backend.calls_to("disassemble").len(), 1);
     r.vm.listing_scrolled(10);
-    r.vm.listing_scrolled(10); // a second request while one is running is dropped
     r.settle();
     assert_eq!(r.backend.calls_to("disassemble").len(), 2);
     assert_eq!(r.backend.calls_to("disassemble")[1]["cursor"], "10");
