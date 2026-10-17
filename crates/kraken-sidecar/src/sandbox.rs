@@ -178,7 +178,7 @@ mod unix {
     use tokio::sync::watch;
 
     use super::{ConfinementReport, ExitInfo, SpawnSpec};
-    use crate::error::GhidraError;
+    use crate::error::SidecarError;
     use crate::log::LogSink;
 
     /// A running confined child. Dropping it kills the child.
@@ -197,13 +197,16 @@ mod unix {
         ///
         /// The child is forked from a dedicated thread that stays alive, waiting on the child,
         /// until it exits: `PR_SET_PDEATHSIG` fires when the *thread* that forked dies.
-        pub fn spawn(spec: SpawnSpec, log: &LogSink) -> Result<(Sandbox, UnixStream), GhidraError> {
+        pub fn spawn(
+            spec: SpawnSpec,
+            log: &LogSink,
+        ) -> Result<(Sandbox, UnixStream), SidecarError> {
             let plan = confine::prepare(&spec)?;
             let report = plan.report.clone();
             let (parent_end, child_end) = UnixStream::pair()
-                .map_err(|e| GhidraError::io("creating the sidecar socketpair", e))?;
+                .map_err(|e| SidecarError::io("creating the sidecar socketpair", e))?;
             let (started_tx, started_rx) =
-                mpsc::channel::<Result<(u32, Arc<Mutex<Child>>), GhidraError>>();
+                mpsc::channel::<Result<(u32, Arc<Mutex<Child>>), SidecarError>>();
             let (exit_tx, exit_rx) = watch::channel(None);
             let parent_pid = std::process::id();
             let log = log.clone();
@@ -252,10 +255,10 @@ mod unix {
                     };
                     let _ = exit_tx.send(Some(info));
                 })
-                .map_err(|e| GhidraError::io("starting the spawner thread", e))?;
+                .map_err(|e| SidecarError::io("starting the spawner thread", e))?;
             let (pid, child) = started_rx
                 .recv()
-                .map_err(|_| GhidraError::Spawn("the spawner thread died".into()))??;
+                .map_err(|_| SidecarError::Spawn("the spawner thread died".into()))??;
             Ok((
                 Sandbox {
                     pid,
@@ -342,7 +345,7 @@ mod unix {
         child_end: UnixStream,
         parent_pid: u32,
         spawner_tid: u32,
-    ) -> Result<Child, GhidraError> {
+    ) -> Result<Child, SidecarError> {
         let mut cmd = Command::new(&spec.program);
         cmd.args(&spec.args)
             .env_clear()
@@ -355,7 +358,7 @@ mod unix {
         }
         confine::install(plan, &mut cmd, parent_pid, spawner_tid);
         cmd.spawn()
-            .map_err(|e| GhidraError::Spawn(format!("{}: {e}", spec.program.display())))
+            .map_err(|e| SidecarError::Spawn(format!("{}: {e}", spec.program.display())))
     }
 
     #[cfg(target_os = "linux")]
@@ -371,7 +374,7 @@ mod unix {
             RulesetCreated, RulesetCreatedAttr, RulesetStatus, Scope,
         };
 
-        use super::{ConfinementReport, GhidraError, SpawnSpec};
+        use super::{ConfinementReport, SidecarError, SpawnSpec};
 
         const ABI_TARGET: ABI = ABI::V9;
         /// Present on most hosts; skipped silently when missing.
@@ -499,12 +502,12 @@ mod unix {
             })
         }
 
-        pub(super) fn prepare(spec: &SpawnSpec) -> Result<Plan, GhidraError> {
+        pub(super) fn prepare(spec: &SpawnSpec) -> Result<Plan, SidecarError> {
             let opts = &spec.options;
             let abi = landlock_abi();
             let filesystem = abi >= 1;
             if !filesystem && !opts.allow_unconfined {
-                return Err(GhidraError::Confinement(
+                return Err(SidecarError::Confinement(
                     "Landlock is not enforced on this host (kernel too old or the LSM is \
                      disabled); refusing to run the sidecar unconfined. Enable Landlock, \
                      or set ConfinementOptions::allow_unconfined to accept the risk"
@@ -512,7 +515,7 @@ mod unix {
                 ));
             }
             if abi < crate::sandbox::MIN_LANDLOCK_ABI && !opts.allow_unconfined {
-                return Err(GhidraError::Confinement(format!(
+                return Err(SidecarError::Confinement(format!(
                     "Landlock ABI {abi} is too old (need >= {}: truncate control and TCP denial); \
                      refusing to run the sidecar with weak confinement. Upgrade the kernel, or \
                      set ConfinementOptions::allow_unconfined to accept the risk",
@@ -521,7 +524,7 @@ mod unix {
             }
             let filter = socket_filter().filter(|_| seccomp_available());
             if filter.is_none() && !opts.allow_unconfined {
-                return Err(GhidraError::Confinement(
+                return Err(SidecarError::Confinement(
                     "seccomp filtering is unavailable on this host or architecture; refusing to \
                      run the sidecar with sockets enabled. Set \
                      ConfinementOptions::allow_unconfined to accept the risk"
@@ -552,9 +555,9 @@ mod unix {
             })
         }
 
-        fn build_ruleset(spec: &SpawnSpec) -> Result<RulesetCreated, GhidraError> {
+        fn build_ruleset(spec: &SpawnSpec) -> Result<RulesetCreated, SidecarError> {
             let err = |what: &str, e: &dyn std::fmt::Display| {
-                GhidraError::Confinement(format!("{what}: {e}"))
+                SidecarError::Confinement(format!("{what}: {e}"))
             };
             let mut rs = Ruleset::default()
                 .handle_access(AccessFs::from_all(ABI_TARGET))
@@ -731,13 +734,13 @@ mod unix {
     mod confine {
         use std::process::Command;
 
-        use super::{ConfinementReport, GhidraError, SpawnSpec};
+        use super::{ConfinementReport, SidecarError, SpawnSpec};
 
         pub(super) struct Plan {
             pub report: ConfinementReport,
         }
 
-        pub(super) fn prepare(spec: &SpawnSpec) -> Result<Plan, GhidraError> {
+        pub(super) fn prepare(spec: &SpawnSpec) -> Result<Plan, SidecarError> {
             if spec.options.allow_unconfined {
                 Ok(Plan {
                     report: ConfinementReport {
@@ -747,7 +750,7 @@ mod unix {
                     },
                 })
             } else {
-                Err(GhidraError::Confinement(
+                Err(SidecarError::Confinement(
                     crate::sandbox::unconfined_refusal(),
                 ))
             }
@@ -773,7 +776,7 @@ mod windows {
     use tokio_util::io::SyncIoBridge;
 
     use super::{ConfinementReport, ExitInfo, SpawnSpec};
-    use crate::error::GhidraError;
+    use crate::error::SidecarError;
     use crate::log::LogSink;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -794,12 +797,12 @@ mod windows {
         pub fn spawn(
             spec: SpawnSpec,
             log: &LogSink,
-        ) -> Result<(WinSandbox, ChildStdout, ChildStdin), GhidraError> {
+        ) -> Result<(WinSandbox, ChildStdout, ChildStdin), SidecarError> {
             if !spec.options.allow_unconfined {
-                return Err(GhidraError::Confinement(super::unconfined_refusal()));
+                return Err(SidecarError::Confinement(super::unconfined_refusal()));
             }
             let guard = ProcessGuard::new()
-                .map_err(|e| GhidraError::io("creating the sidecar job object", e))?;
+                .map_err(|e| SidecarError::io("creating the sidecar job object", e))?;
             let mut child = Command::new(&spec.program)
                 .args(&spec.args)
                 .env_clear()
@@ -811,17 +814,17 @@ mod windows {
                 .creation_flags(CREATE_NO_WINDOW)
                 .kill_on_drop(true)
                 .spawn()
-                .map_err(|e| GhidraError::Spawn(format!("{}: {e}", spec.program.display())))?;
+                .map_err(|e| SidecarError::Spawn(format!("{}: {e}", spec.program.display())))?;
             let pid = child
                 .id()
-                .ok_or_else(|| GhidraError::Spawn("the sidecar exited immediately".into()))?;
+                .ok_or_else(|| SidecarError::Spawn("the sidecar exited immediately".into()))?;
             guard
                 .assign_pid(pid)
-                .map_err(|e| GhidraError::io("adding the sidecar to its job object", e))?;
+                .map_err(|e| SidecarError::io("adding the sidecar to its job object", e))?;
             let (Some(stdin), Some(stdout), Some(stderr)) =
                 (child.stdin.take(), child.stdout.take(), child.stderr.take())
             else {
-                return Err(GhidraError::Spawn("the sidecar pipes are missing".into()));
+                return Err(SidecarError::Spawn("the sidecar pipes are missing".into()));
             };
             let sink = log.clone();
             drop(tokio::task::spawn_blocking(move || {

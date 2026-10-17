@@ -5,9 +5,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use engine_ghidra::LogSink;
-use engine_ghidra::rpc::RpcClient;
-use engine_ghidra::sandbox::{ConfinementOptions, ConfinementReport, ExitInfo};
 use kraken_engine::{
     CancellationToken, Cap, Decompiler, Engine, EngineCaps, EngineResult, FunctionLister, Loader,
     LoaderSpec, ProgramInfo, TypeStore, unsupported,
@@ -16,6 +13,9 @@ use kraken_proto::{
     DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, PROTOCOL_VERSION, Page,
     PageRequest, ProtoError, TypeDef,
 };
+use kraken_sidecar::LogSink;
+use kraken_sidecar::rpc::RpcClient;
+use kraken_sidecar::sandbox::{ConfinementOptions, ConfinementReport, ExitInfo};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
@@ -133,7 +133,7 @@ struct Running {
 
 impl Running {
     fn enrich(&self, mut e: ProtoError) -> ProtoError {
-        if e.code == ErrorCode::Internal && e.message == engine_ghidra::rpc::SIDECAR_EXITED {
+        if e.code == ErrorCode::Internal && e.message == kraken_sidecar::rpc::SIDECAR_EXITED {
             e = e.with_details(json!({
                 "exit": self.exit.borrow().map(|x| json!({"code": x.code, "signal": x.signal})),
                 "log_tail": self.log.tail(20),

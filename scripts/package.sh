@@ -5,6 +5,8 @@
 #
 # Environment:
 #   KRAKEN_GHIDRA_JAR  path of the prebuilt kraken-ghidra.jar (required)
+#   KRAKEN_DOTNET_DIR  directory with the prebuilt .NET sidecar (the output of
+#                      `cargo xtask dotnet-ext`, holding kraken-dotnet.dll) (required)
 #   KRAKEN_DOCS_DIR    path of the built mdBook (required)
 #   CARGO_TARGET_DIR   cargo target directory (default: target)
 #
@@ -30,6 +32,7 @@ esac
 root=$(cd "$(dirname "$0")/.." && pwd)
 bins_dir="${CARGO_TARGET_DIR:-$root/target}/release"
 jar=${KRAKEN_GHIDRA_JAR:?KRAKEN_GHIDRA_JAR is not set}
+dotnet_dir=${KRAKEN_DOTNET_DIR:?KRAKEN_DOTNET_DIR is not set}
 docs=${KRAKEN_DOCS_DIR:?KRAKEN_DOCS_DIR is not set}
 
 exe=""
@@ -39,6 +42,7 @@ case "$target" in
 esac
 
 [ -f "$jar" ] || { echo "missing $jar" >&2; exit 1; }
+[ -f "$dotnet_dir/kraken-dotnet.dll" ] || { echo "missing $dotnet_dir/kraken-dotnet.dll" >&2; exit 1; }
 [ -d "$docs" ] || { echo "missing $docs" >&2; exit 1; }
 for b in kraken krakend kraken-gui; do
   [ -f "$bins_dir/$b$exe" ] || { echo "missing $bins_dir/$b$exe" >&2; exit 1; }
@@ -57,6 +61,12 @@ for b in kraken krakend kraken-gui; do
   chmod 755 "$pkg/bin/$b$exe"
 done
 cp "$jar" "$pkg/share/kraken/kraken-ghidra.jar"
+# The managed sidecar is platform independent; `kraken setup --dotnet` installs it. Debug symbols
+# are left out.
+mkdir -p "$pkg/share/kraken/kraken-dotnet"
+cp -R "$dotnet_dir/." "$pkg/share/kraken/kraken-dotnet/"
+find "$pkg/share/kraken/kraken-dotnet" -name "*.pdb" -delete
+cp "$root/dotnet/kraken-dotnet/THIRD-PARTY-NOTICES.txt" "$pkg/share/kraken/kraken-dotnet/"
 cp -R "$docs/." "$pkg/docs/"
 cp "$root/README.md" "$root/LICENSE" "$root/THIRD-PARTY-NOTICES.md" "$pkg/"
 cp "$root/scripts/INSTALL.txt" "$pkg/INSTALL.txt"

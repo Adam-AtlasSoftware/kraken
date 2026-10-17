@@ -1325,9 +1325,9 @@ name = "engine-dotnet"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "engine-ghidra",
  "kraken-engine",
  "kraken-proto",
+ "kraken-sidecar",
  "serde",
  "serde_json",
  "tempfile",
@@ -1359,7 +1359,7 @@ dependencies = [
  "kraken-engine",
  "kraken-procguard",
  "kraken-proto",
- "landlock",
+ "kraken-sidecar",
  "libc",
  "serde",
  "serde_json",
@@ -2723,6 +2723,7 @@ name = "kraken-host"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "engine-dotnet",
  "engine-ghidra",
  "filetime",
  "flate2",
@@ -2915,6 +2916,23 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "kraken-sidecar"
+version = "0.0.0"
+dependencies = [
+ "kraken-procguard",
+ "kraken-proto",
+ "landlock",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

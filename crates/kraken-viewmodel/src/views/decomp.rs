@@ -4,6 +4,15 @@ use kraken_proto::{Locator, Token, TokenKind};
 
 use super::wire::TokenWire;
 
+/// The locator a token target names: a managed one when the registry gave a module (the address
+/// is then a metadata token), a ram one otherwise.
+pub(crate) fn target_locator(address: u64, module: Option<&str>) -> Locator {
+    match (module, u32::try_from(address)) {
+        (Some(m), Ok(token)) => Locator::managed(m, token),
+        _ => Locator::ram(address),
+    }
+}
+
 /// Turns the registry's token spans into the tokens the decompiler widget draws.
 ///
 /// The registry leaves `symbol` out when it equals the token text, so this fills it in for
@@ -22,7 +31,9 @@ pub(crate) fn server_tokens(text: &str, wire: &[TokenWire]) -> Vec<Token> {
             continue;
         }
         last_end = t.end;
-        let target = t.target.map(|a| Locator::ram(a.0));
+        let target = t
+            .target
+            .map(|a| target_locator(a.0, t.target_module.as_deref()));
         let followable =
             target.is_some() || matches!(t.kind, TokenKind::Function | TokenKind::Variable);
         let symbol = t
@@ -59,6 +70,7 @@ mod tests {
             end,
             kind,
             target: target.map(Hex64),
+            target_module: None,
             symbol: sym.map(|s| Untrusted(s.to_string())),
         }
     }

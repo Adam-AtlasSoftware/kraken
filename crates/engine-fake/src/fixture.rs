@@ -164,6 +164,7 @@ impl FixtureFile {
 pub(crate) fn key_of(l: &Locator) -> (String, u64) {
     match l {
         Locator::Native { space, offset } => (space.clone(), offset.0),
+        Locator::Managed { module, token } => (format!("managed:{module}"), u64::from(*token)),
         _ => (String::new(), 0),
     }
 }

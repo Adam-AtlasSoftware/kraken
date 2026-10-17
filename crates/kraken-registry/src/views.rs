@@ -15,11 +15,23 @@ use serde::{Deserialize, Serialize};
 use crate::validate::untrusted;
 use crate::views_data::TokenView;
 
-/// Splits a locator into its address space and offset.
+/// Splits a locator into its address space and offset. A managed locator's metadata token is its
+/// offset (in the default space); the module is [`locator_module`].
 pub(crate) fn locator_parts(l: &Locator) -> (String, Hex64) {
     match l {
         Locator::Native { space, offset } => (space.clone(), *offset),
+        Locator::Managed { token, .. } => {
+            (kraken_proto::DEFAULT_SPACE.into(), Hex64(u64::from(*token)))
+        }
         _ => (String::new(), Hex64(0)),
+    }
+}
+
+/// The module (MVID) of a managed locator.
+pub(crate) fn locator_module(l: &Locator) -> Option<String> {
+    match l {
+        Locator::Managed { module, .. } => Some(sanitize(module)),
+        _ => None,
     }
 }
 
@@ -40,11 +52,15 @@ pub(crate) fn adjust_completeness(c: Completeness, analysis_running: bool) -> Co
 /// One function in a listing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FunctionView {
-    /// Entry address.
+    /// Entry address; for a managed method, its metadata token.
     pub address: Hex64,
     /// Address space when it is not `ram`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space: Option<String>,
+    /// Module id (MVID) of a managed method. Send it back as `module` with the token in
+    /// `address`. Absent for native code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
     /// Function name (binary-derived).
     pub name: Untrusted<String>,
     /// Body size in bytes, if known.
@@ -63,6 +79,7 @@ impl FunctionView {
         FunctionView {
             address,
             space: space_if_not_ram(space),
+            module: locator_module(&f.locator),
             name: untrusted(&f.name),
             size: f.size,
             signature: f.signature.as_deref().map(untrusted),
@@ -101,16 +118,22 @@ pub struct FunctionDetail {
 pub struct ReferenceView {
     /// Symbol text at the reference (binary-derived).
     pub name: Untrusted<String>,
-    /// Target address.
+    /// Target address; for managed code, the metadata token.
     pub address: Hex64,
+    /// Module id (MVID) of a managed target. Absent for native code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
 }
 
 /// Decompiler output, size-capped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DecompileView {
-    /// Function entry.
+    /// Function entry; for a managed method, its metadata token.
     pub address: Hex64,
-    /// Language tag such as `c`.
+    /// Module id (MVID) of a managed method. Absent for native code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    /// Language tag such as `c` (`csharp` for managed code).
     pub language: String,
     /// Decompiled source (binary-derived), cut at 64 KiB.
     pub text: Untrusted<String>,

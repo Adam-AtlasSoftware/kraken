@@ -106,6 +106,9 @@ pub(crate) struct TokenWire {
     pub kind: TokenKind,
     #[serde(default)]
     pub target: Option<Hex64>,
+    /// Module id (MVID) of a .NET `target`, whose address is then a metadata token.
+    #[serde(default)]
+    pub target_module: Option<String>,
     #[serde(default)]
     pub symbol: Option<Untrusted<String>>,
 }

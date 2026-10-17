@@ -19,9 +19,7 @@ pub mod engine;
 pub mod error;
 pub mod install;
 pub mod launch;
-pub mod log;
-pub mod rpc;
-pub mod sandbox;
+
 pub mod supervisor;
 
 #[cfg(all(test, unix))]
@@ -33,7 +31,7 @@ pub use config::{Deadlines, EngineConfig, heap_mb};
 pub use engine::GhidraEngine;
 pub use error::GhidraError;
 pub use install::{GhidraInstall, InstallConfig, TESTED_GHIDRA_VERSIONS};
+pub use kraken_sidecar::{ConfinementOptions, ConfinementReport};
+pub use kraken_sidecar::{LogSink, log, rpc, sandbox};
 pub use launch::{GhidraLauncher, LaunchPlan, Launcher};
-pub use log::LogSink;
-pub use sandbox::{ConfinementOptions, ConfinementReport};
 pub use supervisor::{Diagnostics, SidecarEvent};

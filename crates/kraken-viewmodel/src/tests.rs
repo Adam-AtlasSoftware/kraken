@@ -1689,3 +1689,6 @@ mod inprocess {
         assert!(callee >= 4, "main calls several known functions");
     }
 }
+
+#[cfg(test)]
+mod dotnet;

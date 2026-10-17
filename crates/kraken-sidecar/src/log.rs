@@ -16,7 +16,7 @@ struct Ring {
 }
 
 /// A shared, bounded ring of the sidecar's output lines. Every line is also emitted as a
-/// `tracing` event (target `engine_ghidra::sidecar`, DEBUG).
+/// `tracing` event (target `kraken_sidecar::sidecar`, DEBUG).
 #[derive(Debug, Clone)]
 pub struct LogSink {
     ring: Arc<Mutex<Ring>>,
@@ -50,7 +50,7 @@ impl LogSink {
             line.truncate(cut);
             line.push_str(" [truncated]");
         }
-        tracing::debug!(target: "engine_ghidra::sidecar", "{line}");
+        tracing::debug!(target: "kraken_sidecar::sidecar", "{line}");
         let mut ring = self.ring.lock().unwrap_or_else(PoisonError::into_inner);
         if ring.lines.len() >= self.capacity {
             ring.lines.pop_front();

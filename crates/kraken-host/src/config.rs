@@ -105,6 +105,11 @@ pub struct KrakenConfig {
     pub java_home: Option<PathBuf>,
     /// `kraken-ghidra.jar` (default: the `cargo xtask ghidra-ext` output).
     pub ext_jar: Option<PathBuf>,
+    /// Directory holding the `dotnet` host of the .NET engine (default: the copy
+    /// `kraken setup --dotnet` provisioned).
+    pub dotnet_root: Option<PathBuf>,
+    /// `kraken-dotnet.dll`, the .NET engine's sidecar (default: the provisioned copy).
+    pub dotnet_ext: Option<PathBuf>,
     /// Upper bound of the sidecar JVM heap in MiB.
     pub max_heap_mb: Option<u64>,
     /// Run the sidecar without Landlock confinement when the host lacks it (default false).
@@ -177,7 +182,7 @@ impl KrakenConfig {
     }
 
     /// Applies environment overrides: `KRAKEN_GHIDRA_HOME`, `KRAKEN_JAVA_HOME`,
-    /// `KRAKEN_GHIDRA_EXT_JAR`, `KRAKEN_MAX_HEAP_MB`, `KRAKEN_ALLOW_UNCONFINED`,
+    /// `KRAKEN_GHIDRA_EXT_JAR`, `KRAKEN_DOTNET_ROOT`, `KRAKEN_DOTNET_EXT_DLL`, `KRAKEN_MAX_HEAP_MB`, `KRAKEN_ALLOW_UNCONFINED`,
     /// `KRAKEN_PER_RUN_CAP` and `KRAKEN_PROJECTS_ROOT`. An environment value wins over the file;
     /// where neither names the JDK, `engine-ghidra` falls back to `JAVA_HOME` itself.
     pub fn apply_env(&mut self, env: &dyn Fn(&str) -> Option<OsString>) -> Result<(), ConfigError> {
@@ -190,6 +195,12 @@ impl KrakenConfig {
         }
         if let Some(v) = get("KRAKEN_GHIDRA_EXT_JAR") {
             self.ext_jar = Some(v.into());
+        }
+        if let Some(v) = get("KRAKEN_DOTNET_ROOT") {
+            self.dotnet_root = Some(v.into());
+        }
+        if let Some(v) = get("KRAKEN_DOTNET_EXT_DLL") {
+            self.dotnet_ext = Some(v.into());
         }
         if let Some(v) = get(ENV_PROJECTS_ROOT) {
             self.projects_root = Some(v.into());

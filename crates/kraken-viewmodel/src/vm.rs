@@ -9,9 +9,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use kraken_proto::{
-    CommentKind, Completeness, DecompileResult, ErrorCode, Locator, ProtoError, Untrusted,
-};
+use kraken_proto::{CommentKind, Completeness, DecompileResult, ErrorCode, ProtoError, Untrusted};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::runtime::Handle;
@@ -93,6 +91,10 @@ pub struct ViewModel {
     pub functions: FunctionList,
     /// Address highlighted in the function list.
     pub selected: Option<u64>,
+    /// The module id (MVID) of a .NET project, learned from its function list. A managed
+    /// function's "address" is its metadata token; this names the module the token is in, and is
+    /// sent with every request that names a function.
+    pub module: Option<String>,
     /// The function in the Decompiler panel.
     pub current: Option<CurrentFunction>,
     /// Back/forward history.
@@ -274,6 +276,7 @@ impl ViewModel {
             project: None,
             functions: FunctionList::default(),
             selected: None,
+            module: None,
             current: None,
             nav: NavHistory::new(),
             rename: None,
@@ -528,6 +531,7 @@ impl ViewModel {
         self.project = None;
         self.functions = FunctionList::default();
         self.selected = None;
+        self.module = None;
         self.current = None;
         self.nav.clear();
         self.rename = None;
@@ -950,6 +954,9 @@ impl ViewModel {
             vm.functions.loading = false;
             match res.and_then(parse::<FunctionPage>) {
                 Ok(page) => {
+                    if let Some(m) = page.items.iter().find_map(|f| f.module.clone()) {
+                        vm.module = Some(m);
+                    }
                     let rows: Vec<FunctionItem> = page.items.iter().map(function_item).collect();
                     let empty = rows.is_empty();
                     if reset {
@@ -1032,43 +1039,48 @@ impl ViewModel {
         self.decompile_seq += 1;
         let (dseq, cseq) = (self.detail_seq, self.decompile_seq);
         self.views_on_request(addr);
-        self.call(
-            "get_function",
-            json!({ "address": hex(addr) }),
-            move |vm, res| {
-                if vm.detail_seq != dseq {
-                    return;
-                }
-                match res.and_then(parse::<DetailWire>) {
-                    Ok(d) => vm.apply_detail(addr, d),
-                    Err(e) => vm.toast_error(&e),
-                }
-            },
-        );
-        self.call(
-            "decompile",
-            json!({ "address": hex(addr) }),
-            move |vm, res| {
-                if vm.decompile_seq != cseq {
-                    return;
-                }
-                let Some(cur) = vm.current.as_mut().filter(|c| c.address == addr) else {
-                    return;
-                };
-                cur.refreshing = false;
-                match res.and_then(parse::<DecompileWire>) {
-                    Ok(w) => {
-                        let name = cur.name.clone();
-                        let d = vm.build_decompiled(addr, &name, w);
-                        vm.note_decompiled(addr);
-                        if let Some(cur) = vm.current.as_mut() {
-                            cur.decompiled = Load::Ready(d);
-                        }
+        let args = self.function_args(addr);
+        self.call("get_function", args.clone(), move |vm, res| {
+            if vm.detail_seq != dseq {
+                return;
+            }
+            match res.and_then(parse::<DetailWire>) {
+                Ok(d) => vm.apply_detail(addr, d),
+                Err(e) => vm.toast_error(&e),
+            }
+        });
+        self.call("decompile", args, move |vm, res| {
+            if vm.decompile_seq != cseq {
+                return;
+            }
+            let Some(cur) = vm.current.as_mut().filter(|c| c.address == addr) else {
+                return;
+            };
+            cur.refreshing = false;
+            match res.and_then(parse::<DecompileWire>) {
+                Ok(w) => {
+                    let name = cur.name.clone();
+                    if let Some(m) = w.module.clone() {
+                        vm.module = Some(m);
                     }
-                    Err(e) => cur.decompiled = Load::Failed(plain_error(&e)),
+                    let d = vm.build_decompiled(addr, &name, w);
+                    vm.note_decompiled(addr);
+                    if let Some(cur) = vm.current.as_mut() {
+                        cur.decompiled = Load::Ready(d);
+                    }
                 }
-            },
-        );
+                Err(e) => cur.decompiled = Load::Failed(plain_error(&e)),
+            }
+        });
+    }
+
+    /// The arguments naming the function at `addr`: its address, plus the module for a .NET one.
+    fn function_args(&self, addr: u64) -> Value {
+        let mut args = json!({ "address": hex(addr) });
+        if let Some(m) = &self.module {
+            args["module"] = json!(m);
+        }
+        args
     }
 
     fn apply_detail(&mut self, addr: u64, d: DetailWire) {
@@ -1113,7 +1125,7 @@ impl ViewModel {
         targets.entry(name.to_string()).or_insert(addr);
         let text = w.text.0;
         let mut result = DecompileResult {
-            function: Locator::ram(addr),
+            function: crate::views::target_locator(addr, self.module.as_deref()),
             language: if w.language.is_empty() {
                 "c".into()
             } else {
@@ -1180,15 +1192,12 @@ impl ViewModel {
             versions,
         });
         if need_versions {
-            self.call(
-                "get_function",
-                json!({ "address": hex(address) }),
-                move |vm, res| {
-                    if let Ok(d) = res.and_then(parse::<DetailWire>) {
-                        vm.apply_rename_versions(address, d);
-                    }
-                },
-            );
+            let args = self.function_args(address);
+            self.call("get_function", args, move |vm, res| {
+                if let Ok(d) = res.and_then(parse::<DetailWire>) {
+                    vm.apply_rename_versions(address, d);
+                }
+            });
         }
     }
 
@@ -1272,15 +1281,12 @@ impl ViewModel {
                     }
                 }
                 if conflict {
-                    self.call(
-                        "get_function",
-                        json!({ "address": hex(address) }),
-                        move |vm, res| {
-                            if let Ok(d) = res.and_then(parse::<DetailWire>) {
-                                vm.apply_rename_versions(address, d);
-                            }
-                        },
-                    );
+                    let args = self.function_args(address);
+                    self.call("get_function", args, move |vm, res| {
+                        if let Ok(d) = res.and_then(parse::<DetailWire>) {
+                            vm.apply_rename_versions(address, d);
+                        }
+                    });
                     self.refresh_functions();
                     self.refresh_current();
                     self.refresh_history();

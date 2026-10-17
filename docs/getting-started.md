@@ -54,6 +54,8 @@ All keys are optional, and unknown keys are an error (so typos do not go unnotic
 | `ghidra_home` | `KRAKEN_GHIDRA_HOME` | Ghidra install directory |
 | `java_home` | `KRAKEN_JAVA_HOME` | JDK 21 home (`JAVA_HOME` is used as a fallback) |
 | `ext_jar` | `KRAKEN_GHIDRA_EXT_JAR` | Path of `kraken-ghidra.jar`; default is the `cargo xtask ghidra-ext` output |
+| `dotnet_root` | `KRAKEN_DOTNET_ROOT` | Directory with the `dotnet` host for [.NET assemblies](dotnet.md); default is the copy `kraken setup --dotnet` installed |
+| `dotnet_ext` | `KRAKEN_DOTNET_EXT_DLL` | Path of `kraken-dotnet.dll`; default is the installed copy |
 | `max_heap_mb` | `KRAKEN_MAX_HEAP_MB` | Upper bound for Ghidra's memory, in MiB |
 | `allow_unconfined` | `KRAKEN_ALLOW_UNCONFINED` | Run Ghidra without Landlock when the kernel lacks it. Default `false`. Leave it off unless you understand the risk |
 | `per_run_cap` | `KRAKEN_PER_RUN_CAP` | How many edits an AI agent may apply on its own per run before the rest become proposals (default 200) |

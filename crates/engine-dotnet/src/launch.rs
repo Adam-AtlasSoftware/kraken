@@ -1,13 +1,12 @@
-//! Starting the confined sidecar. Reuses `engine-ghidra`'s sandbox (Landlock, netns, parent-death
+//! Starting the confined sidecar. Reuses `kraken-sidecar`'s sandbox (Landlock, netns, parent-death
 //! handling, job objects) and its log sink; only the command line and the path sets differ.
-//! A shared sandbox crate would remove this dependency later (see spikes/dotnet-engine/NOTES.md).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use engine_ghidra::LogSink;
-use engine_ghidra::sandbox::{ConfinementOptions, ConfinementReport, ExitInfo, SpawnSpec};
 use kraken_proto::{ErrorCode, ProtoError};
+use kraken_sidecar::LogSink;
+use kraken_sidecar::sandbox::{ConfinementOptions, ConfinementReport, ExitInfo, SpawnSpec};
 use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::watch;
@@ -16,9 +15,9 @@ use crate::error::DotnetError;
 use crate::install::DotnetInstall;
 
 #[cfg(unix)]
-use engine_ghidra::sandbox::Sandbox;
+use kraken_sidecar::sandbox::Sandbox;
 #[cfg(windows)]
-use engine_ghidra::sandbox::WinSandbox as Sandbox;
+use kraken_sidecar::sandbox::WinSandbox as Sandbox;
 
 /// A started sidecar.
 pub(crate) struct Launched {

@@ -48,3 +48,15 @@ impl From<GhidraError> for ProtoError {
         ProtoError::new(code, e.to_string())
     }
 }
+
+impl From<kraken_sidecar::SidecarError> for GhidraError {
+    fn from(e: kraken_sidecar::SidecarError) -> Self {
+        use kraken_sidecar::SidecarError as S;
+        match e {
+            S::Confinement(m) => GhidraError::Confinement(m),
+            S::Spawn(m) => GhidraError::Spawn(m),
+            S::Protocol(m) => GhidraError::Protocol(m),
+            S::Io { context, source } => GhidraError::Io { context, source },
+        }
+    }
+}

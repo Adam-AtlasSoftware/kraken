@@ -17,11 +17,11 @@ use crate::session::Session;
 use crate::validate::{MAX_DECOMPILE_BYTES, MAX_NAME_LEN, untrusted};
 use crate::views::{
     CommentView, DecompileView, FunctionDetail, FunctionView, ReferenceView, adjust_completeness,
-    locator_parts,
+    locator_module, locator_parts,
 };
 use crate::views_data::clean_decompile_text;
 
-use super::{locator, page_request};
+use super::{locator_in, page_request};
 
 const MAX_REFERENCES: usize = 100;
 
@@ -129,8 +129,11 @@ impl Command for ListFunctions {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetFunctionArgs {
-    /// Address inside the function, as `0x...`.
+    /// Address inside the function, as `0x...`. For a .NET method, its metadata token.
     pub address: Hex64,
+    /// Module id (MVID) of a .NET method, as listed in `list_functions`; leave out for native code.
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 /// Shows one function.
@@ -168,25 +171,31 @@ impl Command for GetFunction {
             .function_lister()
             .ok_or_else(|| unsupported("function_lister"))?;
         let summary = lister
-            .get_function(&locator(args.address), &ctx.cancel)
+            .get_function(
+                &locator_in(args.address, args.module.as_deref())?,
+                &ctx.cancel,
+            )
             .await?;
-        let prefix = format!("native:ram:{:#x}:", args.address.0);
+        let prefix = match args.module.as_deref() {
+            Some(m) => format!("managed:{m}:{:#x}:", args.address.0),
+            None => format!("native:ram:{:#x}:", args.address.0),
+        };
+        let store_prefix = prefix.clone();
         let (versions, state) = project
             .with_store(move |st| {
                 let versions = st
                     .entity_versions()?
                     .into_iter()
-                    .filter(|(k, _)| k.starts_with(&prefix))
+                    .filter(|(k, _)| k.starts_with(&store_prefix))
                     .collect::<std::collections::BTreeMap<_, _>>();
                 let state = st
                     .current_state()?
                     .into_iter()
-                    .filter(|(k, _)| k.starts_with(&prefix))
+                    .filter(|(k, _)| k.starts_with(&store_prefix))
                     .collect::<Vec<_>>();
                 Ok((versions, state))
             })
             .await?;
-        let prefix = format!("native:ram:{:#x}:", args.address.0);
         let mut comments = Vec::new();
         let mut calling_convention = None;
         for (key, value) in state {
@@ -233,8 +242,11 @@ fn comment_kind(s: &str) -> Option<CommentKind> {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecompileArgs {
-    /// Address inside the function, as `0x...`.
+    /// Address inside the function, as `0x...`. For a .NET method, its metadata token.
     pub address: Hex64,
+    /// Module id (MVID) of a .NET method, as listed in `list_functions`; leave out for native code.
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 /// Decompiles a function.
@@ -274,7 +286,10 @@ impl Command for Decompile {
             .decompiler()
             .ok_or_else(|| unsupported("decompiler"))?;
         let r = decompiler
-            .decompile(&locator(args.address), &ctx.cancel)
+            .decompile(
+                &locator_in(args.address, args.module.as_deref())?,
+                &ctx.cancel,
+            )
             .await?;
         let (_, entry) = locator_parts(&r.function);
         let clean = clean_decompile_text(&r, MAX_DECOMPILE_BYTES);
@@ -283,17 +298,22 @@ impl Command for Decompile {
         for t in &r.tokens {
             if let Some(target) = &t.target {
                 let (_, address) = locator_parts(target);
+                let module = locator_module(target);
                 let name = sanitize(t.symbol.as_deref().unwrap_or(""));
-                if references.len() < MAX_REFERENCES && seen.insert((address.0, name.clone())) {
+                if references.len() < MAX_REFERENCES
+                    && seen.insert((address.0, module.clone(), name.clone()))
+                {
                     references.push(ReferenceView {
                         name: untrusted(&name),
                         address,
+                        module,
                     });
                 }
             }
         }
         Ok(DecompileView {
             address: entry,
+            module: locator_module(&r.function),
             language: sanitize(&r.language),
             text: Untrusted(clean.text),
             truncated: clean.truncated,
