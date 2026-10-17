@@ -21,4 +21,4 @@ tokio-util = { version = "0.7.16", default-features = false }
 toml = "0.8"
 
 [dev-dependencies]
-tokio = { version = "1.47", features = ["rt", "sync", "time", "macros"] }
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "net", "io-util"] }

@@ -73,6 +73,7 @@ pub struct RunningBackend {
     backend_id: String,
     model: Option<String>,
     process: ManagedProcess,
+    api_key: Option<String>,
 }
 
 impl RunningBackend {
@@ -85,7 +86,20 @@ impl RunningBackend {
             backend_id: backend_id.into(),
             model,
             process,
+            api_key: None,
         }
+    }
+
+    /// Records the per-run API key the engine was started with.
+    pub fn with_api_key(mut self, key: String) -> Self {
+        self.api_key = Some(key);
+        self
+    }
+
+    /// The bearer token clients must send (`Authorization: Bearer ...`), when the engine
+    /// requires one.
+    pub fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
     }
 
     pub fn backend_id(&self) -> &str {

@@ -24,7 +24,7 @@ fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL -o "$tmp/sdk.tar.gz" "$url"
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o "$tmp/sdk.tar.gz" "$url"
 echo "$sha512  $tmp/sdk.tar.gz" | sha512sum -c -
 mkdir -p "$dest"
 tar -xzf "$tmp/sdk.tar.gz" -C "$dest"
