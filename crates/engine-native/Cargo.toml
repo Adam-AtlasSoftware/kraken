@@ -1,0 +1,24 @@
+[package]
+name = "engine-native"
+description = "KRAKEN native (JVM-free) engine: ELF loading, Sleigh disassembly and the Ghidra C++ decompiler in-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1.89"
+engine-native-sys = { path = "../engine-native-sys", version = "0.0.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+kraken-proto.workspace = true
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "std"] }
+sha2 = "0.10"
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync"] }
+tokio-util = { version = "0.7.16", default-features = false }
+
+[dev-dependencies]
+kraken-engine = { path = "../kraken-engine", version = "0.0.0", features = ["testing"] }
+serde_json.workspace = true
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }

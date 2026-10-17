@@ -1,4 +1,5 @@
 mod docs;
+mod native_src;
 mod notices;
 mod samples;
 
@@ -19,6 +20,9 @@ Commands:
                isolated SDK in ~/.cache/kraken-dev/dotnet (refuses if it is missing; see
                dotnet/install-sdk.sh). NuGet packages go to ~/.cache/kraken-dev/nuget; the first
                build restores ICSharpCode.Decompiler from nuget.org.
+  native-src   Download the pinned Ghidra source archive (Ghidra_12.1.4_build, SHA-256 checked),
+               and extract the decompiler C++ sources into
+               ~/.cache/kraken-dev/ghidra-src/Ghidra_12.1.4_build for engine-native-sys.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
   docs         Write docs/reference/commands.md from the command registry.
@@ -36,6 +40,7 @@ fn main() -> ExitCode {
         Some("ghidra-ext") => ghidra_ext(),
         Some("ghidra-ext-test") => ghidra_ext_test(args.get(1).map(PathBuf::from)),
         Some("dotnet-ext") => dotnet_ext(),
+        Some("native-src") => native_src::native_src(),
         Some("schema") => schema(),
         Some("samples") => write_samples(),
         Some("docs") => docs::write_docs(),
