@@ -127,9 +127,10 @@ fn kraken_bin() -> PathBuf {
 }
 
 fn corpus(rel: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus")
-        .join(rel)
+        .join(rel);
+    std::fs::canonicalize(&p).unwrap_or(p)
 }
 
 /// One MCP session against `kraken mcp [--project dir]`.
@@ -273,13 +274,9 @@ async fn agent_edits_undo_and_rebuild_match_the_log() {
     assert!(binary.is_file(), "missing {}", binary.display());
 
     // ---- Session 1: the agent loads, analyses, renames, retypes and proposes structure edits.
-    let s = Session::start(&bin, &env, None).await;
-    let created = s
-        .call(
-            "project_create",
-            json!({"binary": binary, "project_dir": project}),
-        )
-        .await;
+    // The user creates the project; the agent then works inside it (kraken mcp --project).
+    let created = cli_create(&bin, &env, &binary, &project);
+    let s = Session::start(&bin, &env, Some(&project)).await;
     let base = hex(created["program"]["base"].as_str().expect("image base"));
     let analysed = s.job("analyze").await;
     assert!(
@@ -505,4 +502,26 @@ async fn agent_edits_undo_and_rebuild_match_the_log() {
         assert_eq!(fresh.get(addr), Some(name), "{addr:#x} after rebuild");
     }
     s.close().await;
+}
+
+/// The user creates the project through the CLI: agents may not pick arbitrary files to load.
+fn cli_create(bin: &Path, env: &KrakenEnv, binary: &Path, project: &Path) -> Value {
+    let mut cmd = Command::new(bin);
+    env.apply(&mut cmd);
+    let out = cmd
+        .arg("--json")
+        .arg("project-create")
+        .arg("--binary")
+        .arg(binary)
+        .arg("--project-dir")
+        .arg(project)
+        .output()
+        .expect("run kraken project-create");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "project-create failed\nstdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|e| panic!("project-create: {e}: {stdout}"))
 }

@@ -120,9 +120,10 @@ fn kraken_bin() -> PathBuf {
 }
 
 fn corpus(rel: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus")
-        .join(rel)
+        .join(rel);
+    std::fs::canonicalize(&p).unwrap_or(p)
 }
 
 /// One MCP session against `kraken mcp [--project dir]`.
@@ -270,12 +271,9 @@ async fn undoing_a_type_with_cascade_leaves_the_engine_matching_the_log() {
     assert!(binary.is_file(), "missing {}", binary.display());
 
     // ---- The agent loads and analyses.
-    let s = Session::start(&bin, &env, None).await;
-    s.call(
-        "project_create",
-        json!({"binary": binary, "project_dir": project}),
-    )
-    .await;
+    // The user creates the project; the agent then works inside it (kraken mcp --project).
+    let _created = cli_create(&bin, &env, &binary, &project);
+    let s = Session::start(&bin, &env, Some(&project)).await;
     let analysed = s.job("analyze").await;
     assert!(
         analysed["result"]["function_count"].as_u64().unwrap_or(0) > 8,
@@ -423,4 +421,26 @@ async fn undoing_a_type_with_cascade_leaves_the_engine_matching_the_log() {
     assert_eq!(signature(&s, &a.0).await, sig_after);
     assert_eq!(name(&s, &b.0).await, b.1);
     s.close().await;
+}
+
+/// The user creates the project through the CLI: agents may not pick arbitrary files to load.
+fn cli_create(bin: &Path, env: &KrakenEnv, binary: &Path, project: &Path) -> Value {
+    let mut cmd = Command::new(bin);
+    env.apply(&mut cmd);
+    let out = cmd
+        .arg("--json")
+        .arg("project-create")
+        .arg("--binary")
+        .arg(binary)
+        .arg("--project-dir")
+        .arg(project)
+        .output()
+        .expect("run kraken project-create");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "project-create failed\nstdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|e| panic!("project-create: {e}: {stdout}"))
 }
