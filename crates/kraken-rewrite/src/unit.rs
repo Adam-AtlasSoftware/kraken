@@ -45,6 +45,34 @@ pub struct CalleeRef {
     pub address: String,
     /// SHA-256 of its decompile text.
     pub decompile_hash: String,
+    /// Set when the callee was not translated again but called as the Rust of an accepted unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reused: Option<ReusedUnit>,
+}
+
+/// The accepted unit a callee was called as.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReusedUnit {
+    /// Id of the accepted version.
+    pub unit: String,
+    /// Its version number.
+    pub version: u32,
+    /// The Rust function it defines.
+    pub symbol: String,
+}
+
+/// Where a version stands in a repair run: the first attempt has `attempt` 1 and no
+/// `repair_of`; each later attempt answers the failure of the one before.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairLink {
+    /// Attempt number within the run, from 1.
+    pub attempt: u32,
+    /// Version number of the failed attempt this one answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<u32>,
+    /// What was fed back: `compile`, `rejected`, `counterexample` or `reply`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<String>,
 }
 
 /// Where the Rust code came from.
@@ -137,6 +165,9 @@ pub struct RewriteUnit {
     pub counterexamples: Vec<Counterexample>,
     /// The verdict.
     pub verdict: Verdict,
+    /// Repair-run bookkeeping; `None` for a version made outside a run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<RepairLink>,
 }
 
 fn default_status() -> UnitStatus {
@@ -227,6 +258,7 @@ impl RewriteUnit {
             summary,
             counterexamples: report.counterexamples,
             verdict: report.verdict,
+            repair: None,
         }
     }
 }

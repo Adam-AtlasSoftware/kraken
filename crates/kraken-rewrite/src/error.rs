@@ -34,6 +34,9 @@ pub enum RewriteError {
     /// The model output did not have the expected shape.
     #[error("model output: {0}")]
     Output(String),
+    /// The job was cancelled.
+    #[error("cancelled")]
+    Cancelled,
     /// A registry command failed.
     #[error("{}", .0.message)]
     Command(ProtoError),

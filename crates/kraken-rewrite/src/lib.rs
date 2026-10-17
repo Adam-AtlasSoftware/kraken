@@ -24,6 +24,8 @@ pub mod native;
 pub mod oracle;
 pub mod pipeline;
 pub mod plan;
+pub mod repair;
+pub mod reuse;
 pub mod sandbox;
 pub mod service;
 pub mod store;

@@ -13,6 +13,7 @@ use crate::difftest::{DiffOptions, InputSpec, run_differential};
 use crate::error::RewriteError;
 use crate::fetch::{FunctionContext, fetch_function};
 use crate::oracle::FunctionOracle;
+use crate::reuse::ReusedCallee;
 use crate::store::RewriteStore;
 use crate::targets::Target;
 use crate::task::{Budget, RewriteTask};
@@ -45,6 +46,8 @@ impl RewriteJob {
             signature: self.signature.clone(),
             layout_notes: self.layout_notes.clone(),
             spec: None,
+            reused: Vec::new(),
+            repairs: Vec::new(),
             budget: Budget::default(),
         }
     }
@@ -92,6 +95,11 @@ pub struct VerifyPlan<'a> {
     pub mode: RewriteMode,
     /// The spec it was made from, for `spec` mode.
     pub spec_id: Option<u64>,
+    /// Accepted callees the code calls as Rust.
+    pub reused: &'a [ReusedCallee],
+    /// Source compiled in front of the code so those calls resolve ([`crate::reuse::prelude`]);
+    /// empty without reuse. It is part of the test, not of the stored code.
+    pub prelude: &'a str,
 }
 
 /// Differential-tests `rust_code` and returns the (unstored) record.
@@ -102,11 +110,18 @@ pub fn verify_with(
     oracle: &mut FunctionOracle,
     opts: &DiffOptions,
 ) -> Result<RewriteUnit, RewriteError> {
+    let composed;
+    let tested = if plan.prelude.is_empty() {
+        rust_code
+    } else {
+        composed = format!("{}\n{rust_code}", plan.prelude);
+        &composed
+    };
     let report = run_differential(
         oracle,
         plan.entry,
         plan.signature,
-        rust_code,
+        tested,
         plan.inputs,
         opts,
     )?;
@@ -117,7 +132,9 @@ pub fn verify_with(
             name: c.name.clone(),
             address: format!("{:#x}", c.address),
             decompile_hash: c.decompile_hash.clone(),
+            reused: None,
         })
+        .chain(plan.reused.iter().map(ReusedCallee::callee_ref))
         .collect();
     Ok(RewriteUnit::from_run(
         UnitSource {
@@ -159,6 +176,8 @@ pub fn verify(
             entry: job.function.elf_vaddr(),
             mode: RewriteMode::Incremental,
             spec_id: None,
+            reused: &[],
+            prelude: "",
         },
         rust_code,
         provenance,
