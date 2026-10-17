@@ -21,19 +21,23 @@ pub struct TokenView {
     pub end: u32,
     /// Syntactic category.
     pub kind: TokenKind,
-    /// Address the token refers to (`ram` only).
+    /// Address the token refers to (`ram` only), or the metadata token of a managed target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<Hex64>,
+    /// Module id (MVID) of a managed `target`. Absent for native code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_module: Option<String>,
     /// The symbol the token names, only when it differs from the token's text
     /// (binary-derived); otherwise read it from the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<Untrusted<String>>,
 }
 
-/// The ram offset of a locator, if it is one.
+/// The ram offset of a locator, or the metadata token of a managed one, if it has either.
 pub(crate) fn ram_offset(l: &Locator) -> Option<Hex64> {
     match l {
         Locator::Native { space, offset } if space == kraken_proto::DEFAULT_SPACE => Some(*offset),
+        Locator::Managed { token, .. } => Some(Hex64(u64::from(*token))),
         _ => None,
     }
 }
@@ -82,6 +86,7 @@ pub(crate) fn clean_decompile_text(r: &DecompileResult, max_bytes: usize) -> Cle
             end,
             kind: t.kind,
             target: t.target.as_ref().and_then(ram_offset),
+            target_module: t.target.as_ref().and_then(crate::views::locator_module),
             symbol: symbol.map(Untrusted),
         });
     }

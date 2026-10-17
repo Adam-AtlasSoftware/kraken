@@ -122,6 +122,19 @@ ever. If you want an agent to use an API key from your environment, say so expli
 claude = ["ANTHROPIC_API_KEY"]
 ```
 
+### Where the daemon's credentials are kept from the agent
+
+On Linux, KRAKEN starts the agent in a small sandbox (user, mount and PID namespaces, no root
+needed) that hides KRAKEN's runtime directory and the user token inside it. The agent's KRAKEN tool
+server still reaches the daemon, but only with the agent credential, which cannot approve anything.
+Everything else (your files, tools, network, sign-in) works as before. Two consequences: programs
+that need `sudo` or other setuid helpers do not work inside the agent, and if the daemon restarts
+the agent must be restarted too.
+
+If your system does not allow unprivileged user namespaces, the session shows a warning, the agent
+gets no daemon connection, and it is not protected from reading the user token. On macOS and
+Windows this protection does not exist yet. See [Security](security.md).
+
 ## Other ACP agents
 
 Any agent that speaks ACP over stdio can be added in `~/.config/kraken/agents.toml`:

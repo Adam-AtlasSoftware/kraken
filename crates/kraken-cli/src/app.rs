@@ -13,8 +13,7 @@ use kraken_engine::CancellationToken;
 use kraken_host::backend::{CommandBackend, DaemonBackend, LocalBackend};
 use kraken_host::daemon::{DaemonClient, StartOptions};
 use kraken_host::{
-    GhidraEngineFactory, KrakenConfig, ManagedFactory, default_project_dir, finalize_output,
-    user_id,
+    HostEngineFactory, KrakenConfig, ManagedFactory, default_project_dir, finalize_output, user_id,
 };
 use kraken_ipc::{ClientKind, RuntimeDir};
 use kraken_mcp::{KrakenMcp, McpOptions, serve_stdio};
@@ -147,7 +146,7 @@ impl CliEnv {
     pub fn standard(config: KrakenConfig) -> Self {
         CliEnv {
             registry: Arc::new(Registry::standard()),
-            factory: Arc::new(GhidraEngineFactory::new(config.clone())),
+            factory: Arc::new(HostEngineFactory::new(config.clone())),
             config,
             author: CliAuthor::User(user_id()),
             vars: Box::new(|k| std::env::var(k).ok()),
@@ -437,7 +436,15 @@ pub fn build_cli(registry: &Registry) -> Command {
                  ($XDG_DATA_HOME/kraken/runtime) and compiles the KRAKEN extension with the \
                  downloaded JDK. Interrupted downloads resume; a finished setup is left alone unless \
                  --force is given. KRAKEN_GHIDRA_HOME / KRAKEN_JAVA_HOME (or the config file) take \
-                 precedence over this copy.",
+                 precedence over this copy. With --dotnet it installs the .NET engine instead: a \
+                 pinned .NET runtime and the prebuilt kraken-dotnet sidecar shipped with the \
+                 release, which open .NET assemblies.",
+            )
+            .arg(
+                Arg::new("dotnet")
+                    .long("dotnet")
+                    .action(ArgAction::SetTrue)
+                    .help("Install the .NET runtime and sidecar (for .NET assemblies) instead of Ghidra"),
             )
             .arg(
                 Arg::new("force")

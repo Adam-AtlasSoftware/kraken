@@ -365,12 +365,13 @@ fn token_tooltip(ui: &mut Ui, t: &Token, theme: &KrakenTheme) {
             .small()
             .color(pal.text_dim),
     );
-    if let Some(Locator::Native { space, offset }) = &t.target {
-        ui.label(
-            egui::RichText::new(format!("{space}:{offset}"))
-                .monospace()
-                .color(pal.address),
-        );
+    let place = match &t.target {
+        Some(Locator::Native { space, offset }) => Some(format!("{space}:{offset}")),
+        Some(Locator::Managed { token, .. }) => Some(format!("token:{token:#010x}")),
+        _ => None,
+    };
+    if let Some(place) = place {
+        ui.label(egui::RichText::new(place).monospace().color(pal.address));
     }
     if let Some(vn) = &t.varnode {
         ui.label(egui::RichText::new(vn).monospace().color(pal.text_dim));

@@ -175,7 +175,7 @@ impl Connection {
         let config = KrakenConfig::load()
             .map_err(|e| ProtoError::new(ErrorCode::InvalidArgument, e.to_string()))?;
         let factory: Arc<dyn ManagedFactory> =
-            Arc::new(kraken_host::GhidraEngineFactory::new(config.clone()));
+            Arc::new(kraken_host::HostEngineFactory::new(config.clone()));
         Ok(Connection {
             registry,
             transport: Transport::Local {

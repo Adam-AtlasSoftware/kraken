@@ -201,7 +201,7 @@ async fn rebuild(
         })
         .await?;
     }
-    let engine = factory.create(&dir).await?;
+    let engine = factory.create_kind(meta.engine_kind, &dir).await?;
     let program = open_binary(&engine, Path::new(&meta.binary_path)).await?;
 
     let analyzer = engine.analyzer().ok_or_else(|| unsupported("analyzer"))?;

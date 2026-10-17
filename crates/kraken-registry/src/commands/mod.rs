@@ -1,6 +1,6 @@
 //! The 0.1a commands and the `rewrite_*` commands.
 
-use kraken_proto::{Hex64, Locator, PageRequest};
+use kraken_proto::{ErrorCode, Hex64, Locator, PageRequest, ProtoError};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -68,6 +68,32 @@ pub struct JobStarted {
 
 pub(crate) fn locator(address: Hex64) -> Locator {
     Locator::ram(address.0)
+}
+
+/// The locator named by `address` and, for managed code, the module it belongs to. A module is a
+/// lowercase hyphenated GUID and the address must be a 32-bit metadata token.
+pub(crate) fn locator_in(address: Hex64, module: Option<&str>) -> Result<Locator, ProtoError> {
+    let Some(module) = module else {
+        return Ok(locator(address));
+    };
+    let guid = module.len() == 36
+        && module.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        });
+    if !guid {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "module must be a lowercase hyphenated GUID (the `module` of a managed function)",
+        ));
+    }
+    let token = u32::try_from(address.0).map_err(|_| {
+        ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "a managed address is a 32-bit metadata token",
+        )
+    })?;
+    Ok(Locator::managed(module, token))
 }
 
 /// Builds an engine/model page request clamped to `cap`.

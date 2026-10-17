@@ -12,6 +12,7 @@
 - [The built-in assistant](assistant.md)
 - [Terminal agents (ACP)](agents.md)
 - [Running a model on this computer](local-models.md)
+- [.NET assemblies](dotnet.md)
 - [Scripting with the CLI](cli.md)
 - [Scripting with Python](python.md)
 - [Security](security.md)

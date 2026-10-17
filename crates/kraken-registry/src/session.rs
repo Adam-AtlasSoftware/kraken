@@ -35,6 +35,44 @@ pub trait EngineFactory: Send + Sync {
     /// Creates an engine whose private state lives in `engine_dir` (created beforehand). An
     /// existing directory holds a warm cache from an earlier session.
     async fn create(&self, engine_dir: &Path) -> Result<SharedEngine, ProtoError>;
+
+    /// Which engine kind should open `binary`. Factories with a single engine keep the default.
+    /// Reads the file's headers, so call it off the async threads.
+    fn detect_kind(&self, _binary: &Path) -> Result<EngineKind, ProtoError> {
+        Ok(EngineKind::Ghidra)
+    }
+
+    /// Like [`create`](Self::create) for an engine of `kind`. A factory that builds one kind only
+    /// ignores it.
+    async fn create_kind(
+        &self,
+        _kind: EngineKind,
+        engine_dir: &Path,
+    ) -> Result<SharedEngine, ProtoError> {
+        self.create(engine_dir).await
+    }
+}
+
+/// The engine behind a project, recorded in `meta.json` so a project reopens with the engine
+/// that created it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineKind {
+    /// The Ghidra sidecar: native code (PE, ELF, Mach-O and raw images).
+    #[default]
+    Ghidra,
+    /// The .NET sidecar (ILSpy): managed assemblies.
+    Dotnet,
+}
+
+impl EngineKind {
+    /// The name used in `meta.json` and messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EngineKind::Ghidra => "ghidra",
+            EngineKind::Dotnet => "dotnet",
+        }
+    }
 }
 
 /// Tunables of a session.
@@ -96,6 +134,9 @@ pub struct ProjectMeta {
     pub engine_dir: String,
     /// True once a full analysis finished on the current engine cache.
     pub analysis_complete: bool,
+    /// Engine that opened the binary; projects written before engines were selectable are Ghidra.
+    #[serde(default)]
+    pub engine_kind: EngineKind,
 }
 
 /// Where analysis stands.
@@ -600,7 +641,14 @@ impl Session {
             let p = binary_path.clone();
             blocking(move || hash_file(&p)).await?
         };
-        let engine = self.factory.create(&dir.join(ENGINE_DIR)).await?;
+        let kind = {
+            let (factory, p) = (self.factory.clone(), binary_path.clone());
+            blocking(move || factory.detect_kind(&p)).await?
+        };
+        let engine = self
+            .factory
+            .create_kind(kind, &dir.join(ENGINE_DIR))
+            .await?;
         let program = open_binary(&engine, &binary_path).await?;
         let db_path = dir.join(DB_FILE);
         let store = blocking(move || Store::open(db_path)).await?;
@@ -615,6 +663,7 @@ impl Session {
             },
             engine_dir: ENGINE_DIR.into(),
             analysis_complete: false,
+            engine_kind: kind,
         };
         {
             let (dir, meta) = (dir.clone(), meta.clone());
@@ -653,7 +702,10 @@ impl Session {
             })
             .await?;
         }
-        let engine = self.factory.create(&engine_dir).await?;
+        let engine = self
+            .factory
+            .create_kind(meta.engine_kind, &engine_dir)
+            .await?;
         let program = open_binary(&engine, &binary_path).await?;
         let db_path = dir.join(DB_FILE);
         let store = blocking(move || Store::open(db_path)).await?;

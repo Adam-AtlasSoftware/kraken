@@ -23,6 +23,8 @@ env:
   GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
   JDK_URL: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz
   JDK_SHA256: ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94
+  # The .NET SDK that builds the managed sidecar is pinned (with its sha512) in dotnet/install-sdk.sh.
+  DOTNET_SDK_VERSION: "10.0.402"
 
 permissions:
   contents: read
@@ -107,6 +109,22 @@ jobs:
           mkdir -p dist
           cp java/kraken-ghidra/build/libs/kraken-ghidra.jar dist/kraken-ghidra.jar
 
+      - name: Cache the .NET SDK
+        id: dotnetcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kraken-dev/dotnet
+          key: kraken-dev-dotnet-sdk-${{ env.DOTNET_SDK_VERSION }}-${{ hashFiles('dotnet/install-sdk.sh') }}
+
+      - name: Build the .NET sidecar
+        run: |
+          set -euo pipefail
+          dotnet/install-sdk.sh
+          cargo xtask dotnet-ext
+          test -f dotnet/kraken-dotnet/bin/kraken-dotnet.dll
+          mkdir -p dist
+          cp -R dotnet/kraken-dotnet/bin dist/kraken-dotnet
+
       - name: Check the notices are current
         run: |
           set -euo pipefail
@@ -163,6 +181,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           TARGET: ${{ matrix.target }}
           KRAKEN_GHIDRA_JAR: dist-assets/kraken-ghidra.jar
+          KRAKEN_DOTNET_DIR: dist-assets/kraken-dotnet
           KRAKEN_DOCS_DIR: dist-assets/docs
         run: scripts/package.sh "$TARGET" "$VERSION" out
 

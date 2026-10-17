@@ -6,6 +6,7 @@
 //!   the default root is the first candidate without one (see [`paths::projects_root`]).
 //! - [`factory`]: [`GhidraEngineFactory`], an `EngineFactory` over `engine-ghidra`, and the
 //!   [`ManagedFactory`] trait that adds a clean shutdown.
+//! - [`HostEngineFactory`]: picks the engine per binary (Ghidra, or .NET for managed assemblies).
 //! - [`author`]: user and agent identities and run ids.
 //! - [`convention`]: output conventions applied identically by every surface.
 
@@ -14,9 +15,11 @@ pub mod backend;
 pub mod config;
 pub mod convention;
 pub mod daemon;
+pub mod dotnet_setup;
 pub mod factory;
 pub mod infer;
 pub mod llama_setup;
+pub mod managed;
 pub mod paths;
 pub mod provision;
 
@@ -24,6 +27,7 @@ pub use author::{RunIdGen, agent_id_from_client, user_id};
 pub use config::{ConfigError, DaemonSettings, KrakenConfig};
 pub use convention::finalize_output;
 pub use factory::{
-    EngineDiagnostics, EngineEvent, FactoryEvent, GhidraEngineFactory, ManagedFactory,
+    DotnetEngineFactory, EngineDiagnostics, EngineEvent, FactoryEvent, GhidraEngineFactory,
+    HostEngineFactory, ManagedFactory,
 };
 pub use paths::{check_ghidra_safe, default_project_dir, projects_root};

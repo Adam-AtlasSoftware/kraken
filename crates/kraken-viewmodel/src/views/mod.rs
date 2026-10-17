@@ -145,5 +145,5 @@ impl crate::ViewModel {
         self.refresh_memory_map();
     }
 }
-pub(crate) use decomp::server_tokens;
+pub(crate) use decomp::{server_tokens, target_locator};
 pub(crate) use wire::TokenWire;

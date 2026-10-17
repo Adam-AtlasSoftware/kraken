@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
-engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
+kraken-sidecar = { path = "../kraken-sidecar", version = "0.0.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
 kraken-proto.workspace = true
 serde.workspace = true

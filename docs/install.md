@@ -58,6 +58,8 @@ kraken setup
 
 `kraken setup` downloads the pinned Ghidra and Temurin JDK 21 into your user data directory (`~/.local/share/kraken/runtime`), checks them against SHA-256 hashes compiled into the program, and installs the Ghidra extension: the bundled `kraken-ghidra.jar` from a release, or one compiled with the downloaded JDK otherwise. It needs network access once. Interrupted downloads resume, and running it again does nothing if everything is in place (`--force` redoes it). Nothing needs root.
 
+To open .NET assemblies as well, run `kraken setup --dotnet` once. It downloads a pinned .NET runtime the same way and installs the sidecar that ships with the release; see [.NET assemblies](dotnet.md).
+
 Then try it:
 
 ```sh

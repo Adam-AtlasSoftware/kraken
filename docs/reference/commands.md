@@ -737,7 +737,7 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
 Decompile a function to C-like source
 
 ```sh
-kraken decompile --address <address>
+kraken decompile --address <address> [options]
 ```
 
 - Kind: query
@@ -748,7 +748,8 @@ The text is derived from the binary and returned as untrusted data, cut at 64 Ki
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
-| `address` | `--address` | address | yes | Address inside the function, as `0x...`. |
+| `address` | `--address` | address | yes | Address inside the function, as `0x...`. For a .NET method, its metadata token. |
+| `module` | `--module` | string | no | Module id (MVID) of a .NET method, as listed in `list_functions`; leave out for native code. |
 
 <details>
 <summary>Output schema</summary>
@@ -815,7 +816,14 @@ The text is derived from the binary and returned as untrusted data, cut at 64 Ki
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "Target address."
+          "description": "Target address; for managed code, the metadata token."
+        },
+        "module": {
+          "description": "Module id (MVID) of a managed target. Absent for native code.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "$ref": "#/$defs/Untrusted_string",
@@ -917,7 +925,14 @@ The text is derived from the binary and returned as untrusted data, cut at 64 Ki
               "type": "null"
             }
           ],
-          "description": "Address the token refers to (`ram` only)."
+          "description": "Address the token refers to (`ram` only), or the metadata token of a managed target."
+        },
+        "target_module": {
+          "description": "Module id (MVID) of a managed `target`. Absent for native code.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -949,15 +964,22 @@ The text is derived from the binary and returned as untrusted data, cut at 64 Ki
   "properties": {
     "address": {
       "$ref": "#/$defs/Hex64",
-      "description": "Function entry."
+      "description": "Function entry; for a managed method, its metadata token."
     },
     "completeness": {
       "$ref": "#/$defs/Completeness",
       "description": "How much analysis backs this result."
     },
     "language": {
-      "description": "Language tag such as `c`.",
+      "description": "Language tag such as `c` (`csharp` for managed code).",
       "type": "string"
+    },
+    "module": {
+      "description": "Module id (MVID) of a managed method. Absent for native code.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "references": {
       "description": "Distinct call and data targets found in the output, capped.",
@@ -1511,7 +1533,7 @@ Every export has an `address`. Names come from the binary and are returned as un
 Show a function with its comments and entity versions
 
 ```sh
-kraken get-function --address <address>
+kraken get-function --address <address> [options]
 ```
 
 - Kind: query
@@ -1522,7 +1544,8 @@ kraken get-function --address <address>
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
-| `address` | `--address` | address | yes | Address inside the function, as `0x...`. |
+| `address` | `--address` | address | yes | Address inside the function, as `0x...`. For a .NET method, its metadata token. |
+| `module` | `--module` | string | no | Module id (MVID) of a .NET method, as listed in `list_functions`; leave out for native code. |
 
 <details>
 <summary>Output schema</summary>
@@ -1654,7 +1677,7 @@ kraken get-function --address <address>
   "properties": {
     "address": {
       "$ref": "#/$defs/Hex64",
-      "description": "Entry address."
+      "description": "Entry address; for a managed method, its metadata token."
     },
     "calling_convention": {
       "description": "Calling convention set through KRAKEN, if any.",
@@ -1673,6 +1696,13 @@ kraken get-function --address <address>
     "completeness": {
       "$ref": "#/$defs/Completeness",
       "description": "How much analysis backs this entry."
+    },
+    "module": {
+      "description": "Module id (MVID) of a managed method. Send it back as `module` with the token in\n`address`. Absent for native code.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "name": {
       "$ref": "#/$defs/Untrusted_string",
@@ -2901,11 +2931,18 @@ Function names and signatures come from the binary and are returned as untrusted
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "Entry address."
+          "description": "Entry address; for a managed method, its metadata token."
         },
         "completeness": {
           "$ref": "#/$defs/Completeness",
           "description": "How much analysis backs this entry."
+        },
+        "module": {
+          "description": "Module id (MVID) of a managed method. Send it back as `module` with the token in\n`address`. Absent for native code.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "$ref": "#/$defs/Untrusted_string",

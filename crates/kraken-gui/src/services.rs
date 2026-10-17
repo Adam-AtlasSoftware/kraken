@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kraken_host::daemon::StartOptions;
-use kraken_host::{GhidraEngineFactory, KrakenConfig};
+use kraken_host::{HostEngineFactory, KrakenConfig};
 use kraken_viewmodel::{Connector, default_connector};
 
 /// Where real projects run.
@@ -31,7 +31,7 @@ pub struct Services {
     /// How to reach the daemon (`None`: the per-user default, started on demand).
     pub connector: Option<Connector>,
     /// The in-process engine factory of `--no-daemon`.
-    pub ghidra: Option<Arc<GhidraEngineFactory>>,
+    pub ghidra: Option<Arc<HostEngineFactory>>,
     /// Where the Agents tab finds agents (`None`: the user's directories, on first use).
     pub agents: Option<kraken_viewmodel::agents::AgentsConfig>,
 }
@@ -43,7 +43,7 @@ impl Services {
             eprintln!("kraken-gui: {e}; using defaults");
             KrakenConfig::default()
         });
-        let ghidra = no_daemon.then(|| Arc::new(GhidraEngineFactory::new(cfg.clone())));
+        let ghidra = no_daemon.then(|| Arc::new(HostEngineFactory::new(cfg.clone())));
         Services {
             mode: if no_daemon {
                 Mode::NoDaemon

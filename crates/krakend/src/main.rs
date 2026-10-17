@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kraken_host::{GhidraEngineFactory, KrakenConfig, ManagedFactory};
+use kraken_host::{HostEngineFactory, KrakenConfig, ManagedFactory};
 use kraken_ipc::{RuntimeDir, SystemClock};
 use kraken_registry::Registry;
 use krakend::logfile::{DEFAULT_KEEP, DEFAULT_MAX_BYTES, RotatingLog};
@@ -148,7 +148,7 @@ fn main() -> ExitCode {
     };
     let factory: Arc<dyn ManagedFactory> = match fake_factory(&args) {
         Ok(Some(f)) => f,
-        Ok(None) => Arc::new(GhidraEngineFactory::new(config.clone())),
+        Ok(None) => Arc::new(HostEngineFactory::new(config.clone())),
         Err(e) => {
             tracing::error!("{e}");
             eprintln!("krakend: {e}");

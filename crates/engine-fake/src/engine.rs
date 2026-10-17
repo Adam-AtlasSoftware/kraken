@@ -69,7 +69,7 @@ fn not_found(what: impl std::fmt::Display) -> EngineRejected {
 
 fn fn_key(l: &Locator) -> EngineResult<FnKey> {
     match l {
-        Locator::Native { space, offset } => Ok((space.clone(), offset.0)),
+        Locator::Native { .. } | Locator::Managed { .. } => Ok(key_of(l)),
         _ => Err(ProtoError::new(
             ErrorCode::Unsupported,
             "unsupported locator kind",

@@ -1,0 +1,36 @@
+[package]
+name = "kraken-sidecar"
+description = "Generic plumbing for confined engine sidecars: RPC framing client, sandboxed spawner, log sink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+kraken-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "io-util", "net", "fs"] }
+tokio-util = { version = "0.7.16", default-features = false }
+tracing = "0.1"
+kraken-procguard = { path = "../kraken-procguard", version = "0.0.0" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "1.47", features = ["process"] }
+tokio-util = { version = "0.7.16", default-features = false, features = ["io-util"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "net"] }
+
+[features]
+# Exposes the in-process fake peer (`testutil`) to other crates' tests.
+testing = []

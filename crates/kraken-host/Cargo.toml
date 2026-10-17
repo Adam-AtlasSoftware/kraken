@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
+engine-dotnet = { path = "../engine-dotnet", version = "0.0.0" }
 engine-ghidra = { path = "../engine-ghidra", version = "0.0.0" }
 filetime = "0.2"
 flate2 = "1.1.10"
@@ -32,3 +33,7 @@ zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "macros"] }
+
+[features]
+# Compiles the tests that run the real .NET sidecar (kept out of the real-Ghidra CI job).
+real-dotnet = []

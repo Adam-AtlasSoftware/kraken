@@ -89,6 +89,7 @@ impl<'a> Lift<'a> {
                 self.ctx,
                 GetFunctionArgs {
                     address: Hex64(address),
+                    module: None,
                 },
             )
             .await
@@ -100,6 +101,7 @@ impl<'a> Lift<'a> {
                 self.ctx,
                 DecompileArgs {
                     address: Hex64(entry),
+                    module: None,
                 },
             )
             .await
@@ -125,6 +127,7 @@ impl<'a> Lift<'a> {
                 self.ctx,
                 GetFunctionArgs {
                     address: Hex64(address),
+                    module: None,
                 },
             )
             .await

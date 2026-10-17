@@ -490,6 +490,7 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
 fn target_of(t: &kraken_proto::Token) -> Option<u64> {
     match &t.target {
         Some(Locator::Native { offset, .. }) => Some(offset.0),
+        Some(Locator::Managed { token, .. }) => Some(u64::from(*token)),
         _ => None,
     }
 }
@@ -546,6 +547,7 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
     } else if let Some(c) = out.clicked
         && let Some(target) = c.target.as_ref().and_then(|l| match l {
             Locator::Native { offset, .. } => Some(offset.0),
+            Locator::Managed { token, .. } => Some(u64::from(*token)),
             _ => None,
         })
     {

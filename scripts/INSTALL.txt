@@ -6,6 +6,9 @@ Contents
   share/kraken/kraken-ghidra.jar
                              prebuilt Ghidra extension; `kraken setup` installs it, so you do
                              not need Gradle or a JDK to build it
+  share/kraken/kraken-dotnet/
+                             prebuilt .NET sidecar; `kraken setup --dotnet` installs it next to
+                             a pinned .NET runtime
   docs/                      the documentation (open docs/index.html)
   README.md, LICENSE, THIRD-PARTY-NOTICES.md
 
@@ -16,7 +19,10 @@ Install
      KRAKEN finds kraken-ghidra.jar next to the program or in ../share/kraken.
   2. Run `kraken setup`. It downloads the pinned Ghidra and Temurin JDK 21 (both checked against
      compiled-in SHA-256 hashes) into your user data directory. Nothing needs root.
-  3. Try it: `kraken --help`, or start `kraken-gui`.
+  3. Optional, for .NET assemblies (C# decompilation): `kraken setup --dotnet`. It downloads the
+     pinned .NET runtime (SHA-256 checked before it is unpacked) and installs the sidecar from
+     share/kraken. Without it, .NET files are refused with a message pointing here.
+  4. Try it: `kraken --help`, or start `kraken-gui`.
 
 Verify the download
   Compare the archive with SHA256SUMS from the release page:

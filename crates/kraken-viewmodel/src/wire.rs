@@ -38,6 +38,9 @@ fn opt_text_or_untrusted<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Strin
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct FunctionWire {
     pub address: Hex64,
+    /// Module id (MVID) when the function is a .NET method; `address` is then its token.
+    #[serde(default)]
+    pub module: Option<String>,
     pub name: Untrusted<String>,
     #[serde(default)]
     pub size: Option<u64>,
@@ -79,6 +82,8 @@ pub(crate) struct ReferenceWire {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct DecompileWire {
+    #[serde(default)]
+    pub module: Option<String>,
     #[serde(default)]
     pub language: String,
     pub text: Untrusted<String>,
