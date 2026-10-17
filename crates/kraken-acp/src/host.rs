@@ -683,6 +683,66 @@ fn stderr_suffix(tail: &StderrTail) -> String {
     }
 }
 
+/// Decides how the agent is confined (security finding H4) and what the MCP server may be told.
+///
+/// With a runtime directory present, the agent starts in the sandbox of [`crate::confine`] when
+/// the platform allows it. When it does not, the MCP server is not told where the daemon is
+/// (`KRAKEN_RUNTIME_DIR` is removed from its environment), a warning is logged and sent as an
+/// [`AcpEvent::Info`], and the agent runs unconfined.
+fn plan_confinement(
+    mut mcp: Option<McpServerConfig>,
+    parent: &[(OsString, OsString)],
+    events: &mpsc::UnboundedSender<AcpEvent>,
+) -> (Option<crate::confine::Confinement>, Option<McpServerConfig>) {
+    use crate::confine::{AGENT_VISIBLE, Confinement, HiddenDir, probe, runtime_dirs};
+    const RT: &str = "KRAKEN_RUNTIME_DIR";
+    let mcp_dir = mcp
+        .as_ref()
+        .and_then(|m| m.env.iter().find(|(k, _)| k == RT))
+        .map(|(_, v)| v.clone());
+    let dirs: Vec<PathBuf> = runtime_dirs(mcp_dir.as_deref(), parent)
+        .into_iter()
+        .filter(|d| d.is_dir())
+        .collect();
+    if dirs.is_empty() {
+        return (None, mcp);
+    }
+    match probe() {
+        Ok(()) => {
+            let hide = dirs
+                .into_iter()
+                .map(|dir| {
+                    let is_mcp = mcp_dir.as_deref().is_some_and(|m| Path::new(m) == dir);
+                    HiddenDir {
+                        dir,
+                        keep: if is_mcp {
+                            AGENT_VISIBLE.iter().map(OsString::from).collect()
+                        } else {
+                            vec![]
+                        },
+                    }
+                })
+                .collect();
+            (Some(Confinement { hide }), mcp)
+        }
+        Err(why) => {
+            if let Some(m) = mcp.as_mut() {
+                m.env.retain(|(k, _)| k != RT);
+            }
+            let msg = format!(
+                "this agent runs without confinement ({why}); it could read KRAKEN's user \
+                 credential. KRAKEN does not tell its tool server where the daemon is, so the \
+                 agent has no daemon access"
+            );
+            tracing::warn!("{msg}");
+            let _ = events.send(AcpEvent::Info {
+                kind: format!("warning: {msg}"),
+            });
+            (None, mcp)
+        }
+    }
+}
+
 impl AcpHost {
     /// Starts the agent, performs the ACP handshake and opens a session.
     ///
@@ -707,6 +767,7 @@ impl AcpHost {
             env.push((OsString::from("PATH"), path));
         }
         let (events_tx, events_rx) = mpsc::unbounded_channel::<AcpEvent>();
+        let (confinement, mcp) = plan_confinement(config.mcp.clone(), &parent, &events_tx);
         let (stderr_tx, mut stderr_rx) = mpsc::unbounded_channel::<String>();
         let spawned = spawn(
             SpawnSpec {
@@ -714,6 +775,7 @@ impl AcpHost {
                 args: config.launch.args.clone(),
                 env,
                 cwd: config.project_dir.clone(),
+                confine: confinement,
             },
             Some(stderr_tx),
         )
@@ -748,7 +810,7 @@ impl AcpHost {
             next_request,
             policy: config.permission.clone(),
             project_dir: config.project_dir.clone(),
-            mcp: config.mcp.clone(),
+            mcp,
             ready: ready_tx,
             shutdown: shutdown_rx,
             stderr: stderr.clone(),

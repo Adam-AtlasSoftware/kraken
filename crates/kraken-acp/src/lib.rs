@@ -15,6 +15,7 @@
 
 pub mod adapter;
 pub mod agents;
+pub mod confine;
 pub mod fake_agent;
 pub mod host;
 pub mod node;
