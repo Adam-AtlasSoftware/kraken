@@ -51,8 +51,9 @@ pub use rewrite::{
     UnitVersionView, is_inside,
 };
 pub use rewrite_program::{
-    DEFAULT_PROGRAM_DIR, MAX_GENERATED_CASES, MAX_USER_CASES, ProgramCaseResult, ProgramCaseSpec,
-    ProgramFunctionRow, ProgramRunSummary, ProgramRunView, ProgramVerdictView, RewriteProgram,
+    DEFAULT_PROGRAM_DIR, DEFAULT_REPAIR_ROUNDS, MAX_GENERATED_CASES, MAX_REPAIR_ROUNDS,
+    MAX_USER_CASES, ProgramCaseResult, ProgramCaseSpec, ProgramFunctionRow, ProgramRepairView,
+    ProgramRunSummary, ProgramRunView, ProgramVerdictView, RUN_ORIGINAL_SUMMARY, RewriteProgram,
     RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatus, RewriteProgramStatusArgs,
     RewriteProgramStatusOut,
 };

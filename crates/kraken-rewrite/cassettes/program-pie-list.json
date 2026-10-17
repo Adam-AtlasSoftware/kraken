@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "af247004b2a03202b9c77c4a211ea155fc0cdb8052e8d3dcad7a38c713008320",
+        "key": "dddd7eea69670dbeb3fd0cfd1c1c019cce38a1bff429370a3eb047926ea81993"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `node_new`: allocates a zeroed node and fills its record.\n// It returns a pointer, so the function-level test only compiles it.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n/// `calloc(1, sizeof *n)`, `exit(3)` when it fails, then the fields; the name is copied with\n/// `strncpy` into at most 15 bytes (the last byte of the field stays NUL from `calloc`).\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn node_new(\n    id: i32,\n    name: *const u8,\n    x: i32,\n    y: i32,\n    w: f64,\n) -> *const u8 {\n    unsafe {\n        let n = rt::calloc(1, std::mem::size_of::<Node>()) as *mut Node;\n        if n.is_null() {\n            rt::exit(3);\n        }\n        (*n).rec.id = id;\n        rt::strncpy((*n).rec.name.as_mut_ptr(), name, 15);\n        (*n).rec.pos.x = x;\n        (*n).rec.pos.y = y;\n        (*n).rec.weight = w;\n        n as *const u8\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "f0e3c0891ae65683fdefb7e8ae43ebba18f594f8d26d0d375e1ed1538b69cc05",
+        "key": "2d256cc398e5d90f3f548a5bba35fdedb80835b0356d9b8de26fb04ae3f66aa8"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_push`: puts a node at the head of the list.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\n/// `n->next = l->head; l->head = n; l->count++;`\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_push(l: *mut List, n: *mut Node) {\n    unsafe {\n        (*n).next = (*l).head;\n        (*l).head = n;\n        (*l).count = (*l).count.wrapping_add(1);\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "708348b02533af39b5be7517cbeff3a5ab7a4039d1f703cfdd59ae6a68756e1a",
+        "key": "9ebf2081cd7a7b4a3c00ea4e8400f23f8e86fe4d8d2c41833fda51b70efdf142"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id`: the difference of the ids (called through a\n// function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "adba844c82fb40c5f36a3f92743d426f90bdf31ff2858e0b73318f7a97f58703",
+        "key": "2b3dfdc9b16a9c86a8a86fc4d73736642245f158507a151c246a0b092088ae97"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_name`: `strcmp` of the names (called through a function\n// pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_name(a: *const Record, b: *const Record) -> i32 {\n    unsafe { rt::strcmp((*a).name.as_ptr(), (*b).name.as_ptr()) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "1f5e4ca6725263e80246c94f187bff6c8ce991ddfb4963c8dba5b480d1bc02f2",
+        "key": "d90064ac38bc3d9ef39f09cca0c463ddacbedcc82a95f907428d2604108c48d6"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_dist` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\nfn dist2(p: &Point) -> i32 {\n    p.x.wrapping_mul(p.x).wrapping_add(p.y.wrapping_mul(p.y))\n}\n\n/// Squared distance from the origin of each record's position; returns their difference.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_dist(a: *const Record, b: *const Record) -> i32 {\n    unsafe { dist2(&(*a).pos).wrapping_sub(dist2(&(*b).pos)) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "0e6c37ee91281216589a7d198681e60e0dbe1da763303b9a0ea7c956c7537c1e",
+        "key": "a2b5f610caf9f25608a516d6c4fad0d11579f2e9bc9e44600371f64330c994a4"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_sort`: bubble sort of the linked list by relinking\n// nodes, with a comparison callback that receives the two records.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\npub type CmpFn = unsafe extern \"C\" fn(*const Record, *const Record) -> i32;\n\n/// Passes over the list until nothing is swapped; two neighbours swap when `cmp(a, b) > 0`.\n/// `pp` points at the link that points at `a`, which is how the swap relinks without a\n/// previous-node pointer.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_sort(l: *mut List, cmp: Option<CmpFn>) {\n    unsafe {\n        loop {\n            let mut swapped = false;\n            let mut pp: *mut *mut Node = &mut (*l).head;\n            while !(*pp).is_null() && !(**pp).next.is_null() {\n                let a = *pp;\n                let b = (*a).next;\n                if cmp.expect(\"comparison callback\")(&(*a).rec, &(*b).rec) > 0 {\n                    (*a).next = (*b).next;\n                    (*b).next = a;\n                    *pp = b;\n                    swapped = true;\n                }\n                pp = &mut (**pp).next;\n            }\n            if !swapped {\n                break;\n            }\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "7e358a2eaf52bb89c2fa59e4f0844b84b1d022edbecbddf8b16ed95a6658fd0b",
+        "key": "a3cad48411e6e253f4deca6aa2036052d6afada6902c32dba501867ffd54817e"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_each`: calls a visitor on each record, head first.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\npub type VisitFn = unsafe extern \"C\" fn(*const Record, *mut u8);\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_each(l: *const List, f: Option<VisitFn>, ctx: *mut u8) {\n    unsafe {\n        let mut n = (*l).head;\n        while !n.is_null() {\n            f.expect(\"visit callback\")(&(*n).rec, ctx);\n            n = (*n).next;\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "166b76bc099d7b6621bd6334c0c2a5a42b11dccf08c2dfe6d356f6316b9fc998",
+        "key": "3555b00831f70bceae83579ff4934ea1af83ca649ba54182a1e447d94a996bd2"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `print_rec`: one line per record (called through a function\n// pointer only). The decompile lists the arguments of the variadic call in register order; the C\n// source passes id, name, x, y and weight.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn print_rec(r: *const Record, _ctx: *mut u8) {\n    unsafe {\n        rt::printf(\n            b\"  #%d %-6s (%d,%d) %.1f\\n\\0\".as_ptr(),\n            &[\n                rt::Arg::Int(i64::from((*r).id)),\n                rt::Arg::Ptr((*r).name.as_ptr()),\n                rt::Arg::Int(i64::from((*r).pos.x)),\n                rt::Arg::Int(i64::from((*r).pos.y)),\n                rt::Arg::Double((*r).weight),\n            ],\n        );\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "919f5ba6615a1cf5cd2b2466ffc6a85a5867af97429a421a2c0a5e583caa731d",
+        "key": "0c37406b6ff228df273ebc5bba5eb9779cdfd1a54cf2740dc99e45f514ae58db"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `sum_weight`: adds a record's weight to the double `ctx`\n// points to (called through a function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn sum_weight(r: *const Record, ctx: *mut u8) {\n    unsafe {\n        *(ctx as *mut f64) += (*r).weight;\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "be8637e451df2cc28beaee05283feb9834424b9431770a114e40dff7f182b660",
+        "key": "b10bb34efdafbd8c1946c2d052286e04a7f26ef402e45c4f49afdad25a47c9bc"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_free`: frees every node and empties the list.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_free(l: *mut List) {\n    unsafe {\n        while !(*l).head.is_null() {\n            let n = (*l).head;\n            (*l).head = (*n).next;\n            rt::free(n as *mut u8);\n        }\n        (*l).count = 0;\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "c597e3772d2d60896015a800b6ac7741fe6a44934845c80142ad0acd0cec008e",
+        "key": "1034e52a05ceacb6a7f84e3ef8481eb8c1f45d843c4fa127701a39c44fa423ff"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `main`; the entry point of the program. Builds a list of four\n// records, sorts it three ways through comparison callbacks, prints it with a visitor and sums the\n// weights with another. The callbacks are other translated functions passed by address.\n\n#[repr(C)]\npub struct List {\n    pub head: *mut u8,\n    pub count: i32,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn fn_1014da() -> i32 {\n    let mut l = List {\n        head: std::ptr::null_mut(),\n        count: 0,\n    };\n    let lp = &mut l as *mut List;\n    unsafe {\n        list_push(lp as _, node_new(3, b\"gamma\\0\".as_ptr() as _, 5, 1, 2.5) as _);\n        list_push(lp as _, node_new(1, b\"delta\\0\".as_ptr() as _, -2, 7, 1.25) as _);\n        list_push(lp as _, node_new(2, b\"alpha\\0\".as_ptr() as _, 0, 3, 9.0) as _);\n        list_push(lp as _, node_new(4, b\"beta\\0\".as_ptr() as _, 1, 1, 0.5) as _);\n\n        // The table of orders: a label and the comparison function, as addresses.\n        let orders: [(&[u8], usize); 3] = [\n            (b\"by id\\0\", cmp_id as usize),\n            (b\"by name\\0\", cmp_name as usize),\n            (b\"by distance\\0\", cmp_dist as usize),\n        ];\n        for (label, cmp) in orders.iter() {\n            rt::printf(b\"%s:\\n\\0\".as_ptr(), &[rt::Arg::Ptr(label.as_ptr())]);\n            list_sort(lp as _, std::mem::transmute::<usize, _>(*cmp));\n            list_each(\n                lp as _,\n                std::mem::transmute::<usize, _>(print_rec as usize),\n                std::ptr::null_mut(),\n            );\n        }\n        let mut total: f64 = 0.0;\n        list_each(\n            lp as _,\n            std::mem::transmute::<usize, _>(sum_weight as usize),\n            &mut total as *mut f64 as _,\n        );\n        rt::printf(\n            b\"count=%d total=%.2f\\n\\0\".as_ptr(),\n            &[rt::Arg::Int(i64::from(l.count)), rt::Arg::Double(total)],\n        );\n        list_free(lp as _);\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    }
+  ]
+}

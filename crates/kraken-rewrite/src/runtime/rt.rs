@@ -337,11 +337,56 @@ pub unsafe fn format_c(fmt: *const u8, args: &[Arg]) -> Vec<u8> {
     out
 }
 
+// ----- tracing: where did this output byte come from? -----
+//
+// The program-level repair asks the rewritten program for the call stack at the moment it writes
+// the first byte that differs from the original, or at `exit`. The generated `main` arms this
+// from `KRAKEN_TRACE_AT` (`out:<byte>`, `err:<byte>` or `exit`); without it nothing happens.
+
+static TRACE_KIND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static TRACE_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static OUT_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static ERR_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Arms the trace: `out:<n>` (the call that writes byte `n` of stdout), `err:<n>` (of stderr) or
+/// `exit`. Anything else leaves it off.
+pub fn trace_arm(spec: &str) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (kind, at) = match spec.split_once(':') {
+        Some(("out", n)) => (1, n.parse::<usize>().unwrap_or(0)),
+        Some(("err", n)) => (2, n.parse::<usize>().unwrap_or(0)),
+        None if spec == "exit" => (3, 0),
+        _ => (0, 0),
+    };
+    TRACE_AT.store(at, Relaxed);
+    TRACE_KIND.store(kind, Relaxed);
+}
+
+fn trace_emit(what: &str) {
+    let bt = std::backtrace::Backtrace::force_capture();
+    let text = format!("KRAKEN-TRACE-BEGIN {what}\n{bt}\nKRAKEN-TRACE-END\n");
+    let _ = std::io::stderr().write_all(text.as_bytes());
+}
+
+fn trace_note(stream: usize, len: usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let counter = if stream == 1 { &OUT_BYTES } else { &ERR_BYTES };
+    let before = counter.fetch_add(len, Relaxed);
+    if TRACE_KIND.load(Relaxed) == stream {
+        let at = TRACE_AT.load(Relaxed);
+        if before <= at && at < before + len {
+            trace_emit(if stream == 1 { "out" } else { "err" });
+        }
+    }
+}
+
 fn write_stdout(bytes: &[u8]) {
+    trace_note(1, bytes.len());
     let _ = std::io::stdout().write_all(bytes);
 }
 
 fn write_stderr(bytes: &[u8]) {
+    trace_note(2, bytes.len());
     let _ = std::io::stderr().write_all(bytes);
 }
 
@@ -434,6 +479,9 @@ pub fn fflush_stdout() -> i32 {
 
 /// `exit`: flushes stdout like libc and ends the process.
 pub fn exit(code: i32) -> ! {
+    if TRACE_KIND.load(std::sync::atomic::Ordering::Relaxed) == 3 {
+        trace_emit("exit");
+    }
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     std::process::exit(code)

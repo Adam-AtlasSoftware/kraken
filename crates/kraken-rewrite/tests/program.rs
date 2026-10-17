@@ -293,6 +293,53 @@ const STROPS: &[(&str, &str)] = &[
     ),
 ];
 
+const PIE_LIST: &[(&str, &str)] = &[
+    (
+        "node_new",
+        include_str!("../references/program/pie_list/node_new.rs"),
+    ),
+    (
+        "list_push",
+        include_str!("../references/program/pie_list/list_push.rs"),
+    ),
+    (
+        "cmp_id",
+        include_str!("../references/program/pie_list/cmp_id.rs"),
+    ),
+    (
+        "cmp_name",
+        include_str!("../references/program/pie_list/cmp_name.rs"),
+    ),
+    (
+        "cmp_dist",
+        include_str!("../references/program/pie_list/cmp_dist.rs"),
+    ),
+    (
+        "list_sort",
+        include_str!("../references/program/pie_list/list_sort.rs"),
+    ),
+    (
+        "list_each",
+        include_str!("../references/program/pie_list/list_each.rs"),
+    ),
+    (
+        "print_rec",
+        include_str!("../references/program/pie_list/print_rec.rs"),
+    ),
+    (
+        "sum_weight",
+        include_str!("../references/program/pie_list/sum_weight.rs"),
+    ),
+    (
+        "list_free",
+        include_str!("../references/program/pie_list/list_free.rs"),
+    ),
+    (
+        "fn_1014da",
+        include_str!("../references/program/pie_list/main.rs"),
+    ),
+];
+
 /// The provider of a cassette-backed test. With `KRAKEN_UPDATE_CASSETTES` the reference
 /// translations are asked for the real prompts and the cassette is rewritten first.
 async fn cassette_provider(
@@ -677,6 +724,72 @@ async fn stripped_calc_without_symbols_is_rewritten_from_the_entry_stub() {
     );
 }
 
+#[tokio::test]
+async fn pie_list_is_rewritten_with_function_pointers_doubles_and_linked_nodes() {
+    if !sandbox_available() {
+        return;
+    }
+    let provider = cassette_provider("program-pie-list.json", "pie_list-O0", PIE_LIST).await;
+    let r = rig("pie_list-O0", provider).await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false}),
+        )
+        .await
+        .expect("rewrite_program");
+    eprintln!("{}", table(&out));
+    // The comparison functions and the visitors are only ever reached through a pointer: the
+    // program takes their address (in `main`, or from the `orders` table), so they are part of
+    // the program. Libc stubs and loader glue are not.
+    assert_eq!(out["functions_planned"], 11, "{}", table(&out));
+    assert_eq!(out["skipped"], 0);
+    assert_eq!(out["included"], 11, "{}", table(&out));
+    assert_eq!(out["failed"], 0, "{}", table(&out));
+    for name in ["cmp_id", "cmp_name", "cmp_dist", "print_rec", "sum_weight"] {
+        let f = function(&out, name);
+        assert_eq!(f["included"], true, "{name}: {f}");
+    }
+    // Callbacks are translated before the function that hands them on.
+    let order: Vec<&str> = out["functions"]
+        .as_array()
+        .expect("functions")
+        .iter()
+        .filter(|f| f["included"] == true)
+        .map(|f| f["name"]["value"].as_str().expect("name"))
+        .collect();
+    let at = |n: &str| order.iter().position(|x| *x == n).expect(n);
+    assert!(
+        at("cmp_id") < at("main") && at("print_rec") < at("main"),
+        "{order:?}"
+    );
+    assert_eq!(
+        function(&out, "main")["reused_callees"]
+            .as_array()
+            .map(|a| a.len()),
+        Some(10)
+    );
+    // `node_new` returns a pointer and takes a double: compiled, not compared.
+    assert_eq!(function(&out, "node_new")["check"], "compile_only");
+    // The program-level verdict: same output, including the doubles.
+    let v = &out["verdict"];
+    assert_eq!(v["verdict"], "pass", "{v:#}");
+    let stdout = baseline(&out)["original"]["stdout"]["value"]
+        .as_str()
+        .expect("stdout")
+        .to_string();
+    assert!(
+        stdout.starts_with("by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n"),
+        "{stdout}"
+    );
+    assert!(stdout.ends_with("count=4 total=13.25\n"), "{stdout}");
+    assert_eq!(
+        baseline(&out)["rewritten"]["stdout"],
+        baseline(&out)["original"]["stdout"]
+    );
+}
+
 // ----- failures are reported, not hidden -----
 
 #[tokio::test]
@@ -725,6 +838,195 @@ async fn a_wrong_translation_is_a_failed_program_verdict_with_the_diff() {
             .iter()
             .all(|c| c["agree"] == false)
     );
+}
+
+/// Answers like [`ReferenceProvider`], except that `wrong` is the first answer for its function
+/// and the reference comes only when the request carries program-level feedback. Every request
+/// is kept for the assertions.
+struct RepairingProvider {
+    reference: ReferenceProvider,
+    wrong: HashMap<String, String>,
+    seen: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl ChatProvider for RepairingProvider {
+    fn info(&self) -> kraken_agent::ProviderInfo {
+        self.reference.info()
+    }
+
+    async fn complete(
+        &self,
+        req: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<kraken_agent::ChatStream, AgentError> {
+        let Some(Message::User { content }) = req.messages.first() else {
+            return Err(AgentError::Cassette("no user message".into()));
+        };
+        self.seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(content.clone());
+        let name = content
+            .strip_prefix("Translate the function `")
+            .and_then(|r| r.split('`').next())
+            .unwrap_or("")
+            .to_string();
+        if let Some(code) = self.wrong.get(&name)
+            && !content.contains("kind=\"program\"")
+        {
+            let events = vec![
+                StreamEvent::TextDelta {
+                    text: RewriteTask::reply_text(code, &[]),
+                },
+                StreamEvent::Finish {
+                    reason: FinishReason::Stop,
+                },
+            ];
+            return Ok(futures_util::stream::iter(events.into_iter().map(Ok)).boxed());
+        }
+        self.reference.complete(req, cancel).await
+    }
+}
+
+fn vm_with_wrong_print() -> (String, String) {
+    let right = VM
+        .iter()
+        .find(|(n, _)| *n == "vm_run")
+        .map(|(_, c)| (*c).to_string())
+        .expect("vm_run");
+    let wrong = right.replace("b\"out: %d\\n\\0\"", "b\"out:  %d\\n\\0\"");
+    assert_ne!(right, wrong);
+    (right, wrong)
+}
+
+#[tokio::test]
+async fn a_failed_program_verdict_is_traced_and_the_responsible_function_is_repaired() {
+    if !sandbox_available() {
+        return;
+    }
+    let (_, wrong) = vm_with_wrong_print();
+    let provider = Arc::new(RepairingProvider {
+        reference: ReferenceProvider::new(VM),
+        wrong: HashMap::from([("vm_run".to_string(), wrong)]),
+        seen: Mutex::new(Vec::new()),
+    });
+    let r = rig("switch_vm-O0", provider.clone()).await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false, "generated_cases": 4}),
+        )
+        .await
+        .expect("rewrite_program");
+    // The first build failed; one round of repair fixed it.
+    assert_eq!(out["verdict"]["verdict"], "pass", "{:#}", out["repairs"]);
+    let repairs = out["repairs"].as_array().expect("repairs");
+    assert!(!repairs.is_empty(), "{out:#}");
+    let vm_run = repairs
+        .iter()
+        .find(|v| v["name"]["value"] == "vm_run")
+        .expect("vm_run was a suspect");
+    assert_eq!(vm_run["round"], 1);
+    assert_eq!(vm_run["outcome"], "replaced");
+    assert_eq!(vm_run["case"], "baseline");
+    assert_eq!(vm_run["verdict_after"], "pass");
+    assert!(vm_run["version_after"].as_u64() > vm_run["version_before"].as_u64());
+    // The trace named the functions that were running when byte 5 of stdout was written, and the
+    // suspects came from that stack.
+    assert_eq!(
+        vm_run["at"], "writing byte 5 of its standard output",
+        "{vm_run:#}"
+    );
+    assert_eq!(
+        vm_run["stack"],
+        json!(["vm_run", "fn_101707"]),
+        "{vm_run:#}"
+    );
+    assert!(
+        vm_run["why"]["value"]
+            .as_str()
+            .expect("why")
+            .contains("running when the first differing output")
+    );
+    // The model was shown the case, both outputs and the stack, as untrusted evidence.
+    let seen = provider
+        .seen
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let feedback = seen
+        .iter()
+        .find(|c| c.contains("kind=\"program\"") && c.contains("Translate the function `vm_run`"))
+        .expect("a program-level repair request for vm_run");
+    assert!(feedback.contains("<feedback untrusted=\"true\" kind=\"program\">"));
+    assert!(
+        feedback.contains("first difference at byte 5"),
+        "{feedback}"
+    );
+    assert!(feedback.contains("vm_run <- fn_101707"), "{feedback}");
+    assert!(feedback.contains("the program built from it behaves differently"));
+    // The function table shows the repaired version; the crate on disk is the repaired one.
+    let row = function(&out, "vm_run");
+    assert_eq!(row["included"], true);
+    assert!(row["attempts"].as_u64().expect("attempts") >= 2);
+    let crate_dir = PathBuf::from(out["crate_dir"].as_str().expect("crate dir"));
+    let src = std::fs::read_to_string(crate_dir.join("src/u_vm_run.rs")).expect("src");
+    assert!(src.contains("out: %d") && !src.contains("out:  %d"));
+    // The stored run keeps the rounds.
+    let st = r
+        .call(&agent(), "rewrite_program_status", json!({}))
+        .await
+        .expect("status");
+    assert_eq!(
+        st["run"]["repairs"].as_array().map(Vec::len),
+        Some(repairs.len())
+    );
+}
+
+#[tokio::test]
+async fn program_repair_is_bounded_and_can_be_turned_off() {
+    if !sandbox_available() {
+        return;
+    }
+    let (_, wrong) = vm_with_wrong_print();
+    // A provider that never fixes it: the rounds end, the verdict stays `fail`.
+    let stubborn = Arc::new(ReferenceProvider::new(VM).with("vm_run", &wrong));
+    let r = rig("switch_vm-O0", stubborn).await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false, "generated_cases": 0, "repair_rounds": 1}),
+        )
+        .await
+        .expect("rewrite_program");
+    assert_eq!(out["verdict"]["verdict"], "fail", "{:#}", out["verdict"]);
+    let repairs = out["repairs"].as_array().expect("repairs");
+    assert!(!repairs.is_empty() && repairs.len() <= 2, "{repairs:?}");
+    assert!(repairs.iter().all(|v| v["round"] == 1));
+    // Off: nothing is traced or retranslated.
+    let off = rig(
+        "switch_vm-O0",
+        Arc::new(ReferenceProvider::new(VM).with("vm_run", &wrong)),
+    )
+    .await;
+    let out = off
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false, "generated_cases": 0, "repair_rounds": 0}),
+        )
+        .await
+        .expect("rewrite_program");
+    assert_eq!(out["verdict"]["verdict"], "fail");
+    assert!(out.get("repairs").is_none(), "{out:#}");
+    let too_many = off
+        .call(&user(), "rewrite_program", json!({"repair_rounds": 5}))
+        .await
+        .expect_err("limit");
+    assert_eq!(too_many.code, ErrorCode::InvalidArgument);
 }
 
 #[tokio::test]
@@ -887,9 +1189,10 @@ async fn stripped_calc_is_checked_function_by_function_and_as_a_program() {
         .await
         .expect("rewrite_program");
     eprintln!("{}", table(&out));
-    // Curated inputs exist for `evaluate`; the parser functions take a struct that holds a
-    // pointer, which random bytes cannot build, so their test says it could not tell (it used to
-    // pass because both sides crash on every input).
+    // The parser functions take a struct that holds a pointer into text. Curated pointer-aware
+    // inputs build it (the pointer lands in the generated text on both sides at the same
+    // address, and its advance is compared), so these are real tests now; they used to say that
+    // they could not tell, because both sides crash on every input of random bytes.
     for name in [
         "skip_ws",
         "parse_number",
@@ -899,15 +1202,8 @@ async fn stripped_calc_is_checked_function_by_function_and_as_a_program() {
     ] {
         let f = function(&out, name);
         assert_eq!(f["check"], "differential", "{f}");
-        assert_eq!(f["verdict"], "inconclusive", "{f}");
-        assert_eq!(f["status"], "translated", "{f}");
-        assert!(
-            f["check_note"]["value"]
-                .as_str()
-                .expect("note")
-                .contains("faulted on 200 of 200"),
-            "{f}"
-        );
+        assert_eq!(f["verdict"], "pass", "{f}");
+        assert_eq!(f["status"], "accepted", "{f}");
     }
     for name in ["evaluate", "main"] {
         let f = function(&out, name);
@@ -915,5 +1211,80 @@ async fn stripped_calc_is_checked_function_by_function_and_as_a_program() {
         assert_eq!(f["verdict"], "pass", "{f}");
         assert_eq!(f["status"], "accepted", "{f}");
     }
+    assert_eq!(out["verdict"]["verdict"], "pass");
+}
+
+#[tokio::test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+async fn the_pointer_aware_inputs_catch_a_wrong_parser_function() {
+    if !sandbox_available() {
+        return;
+    }
+    // A `parse_number` that forgets to set `err` when there are no digits. It returns the right
+    // value on every input, and random bytes never reach the point where it matters; only a
+    // struct whose pointer leads to real text shows that `err` is not set.
+    let right = CALC
+        .iter()
+        .find(|(n, _)| *n == "parse_number")
+        .map(|(_, c)| (*c).to_string())
+        .expect("parse_number");
+    let wrong = right.replace("(*ps).err = 1;", "");
+    assert_ne!(
+        right, wrong,
+        "the reference no longer sets err where expected"
+    );
+    let provider = Arc::new(ReferenceProvider::new(CALC).with("parse_number", &wrong));
+    let r = rig("stripped_calc-O0", provider).await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": true, "max_attempts": 1, "repair_rounds": 0}),
+        )
+        .await
+        .expect("rewrite_program");
+    eprintln!("{}", table(&out));
+    let f = function(&out, "parse_number");
+    assert_eq!(f["check"], "differential", "{f}");
+    assert_eq!(f["verdict"], "fail", "{f}");
+    assert_eq!(f["status"], "failed", "{f}");
+}
+
+#[tokio::test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+async fn pie_list_is_checked_function_by_function_and_as_a_program() {
+    if !sandbox_available() {
+        return;
+    }
+    let provider = cassette_provider("program-pie-list.json", "pie_list-O0", PIE_LIST).await;
+    let r = rig("pie_list-O0", provider).await;
+    let out = r
+        .job(&user(), "rewrite_program", json!({"max_attempts": 1}))
+        .await
+        .expect("rewrite_program");
+    eprintln!("{}", table(&out));
+    // Pointer graphs, callbacks (recorded on both sides) and a double in memory are compared
+    // against the original under emulation.
+    for name in [
+        "list_push",
+        "list_sort",
+        "list_each",
+        "sum_weight",
+        "cmp_id",
+        "cmp_dist",
+    ] {
+        let f = function(&out, name);
+        assert_eq!(f["check"], "differential", "{f}");
+        assert_eq!(f["verdict"], "pass", "{f}");
+    }
+    // `cmp_name` calls `strcmp`, which the emulator models as glibc does.
+    assert_eq!(function(&out, "cmp_name")["verdict"], "pass");
+    // These call `printf` with a double or `calloc` and `free`, which the emulator does not
+    // model: the test says it could not tell instead of passing.
+    for name in ["print_rec", "list_free", "main"] {
+        let f = function(&out, name);
+        assert_eq!(f["verdict"], "inconclusive", "{f}");
+    }
+    assert_eq!(function(&out, "node_new")["check"], "compile_only");
     assert_eq!(out["verdict"]["verdict"], "pass");
 }

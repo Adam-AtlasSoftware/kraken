@@ -11,6 +11,7 @@
 //! inside [`sandbox`]. The spike this grew from is described in `spikes/rewrite-loop/NOTES.md`.
 
 pub mod abi;
+pub mod blame;
 pub mod clib;
 pub mod collect;
 pub mod difftest;

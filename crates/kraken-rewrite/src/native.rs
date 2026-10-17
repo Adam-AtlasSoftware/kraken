@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::abi::{Arg, Observation, Param, Ret, Signature, Termination, from_hex, mask, to_hex};
+use crate::abi::{
+    Arg, Observation, Param, Ret, Signature, Termination, check_graph, from_hex, mask, to_hex,
+};
 use crate::error::RewriteError;
 use crate::sandbox::{
     Confinement, ConfinementReport, ReadScope, confine, run_captured, scratch_dir, toolchain,
@@ -45,9 +47,23 @@ pub enum Build {
 }
 
 /// Generates the runner's `main.rs` for `sig`.
+///
+/// The case file has one line per argument: `i <hex>` (integer), `d <hex>` (double bits),
+/// `f <n>` (callback number), `b <hex>` (buffer) or `g <objects> <links>` followed by that many
+/// `o <hex>` lines and `l <from> <offset> <to> <to_offset>` lines (a graph). Objects are laid out
+/// in that order, which is also the order of the `buf` lines of the result.
 fn runner_source(sig: &Signature) -> String {
-    let call_args: Vec<String> = (0..sig.params.len())
-        .map(|i| format!("vals[{i}] as _"))
+    let call_args: Vec<String> = sig
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| match p {
+            Param::Double => format!("f64::from_bits(vals[{i}])"),
+            Param::FnPtr => {
+                format!("unsafe {{ std::mem::transmute::<usize, _>(vals[{i}] as usize) }}")
+            }
+            _ => format!("vals[{i}] as _"),
+        })
         .collect();
     let call = format!(
         "unsafe {{ translation::{}({}) }}",
@@ -61,40 +77,49 @@ fn runner_source(sig: &Signature) -> String {
             mask(bits)
         ),
         Ret::Ptr => format!("let r = {call};\n    let ret: Option<u64> = Some(r as u64);"),
+        Ret::Double => {
+            format!("let r: f64 = {call};\n    let ret: Option<u64> = Some(r.to_bits());")
+        }
     };
     format!(
         r#"#![allow(warnings)]
 mod translation;
 
+use std::cell::RefCell;
 use std::fmt::Write as _;
 
-#[repr(C, align(16))]
-#[derive(Clone, Copy)]
-struct Chunk([u8; 16]);
+unsafe extern "C" {{
+    fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, off: i64) -> *mut u8;
+}}
 
-const GUARD: usize = 4;
-
+// An object sits at the address the oracle gives it (`abi::place_object`): its own mapping of
+// whole pages, the data flush against the end, nothing mapped around it. A read or write outside
+// the object faults here as it does in the emulator, and a pointer stored in one object has the
+// same value on both sides.
 struct Buf {{
-    chunks: Vec<Chunk>,
+    at: *mut u8,
     len: usize,
 }}
 
 impl Buf {{
-    fn new(data: &[u8]) -> Buf {{
-        // Zeroed guard chunks on both sides: a read just outside the buffer sees zeros, as it
-        // does inside the oracle's zero-filled pages.
-        let mut chunks = vec![Chunk([0; 16]); GUARD + data.len() / 16 + 1 + GUARD];
-        let bytes = unsafe {{
-            std::slice::from_raw_parts_mut(chunks.as_mut_ptr() as *mut u8, chunks.len() * 16)
-        }};
-        bytes[GUARD * 16..GUARD * 16 + data.len()].copy_from_slice(data);
-        Buf {{ chunks, len: data.len() }}
+    fn new(n: usize, data: &[u8]) -> Buf {{
+        let base = {object_base}u64 + {object_stride}u64 * n as u64;
+        let map = ((data.len().max(1) as u64 + 0xfff) / 0x1000) * 0x1000;
+        // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE
+        let got = unsafe {{ mmap(base as *mut u8, map as usize, 3, 0x2 | 0x20 | 0x100000, -1, 0) }};
+        if got as u64 != base {{
+            eprintln!("runner: cannot place an object at {{:#x}}", base);
+            std::process::exit(99);
+        }}
+        let at = ((base + map - data.len() as u64) & !7) as *mut u8;
+        unsafe {{ std::ptr::copy_nonoverlapping(data.as_ptr(), at, data.len()) }};
+        Buf {{ at, len: data.len() }}
     }}
     fn ptr(&mut self) -> *mut u8 {{
-        unsafe {{ (self.chunks.as_mut_ptr() as *mut u8).add(GUARD * 16) }}
+        self.at
     }}
-    fn bytes(&mut self) -> &[u8] {{
-        unsafe {{ std::slice::from_raw_parts(self.ptr(), self.len) }}
+    fn bytes(&mut self) -> &mut [u8] {{
+        unsafe {{ std::slice::from_raw_parts_mut(self.at, self.len) }}
     }}
 }}
 
@@ -102,23 +127,98 @@ fn unhex(s: &str) -> Vec<u8> {{
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
 }}
 
+thread_local! {{
+    static OBJECTS: RefCell<Vec<(u64, usize)>> = RefCell::new(Vec::new());
+    static EVENTS: RefCell<Vec<String>> = RefCell::new(Vec::new());
+}}
+
+// Mirrors `abi::callback_tag` of the host: the same text for the same situation.
+fn tag(v: u64, objs: &[(u64, usize)]) -> String {{
+    for (j, &(base, len)) in objs.iter().enumerate() {{
+        if v >= base && v < base.saturating_add(len.max(1) as u64) {{
+            let off = v - base;
+            if (len as u64).saturating_sub(off) >= 4 {{
+                let x = unsafe {{ (v as *const i32).read_unaligned() }};
+                return format!("o{{}}+{{}}={{:x}}", j, off, x as u32);
+            }}
+            return format!("o{{}}+{{}}", j, off);
+        }}
+    }}
+    if v > 0xffff {{ "p".to_string() }} else {{ format!("i{{:x}}", v) }}
+}}
+
+fn callback(k: u32, a: u64, b: u64) -> i64 {{
+    let objs = OBJECTS.with(|o| o.borrow().clone());
+    let inside = |v: u64| {{
+        objs.iter()
+            .any(|&(base, len)| v >= base && v < base + len as u64 && (len as u64 - (v - base)) >= 4)
+    }};
+    let ret = if inside(a) && inside(b) {{
+        let x = unsafe {{ (a as *const i32).read_unaligned() }};
+        let y = unsafe {{ (b as *const i32).read_unaligned() }};
+        let d = i64::from(x.wrapping_sub(y));
+        if k == 0 {{ d }} else {{ -d }}
+    }} else {{
+        0
+    }};
+    let ev = format!("cb{{}}({{}},{{}})={{:x}}", k, tag(a, &objs), tag(b, &objs), ret as u64);
+    EVENTS.with(|e| e.borrow_mut().push(ev));
+    ret
+}}
+
+unsafe extern "C" fn cb0(a: u64, b: u64) -> i64 {{ callback(0, a, b) }}
+unsafe extern "C" fn cb1(a: u64, b: u64) -> i64 {{ callback(1, a, b) }}
+
 fn main() {{
     let argv: Vec<String> = std::env::args().collect();
     let case = std::fs::read_to_string(&argv[1]).unwrap();
     let mut bufs: Vec<Buf> = Vec::new();
-    let mut slots: Vec<(bool, u64, usize)> = Vec::new();
-    for line in case.lines() {{
+    // Per argument: (is a pointer to bufs[idx], plain value or index).
+    let mut slots: Vec<(bool, u64)> = Vec::new();
+    let mut links: Vec<(usize, usize, usize, usize, usize)> = Vec::new(); // first, from, off, to, to_off
+    let mut lines = case.lines();
+    while let Some(line) = lines.next() {{
         let (kind, rest) = line.split_once(' ').unwrap_or((line, ""));
-        if kind == "i" {{
-            slots.push((false, u64::from_str_radix(rest, 16).unwrap(), 0));
-        }} else {{
-            bufs.push(Buf::new(&unhex(rest)));
-            slots.push((true, 0, bufs.len() - 1));
+        match kind {{
+            "i" | "d" => slots.push((false, u64::from_str_radix(rest, 16).unwrap())),
+            "f" => {{
+                let k: u32 = rest.parse().unwrap();
+                let addr = if k == 0 {{ cb0 as usize as u64 }} else {{ cb1 as usize as u64 }};
+                slots.push((false, addr));
+            }}
+            "b" => {{
+                bufs.push(Buf::new(bufs.len(), &unhex(rest)));
+                slots.push((true, (bufs.len() - 1) as u64));
+            }}
+            "g" => {{
+                let mut it = rest.split(' ');
+                let n: usize = it.next().unwrap().parse().unwrap();
+                let m: usize = it.next().unwrap().parse().unwrap();
+                let first = bufs.len();
+                for _ in 0..n {{
+                    let l = lines.next().unwrap();
+                    bufs.push(Buf::new(bufs.len(), &unhex(l.strip_prefix("o ").unwrap_or(""))));
+                }}
+                for _ in 0..m {{
+                    let l = lines.next().unwrap();
+                    let v: Vec<usize> = l[2..].split(' ').map(|x| x.parse().unwrap()).collect();
+                    links.push((first, v[0], v[1], v[2], v[3]));
+                }}
+                slots.push((true, first as u64));
+            }}
+            _ => {{}}
         }}
     }}
+    let addrs: Vec<u64> = bufs.iter_mut().map(|b| b.ptr() as u64).collect();
+    for &(first, from, off, to, to_off) in &links {{
+        let target = addrs[first + to] + to_off as u64;
+        bufs[first + from].bytes()[off..off + 8].copy_from_slice(&target.to_le_bytes());
+    }}
+    let objs: Vec<(u64, usize)> = bufs.iter().zip(&addrs).map(|(b, a)| (*a, b.len)).collect();
+    OBJECTS.with(|o| *o.borrow_mut() = objs.clone());
     let vals: Vec<u64> = slots
         .iter()
-        .map(|&(is_buf, v, idx)| if is_buf {{ bufs[idx].ptr() as u64 }} else {{ v }})
+        .map(|&(is_buf, v)| if is_buf {{ addrs[v as usize] }} else {{ v }})
         .collect();
     {body}
     let mut out = String::new();
@@ -128,14 +228,21 @@ fn main() {{
     }}
     for (i, b) in bufs.iter_mut().enumerate() {{
         let mut hex = String::new();
-        for byte in b.bytes() {{
+        for byte in b.bytes().iter() {{
             write!(hex, "{{:02x}}", byte).unwrap();
         }}
         writeln!(out, "buf {{}} {{}}", i, hex).unwrap();
     }}
+    EVENTS.with(|e| {{
+        for ev in e.borrow().iter() {{
+            writeln!(out, "cb {{}}", ev).unwrap();
+        }}
+    }});
     std::fs::write(&argv[2], out).unwrap();
 }}
-"#
+"#,
+        object_base = crate::abi::OBJECT_BASE,
+        object_stride = crate::abi::OBJECT_STRIDE,
     )
 }
 
@@ -158,8 +265,10 @@ pub fn build_with_timeout(
     if let Some(why) = lint_translation(rust_code) {
         return Ok(Build::Rejected(why));
     }
-    if sig.params.len() > 6 {
-        return Err(RewriteError::Unsupported("more than six parameters".into()));
+    if !sig.fits_registers() {
+        return Err(RewriteError::Unsupported(
+            "more than six integer or eight floating-point parameters".into(),
+        ));
     }
     let tc = toolchain()?;
     let dir = scratch_dir("kraken-rewrite-")?;
@@ -243,6 +352,25 @@ impl NativeRunner {
                 (Param::Buf, Arg::Buf { data }) => {
                     case.push_str(&format!("b {}\n", to_hex(data)));
                 }
+                (Param::Double, Arg::Double { bits }) => {
+                    case.push_str(&format!("d {bits:x}\n"));
+                }
+                (Param::FnPtr, Arg::FnPtr { callback }) => {
+                    case.push_str(&format!("f {}\n", callback.index()));
+                }
+                (Param::Buf, Arg::Graph { objects, links }) => {
+                    check_graph(objects, links).map_err(RewriteError::Unsupported)?;
+                    case.push_str(&format!("g {} {}\n", objects.len(), links.len()));
+                    for o in objects {
+                        case.push_str(&format!("o {}\n", to_hex(o)));
+                    }
+                    for l in links {
+                        case.push_str(&format!(
+                            "l {} {} {} {}\n",
+                            l.from, l.offset, l.to, l.to_offset
+                        ));
+                    }
+                }
                 _ => return Err(RewriteError::Unsupported("argument kind".into())),
             }
         }
@@ -305,6 +433,7 @@ impl NativeRunner {
                         );
                     }
                     (Some("buf"), Some(_), None) => obs.buffers.push(Vec::new()),
+                    (Some("cb"), Some(ev), _) => obs.callbacks.push(ev.to_string()),
                     _ => {}
                 }
             }

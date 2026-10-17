@@ -743,7 +743,10 @@ impl KrakenApp {
                         }
                     } else if matches!(
                         shot.scene,
-                        Scene::AutoName | Scene::AssistantAgent | Scene::Rewrite
+                        Scene::AutoName
+                            | Scene::AssistantAgent
+                            | Scene::Rewrite
+                            | Scene::RewriteProgram
                     ) {
                         // Leave the placeholder names alone so there is something to suggest.
                         shot.stage = ShotStage::Settling;
@@ -808,6 +811,14 @@ impl KrakenApp {
                             vm.rewrite_ensure_loaded();
                             vm.rewrite_select(crate::rewrite::SCENE_FUNCTION);
                         }
+                        Scene::RewriteProgram => {
+                            self.dock = crate::rewrite::scene_dock();
+                            vm.rewrite.availability =
+                                kraken_viewmodel::rewrite::Availability::Unknown;
+                            self.state.rewrite.section = crate::rewrite::Section::Program;
+                            self.state.rewrite.program.repairs_open = true;
+                            vm.rewrite_program_refresh(None);
+                        }
                         _ => {}
                     }
                     if shot.tweaks.graph_layout && shot.scene == Scene::Main {
@@ -829,6 +840,7 @@ impl KrakenApp {
                                 d.c.is_some() && !d.loading && !d.versions().is_empty()
                             })
                     }
+                    Scene::RewriteProgram => vm.rewrite.program.detail.is_some(),
                     Scene::AssistantAgent => vm
                         .assist
                         .items

@@ -226,6 +226,14 @@ The goal KRAKEN is built toward is turning a binary back into Rust you can read,
 
 Terminal version: `kraken rewrite-plan`, then `kraken rewrite-function --address 0x101280`. See [The rewrite pipeline](design/0013-rewrite-pipeline.md).
 
+When several functions are done, the **Whole program** section of the same tab rewrites all of them at once: it builds one Rust crate and runs the original program and the Rust program on the same inputs. KRAKEN asks before it does, because the original program is run (in the sandbox, with no network).
+
+![The whole-program view with the function table, the crate folder, and the standard output of the original and the rewrite compared line by line](images/tutorial/rewrite-program.png)
+
+*Illustrative: the demo project's scripted history, a first run that differs from the original in one printed space.*
+
+You see the program verdict, the table of functions with how each translation was checked (compared with the original on its own, or only compiled), the crate folder, and for every case the exit status, the standard output and the standard error of both programs. A line only the original printed starts with `-`, a line only the rewrite printed with `+`. If the program differs, KRAKEN finds the function the first wrong byte points to, has it translated again with that case as evidence, and compares again; the rounds are listed. Terminal version: `kraken rewrite-program`.
+
 **Why it matters:** "it looks right" is not good enough for code you will ship. Running both versions on the same inputs turns a translation into something you can trust or reject.
 
 ## What you did, and where to go next
@@ -236,4 +244,4 @@ You went from a stripped program with no names to a map of how it works: an entr
 - Script what you did: [the CLI](cli.md) and [Python](python.md).
 - Use Claude Code, Codex or Gemini CLI as the assistant itself, in the same chat: [The built-in assistant](assistant.md#terminal-agents).
 - Try a harder program: `corpus/bin/cpp_shapes-O2-stripped` (C++ with virtual calls) or `corpus/bin/static_strops-O2-stripped`.
-- Use only software you are permitted to analyse, and prefer a virtual machine if you ever run an unknown program yourself. KRAKEN never runs the program you open.
+- Use only software you are permitted to analyse, and prefer a virtual machine if you ever run an unknown program yourself. KRAKEN runs the program you open only when you ask it to rewrite the whole program, and then only in a sandbox after asking you first.

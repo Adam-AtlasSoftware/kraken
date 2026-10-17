@@ -184,7 +184,7 @@ impl Backend for InProcessBackend {
             .await?;
         if matches!(
             command,
-            "analyze" | "rewrite_function" | "rewrite_spec" | "rewrite_export"
+            "analyze" | "rewrite_function" | "rewrite_spec" | "rewrite_export" | "rewrite_program"
         ) && let Some(id) = out.get("job_id").and_then(Value::as_str)
         {
             self.watch_job(id.to_string());

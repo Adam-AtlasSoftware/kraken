@@ -264,6 +264,12 @@ fn render_arg(a: &Arg) -> String {
             let more = if data.len() > 32 { "..." } else { "" };
             format!("buf[{}]={head}{more}", data.len())
         }
+        Arg::Double { bits } => format!("{}", f64::from_bits(*bits)),
+        Arg::FnPtr { callback } => format!("callback {callback:?}"),
+        Arg::Graph { objects, links } => {
+            let sizes: Vec<String> = objects.iter().map(|o| o.len().to_string()).collect();
+            format!("graph[{}; {} links]", sizes.join(","), links.len())
+        }
     }
 }
 

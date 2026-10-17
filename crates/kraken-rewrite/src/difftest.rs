@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::abi::{Arg, Observation, Param, Signature, Termination};
+use crate::abi::{Arg, Callback, Link, Observation, Param, Signature, Termination};
 use crate::error::RewriteError;
 use crate::native::{Build, NativeRunner, build};
 use crate::oracle::FunctionOracle;
@@ -154,6 +154,237 @@ pub enum ParamGen {
     },
     /// The logical content length of buffer parameter `param` (an earlier `Bytes`).
     LenOf(usize),
+    /// A `double`: edge values and small multiples of 1/8.
+    Double,
+    /// One of the host callbacks.
+    FnPtr,
+    /// A pointer to an object that holds pointers to further objects (see [`ObjectGen`]).
+    Graph(ObjectGen),
+    /// A struct of unknown layout: every aligned word of a 32-byte object is null, a small
+    /// number, a pointer to a text or a pointer to another such object (without pointers
+    /// below it). For parameters whose pointee the decompiler does not describe.
+    Mixed(TextGen),
+    /// One of the alternatives, chosen per case.
+    OneOf(Vec<ParamGen>),
+}
+
+/// Text for a pointer to point at: NUL terminated, then `pad` zero bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextGen {
+    /// Shortest content.
+    pub min_len: usize,
+    /// Longest content.
+    pub max_len: usize,
+    /// Allowed byte values (default: [`GENERIC_ALPHABET`]).
+    pub alphabet: Option<Vec<u8>>,
+    /// Zero bytes after the terminator.
+    pub pad: usize,
+}
+
+/// Characters of the text the generic generators use: what expression, option and word parsers
+/// tend to look at.
+pub const GENERIC_ALPHABET: &[u8] = b"0123456789 \t+-*/%()abcxyzAB_,.;:=<>!\n";
+
+impl TextGen {
+    /// Short generic text.
+    pub fn generic() -> Self {
+        TextGen {
+            min_len: 0,
+            max_len: 24,
+            alphabet: None,
+            pad: 32,
+        }
+    }
+
+    fn make(&self, rng: &mut Rng) -> Vec<u8> {
+        let span = (self.max_len.saturating_sub(self.min_len) + 1) as u64;
+        let len = self.min_len + usize::try_from(rng.below(span)).unwrap_or(0);
+        let alphabet = self.alphabet.as_deref().unwrap_or(GENERIC_ALPHABET);
+        let mut data: Vec<u8> = (0..len)
+            .map(|_| alphabet[usize::try_from(rng.below(alphabet.len() as u64)).unwrap_or(0)])
+            .collect();
+        data.push(0);
+        data.extend(std::iter::repeat_n(0u8, self.pad));
+        data
+    }
+}
+
+/// What a pointer slot of an [`ObjectGen`] points to.
+#[derive(Debug, Clone)]
+pub enum SlotGen {
+    /// A fresh text object.
+    Text(TextGen),
+    /// An object, or null with probability `1 / null_den` (`0` never).
+    Object(Box<ObjectGen>, u64),
+    /// A chain of `min..=max` objects of one shape, each pointing to the next from its
+    /// `next_offset` (the last one's pointer stays null). Null when the chain is empty.
+    Chain {
+        /// Shape of a chain member.
+        node: Box<ObjectGen>,
+        /// Offset of the member's pointer to the next one.
+        next_offset: usize,
+        /// Fewest members.
+        min: usize,
+        /// Most members.
+        max: usize,
+    },
+}
+
+/// How an object of a pointer graph is generated: a zeroed block of `size` bytes plus `pad` zero
+/// bytes, random little-endian integer fields, and pointers at some offsets.
+#[derive(Debug, Clone)]
+pub struct ObjectGen {
+    /// Size of the struct.
+    pub size: usize,
+    /// Zero bytes after it, so a sloppy read stays in defined memory.
+    pub pad: usize,
+    /// Integer fields to randomise.
+    pub fields: Vec<FieldGen>,
+    /// Offsets of `double` fields to randomise (finite values, so NaN payloads, which an
+    /// emulator and the hardware may disagree on, never matter).
+    pub doubles: Vec<usize>,
+    /// Pointers: offset and target.
+    pub slots: Vec<(usize, SlotGen)>,
+    /// Where to write the length of the first chain slot as a 32-bit integer (a list's count).
+    pub count_at: Option<usize>,
+}
+
+/// A graph under construction.
+#[derive(Default)]
+struct GraphBuild {
+    objects: Vec<Vec<u8>>,
+    links: Vec<Link>,
+}
+
+impl GraphBuild {
+    fn add(&mut self, data: Vec<u8>) -> usize {
+        self.objects.push(data);
+        self.objects.len() - 1
+    }
+
+    fn link(&mut self, from: usize, offset: usize, to: usize) {
+        self.links.push(Link {
+            from,
+            offset,
+            to,
+            to_offset: 0,
+        });
+    }
+
+    /// Builds `g` and everything it points to; returns its index.
+    fn object(&mut self, g: &ObjectGen, rng: &mut Rng, depth: u32) -> usize {
+        let mut data = vec![0u8; g.size + g.pad];
+        for f in &g.fields {
+            let n = usize::from(f.value.bits / 8);
+            let v = f.value.random(rng);
+            if f.offset + n <= g.size {
+                data[f.offset..f.offset + n].copy_from_slice(&v.to_le_bytes()[..n]);
+            }
+        }
+        for off in &g.doubles {
+            if off + 8 <= g.size {
+                data[*off..off + 8].copy_from_slice(&gen_double(rng).to_le_bytes());
+            }
+        }
+        let me = self.add(data);
+        let mut counted = false;
+        for (offset, slot) in &g.slots {
+            if offset + 8 > g.size {
+                continue;
+            }
+            match slot {
+                SlotGen::Text(t) => {
+                    let to = self.add(t.make(rng));
+                    self.link(me, *offset, to);
+                }
+                SlotGen::Object(o, null_den) => {
+                    if depth < 4 && !(*null_den > 0 && rng.chance(1, *null_den)) {
+                        let to = self.object(o, rng, depth + 1);
+                        self.link(me, *offset, to);
+                    }
+                }
+                SlotGen::Chain {
+                    node,
+                    next_offset,
+                    min,
+                    max,
+                } => {
+                    let span = (max.saturating_sub(*min) + 1) as u64;
+                    let n = min + usize::try_from(rng.below(span)).unwrap_or(0);
+                    let mut prev: Option<usize> = None;
+                    for _ in 0..n {
+                        let m = self.object(
+                            &ObjectGen {
+                                slots: Vec::new(),
+                                ..(**node).clone()
+                            },
+                            rng,
+                            depth + 1,
+                        );
+                        match prev {
+                            Some(p) => self.link(p, *next_offset, m),
+                            None => self.link(me, *offset, m),
+                        }
+                        prev = Some(m);
+                    }
+                    if !counted && let Some(at) = g.count_at {
+                        let bytes = (n as u32).to_le_bytes();
+                        if let Some(dst) = self.objects[me].get_mut(at..at + 4) {
+                            dst.copy_from_slice(&bytes);
+                        }
+                        counted = true;
+                    }
+                }
+            }
+        }
+        me
+    }
+
+    fn arg(self) -> Arg {
+        Arg::Graph {
+            objects: self.objects,
+            links: self.links,
+        }
+    }
+}
+
+/// A `Mixed` object: 32 bytes of words that are null, small numbers, text pointers or (at the
+/// top level only) pointers to a child.
+fn mixed(text: &TextGen, rng: &mut Rng, b: &mut GraphBuild, top: bool) -> usize {
+    let mut data = vec![0u8; 32 + 64];
+    let me = b.add(Vec::new());
+    let mut pending: Vec<(usize, usize)> = Vec::new();
+    for w in 0..4 {
+        match rng.below(if top { 4 } else { 3 }) {
+            0 => {}
+            1 => {
+                let v = rng.range(-3, 40);
+                data[w * 8..w * 8 + 8].copy_from_slice(&v.to_le_bytes());
+            }
+            2 => {
+                let to = b.add(text.make(rng));
+                pending.push((w * 8, to));
+            }
+            _ => {
+                let to = mixed(text, rng, b, false);
+                pending.push((w * 8, to));
+            }
+        }
+    }
+    b.objects[me] = data;
+    for (off, to) in pending {
+        b.link(me, off, to);
+    }
+    me
+}
+
+fn gen_double(rng: &mut Rng) -> u64 {
+    const EDGES: [f64; 8] = [0.0, 1.0, -1.0, 0.5, 2.5, 100.25, -3.75, 1.0e10];
+    if rng.chance(1, 3) {
+        EDGES[usize::try_from(rng.below(EDGES.len() as u64)).unwrap_or(0)].to_bits()
+    } else {
+        (rng.range(-8000, 8000) as f64 / 8.0).to_bits()
+    }
 }
 
 /// How cases are produced.
@@ -227,6 +458,34 @@ fn gen_param(
         ParamGen::LenOf(i) => {
             let n = made.get(*i).map_or(0, |(_, logical)| *logical);
             (Arg::Int { value: n as u64 }, 0)
+        }
+        ParamGen::Double => (
+            Arg::Double {
+                bits: gen_double(rng),
+            },
+            0,
+        ),
+        ParamGen::FnPtr => {
+            let cb =
+                Callback::ALL[usize::try_from(rng.below(Callback::ALL.len() as u64)).unwrap_or(0)];
+            (Arg::FnPtr { callback: cb }, 0)
+        }
+        ParamGen::Graph(g) => {
+            let mut b = GraphBuild::default();
+            b.object(g, rng, 0);
+            (b.arg(), 0)
+        }
+        ParamGen::Mixed(text) => {
+            let mut b = GraphBuild::default();
+            mixed(text, rng, &mut b, true);
+            (b.arg(), 0)
+        }
+        ParamGen::OneOf(options) => {
+            let pick = usize::try_from(rng.below(options.len().max(1) as u64)).unwrap_or(0);
+            match options.get(pick) {
+                Some(g) => gen_param(g, rng, made, edge),
+                None => (Arg::Int { value: 0 }, 0),
+            }
         }
     }
 }
@@ -408,6 +667,22 @@ pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
             d.push("number of buffers differs".into());
         }
     }
+    if orig.callbacks != native.callbacks {
+        let at = orig
+            .callbacks
+            .iter()
+            .zip(&native.callbacks)
+            .position(|(a, b)| a != b)
+            .unwrap_or(orig.callbacks.len().min(native.callbacks.len()));
+        d.push(format!(
+            "calls to the callback differ from call {at} on: original {:?}, translation {:?} \
+             ({} vs {} calls)",
+            orig.callbacks.get(at),
+            native.callbacks.get(at),
+            orig.callbacks.len(),
+            native.callbacks.len()
+        ));
+    }
     if !orig.global_writes.is_empty() {
         d.push(format!(
             "the original writes {} global location(s), which a translation cannot reproduce",
@@ -420,8 +695,9 @@ pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
 fn input_size(args: &[Arg]) -> usize {
     args.iter()
         .map(|a| match a {
-            Arg::Int { .. } => 1,
+            Arg::Int { .. } | Arg::Double { .. } | Arg::FnPtr { .. } => 1,
             Arg::Buf { data } => data.len(),
+            Arg::Graph { objects, .. } => objects.iter().map(Vec::len).sum(),
         })
         .sum()
 }
@@ -563,7 +839,10 @@ fn check_shapes(sig: &Signature, spec: &InputSpec) -> Result<(), RewriteError> {
             && case.iter().zip(&sig.params).all(|(a, p)| {
                 matches!(
                     (a, p),
-                    (Arg::Int { .. }, Param::Int { .. }) | (Arg::Buf { .. }, Param::Buf)
+                    (Arg::Int { .. }, Param::Int { .. })
+                        | (Arg::Buf { .. } | Arg::Graph { .. }, Param::Buf)
+                        | (Arg::Double { .. }, Param::Double)
+                        | (Arg::FnPtr { .. }, Param::FnPtr)
                 )
             });
         if !ok {

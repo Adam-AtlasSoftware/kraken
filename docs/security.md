@@ -40,7 +40,7 @@ The rewrite commands (`rewrite_function`, `rewrite_export`) build and run Rust t
 
 ## What is not
 
-- **KRAKEN runs the binary natively only in `rewrite_program`**, confined as described above and never without your approval when an agent asks. A confined process shares the kernel, so for malware run the analysis in a VM. Everything else emulates single functions of it. If you run it yourself, that is up to you (use a VM).
+- **KRAKEN runs the binary natively only in `rewrite_program`**, confined as described above and never without your approval when an agent asks, and the GUI asks before its Run button does it. A confined process shares the kernel, so for malware run the analysis in a VM. Everything else emulates single functions of it. If you run it yourself, that is up to you (use a VM).
 - **Confinement exists only on Linux** in 0.1a. macOS and Windows are not supported yet.
 - **A partly enforced Landlock ruleset is accepted** on older kernels. Network and filesystem limits may then be weaker.
 - **Prompt injection cannot be ruled out.** The measures reduce the risk.

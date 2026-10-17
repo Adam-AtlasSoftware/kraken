@@ -166,6 +166,7 @@ pub fn c_prototype(sig: &Signature) -> String {
         Ret::Void => "void".to_string(),
         Ret::Int { bits, signed } => c_type(bits, signed),
         Ret::Ptr => "const void *".to_string(),
+        Ret::Double => "double".to_string(),
     };
     let params = if sig.params.is_empty() {
         "void".to_string()
@@ -175,7 +176,8 @@ pub fn c_prototype(sig: &Signature) -> String {
             .enumerate()
             .map(|(i, p)| match p {
                 Param::Int { bits, signed } => format!("{} a{i}", c_type(*bits, *signed)),
-                Param::Buf => format!("void *a{i}"),
+                Param::Buf | Param::FnPtr => format!("void *a{i}"),
+                Param::Double => format!("double a{i}"),
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -185,8 +187,14 @@ pub fn c_prototype(sig: &Signature) -> String {
 
 /// The shim function for `sig`, calling `path`.
 fn shim_fn(sig: &Signature, path: &str) -> String {
-    let args: Vec<String> = (0..sig.params.len())
-        .map(|i| format!("a{i} as _"))
+    let args: Vec<String> = sig
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| match p {
+            Param::FnPtr => format!("unsafe {{ std::mem::transmute::<usize, _>(a{i}) }}"),
+            _ => format!("a{i} as _"),
+        })
         .collect();
     let call = format!("{path}({})", args.join(", "));
     let body = match sig.ret {
@@ -196,6 +204,7 @@ fn shim_fn(sig: &Signature, path: &str) -> String {
             crate::abi::int_ty(bits, signed)
         ),
         Ret::Ptr => format!("(unsafe {{ {call} }}) as *const u8"),
+        Ret::Double => format!("unsafe {{ {call} }}"),
     };
     format!(
         "#[unsafe(no_mangle)]\n{} {{\n    {body}\n}}\n",
@@ -569,6 +578,17 @@ pub fn cargo_build(
     confinement: &Confinement,
     what: &str,
 ) -> Result<CargoBuild, RewriteError> {
+    cargo_build_with(dir, confinement, what, &[])
+}
+
+/// [`cargo_build`] with extra environment variables for cargo (for example
+/// `CARGO_PROFILE_RELEASE_OPT_LEVEL` to change the release profile).
+pub fn cargo_build_with(
+    dir: &Path,
+    confinement: &Confinement,
+    what: &str,
+    env: &[(&str, &str)],
+) -> Result<CargoBuild, RewriteError> {
     let tc = toolchain()?;
     let run = scratch_dir("kraken-export-")?;
     let ws = run.path().join("ws");
@@ -592,6 +612,7 @@ pub fn cargo_build(
         .env("CARGO_TERM_COLOR", "never")
         .env("CARGO_NET_OFFLINE", "true")
         .env("TMPDIR", run.path());
+    cmd.envs(env.iter().copied());
     let out = run_captured(
         &mut cmd,
         BUILD_TIMEOUT,

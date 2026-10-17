@@ -32,6 +32,8 @@ pub enum Scene {
     AssistantAgent,
     /// The Rewrite tab over the demo's scripted pipeline.
     Rewrite,
+    /// The Rewrite tab's whole-program view: function table, crate, a failing case's diff.
+    RewriteProgram,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,7 +62,7 @@ pub const USAGE: &str =
   --light            start with the light theme
   --screenshot FILE  with --demo or a hidden --open-project: select a function, render, save
                      FILE as a PNG and exit
-  --scene S          what --screenshot shows: main (default), graph, palette, rename, rewrite or welcome
+  --scene S          what --screenshot shows: main (default), graph, palette, rename, rewrite, rewrite-program or welcome
   -h, --help         show this text";
 
 #[derive(Debug)]
@@ -119,9 +121,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     Some("autoname") => Scene::AutoName,
                     Some("assistant-agent") => Scene::AssistantAgent,
                     Some("rewrite") => Scene::Rewrite,
+                    Some("rewrite-program") => Scene::RewriteProgram,
                     other => {
                         return Err(format!(
-                            "--scene needs main, graph, palette, rename or welcome, got {}",
+                            "--scene needs main, graph, palette, rename, welcome, rewrite or rewrite-program, got {}",
                             other.unwrap_or("nothing")
                         ));
                     }

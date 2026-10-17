@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
-use crate::context::{ApprovalDecision, ApprovalRequest, CallContext};
+use crate::context::{ApprovalDecision, ApprovalRequest, CallContext, Surface};
 use crate::session::Session;
 
 use super::JobStarted;
@@ -26,6 +26,15 @@ pub const DEFAULT_PROGRAM_DIR: &str = "rewrite-program";
 pub const MAX_USER_CASES: usize = 64;
 /// Most generated program cases.
 pub const MAX_GENERATED_CASES: u32 = 200;
+/// Program-level repair rounds when the call names none.
+pub const DEFAULT_REPAIR_ROUNDS: u32 = 2;
+/// Most program-level repair rounds a call may ask for.
+pub const MAX_REPAIR_ROUNDS: u32 = 4;
+
+/// What the approval question for running the original program says.
+pub const RUN_ORIGINAL_SUMMARY: &str = "run the original program natively on test inputs, inside \
+the sandbox (read-only file system, no network, no fork, resource limits), to compare it with \
+the Rust rewrite";
 
 // ---- rewrite_program -------------------------------------------------------------------------
 
@@ -93,6 +102,13 @@ pub struct RewriteProgramArgs {
     /// only written.
     #[serde(default)]
     pub build: Option<bool>,
+    /// How many times a failed program verdict is fed back for repair (default 2, at most 4; 0
+    /// turns it off). Each round finds the functions most likely responsible for the first
+    /// differing case (see the command description), asks the provider to fix them with that
+    /// case as evidence, then rebuilds and runs every case again. A round that changes nothing
+    /// ends the repair.
+    #[serde(default)]
+    pub repair_rounds: Option<u32>,
 }
 
 /// One function of a program rewrite.
@@ -130,6 +146,40 @@ pub struct ProgramFunctionRow {
     /// True when the function is part of the generated crate (reachable from the entry through
     /// the chosen translations).
     pub included: bool,
+}
+
+/// One function a program-level repair round asked the provider to fix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProgramRepairView {
+    /// Round, from 1.
+    pub round: u32,
+    /// Entry address of the function.
+    pub address: Hex64,
+    /// Its name (binary-derived).
+    pub name: Untrusted<String>,
+    /// The case whose difference was fed back.
+    pub case: String,
+    /// What the rewritten program was doing at the first differing output (`writing byte 12 of
+    /// its standard output`), empty when it could not be traced.
+    #[serde(default)]
+    pub at: String,
+    /// The translated functions on the rewritten program's call stack there, innermost first
+    /// (Rust symbols).
+    #[serde(default)]
+    pub stack: Vec<String>,
+    /// Why this function was suspected (binary-derived names inside).
+    pub why: Untrusted<String>,
+    /// `replaced` (the new translation passed its own checks and was used), `kept` (it did not,
+    /// the earlier translation stays) or `no_reply` (the provider's reply could not be used).
+    pub outcome: String,
+    /// Version of the unit before the round.
+    pub version_before: u32,
+    /// Version used after the round (the same when `kept` or `no_reply`).
+    pub version_after: u32,
+    /// The program verdict after the round: `pass`, `fail`, `incomplete`, or empty when nothing
+    /// was rebuilt because no function changed.
+    #[serde(default)]
+    pub verdict_after: String,
 }
 
 /// How a program ended on one input.
@@ -234,8 +284,11 @@ pub struct RewriteProgramResult {
     /// When the run finished (seconds since the Unix epoch).
     #[serde(default)]
     pub created: u64,
-    /// The program-level verdict.
+    /// The program-level verdict (after the repair rounds, if there were any).
     pub verdict: ProgramVerdictView,
+    /// The program-level repair rounds, oldest first (empty when the first verdict was final).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<ProgramRepairView>,
 }
 
 /// Rewrites a whole program.
@@ -271,7 +324,15 @@ impl Command for RewriteProgram {
              the inputs tried. The original binary runs natively, confined, so this command \
              refuses to run on hosts that cannot confine (Linux with Landlock today), and a call \
              made for a person (an agent, MCP) asks for approval first, because it executes the \
-             binary under analysis. It sends decompiled code to the provider. It adds artifacts \
+             binary under analysis. When the program verdict is `fail`, up to `repair_rounds` rounds \
+             of program-level repair follow: the rewritten program is run again on the first \
+             differing case with a trace that prints its call stack where the first differing \
+             output byte is written; the functions on that stack, then their callees, \
+             unverified ones before those that passed their own test against the original, are \
+             the suspects; the first two are re-translated with the case, both outputs and the \
+             stack as evidence (the provider sees program output); a translation that fails its \
+             own function-level check is not used; the crate is rebuilt and every case runs \
+             again. The rounds are in `repairs`. It sends decompiled code to the provider. It adds artifacts \
              only; `accept_verified` (users only) additionally accepts the functions that passed \
              their own test.",
         )
@@ -294,6 +355,11 @@ impl Command for RewriteProgram {
         }
         if args.cases.is_some_and(|c| c > 2000) {
             return Err(invalid("`cases` is at most 2000"));
+        }
+        if args.repair_rounds.is_some_and(|r| r > MAX_REPAIR_ROUNDS) {
+            return Err(invalid(&format!(
+                "`repair_rounds` is at most {MAX_REPAIR_ROUNDS}"
+            )));
         }
         if args.max_attempts.is_some_and(|a| !(1..=8).contains(&a)) {
             return Err(invalid("`max_attempts` is between 1 and 8"));
@@ -354,17 +420,16 @@ impl Command for RewriteProgram {
             }
         }
         // The program-level test runs the original natively (confined, no network). Whoever acts
-        // on a person's behalf needs that person's approval for it, as for any dangerous step.
-        if args.build.unwrap_or(true) && ctx.needs_user_approval() {
+        // on a person's behalf needs that person's approval for it, as for any dangerous step,
+        // and so does the GUI's Run button (its dialog is the approval flow every dangerous
+        // command uses). A person typing the command at the CLI is the approval.
+        if args.build.unwrap_or(true) && (ctx.needs_user_approval() || ctx.surface == Surface::Gui)
+        {
             let decision = ctx
                 .approval
                 .request(ApprovalRequest {
                     command: "rewrite_program".into(),
-                    summary:
-                        "run the original program natively on test inputs, inside the sandbox \
-                              (read-only file system, no network, no fork, resource limits), to \
-                              compare it with the Rust rewrite"
-                            .into(),
+                    summary: RUN_ORIGINAL_SUMMARY.into(),
                     args: serde_json::json!({ "run_original": true }),
                     author: ctx.author.clone(),
                     surface: ctx.surface,

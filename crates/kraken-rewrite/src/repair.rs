@@ -53,6 +53,11 @@ pub struct RepairRound {
     pub feedback: Feedback,
 }
 
+/// `text` cut to `max` bytes at a character boundary, with a note of what was cut.
+pub fn cut_text(text: &str, max: usize) -> String {
+    cut(text, max)
+}
+
 fn cut(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_string();
@@ -79,6 +84,23 @@ pub fn describe_counterexample(c: &Counterexample) -> String {
                 let shown: String = data.iter().take(64).map(|b| format!("{b:02x}")).collect();
                 let more = if data.len() > 64 { "..." } else { "" };
                 format!("buffer of {} bytes {shown}{more}", data.len())
+            }
+            Arg::Double { bits } => format!("{} (bits {bits:#x})", f64::from_bits(*bits)),
+            Arg::FnPtr { callback } => format!("the host callback {callback:?}"),
+            Arg::Graph { objects, links } => {
+                let mut s = String::from("pointer graph:");
+                for (i, o) in objects.iter().enumerate() {
+                    let shown: String = o.iter().take(48).map(|b| format!("{b:02x}")).collect();
+                    let more = if o.len() > 48 { "..." } else { "" };
+                    s.push_str(&format!("\n  object {i}: {} bytes {shown}{more}", o.len()));
+                }
+                for l in links {
+                    s.push_str(&format!(
+                        "\n  object {} offset {} points to object {} offset {}",
+                        l.from, l.offset, l.to, l.to_offset
+                    ));
+                }
+                s
             }
         })
         .collect();

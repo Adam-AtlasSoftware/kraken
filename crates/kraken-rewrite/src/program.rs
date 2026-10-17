@@ -166,12 +166,16 @@ fn main_source(entry: &RewriteUnit, modules: &[String]) -> String {
             (Param::Buf, 1) => "argv.as_ptr() as _".to_string(),
             (Param::Buf, 2) => "envp.as_ptr() as _".to_string(),
             (Param::Buf, _) => "std::ptr::null_mut::<u8>() as _".to_string(),
+            (Param::Double, _) => "0.0".to_string(),
+            (Param::FnPtr, _) => "unsafe { std::mem::transmute::<usize, _>(0usize) }".to_string(),
         })
         .collect();
     let call = format!("{}::{}({})", module_of(entry), sig.name, args.join(", "));
     let finish = match sig.ret {
         Ret::Int { .. } => format!("let code = unsafe {{ {call} }} as i32;"),
-        Ret::Void | Ret::Ptr => format!("unsafe {{ {call} }};\n    let code = 0;"),
+        Ret::Void | Ret::Ptr | Ret::Double => {
+            format!("unsafe {{ {call} }};\n    let code = 0;")
+        }
     };
     let mods: String = modules.iter().map(|m| format!("mod {m};\n")).collect();
     format!(
@@ -200,6 +204,11 @@ fn c_string(mut bytes: Vec<u8>) -> *const u8 {{
 }}
 
 fn main() {{
+    // Debugging aid of KRAKEN's program-level repair: `KRAKEN_TRACE_AT=out:<byte>` (or `err:`,
+    // `exit`) prints the call stack at that point to stderr. Unset, it does nothing.
+    if let Some(spec) = std::env::var_os("KRAKEN_TRACE_AT") {{
+        rt::trace_arm(&spec.to_string_lossy());
+    }}
     let mut argv: Vec<*const u8> = std::env::args_os()
         .map(|a| c_string(os_bytes(&a)))
         .collect();
@@ -320,7 +329,7 @@ pub fn assemble(
                 "two functions of the program are called `{sym}` in Rust; rename one of them"
             )));
         }
-        let uses = reuse::export_uses(u, &|a| by_address.get(&a).cloned())?;
+        let uses = reuse::program_uses(u, &|a| by_address.get(&a).cloned())?;
         files.push((format!("src/{}.rs", module_of(u)), module_source(u, &uses)?));
         modules.push(module_of(u));
         functions.push(ManifestFunction {

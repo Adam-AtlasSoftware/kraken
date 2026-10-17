@@ -5062,7 +5062,7 @@ kraken rewrite-program [options]
 - Kind: job
 - Permission: mutating
 
-Plans the program bottom-up (callees first, recursive groups together), translates every non-library function the entry point reaches by direct calls with the configured provider (reusing callees that are already translated, repairing failures as `rewrite_function` does), then writes a standalone Rust binary crate: one module per function, a small runtime shim (`rt`) that maps the libc calls the corpus programs use (printf, puts, strlen, malloc, free, exit, ...) to Rust `std`, and a `main` that calls the translated entry point. The crate is built in the sandbox and the original and the rewritten program are run on the same inputs (a baseline run, cases derived from the program's source when it is a corpus program, generated and given cases), both inside the sandbox with no network. Exit status, stdout and stderr are compared; the result is a `ProgramVerdict` with the per-case differences, stored in `rewrite.sqlite` and readable with `rewrite_program_status`. A function-level verdict is evidence about one function; only the program verdict says the whole program behaves the same on the inputs tried. The original binary runs natively, confined, so this command refuses to run on hosts that cannot confine (Linux with Landlock today), and a call made for a person (an agent, MCP) asks for approval first, because it executes the binary under analysis. It sends decompiled code to the provider. It adds artifacts only; `accept_verified` (users only) additionally accepts the functions that passed their own test.
+Plans the program bottom-up (callees first, recursive groups together), translates every non-library function the entry point reaches by direct calls with the configured provider (reusing callees that are already translated, repairing failures as `rewrite_function` does), then writes a standalone Rust binary crate: one module per function, a small runtime shim (`rt`) that maps the libc calls the corpus programs use (printf, puts, strlen, malloc, free, exit, ...) to Rust `std`, and a `main` that calls the translated entry point. The crate is built in the sandbox and the original and the rewritten program are run on the same inputs (a baseline run, cases derived from the program's source when it is a corpus program, generated and given cases), both inside the sandbox with no network. Exit status, stdout and stderr are compared; the result is a `ProgramVerdict` with the per-case differences, stored in `rewrite.sqlite` and readable with `rewrite_program_status`. A function-level verdict is evidence about one function; only the program verdict says the whole program behaves the same on the inputs tried. The original binary runs natively, confined, so this command refuses to run on hosts that cannot confine (Linux with Landlock today), and a call made for a person (an agent, MCP) asks for approval first, because it executes the binary under analysis. When the program verdict is `fail`, up to `repair_rounds` rounds of program-level repair follow: the rewritten program is run again on the first differing case with a trace that prints its call stack where the first differing output byte is written; the functions on that stack, then their callees, unverified ones before those that passed their own test against the original, are the suspects; the first two are re-translated with the case, both outputs and the stack as evidence (the provider sees program output); a translation that fails its own function-level check is not used; the crate is rebuilt and every case runs again. The rounds are in `repairs`. It sends decompiled code to the provider. It adds artifacts only; `accept_verified` (users only) additionally accepts the functions that passed their own test.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -5075,6 +5075,7 @@ Plans the program bottom-up (callees first, recursive groups together), translat
 | `inputs` | `--inputs` | json | no | Extra program-level cases (at most 64). |
 | `max_attempts` | `--max-attempts` | integer | no | Most translation attempts per function (default 3, 1 to 8). |
 | `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates decompiles. `spec` is not available for programs yet. |
+| `repair_rounds` | `--repair-rounds` | integer | no | How many times a failed program verdict is fed back for repair (default 2, at most 4; 0 turns it off). Each round finds the functions most likely responsible for the first differing case (see the command description), asks the provider to fix them with that case as evidence, then rebuilds and runs every case again. A round that changes nothing ends the repair. |
 | `scope` | `--scope` | one of `function`, `all` | no | `all` (the only scope today): every non-library function the entry point reaches. |
 | `seed` | `--seed` | integer | no | Seed of the random function-level and program-level cases (default fixed). |
 | `verify_functions` | `--verify-functions` | boolean | no | Run the function-level differential test (emulation oracle, needs the SLEIGH specs of a Ghidra install). Default true. With false, functions are only compiled; the program-level test is then the only evidence. |
@@ -5266,6 +5267,78 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
         "check",
         "attempts",
         "included"
+      ],
+      "type": "object"
+    },
+    "ProgramRepairView": {
+      "description": "One function a program-level repair round asked the provider to fix.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Entry address of the function."
+        },
+        "at": {
+          "default": "",
+          "description": "What the rewritten program was doing at the first differing output (`writing byte 12 of\nits standard output`), empty when it could not be traced.",
+          "type": "string"
+        },
+        "case": {
+          "description": "The case whose difference was fed back.",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Its name (binary-derived)."
+        },
+        "outcome": {
+          "description": "`replaced` (the new translation passed its own checks and was used), `kept` (it did not,\nthe earlier translation stays) or `no_reply` (the provider's reply could not be used).",
+          "type": "string"
+        },
+        "round": {
+          "description": "Round, from 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stack": {
+          "default": [],
+          "description": "The translated functions on the rewritten program's call stack there, innermost first\n(Rust symbols).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "verdict_after": {
+          "default": "",
+          "description": "The program verdict after the round: `pass`, `fail`, `incomplete`, or empty when nothing\nwas rebuilt because no function changed.",
+          "type": "string"
+        },
+        "version_after": {
+          "description": "Version used after the round (the same when `kept` or `no_reply`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version_before": {
+          "description": "Version of the unit before the round.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "why": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Why this function was suspected (binary-derived names inside)."
+        }
+      },
+      "required": [
+        "round",
+        "address",
+        "name",
+        "case",
+        "why",
+        "outcome",
+        "version_before",
+        "version_after"
       ],
       "type": "object"
     },
@@ -5485,6 +5558,13 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
           "description": "Provider id of the model calls.",
           "type": "string"
         },
+        "repairs": {
+          "description": "The program-level repair rounds, oldest first (empty when the first verdict was final).",
+          "items": {
+            "$ref": "#/$defs/ProgramRepairView"
+          },
+          "type": "array"
+        },
         "reused_from_store": {
           "description": "Functions taken from accepted units of earlier runs.",
           "format": "uint32",
@@ -5512,7 +5592,7 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
         },
         "verdict": {
           "$ref": "#/$defs/ProgramVerdictView",
-          "description": "The program-level verdict."
+          "description": "The program-level verdict (after the repair rounds, if there were any)."
         }
       },
       "required": [

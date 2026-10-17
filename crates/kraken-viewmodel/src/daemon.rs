@@ -343,8 +343,22 @@ impl Inner {
     }
 
     async fn approved(&self, command: &str, args: &Value) -> Result<bool, ProtoError> {
-        let Some((Permission::Dangerous, summary)) = self.permission(command) else {
-            return Ok(false);
+        // `rewrite_program` runs the original binary natively (confined) unless it is only
+        // asked to write the crate: it is not `dangerous` for the CLI, whose user typed it, but
+        // the GUI asks first like it does for a dangerous command.
+        let runs_original = command == "rewrite_program"
+            && args.get("build").and_then(Value::as_bool).unwrap_or(true);
+        let summary = if runs_original {
+            let mut s = kraken_registry::commands::RUN_ORIGINAL_SUMMARY.to_string();
+            if let Some(first) = s.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            s
+        } else {
+            match self.permission(command) {
+                Some((Permission::Dangerous, summary)) => summary,
+                _ => return Ok(false),
+            }
         };
         let approver = lock(&self.approver).clone();
         let allowed = match approver {

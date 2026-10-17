@@ -715,3 +715,304 @@ fn a_new_project_clears_the_tab() {
     r.idle();
     assert!(r.vm.rewrite.rows.is_empty() && !r.vm.rewrite.loaded);
 }
+
+// ---------------------------------------------------------------- the Program view
+
+fn side(exit: &str, out: &str, err: &str) -> Value {
+    json!({"exit": exit, "stdout": u(out), "stdout_bytes": out.len(),
+           "stderr": u(err), "stderr_bytes": err.len()})
+}
+
+fn case_json(name: &str, agree: bool) -> Value {
+    json!({"name": name, "origin": "baseline", "argv": [u("-v"), u("a b")], "stdin_bytes": 12,
+           "agree": agree,
+           "original": side("exit 0", "one\ntwo\nthree\n", ""),
+           "rewritten": if agree { side("exit 0", "one\ntwo\nthree\n", "") }
+                        else { side("exit 3", "one\n2\nthree\n", "oops\n") },
+           "differences": if agree { json!([]) } else {
+               json!([u("exit status: original exit 0, rewritten exit 3"),
+                      u("stdout: first difference at byte 4")]) }})
+}
+
+fn program_run_json(run: u64, fail: bool) -> Value {
+    let f = |order: u32, addr: u64, name: &str, check: &str, verdict: &str, included: bool| {
+        json!({"order": order, "address": format!("{addr:#x}"), "name": u(name),
+               "unit": format!("ru-{order}"), "version": 1,
+               "status": if verdict == "pass" { "verified" } else { "translated" },
+               "verdict": verdict, "check": check, "attempts": 1,
+               "reused_callees": if order == 1 { json!(["xor_len"]) } else { json!([]) },
+               "included": included,
+               "check_note": if verdict == "pass" { Value::Null } else { u("pointer result") }})
+    };
+    json!({
+        "run": run, "program_sha256": "00", "entry": "0x401500", "entry_name": u("main"),
+        "functions_planned": 3, "skipped": 0, "translated": 3, "reused_from_store": 0,
+        "failed": 0, "included": 3,
+        "functions": [
+            f(0, 0x401440, "xor_len", "differential", "pass", true),
+            f(1, 0x401240, "checksum", "compile_only", "inconclusive", true),
+            f(2, 0x401500, "main", "differential", "pass", true),
+        ],
+        "crate_dir": "/work/proj/rewrite-program", "built": true, "crate_sha256": "ab12",
+        "provider": "demo", "model": "scripted", "created": 1_760_000_000u64,
+        "verdict": {
+            "verdict": if fail { "fail" } else { "pass" }, "cases_run": 3,
+            "passed": if fail { 2 } else { 3 }, "failed": if fail { 1 } else { 0 },
+            "cases": if fail { vec![case_json("baseline", false)] } else { vec![] },
+            "sandbox": "landlock-v6+netns",
+        },
+        "repairs": if fail { json!([]) } else { json!([{
+            "round": 1, "address": "0x401240", "name": u("checksum"), "case": "baseline",
+            "at": "writing byte 4 of its standard output", "stack": ["checksum", "main"],
+            "why": u("it was running when the first differing output was produced"),
+            "outcome": "replaced", "version_before": 1, "version_after": 2,
+            "verdict_after": "pass"}]) },
+    })
+}
+
+fn status_out(runs: &[(u64, &str)], shown: Option<Value>) -> Value {
+    json!({"program_sha256": "00", "present": !runs.is_empty(),
+           "runs": runs.iter().map(|(n, v)| json!({
+               "run": n, "created": 1_760_000_000u64, "entry": "0x401500", "verdict": v,
+               "cases_run": 3, "passed": 2, "crate_dir": "/work/proj/rewrite-program"}))
+               .collect::<Vec<_>>(),
+           "run": shown})
+}
+
+#[test]
+fn the_program_view_lists_runs_the_function_table_and_the_failing_case() {
+    let b = base().on("rewrite_program_status", |args| {
+        assert_eq!(args["all_cases"], false);
+        Ok(status_out(
+            &[(2, "fail"), (1, "pass")],
+            Some(program_run_json(2, true)),
+        ))
+    });
+    let mut r = opened(b);
+    r.vm.rewrite_program_ensure_loaded();
+    assert!(r.vm.rewrite.program.loading);
+    r.idle();
+    let p = &r.vm.rewrite.program;
+    assert!(p.loaded && !p.loading && p.error.is_none());
+    assert_eq!(p.runs.len(), 2);
+    assert_eq!(p.runs[0].run, 2);
+    let d = p.detail.as_ref().expect("detail");
+    assert_eq!(d.entry_name, "main");
+    assert_eq!(d.crate_dir, "/work/proj/rewrite-program");
+    assert!(d.built);
+    let names: Vec<&str> = d.functions.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["xor_len", "checksum", "main"]);
+    assert_eq!(d.functions[1].check_label(), "compiled only");
+    assert_eq!(d.functions[1].reused, ["xor_len"]);
+    assert_eq!(d.functions[2].check_label(), "compared with the original");
+    assert!(d.functions[1].unverified() && !d.functions[0].unverified());
+    assert_eq!(d.unverified(), 1);
+    // The failing case is on show at once.
+    assert_eq!(p.selected_case, Some(0));
+    let c = p.case().expect("case");
+    assert!(!c.agree);
+    assert_eq!(c.command_line(), "prog -v \"a b\"  < 12 bytes of input");
+    assert!(!c.exit_agrees());
+    assert_eq!(c.rewritten.exit, "exit 3");
+    assert_eq!(
+        verdict_line(&d.verdict),
+        "The rewritten program differs from the original on 1 of 3 cases."
+    );
+    // Run again with the same list, once: ensure_loaded does not call twice.
+    r.vm.rewrite_program_ensure_loaded();
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_program_status").len(), 1);
+}
+
+#[test]
+fn another_run_and_the_agreeing_cases_are_asked_for_by_number_and_flag() {
+    let b = base().on("rewrite_program_status", |args| {
+        let run = args.get("run").and_then(Value::as_u64).unwrap_or(2);
+        Ok(status_out(
+            &[(2, "pass"), (1, "fail")],
+            Some(program_run_json(run, run == 1)),
+        ))
+    });
+    let mut r = opened(b);
+    r.vm.rewrite_program_refresh(None);
+    r.idle();
+    assert_eq!(r.vm.rewrite.program.detail.as_ref().map(|d| d.run), Some(2));
+    // A passing run has no differing case and shows its repair round.
+    let d = r.vm.rewrite.program.detail.clone().expect("detail");
+    assert!(d.verdict.cases.is_empty());
+    assert_eq!(r.vm.rewrite.program.selected_case, None);
+    let rep = &d.repairs[0];
+    assert_eq!(rep.name, "checksum");
+    assert_eq!(rep.stack, ["checksum", "main"]);
+    assert_eq!(rep.versions, (1, 2));
+    assert_eq!(rep.verdict_after, "pass");
+    assert!(rep.outcome_text().contains("replaced the old one"));
+    r.vm.rewrite_program_show_run(1);
+    r.idle();
+    assert_eq!(r.vm.rewrite.program.detail.as_ref().map(|d| d.run), Some(1));
+    assert_eq!(
+        r.vm.rewrite
+            .program
+            .detail
+            .as_ref()
+            .map(|d| d.verdict.failed),
+        Some(1)
+    );
+    r.vm.rewrite_program_set_all_cases(true);
+    r.idle();
+    let calls = r.backend.calls_to("rewrite_program_status");
+    assert_eq!(calls.last().expect("call")["all_cases"], true);
+    assert_eq!(
+        calls.last().expect("call")["run"],
+        1,
+        "the same run is read again"
+    );
+}
+
+#[test]
+fn the_run_button_starts_a_job_with_the_repair_rounds_and_reads_the_result() {
+    let b = base()
+        .reply("rewrite_program", json!({"job_id": "job-p"}))
+        .on("rewrite_program_status", |args| {
+            let run = args.get("run").and_then(Value::as_u64).unwrap_or(1);
+            Ok(status_out(
+                &[(run, "pass")],
+                Some(program_run_json(run, false)),
+            ))
+        });
+    let mut r = opened(b);
+    r.vm.rewrite_program_set_rounds(9);
+    assert_eq!(r.vm.rewrite.program.repair_rounds, MAX_REPAIR_ROUNDS);
+    r.vm.rewrite_program_set_rounds(1);
+    r.vm.rewrite_program_run();
+    // A second click while it runs does nothing.
+    r.vm.rewrite_program_run();
+    assert!(r.vm.rewrite_program_running());
+    r.idle();
+    let started = r.backend.calls_to("rewrite_program");
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0]["scope"], "all");
+    assert_eq!(started[0]["repair_rounds"], 1);
+    assert_eq!(r.vm.rewrite.jobs[0].kind, JobKind::Program);
+    r.backend
+        .emit(done("job-p", "rewrite_program", program_run_json(3, false)));
+    r.until("the result", |vm| !vm.rewrite_program_running());
+    r.idle();
+    let outcome = r.vm.rewrite.jobs[0].outcome.clone().expect("outcome");
+    assert!(
+        outcome.starts_with("Run 3: 3 of 3 functions are in the crate."),
+        "{outcome}"
+    );
+    assert!(
+        outcome.contains("matches the original on 3 cases"),
+        "{outcome}"
+    );
+    assert!(
+        outcome.contains("1 function was translated again"),
+        "{outcome}"
+    );
+    // The new run was read back.
+    let calls = r.backend.calls_to("rewrite_program_status");
+    assert_eq!(calls.last().expect("call")["run"], 3);
+    assert_eq!(r.vm.rewrite.program.detail.as_ref().map(|d| d.run), Some(3));
+}
+
+#[test]
+fn a_run_the_person_does_not_allow_is_not_an_error() {
+    let b = base().on("rewrite_program", |_| {
+        Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            "approval denied: `rewrite_program` was not approved",
+        )
+        .with_details(json!({"approval": "denied"})))
+    });
+    let mut r = opened(b);
+    r.vm.rewrite_program_run();
+    r.idle();
+    let st = &r.vm.rewrite;
+    assert!(!r.vm.rewrite_program_running());
+    assert_eq!(st.jobs[0].state, JobState::Cancelled);
+    assert!(
+        st.program
+            .declined
+            .as_deref()
+            .is_some_and(|d| d.starts_with("Not run."))
+    );
+    assert!(st.program.error.is_none());
+    assert!(st.can_run(), "a refusal does not switch the tab off");
+    assert!(
+        !r.vm.toasts.iter().any(|t| t.level == ToastLevel::Error),
+        "{:?}",
+        r.vm.toasts
+    );
+    // Asking again clears the note.
+    r.vm.rewrite_program_run();
+    assert!(r.vm.rewrite.program.declined.is_none());
+}
+
+#[test]
+fn a_failed_run_says_why_and_a_missing_pipeline_is_reported_once() {
+    let b = base()
+        .reply("rewrite_program", json!({"job_id": "job-f"}))
+        .fail(
+            "rewrite_program_status",
+            ErrorCode::Unsupported,
+            "no pipeline here",
+        );
+    let mut r = opened(b);
+    r.vm.rewrite.availability = Availability::Unknown;
+    r.vm.rewrite_program_refresh(None);
+    r.idle();
+    assert!(matches!(
+        r.vm.rewrite.availability,
+        Availability::NotAttached(_)
+    ));
+    r.vm.rewrite.availability = Availability::Unknown;
+    r.vm.rewrite_program_run();
+    r.idle();
+    r.backend.emit(BackendEvent::Job(JobInfo {
+        error: Some(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "the binary changed",
+        )),
+        ..job("job-f", "rewrite_program", JobState::Failed)
+    }));
+    r.until("the failure", |vm| !vm.rewrite_program_running());
+    assert!(r.vm.rewrite.program.error.is_some());
+    assert_eq!(r.vm.rewrite.jobs[0].state, JobState::Failed);
+}
+
+#[test]
+fn the_line_diff_pairs_equal_lines_and_groups_the_rest() {
+    let d = line_diff("a\nb\nc\n", "a\nB\nc\n");
+    let shape: Vec<(DiffKind, &str)> = d.iter().map(|l| (l.kind, l.text.as_str())).collect();
+    assert_eq!(
+        shape,
+        [
+            (DiffKind::Same, "a"),
+            (DiffKind::Original, "b"),
+            (DiffKind::Rewritten, "B"),
+            (DiffKind::Same, "c"),
+        ]
+    );
+    assert!(
+        line_diff("same\n", "same\n")
+            .iter()
+            .all(|l| l.kind == DiffKind::Same)
+    );
+    // Missing and extra lines at either end.
+    let d = line_diff("x\ny\n", "y\nz\n");
+    let shape: Vec<(DiffKind, &str)> = d.iter().map(|l| (l.kind, l.text.as_str())).collect();
+    assert_eq!(
+        shape,
+        [
+            (DiffKind::Original, "x"),
+            (DiffKind::Same, "y"),
+            (DiffKind::Rewritten, "z"),
+        ]
+    );
+    assert!(line_diff("", "").is_empty());
+    // A long text is cut, not slow.
+    let long: String = (0..2000).map(|i| format!("{i}\n")).collect();
+    assert!(line_diff(&long, &long).len() <= 400);
+}
