@@ -188,6 +188,17 @@ pub struct PaletteState {
     items: Vec<PaletteItem>,
 }
 
+/// `rewrite_plan` as `Rewrite plan`: registry command names are developer-facing, so rows made
+/// from commands read like the curated actions beside them. The raw name still matches queries.
+pub fn humanize_command(name: &str) -> String {
+    let spaced = name.replace(['_', '-'], " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 impl PaletteState {
     /// Builds the rows for `commands` and opens the palette with an empty query.
     pub fn open_with(&mut self, commands: &[CommandInfo]) {
@@ -206,7 +217,7 @@ impl PaletteState {
                 .iter()
                 .filter(|c| AppAction::for_command(&c.name).is_none())
                 .map(|c| PaletteItem {
-                    title: c.name.clone(),
+                    title: humanize_command(&c.name),
                     subtitle: c.summary.clone(),
                     shortcut: None,
                     target: PaletteTarget::Command(c.name.clone()),
@@ -242,7 +253,11 @@ impl PaletteState {
             .iter()
             .enumerate()
             .filter_map(|(i, it)| {
-                let t = fuzzy::score(&self.query, &it.title);
+                let raw = match &it.target {
+                    PaletteTarget::Command(name) => fuzzy::score(&self.query, name),
+                    PaletteTarget::Action(_) => None,
+                };
+                let t = fuzzy::score(&self.query, &it.title).max(raw);
                 let s = fuzzy::score(&self.query, &it.subtitle).map(|s| s / 4 - 20);
                 let bonus = i32::from(matches!(it.target, PaletteTarget::Action(_))) * 20;
                 t.into_iter().chain(s).max().map(|sc| (sc + bonus, i, it))
@@ -297,10 +312,22 @@ mod tests {
         let p = open();
         let all = p.visible();
         assert_eq!(all.len(), AppAction::ALL.len() + 2);
-        let analyze = all.iter().filter(|i| i.title == "analyze").count();
+        let analyze = all.iter().filter(|i| i.title == "Analyze").count();
         assert_eq!(analyze, 0, "analyze is covered by the Analyze action");
-        assert!(all.iter().any(|i| i.title == "rebuild" && i.mutating));
-        assert!(all.iter().any(|i| i.title == "decompile" && !i.mutating));
+        assert!(all.iter().any(|i| i.title == "Rebuild" && i.mutating));
+        assert!(all.iter().any(|i| i.title == "Decompile" && !i.mutating));
+    }
+
+    #[test]
+    fn command_rows_read_like_words_and_still_match_the_raw_name() {
+        assert_eq!(humanize_command("rewrite_plan"), "Rewrite plan");
+        assert_eq!(humanize_command("x"), "X");
+        assert_eq!(humanize_command(""), "");
+        let mut p = PaletteState::default();
+        p.open_with(&[cmd("rewrite_plan", Permission::Safe)]);
+        p.set_query("rewrite_plan");
+        let v = p.visible();
+        assert_eq!(v[0].title, "Rewrite plan");
     }
 
     #[test]

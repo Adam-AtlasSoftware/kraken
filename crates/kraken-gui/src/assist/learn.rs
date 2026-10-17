@@ -10,7 +10,7 @@ use crate::style::{medium, pal};
 pub fn top_bar_buttons(ui: &mut Ui, vm: &mut ViewModel) {
     let on = vm.assist.learn_mode;
     if ui
-        .selectable_label(on, "Learn mode")
+        .selectable_label(on, if on { "Learn mode: on" } else { "Learn mode" })
         .on_hover_text(
             "When on, hover panel tabs, assembly instructions and technical terms for a plain-language explanation.",
         )
