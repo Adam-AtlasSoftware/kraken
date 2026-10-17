@@ -4528,8 +4528,9 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `address` | `--address` | address | yes | Address of the function (or label), as `0x...`. |
-| `new_name` | `--new-name` | string | yes | The new name. Agents: `[A-Za-z_][A-Za-z0-9_:.$@<>~]*`, at most 200 characters. |
+| `new_name` | `--new-name` | string | yes | The new name. Agents: `[A-Za-z_][A-Za-z0-9_:.$@<>~]*`, at most 200 characters. In a .NET assembly the name must be a plain C# identifier. |
 | `expect_versions` | `--expect-versions` | json | no | Entity versions the edit is based on; see `get_function`. |
+| `module` | `--module` | string | no | Module id (MVID) of a .NET entity; `address` is then its metadata token (method, type, field or parameter). Leave out for native code. |
 
 <details>
 <summary>Output schema</summary>
@@ -4742,12 +4743,13 @@ kraken rewrite-function --address <address> [options]
 - Kind: job
 - Permission: mutating
 
-Decompiles the function, asks the configured provider (`[provider]` in config.toml) for a Rust translation behind an explicit `extern "C"` signature, builds it and runs it against the original machine code under emulation on seeded inputs, and stores the result as a new version of the function's rewrite unit in `rewrite.sqlite`. The job result is a `RewriteFunctionResult`; a wrong translation is a `failed` unit with a minimal counterexample, not an error. The generated code is untrusted: it is built and run only inside the sandbox (read-only file system, no network, resource limits), and the command refuses to run at all when the host cannot enforce it (Linux with Landlock today). That is why it is `mutating` and not `dangerous`. It adds artifacts only and never edits the program; accepting a unit is a separate, users-only step (`rewrite_accept`). It sends decompiled code to the provider.
+Decompiles the function, asks the configured provider (`[provider]` in config.toml) for a Rust translation behind an explicit `extern "C"` signature, builds it and runs it against the original machine code under emulation on seeded inputs, and stores the result as a new version of the function's rewrite unit in `rewrite.sqlite`. The job result is a `RewriteFunctionResult`; a wrong translation is a `failed` unit with a minimal counterexample, not an error. The generated code is untrusted: it is built and run only inside the sandbox (read-only file system, no network, resource limits), and the command refuses to run at all when the host cannot enforce it (Linux with Landlock today). That is why it is `mutating` and not `dangerous`. It adds artifacts only and never edits the program; accepting a unit is a separate, users-only step (`rewrite_accept`). It sends decompiled code to the provider. When an attempt does not compile, is refused by the source lint or disagrees with the original, the compiler output or the smallest counterexample is sent back for another attempt, up to `max_attempts` (default 3); every attempt is a stored version. Program callees that already have an accepted, current unit are called as Rust instead of being translated again.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `address` | `--address` | address | yes | The function (any address inside it). |
 | `cases` | `--cases` | integer | no | Random test cases to run (default 200, at most 2000). |
+| `max_attempts` | `--max-attempts` | integer | no | Most translation attempts (default 3, at most 8). After an attempt that does not compile, is refused by the source lint or disagrees with the original, the compiler output or the smallest counterexample goes back to the model for another attempt. Every attempt is stored as a version. 1 turns the repair loop off. |
 | `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates the decompile; `spec` reimplements from the function's spec, writing it first if none is stored. |
 | `seed` | `--seed` | integer | no | Seed of the random test cases (default fixed, so runs are reproducible). |
 
@@ -5100,12 +5102,13 @@ kraken rewrite-status [options]
 - Kind: query
 - Permission: safe
 
-Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); functions with a unit that are not in the plan come last. `status` is one of `planned`, `translated`, `verified`, `failed`, `accepted`.
+Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); functions with a unit that are not in the plan come last. `status` is one of `planned`, `translated`, `verified`, `failed`, `accepted`. `stale` marks a function whose decompile, or a callee's, changed since the version that counts (the accepted one, else the newest) was made; it reflects what earlier commands saw, and `refresh` decompiles the functions that have units first.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `cursor` | `--cursor` | string | no | Cursor from the previous page's `next_cursor`. |
 | `limit` | `--limit` | integer | no | Page size (default 100, at most 200). |
+| `refresh` | `--refresh` | boolean | no | Decompile every function that has a unit (and the callees its versions were made from) first, so `stale` is current. Without it `stale` reflects what earlier commands saw. |
 
 <details>
 <summary>Output schema</summary>
@@ -5279,6 +5282,11 @@ Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); 
             "string",
             "null"
           ]
+        },
+        "stale": {
+          "default": false,
+          "description": "True when the decompile of the function, or of a callee its relevant version was made\nfrom, changed since that version was made. The relevant version is the accepted one, or\nthe newest.",
+          "type": "boolean"
         },
         "status": {
           "$ref": "#/$defs/UnitStatus",
@@ -5555,6 +5563,13 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
           "description": "True when this is the accepted version.",
           "type": "boolean"
         },
+        "attempt": {
+          "default": 0,
+          "description": "Which translation attempt of its run this is, from 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "cases_run": {
           "description": "Cases that ran on both sides.",
           "format": "uint32",
@@ -5600,6 +5615,22 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
           "description": "Provider id.",
           "type": "string"
         },
+        "repair_of": {
+          "description": "The version whose failure this attempt answers, for a repair attempt.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reused_callees": {
+          "description": "Program functions this version calls as already accepted Rust instead of translating\nthem again (their Rust names).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "rust_code": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The generated Rust (model-derived; untrusted)."
@@ -5617,6 +5648,22 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "stale": {
+          "default": false,
+          "description": "True when the function's decompile, or a callee's it was made from, changed since.",
+          "type": "boolean"
+        },
+        "stale_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it is stale (binary-derived)."
         },
         "status": {
           "$ref": "#/$defs/UnitStatus",
@@ -5849,6 +5896,7 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
 | `kind` | `--kind` | one of `plate`, `pre`, `eol`, `post`, `repeatable` | yes | Comment slot: `plate`, `pre`, `eol`, `post` or `repeatable`. |
 | `text` | `--text` | string | yes | Comment text, at most 4096 characters; empty clears the comment. |
 | `expect_versions` | `--expect-versions` | json | no | Entity versions the edit is based on; see `get_function`. |
+| `module` | `--module` | string | no | Module id (MVID) of a .NET method; `address` is then its metadata token. Leave out for native code. |
 
 <details>
 <summary>Output schema</summary>

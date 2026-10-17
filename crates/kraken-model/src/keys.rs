@@ -12,9 +12,14 @@ fn comment_suffix(kind: CommentKind) -> &'static str {
     }
 }
 
-/// Key prefix for an anchor, e.g. `native:ram:0x401000`. Only the address identifies the entity;
-/// the function hash is not part of the key.
+/// Key prefix for an anchor, e.g. `native:ram:0x401000` or `managed:<mvid>:0x6000001`. Only the
+/// address (or module and token) identifies the entity; the function hash is not part of the key.
 pub fn anchor_key(anchor: &Anchor) -> Result<String, ProtoError> {
+    if let Anchor::Managed { token } = anchor
+        && anchor.managed_parts().is_some()
+    {
+        return Ok(format!("managed:{token}"));
+    }
     let (space, offset, _, _) = anchor.native()?;
     Ok(format!("native:{space}:{:#x}", offset.0))
 }

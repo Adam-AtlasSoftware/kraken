@@ -143,6 +143,8 @@ impl RewriteBackend for Mock {
             model: "mock".into(),
             assumptions: vec![],
             unsupported: vec![],
+            attempts: 1,
+            reused_callees: vec![],
         })
     }
 

@@ -42,6 +42,12 @@ pub(crate) async fn anchor_for(
     ctx: &CallContext,
     address: Hex64,
 ) -> Result<Resolved, ProtoError> {
+    if project.meta().engine_kind == crate::session::EngineKind::Dotnet {
+        return Err(kraken_engine::unsupported(
+            "this edit by address for a .NET assembly; renames and comments name a method, type, \
+             field or parameter by its token in `address` plus the `module` id",
+        ));
+    }
     let engine = project.engine();
     let locator = Locator::ram(address.0);
     if let Some(lister) = engine.function_lister() {
@@ -71,6 +77,55 @@ pub(crate) async fn anchor_for(
         },
         function: None,
     })
+}
+
+/// Like [`anchor_for`] for a managed entity: `address` is a metadata token and `module` the
+/// module id. Tokens that are not methods (types, fields, parameters) have no function; the
+/// engine checks them when the edit is pushed.
+pub(crate) async fn managed_anchor_for(
+    project: &Project,
+    ctx: &CallContext,
+    address: Hex64,
+    module: &str,
+) -> Result<Resolved, ProtoError> {
+    let locator = crate::commands::locator_in(address, Some(module))?;
+    let Locator::Managed { token, .. } = &locator else {
+        return Err(ProtoError::new(
+            ErrorCode::Internal,
+            "not a managed locator",
+        ));
+    };
+    let anchor = Anchor::managed(module, *token);
+    let mut function = None;
+    if let Some(lister) = project.engine().function_lister() {
+        match lister.get_function(&locator, &ctx.cancel).await {
+            Ok(f) => function = Some(f),
+            Err(e) if e.code == ErrorCode::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Resolved { anchor, function })
+}
+
+/// A project on the .NET engine takes renames and comments on managed anchors; everything else is
+/// refused before it reaches the log.
+fn check_engine_supports(project: &Project, op: &LogOp) -> Result<(), ProtoError> {
+    if project.meta().engine_kind != crate::session::EngineKind::Dotnet {
+        return Ok(());
+    }
+    let managed = kraken_model::op_anchor(op).managed_parts().is_some();
+    match op {
+        LogOp::Rename { .. } | LogOp::SetComment { .. } if managed => Ok(()),
+        LogOp::Rename { .. } | LogOp::SetComment { .. } => Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "this is a .NET project: name the method by its token with `address` and add \
+             `module` (the module id from `list_functions`)",
+        )),
+        _ => Err(kraken_engine::unsupported(
+            "this edit for .NET assemblies (only renames and comments on methods, types, \
+             fields and parameters are available)",
+        )),
+    }
 }
 
 enum Appended {
@@ -151,6 +206,7 @@ pub(crate) async fn submit_as(
     if project.engine().mutator().is_none() {
         return Err(kraken_engine::unsupported("mutator"));
     }
+    check_engine_supports(&project, &op)?;
     let key = op_key(&op)?;
     let _write = project.write_lock.lock().await;
     let author = ctx.author.clone();

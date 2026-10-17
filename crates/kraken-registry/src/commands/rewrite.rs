@@ -243,6 +243,10 @@ pub struct RewriteStatusArgs {
     /// Page size (default 100, at most 200).
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Decompile every function that has a unit (and the callees its versions were made from)
+    /// first, so `stale` is current. Without it `stale` reflects what earlier commands saw.
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// Units per status.
@@ -301,6 +305,11 @@ pub struct UnitRow {
     pub model: Option<String>,
     /// Why it needs care, from the plan.
     pub flags: Vec<PlanFlag>,
+    /// True when the decompile of the function, or of a callee its relevant version was made
+    /// from, changed since that version was made. The relevant version is the accepted one, or
+    /// the newest.
+    #[serde(default)]
+    pub stale: bool,
 }
 
 /// Result of `rewrite_status`.
@@ -337,7 +346,10 @@ impl Command for RewriteStatus {
         .doc(
             "Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); \
              functions with a unit that are not in the plan come last. `status` is one of \
-             `planned`, `translated`, `verified`, `failed`, `accepted`.",
+             `planned`, `translated`, `verified`, `failed`, `accepted`. `stale` marks a function \
+             whose decompile, or a callee's, changed since the version that counts (the \
+             accepted one, else the newest) was made; it reflects what earlier commands \
+             saw, and `refresh` decompiles the functions that have units first.",
         )
     }
 
@@ -408,6 +420,22 @@ pub struct UnitVersionView {
     pub provider: String,
     /// Model name.
     pub model: String,
+    /// True when the function's decompile, or a callee's it was made from, changed since.
+    #[serde(default)]
+    pub stale: bool,
+    /// Why it is stale (binary-derived).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_reason: Option<Untrusted<String>>,
+    /// Which translation attempt of its run this is, from 1.
+    #[serde(default)]
+    pub attempt: u32,
+    /// The version whose failure this attempt answers, for a repair attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<u32>,
+    /// Program functions this version calls as already accepted Rust instead of translating
+    /// them again (their Rust names).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reused_callees: Vec<String>,
 }
 
 /// The stored spec of a function.
@@ -495,6 +523,12 @@ pub struct RewriteFunctionArgs {
     /// Random test cases to run (default 200, at most 2000).
     #[serde(default)]
     pub cases: Option<u32>,
+    /// Most translation attempts (default 3, at most 8). After an attempt that does not compile,
+    /// is refused by the source lint or disagrees with the original, the compiler output or the
+    /// smallest counterexample goes back to the model for another attempt. Every attempt is
+    /// stored as a version. 1 turns the repair loop off.
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
 }
 
 /// A case on which the translation and the original disagreed.
@@ -547,6 +581,16 @@ pub struct RewriteFunctionResult {
     pub assumptions: Vec<Untrusted<String>>,
     /// What the model said it could not translate (model-derived).
     pub unsupported: Vec<Untrusted<String>>,
+    /// Translation attempts made (each is stored as a version; this result is the last).
+    #[serde(default = "one")]
+    pub attempts: u32,
+    /// Rust names of accepted callees the translation calls instead of re-translating.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reused_callees: Vec<String>,
+}
+
+fn one() -> u32 {
+    1
 }
 
 /// Translates and verifies one function.
@@ -576,7 +620,11 @@ impl Command for RewriteFunction {
              cannot enforce it (Linux with Landlock today). That is why it is `mutating` and not \
              `dangerous`. It adds artifacts only and never edits the program; accepting a unit is \
              a separate, users-only step (`rewrite_accept`). It sends decompiled code to the \
-             provider.",
+             provider. When an attempt does not compile, is refused by the source lint or \
+             disagrees with the original, the compiler output or the smallest counterexample is \
+             sent back for another attempt, up to `max_attempts` (default 3); every attempt is a \
+             stored version. Program callees that already have an accepted, current unit are \
+             called as Rust instead of being translated again.",
         )
     }
 
@@ -591,6 +639,9 @@ impl Command for RewriteFunction {
         s.project()?;
         if args.cases.is_some_and(|c| c > 2000) {
             return Err(invalid("`cases` is at most 2000"));
+        }
+        if args.max_attempts.is_some_and(|a| !(1..=8).contains(&a)) {
+            return Err(invalid("`max_attempts` is between 1 and 8"));
         }
         let (s2, ctx2) = (s.clone(), ctx.clone());
         let id = s

@@ -93,6 +93,25 @@ pub enum Anchor {
 }
 
 impl Anchor {
+    /// An anchor for a managed (.NET) entity: the engine-specific token is `<module>:<0xtoken>`,
+    /// with the module id (MVID) as in [`Locator::Managed`].
+    pub fn managed(module: &str, token: u32) -> Self {
+        Anchor::Managed {
+            token: format!("{module}:{token:#x}"),
+        }
+    }
+
+    /// `(module, token)` of a managed anchor made by [`Anchor::managed`]; `None` for other
+    /// anchors and for malformed managed tokens.
+    pub fn managed_parts(&self) -> Option<(&str, u32)> {
+        let Anchor::Managed { token } = self else {
+            return None;
+        };
+        let (module, hex) = token.rsplit_once(':')?;
+        let token = u32::from_str_radix(hex.strip_prefix("0x")?, 16).ok()?;
+        (!module.is_empty()).then_some((module, token))
+    }
+
     /// Returns `(space, offset, fn_entry, fn_hash)` for a native anchor, or an `unsupported` error
     /// for the reserved variants.
     pub fn native(&self) -> Result<(&str, Hex64, Hex64, &str), ProtoError> {
@@ -130,6 +149,23 @@ pub struct AddressRange {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_anchor_parts_round_trip() {
+        let a = Anchor::managed("61a35c05-1940-4673-81a7-f2157a66b75c", 0x0600_0001);
+        assert_eq!(
+            a.managed_parts(),
+            Some(("61a35c05-1940-4673-81a7-f2157a66b75c", 0x0600_0001))
+        );
+        assert_eq!(
+            Anchor::Managed {
+                token: "0x06000001".into()
+            }
+            .managed_parts(),
+            None
+        );
+        assert_eq!(Anchor::managed("m", 1).managed_parts(), Some(("m", 1)));
+    }
 
     #[test]
     fn locator_round_trip_and_default_space() {
