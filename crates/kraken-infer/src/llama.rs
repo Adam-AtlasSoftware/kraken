@@ -12,7 +12,7 @@ use crate::backend::{BackendCapabilities, GpuApi, InferenceBackend, RunningBacke
 use crate::budget::{GIB, MemoryBudget, Reservation};
 use crate::error::{InferError, Result};
 use crate::logring::LogStream;
-use crate::port::{LOOPBACK, pick_free_port};
+use crate::port::{LOOPBACK, generate_api_key, pick_free_port};
 use crate::supervisor::{ManagedProcess, ProcessSpec};
 
 pub const LLAMA_BINARY_NAME: &str = if cfg!(windows) {
@@ -81,6 +81,8 @@ pub fn build_argv(s: &LlamaSettings, port: u16) -> Vec<String> {
         LOOPBACK.into(),
         "--port".into(),
         port.to_string(),
+        // `/slots` can expose in-flight prompts (decompiled code) to any API-key holder.
+        "--no-slots".into(),
     ];
     if let Some(n) = s.gpu_layers {
         a.push("-ngl".into());
@@ -98,6 +100,19 @@ pub fn build_argv(s: &LlamaSettings, port: u16) -> Vec<String> {
         a.push("--jinja".into());
     }
     a
+}
+
+/// Name of the environment variable `llama-server` reads its API key from. The key travels in the
+/// environment, not argv, because `/proc/<pid>/cmdline` is world-readable.
+pub const API_KEY_ENV: &str = "LLAMA_API_KEY";
+
+/// The supervised process description for one run, with its per-run API key.
+pub fn build_spec(binary: PathBuf, s: &LlamaSettings, port: u16, api_key: &str) -> ProcessSpec {
+    let mut spec = ProcessSpec::new(binary, port, "/health");
+    spec.args = build_argv(s, port);
+    spec.env.push((API_KEY_ENV.into(), api_key.to_string()));
+    spec.progress_parser = Some(parse_progress);
+    spec
 }
 
 /// Finds `llama-server`: explicit path, then each `PATH` entry, then `data_dir/bin`.
@@ -360,9 +375,8 @@ impl InferenceBackend for LlamaServerBackend {
             _ => pick_free_port()?,
         };
 
-        let mut spec = ProcessSpec::new(binary, port, "/health");
-        spec.args = build_argv(&s, port);
-        spec.progress_parser = Some(parse_progress);
+        let api_key = generate_api_key()?;
+        let spec = build_spec(binary, &s, port, &api_key);
         let process = ManagedProcess::start(spec)?;
         for w in warnings {
             process
@@ -373,7 +387,7 @@ impl InferenceBackend for LlamaServerBackend {
             .model_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
-        Ok(RunningBackend::new(self.id(), model, process))
+        Ok(RunningBackend::new(self.id(), model, process).with_api_key(api_key))
     }
 }
 
@@ -399,6 +413,7 @@ mod tests {
                 "127.0.0.1",
                 "--port",
                 "8080",
+                "--no-slots",
                 "--jinja"
             ]
         );
@@ -421,6 +436,7 @@ mod tests {
                 "127.0.0.1",
                 "--port",
                 "9000",
+                "--no-slots",
                 "-ngl",
                 "99",
                 "--n-cpu-moe",
@@ -428,6 +444,19 @@ mod tests {
                 "-t",
                 "12"
             ]
+        );
+    }
+
+    #[test]
+    fn spec_carries_the_key_in_env_not_argv_and_disables_slots() {
+        let s = settings(json!({"model_path": "/m/x.gguf"}));
+        let spec = build_spec("llama-server".into(), &s, 8080, "secretkey");
+        assert!(spec.args.iter().any(|a| a == "--no-slots"));
+        assert!(spec.args.iter().all(|a| !a.contains("secretkey")));
+        assert!(
+            spec.env
+                .iter()
+                .any(|(k, v)| k == API_KEY_ENV && v == "secretkey")
         );
     }
 

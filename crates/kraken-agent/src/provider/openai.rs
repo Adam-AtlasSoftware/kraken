@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::{ChatProvider, ChunkParser, Secret, SseEvent, http_client, send, sse_chat_stream};
+use super::{
+    ChatProvider, ChunkParser, Secret, SseEvent, http_client, send, sse_chat_stream,
+    validate_base_url,
+};
 use crate::error::AgentError;
 use crate::types::{
     ChatRequest, ChatStream, FinishReason, Message, ProviderInfo, StreamEvent, Usage,
@@ -28,10 +31,12 @@ impl OpenAiCompatible {
         model: impl Into<String>,
         api_key: Option<String>,
     ) -> Result<Self, AgentError> {
+        let base_url = base_url.into().trim_end_matches('/').to_string();
+        validate_base_url(&base_url)?;
         Ok(Self {
             client: http_client()?,
             id: "openai-compatible".into(),
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url,
             api_key: api_key.filter(|k| !k.is_empty()).map(Secret),
             model: model.into(),
             supports_tools: true,
@@ -354,8 +359,9 @@ mod tests {
 
     #[test]
     fn debug_does_not_leak_key() {
-        let p = OpenAiCompatible::new("http://x/v1/", "m", Some("sk-secret".into())).unwrap();
+        let p =
+            OpenAiCompatible::new("http://localhost/v1/", "m", Some("sk-secret".into())).unwrap();
         assert!(!format!("{p:?}").contains("sk-secret"));
-        assert_eq!(p.base_url, "http://x/v1");
+        assert_eq!(p.base_url, "http://localhost/v1");
     }
 }

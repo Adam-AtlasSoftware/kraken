@@ -20,8 +20,27 @@ pub fn pick_free_port() -> Result<u16> {
     Ok(l.local_addr()?.port())
 }
 
+/// A fresh random API key (256 bits, hex) for one engine run.
+pub fn generate_api_key() -> Result<String> {
+    let mut b = [0u8; 32];
+    getrandom::fill(&mut b)
+        .map_err(|e| crate::error::InferError::Unsupported(format!("no OS randomness: {e}")))?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn api_keys_are_long_hex_and_unique() {
+        let (a, b) = (
+            super::generate_api_key().unwrap(),
+            super::generate_api_key().unwrap(),
+        );
+        assert_eq!(a.len(), 64);
+        assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
+
     use super::*;
 
     #[test]

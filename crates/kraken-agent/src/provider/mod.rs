@@ -212,8 +212,47 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// Checks a provider `base_url`: it must be `https`, or plain `http` only to a loopback host.
+///
+/// API keys travel in headers, so sending them over cleartext to a remote host is refused.
+pub(crate) fn validate_base_url(raw: &str) -> Result<(), AgentError> {
+    use std::net::IpAddr;
+    let url = reqwest::Url::parse(raw)
+        .map_err(|e| AgentError::Config(format!("invalid base_url {raw:?}: {e}")))?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let loopback = match url.host_str() {
+                Some(h) => {
+                    let h = h.trim_start_matches('[').trim_end_matches(']');
+                    h.eq_ignore_ascii_case("localhost")
+                        || h.parse::<IpAddr>().is_ok_and(|a| a.is_loopback())
+                }
+                None => false,
+            };
+            if loopback {
+                Ok(())
+            } else {
+                Err(AgentError::Config(format!(
+                    "base_url {} must use https unless it points at localhost/loopback",
+                    redact_url(&url)
+                )))
+            }
+        }
+        other => Err(AgentError::Config(format!(
+            "base_url scheme {other:?} is not allowed; use https (or http to loopback)"
+        ))),
+    }
+}
+
+fn redact_url(u: &reqwest::Url) -> String {
+    format!("{}://{}", u.scheme(), u.host_str().unwrap_or("?"))
+}
+
 pub(crate) fn http_client() -> Result<reqwest::Client, AgentError> {
     reqwest::Client::builder()
+        // A redirect could carry `x-api-key` / `x-goog-api-key` to another origin.
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("kraken-agent/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| AgentError::Config(e.to_string()))
@@ -222,6 +261,69 @@ pub(crate) fn http_client() -> Result<reqwest::Client, AgentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_url_requires_https_or_loopback() {
+        for ok in [
+            "https://api.anthropic.com",
+            "https://example.com/v1",
+            "http://localhost:11434/v1",
+            "http://LOCALHOST/v1",
+            "http://127.0.0.1:8080/v1",
+            "http://127.9.9.9/v1",
+            "http://[::1]:8080/v1",
+        ] {
+            assert!(validate_base_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://example.com/v1",
+            "http://10.0.0.5:9000/v1",
+            "http://localhost.evil.com/v1",
+            "http://127.0.0.1.evil.com/v1",
+            "ftp://localhost/v1",
+            "file:///etc/passwd",
+            "not a url",
+            "",
+        ] {
+            assert!(
+                matches!(validate_base_url(bad), Err(AgentError::Config(_))),
+                "{bad}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn clients_do_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let srv = tokio::spawn(async move {
+            let mut hits = 0;
+            // Serve at most two connections; a followed redirect would make a second one.
+            while let Ok(Ok((mut s, _))) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), l.accept()).await
+            {
+                hits += 1;
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                let _ = s
+                    .write_all(
+                        b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\n\r\n",
+                    )
+                    .await;
+            }
+            hits
+        });
+        let resp = http_client()
+            .unwrap()
+            .get(format!("http://127.0.0.1:{port}/"))
+            .header("x-api-key", "k")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 302);
+        assert_eq!(srv.await.unwrap(), 1, "redirect must not be followed");
+    }
 
     #[test]
     fn sse_decoder_handles_split_chunks_and_crlf() {

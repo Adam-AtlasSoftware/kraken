@@ -44,7 +44,7 @@ impl RuntimeDir {
         #[cfg(target_os = "linux")]
         {
             let xdg = env("XDG_RUNTIME_DIR").map(PathBuf::from);
-            Self::resolve_linux(xdg.as_deref(), rustix::process::getuid().as_raw())
+            Self::resolve_linux(xdg.as_deref())
         }
         #[cfg(target_os = "macos")]
         {
@@ -63,12 +63,19 @@ impl RuntimeDir {
         }
     }
 
-    /// Linux resolution with injected inputs: `$XDG_RUNTIME_DIR/kraken`, else `/tmp/kraken-<uid>`.
+    /// Linux resolution with injected inputs: `$XDG_RUNTIME_DIR/kraken`.
+    ///
+    /// Fails closed when `XDG_RUNTIME_DIR` is missing or relative: there is deliberately no
+    /// fallback into the world-writable `/tmp`, where another user could pre-create the
+    /// directory. Set `KRAKEN_RUNTIME_DIR` to an absolute private path instead.
     #[cfg(unix)]
-    pub fn resolve_linux(xdg_runtime_dir: Option<&Path>, uid: u32) -> Result<Self, IpcError> {
+    pub fn resolve_linux(xdg_runtime_dir: Option<&Path>) -> Result<Self, IpcError> {
         match xdg_runtime_dir.filter(|p| p.is_absolute()) {
             Some(x) => Self::from_dir(x.join("kraken")),
-            None => Self::from_dir(PathBuf::from(format!("/tmp/kraken-{uid}"))),
+            None => Err(IpcError::NoRuntimeDir(format!(
+                "XDG_RUNTIME_DIR is not set to an absolute path; set it, or set {ENV_RUNTIME_DIR} \
+                 to a private absolute directory"
+            ))),
         }
     }
 
@@ -151,6 +158,13 @@ impl RuntimeDir {
         self.dir.join("daemon.token")
     }
 
+    /// Token file of the agent credential class (MCP servers and other agent-side clients). It
+    /// opens connections whose author is always an agent and whose approvals are never trusted;
+    /// the user token in [`token_path`](Self::token_path) is the only one that can approve.
+    pub fn agent_token_path(&self) -> PathBuf {
+        self.dir.join("agent.token")
+    }
+
     /// Daemon info file (`pid`, start token, protocol, build).
     pub fn info_path(&self) -> PathBuf {
         self.dir.join("daemon.json")
@@ -199,7 +213,7 @@ mod tests {
     #[test]
     fn xdg_dir_is_created_private() {
         let t = tempfile::tempdir().unwrap();
-        let d = RuntimeDir::resolve_linux(Some(t.path()), 1).unwrap();
+        let d = RuntimeDir::resolve_linux(Some(t.path())).unwrap();
         assert_eq!(d.path(), t.path().join("kraken"));
         let mode = std::fs::metadata(d.path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
@@ -221,10 +235,15 @@ mod tests {
     }
 
     #[test]
-    fn fallback_uses_tmp_uid() {
-        let uid = rustix::process::getuid().as_raw();
-        let d = RuntimeDir::resolve_linux(None, uid).unwrap();
-        assert_eq!(d.path(), Path::new(&format!("/tmp/kraken-{uid}")));
+    fn missing_or_relative_xdg_fails_closed() {
+        assert!(matches!(
+            RuntimeDir::resolve_linux(None),
+            Err(IpcError::NoRuntimeDir(_))
+        ));
+        assert!(matches!(
+            RuntimeDir::resolve_linux(Some(Path::new("relative/run"))),
+            Err(IpcError::NoRuntimeDir(_))
+        ));
     }
 
     #[test]

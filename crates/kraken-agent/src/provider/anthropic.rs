@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::{ChatProvider, ChunkParser, Secret, SseEvent, http_client, send, sse_chat_stream};
+use super::{
+    ChatProvider, ChunkParser, Secret, SseEvent, http_client, send, sse_chat_stream,
+    validate_base_url,
+};
 use crate::error::AgentError;
 use crate::types::{
     ChatRequest, ChatStream, FinishReason, Message, ProviderInfo, StreamEvent, Usage,
@@ -32,12 +35,14 @@ impl Anthropic {
         model: Option<String>,
         base_url: Option<String>,
     ) -> Result<Self, AgentError> {
+        let base_url = base_url
+            .unwrap_or_else(|| DEFAULT_BASE_URL.into())
+            .trim_end_matches('/')
+            .to_string();
+        validate_base_url(&base_url)?;
         Ok(Self {
             client: http_client()?,
-            base_url: base_url
-                .unwrap_or_else(|| DEFAULT_BASE_URL.into())
-                .trim_end_matches('/')
-                .to_string(),
+            base_url,
             api_key: Secret(api_key),
             model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
             max_tokens: DEFAULT_MAX_TOKENS,

@@ -7,10 +7,22 @@
 # Downloads come from GitHub releases over https only, and the archive is checked against the
 # release's SHA256SUMS before anything is extracted or installed.
 #
+# Authenticity: SHA256SUMS comes from the same origin as the archive, so on its own it only
+# guards against corruption. Releases are meant to carry a detached minisign signature
+# (SHA256SUMS.minisig) made with a release key whose public half is embedded below. That key has
+# NOT been generated yet (the project owner must create it and paste the public key into
+# KRAKEN_MINISIGN_PUBKEY); until then the signature step is skipped with a notice. Once a key is
+# embedded the check is mandatory: a missing minisign tool or signature aborts the install.
+#
 # Environment:
-#   KRAKEN_VERSION  release to install, e.g. v0.1.0 (default: the latest published release)
-#   KRAKEN_PREFIX   install prefix (default: $HOME/.local)
+#   KRAKEN_VERSION            release to install, e.g. v0.1.0 (default: the latest release)
+#   KRAKEN_PREFIX             install prefix (default: $HOME/.local)
+#   KRAKEN_REQUIRE_SIGNATURE  set to 1 to abort when no release key is embedded yet
 set -euo pipefail
+
+# minisign public key of the release signing key (the base64 line of the .pub file).
+# EMPTY until the owner generates the key: `minisign -G`, then paste the key here.
+KRAKEN_MINISIGN_PUBKEY=""
 
 repo="Adam-AtlasSoftware/kraken"
 base="https://github.com/$repo/releases"
@@ -26,8 +38,49 @@ need() {
 
 fetch() {
   # $1 = https URL, $2 = output file
-  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --output "$2" "$1"
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location \
+    --output "$2" "$1"
 }
+
+# Verifies the detached minisign signature of the SHA256SUMS file.
+# $1 = SHA256SUMS path, $2 = signature path or empty if the release has none,
+# $3 = public key (may be empty), $4 = "1" to require a signature even without a key.
+verify_signature() {
+  local sums=$1 sig=$2 pubkey=$3 require=${4:-0}
+  if [ -z "$pubkey" ]; then
+    if [ "$require" = "1" ]; then
+      die "no release signing key is embedded in this script yet, but KRAKEN_REQUIRE_SIGNATURE=1"
+    fi
+    echo "Note: no release signing key is embedded yet; authenticity rests on GitHub alone" >&2
+    return 0
+  fi
+  [ -n "$sig" ] && [ -f "$sig" ] || die "release has no SHA256SUMS.minisig; nothing was installed"
+  command -v minisign >/dev/null 2>&1 ||
+    die "minisign is required to verify this release (https://jedisct1.github.io/minisign/)"
+  minisign -V -P "$pubkey" -m "$sums" -x "$sig" >/dev/null ||
+    die "signature check failed for SHA256SUMS; nothing was installed"
+  echo "Signature OK"
+}
+
+# Rejects archives with absolute or parent-relative names and any link entry (symlink or hard
+# link), so extraction cannot write outside the extraction directory.
+# $1 = archive path
+check_archive_entries() {
+  local list
+  list=$(tar -tzf "$1") || die "cannot list $1"
+  if printf '%s\n' "$list" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
+    die "archive contains unsafe paths; nothing was installed"
+  fi
+  # `tar -tv` starts each line with the entry type: l = symlink, h = hard link.
+  if tar -tvzf "$1" | grep -E '^[lh]' >/dev/null; then
+    die "archive contains links; nothing was installed"
+  fi
+}
+
+# Tests source this file to reach the functions above without running an install.
+if [ -n "${KRAKEN_INSTALL_SOURCE_ONLY:-}" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 need curl
 need tar
@@ -58,7 +111,7 @@ fi
 tag=${KRAKEN_VERSION:-}
 if [ -z "$tag" ]; then
   # /releases/latest redirects to /releases/tag/<tag>; read the final URL, not the body.
-  url=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+  url=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location \
     --output /dev/null --write-out '%{url_effective}' "$base/latest") ||
     die "cannot find the latest release (is there a published release yet?)"
   tag=${url##*/}
@@ -79,6 +132,11 @@ trap 'rm -rf "$work"' EXIT
 echo "Downloading KRAKEN $tag for $target"
 fetch "$base/download/$tag/SHA256SUMS" "$work/SHA256SUMS" || die "cannot download SHA256SUMS for $tag"
 fetch "$base/download/$tag/$archive" "$work/$archive" || die "cannot download $archive"
+sig_file=""
+if fetch "$base/download/$tag/SHA256SUMS.minisig" "$work/SHA256SUMS.minisig" 2>/dev/null; then
+  sig_file="$work/SHA256SUMS.minisig"
+fi
+verify_signature "$work/SHA256SUMS" "$sig_file" "$KRAKEN_MINISIGN_PUBKEY" "${KRAKEN_REQUIRE_SIGNATURE:-0}"
 
 # Keep only the line for our archive (exact name match), then verify it.
 grep -F "  $archive" "$work/SHA256SUMS" | grep -x ".\{64\}  $archive" > "$work/archive.sha256" ||
@@ -87,11 +145,9 @@ grep -F "  $archive" "$work/SHA256SUMS" | grep -x ".\{64\}  $archive" > "$work/a
 echo "Checksum OK"
 
 # Refuse archives that would write outside the extraction directory.
-if tar -tzf "$work/$archive" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
-  die "archive contains unsafe paths; nothing was installed"
-fi
+check_archive_entries "$work/$archive"
 mkdir "$work/x"
-tar -xzf "$work/$archive" -C "$work/x"
+tar -xzf "$work/$archive" -C "$work/x" --no-same-owner
 src="$work/x/kraken-$version-$target"
 [ -x "$src/bin/kraken" ] || die "archive layout is not as expected"
 

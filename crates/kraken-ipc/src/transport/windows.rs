@@ -2,8 +2,8 @@
 //!
 //! The first pipe instance is created with `first_pipe_instance(true)` so a squatter that created
 //! the name earlier makes `bind` fail, and remote clients are rejected. Every instance carries an
-//! explicit protected DACL that grants access only to the OWNER RIGHTS principal (the creating
-//! user), per decision 41; the auth token stays the second gate. This module is cross-compile
+//! explicit protected DACL that grants access only to the creating user's SID (not OWNER RIGHTS,
+//! which matches every Administrators member when the daemon runs elevated), per decision 41; the auth token stays the second gate. This module is cross-compile
 //! checked from Linux; it runs for real only in the Windows CI job.
 
 use std::io;
@@ -15,8 +15,68 @@ use tokio::net::windows::named_pipe::{
 
 use crate::paths::RuntimeDir;
 
-/// SDDL for the pipe: protected DACL (no inheritance), generic-all for OWNER RIGHTS only.
-const OWNER_ONLY_SDDL: &str = "D:P(A;;GA;;;OW)";
+/// SDDL for the pipe: protected DACL (no inheritance), generic-all for exactly this user SID.
+fn owner_only_sddl(user_sid: &str) -> String {
+    format!("D:P(A;;GA;;;{user_sid})")
+}
+
+/// The string form (`S-1-5-21-...`) of the current process token's user SID.
+fn current_user_sid_string() -> io::Result<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = std::ptr::null_mut();
+    // SAFETY: plain FFI call with a valid out pointer; the token is closed below.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let result = (|| {
+        let mut needed = 0u32;
+        // SAFETY: size query with a null buffer; fails with ERROR_INSUFFICIENT_BUFFER by design.
+        unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed) };
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // u64 elements keep the buffer aligned for TOKEN_USER.
+        let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
+        // SAFETY: `buf` is at least `needed` bytes.
+        let ok = unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buf.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the OS filled `buf` with a TOKEN_USER whose SID lives inside `buf`.
+        let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        let mut wide = std::ptr::null_mut();
+        // SAFETY: `sid` is valid; on success the OS allocates `wide`, freed with LocalFree.
+        if unsafe { ConvertSidToStringSidW(sid, &mut wide) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `wide` is a NUL-terminated UTF-16 string.
+        let text = unsafe {
+            let mut len = 0;
+            while *wide.add(len) != 0 {
+                len += 1;
+            }
+            String::from_utf16_lossy(std::slice::from_raw_parts(wide, len))
+        };
+        // SAFETY: allocated by ConvertSidToStringSidW.
+        unsafe { LocalFree(wide.cast()) };
+        Ok(text)
+    })();
+    // SAFETY: `token` was opened above.
+    unsafe { CloseHandle(token) };
+    result
+}
 
 /// A self-relative security descriptor allocated by the OS, freed on drop.
 struct OwnerOnly {
@@ -33,7 +93,8 @@ impl OwnerOnly {
         use windows_sys::Win32::Security::Authorization::{
             ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
         };
-        let wide: Vec<u16> = OWNER_ONLY_SDDL.encode_utf16().chain(Some(0)).collect();
+        let sddl = owner_only_sddl(&current_user_sid_string()?);
+        let wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
         let mut descriptor = std::ptr::null_mut();
         // SAFETY: `wide` is NUL-terminated; on success the OS allocates `descriptor`, which we
         // release with LocalFree in Drop.
@@ -176,5 +237,21 @@ pub async fn connect(dir: &RuntimeDir) -> io::Result<Stream> {
             }
             Err(e) => return Err(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dacl_names_the_user_sid_not_owner_rights() {
+        let sid = current_user_sid_string().unwrap();
+        assert!(sid.starts_with("S-1-"), "{sid}");
+        let sddl = owner_only_sddl(&sid);
+        assert_eq!(sddl, format!("D:P(A;;GA;;;{sid})"));
+        assert!(!sddl.contains(";OW)"));
+        // The descriptor must also parse.
+        OwnerOnly::new().unwrap();
     }
 }
