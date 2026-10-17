@@ -62,7 +62,9 @@ fn archives_with_links_or_unsafe_names_are_rejected() {
     make_tar(
         d,
         "dots",
-        "mkdir -p s && echo x > s/a && tar -czf dots.tgz --transform 's|^s/a|s/../a|' s",
+        // GNU tar renames with --transform, BSD tar (macOS) with -s.
+        "mkdir -p s && echo x > s/a && if tar --version 2>/dev/null | grep -q GNU; then \
+         tar -czf dots.tgz --transform 's|^s/a|s/../a|' s; else tar -czf dots.tgz -s '|^s/a|s/../a|' s; fi",
     );
     assert!(run(d, "check_archive_entries good.tgz").0);
     let (ok, err) = run(d, "check_archive_entries sym.tgz");

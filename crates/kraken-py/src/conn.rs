@@ -311,6 +311,14 @@ impl Handle {
         &self.author
     }
 
+    /// A context for the person running the script, whatever author the handle has.
+    fn user_context(&self, cancel: CancellationToken, approve: bool) -> CallContext {
+        with_approval(
+            CallContext::user(user_id(), Surface::Cli).with_cancel(cancel),
+            approve,
+        )
+    }
+
     fn context(&self, cancel: CancellationToken, approve: bool) -> CallContext {
         let ctx = match &self.author {
             Author::User(id) => CallContext::user(id.clone(), Surface::Cli),
@@ -318,12 +326,7 @@ impl Handle {
                 CallContext::agent(id.clone(), run_id.clone(), Surface::Cli)
             }
         };
-        let ctx = ctx.with_cancel(cancel);
-        if approve {
-            ctx.with_approval(Arc::new(AutoApprove))
-        } else {
-            ctx.with_approval(Arc::new(DenyApprover))
-        }
+        with_approval(ctx.with_cancel(cancel), approve)
     }
 
     /// Validates `args` against the command's schema, then runs it. `approve` pre-approves a
@@ -353,9 +356,24 @@ impl Handle {
             )
             .with_details(serde_json::json!({"path": e.path, "reason": e.message}))
         })?;
-        let ctx = self.context(cancel, approve);
+        // A script runs with its owner's authority: choosing which file to load is the person's
+        // decision, so project_create/project_open always run as the user; the script's later
+        // edits follow agent policy when it was opened with `agent=`.
+        let ctx = if matches!(command, "project_create" | "project_open") {
+            self.user_context(cancel, approve)
+        } else {
+            self.context(cancel, approve)
+        };
         let out = self.backend.call(command, &ctx, args).await?;
         Ok((out, self.backend.take_warnings()))
+    }
+}
+
+fn with_approval(ctx: CallContext, approve: bool) -> CallContext {
+    if approve {
+        ctx.with_approval(Arc::new(AutoApprove))
+    } else {
+        ctx.with_approval(Arc::new(DenyApprover))
     }
 }
 
