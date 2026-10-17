@@ -128,8 +128,8 @@ async fn open_reports_dotnet_program_info() {
     );
 
     let caps = e.capabilities();
-    assert!(caps.has(kraken_engine::Cap::Decompiler) && !caps.has(kraken_engine::Cap::Mutator));
-    assert!(e.mutator().is_none());
+    assert!(caps.has(kraken_engine::Cap::Decompiler) && caps.has(kraken_engine::Cap::Mutator));
+    assert!(e.mutator().is_some());
 }
 
 #[tokio::test]
@@ -411,4 +411,298 @@ async fn dropping_the_engine_stops_the_sidecar() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     panic!("sidecar {pid} is still running");
+}
+
+fn managed_anchor(l: &Locator) -> kraken_proto::Anchor {
+    let (module, token) = locator_token(l);
+    kraken_proto::Anchor::managed(&module, token)
+}
+
+fn rename_op(l: &Locator, old: Option<&str>, new: &str) -> kraken_proto::VersionedLogOp {
+    kraken_proto::VersionedLogOp::new(kraken_proto::LogOp::Rename {
+        anchor: managed_anchor(l),
+        old_name: old.map(str::to_string),
+        new_name: new.to_string(),
+    })
+}
+
+fn comment_op(
+    l: &Locator,
+    kind: kraken_proto::CommentKind,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> kraken_proto::VersionedLogOp {
+    kraken_proto::VersionedLogOp::new(kraken_proto::LogOp::SetComment {
+        anchor: managed_anchor(l),
+        comment_kind: kind,
+        old: old.map(str::to_string),
+        new: new.map(str::to_string),
+    })
+}
+
+fn tokens_with<'a>(
+    r: &'a kraken_proto::DecompileResult,
+    table: u32,
+    own_module: &str,
+) -> Vec<(&'a kraken_proto::Token, u32)> {
+    r.tokens
+        .iter()
+        .filter_map(|t| match &t.target {
+            Some(Locator::Managed { module, token })
+                if module == own_module && token >> 24 == table =>
+            {
+                Some((t, *token))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+#[ignore = "needs the isolated .NET SDK and `cargo xtask dotnet-ext`"]
+async fn methods_are_renamed_and_commented_in_the_decompiled_csharp() {
+    use kraken_proto::CommentKind;
+
+    let e = opened().await;
+    let cancel = CancellationToken::new();
+    let m = e.mutator().expect("mutator");
+    let fns = all_functions(&e, 500).await;
+    let fib = find(&fns, "KrakenCorpus.Calc.Fib").clone();
+    let describe = find(&fns, "KrakenCorpus.Calc.Describe").clone();
+    let (own, _) = locator_token(&fib.locator);
+
+    m.apply(
+        &rename_op(&fib.locator, Some(&fib.name), "Fibonacci"),
+        &cancel,
+    )
+    .await
+    .expect("rename");
+    m.apply(
+        &rename_op(&fib.locator, Some(&fib.name), "Fibonacci"),
+        &cancel,
+    )
+    .await
+    .expect("re-applying a rename that is in effect is Ok");
+
+    let g = e.get_function(&fib.locator, &cancel).await.unwrap();
+    assert_eq!(g.name, "KrakenCorpus.Calc.Fibonacci");
+    assert!(
+        g.signature.as_deref().unwrap().contains("Fibonacci("),
+        "{g:?}"
+    );
+    let listed = all_functions(&e, 500).await;
+    assert!(
+        listed
+            .iter()
+            .any(|f| f.name == "KrakenCorpus.Calc.Fibonacci")
+    );
+    assert!(!listed.iter().any(|f| f.name == "KrakenCorpus.Calc.Fib"));
+
+    let r = e.decompile(&fib.locator, &cancel).await.unwrap();
+    r.validate_tokens().unwrap();
+    assert!(r.text.contains("int Fibonacci(int n)"), "{}", r.text);
+    assert!(!r.text.contains("Fib("), "{}", r.text);
+    let calls = r
+        .tokens
+        .iter()
+        .filter(|t| t.target.as_ref() == Some(&fib.locator))
+        .inspect(|t| {
+            assert_eq!(&r.text[t.start as usize..t.end as usize], "Fibonacci");
+            assert_eq!(t.symbol.as_deref(), Some("Fibonacci"));
+        })
+        .count();
+    assert!(calls >= 3, "{}", r.text);
+
+    // Callers of the method show the new name too.
+    let d = e.decompile(&describe.locator, &cancel).await.unwrap();
+    assert!(d.text.contains("Fibonacci(n)"), "{}", d.text);
+
+    // A parameter has a token of its own and is renamed through it.
+    let (_, param) = tokens_with(&r, 0x08, &own)
+        .into_iter()
+        .next()
+        .expect("a parameter token");
+    let param_loc = Locator::managed(own.clone(), param);
+    m.apply(&rename_op(&param_loc, None, "count"), &cancel)
+        .await
+        .expect("rename parameter");
+    let r = e.decompile(&fib.locator, &cancel).await.unwrap();
+    assert!(r.text.contains("int Fibonacci(int count)"), "{}", r.text);
+    assert!(r.text.contains("count < 2"), "{}", r.text);
+    r.validate_tokens().unwrap();
+
+    // A type is renamed wherever the method mentions it.
+    let d = e.decompile(&describe.locator, &cancel).await.unwrap();
+    let (tok, type_token) = tokens_with(&d, 0x02, &own)
+        .into_iter()
+        .find(|(t, _)| t.symbol.as_deref() == Some("Color"))
+        .expect("Color in Describe");
+    assert_eq!(tok.kind, TokenKind::Type);
+    m.apply(
+        &rename_op(&Locator::managed(own.clone(), type_token), None, "Hue"),
+        &cancel,
+    )
+    .await
+    .expect("rename type");
+    let d = e.decompile(&describe.locator, &cancel).await.unwrap();
+    assert!(d.text.contains("Hue c"), "{}", d.text);
+    assert!(d.text.contains("Hue.Red"), "{}", d.text);
+    assert!(!d.text.contains("Color"), "{}", d.text);
+
+    // Comments: above, at the end of the first line and below.
+    let comments = [
+        (CommentKind::Plate, "computes fibonacci\nrecursively"),
+        (CommentKind::Eol, "public api"),
+        (CommentKind::Post, "end"),
+    ];
+    for (kind, text) in comments {
+        m.apply(&comment_op(&fib.locator, kind, None, Some(text)), &cancel)
+            .await
+            .expect("comment");
+    }
+    let r = e.decompile(&fib.locator, &cancel).await.unwrap();
+    r.validate_tokens().unwrap();
+    assert!(
+        r.text
+            .starts_with("// computes fibonacci\n// recursively\n"),
+        "{}",
+        r.text
+    );
+    assert!(r.text.contains("(int count) // public api\n"), "{}", r.text);
+    assert!(r.text.trim_end().ends_with("// end"), "{}", r.text);
+    for t in r.tokens.iter().filter(|t| t.symbol.is_some()) {
+        let s = &r.text[t.start as usize..t.end as usize];
+        assert_eq!(Some(s), t.symbol.as_deref(), "{}", r.text);
+    }
+
+    // Undo is the inverse op: the listed name comes back and the original text with it.
+    m.apply(
+        &rename_op(&fib.locator, Some("KrakenCorpus.Calc.Fibonacci"), &fib.name),
+        &cancel,
+    )
+    .await
+    .expect("undo rename");
+    m.apply(&rename_op(&param_loc, Some("count"), ""), &cancel)
+        .await
+        .expect("undo parameter rename");
+    for (kind, text) in comments {
+        m.apply(&comment_op(&fib.locator, kind, Some(text), None), &cancel)
+            .await
+            .expect("clear comment");
+    }
+    let plain = e.decompile(&fib.locator, &cancel).await.unwrap();
+    assert!(
+        plain.text.starts_with("public static int Fib(int n)"),
+        "{}",
+        plain.text
+    );
+    assert!(!plain.text.contains("//"), "{}", plain.text);
+    assert_eq!(
+        e.get_function(&fib.locator, &cancel).await.unwrap().name,
+        fib.name
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the isolated .NET SDK and `cargo xtask dotnet-ext`"]
+async fn bad_edits_are_rejected_by_the_engine() {
+    use kraken_proto::{CommentKind, LogOp, VersionedLogOp};
+
+    let e = opened().await;
+    let cancel = CancellationToken::new();
+    let m = e.mutator().expect("mutator");
+    let fns = all_functions(&e, 500).await;
+    let fib = find(&fns, "KrakenCorpus.Calc.Fib").clone();
+    let ctor = find(&fns, "KrakenCorpus.Point..ctor").clone();
+    let code = |r: Result<(), kraken_engine::EngineRejected>| r.expect_err("rejected").code;
+
+    for bad in ["class", "a b", "1x", "a.b", "x;"] {
+        assert_eq!(
+            code(m.apply(&rename_op(&fib.locator, None, bad), &cancel).await),
+            ErrorCode::InvalidArgument,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        code(
+            m.apply(&rename_op(&ctor.locator, None, "Make"), &cancel)
+                .await
+        ),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        code(
+            m.apply(&rename_op(&fib.locator, Some("Nope"), "Other"), &cancel)
+                .await
+        ),
+        ErrorCode::ConflictStaleRead
+    );
+    let (module, token) = locator_token(&fib.locator);
+    let elsewhere = Locator::managed("00000000-0000-0000-0000-000000000000", token);
+    assert_eq!(
+        code(m.apply(&rename_op(&elsewhere, None, "X"), &cancel).await),
+        ErrorCode::NotFound
+    );
+    let missing = Locator::managed(module.clone(), 0x0600_ffff);
+    assert_eq!(
+        code(m.apply(&rename_op(&missing, None, "X"), &cancel).await),
+        ErrorCode::NotFound
+    );
+    // Native anchors and other operations do not apply to managed code.
+    let native = VersionedLogOp::new(LogOp::Rename {
+        anchor: kraken_proto::Anchor::Native {
+            space: "ram".into(),
+            offset: kraken_proto::Hex64(0x1000),
+            fn_entry: kraken_proto::Hex64(0x1000),
+            fn_hash: String::new(),
+        },
+        old_name: None,
+        new_name: "x".into(),
+    });
+    assert_eq!(
+        code(m.apply(&native, &cancel).await),
+        ErrorCode::Unsupported
+    );
+    let cc = VersionedLogOp::new(LogOp::SetCallingConvention {
+        anchor: managed_anchor(&fib.locator),
+        old: None,
+        new: "stdcall".into(),
+    });
+    assert_eq!(code(m.apply(&cc, &cancel).await), ErrorCode::Unsupported);
+    // A comment on something that is not a method.
+    let type_loc = Locator::managed(module, 0x0200_0002);
+    assert_eq!(
+        code(
+            m.apply(
+                &comment_op(&type_loc, CommentKind::Plate, None, Some("x")),
+                &cancel
+            )
+            .await
+        ),
+        ErrorCode::Unsupported
+    );
+    // Nothing above changed the output.
+    let r = e.decompile(&fib.locator, &cancel).await.unwrap();
+    assert!(r.text.contains("int Fib(int n)"), "{}", r.text);
+}
+
+#[tokio::test]
+#[ignore = "needs the isolated .NET SDK and `cargo xtask dotnet-ext`"]
+async fn opening_an_assembly_again_forgets_the_annotations() {
+    let e = opened().await;
+    let cancel = CancellationToken::new();
+    let fns = all_functions(&e, 500).await;
+    let fib = find(&fns, "KrakenCorpus.Calc.Fib").clone();
+    e.mutator()
+        .unwrap()
+        .apply(&rename_op(&fib.locator, None, "Fibonacci"), &cancel)
+        .await
+        .unwrap();
+    e.open_binary(&corpus_dll(), &LoaderSpec::default(), &cancel)
+        .await
+        .unwrap();
+    assert_eq!(
+        e.get_function(&fib.locator, &cancel).await.unwrap().name,
+        fib.name
+    );
 }

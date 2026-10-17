@@ -127,9 +127,10 @@ public sealed class RecordingTokenWriter : TokenWriter
 
     private (string Kind, JsonObject? Target) Classify(AstNode node)
     {
-        if (node.Annotation<ILVariableResolveResult>() is not null)
+        if (node.Annotation<ILVariableResolveResult>() is { } local)
         {
-            return ("variable", null);
+            // Parameters are metadata rows and can be renamed by token; other locals have none.
+            return ("variable", _asm.ParameterLocatorOf(local.Variable));
         }
         ISymbol? symbol = node.GetSymbol();
         if (symbol is null && node.Parent is InvocationExpression inv && ReferenceEquals(inv.Target, node))
