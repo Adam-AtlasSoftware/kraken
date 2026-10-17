@@ -226,7 +226,13 @@ fn the_export_dialog_warns_about_folders_outside_the_project() {
     assert!(has(&t, "Inside your project"));
     assert!(has(&t, "Accepted 1 of 13"));
 
-    r.vm.rewrite_export_set_dir("/tmp/elsewhere".into());
+    // Absolute on every platform (`/tmp/elsewhere` is relative on Windows).
+    let elsewhere = if cfg!(windows) {
+        "C:\\elsewhere"
+    } else {
+        "/tmp/elsewhere"
+    };
+    r.vm.rewrite_export_set_dir(elsewhere.into());
     assert_eq!(r.vm.rewrite_export_check(), DirCheck::Outside);
     r.frame();
     let t = r.frame();

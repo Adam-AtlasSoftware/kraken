@@ -97,6 +97,13 @@ pub struct CallContext {
     pub approval: Arc<dyn ApprovalRequester>,
     /// Fires when the caller gives up.
     pub cancel: CancellationToken,
+    /// Identity the auto-apply cap of an agent is counted under, across runs and connections.
+    /// The daemon sets it from the agent credential, so reconnecting does not start a fresh
+    /// quota; without one the cap counts per run id only.
+    pub quota_key: Option<String>,
+    /// True once the call went through `project_gate` (the daemon runs it before it creates a
+    /// session), so `project_create` and `project_open` do not ask a second time.
+    pub gate_passed: bool,
 }
 
 impl CallContext {
@@ -108,6 +115,8 @@ impl CallContext {
             surface,
             approval: Arc::new(DenyApprover),
             cancel: CancellationToken::new(),
+            quota_key: None,
+            gate_passed: false,
         }
     }
 
@@ -119,6 +128,57 @@ impl CallContext {
             surface,
             approval: Arc::new(DenyApprover),
             cancel: CancellationToken::new(),
+            quota_key: None,
+            gate_passed: false,
+        }
+    }
+
+    /// True when an agent or the MCP surface is calling: whoever it is, they act on a person's
+    /// behalf and a person must approve what reaches outside the open project.
+    pub fn needs_user_approval(&self) -> bool {
+        self.author.kind == kraken_model::AuthorKind::Agent || self.surface == Surface::Mcp
+    }
+
+    /// Marks the call as having passed `project_gate`.
+    pub fn with_gate_passed(mut self) -> Self {
+        self.gate_passed = true;
+        self
+    }
+
+    /// Sets the identity the agent's auto-apply cap is counted under.
+    pub fn with_quota_key(mut self, key: impl Into<String>) -> Self {
+        self.quota_key = Some(key.into());
+        self
+    }
+
+    /// Asks for approval of `command` when [`needs_user_approval`](Self::needs_user_approval);
+    /// a person (GUI, CLI) is never asked.
+    pub async fn require_approval(
+        &self,
+        command: &str,
+        summary: String,
+        args: serde_json::Value,
+    ) -> Result<(), kraken_proto::ProtoError> {
+        if !self.needs_user_approval() {
+            return Ok(());
+        }
+        let decision = self
+            .approval
+            .request(ApprovalRequest {
+                command: command.to_string(),
+                summary,
+                args,
+                author: self.author.clone(),
+                surface: self.surface,
+            })
+            .await;
+        match decision {
+            ApprovalDecision::Allow => Ok(()),
+            ApprovalDecision::Deny { reason } => Err(kraken_proto::ProtoError::new(
+                kraken_proto::ErrorCode::Unsupported,
+                format!("approval denied: {reason}"),
+            )
+            .with_details(serde_json::json!({ "approval": "denied" }))),
         }
     }
 

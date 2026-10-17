@@ -3,8 +3,11 @@
 //! The daemon owns the project sessions and the Ghidra sidecars; the CLI, the MCP server and the
 //! GUI are clients (decision 13). It serves the command registry over `kraken-ipc`:
 //!
-//! - [`handler`]: the RPC methods (`call`, `commands`, `status`, `events`, `shutdown`, and the
-//!   `infer_*` methods that host a local model; the model counts as work for the idle exit).
+//! - [`handler`]: the RPC methods (`call`, `commands`, `status`, `events`, `shutdown`, the
+//!   `approvals` pair, and the `infer_*` methods that host a local model; the model counts as
+//!   work for the idle exit). Author kind, surface and approval come from the credential
+//!   (user-class or agent-class token) of the connection, not from what a client claims.
+//! - [`approvals`]: what waits for a person's answer (an agent opening a project, ...).
 //! - [`host`]: sessions per canonical project directory, opened on demand, closed when idle,
 //!   limited in number; one ordered write queue per session.
 //! - [`events`]: the change event stream (`entry_applied`, `proposal_created`, `job_progress`,
@@ -13,6 +16,7 @@
 //! - [`logfile`]: the size-rotated `krakend.log` in the runtime directory.
 //! - `fake` (feature `fake-engine`): a scripted engine for tests.
 
+pub mod approvals;
 pub mod daemon;
 pub mod events;
 pub mod handler;

@@ -708,6 +708,8 @@ pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<(), ProvisionError>
     let file = File::open(archive).map_err(io_err(format!("cannot open {}", archive.display())))?;
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
     tar.set_preserve_permissions(false);
+    // Same policy as zip: never leave group/other write bits on extracted files or directories.
+    tar.set_mask(0o022);
     tar.set_unpack_xattrs(false);
     fs::create_dir_all(dest).map_err(io_err(format!("cannot create {}", dest.display())))?;
     let mut budget = MAX_EXTRACTED_BYTES;

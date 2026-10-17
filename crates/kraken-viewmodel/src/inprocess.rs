@@ -27,7 +27,7 @@ const JOB_POLL: Duration = Duration::from_millis(40);
 /// Answers a call of an [`ExtraQuery`].
 pub type QueryFn = Arc<dyn Fn(&Value) -> Result<Value, ProtoError> + Send + Sync>;
 
-/// A query the embedding code answers itself (the demo's scripted `rewrite_unit`).
+/// A query the embedding code answers itself (none today; the demo's `rewrite_unit` is a registry command now).
 pub struct ExtraQuery {
     /// How the command is listed.
     pub info: CommandInfo,

@@ -26,5 +26,5 @@ pub use idle::{Clock, Counter, IdleMonitor, ManualClock, Shutdown, SystemClock};
 pub use info::{DaemonInfo, pid_alive};
 pub use lifecycle::{DaemonGuard, EnsureError, ensure_daemon};
 pub use paths::{ENV_RUNTIME_DIR, RuntimeDir};
-pub use server::{ConnInfo, Notifier, RpcHandler, Server, ServerConfig};
-pub use wire::{ClientKind, HelloParams, HelloResult, PROTOCOL_VERSION};
+pub use server::{ConnInfo, Limits, Notifier, RpcHandler, Server, ServerConfig};
+pub use wire::{ClientKind, CredentialClass, HelloParams, HelloResult, PROTOCOL_VERSION};

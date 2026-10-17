@@ -2,8 +2,8 @@
 //!
 //! It implements the registry's [`RewriteBackend`] with canned answers, so the Rewrite tab in
 //! `kraken-gui --demo` exercises the real commands (permissions, jobs, events) with nothing
-//! running and no model involved. It also answers `rewrite_unit`, the query that hands out the
-//! stored Rust code and the version history (see the module docs of [`crate::rewrite`]).
+//! running and no model involved. `rewrite_unit` hands out the stored Rust code and the version
+//! history in the registry's own shape (see the module docs of [`crate::rewrite`]).
 //! Nothing here is random, so a screenshot of it is the same every time.
 
 use std::collections::BTreeMap;
@@ -15,14 +15,11 @@ use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::{
     ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend, RewriteExportResult,
     RewriteFunctionArgs, RewriteFunctionResult, RewritePlanArgs, RewritePlanOut, RewriteSpecArgs,
-    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut,
+    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-
-use crate::backend::{CommandInfo, CommandKind, Permission};
-use crate::inprocess::ExtraQuery;
 
 /// Time one phase of a scripted job takes, so the progress bar is visible.
 const STEP: Duration = Duration::from_millis(450);
@@ -328,44 +325,6 @@ pub unsafe extern \"C\" fn log_error(msg: *const core::ffi::c_char, code: i32) {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The `rewrite_unit` query this scripted pipeline answers.
-    pub fn unit_query(&self) -> ExtraQuery {
-        let me = self.clone();
-        ExtraQuery {
-            info: CommandInfo {
-                name: "rewrite_unit".into(),
-                summary: "Show the stored Rust versions of one function (demo)".into(),
-                kind: CommandKind::Query,
-                permission: Permission::Safe,
-            },
-            run: Arc::new(move |args| me.unit(args)),
-        }
-    }
-
-    fn unit(&self, args: &Value) -> Result<Value, ProtoError> {
-        let addr = arg_addr(args)?;
-        let st = self.lock();
-        let versions: Vec<Value> = st
-            .versions
-            .get(&addr)
-            .map(|vs| {
-                vs.iter()
-                    .map(|v| {
-                        let mut j =
-                            version_json(addr, v, st.accepted.get(&addr) == Some(&v.version));
-                        j["rust_code"] = json!({"untrusted": true, "value": v.code});
-                        j
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut out = json!({ "versions": versions });
-        if let Some((id, md)) = st.specs.get(&addr) {
-            out["spec"] = spec_json(*id, Some(addr), md);
-        }
-        Ok(out)
-    }
-
     fn func(addr: u64) -> Result<&'static F, ProtoError> {
         FUNCS.iter().find(|f| f.addr == addr).ok_or_else(|| {
             ProtoError::new(ErrorCode::NotFound, format!("no function at {addr:#x}"))
@@ -391,19 +350,6 @@ pub unsafe extern \"C\" fn log_error(msg: *const core::ffi::c_char, code: i32) {
             Some(v) => v.status,
         }
     }
-}
-
-fn arg_addr(args: &Value) -> Result<u64, ProtoError> {
-    args.get("address")
-        .and_then(Value::as_str)
-        .and_then(|s| s.strip_prefix("0x"))
-        .and_then(|s| u64::from_str_radix(s, 16).ok())
-        .ok_or_else(|| {
-            ProtoError::new(
-                ErrorCode::InvalidArgument,
-                "`address` must be a hex address",
-            )
-        })
 }
 
 fn typed<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
@@ -553,7 +499,7 @@ impl RewriteBackend for DemoRewrite {
             counts[status] = json!(counts[status].as_u64().unwrap_or(0) + 1);
             let last = st.versions.get(&f.addr).and_then(|v| v.last());
             let mut row = json!({
-                "order": i, "address": format!("{:#x}", f.addr),
+                "unit": last.map_or("", |v| v.unit.as_str()), "order": i, "address": format!("{:#x}", f.addr),
                 "name": {"untrusted": true, "value": f.name},
                 "status": status, "version": last.map_or(0, |v| v.version),
                 "cases_run": last.map_or(0, |v| v.cases_run), "passed": last.map_or(0, |v| v.passed),
@@ -574,6 +520,54 @@ impl RewriteBackend for DemoRewrite {
         typed(json!({
             "program_sha256": "00", "plan_present": true, "counts": counts, "units": units,
         }))
+    }
+
+    async fn unit(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteUnitArgs,
+    ) -> Result<RewriteUnitOut, ProtoError> {
+        let st = self.lock();
+        let addr = match (args.address, args.unit) {
+            (Some(a), None) => Self::func(a.0)?.addr,
+            (None, Some(id)) => st
+                .versions
+                .iter()
+                .find(|(_, vs)| vs.iter().any(|v| v.unit == id))
+                .map(|(a, _)| *a)
+                .ok_or_else(|| {
+                    ProtoError::new(ErrorCode::NotFound, format!("no rewrite unit `{id}`"))
+                })?,
+            _ => {
+                return Err(ProtoError::new(
+                    ErrorCode::InvalidArgument,
+                    "give exactly one of `address` and `unit`",
+                ));
+            }
+        };
+        let versions: Vec<Value> = st
+            .versions
+            .get(&addr)
+            .map(|vs| {
+                vs.iter()
+                    .map(|v| {
+                        let mut j =
+                            version_json(addr, v, st.accepted.get(&addr) == Some(&v.version));
+                        j["rust_code"] = json!({"untrusted": true, "value": v.code});
+                        j["signature"] = j["rust_prototype"].clone();
+                        j["oracle_kind"] = json!("demo script");
+                        j["created"] = json!(0);
+                        j
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut out = json!({ "address": format!("{addr:#x}"), "versions": versions });
+        if let Some((id, md)) = st.specs.get(&addr) {
+            out["spec"] = spec_json(*id, Some(addr), md);
+        }
+        typed(out)
     }
 
     async fn function(
@@ -724,7 +718,7 @@ impl RewriteBackend for DemoRewrite {
             "symbols": symbols, "built": request.build,
             "sandbox": if request.build { "demo script (nothing was run)" } else { "none" },
             "coverage": {"accepted": st.accepted.len(), "planned": FUNCS.len(), "functions_total": 21},
-            "readme": "README.md",
+            "readme": {"untrusted": true, "value": "README.md"},
         }))
     }
 }

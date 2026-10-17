@@ -142,6 +142,13 @@ impl AgentsConfig {
                 c.mcp_env.push((key.to_string(), v));
             }
         }
+        // The agent does not get `XDG_RUNTIME_DIR`, so its MCP server is told where the daemon is.
+        if use_daemon
+            && !c.mcp_env.iter().any(|(k, _)| k == "KRAKEN_RUNTIME_DIR")
+            && let Some((k, v)) = kraken_host::daemon::mcp_runtime_env()
+        {
+            c.mcp_env.push((k, v));
+        }
         Some(c)
     }
 }

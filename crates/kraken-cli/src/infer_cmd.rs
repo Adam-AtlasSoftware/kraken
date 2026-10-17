@@ -400,7 +400,12 @@ async fn start(
         let tools = info.capabilities.supports_tool_calls;
         write_provider(
             &path,
-            provider_table(&started.base_url, started.model.as_deref(), tools),
+            provider_table(
+                &started.base_url,
+                started.model.as_deref(),
+                tools,
+                started.api_key.is_some(),
+            ),
         )
         .map_err(|e| internal(format!("cannot write {}: {e}", path.display())))?;
         provider_path = Some(path);
@@ -439,6 +444,16 @@ async fn start(
                     p.display()
                 ),
             );
+            if let Some(k) = &started.api_key {
+                emit(
+                    out,
+                    &format!(
+                        "The server requires this run's key; export it where the assistant runs:\n  \
+                         export {}={k}\n",
+                        kraken_host::infer::LOCAL_KEY_ENV
+                    ),
+                );
+            }
         }
     }
 

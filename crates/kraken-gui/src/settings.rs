@@ -155,6 +155,8 @@ pub fn confinement_summary(v: &Value) -> (String, bool) {
     for (key, label) in [
         ("tcp_denied", "tcp denied"),
         ("scoped", "scoped"),
+        ("unix_connect_denied", "no unix connect"),
+        ("sockets_denied", "no new sockets"),
         ("network_namespace", "no network"),
         ("parent_death_signal", "dies with daemon"),
     ] {

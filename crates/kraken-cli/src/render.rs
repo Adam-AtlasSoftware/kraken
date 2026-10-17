@@ -532,6 +532,94 @@ fn rewrite_status(v: &Value) -> String {
     out
 }
 
+/// `rewrite_unit`: the versions of one function as a table, then the newest version's details and
+/// code, then the spec.
+fn rewrite_unit(v: &Value) -> String {
+    let versions: &[Value] = v
+        .get("versions")
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice);
+    let mut out = format!(
+        "{}: {} stored version{}\n",
+        str_of(v.get("address")),
+        versions.len(),
+        if versions.len() == 1 { "" } else { "s" }
+    );
+    if !versions.is_empty() {
+        let rows: Vec<Vec<String>> = versions
+            .iter()
+            .map(|x| {
+                vec![
+                    str_of(x.get("version")),
+                    str_of(x.get("unit")),
+                    str_of(x.get("status")),
+                    str_of(x.get("verdict")),
+                    format!(
+                        "{}/{}",
+                        x.get("passed").and_then(Value::as_u64).unwrap_or(0),
+                        x.get("cases_run").and_then(Value::as_u64).unwrap_or(0)
+                    ),
+                    str_of(x.get("mode")),
+                    format!("{} {}", str_of(x.get("provider")), str_of(x.get("model"))),
+                ]
+            })
+            .collect();
+        out.push_str(&table(
+            &[
+                "version", "unit", "status", "verdict", "cases", "mode", "model",
+            ],
+            &rows,
+        ));
+    }
+    if let Some(x) = versions.last() {
+        out.push_str(&format!(
+            "\nnewest, version {}{}:\nchecked at: {}\noracle: {}; sandbox: {}\n",
+            str_of(x.get("version")),
+            if x.get("accepted") == Some(&Value::Bool(true)) {
+                " (accepted)"
+            } else {
+                ""
+            },
+            str_of(x.get("signature")),
+            str_of(x.get("oracle_kind")),
+            str_of(x.get("sandbox")),
+        ));
+        if let Some(d) = x.get("verdict_detail").and_then(Value::as_str) {
+            out.push_str(&format!("reason: {}\n", one_line(d)));
+        }
+        if let Some(c) = x.get("counterexample").filter(|c| !c.is_null()) {
+            out.push_str(&format!(
+                "counterexample args: {}\n",
+                joined(c.get("args"), "-")
+            ));
+            if let Some(ds) = c.get("differences").and_then(Value::as_array) {
+                for d in ds.iter().filter_map(Value::as_str) {
+                    out.push_str(&format!("  {}\n", one_line(d)));
+                }
+            }
+        }
+        if let Some(code) = x.get("rust_code").and_then(Value::as_str) {
+            out.push('\n');
+            out.push_str(code);
+            if !code.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+    }
+    if let Some(md) = v
+        .get("spec")
+        .and_then(|sp| sp.get("markdown"))
+        .and_then(Value::as_str)
+    {
+        out.push_str("\nspec:\n");
+        out.push_str(md);
+        if !md.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// The result of a `rewrite_function` job: verdict first, the counterexample if there is one.
 fn rewrite_function(v: &Value) -> String {
     let mut out = format!(
@@ -679,6 +767,7 @@ pub fn render(name: &str, output: &Value) -> Rendered {
         "cfg" => plain(cfg(&v)),
         "rewrite_plan" => plain(rewrite_plan(&v)),
         "rewrite_status" => plain(rewrite_status(&v)),
+        "rewrite_unit" => plain(rewrite_unit(&v)),
         // A finished job prints as a job view with the command's result inside.
         "rewrite_function"
             if v.get("result").is_some_and(|r| r.get("verdict").is_some())
@@ -861,6 +950,36 @@ mod tests {
                 "-"
             ]
         );
+    }
+
+    #[test]
+    fn rewrite_unit_lists_versions_then_the_newest_code_and_the_spec() {
+        let out = json!({
+            "address": "0x10",
+            "versions": [
+                {"unit": "ru-a", "version": 1, "mode": "incremental", "status": "failed",
+                 "accepted": false, "verdict": "fail", "cases_run": 9, "passed": 7,
+                 "rust_code": u("old"), "signature": "fn f()", "oracle_kind": "emu",
+                 "sandbox": "landlock", "created": 5, "provider": "p", "model": "m"},
+                {"unit": "ru-b", "version": 2, "mode": "incremental", "status": "accepted",
+                 "accepted": true, "verdict": "pass", "cases_run": 9, "passed": 9,
+                 "rust_code": u("fn f() {}\n"), "signature": "fn f()", "oracle_kind": "emu",
+                 "sandbox": "landlock", "created": 6, "provider": "p", "model": "m"}
+            ],
+            "spec": {"spec": 1, "markdown": u("# f"), "citations": []}
+        });
+        let cells = |l: &str| l.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+        let r = render("rewrite_unit", &out);
+        let lines: Vec<&str> = r.stdout.lines().collect();
+        assert_eq!(lines[0], "0x10: 2 stored versions");
+        assert_eq!(cells(lines[2])[..3], ["1", "ru-a", "failed"]);
+        assert_eq!(cells(lines[3])[..3], ["2", "ru-b", "accepted"]);
+        assert!(r.stdout.contains("newest, version 2 (accepted):"));
+        assert!(r.stdout.contains("\nfn f() {}\n"));
+        assert!(!r.stdout.contains("old"));
+        assert!(r.stdout.ends_with("spec:\n# f\n"));
+        let empty = render("rewrite_unit", &json!({"address": "0x10", "versions": []}));
+        assert_eq!(empty.stdout, "0x10: 0 stored versions\n");
     }
 
     #[test]

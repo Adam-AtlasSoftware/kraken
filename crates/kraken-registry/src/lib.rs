@@ -17,6 +17,7 @@ pub mod context;
 pub mod jobs;
 mod mutate;
 pub mod session;
+pub mod trust;
 pub mod validate;
 pub mod views;
 pub mod views_data;

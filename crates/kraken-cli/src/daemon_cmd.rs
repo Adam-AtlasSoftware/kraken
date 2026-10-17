@@ -1,4 +1,4 @@
-//! `kraken daemon status|stop|start`.
+//! `kraken daemon status|stop|start|approvals`.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -136,6 +136,10 @@ pub(crate) async fn run_daemon(
         "status" => status(env, json_out, out, err).await,
         "stop" => stop(env, json_out, out, err).await,
         "start" => start(env, json_out, out, err).await,
+        "approvals" => {
+            let m = sm.subcommand_matches("approvals").expect("subcommand");
+            approvals(env, m, json_out, out, err).await
+        }
         other => fail(
             &ProtoError::new(
                 ErrorCode::InvalidArgument,
@@ -144,6 +148,88 @@ pub(crate) async fn run_daemon(
             json_out,
             err,
         ),
+    }
+}
+
+/// `kraken daemon approvals [--approve ID | --deny ID]`: what agents wait for, and the answer.
+async fn approvals(
+    env: &CliEnv,
+    m: &ArgMatches,
+    json_out: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let client = match running(env).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            emit(out, "krakend is not running; nothing waits for approval\n");
+            return 0;
+        }
+        Err(e) => return fail(&e, json_out, err),
+    };
+    let answer = m
+        .get_one::<u64>("approve")
+        .map(|id| (*id, true))
+        .or_else(|| m.get_one::<u64>("deny").map(|id| (*id, false)));
+    if let Some((id, allow)) = answer {
+        return match client
+            .rpc("approval_decide", json!({"id": id, "allow": allow}))
+            .await
+        {
+            Ok(v) if v["decided"] == true => {
+                if json_out {
+                    emit(out, &format!("{v}\n"));
+                } else {
+                    emit(
+                        out,
+                        &format!(
+                            "{} request {id}\n",
+                            if allow { "approved" } else { "denied" }
+                        ),
+                    );
+                }
+                0
+            }
+            Ok(_) => fail(
+                &ProtoError::new(
+                    ErrorCode::NotFound,
+                    format!("no request {id} is waiting (it may have timed out)"),
+                ),
+                json_out,
+                err,
+            ),
+            Err(e) => fail(&e, json_out, err),
+        };
+    }
+    match client.rpc("approvals", Value::Null).await {
+        Ok(v) => {
+            if json_out {
+                emit(out, &format!("{v}\n"));
+                return 0;
+            }
+            let list = v["pending"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                emit(out, "nothing waits for your approval\n");
+                return 0;
+            }
+            let rows: Vec<Vec<String>> = list
+                .iter()
+                .map(|x| {
+                    vec![
+                        x["id"].to_string(),
+                        x["author_id"].as_str().unwrap_or("?").to_string(),
+                        x["summary"].as_str().unwrap_or("?").to_string(),
+                    ]
+                })
+                .collect();
+            emit(out, &table(&["id", "agent", "wants to"], &rows));
+            emit(
+                out,
+                "answer with `kraken daemon approvals --approve ID` or `--deny ID`\n",
+            );
+            0
+        }
+        Err(e) => fail(&e, json_out, err),
     }
 }
 

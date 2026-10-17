@@ -570,7 +570,32 @@ pub fn build_cli(registry: &Registry) -> Command {
             .subcommand_required(true)
             .subcommand(Command::new("status").about("Show whether krakend runs, its sessions and sidecars"))
             .subcommand(Command::new("stop").about("Ask krakend to exit (it closes projects and stops Ghidra first)"))
-            .subcommand(Command::new("start").about("Start krakend if it is not running")),
+            .subcommand(Command::new("start").about("Start krakend if it is not running"))
+            .subcommand(
+                Command::new("approvals")
+                    .about("List what agents wait to do until you approve it, and answer")
+                    .long_about(
+                        "An agent that asks to open a project, or to work on one you have not \
+                         opened yourself, waits for your approval. The KRAKEN window shows a \
+                         dialog; without one, list the waiting requests here and answer with \
+                         --approve or --deny.",
+                    )
+                    .arg(
+                        Arg::new("approve")
+                            .long("approve")
+                            .value_name("ID")
+                            .value_parser(clap::value_parser!(u64))
+                            .conflicts_with("deny")
+                            .help("Allow the request with this id"),
+                    )
+                    .arg(
+                        Arg::new("deny")
+                            .long("deny")
+                            .value_name("ID")
+                            .value_parser(clap::value_parser!(u64))
+                            .help("Refuse the request with this id"),
+                    ),
+            ),
     )
 }
 
@@ -961,8 +986,14 @@ async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Wr
         .get_one::<String>("project")
         .cloned()
         .or_else(|| env.var("KRAKEN_PROJECT"));
+    // A project chosen on the command line binds the server to it (no project_create or
+    // project_open for the agent to point the engine elsewhere).
+    let options = McpOptions {
+        bound_project: project.is_some(),
+        ..McpOptions::default()
+    };
     if sm.get_flag("daemon") {
-        return run_mcp_via_daemon(env, project, json_out, err).await;
+        return run_mcp_via_daemon(env, project, options, json_out, err).await;
     }
     // A running krakend may already hold the project (the CLI starts it on demand), and a
     // Ghidra project can only be open in one process, so join the daemon when it is up.
@@ -972,7 +1003,7 @@ async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Wr
         && let Ok(Some(client)) = auto.connect_running(ClientKind::Mcp).await
     {
         tracing::info!("krakend is running; serving MCP through it");
-        return run_mcp_with_client(env, Arc::new(client), project, json_out, err).await;
+        return run_mcp_with_client(env, Arc::new(client), project, options, json_out, err).await;
     }
     let session = env.new_session();
     if let Some(dir) = project
@@ -982,7 +1013,7 @@ async fn run_mcp(env: &CliEnv, sm: &ArgMatches, json_out: bool, err: &mut dyn Wr
         env.factory.shutdown().await;
         return fail(&e, json_out, err);
     }
-    let server = KrakenMcp::new(env.registry.clone(), session, McpOptions::default());
+    let server = KrakenMcp::new(env.registry.clone(), session, options);
     tracing::info!(run_id = server.run_id(), "starting MCP server on stdio");
     let result = serve_stdio(server).await;
     env.factory.shutdown().await;
@@ -1008,6 +1039,7 @@ fn finish_mcp(
 async fn run_mcp_via_daemon(
     env: &CliEnv,
     project: Option<String>,
+    options: McpOptions,
     json_out: bool,
     err: &mut dyn Write,
 ) -> i32 {
@@ -1034,7 +1066,7 @@ async fn run_mcp_via_daemon(
             );
         }
     };
-    run_mcp_with_client(env, client, project, json_out, err).await
+    run_mcp_with_client(env, client, project, options, json_out, err).await
 }
 
 /// Serves MCP with every command routed through an already connected daemon.
@@ -1042,6 +1074,7 @@ async fn run_mcp_with_client(
     env: &CliEnv,
     client: Arc<DaemonClient>,
     project: Option<String>,
+    options: McpOptions,
     json_out: bool,
     err: &mut dyn Write,
 ) -> i32 {
@@ -1057,7 +1090,7 @@ async fn run_mcp_with_client(
             return fail(&e, json_out, err);
         }
     }
-    let server = KrakenMcp::with_backend(env.registry.clone(), backend, McpOptions::default());
+    let server = KrakenMcp::with_backend(env.registry.clone(), backend, options);
     tracing::info!(
         run_id = server.run_id(),
         "starting MCP server on stdio (via krakend)"

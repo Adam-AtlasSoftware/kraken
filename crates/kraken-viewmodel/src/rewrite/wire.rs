@@ -128,7 +128,7 @@ pub(super) struct VersionWire {
     pub skipped: u32,
     #[serde(default)]
     pub counterexample: Option<CounterexampleWire>,
-    #[serde(default)]
+    #[serde(default, alias = "signature")]
     pub rust_prototype: String,
     #[serde(default)]
     pub rust_code: Option<Untrusted<String>>,
@@ -209,4 +209,36 @@ pub(super) struct StartedWire {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct DecompileTextWire {
     pub text: Untrusted<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kraken_registry::commands::RewriteUnitOut;
+    use serde_json::json;
+
+    /// The panel reads exactly what the registry's `rewrite_unit` produces.
+    #[test]
+    fn the_registry_reply_of_rewrite_unit_parses() {
+        let reply = json!({
+            "address": "0x10",
+            "versions": [{
+                "unit": "ru-1", "version": 2, "mode": "spec", "status": "accepted",
+                "accepted": true, "verdict": "pass", "cases_run": 9, "passed": 9, "skipped": 0,
+                "rust_code": {"untrusted": true, "value": "fn f() {}"},
+                "signature": "pub unsafe extern \"C\" fn f()", "oracle_kind": "emu",
+                "sandbox": "landlock", "created": 7, "provider": "p", "model": "m"
+            }],
+            "spec": {"spec": 3, "markdown": {"untrusted": true, "value": "# f"},
+                     "citations": ["0x10"], "facts": 1, "provider": "p", "model": "m"}
+        });
+        serde_json::from_value::<RewriteUnitOut>(reply.clone()).expect("registry shape");
+        let u: UnitWire = serde_json::from_value(reply).expect("panel shape");
+        assert_eq!(
+            u.versions[0].rust_prototype,
+            "pub unsafe extern \"C\" fn f()"
+        );
+        assert!(u.versions[0].accepted);
+        assert_eq!(u.spec.map(|s| s.markdown.0), Some("# f".to_string()));
+    }
 }

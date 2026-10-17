@@ -14,7 +14,7 @@ use kraken_registry::commands::{
     ExportCoverage, ExportRequest, PlanScope, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend,
     RewriteExportResult, RewriteFunctionArgs, RewriteFunctionResult, RewriteMode, RewritePlanArgs,
     RewritePlanOut, RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut,
-    StatusCounts, UnitStatus,
+    RewriteUnitArgs, RewriteUnitOut, StatusCounts, UnitStatus,
 };
 use kraken_registry::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, CommandKind,
@@ -96,6 +96,20 @@ impl RewriteBackend for Mock {
             counts: StatusCounts::default(),
             units: vec![],
             next_cursor: None,
+        })
+    }
+
+    async fn unit(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteUnitArgs,
+    ) -> Result<RewriteUnitOut, ProtoError> {
+        self.log(&format!("unit {:?} {:?}", args.address, args.unit));
+        Ok(RewriteUnitOut {
+            address: args.address.unwrap_or(Hex64(0x10)),
+            versions: vec![],
+            spec: None,
         })
     }
 
@@ -190,7 +204,7 @@ impl RewriteBackend for Mock {
                 planned: 0,
                 functions_total: 0,
             },
-            readme: String::new(),
+            readme: kraken_proto::Untrusted(String::new()),
         })
     }
 }
@@ -259,6 +273,7 @@ fn kinds_and_permissions_of_the_rewrite_commands() {
     let expect = [
         ("rewrite_plan", CommandKind::Query, Permission::Safe),
         ("rewrite_status", CommandKind::Query, Permission::Safe),
+        ("rewrite_unit", CommandKind::Query, Permission::Safe),
         ("rewrite_function", CommandKind::Job, Permission::Mutating),
         (
             "rewrite_accept",
@@ -319,6 +334,31 @@ async fn queries_pass_straight_to_the_backend() {
         .expect_err("bad scope");
     assert_eq!(e.code, ErrorCode::InvalidArgument);
     assert_eq!(r.mock.calls().len(), 2, "rejected before the backend");
+}
+
+#[tokio::test]
+async fn rewrite_unit_takes_exactly_one_of_address_and_unit() {
+    let r = rig(true).await;
+    let out = r
+        .call(&user(), "rewrite_unit", json!({"address": "0x10"}))
+        .await
+        .expect("by address");
+    assert_eq!(out["versions"], json!([]));
+    r.call(&user(), "rewrite_unit", json!({"unit": "ru-1"}))
+        .await
+        .expect("by unit");
+    for bad in [json!({}), json!({"address": "0x10", "unit": "ru-1"})] {
+        let e = r
+            .call(&user(), "rewrite_unit", bad)
+            .await
+            .expect_err("needs exactly one");
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+    }
+    assert_eq!(
+        r.mock.calls(),
+        ["unit Some(Hex64(16)) None", "unit None Some(\"ru-1\")"],
+        "bad calls are rejected before the backend"
+    );
 }
 
 #[tokio::test]

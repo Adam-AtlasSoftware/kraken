@@ -51,7 +51,8 @@ If your tool cannot find `kraken`, give the full path (for example `/home/you/.c
 - **Reading is free.** Listing, decompiling and inspecting are always allowed.
 - **Additive edits apply at once.** Naming a symbol that still has a default name, or adding a comment, is applied and logged as the agent's work.
 - **Other edits become proposals.** If the agent would overwrite something, or exceeds its per-run cap, the result says `proposed` and nothing changes until you run `kraken proposal-accept`. Agents cannot accept or reject proposals.
-- **Dangerous commands always ask.** The client must support MCP elicitation so KRAKEN can show you a prompt. If it cannot, the command is denied.
+- **Dangerous commands always ask.** In the default mode (the server holds the session itself) the client must support MCP elicitation so KRAKEN can show you a prompt; if it cannot, the command is denied. With `--daemon` the daemon asks you in the KRAKEN window or through `kraken daemon approvals`, because the MCP server runs under the agent's control and cannot vouch for you.
+- **Opening a project asks too.** `project_create` and `project_open` need your approval when an agent calls them, and are refused for files in hidden directories of your home directory. `kraken mcp --project DIR` binds the server to a project you chose and leaves both tools out.
 - **Everything can be undone.** `kraken undo-run` reverses a whole agent run. Each connection has its own run id.
 
 ## Treat binary text as untrusted

@@ -243,7 +243,7 @@ async fn kraken_mcp_daemon_routes_the_tools_through_krakend() {
     )
     .expect("spawn kraken mcp --daemon");
     let client = ().serve(transport).await.expect("initialise");
-    assert_eq!(client.list_all_tools().await.expect("tools").len(), 44);
+    assert_eq!(client.list_all_tools().await.expect("tools").len(), 45);
 
     let call = |tool: &str, args: Value| {
         let client = &client;
@@ -270,11 +270,28 @@ async fn kraken_mcp_daemon_routes_the_tools_through_krakend() {
     };
     let (ok, v) = call("list_functions", json!({})).await;
     assert!(!ok && v["code"] == "not_found", "no project yet: {v}");
-    let (ok, v) = call(
-        "project_create",
-        json!({"binary": path(&e.binary), "project_dir": proj}),
-    )
-    .await;
+    // An agent cannot open a project by itself: the request waits for the person, who answers
+    // it with the CLI.
+    let approver = async {
+        for _ in 0..400 {
+            let v = e.ok(&["--json", "daemon", "approvals"]);
+            if let Some(p) = v["pending"].as_array().and_then(|a| a.first()) {
+                assert_eq!(p["command"], "project_create", "{p}");
+                let id = p["id"].to_string();
+                e.ok(&["--json", "daemon", "approvals", "--approve", &id]);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the agent's request never reached the approval list");
+    };
+    let ((ok, v), ()) = tokio::join!(
+        call(
+            "project_create",
+            json!({"binary": path(&e.binary), "project_dir": proj}),
+        ),
+        approver
+    );
     assert!(ok, "{v}");
     let (ok, v) = call("list_functions", json!({})).await;
     assert!(ok && v["items"].as_array().map(Vec::len) == Some(3), "{v}");

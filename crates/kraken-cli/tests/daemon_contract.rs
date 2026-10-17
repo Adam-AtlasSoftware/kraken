@@ -82,16 +82,34 @@ async fn surfaces() -> Surfaces {
     };
     daemon_cli.daemon = DaemonMode::Connected(connect().await);
 
+    // The MCP server connects like the real one: with the agent credential. What it asks to
+    // open waits on the daemon's approval list; a stand-in for the person answers yes.
+    let agent = {
+        let c = Client::connect(&dir, &ClientHello::new(ClientKind::Mcp, "test"))
+            .await
+            .expect("connect as an agent");
+        Arc::new(DaemonClient::from_client(c, "test"))
+    };
+    let board = daemon.approvals().clone();
+    tokio::spawn(async move {
+        loop {
+            for p in board.pending() {
+                board.decide(p.id, true);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
     let mcp_server = KrakenMcp::with_backend(
         Arc::new(Registry::standard()),
         Arc::new(DaemonBackend::new(
-            connect().await,
+            agent,
             Arc::new(Registry::standard()),
             None,
         )),
         McpOptions {
             agent_id: Some("bot".into()),
             run_id: Some(RUN_MCP.into()),
+            ..McpOptions::default()
         },
     );
     let (c, s) = tokio::io::duplex(1 << 20);
@@ -121,7 +139,15 @@ fn kebab(name: &str) -> String {
 async fn cli_call(env: &CliEnv, project: &str, tool: &str, args: &Value) -> (bool, Value) {
     let text = args.to_string();
     let sub = kebab(tool);
-    let argv = ["--json", "--project", project, &sub, "--args-json", &text];
+    let argv = [
+        "--json",
+        "--yes",
+        "--project",
+        project,
+        &sub,
+        "--args-json",
+        &text,
+    ];
     let r = kraken(env, &argv).await;
     (r.code == 0, r.json())
 }
@@ -425,6 +451,7 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
     for (name, args) in [
         ("rewrite_plan", json!({})),
         ("rewrite_status", json!({})),
+        ("rewrite_unit", json!({"address": "0x401040"})),
         ("rewrite_function", json!({"address": "0x401040"})),
         ("rewrite_spec", json!({"scope": "all"})),
         ("rewrite_export", json!({"dir": "out"})),

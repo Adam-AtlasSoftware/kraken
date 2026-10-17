@@ -20,6 +20,7 @@ use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{Registry, SessionConfig};
 use tokio::task::JoinHandle;
 
+use crate::approvals::ApprovalBoard;
 use crate::events::EventHub;
 use crate::handler::{DaemonFacts, DaemonHandler};
 use crate::host::{HostConfig, SessionHost};
@@ -84,6 +85,7 @@ pub struct Daemon {
     jobs: kraken_ipc::Counter,
     models: kraken_ipc::Counter,
     infer: Arc<InferManager>,
+    approvals: ApprovalBoard,
     done: JoinHandle<()>,
 }
 
@@ -116,6 +118,11 @@ impl Daemon {
     /// Loaded local models right now, as the idle monitor sees them.
     pub fn loaded_models(&self) -> usize {
         self.models.get()
+    }
+
+    /// The approvals waiting for a person (tests answer them directly).
+    pub fn approvals(&self) -> &ApprovalBoard {
+        &self.approvals
     }
 
     /// The local model manager (tests inspect it).
@@ -201,6 +208,7 @@ pub fn start_full(
         shutdown.clone(),
     )
     .with_infer(infer.clone());
+    let approvals = handler.approvals().clone();
     let server = Server::with_parts(
         handler,
         guard.server_config(),
@@ -302,6 +310,7 @@ pub fn start_full(
         jobs,
         models,
         infer,
+        approvals,
         done,
     })
 }

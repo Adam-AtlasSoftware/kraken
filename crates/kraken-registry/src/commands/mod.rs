@@ -34,7 +34,7 @@ pub use jobs::{
 };
 pub use project::{
     AnalysisView, ProjectCreate, ProjectCreateArgs, ProjectInfo, ProjectInfoOut, ProjectOpen,
-    ProjectOpenArgs,
+    ProjectOpenArgs, project_gate,
 };
 pub use query::{
     Decompile, DecompileArgs, GetFunction, GetFunctionArgs, ListFunctions, ListFunctionsArgs,
@@ -46,7 +46,8 @@ pub use rewrite::{
     RewriteExportArgs, RewriteExportResult, RewriteFunction, RewriteFunctionArgs,
     RewriteFunctionResult, RewriteMode, RewritePlan, RewritePlanArgs, RewritePlanOut, RewriteSpec,
     RewriteSpecArgs, RewriteSpecResult, RewriteStatus, RewriteStatusArgs, RewriteStatusOut,
-    StatusCounts, UnitRow, UnitStatus, is_inside,
+    RewriteUnit, RewriteUnitArgs, RewriteUnitOut, StatusCounts, UnitRow, UnitSpecView, UnitStatus,
+    UnitVersionView, is_inside,
 };
 pub use undo_entry::{
     DependentView, TaintedClear, TaintedClearArgs, TaintedClearOut, TaintedFunction, TaintedList,
@@ -120,6 +121,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(Rebuild);
     r.register(RewritePlan);
     r.register(RewriteStatus);
+    r.register(RewriteUnit);
     r.register(RewriteFunction);
     r.register(RewriteAccept);
     r.register(RewriteSpec);

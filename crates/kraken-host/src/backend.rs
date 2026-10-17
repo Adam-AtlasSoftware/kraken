@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::{
-    ApprovalDecision, ApprovalRequest, CallContext, Permission, Registry, Session,
+    ApprovalDecision, ApprovalRequest, CallContext, Permission, Registry, Session, Surface,
 };
 use serde_json::Value;
 
@@ -194,7 +194,10 @@ impl CommandBackend for DaemonBackend {
             ProtoError::new(ErrorCode::NotFound, format!("unknown command `{name}`"))
         })?;
         let mut approved = false;
-        if entry.spec().permission == Permission::Dangerous {
+        // On the MCP surface the daemon asks the person itself: this process runs under the
+        // agent's control, so an approval it reports would prove nothing (the daemon ignores
+        // the `approved` flag of an agent connection).
+        if entry.spec().permission == Permission::Dangerous && ctx.surface != Surface::Mcp {
             let decision = ctx
                 .approval
                 .request(ApprovalRequest {
@@ -218,6 +221,13 @@ impl CommandBackend for DaemonBackend {
         }
         absolutize_args(name, &mut args);
         let creating = is_project_command(name);
+        // An agent author on the CLI (a person typed `--yes` or answers the prompt) goes through
+        // the same gate as in-process, and the daemon is told it was approved. On the MCP
+        // surface the daemon asks the person itself.
+        if creating && ctx.needs_user_approval() && ctx.surface != Surface::Mcp {
+            kraken_registry::commands::project_gate(name, &args, ctx).await?;
+            approved = true;
+        }
         let project_dir = if creating {
             args.get("project_dir")
                 .and_then(Value::as_str)

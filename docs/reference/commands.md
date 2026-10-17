@@ -44,6 +44,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`rewrite_plan`](#rewrite_plan) | query | safe | Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged |
 | [`rewrite_spec`](#rewrite_spec) | job | mutating | Write a cited behavioural spec of a function or the program (job) |
 | [`rewrite_status`](#rewrite_status) | query | safe | Show rewrite progress: counts per status and one row per function |
+| [`rewrite_unit`](#rewrite_unit) | query | safe | Show the stored Rust versions of one function, with code, verdicts and its spec |
 | [`set_calling_convention`](#set_calling_convention) | mutation | mutating | Set a function's calling convention |
 | [`set_comment`](#set_comment) | mutation | mutating | Set or clear a comment at an address |
 | [`set_function_bounds`](#set_function_bounds) | mutation | mutating | Change a function's address range |
@@ -3209,11 +3210,15 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
       "description": "Analysis state of the project.",
       "properties": {
         "error": {
-          "description": "Why the last run failed.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the last run failed."
         },
         "function_count": {
           "description": "Functions known after the last finished analysis.",
@@ -3303,6 +3308,22 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
         "size"
       ],
       "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3313,8 +3334,8 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
       "description": "Analysis state."
     },
     "binary_path": {
-      "description": "Absolute path of the analysed binary.",
-      "type": "string"
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "Absolute path of the analysed binary. The file name is chosen by whoever supplied the\nbinary, so it is marked untrusted."
     },
     "binary_sha256": {
       "description": "SHA-256 of the binary recorded at creation.",
@@ -3448,11 +3469,15 @@ Arguments: none.
       "description": "Analysis state of the project.",
       "properties": {
         "error": {
-          "description": "Why the last run failed.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the last run failed."
         },
         "function_count": {
           "description": "Functions known after the last finished analysis.",
@@ -3542,6 +3567,22 @@ Arguments: none.
         "size"
       ],
       "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3552,8 +3593,8 @@ Arguments: none.
       "description": "Analysis state."
     },
     "binary_path": {
-      "description": "Absolute path of the analysed binary.",
-      "type": "string"
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "Absolute path of the analysed binary. The file name is chosen by whoever supplied the\nbinary, so it is marked untrusted."
     },
     "binary_sha256": {
       "description": "SHA-256 of the binary recorded at creation.",
@@ -3691,11 +3732,15 @@ Opens the project database and the engine cache. If the engine build, options or
       "description": "Analysis state of the project.",
       "properties": {
         "error": {
-          "description": "Why the last run failed.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the last run failed."
         },
         "function_count": {
           "description": "Functions known after the last finished analysis.",
@@ -3785,6 +3830,22 @@ Opens the project database and the engine cache. If the engine build, options or
         "size"
       ],
       "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3795,8 +3856,8 @@ Opens the project database and the engine cache. If the engine build, options or
       "description": "Analysis state."
     },
     "binary_path": {
-      "description": "Absolute path of the analysed binary.",
-      "type": "string"
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "Absolute path of the analysed binary. The file name is chosen by whoever supplied the\nbinary, so it is marked untrusted."
     },
     "binary_sha256": {
       "description": "SHA-256 of the binary recorded at creation.",
@@ -5186,6 +5247,11 @@ Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); 
           "$ref": "#/$defs/UnitStatus",
           "description": "Status."
         },
+        "unit": {
+          "default": "",
+          "description": "Id of the newest version (`ru-...`); empty when nothing was translated. Pass it to\n`rewrite_unit` or `rewrite_accept`.",
+          "type": "string"
+        },
         "verdict": {
           "description": "Verdict of the newest version: `pass`, `fail`, `rejected` or `inconclusive`.",
           "type": [
@@ -5296,6 +5362,323 @@ Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); 
     "units"
   ],
   "title": "RewriteStatusOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_unit
+
+Show the stored Rust versions of one function, with code, verdicts and its spec
+
+```sh
+kraken rewrite-unit [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `address` or by the id of one of its versions (`unit`). `versions` lists every stored version, oldest first, with the Rust code, the signature it was checked at, the verdict and a counterexample for a failed one, and which version is accepted. `spec` is the function's newest stored spec, when `rewrite_spec` wrote one. The code and the spec are model-written and untrusted.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | json | no | The function (any address inside it). |
+| `unit` | `--unit` | string | no | A unit version id from `rewrite_function` or `rewrite_status` (`ru-...`); selects the function that version belongs to. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "CounterexampleView": {
+      "description": "A case on which the translation and the original disagreed.",
+      "properties": {
+        "args": {
+          "description": "The arguments, rendered (`42`, `buf[8]=00ff...`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "differences": {
+          "description": "What differed, derived from the original's output (binary-derived).",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "args",
+        "differences"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "RewriteMode": {
+      "description": "How a function is rewritten (decision 2).",
+      "oneOf": [
+        {
+          "const": "incremental",
+          "description": "Faithful translation of the decompile, checked against the original machine code\n(strangler pattern).",
+          "type": "string"
+        },
+        {
+          "const": "spec",
+          "description": "Reimplementation from a cited behavioural spec (written first when none is stored); the\nmodel does not see the function's decompile, only the spec.",
+          "type": "string"
+        }
+      ]
+    },
+    "UnitSpecView": {
+      "description": "The stored spec of a function.",
+      "properties": {
+        "citations": {
+          "description": "Every address the spec cites.",
+          "items": {
+            "$ref": "#/$defs/Hex64"
+          },
+          "type": "array"
+        },
+        "facts": {
+          "description": "Facts (cited bullets) in the spec.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "markdown": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The spec (model-derived Markdown; citations are `[@0xADDR]`)."
+        },
+        "model": {
+          "description": "Model name.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "Provider id.",
+          "type": "string"
+        },
+        "spec": {
+          "description": "Id of the stored spec.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "spec",
+        "markdown",
+        "citations",
+        "facts",
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
+    "UnitStatus": {
+      "description": "Where a rewrite unit stands (ADR 0013).",
+      "oneOf": [
+        {
+          "const": "planned",
+          "description": "In the plan; nothing translated yet.",
+          "type": "string"
+        },
+        {
+          "const": "translated",
+          "description": "Rust code exists but no passing verdict does (not run, or inconclusive).",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "The differential test passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The differential test found a difference, or the code was refused or did not compile.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "A user accepted this verified version for export.",
+          "type": "string"
+        }
+      ]
+    },
+    "UnitVersionView": {
+      "description": "One stored version of a function, with its code.",
+      "properties": {
+        "accepted": {
+          "description": "True when this is the accepted version.",
+          "type": "boolean"
+        },
+        "cases_run": {
+          "description": "Cases that ran on both sides.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "counterexample": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CounterexampleView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The smallest counterexample, for a failed verdict."
+        },
+        "created": {
+          "description": "When the version was stored (seconds since the Unix epoch).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "$ref": "#/$defs/RewriteMode",
+          "description": "How it was made."
+        },
+        "model": {
+          "description": "Model name.",
+          "type": "string"
+        },
+        "oracle_kind": {
+          "description": "Kind of oracle that checked it, for example `icicle-emu/x86-64-sleigh`.",
+          "type": "string"
+        },
+        "passed": {
+          "description": "Cases that agreed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "description": "Provider id.",
+          "type": "string"
+        },
+        "rust_code": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The generated Rust (model-derived; untrusted)."
+        },
+        "sandbox": {
+          "description": "How the generated code was confined while it ran.",
+          "type": "string"
+        },
+        "signature": {
+          "description": "The Rust declaration the code was checked at.",
+          "type": "string"
+        },
+        "skipped": {
+          "description": "Cases the oracle could not evaluate.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/UnitStatus",
+          "description": "Status of this version."
+        },
+        "unit": {
+          "description": "Id of this version (`ru-...`).",
+          "type": "string"
+        },
+        "verdict": {
+          "description": "`pass`, `fail`, `rejected` or `inconclusive`.",
+          "type": "string"
+        },
+        "verdict_detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why, for `rejected` and `inconclusive` (model- or binary-derived)."
+        },
+        "version": {
+          "description": "Version number for the function, from 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "unit",
+        "version",
+        "mode",
+        "status",
+        "accepted",
+        "verdict",
+        "cases_run",
+        "passed",
+        "skipped",
+        "rust_code",
+        "signature",
+        "oracle_kind",
+        "sandbox",
+        "created",
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `rewrite_unit`.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "Function entry."
+    },
+    "spec": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UnitSpecView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The function's stored spec, if one was written."
+    },
+    "versions": {
+      "description": "Every stored version, oldest first (empty when the function was never translated).",
+      "items": {
+        "$ref": "#/$defs/UnitVersionView"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "address",
+    "versions"
+  ],
+  "title": "RewriteUnitOut",
   "type": "object"
 }
 ```

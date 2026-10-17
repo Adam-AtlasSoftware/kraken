@@ -13,6 +13,32 @@ use kraken_proto::{Locator, ProtoError};
 use kraken_registry::{EngineFactory, Registry, Session};
 use serde_json::Value;
 
+/// An MCP client that supports elicitation and approves everything it is asked: the person
+/// behind the agent saying yes to `project_create`.
+pub struct ApprovingClient;
+
+impl rmcp::ClientHandler for ApprovingClient {
+    fn get_info(&self) -> rmcp::model::ClientConfig {
+        rmcp::model::ClientConfig::new(
+            rmcp::model::ClientCapabilities::builder()
+                .enable_elicitation()
+                .build(),
+            rmcp::model::Implementation::new("approving-test-client", "1.0"),
+        )
+    }
+
+    async fn create_elicitation(
+        &self,
+        _request: rmcp::model::ElicitRequestParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleClient>,
+    ) -> Result<rmcp::model::ElicitResult, rmcp::ErrorData> {
+        Ok(
+            rmcp::model::ElicitResult::new(rmcp::model::ElicitationAction::Accept)
+                .with_content(serde_json::json!({"approve": true})),
+        )
+    }
+}
+
 /// The tiny fixture with every function carrying an engine default name.
 pub fn default_named() -> FixtureFile {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine-fake/fixtures/tiny.json");

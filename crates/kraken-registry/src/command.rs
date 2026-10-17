@@ -218,11 +218,11 @@ impl Entry {
                 .with_details(serde_json::json!({ "approval": "denied" })));
             }
         }
-        self.handler.call(s, ctx, args).await.map_err(|mut e| {
-            // Engine reasons can quote binary-derived text.
-            e.message = kraken_proto::sanitize(&e.message);
-            e
-        })
+        // Engine reasons and their details (log tails, file names) quote binary-derived text.
+        self.handler
+            .call(s, ctx, args)
+            .await
+            .map_err(ProtoError::sanitized)
     }
 }
 

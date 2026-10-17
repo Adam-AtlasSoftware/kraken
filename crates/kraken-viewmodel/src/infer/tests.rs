@@ -251,6 +251,7 @@ fn status(phase: &str, fraction: Option<f32>) -> StatusReply {
         restarts: 0,
         pid: Some(7),
         uptime_secs: Some(1),
+        api_key: Some("run-key".into()),
     }
 }
 
@@ -273,6 +274,7 @@ impl InferApi for FakeApi {
             model: Some("tiny.gguf".into()),
             port: 9,
             pid: Some(7),
+            api_key: Some("run-key".into()),
             warnings: vec!["RAM is tight".into()],
         })
     }
@@ -427,8 +429,17 @@ fn the_panel_lists_selects_starts_follows_and_stops() {
             model,
             supports_tools,
             context_window,
-            ..
+            api_key,
         } => {
+            assert_eq!(p.api_key(), Some("run-key"));
+            assert_eq!(
+                api_key,
+                Some(kraken_agent::SecretRef::Keyring {
+                    service: crate::assist::SECRETS_SERVICE.into(),
+                    account: LOCAL_INFER_ACCOUNT.into(),
+                }),
+                "the key is referenced, never embedded in the config"
+            );
             assert_eq!(base_url, "http://127.0.0.1:9/v1");
             assert_eq!(model, "tiny.gguf");
             assert!(supports_tools, "llama-server calls tools");

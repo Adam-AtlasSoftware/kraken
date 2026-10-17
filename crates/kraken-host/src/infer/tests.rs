@@ -461,3 +461,16 @@ fn settings_pairs_follow_the_schema() {
     );
     assert_eq!(model_setting(&json!({})), None);
 }
+
+#[test]
+fn provider_table_names_the_key_variable_and_never_embeds_a_key() {
+    let t = provider_table("http://127.0.0.1:1/v1", Some("m"), true, true);
+    assert_eq!(t["api_key"]["env"], LOCAL_KEY_ENV);
+    assert!(provider_table("http://127.0.0.1:1/v1", None, true, false)["api_key"].is_null());
+}
+
+#[test]
+fn status_reply_omits_an_absent_key() {
+    let s = serde_json::to_value(StatusReply::none()).unwrap();
+    assert!(s.get("api_key").is_none());
+}

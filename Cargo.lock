@@ -2750,6 +2750,7 @@ name = "kraken-infer"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.3.4",
  "kraken-procguard",
  "libc",
  "serde",
@@ -2909,6 +2910,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

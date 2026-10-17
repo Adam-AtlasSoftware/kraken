@@ -156,6 +156,9 @@ pub(crate) async fn submit_as(
     let author = ctx.author.clone();
     let cap = u64::from(project.config().per_run_cap);
     let is_agent = author.kind == AuthorKind::Agent;
+    // The identity the daemon counts an agent under survives a reconnect, unlike the run id.
+    let quota_key = ctx.quota_key.clone();
+    let quota_used = quota_key.as_deref().map_or(0, |k| project.quota_used(k));
     let op = VersionedLogOp::new(op);
     let draft_key = key.clone();
     let appended = project
@@ -187,7 +190,7 @@ pub(crate) async fn submit_as(
                 };
                 let reason = if classify(&op.op, &state) == Classification::Overwrite {
                     Some("changes an existing annotation or the program structure; needs user approval".to_string())
-                } else if used >= cap {
+                } else if used >= cap || quota_used >= cap {
                     Some(format!(
                         "per-run limit of {cap} auto-applied edits reached; needs user approval"
                     ))
@@ -219,6 +222,9 @@ pub(crate) async fn submit_as(
             reason: Some(reason),
         }),
         Appended::Entry { id, version } => {
+            if is_agent && let Some(k) = &quota_key {
+                project.quota_add(k);
+            }
             let settled = settle(&project, ctx, &[id]).await?;
             if let Some((_, e)) = settled.failed.first() {
                 return Err(engine_rejected(id, e));

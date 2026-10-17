@@ -138,6 +138,18 @@ struct Rig {
 }
 
 async fn rig(name: &'static str, elicit: Option<bool>, delay: Duration, project: bool) -> Rig {
+    rig_with(name, elicit, delay, project, false).await
+}
+
+/// `project`: a person opened a project before the agent connected (as `kraken mcp --project`
+/// does). `bound`: the server is bound to it.
+async fn rig_with(
+    name: &'static str,
+    elicit: Option<bool>,
+    delay: Duration,
+    project: bool,
+    bound: bool,
+) -> Rig {
     let dir = tempfile::Builder::new()
         .prefix("kraken-mcp-test-")
         .tempdir()
@@ -153,6 +165,7 @@ async fn rig(name: &'static str, elicit: Option<bool>, delay: Duration, project:
         McpOptions {
             agent_id: None,
             run_id: Some("run-test-1".into()),
+            bound_project: bound,
         },
     );
     let (c, s) = tokio::io::duplex(1 << 20);
@@ -175,13 +188,10 @@ async fn rig(name: &'static str, elicit: Option<bool>, delay: Duration, project:
         dir,
     };
     if project {
-        let r = rig
-            .call(
-                "project_create",
-                json!({"binary": rig.binary, "project_dir": rig.dir.path().join("p")}),
-            )
-            .await;
-        assert_ne!(r.is_error, Some(true), "{r:?}");
+        session
+            .create_project(&rig.dir.path().join("p"), &binary)
+            .await
+            .expect("the person opens the project");
     }
     rig
 }
@@ -257,8 +267,60 @@ async fn tools_mirror_the_registry() {
 }
 
 #[tokio::test]
+async fn an_agent_cannot_open_a_project_unless_the_person_approves() {
+    let args = |rig: &Rig| json!({"binary": rig.binary, "project_dir": rig.dir.path().join("p")});
+    // A client that cannot ask the person: denied.
+    let silent = rig("t", None, Duration::ZERO, false).await;
+    let denied = silent.call("project_create", args(&silent)).await;
+    assert_eq!(error_json(&denied)["details"]["approval"], "denied");
+    assert!(!silent.dir.path().join("p").exists());
+    // The person says no.
+    let declining = rig("t", Some(false), Duration::ZERO, false).await;
+    let denied = declining.call("project_create", args(&declining)).await;
+    assert_eq!(error_json(&denied)["details"]["approval"], "denied");
+    assert!(!declining.dir.path().join("p").exists());
+    // The person says yes.
+    let approving = rig("t", Some(true), Duration::ZERO, false).await;
+    let created = approving.call("project_create", args(&approving)).await;
+    assert_ne!(created.is_error, Some(true), "{created:?}");
+    // Opening an existing project is asked the same way.
+    let p = approving.dir.path().join("p");
+    let silent = rig("t", None, Duration::ZERO, false).await;
+    let denied = silent.call("project_open", json!({"project_dir": p})).await;
+    assert_eq!(error_json(&denied)["details"]["approval"], "denied");
+}
+
+#[tokio::test]
+async fn a_bound_server_neither_lists_nor_runs_the_project_tools() {
+    let rig = rig_with("t", None, Duration::ZERO, true, true).await;
+    let tools = rig.client.list_all_tools().await.expect("tools");
+    let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "project_create" || n == "project_open")
+    );
+    assert!(names.iter().any(|n| n == "project_info"), "{names:?}");
+    for tool in ["project_create", "project_open"] {
+        let r = rig
+            .call(
+                tool,
+                json!({"binary": rig.binary, "project_dir": rig.dir.path().join("other")}),
+            )
+            .await;
+        let e = error_json(&r);
+        assert_eq!(e["code"], "unsupported", "{e}");
+        assert!(e["message"].as_str().unwrap().contains("bound"), "{e}");
+    }
+    assert!(!rig.dir.path().join("other").exists());
+    // The bound project keeps working.
+    let list = rig.ok("list_functions", json!({})).await;
+    assert_eq!(list["items"].as_array().map(Vec::len), Some(3));
+}
+
+#[tokio::test]
 async fn without_a_project_only_project_tools_can_work() {
-    let rig = rig("t", None, Duration::ZERO, false).await;
+    let rig = rig("t", Some(true), Duration::ZERO, false).await;
     let err = error_json(&rig.call("list_functions", json!({})).await);
     assert_eq!(err["code"], "not_found");
     let created = rig

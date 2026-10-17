@@ -41,7 +41,10 @@ pub use types::{
     Bitfield, Composite, EnumDef, EnumVariant, Field, FunctionPrototype, Param, Primitive,
     PrimitiveClass, TypeDef, TypeRef, TypedefDef,
 };
-pub use untrusted::{Untrusted, sanitize, sanitize_mapped};
+pub use untrusted::{
+    MAX_UNTRUSTED_LEN, SANITIZE_HARD_CAP, Untrusted, sanitize, sanitize_capped, sanitize_mapped,
+    sanitize_value,
+};
 
 /// Root of the generated JSON Schema: one field per top-level protocol type.
 ///
