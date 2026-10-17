@@ -21,13 +21,13 @@ use kraken_engine::{
 use kraken_proto::{ErrorCode, ProtoError};
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::{NativeEngine, Program, blocking, check, signature_of};
+use crate::engine::{InProcessEngine, Program, blocking, check, signature_of};
 
 /// Strings reported by the core stage are at least this long (the default of the CLI).
 const CORE_STRING_MIN: u32 = 4;
 
 #[async_trait]
-impl Analyzer for NativeEngine {
+impl Analyzer for InProcessEngine {
     async fn analyze(
         &self,
         req: AnalyzeRequest,

@@ -1,4 +1,4 @@
-# Native engine, phases 1 and 2: notes
+# Native engine, phases 1 to 3: notes
 
 > Status: the design and the phase plan are in [ADR 0014](../../docs/design/0014-native-engine.md). This file records how the code works, what was measured and the traps found along the way.
 
@@ -56,7 +56,6 @@ Where `cpp_shapes` sizes differ from the truth, the cause is exception landing p
 - mutation (renames, comments, function create/delete) from the edit log
 - PE, Mach-O and 32-bit x86
 - DWARF types and a demangler
-- the confined worker process (hard timeouts, crash isolation)
 - engine selection in `kraken-host`
 
 Phase 1 also listed xrefs, CFG, strings, symbols, types, the analyzer job, landing pads, noreturn propagation, decompiler timeouts and compiling the `.sla` files; phase 2 below covers them.
@@ -104,3 +103,13 @@ Imports agree by name except in C++ binaries (Ghidra demangles), exports 100% on
 - **Static PLT entries** carry IRELATIVE relocations, not symbols, sit 8 bytes apart, and live in `.rela.plt` outside the dynamic relocations. They are named after the IFUNC symbol at the resolver, as Ghidra names them, so jumps to them are tail calls instead of growing the caller's body.
 - **Noreturn without names.** A stripped static binary has no `exit` to start from. Ghidra's discovered-noreturn evidence (a call followed by another function's entry) needs no names and took the stripped static bodies from 58% to 96% agreement.
 - **Ghidra artifacts in the fixtures**, not engine errors: imports in a synthetic `EXTERNAL` block at the end of the image; no operand references in code its switch analysis reached late (`switch_vm` case bodies), where we have them; C++ landing pads left out of bodies; demangled names on C++ exports; references to addresses between sections (`__TMC_END__` in `switch_vm`).
+
+## Phase 3: the confined worker
+
+- **Shape.** `NativeEngine` (`src/native.rs`) routes every capability call either to an `InProcessEngine` (the phase 2 engine, renamed) or to `WorkerEngine` (`src/worker/client.rs`), which speaks to `kraken-native-worker` (`src/bin/`, server in `src/worker/serve.rs`). The worker runs an `InProcessEngine`, so the split is above `Session` and the image callback stays local to the worker. Methods are named after the trait methods, plus `open`, `stats`, `lift`, `cancel` and, with `--test-hooks`, `test_hang`, `test_crash` and `test_probe`. Every request carries an `op` number for `cancel`; analysis progress uses the sidecar `progress` notification.
+- **Worker lifetime.** A worker is started by `open_binary`, since Landlock's read-only set has to name the binary, and lives until the next open or until it dies. `stats()` and `lift()` became `async` for this.
+- **Watchdog** (see the ADR): hard deadlines per request; a timeout or a crash gives a structured error with a `worker` detail, and the next request restarts the worker, re-opening the program and replaying the type definitions. Defaults: 60 s per request, 600 s for open, decompile limit + 5 s, 2 s cancel grace.
+- **Trap: core dumps.** The first crash test was flaky: with `systemd-coredump` as `core_pattern` the aborted worker kept its socket open while the core was written, and the request ran into the 3 s deadline instead of seeing a closed channel. The worker now sets `PR_SET_DUMPABLE` to 0 at start (`WorkerOptions::core_dumps` turns that off), which also keeps test crashes out of the coredump store.
+- **Trap: the binary path.** The worker may read only the binary itself, so the parent canonicalizes the path before opening (a symlink elsewhere would be refused by Landlock).
+- **Measured** (debug build, pie_list-O0): `native.rs` takes 0.85 s in worker mode against 1.8 s in-process on the same machine, so the process boundary adds no visible cost (each test engine gets its own worker, so the in-process run serializes on the process-wide library lock where workers do not). The probe inside the worker gets `EACCES` for TCP connect and bind, UDP, IPv6 and `socket(AF_UNIX)`, and for reading `/etc/passwd`; only the inherited channel and `socketpair(AF_UNIX)` work.
+- **Tests:** `tests/native.rs` and `tests/agreement.rs` run in worker mode (`KRAKEN_NATIVE_TEST_IN_PROCESS=1` switches `native.rs` back), and the contract suite runs in both modes. `tests/worker.rs` covers confinement, the hard deadline (with type replay), crashes (twice in a row), hard cancellation, and clean errors with nothing open or no worker binary.

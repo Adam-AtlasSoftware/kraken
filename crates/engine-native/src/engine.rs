@@ -27,6 +27,7 @@ use crate::elf::{Loaded, load};
 use crate::listing::{flow_kind, operands};
 use crate::refs::RefIndex;
 use crate::typestore::TypeModel;
+use crate::worker::Isolation;
 
 /// Build id in the handshake.
 pub const BUILD: &str = concat!(
@@ -41,8 +42,8 @@ pub const SOURCE_TAG: &str = "Ghidra_12.1.4_build";
 /// Default limit for one decompile.
 pub const DEFAULT_DECOMPILE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Where the engine finds what it needs at run time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Where the engine finds what it needs at run time, and where the decompiler runs.
+#[derive(Debug, Clone)]
 pub struct NativeConfig {
     /// A directory laid out like a Ghidra install (`Ghidra/Processors/*/data/languages` with
     /// `.ldefs`, `.pspec`, `.cspec` and compiled `.sla` files): the tree `cargo xtask native-sla`
@@ -53,15 +54,19 @@ pub struct NativeConfig {
     /// Limit for one decompile, checked at the decompiler's action break points; `None` for no
     /// limit.
     pub decompile_timeout: Option<Duration>,
+    /// Where the decompiler runs: a confined worker process (the default) or this process.
+    pub isolation: Isolation,
 }
 
 impl NativeConfig {
-    /// A config over `spec_root` with symbols on and the default decompile limit.
+    /// A config over `spec_root` with symbols on, the default decompile limit and the confined
+    /// worker.
     pub fn new(spec_root: impl Into<PathBuf>) -> NativeConfig {
         NativeConfig {
             spec_root: spec_root.into(),
             use_symbols: true,
             decompile_timeout: Some(DEFAULT_DECOMPILE_TIMEOUT),
+            isolation: Isolation::default(),
         }
     }
 
@@ -269,16 +274,18 @@ impl Program {
     }
 }
 
-/// The native engine. Create it with [`NativeEngine::new`], then open a binary through
-/// [`Loader`]; the other capabilities answer `invalid_argument` until then.
-pub struct NativeEngine {
+/// The engine with the decompiler in the calling process: what the worker process runs, and
+/// what [`crate::NativeEngine`] uses with [`Isolation::InProcess`]. Create it with
+/// [`InProcessEngine::new`], then open a binary through [`Loader`]; the other capabilities answer
+/// `invalid_argument` until then.
+pub struct InProcessEngine {
     pub(crate) config: NativeConfig,
     program: Mutex<Option<Arc<Program>>>,
 }
 
-impl std::fmt::Debug for NativeEngine {
+impl std::fmt::Debug for InProcessEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NativeEngine")
+        f.debug_struct("InProcessEngine")
             .field("config", &self.config)
             .finish_non_exhaustive()
     }
@@ -534,10 +541,10 @@ fn build_program(
     })
 }
 
-impl NativeEngine {
+impl InProcessEngine {
     /// An engine with no program loaded.
-    pub fn new(config: NativeConfig) -> NativeEngine {
-        NativeEngine {
+    pub fn new(config: NativeConfig) -> InProcessEngine {
+        InProcessEngine {
             config,
             program: Mutex::new(None),
         }
@@ -579,8 +586,8 @@ impl NativeEngine {
     }
 }
 
-/// See [`NativeEngine::stats`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// See [`InProcessEngine::stats`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NativeStats {
     /// Entries of functions that never return, ascending.
     pub noreturn: Vec<u64>,
@@ -594,7 +601,7 @@ pub struct NativeStats {
     pub pending_types: Vec<String>,
 }
 
-impl Engine for NativeEngine {
+impl Engine for InProcessEngine {
     fn capabilities(&self) -> EngineCaps {
         EngineCaps::new(
             BUILD,
@@ -649,7 +656,7 @@ impl Engine for NativeEngine {
 }
 
 #[async_trait]
-impl Loader for NativeEngine {
+impl Loader for InProcessEngine {
     async fn open_binary(
         &self,
         path: &Path,
@@ -678,7 +685,7 @@ impl Loader for NativeEngine {
 }
 
 #[async_trait]
-impl FunctionLister for NativeEngine {
+impl FunctionLister for InProcessEngine {
     async fn list_functions(
         &self,
         page: &PageRequest,
@@ -718,7 +725,7 @@ impl FunctionLister for NativeEngine {
 }
 
 #[async_trait]
-impl Decompiler for NativeEngine {
+impl Decompiler for InProcessEngine {
     async fn decompile(
         &self,
         locator: &Locator,
@@ -760,7 +767,7 @@ impl Decompiler for NativeEngine {
 }
 
 #[async_trait]
-impl MemoryReader for NativeEngine {
+impl MemoryReader for InProcessEngine {
     async fn memory_map(&self, cancel: &CancellationToken) -> EngineResult<Vec<MemoryBlock>> {
         check(cancel)?;
         Ok(self.program()?.loaded.blocks.clone())
@@ -823,7 +830,7 @@ impl MemoryReader for NativeEngine {
 }
 
 #[async_trait]
-impl Disassembler for NativeEngine {
+impl Disassembler for InProcessEngine {
     async fn disassemble(
         &self,
         req: &DisasmRequest,

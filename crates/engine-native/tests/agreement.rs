@@ -22,10 +22,13 @@ fn root() -> PathBuf {
 }
 
 fn config() -> Option<NativeConfig> {
-    let Some(c) = NativeConfig::discover() else {
+    let Some(mut c) = NativeConfig::discover() else {
         eprintln!("skipped: no Sleigh spec tree (cargo xtask native-sla, or KRAKEN_GHIDRA_HOME)");
         return None;
     };
+    c.isolation = engine_native::Isolation::Worker(engine_native::WorkerOptions::with_program(
+        env!("CARGO_BIN_EXE_kraken-native-worker"),
+    ));
     if !NativeEngine::is_usable(&c) {
         eprintln!("skipped: engine-native-sys was built without the decompiler sources");
         return None;
