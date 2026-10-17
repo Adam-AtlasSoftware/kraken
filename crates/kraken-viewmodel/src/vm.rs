@@ -191,6 +191,11 @@ fn function_item(w: &FunctionWire) -> FunctionItem {
         size: w.size,
         signature: w.signature.as_ref().map(|s| s.0.clone()),
         partial: !matches!(w.completeness, Completeness::Complete),
+        stub: crate::state::is_library_stub(
+            &w.name.0,
+            w.size,
+            w.signature.as_ref().map(|s| s.0.as_str()),
+        ),
     }
 }
 

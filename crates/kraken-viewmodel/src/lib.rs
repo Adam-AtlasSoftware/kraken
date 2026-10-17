@@ -60,4 +60,6 @@ pub use views::{
 pub use vm::{FUNCTION_PAGE, MAX_NAME_LEN, ViewModel, validate_name};
 
 #[cfg(test)]
+mod stub_tests;
+#[cfg(test)]
 mod tests;

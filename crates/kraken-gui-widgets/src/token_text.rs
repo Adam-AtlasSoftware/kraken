@@ -98,6 +98,14 @@ pub fn content_hash(r: &DecompileResult) -> u64 {
     h.finish()
 }
 
+/// Width of the "line continues" mark drawn at the right edge of a clipped line.
+const CLIP_CUE_W: f32 = 16.0;
+
+/// True when a line of `chars` monospace characters drawn from `text_x` reaches past `visible_right`.
+pub fn line_is_clipped(chars: usize, char_w: f32, text_x: f32, visible_right: f32) -> bool {
+    text_x + chars as f32 * char_w > visible_right
+}
+
 /// Cache identity of a prepared layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LayoutKey {
@@ -312,6 +320,23 @@ impl<'a> TokenText<'a> {
                     }
                 }
                 painter.galley(origin, galley.clone(), pal.text);
+                let visible_right = ui.clip_rect().right();
+                if line_is_clipped(line.job.text.chars().count(), cw, origin.x, visible_right) {
+                    // A cue that the line goes on past the edge; scrolling sideways reveals it.
+                    let tab = Rect::from_min_max(
+                        Pos2::new(visible_right - CLIP_CUE_W, rect.top() + 1.0),
+                        Pos2::new(visible_right, rect.bottom() - 1.0),
+                    );
+                    let cue = ui.painter_at(tab.intersect(rect));
+                    cue.rect_filled(tab, 0.0, pal.panel);
+                    cue.text(
+                        tab.center(),
+                        Align2::CENTER_CENTER,
+                        "\u{2026}",
+                        font.clone(),
+                        pal.accent,
+                    );
+                }
 
                 if let Some(i) = hover_tok {
                     let seg = hover_seg.expect("hover token implies segment");
@@ -403,6 +428,15 @@ mod tests {
             warnings: vec![],
             completeness: Completeness::Complete,
         }
+    }
+
+    #[test]
+    fn long_lines_are_flagged_as_clipped() {
+        assert!(line_is_clipped(200, 7.0, 40.0, 800.0));
+        assert!(!line_is_clipped(20, 7.0, 40.0, 800.0));
+        // Exactly filling the width is not clipped.
+        assert!(!line_is_clipped(100, 7.0, 40.0, 740.0));
+        assert!(line_is_clipped(101, 7.0, 40.0, 740.0));
     }
 
     #[test]

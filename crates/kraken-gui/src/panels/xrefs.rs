@@ -12,6 +12,19 @@ pub struct XrefsUi {
     pub tab: XrefWhich,
     seen_refs: Option<u64>,
     selected: Option<usize>,
+    /// The function the default tab was last chosen for.
+    seen_fn: Option<u64>,
+    /// The default for `seen_fn` is settled, or the user picked a tab themselves.
+    settled: bool,
+}
+
+/// The side to show first: Callers, unless nothing calls the function but it calls something.
+pub fn default_tab(callers: usize, callees: usize) -> XrefWhich {
+    if callers == 0 && callees > 0 {
+        XrefWhich::Callees
+    } else {
+        XrefWhich::Callers
+    }
 }
 
 impl Default for XrefsUi {
@@ -20,6 +33,8 @@ impl Default for XrefsUi {
             tab: XrefWhich::Callers,
             seen_refs: None,
             selected: None,
+            seen_fn: None,
+            settled: false,
         }
     }
 }
@@ -62,6 +77,23 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
         st.xrefs.tab = XrefWhich::Callers;
     }
 
+    // A newly selected function opens on whichever side has entries, until the user picks one.
+    let cur_fn = vm.views.xrefs.function;
+    if cur_fn != st.xrefs.seen_fn {
+        st.xrefs.seen_fn = cur_fn;
+        st.xrefs.settled = false;
+    }
+    let (callers, callees) = (&vm.views.xrefs.callers, &vm.views.xrefs.callees);
+    if !st.xrefs.settled
+        && cur_fn.is_some()
+        && callers.loaded
+        && callees.loaded
+        && st.xrefs.tab != XrefWhich::References
+    {
+        st.xrefs.tab = default_tab(callers.items.len(), callees.items.len());
+        st.xrefs.settled = true;
+    }
+
     ui.horizontal(|ui| {
         for which in [
             XrefWhich::Callers,
@@ -81,6 +113,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
             if ui.selectable_label(st.xrefs.tab == which, label).clicked() {
                 st.xrefs.tab = which;
                 st.xrefs.selected = None;
+                st.xrefs.settled = true;
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -181,5 +214,18 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
     }
     if has_more && max_seen + 20 >= n {
         vm.more_xrefs(which);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_tab_follows_the_side_with_entries() {
+        assert_eq!(default_tab(3, 5), XrefWhich::Callers);
+        assert_eq!(default_tab(0, 0), XrefWhich::Callers);
+        assert_eq!(default_tab(0, 2), XrefWhich::Callees);
+        assert_eq!(default_tab(1, 0), XrefWhich::Callers);
     }
 }
