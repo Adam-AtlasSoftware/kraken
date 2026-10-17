@@ -550,7 +550,7 @@ async fn a_wrong_translation_fails_with_a_counterexample_and_cannot_be_accepted(
         .job(
             &agent(),
             "rewrite_function",
-            json!({"address": "0x10124e", "cases": 30}),
+            json!({"address": "0x10124e", "cases": 30, "max_attempts": 1}),
         )
         .await
         .expect("rewrite_function");
@@ -586,6 +586,81 @@ async fn a_wrong_translation_fails_with_a_counterexample_and_cannot_be_accepted(
         .expect_err("a failed unit cannot be accepted");
     assert_eq!(err.code, ErrorCode::InvalidArgument);
     assert!(err.message.contains("failed"), "{err}");
+}
+
+#[tokio::test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+async fn a_counterexample_is_fed_back_and_the_repaired_attempt_is_a_second_version() {
+    let r = rig("pie_list-O0").await;
+    let reference = target("cmp_id").expect("target").reference;
+    let wrong = reference.replace(
+        "(*a).id.wrapping_sub((*b).id)",
+        "(*a).id.cmp(&(*b).id) as i32",
+    );
+    assert_ne!(wrong, reference);
+    let events = |text: String| {
+        vec![
+            StreamEvent::TextDelta { text },
+            StreamEvent::Finish {
+                reason: FinishReason::Stop,
+            },
+        ]
+    };
+    let provider = Arc::new(ReplayProvider::scripted(vec![
+        events(reply(&wrong, &[])),
+        events(reply(reference, &[])),
+    ]));
+    r.slot.set(provider);
+
+    let out = r
+        .job(
+            &agent(),
+            "rewrite_function",
+            json!({"address": "0x10124e", "cases": 30}),
+        )
+        .await
+        .expect("rewrite_function");
+    assert_eq!(out["attempts"], 2, "{out:#}");
+    assert_eq!(out["verdict"], "pass", "{out:#}");
+    assert_eq!(out["version"], 2);
+
+    let unit = r
+        .call(&user(), "rewrite_unit", json!({"address": "0x10124e"}))
+        .await
+        .expect("rewrite_unit");
+    let versions = unit["versions"].as_array().expect("versions");
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0]["status"], "failed");
+    assert_eq!(versions[0]["attempt"], 1);
+    assert_eq!(versions[1]["status"], "verified");
+    assert_eq!(versions[1]["attempt"], 2);
+    assert_eq!(versions[1]["repair_of"], 1);
+    assert_eq!(versions[1]["stale"], false);
+
+    // The decompile changes behind the unit's back: the status shows it stale ...
+    let sha = r.session.project().expect("project").program().sha256;
+    r.store()
+        .observe(&sha, &[("0x10124e".into(), "changed".into())])
+        .expect("observe");
+    let status = r
+        .call(&user(), "rewrite_status", json!({}))
+        .await
+        .expect("status");
+    let row = status["units"]
+        .as_array()
+        .and_then(|u| u.iter().find(|r| r["address"] == "0x10124e"))
+        .expect("row");
+    assert_eq!(row["stale"], true, "{status:#}");
+    // ... and `refresh` decompiles again, which finds the source unchanged after all.
+    let status = r
+        .call(&user(), "rewrite_status", json!({"refresh": true}))
+        .await
+        .expect("status");
+    let row = status["units"]
+        .as_array()
+        .and_then(|u| u.iter().find(|r| r["address"] == "0x10124e"))
+        .expect("row");
+    assert_eq!(row["stale"], false, "{status:#}");
 }
 
 #[tokio::test]

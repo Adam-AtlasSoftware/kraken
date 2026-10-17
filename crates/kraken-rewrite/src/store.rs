@@ -8,6 +8,7 @@
 //! `unit_events` (status transitions), `specs`, and the stored plan (`plan_meta`,
 //! `plan_entries`). Versions are append-only; accepting moves a pointer.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,7 +21,8 @@ use crate::abi::Signature;
 use crate::difftest::{CaseRecord, Counterexample, Verdict};
 use crate::error::RewriteError;
 use crate::unit::{
-    CalleeRef, FunctionAnchor, OracleInfo, Provenance, RewriteUnit, RunSummary, UNIT_SCHEMA,
+    CalleeRef, FunctionAnchor, OracleInfo, Provenance, RepairLink, RewriteUnit, RunSummary,
+    UNIT_SCHEMA,
 };
 
 /// File name inside the project directory.
@@ -136,6 +138,22 @@ pub const MIGRATIONS: &[&str] = &[
         flags_json       TEXT NOT NULL,
         PRIMARY KEY (program_sha256, position)
      );",
+    // 3: repair runs and staleness. A version made by a repair run remembers its attempt number
+    // and the failed version it answers; the newest decompile hash seen per function is kept so
+    // a version can be marked stale when it differs from the hash the version was made from.
+    "CREATE TABLE unit_repairs (
+        version_id TEXT PRIMARY KEY REFERENCES unit_versions (id),
+        attempt    INTEGER NOT NULL,
+        repair_of  INTEGER,
+        feedback   TEXT
+     );
+     CREATE TABLE observed_hashes (
+        program_sha256  TEXT NOT NULL,
+        address         TEXT NOT NULL,
+        decompile_hash  TEXT NOT NULL,
+        observed_at     INTEGER NOT NULL,
+        PRIMARY KEY (program_sha256, address)
+     );",
 ];
 
 /// The newest schema version.
@@ -219,6 +237,8 @@ pub struct UnitSummary {
     pub provider: Option<String>,
     /// Model of the newest version.
     pub model: Option<String>,
+    /// Why the relevant version (accepted, else newest) is stale, if it is.
+    pub stale: Option<String>,
 }
 
 /// A stored behavioural spec.
@@ -469,6 +489,22 @@ impl RewriteStore {
             )
             .map_err(db)?;
         }
+        if let Some(r) = &unit.repair {
+            tx.execute(
+                "INSERT INTO unit_repairs (version_id, attempt, repair_of, feedback)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![unit.id, r.attempt, r.repair_of, r.feedback],
+            )
+            .map_err(db)?;
+        }
+        // The version was made from the live decompile of these functions.
+        let mut seen = vec![(addr.clone(), unit.source_decompile_hash.clone())];
+        seen.extend(
+            unit.callees
+                .iter()
+                .map(|c| (c.address.clone(), c.decompile_hash.clone())),
+        );
+        observe_in(&tx, &prog, &seen)?;
         let (kind, detail) = verdict_parts(&unit.verdict);
         tx.execute(
             "INSERT INTO verdicts (version_id, verdict, detail, seed, cases_run, passed, skipped,
@@ -763,10 +799,15 @@ impl RewriteStore {
                         counterexamples,
                         provider,
                         model,
+                        stale: None,
                     })
                 },
             )
             .collect::<Result<Vec<_>, RewriteError>>()?;
+        let stale = stale_reasons_in(&conn, program_sha256)?;
+        for r in &mut rows {
+            r.stale = stale.get(&r.address).cloned();
+        }
         rows.sort_by_key(|u| {
             u64::from_str_radix(u.address.trim_start_matches("0x"), 16).unwrap_or(0)
         });
@@ -1044,6 +1085,157 @@ impl RewriteStore {
     }
 }
 
+/// Why a version made from `source_hash` and `callees` is stale given the newest decompile
+/// hashes seen (address to hash), or `None` when nothing it was made from changed. Functions
+/// never observed count as unchanged.
+pub fn stale_reason(
+    own_address: &str,
+    source_hash: &str,
+    callees: &[CalleeRef],
+    observed: &BTreeMap<String, String>,
+) -> Option<String> {
+    if let Some(now) = observed.get(own_address)
+        && now != source_hash
+    {
+        return Some("the function's decompile changed since this version was made".into());
+    }
+    callees.iter().find_map(|c| {
+        let now = observed.get(&c.address)?;
+        (now != &c.decompile_hash).then(|| {
+            format!(
+                "the decompile of callee `{}` ({}) changed since this version was made",
+                c.name, c.address
+            )
+        })
+    })
+}
+
+fn observed_in(conn: &Connection, prog: &str) -> Result<BTreeMap<String, String>, RewriteError> {
+    let mut st = conn
+        .prepare("SELECT address, decompile_hash FROM observed_hashes WHERE program_sha256 = ?1")
+        .map_err(db)?;
+    st.query_map(params![prog], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(db)?
+        .collect::<rusqlite::Result<BTreeMap<String, String>>>()
+        .map_err(db)
+}
+
+/// Stale reasons per function address, judged on the accepted version or else the newest.
+fn stale_reasons_in(
+    conn: &Connection,
+    prog: &str,
+) -> Result<BTreeMap<String, String>, RewriteError> {
+    let observed = observed_in(conn, prog)?;
+    if observed.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut st = conn
+        .prepare(
+            "SELECT u.address, v.source_decompile_hash, v.callees_json
+             FROM units u JOIN unit_versions v ON v.program_sha256 = u.program_sha256
+                  AND v.address = u.address
+                  AND v.version = COALESCE(u.accepted_version, u.current_version)
+             WHERE u.program_sha256 = ?1",
+        )
+        .map_err(db)?;
+    let rows = st
+        .query_map(params![prog], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db)?;
+    let mut out = BTreeMap::new();
+    for (address, hash, callees) in rows {
+        let callees = serde_json::from_str::<Vec<CalleeRef>>(&callees).map_err(js)?;
+        if let Some(why) = stale_reason(&address, &hash, &callees, &observed) {
+            out.insert(address, why);
+        }
+    }
+    Ok(out)
+}
+
+impl RewriteStore {
+    /// Records the newest decompile hash seen for functions (`0x...` address to hash), which is
+    /// what marks versions made from an older decompile as stale.
+    pub fn observe(
+        &self,
+        program_sha256: &str,
+        hashes: &[(String, String)],
+    ) -> Result<(), RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(db)?;
+        observe_in(&tx, program_sha256, hashes)?;
+        tx.commit().map_err(db)
+    }
+
+    /// The newest decompile hash seen per function address.
+    pub fn observed(&self, program_sha256: &str) -> Result<BTreeMap<String, String>, RewriteError> {
+        observed_in(&self.conn(), program_sha256)
+    }
+
+    /// Addresses whose decompile the stale check depends on: every function with a unit and the
+    /// callees its accepted (else newest) version was made from.
+    pub fn tracked_addresses(&self, program_sha256: &str) -> Result<Vec<String>, RewriteError> {
+        let conn = self.conn();
+        let mut st = conn
+            .prepare(
+                "SELECT u.address, v.callees_json
+                 FROM units u JOIN unit_versions v ON v.program_sha256 = u.program_sha256
+                      AND v.address = u.address
+                      AND v.version = COALESCE(u.accepted_version, u.current_version)
+                 WHERE u.program_sha256 = ?1",
+            )
+            .map_err(db)?;
+        let rows = st
+            .query_map(params![program_sha256], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(db)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db)?;
+        let mut out = std::collections::BTreeSet::new();
+        for (address, callees) in rows {
+            out.insert(address);
+            for c in serde_json::from_str::<Vec<CalleeRef>>(&callees).map_err(js)? {
+                out.insert(c.address);
+            }
+        }
+        Ok(out.into_iter().collect())
+    }
+
+    /// Why the accepted (else newest) version of each function is stale; functions that are
+    /// current are absent.
+    pub fn stale_reasons(
+        &self,
+        program_sha256: &str,
+    ) -> Result<BTreeMap<String, String>, RewriteError> {
+        stale_reasons_in(&self.conn(), program_sha256)
+    }
+}
+
+fn observe_in(
+    tx: &rusqlite::Transaction<'_>,
+    prog: &str,
+    hashes: &[(String, String)],
+) -> Result<(), RewriteError> {
+    for (address, hash) in hashes {
+        tx.execute(
+            "INSERT INTO observed_hashes (program_sha256, address, decompile_hash, observed_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (program_sha256, address)
+             DO UPDATE SET decompile_hash = ?3, observed_at = ?4",
+            params![prog, address, hash, now()],
+        )
+        .map_err(db)?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn event(
     tx: &rusqlite::Transaction<'_>,
@@ -1241,6 +1433,20 @@ fn build_unit(conn: &Connection, raw: Raw) -> Result<RewriteUnit, RewriteError> 
         .iter()
         .map(|c| serde_json::from_str::<CaseRecord>(c).map_err(js))
         .collect::<Result<Vec<_>, _>>()?;
+    let repair = conn
+        .query_row(
+            "SELECT attempt, repair_of, feedback FROM unit_repairs WHERE version_id = ?1",
+            params![id],
+            |r| {
+                Ok(RepairLink {
+                    attempt: r.get(0)?,
+                    repair_of: r.get(1)?,
+                    feedback: r.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(db)?;
     Ok(RewriteUnit {
         schema: UNIT_SCHEMA,
         id,
@@ -1279,5 +1485,6 @@ fn build_unit(conn: &Connection, raw: Raw) -> Result<RewriteUnit, RewriteError> 
         counterexamples: serde_json::from_str::<Vec<Counterexample>>(&counterexamples)
             .map_err(js)?,
         verdict: verdict_from(&verdict, detail)?,
+        repair,
     })
 }

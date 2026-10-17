@@ -33,10 +33,14 @@ use crate::lift::Lift;
 use crate::oracle::{FunctionOracle, OracleConfig};
 use crate::pipeline::{VerifyPlan, verify_with};
 use crate::plan::to_plan;
+use crate::repair::{self, Attempt, DEFAULT_ATTEMPTS};
+use crate::reuse::{self, Resolved};
 use crate::sandbox::{self, Confinement};
-use crate::store::{NewSpec, PlannedFunction, RewriteStore, StoredPlan, StoredSpec, UnitSummary};
+use crate::store::{
+    NewSpec, PlannedFunction, RewriteStore, StoredPlan, StoredSpec, UnitSummary, stale_reason,
+};
 use crate::task::{Budget, RewriteTask, SpecScope, SpecTask};
-use crate::unit::{Provenance, RewriteUnit, sha256_hex};
+use crate::unit::{RewriteUnit, sha256_hex};
 
 /// Default cap on functions a new whole-program plan examines.
 const DEFAULT_PLAN_FUNCTIONS: u32 = 2000;
@@ -112,6 +116,8 @@ pub struct RewriteConfig {
     pub budget: Budget,
     /// Most callees whose decompile goes into a translation prompt.
     pub max_callees: usize,
+    /// Translation attempts of `rewrite_function` when the call does not say (1 = no repair).
+    pub max_attempts: u32,
 }
 
 impl Default for RewriteConfig {
@@ -121,6 +127,7 @@ impl Default for RewriteConfig {
             confinement: Confinement::default(),
             budget: Budget::default(),
             max_callees: 6,
+            max_attempts: DEFAULT_ATTEMPTS,
         }
     }
 }
@@ -154,6 +161,7 @@ impl RewriteService {
 fn proto(e: RewriteError) -> ProtoError {
     match e {
         RewriteError::Command(p) => p,
+        RewriteError::Cancelled => ProtoError::new(ErrorCode::Cancelled, "job cancelled"),
         RewriteError::NoProcessors | RewriteError::Image(_) | RewriteError::Unsupported(_) => {
             ProtoError::new(ErrorCode::Unsupported, e.to_string())
         }
@@ -255,7 +263,18 @@ fn render_arg(a: &Arg) -> String {
     }
 }
 
-fn function_result(unit: &RewriteUnit, out: &crate::task::RewriteOutput) -> RewriteFunctionResult {
+fn reused_symbols(unit: &RewriteUnit) -> Vec<String> {
+    unit.callees
+        .iter()
+        .filter_map(|c| c.reused.as_ref().map(|r| r.symbol.clone()))
+        .collect()
+}
+
+fn function_result(
+    unit: &RewriteUnit,
+    out: &crate::task::RewriteOutput,
+    attempts: usize,
+) -> RewriteFunctionResult {
     let (verdict, detail) = verdict_name(&unit.verdict);
     RewriteFunctionResult {
         unit: unit.id.clone(),
@@ -291,10 +310,12 @@ fn function_result(unit: &RewriteUnit, out: &crate::task::RewriteOutput) -> Rewr
             .iter()
             .map(|a| Untrusted::sanitized(a))
             .collect(),
+        attempts: u32::try_from(attempts).unwrap_or(u32::MAX),
+        reused_callees: reused_symbols(unit),
     }
 }
 
-fn unit_version(unit: &RewriteUnit, created: u64) -> UnitVersionView {
+fn unit_version(unit: &RewriteUnit, created: u64, stale: Option<&String>) -> UnitVersionView {
     let (verdict, detail) = verdict_name(&unit.verdict);
     let u32_of = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     UnitVersionView {
@@ -323,6 +344,11 @@ fn unit_version(unit: &RewriteUnit, created: u64) -> UnitVersionView {
         created,
         provider: unit.provenance.provider.clone().unwrap_or_default(),
         model: unit.provenance.model.clone().unwrap_or_default(),
+        stale: stale.is_some(),
+        stale_reason: stale.map(|r| Untrusted::sanitized(r)),
+        attempt: unit.repair.as_ref().map_or(1, |r| r.attempt),
+        repair_of: unit.repair.as_ref().and_then(|r| r.repair_of),
+        reused_callees: reused_symbols(unit),
     }
 }
 
@@ -334,6 +360,18 @@ fn file_name(path: &str) -> String {
 }
 
 impl RewriteService {
+    /// Decompiles the functions at `addresses` (`0x...`) and returns their hashes; a function
+    /// that cannot be decompiled any more is left out (its old hash stays).
+    async fn fresh_hashes(&self, lift: &Lift<'_>, addresses: &[String]) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for a in addresses {
+            if let Ok(f) = lift.function(hex(a)).await {
+                out.push((a.clone(), f.decompile_hash));
+            }
+        }
+        out
+    }
+
     fn statuses(summaries: &[UnitSummary]) -> BTreeMap<u64, &UnitSummary> {
         summaries.iter().map(|u| (hex(&u.address), u)).collect()
     }
@@ -378,6 +416,8 @@ impl RewriteService {
             signature: signature.clone(),
             layout_notes: generic_notes(&signature),
             spec: None,
+            reused: Vec::new(),
+            repairs: Vec::new(),
             budget: self.cfg.budget.clone(),
         };
         Ok(Prepared {
@@ -454,6 +494,66 @@ impl RewriteService {
         };
         stored.id = with_store(dir.to_path_buf(), move |st| st.put_spec(new)).await?;
         Ok(stored)
+    }
+}
+
+/// Why the oracle could not be built (the error is not `Clone`; every job needs a copy).
+enum LoadFailure {
+    NoProcessors,
+    Other(String),
+}
+
+type OracleJob = Box<dyn FnOnce(&mut Result<FunctionOracle, LoadFailure>) + Send>;
+
+/// A thread that owns the function oracle for the attempts of one run. The oracle is not `Send`
+/// and is slow to build, so it is built once, on first use, inside the thread, and every attempt
+/// is sent to it as a job. The thread ends when the last handle is dropped.
+#[derive(Clone)]
+struct OracleThread {
+    jobs: std::sync::mpsc::Sender<OracleJob>,
+}
+
+impl OracleThread {
+    fn spawn(binary: PathBuf, cfg: OracleConfig) -> Self {
+        let (jobs, rx) = std::sync::mpsc::channel::<OracleJob>();
+        let _ = std::thread::Builder::new()
+            .name("kraken-rewrite-oracle".into())
+            .spawn(move || {
+                let mut oracle: Option<Result<FunctionOracle, LoadFailure>> = None;
+                for job in rx {
+                    let slot = oracle.get_or_insert_with(|| {
+                        FunctionOracle::load(&binary, &cfg).map_err(|e| match e {
+                            RewriteError::NoProcessors => LoadFailure::NoProcessors,
+                            other => LoadFailure::Other(other.to_string()),
+                        })
+                    });
+                    job(slot);
+                }
+            });
+        OracleThread { jobs }
+    }
+
+    /// Runs `f` with the oracle and returns its result.
+    async fn run<T, F>(&self, f: F) -> Result<T, RewriteError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut FunctionOracle) -> Result<T, RewriteError> + Send + 'static,
+    {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let job: OracleJob = Box::new(move |slot| {
+            let r = match slot {
+                Ok(o) => f(o),
+                Err(LoadFailure::NoProcessors) => Err(RewriteError::NoProcessors),
+                Err(LoadFailure::Other(why)) => Err(RewriteError::Emulator(why.clone())),
+            };
+            let _ = reply.send(r);
+        });
+        self.jobs
+            .send(job)
+            .map_err(|_| RewriteError::Emulator("the oracle thread has stopped".into()))?;
+        answer
+            .await
+            .map_err(|_| RewriteError::Emulator("the oracle thread stopped".into()))?
     }
 }
 
@@ -597,6 +697,19 @@ impl RewriteBackend for RewriteService {
         let project = s.project()?;
         let (sha, _) = Lift::new(s, ctx).program().map_err(proto)?;
         let (start, n) = page_bounds(&args.cursor, args.limit)?;
+        if args.refresh {
+            let sha2 = sha.clone();
+            let tracked = with_store(project.dir().to_path_buf(), move |st| {
+                st.tracked_addresses(&sha2)
+            })
+            .await?;
+            let fresh = self.fresh_hashes(&Lift::new(s, ctx), &tracked).await;
+            let sha2 = sha.clone();
+            with_store(project.dir().to_path_buf(), move |st| {
+                st.observe(&sha2, &fresh)
+            })
+            .await?;
+        }
         let sha2 = sha.clone();
         let (plan, summaries) = with_store(project.dir().to_path_buf(), move |st| {
             Ok((st.plan(&sha2)?, st.summaries(&sha2)?))
@@ -683,6 +796,21 @@ impl RewriteBackend for RewriteService {
             Ok((address, units, times, spec))
         })
         .await?;
+        let mut tracked: Vec<String> = vec![address.clone()];
+        tracked.extend(
+            units
+                .iter()
+                .flat_map(|u| u.callees.iter().map(|c| c.address.clone())),
+        );
+        tracked.sort();
+        tracked.dedup();
+        let fresh = self.fresh_hashes(&lift, &tracked).await;
+        let sha3 = sha.clone();
+        let observed = with_store(project.dir().to_path_buf(), move |st| {
+            st.observe(&sha3, &fresh)?;
+            st.observed(&sha3)
+        })
+        .await?;
         let versions = units
             .iter()
             .map(|u| {
@@ -690,7 +818,13 @@ impl RewriteBackend for RewriteService {
                     .iter()
                     .find(|(id, _)| *id == u.id)
                     .map_or(0, |(_, t)| u64::try_from(*t).unwrap_or(0));
-                unit_version(u, created)
+                let stale = stale_reason(
+                    &u.anchor.address,
+                    &u.source_decompile_hash,
+                    &u.callees,
+                    &observed,
+                );
+                unit_version(u, created, stale.as_ref())
             })
             .collect();
         Ok(RewriteUnitOut {
@@ -727,43 +861,41 @@ impl RewriteBackend for RewriteService {
 
         let mut task = prepared.task.clone();
         let mut spec_id = None;
+        let mut reuse = Resolved::default();
+        let mut seen: Vec<(String, String)> = vec![(
+            format!("{:#x}", prepared.function.address),
+            prepared.function.decompile_hash.clone(),
+        )];
+        seen.extend(
+            prepared
+                .callees
+                .iter()
+                .map(|c| (format!("{:#x}", c.address), c.decompile_hash.clone())),
+        );
+        let sha = prepared.function.program_sha256.clone();
         if args.mode == RewriteMode::Spec {
             let spec = self
                 .spec_for_function(&dir, &prepared.function, &prepared.callees, job)
                 .await?;
             spec_id = Some(spec.id);
             task = prepared.reimplement_task(&spec.markdown);
+            with_store(dir.clone(), move |st| st.observe(&sha, &seen)).await?;
+        } else {
+            let (entry, callees) = (prepared.function.address, prepared.callees.clone());
+            reuse = with_store(dir.clone(), move |st| {
+                st.observe(&sha, &seen)?;
+                reuse::resolve(st, &sha, entry, &callees)
+            })
+            .await?;
+            task.callees = reuse.remaining.clone();
+            task.reused = reuse.direct.clone();
         }
         let Prepared {
             function: f,
-            callees,
             signature: sig,
             ..
         } = prepared;
 
-        progress(job, "translate", 1, 4, "asking the model for a translation");
-        let (out, reply) = task
-            .run(provider.as_ref(), job.cancel_token())
-            .await
-            .map_err(proto)?;
-        let provenance = Provenance {
-            author: "model".into(),
-            provider: Some(reply.provider.id.clone()),
-            model: Some(reply.provider.model.clone()),
-            task: "rewrite_function".into(),
-            prompt_hash: reply.prompt_hash,
-        };
-
-        if job.cancel_token().is_cancelled() {
-            return Err(ProtoError::new(ErrorCode::Cancelled, "job cancelled"));
-        }
-        progress(
-            job,
-            "verify",
-            2,
-            4,
-            "building and testing against the original",
-        );
         let defaults = DiffOptions::default();
         let opts = DiffOptions {
             seed: args.seed.unwrap_or(defaults.seed),
@@ -771,37 +903,83 @@ impl RewriteBackend for RewriteService {
             confinement: self.cfg.confinement.clone(),
             ..defaults
         };
-        let oracle_cfg = self.cfg.oracle.clone();
-        let (code, mode) = (out.rust_code.clone(), args.mode);
-        let (f2, callees2, sig2) = (f.clone(), callees.clone(), sig.clone());
-        let unit = tokio::task::spawn_blocking(move || -> Result<RewriteUnit, RewriteError> {
-            let mut oracle = FunctionOracle::load(Path::new(&binary_path), &oracle_cfg)?;
-            let entry = oracle.elf_vaddr(f2.address, f2.image_base);
-            let inputs = generic_inputs(&sig2);
-            let plan = VerifyPlan {
-                function: &f2,
-                callees: if mode == RewriteMode::Spec {
-                    &[][..]
-                } else {
-                    &callees2[..]
-                },
-                signature: &sig2,
-                inputs: &inputs,
-                binary: &file_name(&binary_path),
-                entry,
-                mode,
-                spec_id,
-            };
-            verify_with(&plan, &code, provenance, &mut oracle, &opts)
-        })
+        let max_attempts = args.max_attempts.unwrap_or(self.cfg.max_attempts);
+        let prelude = reuse::prelude(&reuse.all, &reuse.direct);
+        let oracle = OracleThread::spawn(PathBuf::from(&binary_path), self.cfg.oracle.clone());
+        let mode = args.mode;
+        let (translated_with, reused_direct) = (task.callees.clone(), reuse.direct.clone());
+        let cancel = job.cancel_token();
+
+        progress(job, "translate", 1, 4, "asking the model for a translation");
+        let run = repair::run(
+            &task,
+            provider.as_ref(),
+            cancel.clone(),
+            max_attempts,
+            |attempt| {
+                let (f2, sig2, opts2) = (f.clone(), sig.clone(), opts.clone());
+                let (callees2, reused2, prelude2) = (
+                    translated_with.clone(),
+                    reused_direct.clone(),
+                    prelude.clone(),
+                );
+                let binary_path2 = binary_path.clone();
+                let (oracle2, dir2, cancel2) = (oracle.clone(), dir.clone(), cancel.clone());
+                async move {
+                    if cancel2.is_cancelled() {
+                        return Err(RewriteError::Cancelled);
+                    }
+                    progress(
+                        job,
+                        "verify",
+                        2,
+                        4,
+                        &format!(
+                            "building and testing attempt {} against the original",
+                            attempt.link.attempt
+                        ),
+                    );
+                    let Attempt {
+                        output,
+                        provenance,
+                        link,
+                    } = attempt;
+                    let code = output.rust_code;
+                    let mut unit = oracle2
+                        .run(move |oracle| {
+                            let entry = oracle.elf_vaddr(f2.address, f2.image_base);
+                            let inputs = generic_inputs(&sig2);
+                            let plan = VerifyPlan {
+                                function: &f2,
+                                callees: &callees2,
+                                signature: &sig2,
+                                inputs: &inputs,
+                                binary: &file_name(&binary_path2),
+                                entry,
+                                mode,
+                                spec_id,
+                                reused: &reused2,
+                                prelude: &prelude2,
+                            };
+                            verify_with(&plan, &code, provenance, oracle, &opts2)
+                        })
+                        .await?;
+                    unit.repair = Some(link);
+                    progress(job, "store", 3, 4, "storing the unit");
+                    tokio::task::spawn_blocking(move || {
+                        RewriteStore::in_project(&dir2)?.put_unit(unit)
+                    })
+                    .await
+                    .map_err(|e| RewriteError::Store(format!("store task failed: {e}")))?
+                }
+            },
+        )
         .await
-        .map_err(|e| internal(format!("verification task failed: {e}")))?
         .map_err(proto)?;
 
-        progress(job, "store", 3, 4, "storing the unit");
-        let unit = with_store(dir, move |st| st.put_unit(unit)).await?;
+        let (unit, out) = run.last();
         progress(job, "done", 4, 4, "finished");
-        Ok(function_result(&unit, &out))
+        Ok(function_result(unit, out, run.attempts.len()))
     }
 
     async fn accept(
@@ -1048,6 +1226,7 @@ fn row(
             provider: u.provider.clone(),
             model: u.model.clone(),
             flags,
+            stale: u.stale.is_some(),
         },
         None => UnitRow {
             unit: String::new(),
@@ -1065,6 +1244,7 @@ fn row(
             provider: None,
             model: None,
             flags,
+            stale: false,
         },
     }
 }

@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::abi::{Param, Ret, Signature};
 use crate::error::RewriteError;
 use crate::native::lint_translation;
+use crate::reuse;
 use crate::sandbox::{Confinement, ReadScope, confine, run_captured, scratch_dir, toolchain};
 use crate::unit::RewriteUnit;
 
@@ -202,7 +203,7 @@ fn shim_fn(sig: &Signature, path: &str) -> String {
 
 /// The unit's code as a library module: symbol attributes removed. Refuses code that sets its
 /// own symbol names or sections, which would export something the manifest does not list.
-fn module_code(unit: &RewriteUnit) -> Result<String, RewriteError> {
+fn module_code(unit: &RewriteUnit, uses: &str) -> Result<String, RewriteError> {
     let code = &unit.rust_code;
     if let Some(why) = lint_translation(code) {
         return Err(RewriteError::Store(format!(
@@ -218,9 +219,11 @@ fn module_code(unit: &RewriteUnit) -> Result<String, RewriteError> {
             )));
         }
     }
-    Ok(code
-        .replace("#[unsafe(no_mangle)]", "")
-        .replace("#[no_mangle]", ""))
+    Ok(format!(
+        "{uses}{}",
+        code.replace("#[unsafe(no_mangle)]", "")
+            .replace("#[no_mangle]", "")
+    ))
 }
 
 fn io(what: &str, e: std::io::Error) -> RewriteError {
@@ -288,6 +291,19 @@ pub fn write_workspace(
     let lib_ident = lib_crate.replace('-', "_");
     let ffi_ident = ffi_crate.replace('-', "_");
 
+    let by_address: std::collections::BTreeMap<u64, reuse::ExportedUnit> = units
+        .iter()
+        .map(|u| {
+            (
+                u64::from_str_radix(u.anchor.address.trim_start_matches("0x"), 16).unwrap_or(0),
+                (
+                    format!("u_{}", u.signature.name),
+                    u.version,
+                    u.signature.name.clone(),
+                ),
+            )
+        })
+        .collect();
     let mut symbols = BTreeSet::new();
     let mut exports = Vec::new();
     let mut modules = Vec::new();
@@ -298,7 +314,8 @@ pub fn write_workspace(
                 "two accepted units export the symbol `{sym}`; reject or re-translate one of them"
             )));
         }
-        let code = module_code(u)?;
+        let uses = reuse::export_uses(u, &|a| by_address.get(&a).cloned())?;
+        let code = module_code(u, &uses)?;
         let module = format!("u_{sym}");
         write(
             &dir.join(&lib_crate)

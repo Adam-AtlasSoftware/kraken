@@ -392,8 +392,8 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
     }
 
     let st = RewriteStore::open(&path).expect("open migrates");
-    assert_eq!(st.schema_version().expect("version"), 2);
-    assert_eq!(SCHEMA_VERSION, 2);
+    assert_eq!(st.schema_version().expect("version"), 3);
+    assert_eq!(SCHEMA_VERSION, 3);
 
     // The old unit reads back intact, with the new column empty.
     let u = st.get("ru-old").expect("get").expect("unit");
@@ -404,6 +404,9 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
     assert_eq!(u.summary.seed, 42);
     assert_eq!(u.verdict, Verdict::Pass);
     assert_eq!(u.test_cases.len(), 1);
+    // Migration 3: no repair link on an old version, and nothing observed, so nothing stale.
+    assert_eq!(u.repair, None);
+    assert!(st.stale_reasons("ab12").expect("stale").is_empty());
     assert_eq!(st.events("ab12", "0x10").expect("events").len(), 1);
     assert_eq!(
         st.accepted("ab12", "0x10")
@@ -432,7 +435,7 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
 
     // Opening again changes nothing.
     let again = RewriteStore::open(&path).expect("reopen");
-    assert_eq!(again.schema_version().expect("version"), 2);
+    assert_eq!(again.schema_version().expect("version"), 3);
     assert_eq!(again.versions("ab12", "0x10").expect("versions").len(), 2);
 }
 
