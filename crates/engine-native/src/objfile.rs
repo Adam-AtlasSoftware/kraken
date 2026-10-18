@@ -6,8 +6,10 @@
 //! (0x100000, 0x10000 on 32-bit x86), each at its alignment, then a GOT for the GOT-relative
 //! relocations, an import slot for every `__imp_` symbol, and a stand-in address past the image
 //! for every external symbol (as PE imports get them, so a call to `puts` decompiles as a call to
-//! `puts`). The common x86-64 and i386 relocations of ELF and COFF are applied, to the image and
-//! to the DWARF sections, so names, types and unwind tables read as in a linked program.
+//! `puts`). The common x86-64 and i386 relocations of ELF and COFF are applied, and those of ARM,
+//! AArch64 and RISC-V ELF objects (see [`crate::relocs`]), to the image and to the DWARF
+//! sections, so names, types and unwind tables read as in a linked program. ARM objects say with
+//! their mapping symbols (`$a`, `$t`) which code is Thumb.
 //!
 //! A static library loads every member into one program, member after member, with the block
 //! names prefixed by the member (`kr_core.o:.text`); a definition in one member resolves the
@@ -69,11 +71,28 @@ fn language(arch: Architecture, family: Family) -> Result<Language, ProtoError> 
             compiler,
             pointer_size: 4,
         }),
+        Architecture::Arm
+        | Architecture::Aarch64
+        | Architecture::Riscv32
+        | Architecture::Riscv64
+            if family == Family::Elf =>
+        {
+            // the languages of linked ELF files of the same processors
+            crate::elf::language(arch)
+        }
         other => Err(unsupported(format!(
-            "object files for {other:?} are not supported by the native engine yet (x86 and \
-             x86-64 only)"
+            "object files for {other:?} are not supported by the native engine yet (x86, \
+             x86-64, ARM, AArch64 and RISC-V ELF only)"
         ))),
     }
+}
+
+/// Whether the processor's relocations are those of [`crate::relocs`].
+fn risc(arch: Architecture) -> bool {
+    matches!(
+        arch,
+        Architecture::Arm | Architecture::Aarch64 | Architecture::Riscv32 | Architecture::Riscv64
+    )
 }
 
 /// Whether `data` is a relocatable object or an archive this module loads.
@@ -494,6 +513,7 @@ fn empty_loaded(language: Language) -> Loaded {
         base,
         image: Image {
             segments: Vec::new(),
+            context: Vec::new(),
         },
         blocks: Vec::new(),
         functions: BTreeMap::new(),
@@ -515,6 +535,7 @@ fn empty_loaded(language: Language) -> Loaded {
         landing_pads: BTreeMap::new(),
         got_code: Vec::new(),
         default_names: BTreeMap::new(),
+        global_pointer: None,
     }
 }
 
@@ -677,6 +698,10 @@ fn relocate(
     pointer_slots: &mut Vec<(u64, u64)>,
 ) {
     use object::elf::*;
+    if risc(file.architecture()) {
+        relocate_risc(layout, obj, file, sec, bytes, at, pointer_slots);
+        return;
+    }
     let ptr = layout.ptr;
     for (offset, rel) in sec.relocations() {
         let RelocationTarget::Symbol(si) = rel.target() else {
@@ -779,6 +804,66 @@ fn relocate(
     }
 }
 
+/// [`relocate`] for ARM, AArch64 and RISC-V objects. RISC-V's `%pcrel_lo` relocations name the
+/// `auipc` they complete, so the `%pcrel_hi` offsets are worked out first.
+fn relocate_risc(
+    layout: &Layout<'_>,
+    obj: usize,
+    file: &object::File<'_>,
+    sec: &object::Section<'_, '_>,
+    bytes: &mut [u8],
+    at: u64,
+    pointer_slots: &mut Vec<(u64, u64)>,
+) {
+    let arch = file.architecture();
+    let mask = if layout.ptr == 4 {
+        0xffff_ffff
+    } else {
+        u64::MAX
+    };
+    let target = |rel: &object::Relocation| -> Option<crate::relocs::Target> {
+        let RelocationTarget::Symbol(si) = rel.target() else {
+            return None;
+        };
+        let sym = file.symbol_by_index(si).ok()?;
+        let (s, _) = layout.symbol(obj, &sym)?;
+        Some(crate::relocs::Target {
+            s,
+            slot: layout.got_of.get(&s).copied().unwrap_or(0),
+            got: layout.got.unwrap_or(0),
+            addend: (!rel.has_implicit_addend()).then(|| rel.addend()),
+        })
+    };
+    let rels: Vec<(u64, object::Relocation)> = sec.relocations().collect();
+    let mut hi: BTreeMap<u64, i64> = BTreeMap::new();
+    for (offset, rel) in &rels {
+        let RelocationFlags::Elf { r_type } = rel.flags() else {
+            continue;
+        };
+        let p = at.wrapping_add(*offset);
+        if let Some(t) = target(rel)
+            && let Some(o) = crate::relocs::riscv_hi(r_type, p, &t)
+        {
+            hi.insert(p, o);
+        }
+    }
+    for (offset, rel) in &rels {
+        let RelocationFlags::Elf { r_type } = rel.flags() else {
+            continue;
+        };
+        let (Some(t), Ok(off)) = (target(rel), usize::try_from(*offset)) else {
+            continue;
+        };
+        let p = at.wrapping_add(*offset);
+        if let crate::relocs::Applied::Done(Some(v)) =
+            crate::relocs::apply(arch, r_type, bytes, off, p, &t, &hi)
+            && v != 0
+        {
+            pointer_slots.push((p, v & mask));
+        }
+    }
+}
+
 fn read_signed(bytes: &[u8], offset: u64, width: usize) -> i128 {
     let Some(b) = usize::try_from(offset)
         .ok()
@@ -802,8 +887,9 @@ fn link(
         .unwrap_or(Architecture::Unknown);
     let language = language(arch, family)?;
     let ptr = language.pointer_size as usize;
-    let x86 = ptr == 4;
-    let base = if x86 { PIE_BASE_32 } else { PIE_BASE };
+    let x86 = arch == Architecture::I386;
+    let base = if ptr == 4 { PIE_BASE_32 } else { PIE_BASE };
+    let arm = arch == Architecture::Arm;
     let prefix = |obj: usize, name: &str| match &objects[obj].0 {
         Some(m) => format!("{m}:{name}"),
         None => name.to_string(),
@@ -998,7 +1084,11 @@ fn link(
                 let RelocationFlags::Elf { r_type } = rel.flags() else {
                     continue;
                 };
-                let (slot, base_rel) = got_relative(family, ptr, r_type);
+                let (slot, base_rel) = if risc(arch) {
+                    crate::relocs::got_use(arch, r_type)
+                } else {
+                    got_relative(family, ptr, r_type)
+                };
                 needs_got |= base_rel;
                 if slot && let RelocationTarget::Symbol(si) = rel.target() {
                     got_targets.insert((oi, si.0));
@@ -1190,9 +1280,15 @@ fn link(
     if !externals.is_empty() {
         // the decompiler reads a few bytes at a call target: returns, in no block
         let len = external_names.len() * ptr + 16;
+        let ret: &[u8] = match arch {
+            Architecture::Arm => &[0x1e, 0xff, 0x2f, 0xe1],
+            Architecture::Aarch64 => &[0xc0, 0x03, 0x5f, 0xd6],
+            Architecture::Riscv32 | Architecture::Riscv64 => &[0x67, 0x80, 0x00, 0x00],
+            _ => &[0xc3],
+        };
         segments.push(Segment {
             start: externals_start,
-            data: vec![0xc3; len],
+            data: ret.iter().copied().cycle().take(len).collect(),
             mem_size: len as u64,
             readonly: false,
         });
@@ -1209,7 +1305,33 @@ fn link(
         s.mem_size = s.mem_size.max(room.min(s.mem_size + 0x1000));
     }
     blocks.sort_by_key(|b| (b.start, b.end));
-    let image = Image { segments };
+    let mut image = Image {
+        segments,
+        context: Vec::new(),
+    };
+    // ARM: the mapping symbols say which code is Thumb
+    if arm {
+        let mut mapping: Vec<(u64, crate::arm::Mapping)> = Vec::new();
+        for (oi, (_, file)) in objects.iter().enumerate() {
+            for sym in file.symbols() {
+                let (SymbolSection::Section(idx), Some(m)) = (
+                    sym.section(),
+                    sym.name().ok().and_then(crate::arm::mapping_kind),
+                ) else {
+                    continue;
+                };
+                if let Some(start) = placed[oi].get(&idx.0) {
+                    mapping.push((start + sym.address(), m));
+                }
+            }
+        }
+        let exec: Vec<(u64, u64)> = blocks
+            .iter()
+            .filter(|b| b.initialized && b.perms.ends_with('x'))
+            .map(|b| (b.start.0, b.end.0))
+            .collect();
+        image.context = crate::arm::paint_mapping(&mapping, &exec);
+    }
 
     // symbols: functions, exports, conventions
     let exec_at = |a: u64| {
@@ -1231,7 +1353,13 @@ fn link(
             if name.is_empty() || name.starts_with('.') || name.starts_with('$') {
                 continue;
             }
-            let addr = start + sym.address();
+            let raw = start + sym.address();
+            // a Thumb function's symbol has the low bit set
+            let addr = if arm && sym.kind() == SymbolKind::Text {
+                raw & !1
+            } else {
+                raw
+            };
             let is_code = match sym.kind() {
                 SymbolKind::Text => true,
                 SymbolKind::Data | SymbolKind::Unknown => {
@@ -1251,7 +1379,7 @@ fn link(
             // a hidden ELF symbol (`__x86.get_pc_thunk.bx`) stays inside whatever links it
             let hidden = matches!(sym.flags(), SymbolFlags::Elf { st_other, .. }
                 if st_other & 3 == object::elf::STV_HIDDEN || st_other & 3 == object::elf::STV_INTERNAL);
-            if !sym.is_local() && !hidden && sym.is_definition() && globals.get(name) == Some(&addr)
+            if !sym.is_local() && !hidden && sym.is_definition() && globals.get(name) == Some(&raw)
             {
                 let kind = if is_code {
                     ProtoSymbolKind::Function
@@ -1354,7 +1482,14 @@ fn link(
         };
         for p in sections.iter().filter(|p| p.obj == oi) {
             let short = p.name.rsplit(':').next().unwrap_or(&p.name);
-            if short == ".eh_frame" {
+            if short == ".ARM.exidx" {
+                // prel31 offsets to the functions (relocated above)
+                for (i, e) in p.data.as_chunks::<8>().0.iter().enumerate() {
+                    let w = u32::from_le_bytes([e[0], e[1], e[2], e[3]]);
+                    let off = i64::from(((w << 1) as i32) >> 1);
+                    fde_starts.push((p.addr + 8 * i as u64).wrapping_add_signed(off) & !1);
+                }
+            } else if short == ".eh_frame" {
                 let frames = crate::eh::parse(&crate::eh::Sections {
                     eh_frame: (p.addr, &p.data),
                     text: start_of(".text"),
@@ -1443,6 +1578,7 @@ fn link(
         landing_pads,
         got_code: Vec::new(),
         default_names: BTreeMap::new(),
+        global_pointer: None,
     })
 }
 

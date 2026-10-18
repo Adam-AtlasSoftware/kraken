@@ -1,7 +1,8 @@
 //! The cross-architecture corpus sets (`corpus/{arm32,aarch64,riscv64,riscv32}`): every binary is
 //! there, matches its set's `MANIFEST.sha256`, has ground truth, and `binary_probe` sees an ELF
-//! executable of the right processor and width. Whether an engine opens it is not checked (the
-//! native engine is x86 only for now); the test prints what the probe says.
+//! executable of the right processor and width. Where the native engine can run (its library,
+//! the compiled `.sla` files with ARM, AArch64 and RISC-V, and its worker), `auto` recommends it;
+//! the test prints what the probe says.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -69,6 +70,17 @@ fn manifest(set: &Path) -> BTreeMap<String, String> {
 fn cross_sets_match_their_manifests_and_probe_as_their_architecture() {
     // The probe asks the engine factory about this machine; keep it off the user's config.
     let cfg = KrakenConfig::default();
+    // the native engine opens these when this build and machine can run it with specs that
+    // have the four processors
+    let native = kraken_host::native::NativeProbe::detect(None);
+    let native_ready = native.problem().is_none()
+        && native.specs.as_deref().is_some_and(|s| {
+            s.join("Ghidra/Processors/ARM/data/languages/ARM8_le.sla")
+                .is_file()
+                && s.join("Ghidra/Processors/RISCV/data/languages/riscv.ilp32d.sla")
+                    .is_file()
+        });
+    println!("native engine ready for the cross sets: {native_ready}");
     for set in SETS {
         let dir = corpus().join(set.name);
         let listed = manifest(&dir);
@@ -114,6 +126,15 @@ fn cross_sets_match_their_manifests_and_probe_as_their_architecture() {
                 "{}/{file}",
                 set.name
             );
+            if native_ready {
+                assert_eq!(
+                    p.recommended_engine,
+                    Some(kraken_registry::session::EngineKind::Native),
+                    "{}/{file}: {:?}",
+                    set.name,
+                    p.recommended_reason
+                );
+            }
             let verdict = format!(
                 "supported={} engine={:?} problem={:?} reason={:?}",
                 p.supported, p.recommended_engine, p.problem, p.recommended_reason

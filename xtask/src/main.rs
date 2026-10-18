@@ -29,7 +29,7 @@ Commands:
                and extract the decompiler C++ sources into
                ~/.cache/kraken-dev/ghidra-src/Ghidra_12.1.4_build for engine-native-sys.
   native-sla   Build Ghidra's Sleigh compiler from the same pinned sources (CXX/CC, default
-               c++/cc) and compile the x86 and AArch64 specifications into
+               c++/cc) and compile the x86, AArch64, ARM and RISC-V specifications into
                ~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, so the native engine needs no
                Ghidra install.
   emu-sysroots Extract the armhf, arm64 and riscv64 glibc sysroots (loader and shared libraries)

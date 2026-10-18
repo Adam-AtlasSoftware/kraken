@@ -11,10 +11,10 @@ The [native engine page](native-engine.md#native-or-ghidra) compares them.
 
 | File | Example | Native engine | Ghidra engine |
 |---|---|---|---|
-| Linux program (ELF, static or dynamic, PIE or not) | `/usr/bin/ls` | x86-64, 32-bit x86, AArch64 | yes |
-| Linux shared library (ELF) | `libkr.so` | x86-64, 32-bit x86, AArch64 | yes |
-| Linux object file (ELF relocatable) | `kr.o` | x86-64, 32-bit x86 | yes |
-| Linux static library (`ar` archive of objects) | `libkr.a` | x86-64, 32-bit x86: all members in one project | no |
+| Linux program (ELF, static or dynamic, PIE or not) | `/usr/bin/ls` | x86-64, 32-bit x86, ARM (A32 and Thumb-2), AArch64, RISC-V 64, RISC-V 32 | yes |
+| Linux shared library (ELF) | `libkr.so` | x86-64, 32-bit x86, ARM, AArch64, RISC-V 64 | yes |
+| Linux object file (ELF relocatable) | `kr.o` | x86-64, 32-bit x86, ARM, AArch64, RISC-V 64, RISC-V 32 | yes |
+| Linux static library (`ar` archive of objects) | `libkr.a` | x86-64, 32-bit x86, ARM, AArch64, RISC-V: all members in one project | no |
 | Windows program or DLL (PE) | `app.exe`, `kr.dll` | x86, x86-64 | yes |
 | Windows object file (COFF) | `kr.obj` | x86, x86-64 | yes |
 | Windows static library (COFF archive) | `kr.lib`, mingw `libkr.a` | x86, x86-64: all members in one project | no |

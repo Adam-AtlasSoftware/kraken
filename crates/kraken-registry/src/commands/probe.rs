@@ -314,9 +314,11 @@ impl Members {
         }
         match self.arch {
             Some(A::X86_64 | A::I386) | None => None,
+            // ELF objects of these (the native engine reads no COFF for them)
+            Some(A::Arm | A::Aarch64 | A::Riscv32 | A::Riscv64) if self.coff == 0 => None,
             Some(a) => Some(format!(
                 "its objects are for {}; KRAKEN opens object files and libraries for x86 and \
-                 x86-64 only",
+                 x86-64, and ELF ones for ARM, AArch64 and RISC-V",
                 arch_name(a)
             )),
         }
@@ -475,7 +477,7 @@ fn facts_of(data: &[u8], whole: bool) -> Facts {
     let problem = match (format, f.architecture()) {
         (BinaryFormat::Coff, object::Architecture::X86_64 | object::Architecture::I386) => None,
         (BinaryFormat::Coff, a) => Some(format!(
-            "it is a COFF object for {}; KRAKEN opens object files for x86 and x86-64 only",
+            "it is a COFF object for {}; KRAKEN opens COFF object files for x86 and x86-64 only",
             arch_name(a)
         )),
         _ => None,

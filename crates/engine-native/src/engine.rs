@@ -211,6 +211,8 @@ pub(crate) struct Program {
     pub(crate) insns: Mutex<BTreeMap<u64, Instruction>>,
     /// Code reached only through data (the lazy PLT entries), indexed with the bodies.
     orphans: Vec<Instruction>,
+    /// The references constant propagation found in RISC code (see [`crate::constprop`]).
+    computed: crate::discover::ComputedRefs,
     session: Mutex<Session>,
     /// Raised to abandon the decompile in flight (see `Session::stop_flag`).
     stop: Arc<AtomicBool>,
@@ -367,7 +369,7 @@ impl Program {
         }
         match self.loaded.functions.get(&at) {
             Some(raw) => crate::symbols::default_name(&self.loaded, at, raw),
-            None => crate::discover::default_name(at),
+            None => format!("{}{at:08x}", self.loaded.default_prefix()),
         }
     }
 
@@ -409,7 +411,7 @@ impl Program {
                 }
             }
         }
-        RefIndex::build(&self.loaded, &funcs.map, &insns, &loose)
+        RefIndex::build(&self.loaded, &funcs.map, &insns, &loose, &self.computed)
     }
 
     /// Rebuilds what depends on the function table: the reference index (the bodies of the
@@ -1138,6 +1140,12 @@ fn build_program(
             // runtime's functions are `__cdecl`
             proto.calling_convention = "__cdecl".into();
         }
+        if !crate::discover::is_noreturn_name(&loaded, &name)
+            && crate::discover::NORETURN.contains(&name.as_str())
+        {
+            // the start-up call `_start` runs on after on the RISC targets
+            proto.noreturn = false;
+        }
         if proto.noreturn {
             noreturn.extend(named(&name));
         }
@@ -1234,6 +1242,7 @@ fn build_program(
         locked: Mutex::new(locked),
         insns: Mutex::new(found.insns),
         orphans,
+        computed: found.computed,
         session: Mutex::new(session),
         stop,
         decompile_slot: tokio::sync::Mutex::new(()),

@@ -47,6 +47,7 @@ fn session() -> Option<Session> {
             data,
             readonly: true,
         }],
+        context: Vec::new(),
     };
     Some(Session::new("x86:LE:64:default", "gcc", img).expect("session"))
 }
@@ -157,4 +158,43 @@ fn prototypes_and_types_reach_the_output() {
         s.set_prototype(0x1050, "int printf(no_such_type x)")
             .is_err()
     );
+}
+
+/// A context range painted when the session starts selects Thumb decoding for its bytes; the
+/// rest decodes as A32, the language's default.
+#[test]
+fn context_ranges_select_thumb_code() {
+    // make sure the library is started (with the install's languages)
+    if session().is_none() {
+        return;
+    }
+    if !engine_native_sys::has_language("ARM:LE:32:v8").expect("languages") {
+        eprintln!("skipped: no ARM specification");
+        return;
+    }
+    // Thumb `push {r4, lr}; pop {r4, pc}` at 0x1000, A32 `bx lr` at 0x1004
+    let mut data = vec![0x10, 0xb5, 0x10, 0xbd];
+    data.extend_from_slice(&0xe12f_ff1eu32.to_le_bytes());
+    let img = Image {
+        segments: vec![Segment {
+            start: 0x1000,
+            mem_size: data.len() as u64,
+            data,
+            readonly: true,
+        }],
+        context: vec![engine_native_sys::ContextRange {
+            name: "TMode".into(),
+            start: 0x1000,
+            end: 0x1004,
+            value: 1,
+        }],
+    };
+    let mut s = Session::new("ARM:LE:32:v8", "default", img).expect("ARM session");
+    let thumb = s.decode(0x1000, 2).expect("decode Thumb");
+    assert_eq!(thumb.len(), 2, "{thumb:?}");
+    assert_eq!(thumb[0].length, 2);
+    assert_eq!(thumb[1].flow, Flow::Return, "pop {{r4, pc}}: {thumb:?}");
+    let arm = s.decode(0x1004, 1).expect("decode A32");
+    assert_eq!(arm[0].length, 4);
+    assert_eq!(arm[0].flow, Flow::Return, "bx lr: {arm:?}");
 }

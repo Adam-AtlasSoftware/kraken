@@ -1,0 +1,122 @@
+{
+  "binary": "libkr-riscv64.so",
+  "sha256": "5ae9f308a54a00f1a88f936b407af4e4782c17c8c29d2bed29dc0a5633801536",
+  "kind": "Linux shared library",
+  "arch": "riscv64",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "deregister_tm_clones",
+      "demangled": "deregister_tm_clones",
+      "size": 0,
+      "entry": "0x690"
+    },
+    {
+      "member": null,
+      "name": "register_tm_clones",
+      "demangled": "register_tm_clones",
+      "size": 0,
+      "entry": "0x6b2"
+    },
+    {
+      "member": null,
+      "name": "__do_global_dtors_aux",
+      "demangled": "__do_global_dtors_aux",
+      "size": 0,
+      "entry": "0x6de"
+    },
+    {
+      "member": null,
+      "name": "frame_dummy",
+      "demangled": "frame_dummy",
+      "size": 0,
+      "entry": "0x716"
+    },
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 16,
+      "entry": "0x718"
+    },
+    {
+      "member": null,
+      "name": "kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 84,
+      "entry": "0x834"
+    },
+    {
+      "member": null,
+      "name": "kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 50,
+      "entry": "0x888"
+    },
+    {
+      "member": null,
+      "name": "kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 100,
+      "entry": "0x8ba"
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 88,
+      "entry": "0x728"
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 180,
+      "entry": "0x780"
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "_ITM_deregisterTMCloneTable"
+    },
+    {
+      "name": "_ITM_registerTMCloneTable"
+    },
+    {
+      "name": "__ctype_toupper_loc"
+    },
+    {
+      "name": "__cxa_finalize"
+    },
+    {
+      "name": "malloc"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

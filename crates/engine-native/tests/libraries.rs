@@ -2,8 +2,9 @@
 //! library and object files, and as Windows DLLs, static libraries, import libraries and COFF
 //! objects for x64 and x86): function names and sizes against the toolchain's truth, exports and
 //! imports, member blocks, a decompile that names a call into another member or an external, and
-//! the contract suite. Needs the native build and a spec tree with the x86 `.sla` files (`cargo
-//! xtask native-sla` compiles both); skips otherwise.
+//! the contract suite; and libkr for ARM (Thumb-2 and A32), AArch64 and RISC-V (`corpus/xlib`).
+//! Needs the native build and a spec tree with the x86 (and for `corpus/xlib` the ARM, AArch64
+//! and RISC-V) `.sla` files (`cargo xtask native-sla` compiles them); skips otherwise.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -102,10 +103,15 @@ async fn all<T>(mut page: impl AsyncFnMut(PageRequest) -> kraken_proto::Page<T>)
 }
 
 async fn open(name: &str) -> Option<Opened> {
+    open_path(&lib(name)).await
+}
+
+async fn open_path(path: &Path) -> Option<Opened> {
+    let name = path.display();
     let engine = NativeEngine::new(config()?);
     let t = CancellationToken::new();
     let info = engine
-        .open_binary(&lib(name), &LoaderSpec::default(), &t)
+        .open_binary(path, &LoaderSpec::default(), &t)
         .await
         .unwrap_or_else(|e| panic!("open {name}: {e}"));
     let functions = all(async |p| engine.list_functions(&p, &t).await.expect("list"))
@@ -130,7 +136,15 @@ async fn open(name: &str) -> Option<Opened> {
 }
 
 fn truth(name: &str) -> Value {
-    let p = root().join("corpus/lib/truth").join(format!("{name}.json"));
+    truth_in("lib", name)
+}
+
+fn truth_in(set: &str, name: &str) -> Value {
+    let p = root()
+        .join("corpus")
+        .join(set)
+        .join("truth")
+        .join(format!("{name}.json"));
     serde_json::from_str(&std::fs::read_to_string(p).expect("truth")).expect("json")
 }
 
@@ -157,9 +171,16 @@ fn check_functions(o: &Opened, t: &Value, binary: &str) {
         }
         // a linked file says where (a shared library linked at 0 is loaded at Ghidra's base);
         // in an object or archive the name has to do
+        // (an ARM symbol has the Thumb bit; the function starts at the even address)
+        let thumb_bit = if o.info.arch.starts_with("ARM:") {
+            !1
+        } else {
+            u64::MAX
+        };
         let entry = f["entry"]
             .as_str()
             .and_then(|e| u64::from_str_radix(e.trim_start_matches("0x"), 16).ok())
+            .map(|e| e & thumb_bit)
             .map(|e| {
                 if e < o.info.base.0 {
                     e + o.info.base.0
@@ -313,6 +334,45 @@ async fn windows_dlls_export_by_name_and_ordinal() {
         }
         let text = o.decompile("kr_report").await;
         assert!(text.contains("puts("), "{binary}: import call\n{text}");
+    }
+}
+
+/// libkr for ARM (Thumb-2, and one A32 object), AArch64, RISC-V 64 and RISC-V 32 as object
+/// files, static libraries and shared libraries (`corpus/xlib`): the functions of the truth, the
+/// exports and imports, and a decompile that names the external `puts` and the call into the
+/// other member.
+#[tokio::test(flavor = "multi_thread")]
+async fn cross_architecture_objects_and_libraries() {
+    let dir = root().join("corpus/xlib/bin");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("corpus/xlib/bin")
+        .filter_map(|e| e.ok()?.file_name().to_str().map(str::to_string))
+        .collect();
+    names.sort();
+    for binary in names {
+        let Some(o) = open_path(&dir.join(&binary)).await else {
+            return;
+        };
+        let t = truth_in("xlib", &binary);
+        check_functions(&o, &t, &binary);
+        check_symbols(&o, &t, &binary);
+        let want = match t["arch"].as_str().unwrap_or_default() {
+            "arm32" => "ARM:LE:32:v8",
+            "aarch64" => "AARCH64:LE:64:v8A",
+            "riscv64" => "RISCV:LE:64:default",
+            _ => "RISCV:LE:32:default",
+        };
+        assert_eq!(o.info.arch, want, "{binary}");
+        let text = o.decompile("kr_report").await;
+        assert!(text.contains("puts("), "{binary}: external call\n{text}");
+        assert!(text.contains("kr_kind_name("), "{binary}: call\n{text}");
+        if binary.ends_with(".a") {
+            assert_eq!(o.info.members, ["kr_core.o", "kr_text.o"], "{binary}");
+            assert_eq!(o.block_of(o.named("kr_kind_name")), "kr_text.o:.text");
+            // the strings of the other member, read through its relocated references
+            let text = o.decompile("kr_kind_name").await;
+            assert!(text.contains("punctuation"), "{binary}\n{text}");
+        }
     }
 }
 

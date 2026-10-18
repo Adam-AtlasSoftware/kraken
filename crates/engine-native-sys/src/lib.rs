@@ -2,7 +2,7 @@
 //!
 //! The decompiler library keeps global state (capability registries, the language list, static
 //! caches) and is not thread-safe, so every call into it takes one process-wide lock; only
-//! `decode` and `jump_tables`, which touch nothing but their own session, share it, so the
+//! `decode`, `lift` and `jump_tables`, which touch nothing but their own session, share it, so the
 //! analysis of one program can run on several sessions at once. A crash or
 //! hang in the C++ code takes the whole process with it; the plan (ADR 0014) is to move
 //! [`Session`] into a confined child process once the in-process phase has proven the glue.
@@ -52,11 +52,29 @@ pub struct Segment {
     pub readonly: bool,
 }
 
-/// The bytes the decompiler and Sleigh read, as a list of segments.
+/// A Sleigh context variable painted over an address range when a session starts, such as
+/// ARM's `TMode` (1 where the code is Thumb).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextRange {
+    /// Name of the context variable in the language's specification (`TMode`).
+    pub name: String,
+    /// First address.
+    pub start: u64,
+    /// One past the last address.
+    pub end: u64,
+    /// The value it takes there.
+    pub value: u32,
+}
+
+/// The bytes the decompiler and Sleigh read, as a list of segments, and the context values a
+/// session starts with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Image {
     /// Non-overlapping segments.
     pub segments: Vec<Segment>,
+    /// Context variables over address ranges, applied in order (later ones win); addresses
+    /// outside them keep the language's defaults.
+    pub context: Vec<ContextRange>,
 }
 
 impl Image {
@@ -349,9 +367,9 @@ fn lock() -> RwLockWriteGuard<'static, ()> {
     LOCK.write().unwrap_or_else(|p| p.into_inner())
 }
 
-/// The shared lock of [`Session::decode`] and [`Session::jump_tables`]: they only read the
-/// session's own program image and Sleigh translator (no process-wide state), so calls on
-/// different sessions may overlap, but never with an exclusive call.
+/// The shared lock of [`Session::decode`], [`Session::lift`] and [`Session::jump_tables`]: they
+/// only read the session's own program image and Sleigh translator (no process-wide state), so
+/// calls on different sessions may overlap, but never with an exclusive call.
 #[cfg(kraken_native)]
 fn lock_shared() -> RwLockReadGuard<'static, ()> {
     LOCK.read().unwrap_or_else(|p| p.into_inner())
@@ -370,6 +388,19 @@ mod real {
         }
         fn readonly_ranges(&self) -> Vec<u64> {
             self.0.readonly_pairs()
+        }
+        fn context_ranges(&self) -> Vec<ffi::ContextOut> {
+            self.0
+                .context
+                .iter()
+                .filter(|c| c.end > c.start)
+                .map(|c| ffi::ContextOut {
+                    name: c.name.clone(),
+                    start: c.start,
+                    end: c.end,
+                    value: c.value,
+                })
+                .collect()
         }
         fn interrupted(&self) -> bool {
             self.1.load(Ordering::Relaxed)
@@ -396,6 +427,13 @@ mod real {
         struct JumpEdgeOut {
             op: u64,
             target: u64,
+        }
+
+        struct ContextOut {
+            name: String,
+            start: u64,
+            end: u64,
+            value: u32,
         }
 
         struct VarnodeOut {
@@ -441,6 +479,7 @@ mod real {
             type ImageSource;
             fn load_fill(self: &ImageSource, addr: u64, buf: &mut [u8]) -> bool;
             fn readonly_ranges(self: &ImageSource) -> Vec<u64>;
+            fn context_ranges(self: &ImageSource) -> Vec<ContextOut>;
             fn interrupted(self: &ImageSource) -> bool;
         }
 
@@ -639,7 +678,7 @@ impl Session {
     pub fn lift(&mut self, start: u64, end: u64) -> NativeResult<Vec<PcodeOp>> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            let _g = lock_shared();
             let ops = self.pinned()?.lift(start, end).map_err(real::err)?;
             let vn = |v: real::ffi::VarnodeOut| Varnode {
                 space: v.space,
@@ -871,6 +910,7 @@ mod tests {
                 mem_size: 8,
                 readonly: true,
             }],
+            context: Vec::new(),
         };
         let mut buf = [0xffu8; 4];
         assert!(img.read(0x1001, &mut buf));

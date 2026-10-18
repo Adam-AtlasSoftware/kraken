@@ -30,21 +30,21 @@ new projects.
 |---|---|---|
 | Needs Java and a Ghidra download | No | Yes (`kraken setup`, about 3 GB) |
 | Start of a new project | Seconds (a small program is ready in well under a second) | About a minute of analysis for a small program |
-| File formats | ELF (x86-64, AArch64, 32-bit x86) and PE (x86, x86-64); object files, static libraries and import libraries for x86 and x86-64 | ELF, PE, Mach-O, object files, many processors; no archives |
+| File formats | ELF (x86-64, 32-bit x86, ARM and Thumb-2, AArch64, RISC-V 64 and 32) and PE (x86, x86-64); object files and static libraries for those (COFF and import libraries for x86 and x86-64) | ELF, PE, Mach-O, object files, many processors; no archives |
 | Function list, disassembly, hex, memory map | Yes | Yes |
 | Decompiler | Yes (the same Ghidra decompiler) | Yes |
 | Cross-references, callers and callees, control-flow graph | Yes | Yes |
 | Strings, imports, exports | Yes | Yes |
 | Rename, comments, prototypes, function create/delete | Yes, undoable | Yes, undoable |
 | Prototypes (`set-type`), calling conventions | Yes | Yes |
-| Debug-info (DWARF) types, C++ name demangling | Not yet | Yes |
+| Debug-info (DWARF) types, C++ name demangling | Yes (types and prototypes; not variables) | Yes |
 | Function discovery on stripped code | Finds every function the symbol table lists; on a stripped program it can miss a small helper that is reached only by a jump from other code (`stripped_calc` has one, `FUN_001011c0`); Ghidra also lists its imported symbols as functions, so counts differ (14 and 22 for `stripped_calc`) | The reference |
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
 | Runs where | Linux | Linux; macOS and Windows experimental |
 
-Use native to get going quickly, for ELF programs and Windows PE images. Switch a project to
-Ghidra (create it again with `--engine ghidra`) when you need Mach-O files, other processors or a
-program's PDB.
+Use native to get going quickly, for ELF programs (x86, ARM, AArch64, RISC-V) and Windows PE
+images. Switch a project to Ghidra (create it again with `--engine ghidra`) when you need Mach-O
+files, other processors or a program's PDB.
 
 ## Choosing an engine
 
@@ -54,7 +54,7 @@ Every project has one engine, picked when it is created and remembered in the pr
 | Choice | What you get |
 |---|---|
 | `ghidra` | The Ghidra engine: every format, renames, comments, types. The default. |
-| `native` | No Java. ELF files for x86-64, AArch64 and 32-bit x86, and PE images for x86 and x86-64. Listing, reading, decompiling, searching, renames, comments, prototypes and function edits. |
+| `native` | No Java. ELF files for x86-64, 32-bit x86, ARM (A32 and Thumb-2), AArch64, RISC-V 64 and RISC-V 32, and PE images for x86 and x86-64. Listing, reading, decompiling, searching, renames, comments, prototypes and function edits. |
 | `auto` | Native when its library and compiled Sleigh files are installed and the file is one it opens; otherwise Ghidra. |
 
 .NET assemblies always use the .NET engine, whatever you choose.
@@ -96,6 +96,11 @@ it has to sit next to `kraken` and `krakend`, or be named by `KRAKEN_NATIVE_WORK
 Elsewhere, `kraken setup --native` cannot build anything and prints the exact commands to run in a
 checkout of the repository. Put the compiled files somewhere else with `native_specs` in
 `config.toml` or `KRAKEN_NATIVE_SPECS`.
+
+`cargo xtask native-sla` compiles the specifications of x86, AArch64, ARM and RISC-V (24 files). A
+tree compiled before ARM and RISC-V were added has the first two only: `kraken setup --native`
+sees that and compiles it again, and until then `auto` opens ARM and RISC-V programs with Ghidra
+and says why.
 
 ## Where it runs and what it keeps
 
@@ -176,6 +181,82 @@ kraken decompile --project ~/kraken-projects/win --address 0x14000167f   # probe
 - **32-bit ELF**: position-independent code works through `__x86.get_pc_thunk.bx` (named even in
   stripped programs), so strings and switch tables resolve.
 
+## ARM, AArch64 and RISC-V
+
+The native engine opens Linux programs, shared libraries, object files and static libraries for
+32-bit ARM (A32 and Thumb-2), AArch64, RISC-V 64 and RISC-V 32, with the same commands and the
+same results as for x86: functions with their names and sizes, the decompiler (calls by name
+through the PLT, `printf("...")`, switches), cross-references, CFGs, strings, imports and
+exports, DWARF types and prototypes.
+
+```sh
+kraken project-create --binary corpus/arm32/bin/switch_vm-arm32-thumb-O2 --engine native --project ~/kraken-projects/thumb
+kraken decompile --project ~/kraken-projects/thumb --address 0x105d4   # vm_run, Thumb-2
+```
+
+| Processor | Language (Sleigh) | Notes |
+|---|---|---|
+| ARM | `ARM:LE:32:v8`, compiler spec `default` | A32 and Thumb-2 in one language; the `TMode` context register selects Thumb |
+| AArch64 | `AARCH64:LE:64:v8A`, `default` | |
+| RISC-V 64 | `RISCV:LE:64:default`, `gcc` | RV64GC |
+| RISC-V 32 | `RISCV:LE:32:default`, `gcc` | Ghidra's loader picks `RISCV:LE:32:AndeStar_v5` for these files (its opinion file leaves RV32 open between the two); AndeStar is a superset with Andes' custom opcodes, so standard RV32 code (rv32imac) decodes the same, and `default` has no vendor opcodes to take data for code |
+
+- **Thumb**: an address with the low bit set (symbol values, the entry point, function pointers
+  in data and in literal pools) is Thumb code at the even address. With a symbol table the
+  mapping symbols (`$a`, `$t`, `$d`) say exactly which code is which; in a stripped program the
+  engine follows the flow from every code pointer of known mode (a `blx` switches mode, a call to
+  a function that never returns ends a path, literal pools are data) and gives each run of code
+  its mode. Listings, sizes and the decompiler then read Thumb functions as Thumb (2- and 4-byte
+  instructions, `it` blocks, `tbb`/`tbh` switches).
+- **PLT and GOT**: the PLT entries of all three (ARM's `add ip, pc, ...; ldr pc, [ip, ...]!`,
+  AArch64's `adrp x16`/`ldr x17`/`br x17`, RISC-V's `auipc t3`/`ld t3`/`jalr t1, t3`) are named
+  after the import whose GOT slot they jump through, so calls decompile as `printf(...)`. Ghidra
+  leaves the RISC-V ones unnamed (`FUN_ram_00100660`) and puts its imports at addresses past the
+  image; the native engine names them, and otherwise follows Ghidra's `FUN_ram_` spelling for
+  RISC-V's unnamed functions.
+- **References**: RISC code builds its addresses in registers (AArch64 `adrp` + `add`, RISC-V
+  `auipc` + `addi`, ARM literal pools and `add r3, pc, r3`), so the engine follows constants
+  through the p-code of each function, as Ghidra's constant propagation does: loads and stores at
+  known addresses are read and write references (a GOT slot yields the address the loader puts
+  there), and an address built in a register is a data reference of the instruction that put it
+  there once a call, a jump or a load or store uses it. RISC-V's `gp` comes from
+  `__global_pointer$` when the symbol table is there.
+- **Functions** come from the symbol table, the entry point, PLT entries, init and fini arrays,
+  `.eh_frame` and `.ARM.exidx`, calls, and code pointers that propagation sees handed to a call
+  or stored. A function that starts with a jump (ARM's `frame_dummy`) is a thunk, and a jump past
+  the start of another function is a tail call (Ghidra's rule for contiguous functions). Without
+  unwind tables an unreferenced function (the out-of-line copy of an inlined one) is found in the
+  gaps between bodies: the first instruction past padding and literal pools whose straight-line
+  run ends in a return or a jump.
+- **Calls that never return**: as on x86 by name and by propagation. Like Ghidra on these
+  processors, `_start` runs on past `__libc_start_main` (into the `abort` or `ebreak` after it);
+  traps (`udf`, `brk`, `ebreak`) end the flow.
+- **Object files and static libraries**: the relocations of ELF objects are applied without
+  relaxation: data words, branches and calls (an ARM call between A32 and Thumb code becomes
+  `blx`), `movw`/`movt`, AArch64 page and low-12 pairs, RISC-V `%pcrel_hi`/`%pcrel_lo` pairs
+  (the low part finds its `auipc` by label), GOT slots, and RISC-V's in-place `ADD`/`SUB`/`SET`
+  and ULEB128 arithmetic of the DWARF and unwind tables. External symbols get stand-in addresses
+  whose code is a return in the processor's own instruction set.
+
+Agreement with Ghidra 12.1.4 on the committed fixtures (`tests/agreement.rs`,
+`KRAKEN_AGREEMENT_SET=corpus/<set>`; recall over what Ghidra recorded):
+
+| Set (fixtures) | functions | bodies | xrefs (in image) | callers | CFG edges | strings | imports | exports | names |
+|---|---|---|---|---|---|---|---|---|---|
+| ARM (5) | 100% | 92.4% | 96.9% (precision 82.6%) | 100% | 98.8% | 100% | 100% | 100% | 100% |
+| AArch64 (4) | 98.9% | 100% | 98.7% (precision 95.2%) | 100% | 100% | 100% | 100% | 100% | 100% |
+| RISC-V 64 (4) | 82.9% | 95.6% | 95.8% (precision 81.1%) | 100% | 97.4% | 100% | 100% | 88.6% | 72.1% |
+| RISC-V 32 (2) | 100% | 96.9% | 92.6% (precision 98.3%) | 100% | 99.8% | 100% | n/a | 97.8% | 100% |
+
+The misses are mostly Ghidra's: on the stripped RISC-V switch it fails to recover the jump table
+and makes each case a function (`caseD_0`, ...), it leaves RISC-V PLT entries unnamed, and it
+makes no references in switch cases its own flow did not reach (the lower precision). Truth recall
+(functions with their DWARF names and sizes) is 452 of 452 over all 68 binaries of the four sets,
+stripped and `-O2` builds included; on ARM a body leaves out the literal pools and switch tables
+DWARF counts, and now and then an unreachable padding instruction, as Ghidra's does. Opening one
+of the small programs takes 30 to 230 ms in a debug build; the statically linked `static_strops`
+(glibc inside) about 3 s on RISC-V 64, 5 s on AArch64 and 12 s on ARM.
+
 ## Libraries and object files
 
 The native engine also opens files that are not linked into a program yet, for Linux and for
@@ -191,7 +272,8 @@ kraken decompile --project ~/kraken-projects/kr --address 0x100070   # kr_report
   fine; its exports (by name, and for a DLL by ordinal, named by the symbol) are the entry points.
 - **Object files** (`.o`, `.obj`) have no addresses yet, so KRAKEN lays them out like Ghidra: the
   sections one after another from 0x100000 (0x10000 for 32-bit code), each at its alignment, and
-  applies the relocations (the common x86-64 and x86 ones of ELF and COFF). Functions are named
+  applies the relocations (the common x86-64 and x86 ones of ELF and COFF, and those of ARM,
+  AArch64 and RISC-V ELF objects, see above). Functions are named
   from the symbol table, and with debug information they get their prototypes too. A symbol the
   object only uses (`puts`) gets a stand-in address past the image, like a Windows import, so
   `puts(s)` reads as a call by name. Sections with one function each (`.text.f`, `.text$f`) are
@@ -214,9 +296,13 @@ same code linked into a shared library, so the time goes to the analysis, not to
 
 ## What does not work yet
 
-- Mach-O files, big-endian ELF, processors other than x86 and AArch64, and PDB files for PE images. With `auto` these go to Ghidra.
-- Object files and libraries for processors other than x86 and x86-64 (AArch64 objects are refused
-  with a message), thin archives, and LLVM bitcode members.
+- Mach-O files, big-endian ELF (ARM BE8, AArch64 BE), processors other than x86, ARM, AArch64 and
+  RISC-V, and PDB files for PE images. With `auto` these go to Ghidra.
+- COFF objects and libraries for processors other than x86 and x86-64 (Windows on ARM), thin
+  archives, and LLVM bitcode members. RISC-V objects assembled with linker relaxation are read
+  unrelaxed, which is what they mean, and TLS relocations are not applied.
+- ARM: Thumb-only PLT entries (`--thumb-plt`) and the long BE8 forms are not named; a stripped
+  program whose only pointer to an A32 function is computed at run time may decode it as Thumb.
 - PE: delay-load imports, resources, .NET metadata (managed assemblies go to the .NET engine),
   and data symbols in the decompiler output (`uRam0040d03c` where Ghidra shows `tls_hits`).
 - DWARF variables (globals and locals); DWARF types and function prototypes are imported.

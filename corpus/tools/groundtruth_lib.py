@@ -18,16 +18,21 @@ Output: corpus/lib/truth/<file>.json
   {binary, sha256, kind, arch, members, functions:[{member, name, demangled, size, entry?}],
    exports:[{name, ordinal?}], imports:[{name, library?}]}
 `member` is null outside archives; `entry` is set for linked files only (link-time addresses).
+
+`--set xlib` writes corpus/xlib/truth for the cross-architecture builds of libkr (ARM, AArch64,
+RISC-V ELF objects, static and shared libraries; `arch` from the ELF header).
 """
 import hashlib
 import json
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 CORPUS = Path(__file__).resolve().parent.parent
-LIB = CORPUS / "lib"
+XLIB = "--set" in sys.argv and sys.argv[sys.argv.index("--set") + 1] == "xlib"
+LIB = CORPUS / ("xlib" if XLIB else "lib")
 BIN = LIB / "bin"
 BUILD = LIB / ".build"
 TRUTH = LIB / "truth"
@@ -200,8 +205,17 @@ def dll_exports(path):
     return [{"name": named.get(o), "ordinal": o} for o in ordinals]
 
 
+ELF_MACHINES = {"ARM": "arm32", "AArch64": "aarch64", "RISC-V": "riscv"}
+
+
 def kind_and_arch(path):
     head = path.read_bytes()[:8]
+    if XLIB:
+        machine = re.search(r"Machine:\s+(.+)", run("readelf", "-h", str(path))).group(1).strip()
+        arch = ELF_MACHINES.get(machine, machine)
+        if arch == "riscv":
+            arch = "riscv32" if "riscv32" in path.name else "riscv64"
+        return head, arch
     fmt = run("objdump", "-f", str(path))
     arch = "x86" if ("i386" in fmt and "x86-64" not in fmt) else "x86-64"
     return head, arch
@@ -211,7 +225,7 @@ def truth(path):
     name = path.name
     head, arch = kind_and_arch(path)
     x86 = arch == "x86"
-    win = "x64" in name or "x86" in name
+    win = not XLIB and ("x64" in name or "x86" in name)
     funcs, exports, imports, mlist, kind = [], [], [], [], None
     if head.startswith(b"!<arch>"):
         mlist = run("ar", "t", str(path)).split()

@@ -1,0 +1,82 @@
+{
+  "binary": "libkr-riscv64.a",
+  "sha256": "8d867731fded6ca236ccbf22dd4114c41c2f497691ded66311ab002c8a367b6f",
+  "kind": "Linux static library with 2 objects",
+  "arch": "riscv64",
+  "members": [
+    "kr_core.o",
+    "kr_text.o"
+  ],
+  "functions": [
+    {
+      "member": "kr_core.o",
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 16
+    },
+    {
+      "member": "kr_core.o",
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 92
+    },
+    {
+      "member": "kr_core.o",
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 208
+    },
+    {
+      "member": "kr_text.o",
+      "name": "kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 84
+    },
+    {
+      "member": "kr_text.o",
+      "name": "kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 50
+    },
+    {
+      "member": "kr_text.o",
+      "name": "kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 112
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "__ctype_toupper_loc"
+    },
+    {
+      "name": "malloc"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

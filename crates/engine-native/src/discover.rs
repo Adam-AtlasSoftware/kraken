@@ -58,6 +58,11 @@ pub const NORETURN: &[&str] = &[
 /// Whether a function of this name never returns (the list above, the C library's, and for PE
 /// images the Win32 and C runtime ones).
 pub fn is_noreturn_name(loaded: &Loaded, name: &str) -> bool {
+    // Ghidra lets `_start` run on after `__libc_start_main` on the RISC targets (into the
+    // `abort` that follows), and so does the native engine there
+    if name == "__libc_start_main" && crate::constprop::wanted(loaded) {
+        return false;
+    }
     NORETURN.contains(&name)
         || (loaded.is_pe() && crate::win32::noreturn_names().any(|n| n == name))
 }
@@ -89,8 +94,9 @@ pub fn pc_thunk_name(loaded: &Loaded, addr: u64) -> Option<&'static str> {
 const MAX_BODY: usize = 50_000;
 /// Instructions decoded per FFI call during a linear run.
 const CHUNK: u32 = 64;
-/// Upper bound on discovery rounds (each round can only add noreturn functions).
-const MAX_ROUNDS: usize = 6;
+/// Upper bound on discovery rounds (each round can only add noreturn functions, and on RISC
+/// targets names and the gaps between bodies).
+const MAX_ROUNDS: usize = 8;
 /// Stack of a discovery thread: the decompiler recurses deeply on big functions.
 const WALK_STACK: usize = 64 * 1024 * 1024;
 
@@ -143,6 +149,8 @@ pub struct Discovery {
     pub jumps: JumpCache,
     /// How many jump-table recoveries ran (the rest came from the cache).
     pub recovered: usize,
+    /// The references constant propagation found in the bodies (RISC code only).
+    pub computed: ComputedRefs,
 }
 
 /// How a discovery is getting on, for the progress report of an open.
@@ -197,7 +205,12 @@ struct Walk {
     calls: Vec<u64>,
     consts: Vec<u64>,
     returns: bool,
+    /// References found by constant propagation (RISC code only, see [`crate::constprop`]).
+    computed: Vec<crate::constprop::Computed>,
 }
+
+/// References found by constant propagation, by the instruction that makes them.
+pub type ComputedRefs = BTreeMap<u64, Vec<(u64, kraken_proto::XrefKind)>>;
 
 /// What a walk reads from the discovery in progress; shared by the threads of a wave.
 struct Env<'a> {
@@ -262,6 +275,9 @@ fn walk(
     mut cached: Option<Vec<JumpEdge>>,
 ) -> NativeResult<Walked> {
     let loaded = env.loaded;
+    // RISC code builds its addresses in registers: literal-pool and page addresses in the
+    // operands are not function pointers, propagation finds the real ones
+    let propagate = crate::constprop::wanted(loaded);
     let mut seen: BTreeSet<u64> = BTreeSet::new();
     let mut work = vec![entry];
     if let Some(pads) = loaded.landing_pads.get(&entry) {
@@ -310,6 +326,9 @@ fn walk(
             break;
         };
         let mut pc = start;
+        // the registers the previous instruction wrote when it was an `add` (ARM switches
+        // jump with `add r2, r3; bx r2`)
+        let mut added_to: Vec<(u64, u32)> = Vec::new();
         loop {
             if seen.contains(&pc) || seen.len() >= MAX_BODY || !loaded.is_code(pc) {
                 break;
@@ -319,29 +338,42 @@ fn walk(
             };
             seen.insert(pc);
             for r in &insn.refs {
-                if r.kind != RefKind::Immediate && loaded.is_code(r.addr) {
+                if !propagate && r.kind != RefKind::Immediate && loaded.is_code(r.addr) {
                     consts.push(r.addr);
                 }
             }
             let next = pc + u64::from(insn.length);
+            // a trap (`ebreak`, `udf`, `brk`) ends the flow, as in Ghidra
+            if propagate && is_trap(&insn.mnemonic) {
+                break;
+            }
+            // a conditional return or computed jump (ARM) also falls through
             match insn.flow {
                 Flow::Return => {
                     returns = true;
-                    break;
                 }
                 Flow::IndirectJump => {
-                    if insn.via_pointer {
+                    // ARM's `bx rN` leaves through a register (a tail call through a pointer,
+                    // an interworking return) unless the register was just computed (`add r2,
+                    // r3; bx r2`); compilers also dispatch switches with `ldr pc`, `add pc` and
+                    // `tbb`/`tbh`
+                    let computed_target = insn.reg_reads.iter().any(|r| added_to.contains(r));
+                    let leaves =
+                        loaded.is_arm() && insn.mnemonic.starts_with("bx") && !computed_target;
+                    if insn.via_pointer || leaves {
                         // a stub: control goes to whatever the slot holds, which may return
                         returns = true;
                     } else {
                         computed.push(pc);
                     }
-                    break;
                 }
                 Flow::Jump => {
                     if let Some(&t) = insn.targets.first() {
-                        // a jump to another function's entry is a tail call
-                        if t != entry && env.names.contains_key(&t) {
+                        // a jump to another function's entry is a tail call; so is the jump
+                        // a RISC function starts with (a thunk, such as ARM's `frame_dummy`)
+                        let thunk = propagate && pc == entry && t != entry;
+                        let far = propagate && crosses(env.names, entry, pc, t);
+                        if t != entry && (env.names.contains_key(&t) || thunk || far) {
                             calls.push(t);
                             tail_calls.push((pc, t));
                         } else {
@@ -385,6 +417,11 @@ fn walk(
             if !insn.fallthrough {
                 break;
             }
+            added_to = if insn.mnemonic.starts_with("add") {
+                insn.reg_writes.clone()
+            } else {
+                Vec::new()
+            };
             pc = next;
         }
     }
@@ -404,6 +441,18 @@ fn walk(
     for t in switches.values_mut() {
         t.sort_unstable();
         t.dedup();
+    }
+    let mut computed = Vec::new();
+    if propagate {
+        let body: Vec<&Instruction> = insns.iter().filter_map(|a| lane.insns.get(a)).collect();
+        match crate::constprop::function(loaded, &mut *lane.session, &body, &switches) {
+            Ok(found) => {
+                consts.extend(found.code);
+                computed = found.refs;
+            }
+            Err(NativeError::Native(_)) => {}
+            Err(e) => return Err(e),
+        }
     }
     let name = env
         .names
@@ -425,11 +474,29 @@ fn walk(
             calls,
             consts,
             returns,
+            computed,
         },
         sites,
         tables,
         thunks,
     })
+}
+
+/// Whether the RISC mnemonic is a trap that does not come back: RISC-V `ebreak` and `unimp`,
+/// ARM `udf`, AArch64 `brk` (what `__builtin_trap` and `_start` end with).
+fn is_trap(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "ebreak" | "c.ebreak" | "unimp" | "c.unimp" | "udf" | "udf.w" | "brk"
+    )
+}
+
+/// Whether a jump from `pc` to `t` in the function at `entry` passes the entry of another
+/// known function (`names`): Ghidra's contiguous-function rule for tail calls (its shared
+/// return analysis), which RISC code without unwind tables needs to tell them from jumps.
+fn crosses(names: &BTreeMap<u64, String>, entry: u64, pc: u64, t: u64) -> bool {
+    let (lo, hi) = if t > pc { (pc + 1, t) } else { (t + 1, pc) };
+    lo < hi && names.range(lo..hi).any(|(a, _)| *a != entry)
 }
 
 /// Memory (bytes) that should stay free while several sessions work.
@@ -514,6 +581,12 @@ struct Walker<'a> {
     progress: Option<ProgressFn<'a>>,
     round: usize,
     code: u64,
+    /// Propagated references of the current round's functions, by entry.
+    computed: BTreeMap<u64, Vec<crate::constprop::Computed>>,
+    /// Whether rounds look for functions in the gaps between bodies (RISC targets, once the
+    /// noreturn set has settled: before, switch tables that only recover with it leave their
+    /// cases looking like gaps).
+    gaps: bool,
 }
 
 impl Walker<'_> {
@@ -662,7 +735,9 @@ impl Walker<'_> {
         let mut flow: BTreeMap<u64, (bool, Vec<u64>)> = BTreeMap::new();
         let mut covered: u64 = 0;
         self.sites.clear();
+        self.computed.clear();
         let mut queue: Vec<u64> = seeds.to_vec();
+        let mut tried: BTreeSet<u64> = BTreeSet::new();
         let mut pending: BTreeSet<u64> = loaded
             .data_pointers
             .iter()
@@ -708,6 +783,9 @@ impl Walker<'_> {
                     queue.extend(w.calls.iter().copied().filter(|c| loaded.is_code(*c)));
                     pending.extend(w.consts);
                     flow.insert(f, (w.returns, w.calls));
+                    if !w.computed.is_empty() {
+                        self.computed.insert(f, w.computed);
+                    }
                     covered += w.func.size();
                     functions.insert(f, w.func);
                 }
@@ -743,12 +821,129 @@ impl Walker<'_> {
                     !functions.contains_key(a) && !loaded.in_plt(*a) && !in_ranges(&covered, *a)
                 })
                 .collect();
-            if candidates.is_empty() {
+            if !candidates.is_empty() {
+                queue.extend(candidates);
+                continue;
+            }
+            // RISC code without unwind tables keeps functions nothing calls (the out-of-line
+            // copies of inlined functions): the gaps between the bodies are tried last
+            let gaps = if self.gaps {
+                self.gap_starts(&functions, &covered, &mut tried)?
+            } else {
+                Vec::new()
+            };
+            if gaps.is_empty() {
                 break;
             }
-            queue.extend(candidates);
+            queue.extend(gaps);
         }
         Ok(Some((functions, flow)))
+    }
+
+    /// Function starts in the gaps between the bodies (`covered`): the first instruction past
+    /// padding and literal-pool words (the words the code reads) whose straight-line run ends in
+    /// a return or a jump before the gap does. `tried` holds the starts already judged.
+    fn gap_starts(
+        &mut self,
+        functions: &BTreeMap<u64, Func>,
+        covered: &[(u64, u64)],
+        tried: &mut BTreeSet<u64>,
+    ) -> NativeResult<Vec<u64>> {
+        let loaded = self.loaded;
+        let pools: BTreeSet<u64> = self
+            .computed
+            .values()
+            .flatten()
+            .filter(|r| r.kind == kraken_proto::XrefKind::Read && loaded.is_code(r.to))
+            .map(|r| r.to)
+            .collect();
+        let pool_word = |a: u64| pools.range(a.saturating_sub(3)..=a).next().is_some();
+        // the smallest instruction: 2 bytes for Thumb and compressed RISC-V, else 4
+        let step = if loaded.language.id.starts_with("AARCH64") {
+            4
+        } else {
+            2
+        };
+        let mut out = Vec::new();
+        let exec: Vec<(u64, u64)> = loaded
+            .blocks
+            .iter()
+            .filter(|b| b.initialized && b.perms.ends_with('x') && !b.name.starts_with(".plt"))
+            .map(|b| (b.start.0, b.end.0))
+            .collect();
+        for (lo, hi) in exec {
+            let mut gaps = Vec::new();
+            let mut at = lo;
+            for &(s, e) in covered.iter().filter(|(s, e)| *e > lo && *s < hi) {
+                if s > at {
+                    gaps.push((at, s));
+                }
+                at = at.max(e);
+            }
+            if at < hi {
+                gaps.push((at, hi));
+            }
+            for (gs, ge) in gaps {
+                let mut a = gs.next_multiple_of(step);
+                while a < ge {
+                    // literal-pool words the code reads, and words that look like data (table
+                    // entries: small or small negative offsets, which no instruction set here
+                    // encodes as common code)
+                    let mut w = [0u8; 4];
+                    let small = a % 4 == 0
+                        && a + 4 <= ge
+                        && loaded.image.read(a, &mut w)
+                        && !(0x1_0000..0xffff_0000).contains(&u32::from_le_bytes(w));
+                    if pool_word(a) || small {
+                        a += 4;
+                        continue;
+                    }
+                    let lane = &mut self.lanes[0];
+                    let Some(i) = lane.instruction(a)?.cloned() else {
+                        a += step;
+                        continue;
+                    };
+                    let zero = {
+                        let mut b = [0u8; 4];
+                        loaded.image.read(a, &mut b)
+                            && b[..i.length.min(4) as usize].iter().all(|x| *x == 0)
+                    };
+                    if zero || matches!(i.mnemonic.as_str(), "nop" | "NOP" | "c.nop") {
+                        a += u64::from(i.length);
+                        continue;
+                    }
+                    if !tried.insert(a) {
+                        break;
+                    }
+                    if functions.contains_key(&a) {
+                        break;
+                    }
+                    // the straight-line run must end in the gap without touching a pool word
+                    let mut pc = a;
+                    let mut ok = false;
+                    for _ in 0..4096 {
+                        if pc >= ge || pool_word(pc) {
+                            break;
+                        }
+                        let Some(j) = lane.instruction(pc)?.cloned() else {
+                            break;
+                        };
+                        if matches!(j.flow, Flow::Return | Flow::IndirectJump | Flow::Jump)
+                            && !j.fallthrough
+                        {
+                            ok = pc + u64::from(j.length) <= ge;
+                            break;
+                        }
+                        pc += u64::from(j.length);
+                    }
+                    if ok {
+                        out.push(a);
+                    }
+                    break;
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -994,6 +1189,8 @@ pub fn discover(
         progress,
         round: 0,
         code,
+        computed: BTreeMap::new(),
+        gaps: false,
     };
     let mut rounds = 0;
     loop {
@@ -1007,7 +1204,21 @@ pub fn discover(
         known.extend(seen.iter().copied());
         let mut added: Vec<u64> = seen.into_iter().collect();
         added.extend(propagate(&functions, &flow, &known));
-        if added.is_empty() || rounds >= MAX_ROUNDS {
+        // RISC code without unwind tables: the functions found are named for the next round,
+        // where a body that runs into one (a tail call found later, code falling into it) ends
+        // at its entry and a jump past one is a tail call (see `crosses`)
+        let inner: BTreeSet<u64> = if crate::constprop::wanted(loaded) {
+            functions
+                .keys()
+                .copied()
+                .filter(|a| !w.names.contains_key(a))
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+        // the gaps are tried once nothing else changes
+        let gaps_next = crate::constprop::wanted(loaded) && !w.gaps && added.is_empty();
+        if (added.is_empty() && inner.is_empty() && !gaps_next) || rounds >= MAX_ROUNDS {
             let mut functions = functions;
             for f in functions.values_mut() {
                 f.noreturn = noreturn.contains(&f.entry);
@@ -1024,12 +1235,20 @@ pub fn discover(
                 .flat_map(|f| f.insns.iter().copied())
                 .collect();
             insns.retain(|a, _| body.contains(a));
+            let mut computed: ComputedRefs = BTreeMap::new();
+            for r in std::mem::take(&mut w.computed).into_values().flatten() {
+                let list = computed.entry(r.from).or_default();
+                if !list.contains(&(r.to, r.kind)) {
+                    list.push((r.to, r.kind));
+                }
+            }
             return Ok(Some(Discovery {
                 functions,
                 insns,
                 rounds,
                 jumps: std::mem::take(&mut w.log),
                 recovered: w.recovered,
+                computed,
             }));
         }
         // the decompiler followed flow past calls it now knows never return, so the jump tables
@@ -1040,6 +1259,10 @@ pub fn discover(
                 w.tables.remove(entry);
             }
         }
+        for a in inner {
+            w.names.insert(a, default_name(a));
+        }
+        w.gaps |= gaps_next;
         for a in added {
             noreturn.insert(a);
             w.noreturn.insert(a);

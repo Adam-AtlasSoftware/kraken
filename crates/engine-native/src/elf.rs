@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
 use object::elf::{
-    PF_W, PF_X, R_386_IRELATIVE, R_386_JMP_SLOT, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC,
-    SHF_EXECINSTR, SHF_WRITE,
+    PF_W, PF_X, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE, R_ARM_IRELATIVE,
+    R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE,
 };
 use object::read::{Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable};
 use object::{
@@ -125,7 +125,8 @@ pub struct Loaded {
     pub imports: Vec<ImportSymbol>,
     /// Exported symbols by address (one per address: functions before data, global before weak).
     pub exports: BTreeMap<u64, ExportSymbol>,
-    /// Start of every `.eh_frame` FDE after rebasing, ascending.
+    /// Start of every `.eh_frame` FDE (and on ARM every `.ARM.exidx` entry) after rebasing,
+    /// ascending.
     pub fde_starts: Vec<u64>,
     /// Exception landing pads after rebasing, by the start of the FDE whose LSDA lists them.
     pub landing_pads: BTreeMap<u64, Vec<u64>>,
@@ -135,6 +136,8 @@ pub struct Loaded {
     /// Names for functions without a symbol, as Ghidra gives them: `_DT_INIT`, `_DT_FINI`,
     /// `_INIT_<n>`, `_FINI_<n>`.
     pub default_names: BTreeMap<u64, String>,
+    /// RISC-V's global pointer (`__global_pointer$`, which `gp` holds), after rebasing.
+    pub global_pointer: Option<u64>,
 }
 
 impl Loaded {
@@ -165,6 +168,36 @@ impl Loaded {
         self.format == "pe"
     }
 
+    /// Whether this is 32-bit ARM code, where a code address with the low bit set means Thumb.
+    pub fn is_arm(&self) -> bool {
+        self.language.id.starts_with("ARM:")
+    }
+
+    /// Whether the code at `addr` decodes as Thumb (ARM only).
+    pub fn is_thumb(&self, addr: u64) -> bool {
+        self.is_arm() && crate::arm::is_thumb(&self.image.context, addr)
+    }
+
+    /// A code pointer as an instruction address: ARM's Thumb bit is cleared where the even
+    /// address is code.
+    pub fn code_address(&self, addr: u64) -> u64 {
+        if self.is_arm() && addr & 1 == 1 && self.is_code(addr & !1) {
+            addr & !1
+        } else {
+            addr
+        }
+    }
+
+    /// The prefix of the default function name (`FUN_`), as Ghidra writes it: RISC-V images,
+    /// which have more than one memory space, name the space too (`FUN_ram_`).
+    pub fn default_prefix(&self) -> &'static str {
+        if self.language.id.starts_with("RISCV:") {
+            "FUN_ram_"
+        } else {
+            "FUN_"
+        }
+    }
+
     /// Whether `addr` lies in a PLT section.
     pub fn in_plt(&self, addr: u64) -> bool {
         self.blocks
@@ -177,7 +210,7 @@ fn bad(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
 }
 
-fn language(arch: Architecture) -> Result<Language, ProtoError> {
+pub(crate) fn language(arch: Architecture) -> Result<Language, ProtoError> {
     match arch {
         Architecture::X86_64 => Ok(Language {
             id: "x86:LE:64:default",
@@ -193,6 +226,26 @@ fn language(arch: Architecture) -> Result<Language, ProtoError> {
             id: "AARCH64:LE:64:v8A",
             compiler: "default",
             pointer_size: 8,
+        }),
+        // A32 and Thumb in one language; `TMode` tells them apart
+        Architecture::Arm => Ok(Language {
+            id: "ARM:LE:32:v8",
+            compiler: "default",
+            pointer_size: 4,
+        }),
+        Architecture::Riscv64 => Ok(Language {
+            id: "RISCV:LE:64:default",
+            compiler: "gcc",
+            pointer_size: 8,
+        }),
+        // Ghidra's opinion file leaves RV32 open between `default` and `AndeStar_v5` (a
+        // superset with Andes' custom instructions) and its loader takes the latter; standard
+        // RV32 code (rv32imac) decodes the same in both, and `default` has no vendor opcodes to
+        // mistake data for
+        Architecture::Riscv32 => Ok(Language {
+            id: "RISCV:LE:32:default",
+            compiler: "gcc",
+            pointer_size: 4,
         }),
         other => Err(ProtoError::new(
             ErrorCode::Unsupported,
@@ -263,7 +316,11 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         });
     }
     segments.sort_by_key(|s| s.start);
-    let image = Image { segments };
+    let mut image = Image {
+        segments,
+        context: Vec::new(),
+    };
+    let arm = language.id.starts_with("ARM:");
 
     let mut blocks = Vec::new();
     for sec in file.sections() {
@@ -311,10 +368,38 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         }
     }
     blocks.sort_by_key(|b| (b.start, b.end));
+    let exec: Vec<(u64, u64)> = blocks
+        .iter()
+        .filter(|b| b.initialized && b.perms.ends_with('x'))
+        .map(|b| (b.start.0, b.end.0))
+        .collect();
+    let in_exec = |a: u64| exec.iter().any(|(s, e)| *s <= a && a < *e);
+    // ARM: a code address with the low bit set is Thumb code at the even address
+    let mut seeds: Vec<crate::arm::Seed> = Vec::new();
+    let mut code_at = |a: u64, rank: u8| -> u64 {
+        if !arm || !in_exec(a & !1) {
+            return a;
+        }
+        seeds.push(crate::arm::Seed {
+            rank,
+            addr: a & !1,
+            thumb: a & 1 == 1,
+        });
+        a & !1
+    };
 
     let mut functions = BTreeMap::new();
     let mut code_symbols: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    let mut mapping: Vec<(u64, crate::arm::Mapping)> = Vec::new();
     for sym in file.symbols().chain(file.dynamic_symbols()) {
+        if arm
+            && sym.kind() == SymbolKind::Unknown
+            && sym.is_local()
+            && let Some(m) = sym.name().ok().and_then(crate::arm::mapping_kind)
+        {
+            mapping.push((at(sym.address()), m));
+            continue;
+        }
         if sym.kind() != SymbolKind::Text || !sym.is_definition() || sym.address() == 0 {
             continue;
         }
@@ -322,10 +407,9 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         if name.is_empty() {
             continue;
         }
-        functions
-            .entry(at(sym.address()))
-            .or_insert_with(|| name.to_string());
-        let names = code_symbols.entry(at(sym.address())).or_default();
+        let addr = code_at(at(sym.address()), crate::arm::rank::SYMBOL);
+        functions.entry(addr).or_insert_with(|| name.to_string());
+        let names = code_symbols.entry(addr).or_default();
         if !names.iter().any(|n| n == name) {
             names.push(name.to_string());
         }
@@ -336,13 +420,15 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         .map(|(a, f)| (at(a), f))
         .collect();
 
-    let plt = if language.id.starts_with("x86") {
-        x86_plt(&file, data, bias, &functions, ptr)
-    } else {
-        BTreeMap::new()
-    };
+    let plt = plt_entries(&file, data, bias, &functions, ptr);
+    for a in plt.keys() {
+        // PLT entries are A32 code
+        if arm {
+            code_at(*a, crate::arm::rank::KNOWN);
+        }
+    }
 
-    let entry = (file.entry() != 0).then(|| at(file.entry()));
+    let entry = (file.entry() != 0).then(|| code_at(at(file.entry()), crate::arm::rank::SYMBOL));
 
     let mut init_pointers = Vec::new();
     let mut default_names: BTreeMap<u64, String> = BTreeMap::new();
@@ -388,9 +474,10 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
                 v = relative.get(&slot).map(|a| *a as u64).unwrap_or(0);
             }
             if v != 0 && v != all_ones {
-                init_pointers.push(at(v));
+                let v = code_at(at(v), crate::arm::rank::KNOWN);
+                init_pointers.push(v);
                 default_names
-                    .entry(at(v))
+                    .entry(v)
                     .or_insert_with(|| format!("{prefix}{i}"));
             }
         }
@@ -408,8 +495,9 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
                 _ => continue,
             };
             if val != 0 {
-                init_pointers.push(at(val));
-                default_names.entry(at(val)).or_insert_with(|| name.into());
+                let val = code_at(at(val), crate::arm::rank::KNOWN);
+                init_pointers.push(val);
+                default_names.entry(val).or_insert_with(|| name.into());
             }
         }
     }
@@ -420,8 +508,23 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         init_pointers.push(at(plt.address()));
     }
 
-    let mut data_pointers: Vec<u64> = relative.values().map(|a| at(*a as u64)).collect();
-    if relative.is_empty() {
+    // odd code pointers are Thumb functions; even ones may be A32 functions, or not code at all
+    let pointer_rank = |a: u64| {
+        if a & 1 == 1 {
+            crate::arm::rank::POINTER
+        } else {
+            crate::arm::rank::WEAK
+        }
+    };
+    let mut data_pointers: Vec<u64> = relative
+        .values()
+        .map(|a| at(*a as u64))
+        .map(|a| code_at(a, pointer_rank(a)))
+        .collect();
+    // a static RISC executable (no dynamic section) has its final pointers in place, IRELATIVE
+    // slots aside; its code reaches them through the GOT, where x86 code names them directly
+    let static_risc = !language.id.starts_with("x86") && file.section_by_name(".dynamic").is_none();
+    if relative.is_empty() || static_risc {
         for sec in file.sections() {
             let sh_flags = match sec.flags() {
                 SectionFlags::Elf { sh_flags } => sh_flags,
@@ -437,7 +540,11 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
             for chunk in bytes.get(skip..).unwrap_or_default().chunks_exact(ptr) {
                 let v = le_word(chunk);
                 if v != 0 {
-                    data_pointers.push(at(v));
+                    // these are guesses, and so are the modes they suggest (a walk that does
+                    // not look like code drops an even one)
+                    let a = at(v);
+                    let a = code_at(a, pointer_rank(a));
+                    data_pointers.push(a);
                 }
             }
         }
@@ -448,8 +555,39 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     let mut pointer_slots: Vec<(u64, u64)> = relative
         .iter()
         .filter(|(_, a)| **a != 0)
-        .map(|(slot, a)| (at(*slot), at(*a as u64)))
+        .map(|(slot, a)| {
+            let t = at(*a as u64);
+            let t = if arm && in_exec(t & !1) { t & !1 } else { t };
+            (at(*slot), t)
+        })
         .collect();
+    // RISC code loads the addresses of its data through GOT slots that name a symbol of the
+    // image itself (a copy-relocated `stderr`, a protected global): the slot holds it
+    if !language.id.starts_with("x86")
+        && let Some(dynsyms) = file.dynamic_symbol_table()
+    {
+        for (off, r) in file.dynamic_relocations().into_iter().flatten() {
+            let RelocationTarget::Symbol(idx) = r.target() else {
+                continue;
+            };
+            let Ok(sym) = dynsyms.symbol_by_index(idx) else {
+                continue;
+            };
+            let jump_slot = matches!(r.flags(), RelocationFlags::Elf { r_type }
+                if matches!(r_type, 5 | 22 | 1026));
+            if !sym.is_definition() || sym.address() == 0 || jump_slot {
+                continue;
+            }
+            let addend = if r.has_implicit_addend() {
+                0
+            } else {
+                r.addend()
+            };
+            let t = at(sym.address()).wrapping_add_signed(addend);
+            let t = if arm && in_exec(t & !1) { t & !1 } else { t };
+            pointer_slots.push((at(off), t));
+        }
+    }
     pointer_slots.sort_unstable();
 
     let mut imports: Vec<ImportSymbol> = file
@@ -493,6 +631,11 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
             continue;
         }
         let addr = at(sym.address());
+        let addr = if arm && kind == ProtoSymbolKind::Function {
+            addr & !1
+        } else {
+            addr
+        };
         if !sym.is_local() {
             exported.insert(addr);
         }
@@ -561,7 +704,29 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         }
         None => crate::eh::Frames::default(),
     };
-    let fde_starts = frames.fde_starts.iter().map(|a| at(*a)).collect();
+    let mut fde_starts: Vec<u64> = frames.fde_starts.iter().map(|a| at(*a)).collect();
+    if arm {
+        fde_starts.extend(exidx_starts(&file).into_iter().map(|a| at(a) & !1));
+        fde_starts.sort_unstable();
+        fde_starts.dedup();
+    }
+    if arm {
+        image.context = if mapping
+            .iter()
+            .any(|(a, m)| *m != crate::arm::Mapping::Data && in_exec(*a))
+        {
+            crate::arm::paint_mapping(&mapping, &exec)
+        } else {
+            let noreturn: BTreeSet<u64> = functions
+                .iter()
+                .chain(&plt)
+                .filter(|(_, n)| crate::discover::NORETURN.contains(&n.as_str()))
+                .map(|(a, _)| *a)
+                .collect();
+            let walked = crate::arm::Modes::new(&image, exec.clone(), noreturn).walk(seeds);
+            crate::arm::paint(&walked, &exec)
+        };
+    }
     let landing_pads = frames
         .landing_pads
         .iter()
@@ -575,7 +740,13 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         _ if !interp => "Linux program (statically linked)",
         _ => "Linux program",
     };
+    let global_pointer = file
+        .symbols()
+        .chain(file.dynamic_symbols())
+        .find(|s| s.name() == Ok("__global_pointer$"))
+        .map(|s| at(s.address()));
     Ok(Loaded {
+        global_pointer,
         format: "elf",
         container: "elf",
         description: description.into(),
@@ -620,18 +791,26 @@ pub(crate) fn le_word(b: &[u8]) -> u64 {
     u64::from_le_bytes(w)
 }
 
-/// Names x86 PLT entries after the symbol of the GOT slot their indirect `jmp` reads: `jmp
-/// [rip+disp32]` on x86-64, `jmp [abs32]` (`ff 25`) or `jmp [ebx+disp32]` (`ff a3`, position
-/// independent, relative to `.got.plt`) on 32-bit x86. In a static binary the slots carry
-/// IRELATIVE relocations instead, and an entry is named after the IFUNC symbol at the
+/// The entries of `.plt`, `.plt.sec`, `.plt.got` and `.iplt`, named after the symbol of the GOT
+/// slot each one jumps through (see [`x86_plt`] and [`risc_plt`]). In a static binary the slots
+/// carry IRELATIVE relocations instead, and an entry is named after the IFUNC symbol at the
 /// relocation's resolver (as Ghidra names them), or `FUN_<address>`.
-fn x86_plt(
+fn plt_entries(
     file: &object::File<'_>,
     data: &[u8],
     bias: u64,
     functions: &BTreeMap<u64, String>,
     ptr: usize,
 ) -> BTreeMap<u64, String> {
+    let irelative = match file.architecture() {
+        Architecture::X86_64 => R_X86_64_IRELATIVE,
+        Architecture::I386 => R_386_IRELATIVE,
+        Architecture::Arm => R_ARM_IRELATIVE,
+        Architecture::Aarch64 => R_AARCH64_IRELATIVE,
+        Architecture::Riscv32 | Architecture::Riscv64 => R_RISCV_IRELATIVE,
+        _ => return BTreeMap::new(),
+    };
+    let arm = file.architecture() == Architecture::Arm;
     let mut slots: BTreeMap<u64, Option<String>> = BTreeMap::new();
     let dynsyms = file.dynamic_symbol_table();
     for (off, rel) in file.dynamic_relocations().into_iter().flatten() {
@@ -649,14 +828,10 @@ fn x86_plt(
             slots.insert(off, Some(name));
         }
     }
-    let file_bytes = |sec: &object::Section<'_, '_>| -> Option<&[u8]> {
-        let (foff, fsize) = sec.file_range()?;
-        data.get(foff as usize..(foff + fsize) as usize)
-    };
     for sec in file.sections() {
         let (rela, irelative) = match sec.name() {
-            Ok(".rela.plt" | ".rela.iplt") => (true, R_X86_64_IRELATIVE),
-            Ok(".rel.plt" | ".rel.iplt") => (false, R_386_IRELATIVE),
+            Ok(".rela.plt" | ".rela.iplt") => (true, irelative),
+            Ok(".rel.plt" | ".rel.iplt") => (false, irelative),
             _ => continue,
         };
         let Ok(bytes) = sec.data() else { continue };
@@ -678,18 +853,122 @@ fn x86_plt(
                         if !(lo..hi).contains(&word(0)) {
                             return None;
                         }
-                        let b = file_bytes(&s)?;
+                        let b = file_bytes(data, &s)?;
                         let at = (word(0) - lo) as usize;
                         b.get(at..at + ptr).map(le_word)
                     })
                     .unwrap_or(0)
             }
             .wrapping_add(bias);
+            // a Thumb resolver has the low bit set
+            let resolver = if arm { resolver & !1 } else { resolver };
             slots
                 .entry(word(0))
                 .or_insert_with(|| functions.get(&resolver).cloned());
         }
     }
+    match file.architecture() {
+        Architecture::X86_64 | Architecture::I386 => x86_plt(file, data, bias, &slots, ptr),
+        _ => risc_plt(file, data, bias, &slots, ptr),
+    }
+}
+
+/// The section's bytes as in the file (none for `SHT_NOBITS`).
+fn file_bytes<'d>(data: &'d [u8], sec: &object::Section<'d, '_>) -> Option<&'d [u8]> {
+    let (foff, fsize) = sec.file_range()?;
+    data.get(foff as usize..(foff + fsize) as usize)
+}
+
+/// Names ARM, AArch64 and RISC-V PLT entries after their GOT slots (`slots`, by the slot's
+/// link-time address): each entry computes its slot's address from its own (see
+/// [`crate::arm::arm_plt_slot`] and its siblings). An AArch64 entry with a `bti c` in front
+/// starts there.
+fn risc_plt(
+    file: &object::File<'_>,
+    data: &[u8],
+    bias: u64,
+    slots: &BTreeMap<u64, Option<String>>,
+    ptr: usize,
+) -> BTreeMap<u64, String> {
+    let arch = file.architecture();
+    let mut out = BTreeMap::new();
+    for sec in file.sections() {
+        let Ok(name) = sec.name() else { continue };
+        if !matches!(name, ".plt" | ".plt.sec" | ".plt.got" | ".iplt") {
+            continue;
+        }
+        let Some(bytes) = file_bytes(data, &sec) else {
+            continue;
+        };
+        let lo = sec.address();
+        let read = |a: u64| -> Option<u32> {
+            let off = usize::try_from(a.checked_sub(lo)?).ok()?;
+            let b = bytes.get(off..off + 4)?;
+            Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let mut a = lo;
+        while a + 4 <= lo + bytes.len() as u64 {
+            let (slot, len) = match arch {
+                Architecture::Arm => match crate::arm::arm_plt_slot(&read, a) {
+                    Some((s, n)) => (Some(s), n),
+                    None => (None, 4),
+                },
+                Architecture::Aarch64 => (crate::arm::aarch64_plt_slot(&read, a), 16),
+                _ => (crate::arm::riscv_plt_slot(&read, a, ptr), 16),
+            };
+            let Some(n) = slot.and_then(|s| slots.get(&s)) else {
+                a += 4;
+                continue;
+            };
+            let start =
+                if arch == Architecture::Aarch64 && a > lo && read(a - 4) == Some(0xd503_245f) {
+                    a - 4
+                } else {
+                    a
+                };
+            let entry = start.wrapping_add(bias);
+            out.insert(
+                entry,
+                n.clone().unwrap_or_else(|| format!("FUN_{entry:08x}")),
+            );
+            a += len;
+        }
+    }
+    out
+}
+
+/// The function starts of `.ARM.exidx` (link-time addresses; a Thumb start may carry the low
+/// bit): each entry's first word is a 31-bit place-relative offset to the function.
+fn exidx_starts(file: &object::File<'_>) -> Vec<u64> {
+    let Some(sec) = file.section_by_name(".ARM.exidx") else {
+        return Vec::new();
+    };
+    let Ok(bytes) = sec.data() else {
+        return Vec::new();
+    };
+    bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let w = u32::from_le_bytes([e[0], e[1], e[2], e[3]]);
+            let off = i64::from(((w << 1) as i32) >> 1);
+            (sec.address() + 8 * i as u64).wrapping_add_signed(off) & 0xffff_ffff
+        })
+        .collect()
+}
+
+/// Names x86 PLT entries after the symbol of the GOT slot their indirect `jmp` reads: `jmp
+/// [rip+disp32]` on x86-64, `jmp [abs32]` (`ff 25`) or `jmp [ebx+disp32]` (`ff a3`, position
+/// independent, relative to `.got.plt`) on 32-bit x86.
+fn x86_plt(
+    file: &object::File<'_>,
+    data: &[u8],
+    bias: u64,
+    slots: &BTreeMap<u64, Option<String>>,
+    ptr: usize,
+) -> BTreeMap<u64, String> {
     let got_plt = file
         .section_by_name(".got.plt")
         .or_else(|| file.section_by_name(".got"))
@@ -700,7 +979,7 @@ fn x86_plt(
         if !matches!(name, ".plt" | ".plt.sec" | ".plt.got" | ".iplt") {
             continue;
         }
-        let Some(bytes) = file_bytes(&sec) else {
+        let Some(bytes) = file_bytes(data, &sec) else {
             continue;
         };
         // every indirect jump through a known slot starts an entry, together with the `bnd`

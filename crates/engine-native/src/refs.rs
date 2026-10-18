@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_native_sys::{Flow, Instruction, RefKind};
 use kraken_proto::XrefKind;
 
-use crate::discover::Func;
+use crate::discover::{ComputedRefs, Func};
 use crate::elf::Loaded;
 
 /// The displacement of a memory operand based on `reg` alone in x86 operand text, as Sleigh
@@ -91,6 +91,9 @@ struct Builder<'a> {
     loaded: &'a Loaded,
     lowest: u64,
     set: BTreeSet<Ref>,
+    /// References found by constant propagation, which replace the operand references of RISC
+    /// code (whose operands hold literal-pool and page addresses, not what the code refers to).
+    computed: Option<&'a ComputedRefs>,
 }
 
 impl Builder<'_> {
@@ -126,6 +129,19 @@ impl Builder<'_> {
                 };
                 self.add(a, *t, kind);
             }
+        }
+        if let Some(computed) = self.computed {
+            // a PLT entry reads its slot; its address arithmetic is not a reference
+            let plt = self.loaded.in_plt(a);
+            for (to, kind) in computed.get(&a).into_iter().flatten() {
+                if plt && *kind != XrefKind::Read {
+                    continue;
+                }
+                if self.mapped(*to) && !i.targets.contains(to) {
+                    self.add(a, *to, *kind);
+                }
+            }
+            return;
         }
         let is_call = matches!(i.flow, Flow::Call | Flow::IndirectCall);
         for r in &i.refs {
@@ -166,17 +182,20 @@ pub struct RefIndex {
 impl RefIndex {
     /// Builds the index over every instruction of every function body, the code reached only
     /// through data (`orphans`, such as the lazy PLT entries), and the image's relocated
-    /// pointers. Only targets inside a memory block count.
+    /// pointers. Only targets inside a memory block count. For RISC code the references of the
+    /// operands are those constant propagation found (`computed`, see [`crate::constprop`]).
     pub fn build(
         loaded: &Loaded,
         functions: &BTreeMap<u64, Func>,
         insns: &BTreeMap<u64, Instruction>,
         orphans: &[Instruction],
+        computed: &ComputedRefs,
     ) -> RefIndex {
         let mut b = Builder {
             loaded,
             lowest: loaded.blocks.first().map_or(0, |b| b.start.0),
             set: BTreeSet::new(),
+            computed: crate::constprop::wanted(loaded).then_some(computed),
         };
         let mut done: BTreeSet<u64> = BTreeSet::new();
         let pic32 = loaded.pointer_size() == 4 && loaded.pic_base.is_some();
@@ -202,6 +221,17 @@ impl RefIndex {
                 }
             }
             let tails: BTreeSet<(u64, u64)> = f.tail_calls.iter().copied().collect();
+            if b.computed.is_some() {
+                // propagation already followed the registers
+                for a in f.insns.iter() {
+                    if let Some(i) = insns.get(a)
+                        && done.insert(*a)
+                    {
+                        b.instruction(i, &|t| tails.contains(&(*a, t)));
+                    }
+                }
+                continue;
+            }
             let mut leaders: BTreeSet<u64> = f.switches.values().flatten().copied().collect();
             for a in f.insns.iter() {
                 if let Some(i) = insns.get(a)

@@ -1,0 +1,146 @@
+{
+  "binary": "libkr-arm32.so",
+  "sha256": "ae7771290d4eda649e22bd8e1fba4173ba660c96af182161a0a530389fd13628",
+  "kind": "Linux shared library",
+  "arch": "arm32",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "call_weak_fn",
+      "demangled": "call_weak_fn",
+      "size": 0,
+      "entry": "0x468"
+    },
+    {
+      "member": null,
+      "name": "deregister_tm_clones",
+      "demangled": "deregister_tm_clones",
+      "size": 0,
+      "entry": "0x48d"
+    },
+    {
+      "member": null,
+      "name": "register_tm_clones",
+      "demangled": "register_tm_clones",
+      "size": 0,
+      "entry": "0x4b9"
+    },
+    {
+      "member": null,
+      "name": "__do_global_dtors_aux",
+      "demangled": "__do_global_dtors_aux",
+      "size": 0,
+      "entry": "0x4ed"
+    },
+    {
+      "member": null,
+      "name": "frame_dummy",
+      "demangled": "frame_dummy",
+      "size": 0,
+      "entry": "0x52d"
+    },
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 24,
+      "entry": "0x531"
+    },
+    {
+      "member": null,
+      "name": "_fini",
+      "demangled": "_fini",
+      "size": 0,
+      "entry": "0x6c8"
+    },
+    {
+      "member": null,
+      "name": "_init",
+      "demangled": "_init",
+      "size": 0,
+      "entry": "0x3d0"
+    },
+    {
+      "member": null,
+      "name": "kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 76,
+      "entry": "0x5f9"
+    },
+    {
+      "member": null,
+      "name": "kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 40,
+      "entry": "0x645"
+    },
+    {
+      "member": null,
+      "name": "kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 92,
+      "entry": "0x66d"
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 28,
+      "entry": "0x549"
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 146,
+      "entry": "0x565"
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "_ITM_deregisterTMCloneTable"
+    },
+    {
+      "name": "_ITM_registerTMCloneTable"
+    },
+    {
+      "name": "__ctype_toupper_loc"
+    },
+    {
+      "name": "__cxa_finalize"
+    },
+    {
+      "name": "__gmon_start__"
+    },
+    {
+      "name": "malloc"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

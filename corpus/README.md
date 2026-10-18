@@ -89,7 +89,7 @@ DLLs stay in the ignored `lib/.build/`.
 The four C programs (`static_strops`, `pie_list`, `stripped_calc`, `switch_vm`; `cpp_shapes` is
 left out to keep the sets small) for ARM and RISC-V, `-O0`/`-O2`, each with a `-stripped` twin:
 `<set>/bin/<name>-<set>-<opt>[-stripped]`. They are for analysing, emulating, stepping through
-and rewriting non-x86 code; no engine of KRAKEN runs them yet.
+and rewriting non-x86 code; the native engine analyses all four (`crates/engine-native/tests/arch.rs`).
 
 | set | target | toolchain | binaries |
 |---|---|---|---|
@@ -145,18 +145,29 @@ binaries), plus `switch_vm-arm32-thumb-O2`; for riscv32 `switch_vm-riscv32-O0` a
 set's `MANIFEST.sha256` and has truth, and that `binary_probe` reports an ELF executable of the
 right processor (`ARM`, `AArch64`, `RISC-V 64`, `RISC-V 32`), width and endianness.
 
+## The cross-architecture library set (`xlib/`)
+
+libkr of the library set (`lib/src`) for the four cross targets, `-O2 -g -fPIC`, built in the
+`cross` stage: `xlib/bin/kr-<set>.o` (`kr_core.c`), `xlib/bin/libkr-<set>.a` (both objects) and,
+for the Linux targets, `xlib/bin/libkr-<set>.so`. ARM is Thumb-2 (the armhf default) with one
+A32 object besides, `kr-arm32-a32.o`; riscv32 uses the bare-metal compiler with picolibc's
+headers and has no shared library. Truth: `python3 -I corpus/tools/groundtruth_lib.py --set xlib`
+(the processor from the ELF header; ARM shared-library entries keep the Thumb bit of their
+symbols). `crates/engine-native/tests/libraries.rs` opens all twelve.
+
 ## Rebuild
 
 ```
-corpus/build.sh [elf] [pe] [elf32] [lib] [arm32] [aarch64] [riscv64] [riscv32]
+corpus/build.sh [elf] [pe] [elf32] [lib] [arm32] [aarch64] [riscv64] [riscv32] [xlib]
                                                      # needs docker; builds image, compiles in container
 python3 -I corpus/tools/groundtruth.py               # host, stdlib only; needs binutils (readelf, nm)
 python3 -I corpus/tools/groundtruth.py --set elf32   # likewise arm32, aarch64, riscv64, riscv32
 python3 -I corpus/tools/groundtruth_pe.py            # host binutils with PE support (nm, objdump)
 python3 -I corpus/tools/groundtruth_lib.py           # host binutils with PE support (readelf, objdump, ar)
+python3 -I corpus/tools/groundtruth_lib.py --set xlib  # host readelf, objdump, ar
 ```
 
-With no set named, all eight are built. The PE and 32-bit sets were added with a second
+With no set named, all nine are built. The PE and 32-bit sets were added with a second
 Containerfile layer (`gcc-mingw-w64-*-win32`, `gcc-multilib`), so the first layer and the ELF set
 built with it did not change; each set has its own `MANIFEST.sha256` and `TOOLCHAIN.txt`. The
 cross-architecture sets came with a third layer (the Linux cross compilers and their

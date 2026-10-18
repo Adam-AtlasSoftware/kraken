@@ -5,8 +5,9 @@
 //!
 //! `cargo test -p engine-native --test agreement -- --nocapture` prints the numbers for the
 //! guarded binaries; `-- --ignored --nocapture` prints them for all 20 (and with
-//! `KRAKEN_AGREEMENT_SET=corpus/pe` or `corpus/elf32` for those sets). Names are compared by
-//! entry, signatures without spacing (exactly, and by types alone).
+//! `KRAKEN_AGREEMENT_SET=corpus/pe`, `corpus/elf32`, `corpus/arm32`, `corpus/aarch64`,
+//! `corpus/riscv64` or `corpus/riscv32` for those sets). Names are compared by entry,
+//! signatures without spacing (exactly, and by types alone).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -605,6 +606,57 @@ async fn agrees_with_ghidra_on_pe_and_elf32() {
             r.exports
         );
         assert!(r.names.recall() >= 0.85, "{binary}: names {}", r.names);
+    }
+}
+
+/// ARM (A32 and Thumb-2), AArch64, RISC-V 64 and RISC-V 32 against Ghidra's fixtures. Ghidra
+/// leaves RISC-V PLT entries unnamed (`FUN_ram_...`) where the native engine names them after
+/// their imports, hence the lower bar for names there.
+#[tokio::test(flavor = "multi_thread")]
+async fn agrees_with_ghidra_on_arm_aarch64_and_riscv() {
+    for (set, binary) in [
+        ("corpus/arm32", "switch_vm-arm32-O0"),
+        ("corpus/arm32", "switch_vm-arm32-thumb-O2"),
+        ("corpus/aarch64", "switch_vm-aarch64-O0"),
+        ("corpus/riscv64", "switch_vm-riscv64-O0"),
+        ("corpus/riscv32", "switch_vm-riscv32-O0"),
+    ] {
+        let Some(c) = config() else { return };
+        let langs = c.spec_root.join("Ghidra/Processors");
+        if !langs.join("ARM/data/languages/ARM8_le.sla").is_file()
+            || !langs.join("RISCV/data/languages/riscv.lp64d.sla").is_file()
+        {
+            eprintln!("skipped: the spec tree has no ARM or RISC-V specifications");
+            return;
+        }
+        let r = compare_in(set, binary, c).await;
+        print(binary, &r);
+        assert_eq!(r.functions.recall(), 1.0, "{binary}: functions");
+        assert!(r.bodies.recall() >= 0.9, "{binary}: bodies {}", r.bodies);
+        assert!(
+            r.xrefs_image.recall() >= 0.85,
+            "{binary}: xrefs {}",
+            r.xrefs_image
+        );
+        assert!(
+            r.callers.recall() >= 0.95,
+            "{binary}: callers {}",
+            r.callers
+        );
+        assert!(r.edges.recall() >= 0.95, "{binary}: cfg edges {}", r.edges);
+        assert!(
+            r.blocks.recall() >= 0.95,
+            "{binary}: cfg blocks {}",
+            r.blocks
+        );
+        assert!(
+            r.strings.recall() >= 0.95,
+            "{binary}: strings {}",
+            r.strings
+        );
+        assert_eq!(r.imports.recall(), 1.0, "{binary}: imports {}", r.imports);
+        assert!(r.exports.recall() >= 0.8, "{binary}: exports {}", r.exports);
+        assert!(r.names.recall() >= 0.7, "{binary}: names {}", r.names);
     }
 }
 
