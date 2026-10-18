@@ -122,6 +122,19 @@ async fn project_create_defaults_to_the_projects_root() {
 }
 
 #[tokio::test]
+async fn binary_probe_needs_no_project() {
+    let work = workdir();
+    let env = fresh_env(KrakenConfig::default(), vec![]);
+    let r = kraken(
+        &env,
+        &["--json", "binary-probe", "--path", &path_str(&work.binary)],
+    )
+    .await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(r.json()["sha256"].is_string(), "{}", r.stdout);
+}
+
+#[tokio::test]
 async fn human_output_is_readable() {
     let work = workdir();
     let r = rig(CliAuthor::User("tester".into()), vec![]);
