@@ -142,6 +142,9 @@ pub struct CliEnv {
     pub rewrite: Option<Arc<dyn RewriteBackend>>,
 }
 
+/// Commands that need no open project.
+const PROJECTLESS: [&str; 1] = ["binary_probe"];
+
 impl CliEnv {
     /// The environment of the real binary.
     pub fn standard(config: KrakenConfig) -> Self {
@@ -978,7 +981,10 @@ async fn run_registry_command(
 
     let setup = if creating {
         fill_project_dir(env, name, &mut args, project.as_deref())
-    } else if project.is_none() && !env.session.as_ref().is_some_and(|s| s.project().is_ok()) {
+    } else if project.is_none()
+        && !PROJECTLESS.contains(&name)
+        && !env.session.as_ref().is_some_and(|s| s.project().is_ok())
+    {
         Err(bad(
             "no project: pass --project <dir> or set KRAKEN_PROJECT",
         ))
