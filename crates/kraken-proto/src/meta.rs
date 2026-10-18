@@ -86,6 +86,10 @@ pub struct FunctionSummary {
     pub fn_hash: Option<String>,
     /// Analysis completeness for this function.
     pub completeness: Completeness,
+    /// The symbol's mangled (linkage) name when `name` is a demangled one, such as
+    /// `_ZNK4Rect4areaEv` for `area`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mangled: Option<String>,
 }
 
 /// Protocol version; a different `major` is incompatible.
@@ -160,6 +164,7 @@ mod tests {
             signature: Some("int main(void)".into()),
             fn_hash: Some("abc".into()),
             completeness: Completeness::Complete,
+            mangled: None,
         });
         rt(FunctionSummary {
             locator: Locator::ram(0x401000),
@@ -168,6 +173,7 @@ mod tests {
             signature: None,
             fn_hash: None,
             completeness: Completeness::NotAnalyzed,
+            mangled: None,
         });
         rt(PROTOCOL_VERSION);
         rt(Capability {

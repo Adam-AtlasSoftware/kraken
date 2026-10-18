@@ -68,8 +68,13 @@ pub struct Loaded {
     pub image: Image,
     /// Memory map ordered by start.
     pub blocks: Vec<MemoryBlock>,
-    /// Defined function symbols (static and dynamic), by address; first name wins.
+    /// Defined function symbols (static and dynamic), by address; first name wins. Names are
+    /// as in the symbol table (mangled for C++).
     pub functions: BTreeMap<u64, String>,
+    /// Every name of a defined function symbol, by address, in symbol-table order.
+    pub code_symbols: BTreeMap<u64, Vec<String>>,
+    /// Types and function prototypes from DWARF, with the function addresses rebased.
+    pub debug: crate::dwarf::Debug,
     /// PLT stubs, by address, named after the imported symbol.
     pub plt: BTreeMap<u64, String>,
     /// Entry point after rebasing, if any.
@@ -241,6 +246,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     blocks.sort_by_key(|b| (b.start, b.end));
 
     let mut functions = BTreeMap::new();
+    let mut code_symbols: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for sym in file.symbols().chain(file.dynamic_symbols()) {
         if sym.kind() != SymbolKind::Text || !sym.is_definition() || sym.address() == 0 {
             continue;
@@ -252,7 +258,16 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         functions
             .entry(at(sym.address()))
             .or_insert_with(|| name.to_string());
+        let names = code_symbols.entry(at(sym.address())).or_default();
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
     }
+    let mut debug = crate::dwarf::parse(&file);
+    debug.functions = std::mem::take(&mut debug.functions)
+        .into_iter()
+        .map(|(a, f)| (at(a), f))
+        .collect();
 
     let plt = if language.id.starts_with("x86") {
         x86_plt(&file, data, bias, &functions)
@@ -472,6 +487,8 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         image,
         blocks,
         functions,
+        code_symbols,
+        debug,
         plt,
         entry,
         init_pointers,

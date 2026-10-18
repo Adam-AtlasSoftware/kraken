@@ -91,6 +91,16 @@ fn base_of(ty: &TypeRef, known: Known<'_>) -> String {
 
 /// A C prototype `ret name(T a,U b,...)` for `parse_protopieces`.
 pub fn prototype(p: &FunctionPrototype, name: &str, known: Known<'_>) -> String {
+    prototype_with(p, name, known, ",")
+}
+
+/// A prototype as a listed signature, in the decompiler's spelling:
+/// `int cmp_id(record *a, record *b)`.
+pub fn signature(p: &FunctionPrototype, name: &str, known: Known<'_>) -> String {
+    prototype_with(p, name, known, ", ")
+}
+
+fn prototype_with(p: &FunctionPrototype, name: &str, known: Known<'_>, sep: &str) -> String {
     let mut params: Vec<String> = p
         .params
         .iter()
@@ -110,7 +120,7 @@ pub fn prototype(p: &FunctionPrototype, name: &str, known: Known<'_>) -> String 
     let args = if params.is_empty() {
         "void".to_string()
     } else {
-        params.join(",")
+        params.join(sep)
     };
     format!("{}({args})", declarator(&p.return_type, name, known))
 }
@@ -167,6 +177,16 @@ fn size_hint(ty: &TypeRef) -> u64 {
 }
 
 fn enumeration(e: &EnumDef) -> String {
+    if e.variants.is_empty() {
+        // the grammar wants at least one enumerator; an integer of the size stands in
+        let int = match e.size {
+            1 => "byte",
+            2 => "ushort",
+            8 => "ulong",
+            _ => "uint",
+        };
+        return format!("typedef {int} {};", e.name);
+    }
     let body: Vec<String> = e
         .variants
         .iter()

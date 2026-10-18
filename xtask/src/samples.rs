@@ -376,6 +376,7 @@ pub fn samples() -> Result<Samples, String> {
         signature: Some("int main(int argc, char **argv)".into()),
         fn_hash: Some("ab".repeat(32)),
         completeness: Completeness::Complete,
+        mangled: None,
     };
     add(o, "function_summary", summary.clone())?;
     add(
@@ -561,6 +562,7 @@ fn program_samples(o: &mut Samples) -> Result<(), String> {
             address: Some(Hex64(0x401030)),
             library: Some("libc.so.6".into()),
             kind: SymbolKind::Function,
+            mangled: None,
         },
     )?;
     Ok(())

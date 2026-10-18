@@ -17,6 +17,8 @@ KRAKEN is licensed **GPL-3.0-or-later**. Every crate says so in its `Cargo.toml`
 
 **Separate components.** Ghidra and the JRE are distributed as separate components. KRAKEN does not link them. The Ghidra NOTICE is shipped. A `THIRD-PARTY-NOTICES` file is generated.
 
+**Compiled-in code.** The native engine (ADR 0014) is the exception: `engine-native-sys` compiles Ghidra's decompiler and Sleigh (Apache-2.0) and the zlib subset Ghidra bundles (zlib License) into the binaries. Their license and notice texts (Ghidra's `LICENSE` and `NOTICE`, the zlib license) are committed in `crates/engine-native-sys/licenses`, refreshed from the pinned source archive by `cargo xtask notices`, reproduced in `THIRD-PARTY-NOTICES.md`, and shipped as `licenses/` in the release archive; tests fail when the copies or the page are stale.
+
 **New components.** An inference backend gets a license review before it joins the default build. CUDA is never bundled.
 
 **Legal use.** KRAKEN is a neutral tool. The README has one line on lawful use, and nothing more.

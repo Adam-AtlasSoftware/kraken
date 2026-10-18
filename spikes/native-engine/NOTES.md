@@ -143,3 +143,33 @@ cargo test -p kraken-e2e --test exit_criterion_native           # the exit-crite
 - **Undo markers.** The log undoes a `set_type` with no earlier type as `undefined`, a bounds change with no earlier bounds as the empty range at 0, and a rename with no old name as the empty name; each restores what the engine found.
 - **Type definitions are not in the log.** `define_type` is an engine call, so the journal records definitions too; otherwise a prototype over a user struct came back as `void *` after a reopen.
 
+## Phase 5: licensing, rebuilt references, C++ names, DWARF
+
+How it works is in the ADR (Names, DWARF, rebuilt references and licensing). Code:
+`crates/engine-native/src/{demangle,dwarf}.rs`, `Program::reindex` in `engine.rs`, aliases in
+`typestore.rs`; `xtask/src/native_licenses.rs`.
+
+```sh
+cargo test -p engine-native --test mutate structural          # rebuilt references, exports, noreturn
+cargo test -p engine-native --test native cpp_names           # demangled names, mangled kept, DWARF this
+cargo test -p engine-native --test agreement -- --nocapture   # guarded binaries plus cpp_shapes-O0 names
+cargo test -p xtask native_licenses                            # committed texts vs the pinned archive
+```
+
+| Check | Result |
+|---|---|
+| Names by entry, all 20 fixtures | 65.8% -> 89.2% (`cpp_shapes-O0` 7% -> 100%; the rest are static glibc aliases) |
+| Imports / exports (addr, name), all 20 | 69.4% -> 100% / 36.9% -> 51.1% (`cpp_shapes-O0` exports 3.4% -> 100%) |
+| Signatures (no spacing), all 20, before analysis | 0.6% -> 19.6%; `cpp_shapes-O0` 70%, and every DWARF function of the C binaries |
+| `cpp_shapes-O0` open, debug, in-process | about 0.3 s, every DWARF type accepted by the decompiler (none pending) |
+| One structural edit on `static_strops-O0`, debug | about 0.4 s (the whole index is rebuilt) |
+
+### Traps
+
+- **A typedef renames its target in the decompiler.** `parse_C` handles `typedef record rec_t;` by renaming the type `record` to `rec_t` (`TypeFactory::setName`), so after it `record` no longer parses and a second typedef of it fails with a syntax error. Typedefs of named types are kept as aliases in the type store; declarations and prototypes handed to the decompiler are rewritten through them. Typedefs of core types are copies and are safe.
+- **Scoped C++ names collide.** `pointer`, `type`, `size_type` and `_Vector_impl` exist in dozens of class scopes; keying by name alone made typedefs of themselves (`pointer_conflict1 -> pointer_conflict1`) that never resolved. Types are keyed by their scope-qualified name, size and members; the display adds `.conflict<n>` only within one scope, as Ghidra does.
+- **Empty bases.** `_Alloc_hider` has the empty `allocator<char>` base at offset 0 and `_M_p` at offset 0 too; declaring both made the struct too big for its size and the decompiler refused everything holding a `std::string`. Empty bases are left out.
+- **Out-of-line instances** of constructors and destructors list only the parameters they use; Ghidra shows the abstract origin's (with `__in_chrg`), so those are taken when the origin has them.
+- **Signatures carry the name they were made with.** A name with parentheses (`operator()`) broke the old name replacement, which took the first `(`; the parameter list is now the parenthesis matching the last one, and the name is replaced when the head ends with the name the signature was made with.
+- **Deleted code stays code.** Ghidra keeps instructions and their references when a function is deleted; the index does too (the calls into a deleted function stay, with no callee name), until data is defined over them.
+

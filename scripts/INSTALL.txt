@@ -2,7 +2,9 @@ KRAKEN release archive
 ======================
 
 Contents
-  bin/                       kraken (CLI and MCP server), krakend (daemon), kraken-gui
+  bin/                       kraken (CLI and MCP server), krakend (daemon), kraken-gui, and on
+                             Linux kraken-native-worker (the native engine's decompiler
+                             process; `kraken setup --native` explains the rest)
   share/kraken/kraken-ghidra.jar
                              prebuilt Ghidra extension; `kraken setup` installs it, so you do
                              not need Gradle or a JDK to build it
@@ -11,6 +13,8 @@ Contents
                              a pinned .NET runtime
   docs/                      the documentation (open docs/index.html)
   README.md, LICENSE, THIRD-PARTY-NOTICES.md
+  licenses/                  license and notice files of the Ghidra decompiler (Apache-2.0)
+                             and zlib, which the native engine compiles into the programs
 
 Install
   1. Put the three programs on your PATH, keeping share/kraken next to bin/:

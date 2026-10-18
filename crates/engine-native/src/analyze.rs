@@ -78,20 +78,20 @@ async fn run(
                         "{} memory blocks, {} functions ({} never return), {} landing pads",
                         p.loaded.blocks.len(),
                         p.funcs().len(),
-                        p.noreturn.len(),
+                        p.noreturn().len(),
                         p.loaded.landing_pads.values().map(Vec::len).sum::<usize>()
                     ),
                 );
             }
             Stage::Core => {
-                progress(&tx, stage, 1, 3, format!("{} references", p.refs.len()));
+                progress(&tx, stage, 1, 3, format!("{} references", p.refs().len()));
                 check(&token)?;
                 progress(
                     &tx,
                     stage,
                     2,
                     3,
-                    format!("{} imports, {} exports", p.imports.len(), p.exports.len()),
+                    format!("{} imports, {} exports", p.imports.len(), p.exports().len()),
                 );
                 check(&token)?;
                 let q = p.clone();

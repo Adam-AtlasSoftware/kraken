@@ -71,6 +71,9 @@ pub struct FunctionView {
     pub signature: Option<Untrusted<String>>,
     /// How much analysis backs this entry.
     pub completeness: Completeness,
+    /// The mangled symbol name when `name` is demangled (binary-derived).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mangled: Option<Untrusted<String>>,
 }
 
 impl FunctionView {
@@ -84,6 +87,7 @@ impl FunctionView {
             size: f.size,
             signature: f.signature.as_deref().map(untrusted),
             completeness: adjust_completeness(f.completeness.clone(), analysis_running),
+            mangled: f.mangled.as_deref().map(untrusted),
         }
     }
 }

@@ -169,6 +169,7 @@ mod tests {
             switches: BTreeMap::new(),
             tail_calls: Vec::new(),
             noreturn: false,
+            returns: true,
         };
         let cfg = build(&f, &insns, &[], &|_| false);
         let blocks: Vec<(u64, u64, u32)> = cfg

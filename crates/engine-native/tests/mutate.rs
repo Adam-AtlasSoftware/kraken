@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 
 use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
 use kraken_engine::{
-    CancellationToken, Decompiler, DisasmRequest, Disassembler, FunctionLister, Loader, LoaderSpec,
-    Mutator, TypeStore,
+    CancellationToken, Decompiler, DisasmRequest, Disassembler, FlowGraph, FunctionLister, Loader,
+    LoaderSpec, Mutator, SymbolLister, TypeStore, XrefProvider, XrefRequest,
 };
 use kraken_proto::{
     AddressRange, Anchor, CodeData, CommentKind, Composite, DisasmRow, DisasmScope, ErrorCode,
     Field, FunctionPrototype, FunctionSummary, Hex64, Locator, LogOp, PageRequest, Param,
-    Primitive, PrimitiveClass, TypeDef, TypeRef, VersionedLogOp,
+    Primitive, PrimitiveClass, TypeDef, TypeRef, VersionedLogOp, Xref, XrefDirection,
 };
 
 /// `cmp_id` in `pie_list-O0` (loaded at 0x100000).
@@ -142,12 +142,12 @@ fn record_proto() -> FunctionPrototype {
         return_type: Box::new(int()),
         params: vec![
             Param {
-                name: Some("a".into()),
+                name: Some("lhs".into()),
                 ty: rec(),
                 storage: None,
             },
             Param {
-                name: Some("b".into()),
+                name: Some("rhs".into()),
                 ty: rec(),
                 storage: None,
             },
@@ -289,10 +289,10 @@ async fn edits_show_everywhere_and_replay_on_reopen() {
     };
     apply(&e, typed.clone()).await.expect("set_type");
     let text = decompiled(&e, CMP_ID).await;
-    assert!(text.contains("by_id(record *a,record *b)"), "{text}");
-    assert!(text.contains("a->id - b->id"), "{text}");
+    assert!(text.contains("by_id(record *lhs,record *rhs)"), "{text}");
+    assert!(text.contains("lhs->id - rhs->id"), "{text}");
     let sig = function(&e, CMP_ID).await.expect("f").signature;
-    assert_eq!(sig.as_deref(), Some("int by_id(record *a,record *b)"));
+    assert_eq!(sig.as_deref(), Some("int by_id(record *lhs,record *rhs)"));
     // a prototype naming an unknown type by value is refused
     let mut bad = record_proto();
     bad.params[0].ty = TypeRef::Named {
@@ -310,7 +310,7 @@ async fn edits_show_everywhere_and_replay_on_reopen() {
         .await,
         Err(ErrorCode::InvalidArgument)
     );
-    assert!(decompiled(&e, CMP_ID).await.contains("a->id - b->id"));
+    assert!(decompiled(&e, CMP_ID).await.contains("lhs->id - rhs->id"));
 
     // calling convention: MSABI moves the parameters to RCX and RDX
     let cc = |name: &str| LogOp::SetCallingConvention {
@@ -459,11 +459,11 @@ async fn edits_show_everywhere_and_replay_on_reopen() {
     assert_eq!(f.name, "by_id");
     assert_eq!(
         f.signature.as_deref(),
-        Some("int by_id(record *a,record *b)")
+        Some("int by_id(record *lhs,record *rhs)")
     );
     let text = decompiled(&e, CMP_ID).await;
     assert!(text.contains("compares two records by id"), "{text}");
-    assert!(text.contains("a->id - b->id"), "{text}");
+    assert!(text.contains("lhs->id - rhs->id"), "{text}");
     let body = rows(&e, CMP_ID, DisasmScope::Function, 50).await;
     assert_eq!(body[1].labels, vec!["after_prologue".to_string()]);
     assert_eq!(
@@ -486,11 +486,11 @@ async fn edits_show_everywhere_and_replay_on_reopen() {
     )
     .await
     .expect("clear type");
+    // ... which for this binary is the prototype from its DWARF
     let text = decompiled(&e, CMP_ID).await;
-    assert!(
-        text.contains("by_id(") && !text.contains("record *"),
-        "{text}"
-    );
+    assert!(text.contains("by_id(record *a,record *b)"), "{text}");
+    let sig = function(&e, CMP_ID).await.expect("f").signature;
+    assert_eq!(sig.as_deref(), Some("int by_id(record *a, record *b)"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -591,4 +591,272 @@ async fn rejects_what_it_cannot_apply() {
     );
     // nothing was applied, so nothing was journaled
     assert_eq!(e.stats().await.expect("stats").edits, 0);
+}
+
+/// `node_new` (static): calls `calloc`, `exit` (on failure, at 0x1011c2) and `strncpy`.
+const NODE_NEW: u64 = 0x101189;
+/// `list_push` (exported); `main` calls it.
+const LIST_PUSH: u64 = 0x101214;
+/// `list_sort` (exported); `main` calls it at 0x101635.
+const LIST_SORT: u64 = 0x1012ff;
+/// `main` (exported).
+const MAIN: u64 = 0x1014da;
+/// The PLT stub of `exit`.
+const EXIT: u64 = 0x101080;
+/// `mov edi,1` before the `call exit` in `node_new`'s failure path.
+const NODE_NEW_FAIL: u64 = 0x1011bd;
+
+async fn xrefs(e: &NativeEngine, at: u64, direction: XrefDirection, whole: bool) -> Vec<Xref> {
+    e.xrefs(
+        &XrefRequest {
+            address: Hex64(at),
+            direction,
+            kind: None,
+            whole_function: whole,
+        },
+        &PageRequest {
+            cursor: None,
+            limit: Some(500),
+        },
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("xrefs")
+    .items
+}
+
+async fn export_name(e: &NativeEngine, at: u64) -> Option<String> {
+    e.exports(
+        &PageRequest {
+            cursor: None,
+            limit: Some(500),
+        },
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("exports")
+    .items
+    .into_iter()
+    .find(|s| s.address == Some(Hex64(at)))
+    .map(|s| s.name)
+}
+
+async fn exit_callers(e: &NativeEngine) -> Vec<u64> {
+    xrefs(e, EXIT, XrefDirection::To, false)
+        .await
+        .iter()
+        .map(|x| x.from.0)
+        .collect()
+}
+
+async fn targets(e: &NativeEngine, at: u64) -> Vec<u64> {
+    xrefs(e, at, XrefDirection::From, true)
+        .await
+        .iter()
+        .map(|x| x.to.0)
+        .collect()
+}
+
+/// Structural edits rebuild the references, the exports and the noreturn set: code a deleted
+/// function leaves behind stays code (as in Ghidra), data defined over it drops its references,
+/// a created function's references come back and its callers name it, an export follows a
+/// renamed or recreated function, a bounds change moves references out of the function, and a
+/// created function over a failure path never returns.
+#[tokio::test(flavor = "multi_thread")]
+async fn structural_edits_rebuild_references_exports_and_noreturn() {
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(e) = open(state.path()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+
+    assert!(exit_callers(&e).await.contains(&0x1011c2));
+    apply(
+        &e,
+        LogOp::DeleteFunction {
+            anchor: anchor(NODE_NEW, None),
+            old_body: None,
+        },
+    )
+    .await
+    .expect("delete node_new");
+    let calls = xrefs(&e, NODE_NEW, XrefDirection::To, false).await;
+    assert!(!calls.is_empty() && calls.iter().all(|x| x.to_function.is_none()));
+    assert!(exit_callers(&e).await.contains(&0x1011c2), "the code stays");
+    apply(
+        &e,
+        LogOp::SetCodeData {
+            anchor: anchor(NODE_NEW, None),
+            old: None,
+            new: CodeData::Data { data_type: None },
+            length: Some(Hex64(LIST_PUSH - NODE_NEW)),
+        },
+    )
+    .await
+    .expect("data over the old body");
+    assert!(
+        !exit_callers(&e).await.contains(&0x1011c2),
+        "data has no references"
+    );
+
+    apply(
+        &e,
+        LogOp::CreateFunction {
+            anchor: anchor(NODE_NEW, None),
+            name: Some("make_node".into()),
+            body: None,
+        },
+    )
+    .await
+    .expect("create make_node");
+    assert!(exit_callers(&e).await.contains(&0x1011c2));
+    let calls = xrefs(&e, NODE_NEW, XrefDirection::To, false).await;
+    assert!(
+        !calls.is_empty()
+            && calls.iter().all(|x| {
+                x.to_function
+                    .as_ref()
+                    .is_some_and(|f| f.name == "make_node")
+                    && x.from_function
+                        .as_ref()
+                        .is_some_and(|f| f.address.0 == MAIN)
+            }),
+        "{calls:?}"
+    );
+
+    assert_eq!(
+        export_name(&e, LIST_PUSH).await.as_deref(),
+        Some("list_push")
+    );
+    apply(
+        &e,
+        LogOp::DeleteFunction {
+            anchor: anchor(LIST_PUSH, None),
+            old_body: None,
+        },
+    )
+    .await
+    .expect("delete list_push");
+    assert_eq!(
+        export_name(&e, LIST_PUSH).await.as_deref(),
+        Some("list_push"),
+        "the symbol stays exported"
+    );
+    apply(
+        &e,
+        LogOp::CreateFunction {
+            anchor: anchor(LIST_PUSH, None),
+            name: Some("push_node".into()),
+            body: None,
+        },
+    )
+    .await
+    .expect("recreate");
+    assert_eq!(
+        export_name(&e, LIST_PUSH).await.as_deref(),
+        Some("push_node")
+    );
+    apply(
+        &e,
+        LogOp::Rename {
+            anchor: anchor(MAIN, None),
+            old_name: Some("main".into()),
+            new_name: "entry_main".into(),
+        },
+    )
+    .await
+    .expect("rename main");
+    assert_eq!(export_name(&e, MAIN).await.as_deref(), Some("entry_main"));
+
+    assert!(targets(&e, MAIN).await.contains(&LIST_SORT));
+    apply(
+        &e,
+        LogOp::SetFunctionBounds {
+            anchor: anchor(MAIN, None),
+            old: None,
+            new: AddressRange {
+                space: "ram".into(),
+                start: Hex64(MAIN),
+                end: Hex64(0x101530),
+            },
+        },
+    )
+    .await
+    .expect("shrink main");
+    let t = targets(&e, MAIN).await;
+    assert!(t.contains(&NODE_NEW) && !t.contains(&LIST_SORT), "{t:x?}");
+    let sort_calls = xrefs(&e, LIST_SORT, XrefDirection::To, false).await;
+    assert!(
+        sort_calls
+            .iter()
+            .any(|x| x.from.0 == 0x101635 && x.from_function.is_none()),
+        "the call stays, outside any function: {sort_calls:?}"
+    );
+
+    apply(
+        &e,
+        LogOp::CreateFunction {
+            anchor: anchor(NODE_NEW_FAIL, None),
+            name: Some("die".into()),
+            body: None,
+        },
+    )
+    .await
+    .expect("create die");
+    let stats = e.stats().await.expect("stats");
+    assert!(
+        stats.noreturn.contains(&NODE_NEW_FAIL),
+        "{:x?}",
+        stats.noreturn
+    );
+    let cfg = e.cfg(&Locator::ram(NODE_NEW_FAIL), &c).await.expect("cfg");
+    assert!(cfg.edges.is_empty(), "the call to exit ends it: {cfg:?}");
+    apply(
+        &e,
+        LogOp::DeleteFunction {
+            anchor: anchor(NODE_NEW_FAIL, None),
+            old_body: None,
+        },
+    )
+    .await
+    .expect("delete die");
+    let stats = e.stats().await.expect("stats");
+    assert!(!stats.noreturn.contains(&NODE_NEW_FAIL));
+
+    // a reopened engine replays the edits and rebuilds once
+    e.save(&c).await.expect("save");
+    drop(e);
+    let Some(e) = open(state.path()).await else {
+        return;
+    };
+    assert_eq!(
+        export_name(&e, LIST_PUSH).await.as_deref(),
+        Some("push_node")
+    );
+    assert!(!targets(&e, MAIN).await.contains(&LIST_SORT));
+    assert!(exit_callers(&e).await.contains(&0x1011c2));
+}
+
+/// With DWARF, the type store has the program's types and functions their prototypes, so
+/// `cmp_id` decompiles as Ghidra shows it with DWARF.
+#[tokio::test(flavor = "multi_thread")]
+async fn dwarf_types_and_prototypes() {
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(e) = open(state.path()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    match e.get_type("record", &c).await.expect("record") {
+        TypeDef::Struct(s) => assert_eq!(s.size, 40),
+        other => panic!("{other:?}"),
+    }
+    let f = function(&e, CMP_ID).await.expect("cmp_id");
+    assert_eq!(
+        f.signature.as_deref(),
+        Some("int cmp_id(record *a, record *b)")
+    );
+    assert_eq!(f.mangled, None);
+    let text = decompiled(&e, CMP_ID).await;
+    assert!(text.contains("int cmp_id(record *a,record *b)"), "{text}");
+    assert!(text.contains("a->id - b->id"), "{text}");
 }

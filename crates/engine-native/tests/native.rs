@@ -12,7 +12,7 @@ use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
 use kraken_engine::testing::{ExpectedFunction, FixtureExpectations, run_contract_suite};
 use kraken_engine::{
     AnalyzeRequest, Analyzer, CancellationToken, Decompiler, DisasmRequest, Disassembler,
-    FlowGraph, FunctionLister, Loader, LoaderSpec, ProgramInfo, Stage, TypeStore,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, ProgramInfo, Stage, SymbolLister, TypeStore,
 };
 use kraken_proto::{
     CfgEdgeKind, Composite, DisasmScope, ErrorCode, Field, FlowKind, FunctionPrototype,
@@ -456,7 +456,7 @@ async fn whole_corpus() {
     }
 }
 
-/// Library prototypes reach the decompiler: `printf`'s `char *format` turns the constant at the
+/// Library prototypes reach the decompiler: `printf`'s `char *__format` turns the constant at the
 /// call site into a string literal, and the prototype is in the type store and the listing.
 #[tokio::test(flavor = "multi_thread")]
 async fn library_prototypes_type_call_sites() {
@@ -477,7 +477,7 @@ async fn library_prototypes_type_call_sites() {
         .expect("printf stub");
     assert_eq!(
         printf.signature.as_deref(),
-        Some("int printf(char *format,...)")
+        Some("int printf(char *__format,...)")
     );
     match e.get_type("printf", &c).await.expect("printf prototype") {
         TypeDef::Function(p) => assert!(p.varargs && p.params.len() == 1),
@@ -777,4 +777,78 @@ async fn aarch64_when_given() {
         "{}",
         r.text
     );
+}
+
+/// C++ names are shown as Ghidra shows them (from DWARF, else demangled), with the mangled names
+/// kept: in summaries and symbols (`mangled`) and as labels in the listing. With DWARF, methods
+/// get their class types (`this`) in the signature and the decompiled C.
+#[tokio::test(flavor = "multi_thread")]
+async fn cpp_names_are_demangled_and_mangled_names_kept() {
+    let Some((e, _)) = open("cpp_shapes-O0", true).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let fns = listing(&e).await;
+    let at = |a: u64| {
+        fns.iter()
+            .find(|f| f.locator == Locator::ram(a))
+            .unwrap_or_else(|| panic!("no function at {a:#x}"))
+    };
+    // Rect::area() const, named from DWARF
+    let area = at(0x102db8);
+    assert_eq!(area.name, "area");
+    assert_eq!(area.mangled.as_deref(), Some("_ZNK4Rect4areaEv"));
+    assert_eq!(area.signature.as_deref(), Some("double area(Rect *this)"));
+    // the PLT stub of operator new(unsigned long), demangled
+    let new = at(0x102160);
+    assert_eq!(new.name, "operator.new");
+    assert_eq!(new.mangled.as_deref(), Some("_Znwm"));
+    // std::string's constructor goes by the typedef name
+    assert_eq!(at(0x1020a0).name, "string");
+
+    let rows = e
+        .disassemble(
+            &DisasmRequest {
+                start: Hex64(0x102db8),
+                scope: DisasmScope::Function,
+            },
+            &PageRequest {
+                cursor: None,
+                limit: Some(1),
+            },
+            &c,
+        )
+        .await
+        .expect("disassemble")
+        .items;
+    assert_eq!(rows[0].labels, vec!["_ZNK4Rect4areaEv", "area"]);
+
+    let imports = e
+        .imports(
+            &PageRequest {
+                cursor: None,
+                limit: Some(500),
+            },
+            &c,
+        )
+        .await
+        .expect("imports")
+        .items;
+    let imp = imports
+        .iter()
+        .find(|s| s.name == "operator.new")
+        .expect("operator.new import");
+    assert_eq!(imp.mangled.as_deref(), Some("_Znwm"));
+    assert!(
+        imports.iter().all(|s| !s.name.starts_with("_Z")),
+        "{imports:?}"
+    );
+
+    let text = e
+        .decompile(&Locator::ram(0x102db8), &c)
+        .await
+        .expect("decompile")
+        .text;
+    assert!(text.contains("double area(Rect *this)"), "{text}");
+    assert!(text.contains("this->"), "{text}");
 }

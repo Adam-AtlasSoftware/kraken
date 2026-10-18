@@ -4,6 +4,9 @@
 //! `kraken-gui`: normal and build dependencies, no dev-only ones), grouped by license, with the
 //! license and notice files found in each crate's registry source. Identical texts are printed
 //! once. Non-Rust bundled assets and the separately downloaded components are described by hand.
+//! When a shipped binary links `engine-native-sys`, the page also carries the license and notice
+//! texts of the C/C++ code it compiles in (Ghidra's decompiler and Sleigh, the bundled zlib),
+//! from the committed copies in `crates/engine-native-sys/licenses` (see `native_licenses`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
@@ -43,6 +46,17 @@ impl std::fmt::Display for NoticesError {
 }
 
 pub fn write_notices() -> Result<()> {
+    if crate::native_licenses::sync()? {
+        println!(
+            "notices: refreshed {} from the pinned Ghidra source archive",
+            crate::native_licenses::DIR
+        );
+    } else {
+        println!(
+            "notices: pinned Ghidra source archive not cached; using the committed {}",
+            crate::native_licenses::DIR
+        );
+    }
     let text = generate(false).map_err(|e| e.to_string())?;
     let path = notices_path();
     fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -100,8 +114,11 @@ fn normalise_license(raw: &str) -> String {
         .join(" ")
 }
 
-/// The packages reachable from the shipped binaries over non-dev edges.
-fn shipped_crates(meta: &Value) -> std::result::Result<Vec<Krate>, NoticesError> {
+/// The registry packages reachable from the shipped binaries over non-dev edges, and the names
+/// of the workspace members among them.
+fn shipped_crates(
+    meta: &Value,
+) -> std::result::Result<(Vec<Krate>, BTreeSet<String>), NoticesError> {
     let bad = |what: &str| NoticesError::Other(format!("unexpected cargo metadata: {what}"));
     let packages = meta["packages"].as_array().ok_or_else(|| bad("packages"))?;
     let by_id: HashMap<&str, &Value> = packages
@@ -145,10 +162,15 @@ fn shipped_crates(meta: &Value) -> std::result::Result<Vec<Krate>, NoticesError>
     }
 
     let mut out = Vec::new();
+    let mut members = BTreeSet::new();
     for id in seen {
         let Some(p) = by_id.get(id) else { continue };
         if p["source"].is_null() {
-            continue; // workspace members are KRAKEN itself
+            // workspace members are KRAKEN itself
+            if let Some(n) = p["name"].as_str() {
+                members.insert(n.to_string());
+            }
+            continue;
         }
         let name = str_field(p, "name").ok_or_else(|| bad("package name"))?;
         let manifest = str_field(p, "manifest_path").ok_or_else(|| bad("manifest_path"))?;
@@ -168,7 +190,7 @@ fn shipped_crates(meta: &Value) -> std::result::Result<Vec<Krate>, NoticesError>
         });
     }
     out.sort_by(|a, b| (&a.name, &a.version).cmp(&(&b.name, &b.version)));
-    Ok(out)
+    Ok((out, members))
 }
 
 fn is_license_file_name(name: &str) -> bool {
@@ -253,6 +275,58 @@ The KRAKEN GUI embeds IBM Plex Sans (Regular, Medium) and IBM Plex Mono (Regular
 IBM Plex project (<https://github.com/IBM/plex>). License text, as shipped with the fonts:
 ";
 
+/// The section on the C/C++ code `engine-native-sys` compiles into the binaries.
+fn native_section() -> std::result::Result<String, NoticesError> {
+    use crate::native_licenses::{PROVENANCE, committed, ghidra_version, recorded_zlib_version};
+    let read = |name: &str| {
+        committed(name)
+            .map(|t| clean(&t))
+            .map_err(NoticesError::Other)
+    };
+    let provenance = read(PROVENANCE)?;
+    let zlib = recorded_zlib_version(&provenance)
+        .ok_or_else(|| NoticesError::Other(format!("no zlib version in {PROVENANCE}")))?;
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "## Compiled-in C and C++ components
+
+The native engine (`engine-native-sys`, linked into `kraken`, `krakend`, `kraken-gui` and
+`kraken-native-worker`) compiles the following third-party sources into the binaries. A build
+without the pinned sources links a stub instead and contains neither. The release archive also
+carries these texts as files in `licenses/`.
+
+Provenance:
+
+{prov}
+### Ghidra {ghidra} decompiler and Sleigh (Apache License 2.0)
+
+Ghidra's C++ decompiler and Sleigh translator from
+<https://github.com/NationalSecurityAgency/ghidra>. Ghidra's `NOTICE`:
+
+{notice}
+Ghidra's `LICENSE`:
+
+{license}
+### zlib {zlib} (zlib License)
+
+The zlib subset Ghidra bundles with its decompiler sources (<https://www.zlib.net/>). Ghidra's
+note on the subset:
+
+{readme}
+License text, as shipped with Ghidra:
+
+{zlib_license}",
+        prov = indent(&provenance),
+        ghidra = ghidra_version(),
+        notice = indent(&read("ghidra/NOTICE")?),
+        license = indent(&read("ghidra/LICENSE")?),
+        readme = indent(&read("zlib/README.txt")?),
+        zlib_license = indent(&read("zlib/LICENSE")?),
+    );
+    Ok(out)
+}
+
 const DOWNLOADED: &str = "## Components downloaded at setup time (not redistributed)
 
 The default KRAKEN release does not contain the following. `kraken setup` downloads them from
@@ -280,7 +354,7 @@ license text, it is printed once.
 pub fn render(meta: &Value, root: &Path) -> std::result::Result<String, NoticesError> {
     let font_license = fs::read_to_string(root.join(FONT_LICENSE))
         .map_err(|e| NoticesError::Other(format!("cannot read {FONT_LICENSE}: {e}")))?;
-    let crates = shipped_crates(meta)?;
+    let (crates, members) = shipped_crates(meta)?;
 
     let mut groups: BTreeMap<&str, Vec<&Krate>> = BTreeMap::new();
     for k in &crates {
@@ -291,6 +365,10 @@ pub fn render(meta: &Value, root: &Path) -> std::result::Result<String, NoticesE
     out.push('\n');
     out.push_str(&indent(&clean(&font_license)));
     out.push('\n');
+    if members.contains("engine-native-sys") {
+        out.push_str(&native_section()?);
+        out.push('\n');
+    }
     out.push_str(DOWNLOADED);
     let _ = writeln!(
         out,
@@ -415,6 +493,47 @@ mod tests {
         let text = render(&meta, &workspace_root()).expect("render");
         for needle in ["IBM Plex", "Ghidra", "Temurin", "GPLv2+CE", "0 crates"] {
             assert!(text.contains(needle), "{needle}");
+        }
+        assert!(!text.contains("Compiled-in C and C++ components"));
+    }
+
+    #[test]
+    fn linking_the_native_engine_adds_the_ghidra_and_zlib_texts() {
+        let meta: Value = serde_json::json!({
+            "packages": [
+                {"id": "a", "name": "kraken-cli", "version": "0.0.0", "source": null, "manifest_path": "/x/Cargo.toml"},
+                {"id": "b", "name": "krakend", "version": "0.0.0", "source": null, "manifest_path": "/x/Cargo.toml"},
+                {"id": "c", "name": "kraken-gui", "version": "0.0.0", "source": null, "manifest_path": "/x/Cargo.toml"},
+                {"id": "d", "name": "engine-native-sys", "version": "0.0.0", "source": null, "manifest_path": "/x/Cargo.toml"},
+            ],
+            "resolve": {"nodes": [
+                {"id": "a", "deps": [{"pkg": "d", "dep_kinds": [{"kind": null}]}]},
+            ]}
+        });
+        let text = render(&meta, &workspace_root()).expect("render");
+        for needle in [
+            "Compiled-in C and C++ components",
+            "Ghidra 12.1.4 decompiler and Sleigh (Apache License 2.0)",
+            "This product includes software developed at National Security Agency",
+            "Apache License",
+            "zlib 1.3.1 (zlib License)",
+            "Jean-loup Gailly",
+            crate::native_src::SHA256,
+        ] {
+            assert!(text.contains(needle), "{needle}");
+        }
+    }
+
+    /// The shipped binaries link the native engine, so the committed page carries its texts.
+    #[test]
+    fn committed_notices_name_the_compiled_in_components() {
+        let committed = fs::read_to_string(notices_path()).unwrap_or_default();
+        for needle in [
+            "Compiled-in C and C++ components",
+            "decompiler and Sleigh (Apache License 2.0)",
+            "(zlib License)",
+        ] {
+            assert!(committed.contains(needle), "{needle}");
         }
     }
 }

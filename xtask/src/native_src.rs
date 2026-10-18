@@ -1,6 +1,6 @@
 //! `cargo xtask native-src`: fetches the pinned Ghidra source tarball, checks its SHA-256 and
-//! extracts only the decompiler C++ sources (plus the bundled zlib and Ghidra's LICENSE) for
-//! `engine-native-sys`.
+//! extracts only the decompiler C++ sources (plus the bundled zlib, Ghidra's LICENSE and NOTICE
+//! and the zlib license) for `engine-native-sys`.
 
 use std::fs;
 use std::io::Read;
@@ -47,12 +47,15 @@ pub fn native_src() -> Result<()> {
             6,
         )?;
     }
-    extract(&archive, &staging, &format!("{PREFIX}/LICENSE"), 1)?;
+    for member in ["LICENSE", "NOTICE", "licenses/zlib_License.txt"] {
+        extract(&archive, &staging, &format!("{PREFIX}/{member}"), 1)?;
+    }
     fs::write(
         staging.join("SOURCE.txt"),
         format!(
             "Extracted by `cargo xtask native-src` from\n{URL}\nsha256 {SHA256}\nmembers: \
-             {DECOMPILE}/cpp, {DECOMPILE}/zlib, LICENSE (Apache-2.0; zlib under its own license)\n"
+             {DECOMPILE}/cpp, {DECOMPILE}/zlib, LICENSE, NOTICE (Apache-2.0; zlib under its own \
+             license, licenses/zlib_License.txt)\n"
         ),
     )
     .map_err(|e| format!("cannot write SOURCE.txt: {e}"))?;
@@ -72,10 +75,9 @@ pub fn native_src() -> Result<()> {
 /// The pinned archive in `~/.cache/kraken-dev/ghidra-src/dl`, downloaded first if it is missing
 /// or does not match [`SHA256`].
 pub fn fetch_archive() -> Result<PathBuf> {
-    let root = cache_dir().ok_or("HOME is not set")?.join("ghidra-src");
-    let dl = root.join("dl");
+    let archive = archive_path()?;
+    let dl = archive.parent().ok_or("bad archive path")?.to_path_buf();
     fs::create_dir_all(&dl).map_err(|e| format!("cannot create {}: {e}", dl.display()))?;
-    let archive = dl.join(format!("{TAG}.tar.gz"));
 
     if !archive.is_file() || sha256_file(&archive)? != SHA256 {
         let part = dl.join(format!("{TAG}.tar.gz.part"));
@@ -112,6 +114,14 @@ pub fn fetch_archive() -> Result<PathBuf> {
     Ok(archive)
 }
 
+/// Where the pinned archive is kept: `~/.cache/kraken-dev/ghidra-src/dl/<TAG>.tar.gz`.
+pub fn archive_path() -> Result<PathBuf> {
+    Ok(cache_dir()
+        .ok_or("HOME is not set")?
+        .join("ghidra-src/dl")
+        .join(format!("{TAG}.tar.gz")))
+}
+
 pub fn extract(archive: &Path, into: &Path, member: &str, strip: u32) -> Result<()> {
     let status = Command::new("tar")
         .arg("-xzf")
@@ -130,7 +140,7 @@ pub fn extract(archive: &Path, into: &Path, member: &str, strip: u32) -> Result<
     }
 }
 
-fn sha256_file(path: &PathBuf) -> Result<String> {
+pub fn sha256_file(path: &Path) -> Result<String> {
     let mut f = fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];

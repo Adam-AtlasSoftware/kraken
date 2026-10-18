@@ -1,4 +1,5 @@
 mod docs;
+mod native_licenses;
 mod native_sla;
 mod native_src;
 mod notices;
@@ -31,7 +32,10 @@ Commands:
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
   docs         Write docs/reference/commands.md from the command registry.
-  notices      Write THIRD-PARTY-NOTICES.md from cargo metadata and the crates' license files.";
+  notices      Write THIRD-PARTY-NOTICES.md from cargo metadata and the crates' license files,
+               plus the Ghidra decompiler and zlib texts the native engine compiles in
+               (crates/engine-native-sys/licenses, refreshed from the pinned source archive
+               when `native-src` has cached it).";
 
 type Result<T> = std::result::Result<T, String>;
 

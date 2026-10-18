@@ -31,6 +31,7 @@ fn method(token: u32, name: &str, text: &str, tokens: Vec<Token>) -> FixtureFunc
             signature: Some(format!("void {name}()")),
             fn_hash: None,
             completeness: Completeness::Complete,
+            mangled: None,
         },
         DecompileResult {
             function: locator,

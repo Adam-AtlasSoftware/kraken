@@ -22,11 +22,11 @@ use kraken_proto::{
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::ctypes::{base_definitions, parse_prototype};
+use crate::ctypes::{base_definitions, parse_prototype, signature};
 use crate::discover::{Func, discover};
 use crate::elf::{Loaded, load};
 use crate::listing::{flow_kind, operands};
-use crate::mutate::{Defined, Edits, Journaled, STATE_FILE, STATE_FORMAT};
+use crate::mutate::{Defined, Edits, Journaled, PROTO_NAME, STATE_FILE, STATE_FORMAT};
 use crate::refs::RefIndex;
 use crate::typestore::TypeModel;
 use crate::worker::Isolation;
@@ -183,20 +183,31 @@ pub(crate) struct Program {
     /// named function types), reapplied when a function symbol is rebuilt.
     pub(crate) locked: Mutex<BTreeMap<u64, String>>,
     pub(crate) insns: Mutex<BTreeMap<u64, Instruction>>,
+    /// Code reached only through data (the lazy PLT entries), indexed with the bodies.
+    orphans: Vec<Instruction>,
     session: Mutex<Session>,
     /// Raised to abandon the decompile in flight (see `Session::stop_flag`).
     stop: Arc<AtomicBool>,
     /// One decompile at a time, so a cancellation only stops its own decompile.
     decompile_slot: tokio::sync::Mutex<()>,
-    pub(crate) refs: RefIndex,
+    /// References, exports and the noreturn set of the current function table, rebuilt after
+    /// structural edits (see [`Program::reindex`]).
+    refs: RwLock<Arc<RefIndex>>,
     pub(crate) imports: Vec<SymbolEntry>,
-    pub(crate) exports: Vec<SymbolEntry>,
+    exports: RwLock<Arc<Vec<SymbolEntry>>>,
+    /// Symbol-table names at function entries that differ from the function's name (mangled
+    /// C++ names, aliases), shown as labels as Ghidra shows them.
+    symbol_labels: BTreeMap<u64, Vec<String>>,
+    /// The mangled name of each function whose name is demangled or from DWARF.
+    mangled: BTreeMap<u64, String>,
     strings: Mutex<BTreeMap<u32, Arc<Vec<StringEntry>>>>,
     pub(crate) types: Mutex<TypeModel>,
     /// Rendered prototypes: known ones at load, the decompiler's after analysis.
     pub(crate) signatures: Mutex<BTreeMap<u64, String>>,
     /// Entries of functions that never return.
-    pub(crate) noreturn: BTreeSet<u64>,
+    noreturn: RwLock<Arc<BTreeSet<u64>>>,
+    /// The noreturn set at load (by name, propagation, library and DWARF prototypes).
+    found_noreturn: BTreeSet<u64>,
     pub(crate) discovery_rounds: usize,
     /// Saved operations that did not apply again when the program was opened.
     replay_failed: AtomicUsize,
@@ -225,6 +236,157 @@ impl Program {
 
     pub(crate) fn locked(&self) -> MutexGuard<'_, BTreeMap<u64, String>> {
         self.locked.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// The current references.
+    pub(crate) fn refs(&self) -> Arc<RefIndex> {
+        self.refs.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// The current exports.
+    pub(crate) fn exports(&self) -> Arc<Vec<SymbolEntry>> {
+        self.exports
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// Entries of the functions that never return.
+    pub(crate) fn noreturn(&self) -> Arc<BTreeSet<u64>> {
+        self.noreturn
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// The name a function at `at` gets when the log names none: the one discovery gave it,
+    /// else its symbol's (demangled, or from DWARF), else `FUN_<entry>`.
+    pub(crate) fn base_name(&self, at: u64) -> String {
+        if let Some(f) = self.discovered.get(at) {
+            return f.name.clone();
+        }
+        match self.loaded.functions.get(&at) {
+            Some(raw) => crate::symbols::default_name(&self.loaded, at, raw),
+            None => crate::discover::default_name(at),
+        }
+    }
+
+    /// Rebuilds what depends on the function table: the reference index (the bodies of the
+    /// current functions, plus code no function holds any more, which stays code as in Ghidra,
+    /// and addresses defined as code), the exports (a renamed function renames its export) and
+    /// the noreturn set (functions created or re-bounded since discovery are judged by the
+    /// propagation rule; the decompiler learns the changes).
+    pub(crate) fn reindex(&self) {
+        let funcs = self.funcs();
+        let (refs, noreturn_protos) = {
+            let edits = self.edits();
+            let insns = self.insns();
+            let mut loose: Vec<Instruction> = self.orphans.clone();
+            if !Arc::ptr_eq(&funcs, &self.discovered) || !edits.defined.is_empty() {
+                let data: Vec<(u64, u64)> = edits
+                    .defined
+                    .iter()
+                    .filter_map(|(a, d)| match d {
+                        Defined::Data { len, .. } => Some((*a, a + len)),
+                        Defined::Code => None,
+                    })
+                    .collect();
+                let is_data = |a: u64| data.iter().any(|(s, e)| *s <= a && a < *e);
+                let held = |a: u64| funcs.owner.contains_key(&a);
+                let gone = self
+                    .discovered
+                    .map
+                    .values()
+                    .filter(|d| funcs.get(d.entry).is_none_or(|f| f.insns != d.insns))
+                    .flat_map(|d| d.insns.iter().copied());
+                let defined_code = edits
+                    .defined
+                    .iter()
+                    .filter(|(_, d)| matches!(d, Defined::Code))
+                    .map(|(a, _)| *a);
+                let mut seen: BTreeSet<u64> = BTreeSet::new();
+                for a in gone.chain(defined_code) {
+                    if held(a) || is_data(a) || !seen.insert(a) {
+                        continue;
+                    }
+                    if let Some(i) = insns.get(&a) {
+                        loose.push(i.clone());
+                    }
+                }
+            }
+            let refs = RefIndex::build(&self.loaded, &funcs.map, &insns, &loose);
+            let protos: BTreeSet<u64> = edits
+                .protos
+                .iter()
+                .filter(|(_, p)| p.noreturn)
+                .map(|(a, _)| *a)
+                .collect();
+            (refs, protos)
+        };
+
+        // noreturn: the set found at load for unchanged bodies, the rule for changed ones
+        let unchanged = |f: &Func| {
+            self.discovered
+                .get(f.entry)
+                .is_some_and(|d| d.insns == f.insns)
+        };
+        let mut noreturn: BTreeSet<u64> = funcs
+            .map
+            .values()
+            .filter(|f| self.found_noreturn.contains(&f.entry) && unchanged(f))
+            .map(|f| f.entry)
+            .collect();
+        noreturn.extend(noreturn_protos.iter().filter(|a| funcs.get(**a).is_some()));
+        let changed: Vec<&Func> = funcs.map.values().filter(|f| !unchanged(f)).collect();
+        loop {
+            let mut grew = false;
+            for f in &changed {
+                if f.returns || noreturn.contains(&f.entry) {
+                    continue;
+                }
+                if f.tail_calls.iter().any(|(_, t)| !noreturn.contains(t)) {
+                    continue;
+                }
+                let calls_noreturn = f.insns.iter().any(|a| {
+                    refs.from(*a)
+                        .iter()
+                        .any(|r| r.kind == kraken_proto::XrefKind::Call && noreturn.contains(&r.to))
+                });
+                if calls_noreturn {
+                    noreturn.insert(f.entry);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+
+        let renamed = |a: u64| {
+            let f = funcs.get(a)?;
+            (f.name != self.base_name(a)).then(|| f.name.clone())
+        };
+        let exports = crate::symbols::exports(&self.loaded, &funcs.map, &renamed);
+
+        let before = self.noreturn();
+        {
+            let mut s = self.session();
+            for a in noreturn.difference(&before) {
+                let _ = s.set_noreturn(*a, true);
+            }
+            for a in before.difference(&noreturn) {
+                if funcs.get(*a).is_some() {
+                    let _ = s.set_noreturn(*a, false);
+                }
+            }
+        }
+        *self.refs.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(refs);
+        *self.exports.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(exports);
+        *self.noreturn.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(noreturn);
+        self.strings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
     }
 
     /// A snapshot of the current function table.
@@ -257,6 +419,7 @@ impl Program {
             signature: self.signature(f),
             fn_hash: Some(self.fn_hash(f)),
             completeness: Completeness::Complete,
+            mangled: self.mangled.get(&f.entry).cloned(),
         }
     }
 
@@ -267,9 +430,20 @@ impl Program {
         if let Some(p) = user {
             return Some(crate::ctypes::prototype(&p, &f.name, &|_| true));
         }
-        self.signatures()
+        let sig = self.signatures().get(&f.entry).cloned()?;
+        // the signature carries the name it was made with: the function's at the time
+        let base = self.base_name(f.entry);
+        let raw = self
+            .loaded
+            .functions
             .get(&f.entry)
-            .map(|s| crate::mutate::with_name(s, &f.name))
+            .cloned()
+            .unwrap_or_default();
+        Some(crate::mutate::renamed_signature(
+            &sig,
+            &[base.as_str(), raw.as_str()],
+            &f.name,
+        ))
     }
 
     /// Entries of the functions named `name`.
@@ -286,7 +460,7 @@ impl Program {
                     &self.loaded.image,
                     &self.loaded.blocks,
                     min_len,
-                    &self.refs.data_targets(),
+                    &self.refs().data_targets(),
                 ))
             })
             .clone()
@@ -304,11 +478,15 @@ impl Program {
         Ok(cache.get(&addr).cloned())
     }
 
-    /// The function name and the user label at `addr`, sorted as Ghidra lists them.
-    fn labels_at(funcs: &Funcs, edits: &Edits, addr: u64) -> Vec<String> {
+    /// The function name, the other symbol-table names (mangled ones) and the user label at
+    /// `addr`, sorted as Ghidra lists them.
+    fn labels_at(&self, funcs: &Funcs, edits: &Edits, addr: u64) -> Vec<String> {
         let mut labels = Vec::new();
         if let Some(f) = funcs.get(addr) {
             labels.push(f.name.clone());
+        }
+        if let Some(names) = self.symbol_labels.get(&addr) {
+            labels.extend(names.iter().cloned());
         }
         if let Some(l) = edits.labels.get(&addr) {
             labels.push(l.clone());
@@ -337,7 +515,7 @@ impl Program {
                 |a| self.mapped(a),
             ),
             comment: edits.listing_comment(i.addr),
-            labels: Self::labels_at(funcs, &edits, i.addr),
+            labels: self.labels_at(funcs, &edits, i.addr),
             flow: flow_kind(i.flow),
         }
     }
@@ -373,7 +551,7 @@ impl Program {
             mnemonic,
             operands,
             comment: edits.listing_comment(addr),
-            labels: Self::labels_at(funcs, &edits, addr),
+            labels: self.labels_at(funcs, &edits, addr),
             flow: FlowKind::Fallthrough,
         };
         Some((row, len))
@@ -571,7 +749,12 @@ fn build_program(
             format!("cannot read {}: {e}", path.display()),
         )
     })?;
-    let loaded = load(&data, spec.base.map(|b| b.0))?;
+    let mut loaded = load(&data, spec.base.map(|b| b.0))?;
+    if !config.use_symbols {
+        // a stripped binary has neither
+        loaded.debug = crate::dwarf::Debug::default();
+        loaded.code_symbols.clear();
+    }
     if let Some(a) = spec.arch.as_deref()
         && a != loaded.language.id
     {
@@ -600,18 +783,57 @@ fn build_program(
         loaded.image.clone(),
     )
     .map_err(native)?;
-    let Some(found) = discover(&loaded, &mut session, config.use_symbols, token).map_err(native)?
+    let Some(mut found) =
+        discover(&loaded, &mut session, config.use_symbols, token).map_err(native)?
     else {
         return Err(cancelled());
     };
+    // names as Ghidra shows them: from DWARF, else demangled; the symbol-table names stay as
+    // labels and as the mangled name
+    let raw_names: BTreeMap<u64, String> = found
+        .functions
+        .values()
+        .map(|f| (f.entry, f.name.clone()))
+        .collect();
+    let mut mangled_names: BTreeMap<u64, String> = BTreeMap::new();
+    let mut symbol_labels: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    for f in found.functions.values_mut() {
+        let raw = f.name.clone();
+        f.name = crate::symbols::default_name(&loaded, f.entry, &raw);
+        let linkage = loaded
+            .debug
+            .functions
+            .get(&f.entry)
+            .and_then(|d| d.linkage.clone())
+            .filter(|l| crate::demangle::is_mangled(l));
+        if let Some(m) = crate::demangle::mangled(&raw).or(linkage) {
+            mangled_names.insert(f.entry, m);
+        }
+        let others: Vec<String> = loaded
+            .code_symbols
+            .get(&f.entry)
+            .into_iter()
+            .flatten()
+            .filter(|n| **n != f.name)
+            .cloned()
+            .collect();
+        if !others.is_empty() {
+            symbol_labels.insert(f.entry, others);
+        }
+    }
     for f in found.functions.values() {
         session.add_function(f.entry, &f.name).map_err(native)?;
+        if f.noreturn {
+            // a renamed symbol is a new decompiler function
+            session.set_noreturn(f.entry, true).map_err(native)?;
+        }
     }
 
     // types: the base typedefs, then the prototypes of known library functions present here
+    // (by their symbol-table names)
     let mut by_name: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
-    for f in found.functions.values() {
-        by_name.entry(f.name.as_str()).or_default().push(f.entry);
+    for (entry, name) in &raw_names {
+        by_name.entry(name.as_str()).or_default().push(*entry);
     }
     let named = |n: &str| by_name.get(n).cloned().unwrap_or_default();
     let mut types = TypeModel::default();
@@ -626,10 +848,16 @@ fn build_program(
         .map(|f| f.entry)
         .collect();
     for src in crate::libc::PROTOTYPES {
-        let (name, proto) =
+        let (name, mut proto) =
             parse_prototype(src).map_err(|e| ProtoError::new(ErrorCode::Internal, e))?;
         if !by_name.contains_key(name.as_str()) {
             continue;
+        }
+        // the parameter names of the C library headers, as Ghidra shows them (`__format`)
+        for param in &mut proto.params {
+            if let Some(n) = param.name.as_mut().filter(|n| !n.starts_with("__")) {
+                n.insert_str(0, "__");
+            }
         }
         if proto.noreturn {
             noreturn.extend(named(&name));
@@ -639,6 +867,41 @@ fn build_program(
         }
     }
     drop(by_name);
+    let mut locked = signatures.clone();
+
+    // DWARF: its named types, then the prototypes of the functions it describes
+    for def in loaded.debug.types.iter().cloned() {
+        if kraken_engine::type_def_name(&def).is_some_and(crate::typestore::is_core) {
+            continue;
+        }
+        // a definition the decompiler refuses leaves the type out
+        let _ = types.define(def, &mut session, &|_| Vec::new());
+    }
+    // listed signatures show the type names as Ghidra does
+    let display = &loaded.debug.display;
+    let by_display: BTreeMap<&str, &str> = display
+        .iter()
+        .map(|(c, g)| (g.as_str(), c.as_str()))
+        .collect();
+    for (at, d) in &loaded.debug.functions {
+        let Some(f) = found.functions.get(at) else {
+            continue;
+        };
+        let known = |n: &str| types.knows(by_display.get(n).copied().unwrap_or(n));
+        let shown = crate::typestore::renamed_proto(&d.prototype, &|n| {
+            display.get(n).cloned().unwrap_or_else(|| n.to_string())
+        });
+        let decl = types.prototype_text(&d.prototype, PROTO_NAME);
+        if session.set_prototype(*at, &decl).is_err() {
+            continue;
+        }
+        if d.prototype.noreturn {
+            session.set_noreturn(*at, true).map_err(native)?;
+            noreturn.insert(*at);
+        }
+        signatures.insert(*at, signature(&shown, &f.name, &known));
+        locked.insert(*at, decl);
+    }
 
     let funcs = Arc::new(Funcs::new(found.functions));
     // straight-line code reached only through GOT slots (the lazy PLT entries)
@@ -655,9 +918,7 @@ fn build_program(
             }
         }
     }
-    let refs = RefIndex::build(&loaded, &funcs.map, &found.insns, &orphans);
     let imports = crate::symbols::imports(&loaded);
-    let exports = crate::symbols::exports(&loaded, &funcs.map);
     let info = ProgramInfo {
         arch: loaded.language.id.to_string(),
         format: "elf".into(),
@@ -666,27 +927,33 @@ fn build_program(
         size: data.len() as u64,
     };
     let stop = session.stop_flag();
-    Ok(Program {
+    let p = Program {
         info,
         loaded,
         discovered: funcs.clone(),
         funcs: RwLock::new(funcs),
         edits: Mutex::new(Edits::default()),
-        locked: Mutex::new(signatures.clone()),
+        locked: Mutex::new(locked),
         insns: Mutex::new(found.insns),
+        orphans,
         session: Mutex::new(session),
         stop,
         decompile_slot: tokio::sync::Mutex::new(()),
-        refs,
+        refs: RwLock::new(Arc::new(RefIndex::default())),
         imports,
-        exports,
+        exports: RwLock::new(Arc::new(Vec::new())),
+        symbol_labels,
+        mangled: mangled_names,
         strings: Mutex::new(BTreeMap::new()),
         types: Mutex::new(types),
         signatures: Mutex::new(signatures),
-        noreturn,
+        noreturn: RwLock::new(Arc::new(noreturn.clone())),
+        found_noreturn: noreturn,
         discovery_rounds: found.rounds,
         replay_failed: AtomicUsize::new(0),
-    })
+    };
+    p.reindex();
+    Ok(p)
 }
 
 /// What a state directory holds for one binary: the analysed signatures and the journal.
@@ -788,9 +1055,9 @@ impl InProcessEngine {
         let p = self.program()?;
         let pending = p.types().pending().map(str::to_string).collect();
         Ok(NativeStats {
-            noreturn: p.noreturn.iter().copied().collect(),
+            noreturn: p.noreturn().iter().copied().collect(),
             discovery_rounds: p.discovery_rounds,
-            references: p.refs.len(),
+            references: p.refs().len(),
             landing_pads: p.loaded.landing_pads.values().map(Vec::len).sum(),
             pending_types: pending,
             edits: p.edits().journal.len(),
@@ -903,14 +1170,19 @@ impl Loader for InProcessEngine {
             if let Some(dir) = &config.state_dir {
                 let saved = read_state(dir, &p.info.sha256);
                 p.signatures().extend(saved.signatures);
+                let replayed = !saved.entries.is_empty();
                 for entry in saved.entries {
                     let ok = match entry {
-                        Journaled::Op(op) => crate::mutate::apply(&p, &op).is_ok(),
+                        // one rebuild of the references at the end instead of one per edit
+                        Journaled::Op(op) => crate::mutate::apply_deferred(&p, &op).is_ok(),
                         Journaled::TypeDef(def) => crate::data::define(&p, def).is_ok(),
                     };
                     if !ok {
                         p.replay_failed.fetch_add(1, Ordering::Relaxed);
                     }
+                }
+                if replayed {
+                    p.reindex();
                 }
             }
             Ok(p)
