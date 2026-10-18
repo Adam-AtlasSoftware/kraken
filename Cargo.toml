@@ -15,3 +15,8 @@ serde_json = "1"
 schemars = "=1.2.3"
 thiserror = "2"
 kraken-proto = { path = "crates/kraken-proto", version = "0.0.0" }
+
+# Third-party crates build without debug info in dev builds: much smaller target/ and faster
+# links, while KRAKEN's own crates keep full debug info for stepping and variable inspection.
+[profile.dev.package."*"]
+debug = false
