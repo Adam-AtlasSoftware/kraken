@@ -5,6 +5,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use kraken_assist::ApiBackend;
+
+fn api(p: impl ChatProvider + 'static) -> ApiBackend {
+    ApiBackend::new(Arc::new(p))
+}
 use kraken_agent::{
     Cassette, CassetteEntry, ChatProvider, Fingerprint, FinishReason, ReplayProvider, StreamEvent,
 };
@@ -189,7 +194,7 @@ async fn a_compile_error_is_fed_back_and_the_second_attempt_is_a_new_version() {
         ],
         ..Cassette::default()
     };
-    let provider = ReplayProvider::new(cassette);
+    let provider = api(ReplayProvider::new(cassette));
     let store = Arc::new(RewriteStore::open_in_memory().expect("store"));
 
     let run = repair::run(
@@ -285,7 +290,7 @@ async fn only_failures_are_repaired_and_the_loop_is_bounded() {
     let task = task_for(&f);
 
     // A run that never passes stops at the bound.
-    let provider = ReplayProvider::scripted(vec![reply(&code("twice", "a"))]);
+    let provider = api(ReplayProvider::scripted(vec![reply(&code("twice", "a"))]));
     let calls = Arc::new(AtomicU32::new(0));
     let c2 = calls.clone();
     let run = repair::run(
@@ -379,7 +384,7 @@ async fn an_unusable_reply_is_an_error_first_and_an_attempt_later() {
         },
     ];
 
-    let provider = ReplayProvider::scripted(vec![garbage.clone()]);
+    let provider = api(ReplayProvider::scripted(vec![garbage.clone()]));
     let err = repair::run(&task, &provider, CancellationToken::new(), 3, |_a| async {
         Err(RewriteError::Cancelled)
     })
@@ -388,11 +393,11 @@ async fn an_unusable_reply_is_an_error_first_and_an_attempt_later() {
     assert!(matches!(err, RewriteError::Output(_)), "{err}");
 
     // Second reply unusable: the model is told and answers again.
-    let provider = ReplayProvider::scripted(vec![
+    let provider = api(ReplayProvider::scripted(vec![
         reply(&code("twice", "a")),
         garbage,
         reply(&code("twice", "a.wrapping_mul(2)")),
-    ]);
+    ]));
     let run = repair::run(
         &task,
         &provider,
@@ -429,7 +434,7 @@ async fn an_unusable_reply_is_an_error_first_and_an_attempt_later() {
 async fn a_cancelled_run_stops_before_asking_again() {
     let f = function("twice", 0x401000, "int twice(int a) { return a * 2; }");
     let task = task_for(&f);
-    let provider = ReplayProvider::scripted(vec![reply(&code("twice", "a"))]);
+    let provider = api(ReplayProvider::scripted(vec![reply(&code("twice", "a"))]));
     let cancel = CancellationToken::new();
     cancel.cancel();
     let err = repair::run(&task, &provider, cancel, 3, |_a| async {
@@ -731,7 +736,7 @@ fn stale_reason_ignores_functions_that_were_never_observed() {
 
 #[test]
 fn the_provider_is_an_ordinary_chat_provider() {
-    // Guards the trait-object use in the service: `run` takes `&dyn ChatProvider`.
+    // Guards the trait-object use: the API backend wraps an `Arc<dyn ChatProvider>`.
     let p: Arc<dyn ChatProvider> = Arc::new(ReplayProvider::scripted(vec![reply("x")]));
     assert_eq!(p.info().id, "replay");
 }

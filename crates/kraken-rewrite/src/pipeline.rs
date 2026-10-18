@@ -2,7 +2,7 @@
 //! verify (differential test against the original under emulation) -> record (a versioned
 //! [`RewriteUnit`]).
 
-use kraken_agent::ChatProvider;
+use kraken_assist::AssistBackend;
 use kraken_host::backend::CommandBackend;
 use kraken_registry::CallContext;
 use kraken_registry::commands::RewriteMode;
@@ -222,17 +222,17 @@ pub fn verify(
     )
 }
 
-/// Asks `provider` for a translation, verifies it, and stores the record when `store` is given.
+/// Asks `backend` for a translation, verifies it, and stores the record when `store` is given.
 pub async fn rewrite_and_verify(
     job: &RewriteJob,
-    provider: &dyn ChatProvider,
+    backend: &dyn AssistBackend,
     oracle: &mut FunctionOracle,
     opts: &DiffOptions,
     store: Option<&RewriteStore>,
     cancel: CancellationToken,
 ) -> Result<RewriteUnit, RewriteError> {
     let task = job.task();
-    let (out, reply) = task.run(provider, cancel).await?;
+    let (out, reply) = task.run(backend, cancel).await?;
     let provenance = Provenance {
         author: "model".into(),
         provider: Some(reply.provider.id.clone()),

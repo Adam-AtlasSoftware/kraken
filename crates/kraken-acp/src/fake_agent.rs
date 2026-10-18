@@ -25,6 +25,9 @@
 //! agent replays the tool calls and the answer the JSON file named by `FAKE_ACP_EVAL_ANSWERS`
 //! holds for that id.
 //!
+//! A prompt that starts with `KRAKEN text-only request.` is a text-only request (the rewrite
+//! pipeline): the agent answers with the reply `FAKE_ACP_COMPLETION_ANSWERS` holds for it.
+//!
 //! `FAKE_ACP_SCRIPT=kraken` makes every other prompt play the `kraken` turn.
 //! `FAKE_ACP_REQUIRE_AUTH=1` makes `session/new` fail with an authentication error.
 //! `FAKE_ACP_ALLOW_NO_MCP=1` lets `session/new` succeed without the KRAKEN MCP server (the
@@ -303,6 +306,7 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             }
             "die" => std::process::exit(7),
             "kraken" => self.kraken_turn(id),
+            _ if text.starts_with("KRAKEN text-only request.") => self.completion_turn(id, &text),
             _ if text.contains("<kraken-eval id=\"") => self.eval_turn(id, &text),
             _ if text.contains("<kraken-result>") => self.task_turn(id, &text),
             _ if std::env::var("FAKE_ACP_SCRIPT").as_deref() == Ok("kraken") => {
@@ -441,6 +445,73 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             "\n\nUnderstood, I did not run the command."
         })?;
         self.end(id, if cancelled { "cancelled" } else { "end_turn" })
+    }
+
+    /// A text-only request (the rewrite pipeline): the prompt starts with `KRAKEN text-only
+    /// request.` and the whole job is the reply text. The answer comes from the JSON file named
+    /// by `FAKE_ACP_COMPLETION_ANSWERS`: `[{"match": "text the prompt contains", "reply":
+    /// "text"}]`; the first entry whose `match` occurs in the prompt wins, and a prompt no entry
+    /// matches gets a reply with no answer block, as an agent that gave up would.
+    ///
+    /// `FAKE_ACP_COMPLETION_MISBEHAVE=<file>` makes the agent first ask for permission to write
+    /// a file and to run a command, like an agent that wants to "just build it"; it creates
+    /// `<file>` (the marker) for every request that is granted, and says so in its reply.
+    fn completion_turn(&mut self, id: &Value, prompt: &str) -> io::Result<()> {
+        if let Some(marker) = std::env::var_os("FAKE_ACP_COMPLETION_MISBEHAVE") {
+            for (i, (title, kind)) in [
+                ("Write translation.rs", "edit"),
+                ("Run cargo build", "execute"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (answer, cancelled) = self.ask(
+                    "session/request_permission",
+                    json!({
+                        "sessionId": SESSION_ID,
+                        "toolCall": {
+                            "toolCallId": format!("own{i}"),
+                            "title": title,
+                            "kind": kind,
+                            "rawInput": {"command": "cargo build"}
+                        },
+                        "options": [
+                            {"optionId": "allow", "name": "Allow once", "kind": "allow_once"},
+                            {"optionId": "reject", "name": "Deny", "kind": "reject_once"}
+                        ]
+                    }),
+                )?;
+                if answer["result"]["outcome"]["optionId"].as_str() == Some("allow") {
+                    let _ = std::fs::write(&marker, title);
+                }
+                if cancelled {
+                    return self.end(id, "cancelled");
+                }
+            }
+        }
+        let answers: Value = std::env::var_os("FAKE_ACP_COMPLETION_ANSWERS")
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(Value::Null);
+        let reply = answers
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|e| e["match"].as_str().is_some_and(|m| prompt.contains(m)))
+            .and_then(|e| e["reply"].as_str())
+            .unwrap_or("I could not work this out.")
+            .to_string();
+        let mut rest = reply.as_str();
+        while !rest.is_empty() {
+            let mut cut = rest.len().min(200);
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let (head, tail) = rest.split_at(cut);
+            self.chunk(head)?;
+            rest = tail;
+        }
+        self.end(id, "end_turn")
     }
 
     /// An evaluation task (`kraken eval`): the prompt names its task in

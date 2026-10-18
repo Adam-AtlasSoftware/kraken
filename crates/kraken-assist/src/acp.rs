@@ -24,13 +24,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use kraken_acp::{
-    AcpEvent, AcpHost, AgentProfile, AgentStatus, HostConfig, LaunchSpec, McpServerConfig,
+    AcpEvent, AcpHost, AgentProfile, AgentStatus, DenyAll, HostConfig, LaunchSpec, McpServerConfig,
     PermissionDecision, PermissionPolicy, PermissionRequest, Resolver, ToolCallChange,
     ToolCallInfo, TurnEnd,
 };
 use kraken_agent::{
-    AgentEvent, AgentRun, ApprovalDecision, ApprovalHandle, Message, ProviderInfo, StopReason,
-    Usage,
+    AgentError, AgentEvent, AgentRun, ApprovalDecision, ApprovalHandle, ChatRequest, Message,
+    ProviderInfo, StopReason, Usage,
 };
 use kraken_proto::sanitize;
 use kraken_registry::{CommandKind, Permission as RegPermission, Registry};
@@ -38,7 +38,9 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::backend::{AssistBackend, BackendInfo, BackendKind, Purpose, RunSpec};
+use crate::backend::{
+    AssistBackend, BackendInfo, BackendKind, Purpose, RunSpec, TextFuture, TextReply,
+};
 use crate::host::{CallRecord, HostStats, shape_output};
 
 /// How the assistant addresses the agent before the task or chat text.
@@ -50,6 +52,15 @@ and, only when asked, to change the project. Where the instructions below name a
 decompile or rename_symbol, they mean the KRAKEN tool. Do not read the binary or the project \
 files with shell commands or your own file tools, and do not run commands of your own unless the \
 person asks you to.";
+
+/// How a text-only request addresses the agent (see [`AssistBackend::complete_text`]). The fake
+/// agent of `kraken-acp` recognises the first sentence.
+pub const COMPLETION_PREAMBLE: &str = "\
+KRAKEN text-only request. You are used here as a plain text model: everything you need is in \
+this message. Do not use any tools. Do not read, write, create or delete files, do not run \
+commands, and do not build or test anything: KRAKEN builds and checks your answer itself, in \
+its own sandbox, and every request for permission to use your tools is denied. Reply with the \
+answer in exactly the format asked for below.";
 
 /// The agent the person chose, from the `[provider]` table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -488,6 +499,137 @@ impl AcpBackend {
     pub fn settings(&self) -> &AcpSettings {
         &self.settings
     }
+
+    /// A text-only request in a fresh session: no KRAKEN MCP server, an empty scratch directory
+    /// as the working directory, every permission request denied. The reply is what the agent
+    /// said; whatever it did or tried to do besides is not used.
+    async fn complete(
+        &self,
+        req: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<TextReply, AgentError> {
+        let fail = |m: String| AgentError::Provider(m);
+        if self.shared.closed.load(Ordering::SeqCst) {
+            return Err(fail("the assistant was closed".into()));
+        }
+        let scratch = tempfile::Builder::new()
+            .prefix("kraken-agent-text-")
+            .tempdir()
+            .map_err(|e| {
+                fail(format!(
+                    "cannot make a scratch directory for the agent: {e}"
+                ))
+            })?;
+        let mut cfg = HostConfig::new(
+            self.settings.profile.clone(),
+            self.settings.launch.clone(),
+            scratch.path().to_path_buf(),
+            None,
+        );
+        cfg.permission = PermissionPolicy::Handler(Arc::new(DenyAll));
+        cfg.parent_env = self.settings.parent_env.clone();
+        cfg.start_timeout = self.settings.start_timeout;
+        let started = tokio::select! {
+            r = AcpHost::start(cfg) => r,
+            () = cancel.cancelled() => return Err(AgentError::Cancelled),
+        };
+        let (host, mut rx) = started.map_err(|e| fail(e.to_string()))?;
+
+        let prompt = compose_completion(&req);
+        let mut text = String::new();
+        let mut denied = 0usize;
+        let mut own_calls = 0usize;
+        let mut cancelled = false;
+        let mut absorb = |ev: AcpEvent| match ev {
+            AcpEvent::Started { agent, .. } => {
+                if let Some(m) = agent.model {
+                    *lock(&self.shared.model) = Some(m);
+                }
+            }
+            AcpEvent::AgentText { text: t } => text.push_str(&t),
+            AcpEvent::ToolCall(_) => own_calls += 1,
+            AcpEvent::PermissionRequested(_) => denied += 1,
+            AcpEvent::Info { kind } => {
+                if let Some(w) = kind.strip_prefix("warning: ") {
+                    lock(&self.shared.notes).push(w.to_string());
+                }
+            }
+            _ => {}
+        };
+        let result = {
+            let fut = host.prompt(&prompt);
+            tokio::pin!(fut);
+            loop {
+                tokio::select! {
+                    Some(ev) = rx.recv() => absorb(ev),
+                    () = cancel.cancelled(), if !cancelled => {
+                        cancelled = true;
+                        let _ = host.cancel();
+                    }
+                    res = &mut fut => break res,
+                }
+            }
+        };
+        while let Ok(ev) = rx.try_recv() {
+            absorb(ev);
+        }
+        host.shutdown().await;
+        drop(scratch);
+        if denied > 0 || own_calls > 0 {
+            lock(&self.shared.notes).push(format!(
+                "{} was given a text-only request but tried to use its own tools ({own_calls} \
+                 calls, {denied} permission requests); every request was denied and nothing it \
+                 did was kept",
+                self.settings.profile.display_name
+            ));
+        }
+        if cancelled {
+            return Err(AgentError::Cancelled);
+        }
+        match result {
+            Ok(end) => match stop_for(end) {
+                (StopReason::Completed | StopReason::TokenBudget | StopReason::MaxSteps, None) => {}
+                (StopReason::Cancelled, _) => return Err(AgentError::Cancelled),
+                (_, why) => {
+                    return Err(fail(why.unwrap_or("the agent stopped early").to_string()));
+                }
+            },
+            Err(e) => return Err(fail(e.to_string())),
+        }
+        if text.trim().is_empty() {
+            return Err(fail("the agent returned no text".into()));
+        }
+        Ok(TextReply {
+            text,
+            usage: Usage::default(),
+            provider: self.provider_info(),
+        })
+    }
+}
+
+/// The prompt of a text-only request: the fixed instructions, then the request's system text and
+/// messages (a conversation is shown with who said what, as a fresh agent session has no memory).
+fn compose_completion(req: &ChatRequest) -> String {
+    let mut out = String::from(COMPLETION_PREAMBLE);
+    if !req.system.trim().is_empty() {
+        out.push_str("\n\n");
+        out.push_str(req.system.trim());
+    }
+    out.push_str("\n\n---\n\n");
+    let single = req.messages.len() == 1;
+    let mut parts: Vec<String> = Vec::new();
+    for m in &req.messages {
+        match m {
+            Message::User { content } if single => parts.push(content.clone()),
+            Message::User { content } => parts.push(format!("Request:\n{content}")),
+            Message::Assistant { content, .. } if !content.trim().is_empty() => {
+                parts.push(format!("Your earlier answer:\n{content}"));
+            }
+            _ => {}
+        }
+    }
+    out.push_str(&parts.join("\n\n"));
+    out
 }
 
 impl AssistBackend for AcpBackend {
@@ -509,6 +651,10 @@ impl AssistBackend for AcpBackend {
             supports_tools: true,
             context_window: None,
         }
+    }
+
+    fn complete_text(&self, req: ChatRequest, cancel: CancellationToken) -> TextFuture<'_> {
+        Box::pin(self.complete(req, cancel))
     }
 
     fn start(&self, spec: RunSpec) -> AgentRun {

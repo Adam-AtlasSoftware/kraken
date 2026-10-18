@@ -40,7 +40,9 @@ pub mod task;
 pub mod unit;
 
 pub use error::RewriteError;
-pub use service::{ConfigProvider, FixedProvider, ProviderSource, RewriteConfig, RewriteService};
+pub use service::{
+    BackendSource, ConfigBackend, FixedBackend, FixedProvider, RewriteConfig, RewriteService,
+};
 
 /// The runtime shim ([`rt`]) as source text: the program crate's `src/rt.rs`.
 pub const RT_SOURCE: &str = include_str!("runtime/rt.rs");

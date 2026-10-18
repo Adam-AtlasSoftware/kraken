@@ -32,7 +32,8 @@ pub use acp::{
 };
 pub use assistant::{Assistant, ResultTagFilter, TaskResult, ToolCallSummary};
 pub use backend::{
-    ApiBackend, AssistBackend, BackendInfo, BackendKind, Purpose, RunSpec, UnusedBackend,
+    ApiBackend, AssistBackend, BackendInfo, BackendKind, Purpose, RunSpec, TextFuture, TextReply,
+    UnusedBackend,
 };
 pub use error::AssistError;
 pub use glossary::{Arch, Glossary, GlossaryEntry, GlossaryKind, GlossaryMatch, MatchKind};
@@ -42,7 +43,8 @@ pub use output::{
     InterestingFunction, NameSuggestion, Outcome, Overview, SuggestedName, TaskOutput,
 };
 pub use provider::{
-    SAMPLES, load_provider_config, no_provider_message, provider_config_path, sample_config,
+    SAMPLES, load_provider_config, load_rewrite_config, no_provider_message, provider_config_path,
+    sample_config, text_backend, text_backend_from_config,
 };
 pub use tasks::{AutoNameOptions, Budget, SelectionKind, Task, TaskKind};
 

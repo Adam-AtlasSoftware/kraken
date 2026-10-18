@@ -85,7 +85,22 @@ The translation is model-written code and it is built and run on the user's mach
 - It fails closed. A host that cannot enforce this (Landlock ABI 4 and a network barrier) does not run generated code at all: `rewrite_function` and the building part of `rewrite_export` answer `unsupported`. There is no flag to run unconfined from a command. macOS and Windows therefore cannot rewrite until they have their own confinement (App Sandbox, Job objects with restricted tokens). The commands are still defined there and say why they refuse.
 - Permission classes follow from this. `rewrite_function` is `mutating`, not `dangerous`, because the sandbox is enforced or the command does not run. It only adds artifacts to `rewrite.sqlite`; it never edits the program, so agents may run it. `rewrite_export` is `mutating` when it writes inside the project directory and asks for approval, exactly like a `dangerous` command, when the target is outside it (the approval request names the directory; a `..` in the path is refused outright). `rewrite_accept` is for users only; agents get `rejected_human_priority`.
 - Not done yet: a network namespace and a seccomp filter for the generated code, which should come from one `kraken-sandbox` crate shared with the Ghidra sidecar (ADR 0007), the inference backends and the ACP agents.
-- Model calls send decompiled code to the configured provider. A cloud provider sees the code of the functions being rewritten; a local one does not. This is the same as for the assistant (ADR 0008), and the commands' documentation says it.
+- Model calls send decompiled code to the configured provider (`[rewrite]`, else `[provider]`). A cloud provider or a terminal agent's service sees the code of the functions being rewritten; a local model does not. This is the same as for the assistant (ADR 0008), and the commands' documentation says it. A terminal agent used for rewriting gets no KRAKEN tools, runs in an empty scratch directory and has every permission request for its own tools denied (see "Model calls run on the assistant's backends").
+
+### Model calls run on the assistant's backends
+
+Every model call of the pipeline (a translation, a repair attempt, a spec, the reimplementation from a spec, a program-level repair) goes through `kraken_assist::AssistBackend`, the same trait the assistant runs on (ADR 0008, decision 94), not directly through a chat provider. `RewriteService` takes a `BackendSource`; the standard one reads `config.toml` on each call: the optional `[rewrite]` table when there is one, else `[provider]`. Both have the keys of a provider table, so either can be a model API (`ApiBackend`) or `kind = "terminal_agent"` (`AcpBackend`: Claude Code, Codex, Gemini CLI, any ACP agent).
+
+The trait gains one method for this, `complete_text(ChatRequest, cancel) -> TextReply`: one text-only request, no tools. The API backend calls the provider as before (the request is unchanged, so the checked-in cassettes still match). The terminal agent starts a fresh session per call, with these differences from an assistant task:
+
+- It runs in an empty scratch directory, not the project, and gets no KRAKEN MCP server: everything it needs is in the prompt, so it has no tool to call.
+- The prompt is a fixed preamble (a text-only request; do not use tools, files or commands; KRAKEN builds and checks the answer itself) followed by the same system text and user message a model gets. The agent returns the translation in the existing result format and KRAKEN parses it like any other reply.
+- Permission is `DenyAll`: a request to use the agent's own tools (write a file, run the build) is answered "reject" without asking anyone, counted, and reported as a note. The ACP client already declines file reads and writes the agent asks of KRAKEN. Only KRAKEN builds and tests, in the sandbox above; the agent never does.
+- A refusal, a failed start, a cancelled job or an empty reply are errors of the model call (`RewriteError::Provider`); an unusable reply is handled as before (a failure of the attempt, then the repair loop).
+
+A unit records the provider id and model of whoever answered (for an agent, the agent id and the model it reported), so provenance, specs and the export manifest are unchanged. The agent can still use whatever its own settings allow without asking permission; that is the same limit as for the assistant, and the empty scratch directory is what keeps the project out of reach.
+
+Tests: `kraken-rewrite/tests/acp_backend.rs` runs `rewrite_function` (also with a repair attempt and in spec mode) and `rewrite_program` with the fake ACP agent answering with the reference translations, and checks that an agent that asks to write a file and run `cargo build` is refused both; `kraken-assist/tests/backends.rs` covers the text request on both backends and the `[rewrite]` precedence. The cassette tests are unchanged apart from wrapping their provider in `ApiBackend`.
 
 ### Where the pieces live
 
@@ -202,6 +217,10 @@ The Rewrite tab has two sections (task R4): the per-function one and "Whole prog
 - A passing unit is only as good as its inputs. Struct-heavy and stateful functions need curated or harvested inputs before their verdicts mean much; the plan flags make the known gaps visible.
 
 ## Alternatives considered
+
+- **Rewriting only against `ChatProvider`.** The first version did, which left Claude Code and the other terminal agents out of the pipeline (`ConfigProvider` refused a `terminal_agent` table). Running on `AssistBackend` costs one trait method and keeps a single configuration.
+- **Letting the agent use KRAKEN's tools or build the code itself.** A terminal agent could read the program through MCP and iterate with its own compiler. Refused: the verdict must come from KRAKEN's oracle and sandbox, the prompts must be the same on every backend so results are comparable, and an agent that builds on its own is outside the confinement.
+- **One long agent session for a program.** Cheaper to start, but the context would grow with every function and a poisoned earlier reply could steer later ones. A fresh session per call keeps requests independent, as they are for a model API; the start-up cost is paid per call.
 
 - **One generic `artifact` table in the project database now.** Matches decision 46 literally, but couples the rewrite schema to `kraken-model` while that is changing, and the generic shape has no second user yet.
 - **Commands registered by `kraken-rewrite`, or the registry depending on it.** See above: a cycle or a surface that can forget.

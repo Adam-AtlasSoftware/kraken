@@ -13,7 +13,7 @@
 
 use std::future::Future;
 
-use kraken_agent::ChatProvider;
+use kraken_assist::AssistBackend;
 use kraken_registry::commands::UnitStatus;
 use tokio_util::sync::CancellationToken;
 
@@ -184,7 +184,7 @@ impl RepairRun {
 /// reply and asked again.
 pub async fn run<F, Fut>(
     task: &RewriteTask,
-    provider: &dyn ChatProvider,
+    backend: &dyn AssistBackend,
     cancel: CancellationToken,
     max_attempts: u32,
     mut check: F,
@@ -201,7 +201,7 @@ where
             return Err(RewriteError::Cancelled);
         }
         let reply: ModelReply =
-            crate::task::complete_text(provider, task.request(), cancel.clone()).await?;
+            crate::task::complete_text(backend, task.request(), cancel.clone()).await?;
         let output = match task.parse(&reply.text) {
             Ok(o) => o,
             Err(e @ RewriteError::Output(_)) if n > 1 => {

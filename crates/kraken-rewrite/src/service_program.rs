@@ -77,7 +77,7 @@ struct ProgramRun<'a> {
     /// Functions whose address a function takes (see `collect::address_taken`).
     taken: BTreeMap<u64, BTreeSet<u64>>,
     entry_addr: u64,
-    provider: Arc<dyn ChatProvider>,
+    backend: Arc<dyn AssistBackend>,
     oracle: OracleThread,
     opts: DiffOptions,
     max_attempts: u32,
@@ -367,8 +367,8 @@ impl RewriteService {
         };
 
         // 2. Translate, callees first.
-        let provider = self.providers.provider()?;
-        let provider_info = provider.info();
+        let backend = self.backends.backend()?;
+        let provider_info = backend.provider_info();
         let defaults = DiffOptions::default();
         let opts = DiffOptions {
             seed: args.seed.unwrap_or(defaults.seed),
@@ -385,7 +385,7 @@ impl RewriteService {
             plan: plan.clone(),
             taken,
             entry_addr,
-            provider,
+            backend,
             oracle: OracleThread::spawn(binary_path.clone(), self.cfg.oracle.clone()),
             opts: opts.clone(),
             max_attempts: args.max_attempts.unwrap_or(self.cfg.max_attempts),
@@ -726,7 +726,7 @@ impl RewriteService {
                 work,
                 &pc.dir,
                 &pc.binary_path.display().to_string(),
-                pc.provider.as_ref(),
+                pc.backend.as_ref(),
                 &pc.oracle,
                 None,
             )

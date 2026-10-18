@@ -622,3 +622,249 @@ async fn cancelling_stops_a_terminal_agent_task() {
         .await;
     assert_eq!(r.stop, StopReason::Cancelled);
 }
+
+// ----- text-only requests (the rewrite pipeline's model calls) -----
+
+fn text_request(user: &str) -> kraken_agent::ChatRequest {
+    kraken_agent::ChatRequest {
+        system: "SYSTEM-RULES".into(),
+        messages: vec![Message::user(user)],
+        tools: Vec::new(),
+        max_tokens: Some(100),
+        temperature: Some(0.0),
+    }
+}
+
+fn answers_file(rig: &Rig, entries: &Value) -> String {
+    let path = rig.tmp.path().join("answers.json");
+    std::fs::write(&path, entries.to_string()).expect("answers");
+    path.to_string_lossy().into_owned()
+}
+
+#[tokio::test]
+async fn a_text_request_on_a_model_api_returns_the_reply_text() {
+    let backend = ApiBackend::new(Arc::new(ReplayProvider::scripted(vec![say("the reply")])));
+    let r = backend
+        .complete_text(text_request("hello"), CancellationToken::new())
+        .await
+        .expect("reply");
+    assert_eq!(r.text, "the reply");
+    assert_eq!(r.provider.id, "replay");
+}
+
+#[tokio::test]
+async fn a_text_request_on_a_terminal_agent_is_tool_free_and_its_permission_requests_are_denied() {
+    let rig = rig().await;
+    let record = rig.tmp.path().join("text.jsonl");
+    let marker = rig.tmp.path().join("agent-wrote-something");
+    let answers = answers_file(
+        &rig,
+        &json!([{"match": "translate this", "reply": "<kraken-rust>fn x() {}</kraken-rust>"}]),
+    );
+    let backend = acp(
+        &rig,
+        &[
+            ("FAKE_ACP_RECORD", record.to_str().expect("utf8")),
+            ("FAKE_ACP_ALLOW_NO_MCP", "1"),
+            ("FAKE_ACP_COMPLETION_ANSWERS", answers.as_str()),
+            (
+                "FAKE_ACP_COMPLETION_MISBEHAVE",
+                marker.to_str().expect("utf8"),
+            ),
+        ],
+    );
+    let r = backend
+        .complete_text(
+            text_request("please translate this"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("reply");
+    assert_eq!(r.text, "<kraken-rust>fn x() {}</kraken-rust>");
+    assert_eq!(r.provider.id, "fake");
+
+    // The agent asked to write a file and to run a command; both were denied.
+    assert!(!marker.exists(), "a permission request was granted");
+    let notes = backend.take_notes();
+    assert!(
+        notes.iter().any(|n| n.contains("2 permission requests")),
+        "{notes:?}"
+    );
+
+    let log = std::fs::read_to_string(&record).expect("record");
+    let events: Vec<Value> = log
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let new = events
+        .iter()
+        .find(|v| v["method"] == "session/new")
+        .expect("session/new");
+    // No KRAKEN tools, and not in the project directory.
+    assert_eq!(new.pointer("/params/mcpServers"), Some(&json!([])));
+    let cwd = new["params"]["cwd"].as_str().expect("cwd");
+    assert!(
+        !cwd.starts_with(rig.tmp.path().to_str().expect("utf8")),
+        "{cwd}"
+    );
+    let prompt = events
+        .iter()
+        .find(|v| v["method"] == "session/prompt")
+        .and_then(|v| v.pointer("/params/prompt/0/text"))
+        .and_then(Value::as_str)
+        .expect("prompt");
+    assert!(prompt.starts_with(kraken_assist::acp::COMPLETION_PREAMBLE));
+    assert!(prompt.contains("SYSTEM-RULES") && prompt.ends_with("please translate this"));
+    backend.close();
+}
+
+#[tokio::test]
+async fn a_text_request_that_cannot_start_or_is_cancelled_is_an_error() {
+    let rig = rig().await;
+    let backend = acp(
+        &rig,
+        &[
+            ("FAKE_ACP_REQUIRE_AUTH", "1"),
+            ("FAKE_ACP_ALLOW_NO_MCP", "1"),
+        ],
+    );
+    let err = backend
+        .complete_text(text_request("x"), CancellationToken::new())
+        .await
+        .expect_err("cannot start");
+    assert!(err.to_string().contains("sign in"), "{err}");
+
+    let backend = acp(&rig, &[("FAKE_ACP_ALLOW_NO_MCP", "1")]);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let err = backend
+        .complete_text(text_request("x"), cancel)
+        .await
+        .expect_err("cancelled");
+    assert!(matches!(err, kraken_agent::AgentError::Cancelled), "{err}");
+}
+
+// ----- the `[rewrite]` override and terminal agents chosen by config -----
+
+fn config_env(root: &Path) -> impl Fn(&str) -> Option<OsString> + use<> {
+    let root = root.to_path_buf();
+    move |k| match k {
+        "KRAKEN_CONFIG" => Some(root.join("config.toml").into_os_string()),
+        "HOME" | "XDG_DATA_HOME" => Some(root.join("home").into_os_string()),
+        "PATH" => Some(OsString::from("/usr/bin:/bin")),
+        _ => None,
+    }
+}
+
+const API_TABLE: &str =
+    "kind = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:9/v1\"\nmodel = \"m\"\n";
+const AGENT_TABLE: &str = "kind = \"terminal_agent\"\nagent = \"wrapped\"\n";
+
+fn backend_kind(root: &Path, config: &str) -> Result<BackendKind, String> {
+    std::fs::write(root.join("config.toml"), config).expect("config");
+    kraken_assist::text_backend_from_config(&config_env(root), &kraken_agent::EnvSecrets)
+        .map(|b| b.info().kind)
+        .map_err(|e| e.to_string())
+}
+
+#[tokio::test]
+async fn the_rewrite_table_overrides_the_provider_and_either_may_be_a_terminal_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::Builder::new()
+        .prefix("kraken-assist-textcfg-")
+        .tempdir()
+        .expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("home")).expect("home");
+    // A custom agent in agents.toml: a wrapper that gives the fake agent its answers.
+    let answers = root.join("answers.json");
+    std::fs::write(
+        &answers,
+        json!([{"match": "from config", "reply": "answered by the configured agent"}]).to_string(),
+    )
+    .expect("answers");
+    let wrapper = root.join("wrapped-agent.sh");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nFAKE_ACP_ALLOW_NO_MCP=1 FAKE_ACP_COMPLETION_ANSWERS={} exec {}\n",
+            answers.display(),
+            fake_agent().display()
+        ),
+    )
+    .expect("wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    std::fs::write(
+        root.join("agents.toml"),
+        format!(
+            "[[agent]]\nid = \"wrapped\"\nname = \"Wrapped fake\"\ncommand = \"{}\"\n",
+            wrapper.display()
+        ),
+    )
+    .expect("agents.toml");
+
+    // `[provider]` alone decides when there is no `[rewrite]`.
+    assert_eq!(
+        backend_kind(root, &format!("[provider]\n{API_TABLE}")),
+        Ok(BackendKind::Api)
+    );
+    assert_eq!(
+        backend_kind(root, &format!("[provider]\n{AGENT_TABLE}")),
+        Ok(BackendKind::TerminalAgent)
+    );
+    // `[rewrite]` wins in both directions.
+    assert_eq!(
+        backend_kind(
+            root,
+            &format!("[provider]\n{API_TABLE}\n[rewrite]\n{AGENT_TABLE}")
+        ),
+        Ok(BackendKind::TerminalAgent)
+    );
+    assert_eq!(
+        backend_kind(
+            root,
+            &format!("[provider]\n{AGENT_TABLE}\n[rewrite]\n{API_TABLE}")
+        ),
+        Ok(BackendKind::Api)
+    );
+    // `[rewrite]` alone is enough for the rewrite pipeline.
+    assert_eq!(
+        backend_kind(root, &format!("[rewrite]\n{AGENT_TABLE}")),
+        Ok(BackendKind::TerminalAgent)
+    );
+    // Nothing configured, a broken table, or an agent nobody set up say so.
+    let none = backend_kind(root, "").expect_err("no provider");
+    assert!(none.contains("no AI provider"), "{none}");
+    let bad = backend_kind(
+        root,
+        &format!("[provider]\n{API_TABLE}\n[rewrite]\nkind = \"nope\"\n"),
+    )
+    .expect_err("bad table");
+    assert!(bad.contains("[rewrite]"), "{bad}");
+    let unknown = backend_kind(
+        root,
+        "[rewrite]\nkind = \"terminal_agent\"\nagent = \"no-such-agent\"\n",
+    )
+    .expect_err("unknown agent");
+    assert!(unknown.contains("no-such-agent"), "{unknown}");
+
+    // The configured agent really answers a text request.
+    std::fs::write(
+        root.join("config.toml"),
+        format!("[provider]\n{API_TABLE}\n[rewrite]\n{AGENT_TABLE}"),
+    )
+    .expect("config");
+    let backend =
+        kraken_assist::text_backend_from_config(&config_env(root), &kraken_agent::EnvSecrets)
+            .expect("backend");
+    let r = backend
+        .complete_text(
+            text_request("a request from config"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("reply");
+    assert_eq!(r.text, "answered by the configured agent");
+    assert_eq!(r.provider.id, "wrapped");
+    backend.close();
+}

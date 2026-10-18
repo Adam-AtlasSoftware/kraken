@@ -2694,6 +2694,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "engine-fake",
+ "futures-util",
  "kraken-acp",
  "kraken-agent",
  "kraken-engine",
@@ -3018,6 +3019,7 @@ dependencies = [
  "futures-util",
  "icicle-cpu",
  "icicle-vm",
+ "kraken-acp",
  "kraken-agent",
  "kraken-assist",
  "kraken-engine",

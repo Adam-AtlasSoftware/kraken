@@ -9,6 +9,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use common::{config, corpus_bin};
 use engine_fake::{FakeEngine, FixtureFile};
+use kraken_assist::ApiBackend;
+
+fn api(p: impl ChatProvider + 'static) -> ApiBackend {
+    ApiBackend::new(Arc::new(p))
+}
 use kraken_agent::{
     AgentError, Cassette, CassetteEntry, ChatProvider, ChatRequest, Fingerprint, FinishReason,
     ReplayProvider, StreamEvent,
@@ -157,7 +162,7 @@ async fn registry_decompile_feeds_the_task_prompt() {
 #[tokio::test]
 #[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn cassette_backed_rewrite_of_every_target_verifies_and_is_stored() {
-    let provider = ReplayProvider::from_path(&cassette_path()).expect("cassette");
+    let provider = api(ReplayProvider::from_path(&cassette_path()).expect("cassette"));
     for t in targets() {
         let (r, j) = job(&t).await;
         let mut oracle = FunctionOracle::load(&corpus_bin(t.binary), &config()).expect("oracle");
@@ -261,7 +266,7 @@ async fn a_changed_prompt_misses_the_cassette_instead_of_returning_a_stale_answe
     let t = target("cmp_id").expect("target");
     let (_r, mut j) = job(&t).await;
     j.layout_notes.push_str("\nan extra note");
-    let provider = ReplayProvider::from_path(&cassette_path()).expect("cassette");
+    let provider = api(ReplayProvider::from_path(&cassette_path()).expect("cassette"));
     let err = j
         .task()
         .run(&provider, CancellationToken::new())
@@ -311,7 +316,7 @@ async fn malformed_model_output_is_an_error_not_a_unit() {
             .replace("{\"assumptions\": [], \"unsupported\": []}", "{nope}"),
     ] {
         let err = task
-            .run(&Canned(bad.clone()), CancellationToken::new())
+            .run(&api(Canned(bad.clone())), CancellationToken::new())
             .await
             .expect_err("bad output");
         assert!(
@@ -325,7 +330,7 @@ async fn malformed_model_output_is_an_error_not_a_unit() {
         t.reference.trim()
     );
     let (out, _) = task
-        .run(&Canned(fenced), CancellationToken::new())
+        .run(&api(Canned(fenced)), CancellationToken::new())
         .await
         .expect("fenced");
     assert!(out.rust_code.starts_with("// Reference translation"));
@@ -370,7 +375,7 @@ async fn function_spec_with_citations_is_accepted_and_every_citation_is_checked(
         &["vm_run", "push", "pop", "vm_fail"],
     )
     .await;
-    let provider = spec_cassette_provider(&task, md);
+    let provider = api(spec_cassette_provider(&task, md));
     let (spec, _) = task
         .run(&provider, CancellationToken::new())
         .await
@@ -399,7 +404,7 @@ async fn program_spec_covers_the_functions_given() {
         "skip_ws",
     ];
     let (_r, task) = spec_task("stripped_calc-O0", SpecScope::Program, &names).await;
-    let provider = spec_cassette_provider(&task, md);
+    let provider = api(spec_cassette_provider(&task, md));
     let (spec, _) = task
         .run(&provider, CancellationToken::new())
         .await
