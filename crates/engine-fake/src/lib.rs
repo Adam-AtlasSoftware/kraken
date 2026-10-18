@@ -76,7 +76,7 @@ mod engine;
 mod fixture;
 mod text;
 
-pub use engine::FakeEngine;
+pub use engine::{FAKE_STATE_FILE, FakeEngine};
 pub use fixture::{FixtureFile, FixtureFunction, Perturb, Recording};
 
 #[cfg(test)]

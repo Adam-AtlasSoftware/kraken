@@ -340,6 +340,10 @@ async fn edits_survive_a_crash_and_land_in_the_state_dir() {
     let stats = e.stats().await.expect("stats after the second restart");
     assert_eq!((stats.edits, stats.replay_failed), (3, 0));
     assert_eq!(e.save(&c).await.expect("same watermark"), mark);
+    assert_eq!(
+        e.current_checkpoint(&c).await.expect("checkpoint"),
+        Some(mark.clone())
+    );
     drop(e);
 
     // a fresh engine over the same directory has everything
@@ -348,6 +352,11 @@ async fn edits_survive_a_crash_and_land_in_the_state_dir() {
     };
     let stats = e.stats().await.expect("stats");
     assert_eq!((stats.edits, stats.replay_failed), (3, 0));
+    // what it loaded is named by the checkpoint the save returned (the host compares the two)
+    assert_eq!(
+        e.current_checkpoint(&c).await.expect("checkpoint"),
+        Some(mark)
+    );
     assert_eq!(
         e.get_function(&Locator::ram(CMP_ID), &c)
             .await

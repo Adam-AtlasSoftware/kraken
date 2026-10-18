@@ -559,7 +559,7 @@ impl AssistantSource for AgentSource<'_> {
     ) -> Result<Assistant, EvalError> {
         let project = prepared.project_dir.as_ref().and_then(|p| p.to_str());
         let mut stderr = std::io::stderr();
-        let engine = agent_backend(self.env, self.sm, &self.choice, project, &mut stderr)
+        let engine = agent_backend(self.env, self.sm, &self.choice, project, None, &mut stderr)
             .map_err(|e| EvalError::Backend(e.message))?;
         self.open
             .lock()

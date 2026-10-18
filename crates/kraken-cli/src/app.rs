@@ -1048,12 +1048,10 @@ async fn run_registry_command(
 }
 
 pub(crate) async fn save(session: &Session, err: &mut dyn Write) {
-    let Ok(engine) = session.engine() else {
+    let Ok(project) = session.project() else {
         return;
     };
-    if let Some(m) = engine.mutator()
-        && let Err(e) = m.save(&CancellationToken::new()).await
-    {
+    if let Err(e) = project.save(&CancellationToken::new()).await {
         emit(
             err,
             &format!("warning: saving the project failed: {}\n", e.message),

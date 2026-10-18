@@ -301,6 +301,115 @@ mod terminal_agent {
         );
         assert!(run.stdout.contains("Summary"), "{}", run.stdout);
     }
+
+    /// Without a daemon, the agent's own `kraken mcp` and this run share one session: the run
+    /// starts a private daemon and the agent's MCP server goes through it. Before, the agent's
+    /// server opened the project in a second session and the run, saving last, dropped the
+    /// agent's renames from the engine while the log marked them pushed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_a_daemon_the_agent_edits_in_the_runs_session_through_a_private_daemon() {
+        use kraken_engine::CancellationToken;
+        use kraken_proto::Locator;
+        use kraken_registry::Session;
+        use std::os::unix::fs::PermissionsExt;
+
+        let work = workdir();
+        let world = tempfile::tempdir().expect("tempdir");
+        let vars = select(world.path());
+        // the agent: the fake, which starts the MCP server it is given and renames through it
+        let record = world.path().join("acp.jsonl");
+        let calls = json!([{"name": "rename_symbol",
+                            "arguments": {"address": "0x401040", "new_name": "parse_args"}}]);
+        let script = world.path().join("agent.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nFAKE_ACP_RECORD='{}' FAKE_ACP_MCP_CALLS='{calls}' exec '{}' agents __fake-agent\n",
+                path_str(&record),
+                env!("CARGO_BIN_EXE_kraken")
+            ),
+        )
+        .expect("script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::write(
+            world.path().join("config/kraken/agents.toml"),
+            format!(
+                "[[agent]]\nid = \"fake\"\nname = \"Fake agent\"\ncommand = \"{}\"\n",
+                path_str(&script)
+            ),
+        )
+        .expect("agents.toml");
+        let runtime = vars
+            .iter()
+            .find(|(k, _)| *k == "KRAKEN_RUNTIME_DIR")
+            .map(|(_, v)| v.clone())
+            .expect("runtime dir");
+        let factory = Arc::new(StatefulFactory);
+        let env = CliEnv {
+            factory: factory.clone(),
+            ..fresh_env(KrakenConfig::default(), vars)
+        };
+        let dir = work.tmp.path().join("p");
+        let run = kraken(
+            &env,
+            &[
+                "auto",
+                &path_str(&work.binary),
+                "--project-dir",
+                &path_str(&dir),
+                "--names",
+            ],
+        )
+        .await;
+        assert_eq!(run.code, 0, "{}\n{}", run.stdout, run.stderr);
+        assert!(run.stderr.contains("private one"), "{}", run.stderr);
+        assert!(
+            run.stdout.contains("mcp rename_symbol: ok"),
+            "{}\n{}",
+            run.stdout,
+            run.stderr
+        );
+
+        // session/new pointed the agent's MCP server at the run's private daemon
+        let text = std::fs::read_to_string(&record).expect("record");
+        let new = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .find(|m| m["method"] == "session/new")
+            .expect("session/new");
+        let server = &new["params"]["mcpServers"][0];
+        assert!(
+            server["args"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|x| x == "--daemon")),
+            "{server}"
+        );
+        let env_of = |k: &str| {
+            server["env"]
+                .as_array()
+                .and_then(|a| a.iter().find(|e| e["name"] == k))
+                .and_then(|e| e["value"].as_str())
+                .map(str::to_string)
+        };
+        let private = env_of("KRAKEN_RUNTIME_DIR").expect("runtime dir for the MCP server");
+        assert_ne!(private, runtime);
+        assert!(env_of("KRAKEN_NO_DAEMON").is_none(), "{server}");
+        // the private daemon is gone with the run
+        assert!(!Path::new(&private).exists());
+
+        // reopened from disk: the engine has the agent's rename, and the state needed no repair
+        let s = Session::open(&dir, factory).await.expect("reopen");
+        let f = s
+            .engine()
+            .expect("engine")
+            .function_lister()
+            .expect("lister")
+            .get_function(&Locator::ram(0x401040), &CancellationToken::new())
+            .await
+            .expect("function");
+        assert_eq!(f.name, "parse_args");
+        assert!(s.project().expect("project").resync_report().is_none());
+    }
 }
 
 // ---- the rewrite path, on a corpus program with a cassette -------------------------------------

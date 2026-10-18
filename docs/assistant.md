@@ -253,7 +253,7 @@ kraken auto ./a.out --names
 kraken auto ./a.out --project-dir ~/re/a --engine native --names --rewrite --accept-verified
 ```
 
-Progress lines go to standard error (`[2/4] creating the project and analysing it`, then the jobs' own progress). The summary goes to standard output: program and format, project directory, function count, how many functions the assistant renamed, the rewrite verdict (`pass` means every test case agreed) and where the Rust crate and the export are. `--json` prints that summary as one object. The exit status is 0 when everything you asked for worked and the rewrite verdict is `pass`, 4 when the verdict is not `pass` or the export could not be made, and the usual codes for errors. `--names` needs a provider like the other assistant commands and checks for one before it creates anything. With a terminal agent, leave the daemon on (the default): the agent's own `kraken mcp` process opens the project too.
+Progress lines go to standard error (`[2/4] creating the project and analysing it`, then the jobs' own progress). The summary goes to standard output: program and format, project directory, function count, how many functions the assistant renamed, the rewrite verdict (`pass` means every test case agreed) and where the Rust crate and the export are. `--json` prints that summary as one object. The exit status is 0 when everything you asked for worked and the rewrite verdict is `pass`, 4 when the verdict is not `pass` or the export could not be made, and the usual codes for errors. `--names` needs a provider like the other assistant commands and checks for one before it creates anything. A terminal agent edits through its own `kraken mcp` process, which must share the run's session: with the daemon (the default) it does, and without one (`--no-daemon`, or no `krakend` to start) `kraken auto` runs a private daemon inside its own process for the run, points the agent's tool server at it (`private one` on stderr says so) and stops it at the end, which saves the project.
 
 ### `kraken glossary <term>`
 
@@ -302,7 +302,7 @@ The GUI has one **Assistant** tab (next to Hex) and the same features whichever 
 - **Automate.** *Automate with the assistant...* in the command palette lets the assistant work through the flow on its own; see above.
 - **Learn mode.** The switch in the top bar adds a "?" to panel tabs and explains terms and assembly instructions on hover.
 
-With the daemon (the default) a terminal agent gets `kraken mcp --daemon --project <dir>`, so its edits reach the window as they happen, with the usual notification and Undo. With `--no-daemon` the agent uses its own session on the project and the window refreshes when each turn ends. Changing the project ends the agent's session; the next question starts a new one.
+With the daemon (the default) a terminal agent gets `kraken mcp --daemon --project <dir>`, so its edits reach the window as they happen, with the usual notification and Undo. With `--no-daemon` the window holds the project in its own process, and a project can be open in only one KRAKEN process at a time: the agent's own `kraken mcp --project <dir>` is refused with a message saying so. Use the daemon for terminal agents. Changing the project ends the agent's session; the next question starts a new one.
 
 ## How it stays safe
 

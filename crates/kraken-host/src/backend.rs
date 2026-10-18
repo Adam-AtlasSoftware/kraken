@@ -113,6 +113,9 @@ impl LocalBackend {
                     p.epoch_mismatch().join(", ")
                 ));
             }
+            if let Some(r) = p.resync_report() {
+                self.warnings.push(r.message());
+            }
         }
         Ok(())
     }

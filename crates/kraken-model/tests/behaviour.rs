@@ -37,6 +37,23 @@ fn draft(op: LogOp, author: Author, run: Option<&str>, reads: &[(&str, u64)]) ->
 const NAME: &str = "native:ram:0x401000:name";
 
 #[test]
+fn pushed_and_settled_entries_follow_the_sync_state() {
+    let mut s = Store::open_in_memory().unwrap();
+    let mut ids = Vec::new();
+    for (i, name) in ["a", "b", "c"].into_iter().enumerate() {
+        let op = rename(0x401000 + i as u64 * 0x10, None, name);
+        ids.push(s.append(draft(op, Author::user("u"), None, &[])).unwrap());
+    }
+    s.mark_pushed(ids[0]).unwrap();
+    s.mark_engine_rejected(ids[1], "no").unwrap();
+    assert_eq!(s.pushed_entry_ids().unwrap(), vec![ids[0]]);
+    let pushed = s.pushed_entries().unwrap();
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(pushed[0].id, ids[0]);
+    assert_eq!(s.settled_entry_ids().unwrap(), vec![ids[0], ids[1]]);
+}
+
+#[test]
 fn key_format() {
     assert_eq!(op_key(&rename(0x401000, None, "x")).unwrap(), NAME);
     let c = LogOp::SetComment {

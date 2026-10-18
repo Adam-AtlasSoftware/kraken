@@ -37,9 +37,13 @@
 //! `FAKE_ACP_ALLOW_NO_MCP=1` lets `session/new` succeed without the KRAKEN MCP server (the
 //! settings' connection test starts agents without KRAKEN's tools).
 //! `FAKE_ACP_RECORD=<file>` appends every message received, one JSON document per line.
+//! `FAKE_ACP_MCP_CALLS=<json>` (an array of `{"name", "arguments"}`) makes every prompt first
+//! start the KRAKEN MCP server `session/new` carried, as a real agent does, call those tools
+//! through it and report each result in a chunk (`mcp <name>: ok|error <text>`).
 
 use std::fs::OpenOptions;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
 
@@ -252,12 +256,108 @@ impl<R: BufRead, W: Write> Fake<R, W> {
         )
     }
 
+    /// Runs the tool calls of `FAKE_ACP_MCP_CALLS` through the KRAKEN MCP server of the session.
+    fn mcp_calls(&mut self) -> io::Result<()> {
+        let Some(spec) = std::env::var_os("FAKE_ACP_MCP_CALLS") else {
+            return Ok(());
+        };
+        let calls: Vec<Value> = serde_json::from_str(&spec.to_string_lossy())
+            .map_err(|e| io::Error::other(format!("FAKE_ACP_MCP_CALLS: {e}")))?;
+        let server = self
+            .mcp_servers
+            .as_array()
+            .and_then(|a| {
+                a.iter()
+                    .find(|s| s.get("name").and_then(Value::as_str) == Some("kraken"))
+            })
+            .cloned()
+            .ok_or_else(|| io::Error::other("no kraken MCP server in session/new"))?;
+        let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+        let mut cmd = Command::new(text(&server["command"]));
+        for a in server["args"].as_array().into_iter().flatten() {
+            cmd.arg(text(a));
+        }
+        for e in server["env"].as_array().into_iter().flatten() {
+            cmd.env(text(&e["name"]), text(&e["value"]));
+        }
+        if !self.cwd.is_empty() {
+            cmd.current_dir(&self.cwd);
+        }
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("no stdin"))?;
+        let mut stdout = BufReader::new(
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::other("no stdout"))?,
+        );
+        let mut rpc = move |msg: Value| -> io::Result<Value> {
+            writeln!(stdin, "{msg}")?;
+            stdin.flush()?;
+            let Some(want) = msg.get("id").cloned() else {
+                return Ok(Value::Null);
+            };
+            loop {
+                let mut line = String::new();
+                if stdout.read_line(&mut line)? == 0 {
+                    return Err(io::Error::other("the MCP server closed its output"));
+                }
+                if let Ok(v) = serde_json::from_str::<Value>(&line)
+                    && v.get("id") == Some(&want)
+                {
+                    return Ok(v);
+                }
+            }
+        };
+        rpc(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "fake-acp-agent", "version": "1.0"}
+            }}),
+        )?;
+        rpc(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
+        let mut lines = Vec::new();
+        for (i, call) in calls.iter().enumerate() {
+            let name = text(&call["name"]);
+            let r = rpc(
+                json!({"jsonrpc": "2.0", "id": 2 + i, "method": "tools/call", "params": {
+                    "name": name,
+                    "arguments": call.get("arguments").cloned().unwrap_or_else(|| json!({}))
+                }}),
+            )?;
+            let failed = r.get("error").is_some()
+                || r.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
+            let detail = r
+                .pointer("/result/content/0/text")
+                .or_else(|| r.pointer("/error/message"))
+                .map(text)
+                .unwrap_or_default();
+            let status = if failed { "error" } else { "ok" };
+            lines.push(format!("mcp {name}: {status} {detail}\n"));
+        }
+        drop(rpc);
+        let _ = child.wait();
+        for l in lines {
+            self.chunk(&l)?;
+        }
+        Ok(())
+    }
+
     fn prompt(&mut self, id: &Value, params: &Value) -> io::Result<()> {
         let text = params
             .pointer("/prompt/0/text")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+        self.mcp_calls()?;
         match text.as_str() {
             "report" => {
                 let report = json!({
