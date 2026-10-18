@@ -262,7 +262,9 @@ async fn rewrite_function_on_a_terminal_agent_is_verified_and_the_agent_cannot_a
     assert!(!granted, "a permission request of the agent was granted");
     let notes = r.backend.take_notes();
     assert!(
-        notes.iter().any(|n| n.contains("every request was denied")),
+        notes
+            .iter()
+            .any(|n| n.contains("every permission request was denied")),
         "{notes:?}"
     );
 
@@ -474,7 +476,9 @@ async fn rewrite_program_on_a_terminal_agent_matches_the_original() {
     assert!(!granted, "a permission request of the agent was granted");
     let notes = r.backend.take_notes();
     assert!(
-        notes.iter().any(|n| n.contains("every request was denied")),
+        notes
+            .iter()
+            .any(|n| n.contains("every permission request was denied")),
         "{notes:?}"
     );
     // The agent never wrote into the project: only KRAKEN's own files are there.
