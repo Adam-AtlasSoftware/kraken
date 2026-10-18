@@ -433,10 +433,15 @@ fn low_on_memory() -> bool {
 
 /// The address ranges of all bodies, merged into ascending disjoint ranges.
 fn coverage(functions: &BTreeMap<u64, Func>) -> Vec<(u64, u64)> {
-    let mut all: Vec<(u64, u64)> = functions
+    let all: Vec<(u64, u64)> = functions
         .values()
         .flat_map(|f| f.ranges.iter().copied())
         .collect();
+    merge_ranges(all)
+}
+
+/// Half-open ranges, sorted and merged where they overlap or touch.
+pub(crate) fn merge_ranges(mut all: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     all.sort_unstable();
     let mut merged: Vec<(u64, u64)> = Vec::with_capacity(all.len());
     for (s, e) in all {
@@ -449,7 +454,7 @@ fn coverage(functions: &BTreeMap<u64, Func>) -> Vec<(u64, u64)> {
 }
 
 /// Whether `addr` lies in one of the ascending disjoint half-open `ranges`.
-fn in_ranges(ranges: &[(u64, u64)], addr: u64) -> bool {
+pub(crate) fn in_ranges(ranges: &[(u64, u64)], addr: u64) -> bool {
     let i = ranges.partition_point(|(s, _)| *s <= addr);
     i > 0 && addr < ranges[i - 1].1
 }

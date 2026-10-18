@@ -78,9 +78,22 @@ fn scan_plain(image: &Image, blocks: &[MemoryBlock], min: usize) -> Vec<StringEn
         if b.space != "ram" || !b.initialized || b.perms.ends_with('x') {
             continue;
         }
-        let Ok(len) = usize::try_from(b.end.0 - b.start.0) else {
+        // only the file-backed bytes: the zero fill past them holds no strings (and a hostile
+        // header can make it gigabytes)
+        let backed = image
+            .segments
+            .iter()
+            .filter(|s| s.start < b.end.0 && b.start.0 < s.start.saturating_add(s.mem_size))
+            .map(|s| s.start.saturating_add(s.data.len() as u64))
+            .max()
+            .unwrap_or(b.start.0)
+            .clamp(b.start.0, b.end.0);
+        let Ok(len) = usize::try_from(backed - b.start.0) else {
             continue;
         };
+        if len == 0 {
+            continue;
+        }
         let mut bytes = vec![0u8; len];
         if !image.read(b.start.0, &mut bytes) {
             continue;

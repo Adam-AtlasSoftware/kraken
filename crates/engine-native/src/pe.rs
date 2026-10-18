@@ -25,7 +25,15 @@ use object::read::pe::{
 use object::read::{Object, ObjectSection, ObjectSymbol};
 use object::{FileKind, SymbolKind};
 
+use crate::discover::{in_ranges, merge_ranges};
 use crate::elf::{ExportSymbol, ImportSymbol, Language, Loaded, le_word};
+
+/// Largest image (`SizeOfImage`) the loader lays out; every section is cut to the image.
+const MAX_IMAGE: u64 = 1 << 30;
+/// Room above the image for the import stand-ins, so address sums cannot overflow.
+const ADDRESS_HEADROOM: u64 = 1 << 33;
+/// Most sections the loader takes (the Windows loader stops at 96).
+const MAX_SECTIONS: usize = 1024;
 
 fn bad(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
@@ -124,7 +132,7 @@ impl Rva<'_> {
         }
         for (va, vsize, off, raw) in &self.sections {
             let len = (*vsize).max(*raw);
-            if rva >= *va && rva < va + len {
+            if rva >= *va && u64::from(rva) < u64::from(*va) + u64::from(len) {
                 let at = (rva - va) as usize;
                 if at + n > *raw as usize {
                     return None;
@@ -174,25 +182,47 @@ fn load_pe<Pe: ImageNtHeaders>(
     let opt = nt.optional_header();
     let link_base = opt.image_base();
     let base = base_override.unwrap_or(link_base);
+    let image_size = u64::from(opt.size_of_image());
+    if image_size > MAX_IMAGE {
+        return Err(bad(format!(
+            "PE image of {image_size} bytes is larger than the {MAX_IMAGE} bytes the native engine lays out"
+        )));
+    }
+    if link_base.checked_add(ADDRESS_HEADROOM).is_none()
+        || base.checked_add(ADDRESS_HEADROOM).is_none()
+    {
+        return Err(bad("PE image base is out of range"));
+    }
     let bias = base.wrapping_sub(link_base);
     // link-time virtual address -> loaded address
     let at = |va: u64| va.wrapping_add(bias);
     let mask = if ptr == 4 { 0xffff_ffff } else { u64::MAX };
-    let headers_size = opt.size_of_headers();
+    let headers_size = opt.size_of_headers().min(image_size as u32);
     let section_table = file.section_table();
+    if section_table.len() > MAX_SECTIONS {
+        return Err(bad(format!(
+            "PE image has {} sections, more than the {MAX_SECTIONS} the native engine takes",
+            section_table.len()
+        )));
+    }
+    // (rva, virtual size, file offset, raw size), cut to the image as the Windows loader
+    // requires; a section outside it is dropped
+    let fitted: Vec<Option<(u32, u32, u32, u32)>> = section_table
+        .iter()
+        .map(|s| {
+            let va = s.virtual_address.get(LE);
+            let room = image_size.checked_sub(u64::from(va)).filter(|r| *r > 0)? as u32;
+            Some((
+                va,
+                s.virtual_size.get(LE).min(room),
+                s.pointer_to_raw_data.get(LE),
+                s.size_of_raw_data.get(LE).min(room),
+            ))
+        })
+        .collect();
     let rva = Rva {
         data,
-        sections: section_table
-            .iter()
-            .map(|s| {
-                (
-                    s.virtual_address.get(LE),
-                    s.virtual_size.get(LE),
-                    s.pointer_to_raw_data.get(LE),
-                    s.size_of_raw_data.get(LE),
-                )
-            })
-            .collect(),
+        sections: fitted.iter().flatten().copied().collect(),
         headers: headers_size,
     };
     let dirs = file.data_directories();
@@ -274,10 +304,10 @@ fn load_pe<Pe: ImageNtHeaders>(
     });
     let mut section_names: Vec<(u64, u64, String)> = Vec::new(); // link VA range, long name
     for (i, s) in section_table.iter().enumerate() {
-        let va = s.virtual_address.get(LE);
-        let vsize = s.virtual_size.get(LE);
-        let raw = s.size_of_raw_data.get(LE);
-        let off = s.pointer_to_raw_data.get(LE) as usize;
+        let Some((va, vsize, off, raw)) = fitted[i] else {
+            continue;
+        };
+        let off = off as usize;
         let flags = s.characteristics.get(LE);
         let size = vsize.max(raw);
         if size == 0 {
@@ -286,7 +316,7 @@ fn load_pe<Pe: ImageNtHeaders>(
         let bytes = if raw == 0 {
             &[][..]
         } else {
-            data.get(off..(off + raw as usize).min(data.len()))
+            data.get(off..off.saturating_add(raw as usize).min(data.len()))
                 .unwrap_or_default()
         };
         let exec = flags & pe::IMAGE_SCN_MEM_EXECUTE != 0;
@@ -339,7 +369,10 @@ fn load_pe<Pe: ImageNtHeaders>(
 
     let patch = |segments: &mut Vec<Segment>, addr: u64, bytes: &[u8]| {
         for s in segments.iter_mut() {
-            if addr >= s.start && addr + bytes.len() as u64 <= s.start + s.data.len() as u64 {
+            let fits = addr
+                .checked_add(bytes.len() as u64)
+                .is_some_and(|end| end <= s.start + s.data.len() as u64);
+            if addr >= s.start && fits {
                 let o = (addr - s.start) as usize;
                 s.data[o..o + bytes.len()].copy_from_slice(bytes);
                 return;
@@ -438,8 +471,9 @@ fn load_pe<Pe: ImageNtHeaders>(
         }
     }
     let thunked: BTreeSet<&str> = plt.values().map(String::as_str).collect();
+    let mut listed: BTreeSet<&str> = BTreeSet::new();
     for (name, library) in slots.values() {
-        if imports.iter().any(|i| &i.name == name) {
+        if !listed.insert(name.as_str()) {
             continue;
         }
         // an import without a thunk is data or a `dllimport` function called through its slot;
@@ -458,7 +492,8 @@ fn load_pe<Pe: ImageNtHeaders>(
     imports.sort_by(|a, b| a.name.cmp(&b.name));
 
     // COFF symbols: functions, and untyped symbols in code (assembly such as `___chkstk_ms`)
-    let in_exec = |va: u64| exec_ranges.iter().any(|(lo, hi)| (*lo..*hi).contains(&va));
+    let exec_merged = merge_ranges(exec_ranges);
+    let in_exec = |va: u64| in_ranges(&exec_merged, va);
     let mut coff: Vec<CoffSymbol> = Vec::new();
     for sym in file.symbols() {
         let code = match sym.kind() {
@@ -540,17 +575,14 @@ fn load_pe<Pe: ImageNtHeaders>(
     // a thunk is named after its import, or on x86 after its symbol without the decoration
     // (`___getmainargs` stays, `_abort` is `abort`)
     for (a, n) in &plt {
-        let name = match (ptr, coff.iter().find(|s| s.addr == *a)) {
-            (4, Some(s)) => undecorate(&s.name).unwrap_or_else(|| s.name.clone()),
+        // the first symbol at the address, as `coff` lists them
+        let name = match (ptr, code_symbols.get(a).and_then(|v| v.first())) {
+            (4, Some(s)) => undecorate(s).unwrap_or_else(|| s.clone()),
             _ => n.clone(),
         };
         functions.insert(*a, name);
     }
-    let exec_at = |a: u64| {
-        exec_ranges
-            .iter()
-            .any(|(lo, hi)| (at(*lo)..at(*hi)).contains(&a))
-    };
+    let exec_at = |a: u64| in_exec(a.wrapping_sub(bias));
 
     // exports: names from the export table win
     let mut exports: BTreeMap<u64, ExportSymbol> = BTreeMap::new();
@@ -612,7 +644,9 @@ fn load_pe<Pe: ImageNtHeaders>(
     // TLS callbacks: an array of absolute pointers ending with 0
     let mut init_pointers = Vec::new();
     if let Some((tls, _)) = dir_range(pe::IMAGE_DIRECTORY_ENTRY_TLS)
-        && let Some(callbacks) = rva.word(tls + 3 * ptr as u32, ptr)
+        && let Some(callbacks) = tls
+            .checked_add(3 * ptr as u32)
+            .and_then(|a| rva.word(a, ptr))
         && callbacks != 0
     {
         let mut i = 0u32;
@@ -642,7 +676,7 @@ fn load_pe<Pe: ImageNtHeaders>(
         && let Some((exc, size)) = dir_range(pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
     {
         for k in 0..size / 12 {
-            let Some(e) = rva.bytes(exc + k * 12, 12) else {
+            let Some(e) = exc.checked_add(k * 12).and_then(|a| rva.bytes(a, 12)) else {
                 break;
             };
             let begin = u32::from_le_bytes([e[0], e[1], e[2], e[3]]);
@@ -740,6 +774,41 @@ mod tests {
             .join("../../corpus/pe/bin")
             .join(name);
         std::fs::read(p).expect("corpus binary")
+    }
+
+    /// Offsets of (optional header, section table, section count) in a PE file.
+    fn headers(d: &[u8]) -> (usize, usize, usize) {
+        let pe = u32::from_le_bytes(d[0x3c..0x40].try_into().unwrap()) as usize;
+        let count = u16::from_le_bytes(d[pe + 6..pe + 8].try_into().unwrap()) as usize;
+        let opt_size = u16::from_le_bytes(d[pe + 20..pe + 22].try_into().unwrap()) as usize;
+        (pe + 24, pe + 24 + opt_size, count)
+    }
+
+    #[test]
+    fn hostile_sizes_stay_inside_the_image() {
+        let mut d = corpus("win_tls-x64-O0.exe");
+        let (opt, table, count) = headers(&d);
+        let image_size = u32::from_le_bytes(d[opt + 56..opt + 60].try_into().unwrap());
+        // every section claims 4 GiB in memory
+        for i in 0..count {
+            let s = table + 40 * i;
+            d[s + 8..s + 12].copy_from_slice(&u32::MAX.to_le_bytes());
+        }
+        let l = load(&d, None).expect("load");
+        let end = l.base + u64::from(image_size);
+        assert!(l.blocks.iter().all(|b| b.end.0 <= end), "{:?}", l.blocks);
+        // and the string scan reads no more than the file holds
+        let strings = crate::strings::scan(&l.image, &l.blocks, 4, &[]);
+        assert!(!strings.is_empty());
+
+        let mut big = corpus("win_tls-x64-O0.exe");
+        big[opt + 56..opt + 60].copy_from_slice(&0xffff_f000u32.to_le_bytes());
+        assert!(load(&big, None).is_err());
+
+        let mut high = corpus("win_tls-x64-O0.exe");
+        high[opt + 24..opt + 32].copy_from_slice(&(u64::MAX - 0x1000).to_le_bytes());
+        assert!(load(&high, None).is_err());
+        assert!(load(&corpus("win_tls-x64-O0.exe"), Some(u64::MAX - 0x1000)).is_err());
     }
 
     #[test]
