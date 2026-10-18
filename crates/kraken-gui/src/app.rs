@@ -164,7 +164,12 @@ pub struct KrakenApp {
 
 impl KrakenApp {
     pub fn new(ctx: &egui::Context, rt: Arc<Runtime>, services: Services, opts: &Options) -> Self {
-        let prefs = Prefs::load(services.prefs_file.clone());
+        // A screenshot neither reads nor writes the person's preferences and recent projects.
+        let prefs = Prefs::load(if opts.screenshot.is_some() {
+            None
+        } else {
+            services.prefs_file.clone()
+        });
         let dark = if opts.light {
             false
         } else {
@@ -563,7 +568,11 @@ impl KrakenApp {
                     self.welcome.error = Some("The in-process engine is not available.".into());
                     return;
                 };
-                let backend = InProcessBackend::new(factory);
+                // The same rewrite pipeline krakend and the CLI attach.
+                let backend = InProcessBackend::with_session(
+                    kraken_registry::Session::new(factory)
+                        .with_rewrite(kraken_rewrite::RewriteService::standard().into_backend()),
+                );
                 backend.set_approver(Arc::new(self.approvals.clone()));
                 self.launch(choice, Arc::new(backend), ctx);
             }
