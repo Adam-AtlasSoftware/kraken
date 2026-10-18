@@ -6,42 +6,42 @@ We will take apart a small program that has had its names stripped out. At the s
 
 **What "reverse engineering" means here.** A compiled program is a pile of machine instructions with no explanation. Reverse engineering is working out what it does and writing that down, usually by giving the pieces good names. KRAKEN does the heavy lifting (finding the functions, turning machine code back into C-like code) and keeps a careful record of everything you change.
 
-A note on the pictures. Screenshots marked **real** were made with KRAKEN's own screenshot mode against the exact project in this tutorial, using the real Ghidra engine. Screenshots marked **illustrative** need a language model to answer, so they were made with KRAKEN's built-in demo project and a scripted answer. They show the layout and what to look for, not what a model will say about this program.
+A note on the pictures. Screenshots marked **real** were made with KRAKEN's own screenshot mode against the exact project in this tutorial, using the native engine (no Java, no Ghidra). Screenshots marked **illustrative** need a language model to answer, so they were made with KRAKEN's built-in demo project and a scripted answer. They show the layout and what to look for, not what a model will say about this program.
 
 You need:
 
 - Linux x86_64 (the only fully supported platform today, see [Install](install.md)).
 - A copy of the KRAKEN repository, because the practice program lives in `corpus/bin/` of a checkout. Any other small program works too.
-- About 3 GB of disk for Ghidra and a JDK, which `kraken setup` downloads once.
+- Rust and a C++ compiler, to build KRAKEN and run `kraken setup --native` once. You do **not** need Java or Ghidra: this tutorial uses the native engine. (The optional Ghidra engine works too; see the note after step 3.)
 - Optional: a language model (local or cloud) for steps 9, 10 and 14, and Claude Code for step 13. Everything else works without one.
 
 ## 1. Install and run setup
 
-**Do:** [install KRAKEN](install.md), then run
+**Do:** [build KRAKEN from a checkout](install.md#install-from-source) (`cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native`), put `target/release` on your `PATH`, and run
 
 ```sh
-kraken setup
+kraken setup --native
 ```
 
-**You should see:** progress bars while Ghidra and a JDK download, then a line saying setup is done. It needs the network once, checks every download against a SHA-256 hash and never needs root. Running it again does nothing if everything is in place.
+**You should see:** a few build messages, then "The native engine is ready." and the folder of the compiled processor files. It needs the network once (to fetch the pinned sources, checked against a SHA-256 hash) and a C++ compiler, takes about a minute and never needs root. Running it again does nothing if everything is in place.
 
-**Why it matters:** KRAKEN does not analyse programs itself. It drives Ghidra, a free analysis engine from the NSA, inside a locked-down child process. Setup puts that engine where KRAKEN can find it.
+**Why it matters:** KRAKEN uses Ghidra's decompiler, a free analysis component from the NSA, but runs it as a library inside a locked-down child process, so there is no Java and no Ghidra window. Setup compiles the descriptions of the processors it needs. If you later want PE or Mach-O programs, `kraken setup` installs the full Ghidra engine as well (see [the native engine](native-engine.md#native-or-ghidra)).
 
 ## 2. Create a project
 
-**Do:** start the GUI with `kraken-gui`. Under **New project from a program**, press **Browse...** and choose `corpus/bin/stripped_calc-O2-stripped` from your checkout (or paste the path). Leave the project folder as proposed and press **Create project and analyze**.
+**Do:** start the GUI with `kraken-gui`. Under **New project from a program**, press **Browse...** and choose `corpus/bin/stripped_calc-O2-stripped` from your checkout (or paste the path). Choose **Native** next to **Engine** (or set `engine = "native"` in `config.toml` to have it chosen for you), leave the project folder as proposed and press **Create project and analyze**.
 
 ![The KRAKEN welcome screen with the new-project, open-project and demo sections](images/tutorial/welcome.png)
 
-*Real: the welcome screen. The demo button is a good way to look around before you have a program of your own.*
+*Real: the welcome screen with the native engine chosen. The demo button is a good way to look around before you have a program of your own.*
 
-**You should see:** a progress bar while Ghidra works. For this tiny program it takes under a minute.
+**You should see:** a short progress bar while KRAKEN finds and decompiles the functions. For this tiny program it takes a second or two (the Ghidra engine needs about a minute).
 
 **Prefer the terminal?** The same step is
 
 ```sh
 export KRAKEN_PROJECT=~/kraken-projects/calc
-kraken project-create --binary corpus/bin/stripped_calc-O2-stripped
+kraken project-create --binary corpus/bin/stripped_calc-O2-stripped --engine native
 kraken analyze
 ```
 
@@ -49,17 +49,19 @@ kraken analyze
 
 ## 3. Read the function list
 
-**You should see:** the main window opens with the **Functions** list on the left, 22 entries.
+**You should see:** the main window opens with the **Functions** list on the left, 14 entries.
 
 ![The main window: function list on the left, the decompiler of FUN_00101080 in the middle, bytes and instructions on the right](images/tutorial/first.png)
 
-*Real: `stripped_calc-O2-stripped` right after analysis, with `FUN_00101080` selected.*
+*Real: `stripped_calc-O2-stripped` (native engine) right after analysis, with `FUN_00101080` selected.*
 
-Read down the list. Some names are real: `printf`, `__ctype_b_loc` and `__cxa_finalize` are library functions the program imports, so their names survive stripping. `entry` is where the operating system starts the program. `_DT_INIT` and `_FINI_0` are startup scaffolding that Ghidra recognises from the file structure. The ones called `FUN_` followed by an address are functions Ghidra found but knows nothing about: `FUN_00101080`, `FUN_00101280`, `FUN_001013c0` and `FUN_001014b0` are the program's own code, and they are the ones we want to understand.
+Read down the list. Some names are real: `printf`, `__ctype_b_loc` and `__cxa_finalize` are library functions the program imports, so their names survive stripping. `entry` is where the operating system starts the program. `_DT_INIT`, `_DT_FINI`, `_INIT_0` and `_FINI_0` are startup and shutdown scaffolding that KRAKEN recognises from the file structure. The ones called `FUN_` followed by an address are functions it found but knows nothing about: `FUN_00101080`, `FUN_00101280`, `FUN_001013c0` and `FUN_001014b0` are the program's own code, and they are the ones we want to understand. (`FUN_00101020` is the start of the import table and `FUN_00101190` is a C runtime helper; step 13 names it.)
 
 **Do:** click `FUN_00101080`. Use the filter box (Ctrl+L) to narrow the list if it grows long.
 
 **Why it matters:** compilers throw function names away when a program is "stripped", which is how almost all software is shipped. Recovering meaning without them is the everyday job of reverse engineering.
+
+**Ghidra engine?** If you create the same project with `--engine ghidra` you see 22 entries instead of 14: seven are Ghidra's entries for imported symbols (`__libc_start_main`, `printf` again and so on, at addresses in a made-up `EXTERNAL` area), and one is `FUN_001011c0`, the C runtime's `register_tm_clones`, which the native engine does not split off from the startup code that jumps to it. Everything below, the four functions of the program itself and what you do with them, is the same.
 
 ## 4. Open the decompiler
 
@@ -67,7 +69,7 @@ Read down the list. Some names are real: `printf`, `__ctype_b_loc` and `__cxa_fi
 
 Even without a single good name you can read a lot from it. The function walks a table of pointers in a loop. For each entry it calls `FUN_001014b0`, then calls `printf` with either `"%-18s = %ld\n"` or `"%-18s : error\n"`, counts the errors and prints `"errors: %d\n"` at the end. That is a test driver: it runs something on a list of inputs and prints a result for each.
 
-**Why it matters:** the decompiler (a feature of Ghidra) turns machine instructions back into C-like text. It cannot recover names, comments or types the compiler discarded, so treat it as a very good guess, not the truth. If something looks odd, check it against the instructions in the next step.
+**Why it matters:** the decompiler (Ghidra's, run by the native engine) turns machine instructions back into C-like text. It cannot recover names, comments or types the compiler discarded, so treat it as a very good guess, not the truth. If something looks odd, check it against the instructions in the next step.
 
 Look at the top right of the Xrefs panel: `FUN_00101080` has **Callers (0)**. Nothing in the program calls it directly. That is a clue: functions with no callers are usually entry points or are called through a pointer. This one is called through a pointer by startup code, which makes it `main`. Keep that in mind for step 11.
 
@@ -77,7 +79,7 @@ Look at the top right of the Xrefs panel: `FUN_00101080` has **Callers (0)**. No
 
 ![The Listing tab: addresses, raw bytes, instruction names and operands next to the decompiled function](images/tutorial/listing.png)
 
-*Real: the instructions of `FUN_00101280`.*
+*Real: the instructions of `FUN_00101280` (native engine).*
 
 **You should see:** one line per machine instruction: its address, the bytes it is made of, the mnemonic (`push`, `mov`, `call`, `jz`) and its operands. Names in the operands (like `__ctype_b_loc`) are links, and labels such as `LAB_001012a0` mark places the code jumps to.
 
@@ -188,7 +190,7 @@ Terminal version: `kraken rename-symbol --address 0x101080 --new-name main`.
 
 Some edits depend on others. If you undo a change that later changes were built on, KRAKEN tells you which later edits would go with it and asks first. In the terminal, `kraken undo-preview` shows this, and `kraken undo-entry` does it.
 
-**Why it matters:** KRAKEN keeps an *edit log* and treats it as the truth. Ghidra's own project is just a cache rebuilt from the log. That is why you can try things freely: nothing is lost, everything is attributed, and anyone can see who changed what.
+**Why it matters:** KRAKEN keeps an *edit log* and treats it as the truth. The engine's own copy of the project (Ghidra's database, or the native engine's saved state) is just a cache rebuilt from the log. That is why you can try things freely: nothing is lost, everything is attributed, and anyone can see who changed what.
 
 ## 13. Connect Claude Code over MCP and watch it work
 
@@ -200,11 +202,11 @@ MCP (the Model Context Protocol) is how tools like Claude Code talk to other pro
 claude mcp add kraken -- kraken mcp --project ~/kraken-projects/calc
 ```
 
-then start `claude` and ask for something small, for example: *"Use the kraken tools to find the C runtime startup functions in this binary and give them their standard names."* (Other agents work too, see [Connecting AI agents](mcp.md).)
+then start `claude` and ask for something small, for example: *"Use the kraken tools to find the C runtime startup helpers in this binary and give the ones still called FUN_ their standard names."* (Other agents work too, see [Connecting AI agents](mcp.md).)
 
 ![The History tab showing an agent run by claude-code with two renames, above three renames made by you](images/tutorial/mcp.png)
 
-*Real, with a caveat: these two renames, `deregister_tm_clones` and `register_tm_clones`, were sent through KRAKEN's real MCP server by a small script that identifies itself as `claude-code`, so the screenshot shows exactly what an agent session looks like without needing a login. A real Claude Code session produces the same entries.*
+*Real, with a caveat: these two renames, `deregister_tm_clones` and `plt_resolver_stub`, were sent through KRAKEN's real MCP server by a small script that identifies itself as `claude-code`, so the screenshot shows exactly what an agent session looks like without needing a login. A real Claude Code session produces the same entries.*
 
 **You should see:** the renames appear in the GUI as the agent makes them, with a notice and an **Undo** button, and in the History tab grouped as one *run* with the agent's name. **Undo this agent run** takes back everything that run did in one click.
 

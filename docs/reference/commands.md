@@ -1489,6 +1489,17 @@ Example: `exports {}`
           ],
           "description": "Library an import comes from (binary-derived)."
         },
+        "mangled": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The mangled name when `name` is demangled (binary-derived)."
+        },
         "name": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "Symbol name (binary-derived)."
@@ -1726,6 +1737,17 @@ Missing keys have version 0.
     "completeness": {
       "$ref": "#/$defs/Completeness",
       "description": "How much analysis backs this entry."
+    },
+    "mangled": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Untrusted_string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The mangled symbol name when `name` is demangled (binary-derived)."
     },
     "module": {
       "description": "Module id (MVID) of a managed method. Send it back as `module` with the token in\n`address`. Absent for native code.",
@@ -2178,6 +2200,17 @@ Example: `imports {"limit": 50}`
             }
           ],
           "description": "Library an import comes from (binary-derived)."
+        },
+        "mangled": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The mangled name when `name` is demangled (binary-derived)."
         },
         "name": {
           "$ref": "#/$defs/Untrusted_string",
@@ -2980,6 +3013,17 @@ Example: `list_functions {"name_filter": "parse", "limit": 20}`
         "completeness": {
           "$ref": "#/$defs/Completeness",
           "description": "How much analysis backs this entry."
+        },
+        "mangled": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Untrusted_string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The mangled symbol name when `name` is demangled (binary-derived)."
         },
         "module": {
           "description": "Module id (MVID) of a managed method. Send it back as `module` with the token in\n`address`. Absent for native code.",

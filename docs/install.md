@@ -1,6 +1,11 @@
 # Install
 
-KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It needs Ghidra and a JDK at run time, but those are downloaded for you on first run and are not part of the release archive.
+KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It has two analysis engines:
+
+- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN, and the processor specifications are compiled once by `kraken setup --native`. It opens 64-bit ELF programs. This is the shortest path for a new Linux user; today it is installed from a source checkout (see [Install from source](#install-from-source)), because the release archives do not carry the native worker or the compiled specifications yet.
+- **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 21 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
+
+The [native engine page](native-engine.md#native-or-ghidra) compares them.
 
 Platforms: Linux x86_64 is supported today. macOS (Apple silicon) and Windows (x86_64) archives are published when their builds succeed and are experimental.
 
@@ -36,11 +41,25 @@ The first macOS and Windows releases are not signed by a recognised publisher (s
 
 ## Install from source
 
-You need Rust (stable), a JDK 21, Ghidra 12.1.4 and Gradle to build the extension. The [Getting started](getting-started.md) page walks through it. In short:
+### Native engine (no Java)
+
+You need Rust (stable) and a C++ compiler. The [Getting started](getting-started.md) page walks through it. In short:
 
 ```sh
 git clone https://github.com/Adam-AtlasSoftware/kraken
 cd kraken
+cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native
+cp target/release/{kraken,krakend,kraken-gui,kraken-native-worker} ~/.local/bin/
+kraken setup --native
+```
+
+`kraken-native-worker` has to sit next to `kraken` and `krakend` (or be named by `KRAKEN_NATIVE_WORKER`). `kraken setup --native` fetches the pinned Ghidra sources, compiles the specifications into `~/.cache/kraken-dev/native-sla` and tells you when it is done; run it from the checkout. Then create projects with `--engine native`, or set `engine = "native"` in `~/.config/kraken/config.toml`.
+
+### Ghidra engine
+
+You need Rust (stable), a JDK 21, Ghidra 12.1.4 and Gradle to build the extension. In short:
+
+```sh
 export GHIDRA_INSTALL_DIR=/path/to/ghidra_12.1.4_PUBLIC JAVA_HOME=/path/to/jdk-21
 cargo xtask ghidra-ext
 cargo install --path crates/kraken-cli
@@ -50,7 +69,9 @@ cargo install --path crates/kraken-gui
 
 Without Gradle you can still run `kraken setup` (below): it compiles the extension with the JDK it downloads.
 
-## First run
+## First run (Ghidra engine)
+
+Skip this if you only use the native engine.
 
 ```sh
 kraken setup
@@ -72,7 +93,7 @@ Ghidra (Apache-2.0) and the Temurin JDK (GPL-2.0 with the Classpath Exception) c
 ## Uninstall
 
 1. Stop the daemon: `kraken daemon stop`.
-2. Remove the programs: `rm ~/.local/bin/kraken ~/.local/bin/krakend ~/.local/bin/kraken-gui` and `rm ~/.local/share/kraken/kraken-ghidra.jar` (or the whole `~/.local/share/kraken/` directory; that also removes the downloaded Ghidra and JDK, a few GiB).
+2. Remove the programs: `rm ~/.local/bin/kraken ~/.local/bin/krakend ~/.local/bin/kraken-gui ~/.local/bin/kraken-native-worker` and `rm ~/.local/share/kraken/kraken-ghidra.jar` (or the whole `~/.local/share/kraken/` directory; that also removes the downloaded Ghidra and JDK, a few GiB).
 3. Optionally remove your settings in `~/.config/kraken/`. Your analysis projects live where you created them (by default under your projects directory) and are not touched.
 
 If you installed with `cargo install`, use `cargo uninstall kraken-cli krakend kraken-gui` instead of step 2's `rm` of the programs.

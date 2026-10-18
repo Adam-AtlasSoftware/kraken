@@ -1437,6 +1437,7 @@ name = "engine-native"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "cpp_demangle",
  "engine-native-sys",
  "gimli",
  "kraken-engine",

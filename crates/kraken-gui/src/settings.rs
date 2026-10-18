@@ -526,7 +526,9 @@ impl Settings {
         let installed = Layout::from_env().map(|l| l.provisioned());
         let line = match &installed {
             Some(i) if i.is_complete() => "Ghidra, Java and the engine extension are installed.",
-            Some(_) => "Ghidra and Java are not installed yet (about 750 MB).",
+            Some(_) => {
+                "Ghidra and Java are not installed yet (about 750 MB). Only the Ghidra engine needs them; the native engine works without."
+            }
             None => "Cannot place the runtime: HOME is not set.",
         };
         ui.label(RichText::new(line).color(p.text_dim));
