@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use kraken_engine::{
     AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, FlowGraph, FunctionLister,
-    Loader, MemoryReader, Mutator, StringLister, StringsRequest, SymbolLister, TypeStore,
-    XrefProvider, XrefRequest,
+    MemoryReader, Mutator, StringLister, StringsRequest, SymbolLister, TypeStore, XrefProvider,
+    XrefRequest,
 };
 use kraken_proto::{ErrorCode, Locator, PageRequest, ProtoError, TypeDef, VersionedLogOp};
 use kraken_sidecar::rpc::{read_frame, write_frame};
@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::{CORE_DUMPS_ARG, OpenParams, TEST_HOOKS_ARG, WirePcodeOp, rpc_error};
-use crate::engine::{InProcessEngine, NativeConfig};
+use crate::engine::{InProcessEngine, NativeConfig, OpenReport};
 use crate::worker::Isolation;
 
 struct State {
@@ -192,9 +192,33 @@ async fn handle(
                 decompile_timeout: p.decompile_timeout_ms.map(Duration::from_millis),
                 isolation: Isolation::InProcess,
                 state_dir: p.state_dir,
+                discovery_threads: p.threads,
             };
             let engine = Arc::new(InProcessEngine::new(config));
-            let info = engine.open_binary(&p.path, &p.spec, c).await?;
+            // a first open of a big binary can take minutes; the progress tells the parent's
+            // watchdog that the worker is alive
+            let report: Option<OpenReport> =
+                params.get("job_id").and_then(Value::as_str).map(|job_id| {
+                    let job_id = job_id.to_string();
+                    let out = state.out.clone();
+                    Arc::new(move |found: usize, queued: usize| {
+                        let msg = json!({
+                            "jsonrpc": "2.0",
+                            "method": "progress",
+                            "params": {
+                                "job_id": job_id,
+                                "stage": "load",
+                                "done": found,
+                                "total": found + queued,
+                                "message": format!("{found} functions found, {queued} to walk"),
+                            },
+                        });
+                        if let Ok(body) = serde_json::to_vec(&msg) {
+                            let _ = out.send(body);
+                        }
+                    }) as OpenReport
+                });
+            let info = engine.open_reporting(&p.path, &p.spec, c, report).await?;
             *lock(&state.engine) = Some(engine);
             out(info)
         }
@@ -307,6 +331,9 @@ fn probe() -> Value {
         "unix_socket": res(std::os::unix::net::UnixDatagram::unbound()),
         "unix_pair": res(std::os::unix::net::UnixStream::pair()),
         "read_etc_passwd": res(std::fs::read("/etc/passwd")),
+        // the one /proc file discovery reads, to see how much memory is free
+        "read_meminfo": res(std::fs::read_to_string("/proc/meminfo")),
+        "read_proc_stat": res(std::fs::read("/proc/stat")),
         "write_tmp_home": res(std::fs::write(tmp.join("probe"), b"x")),
         // the directory holding the worker's home is not granted
         "write_outside_home": res(std::env::var_os("HOME")

@@ -207,6 +207,10 @@ async fn edits_show_everywhere_and_replay_on_reopen() {
     };
     let (main_at, _) = at_of("main");
     let (node_new, nf) = at_of("node_new");
+    // a repeated decompile is served from the cache and equal; the edit below drops it
+    let cached = decompiled(&e, main_at).await;
+    assert_eq!(decompiled(&e, main_at).await, cached);
+    assert!(cached.contains("node_new("), "{cached}");
     apply(
         &e,
         LogOp::Rename {

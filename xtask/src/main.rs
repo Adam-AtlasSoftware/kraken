@@ -1,3 +1,4 @@
+mod bench;
 mod docs;
 mod native_licenses;
 mod native_sla;
@@ -29,6 +30,14 @@ Commands:
                c++/cc) and compile the x86 and AArch64 specifications into
                ~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, so the native engine needs no
                Ghidra install.
+  bench        Run the performance benchmarks in release mode and print their tables.
+               `cargo xtask bench [engine|daemon|gui|widgets|all] [binary...]`: with no suite, the
+               engine one. The binaries (default: the system's libpython, cargo and libQt6Widgets)
+               are copied to a temp dir first; the daemon and gui suites start a private krakend.
+               Environment: KRAKEN_BENCH_SAMPLES (functions sampled per query, default 200),
+               KRAKEN_BENCH_ANALYZE=1 (also time the analysis job), KRAKEN_BENCH_IN_PROCESS=1
+               (engine without its worker), KRAKEN_BENCH_STATE=<dir> (keep the engines' saved
+               state, so a second run starts from the saved analysis), KRAKEN_NATIVE_THREADS.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
   docs         Write docs/reference/commands.md from the command registry.
@@ -51,6 +60,7 @@ fn main() -> ExitCode {
         Some("dotnet-ext") => dotnet_ext(),
         Some("native-src") => native_src::native_src(),
         Some("native-sla") => native_sla::native_sla(),
+        Some("bench") => bench::bench(&args[1..]),
         Some("schema") => schema(),
         Some("samples") => write_samples(),
         Some("docs") => docs::write_docs(),

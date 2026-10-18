@@ -256,24 +256,42 @@ impl<'a> Table<'a> {
 
     fn commit(self) {
         let map = self.funcs.map;
-        self.p.set_funcs(Funcs::new(map));
+        // an edit that keeps every body (a rename) keeps the owner of each instruction
+        let old = self.p.funcs();
+        self.p.set_funcs(Funcs::same_bodies(map, &old));
     }
 }
 
-/// Applies one op (blocking: it may call into the decompiler). Structural edits (function
-/// create, delete and bounds, code and data, renames) rebuild the references, exports and
-/// noreturn set afterwards.
+/// Applies one op (blocking: it may call into the decompiler). Edits that move code (function
+/// create, delete and bounds, code and data) rebuild the references, exports and noreturn set
+/// afterwards; renames and prototypes only update the exports and the noreturn set.
 pub(crate) fn apply(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
-    apply_op(p, op)?;
-    if is_structural(&op.op) {
-        p.reindex();
+    let applied = apply_op(p, op);
+    if applied.is_ok() && is_structural(&op.op) {
+        if moves_code(&op.op) {
+            p.reindex();
+        } else {
+            p.reindex_names();
+        }
     }
-    Ok(())
+    applied
 }
 
 /// [`apply`] without the rebuild, for replaying many ops; the caller rebuilds once at the end.
 pub(crate) fn apply_deferred(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
     apply_op(p, op)
+}
+
+/// Whether `op` changes which code belongs to which function (and so the reference index), as
+/// opposed to a name or a prototype.
+fn moves_code(op: &LogOp) -> bool {
+    matches!(
+        op,
+        LogOp::CreateFunction { .. }
+            | LogOp::DeleteFunction { .. }
+            | LogOp::SetFunctionBounds { .. }
+            | LogOp::SetCodeData { .. }
+    )
 }
 
 /// Whether `op` changes what the reference index, the exports or the noreturn set derive from.
@@ -290,6 +308,13 @@ fn is_structural(op: &LogOp) -> bool {
 }
 
 fn apply_op(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
+    p.touch();
+    let r = apply_inner(p, op);
+    p.touch();
+    r
+}
+
+fn apply_inner(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
     op.check_version()?;
     let (space, offset, _, hash) = anchor_of(&op.op).native()?;
     if space != "ram" {
@@ -623,7 +648,7 @@ fn linear_func(
     Ok(Func {
         entry,
         name,
-        insns,
+        insns: insns.into(),
         ranges: vec![(start, end)],
         switches: BTreeMap::new(),
         tail_calls: Vec::new(),

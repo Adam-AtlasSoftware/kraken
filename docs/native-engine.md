@@ -110,6 +110,24 @@ Edits are applied to the open program and saved in the project's engine director
 the analysis. The project's edit log stays the source of truth: `kraken rebuild` starts from an
 empty engine directory and replays the log.
 
+## Big programs
+
+The first open of a big binary is dominated by the decompiler's switch analysis, one decompiler
+pass per jump table: a 7 MB library with 11 000 functions takes a few minutes, a library the size
+of Qt Widgets about twenty. Discovery therefore runs on several decompiler sessions at once (one
+per CPU, at most 6 and one per 3 GB of free memory; `KRAKEN_NATIVE_THREADS` sets the number, 1 to 16) and keeps the answers in
+the project's engine directory (`discovery-cache.json`, next to `native-state.json`). Opening the
+project again, or restarting the worker, reads them back and takes seconds. The cache is tied to
+the binary's SHA-256 and the engine version; a file for anything else is ignored and replaced.
+
+Each extra session holds its own copy of the Sleigh specification (about 200 MB), and the switch
+analysis of a huge function can take gigabytes for minutes, so a first open of a big program
+needs memory: expect a peak of several GB, and more with more threads. A session waits for the
+others when less than 3 GB of memory is available. While the first open runs, the worker reports
+how many functions it has found; it is only stopped when that report stops for ten minutes.
+
+`docs/performance.md` has measurements, and `cargo xtask bench` reproduces them.
+
 `native_in_process = true` in `config.toml` (or `KRAKEN_NATIVE_IN_PROCESS=1`) runs the decompiler
 inside the daemon instead, for machines without the worker; a decompiler crash then takes the
 daemon down. Without the worker and without that setting, `auto` picks Ghidra and says why.
@@ -123,9 +141,10 @@ engine imports its structs, unions, enums and typedefs into the project's types 
 function its declared name and prototype, so decompiled C reads
 `int cmp_id(record *a,record *b) { return a->id - b->id; }` without any typing on your part.
 
-Creating, deleting or resizing functions, renaming them and defining code or data rebuild the
-cross-references, the exports and the list of functions that never return, so callers and
-references stay right.
+Creating, deleting or resizing functions and defining code or data rebuild the cross-references,
+the exports and the list of functions that never return, so callers and references stay right.
+Renaming a function or giving it a prototype only updates the exports and the list of functions
+that never return, which is much faster on a big program.
 
 ## Windows programs and 32-bit code
 

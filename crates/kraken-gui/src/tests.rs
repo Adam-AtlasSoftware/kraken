@@ -771,3 +771,6 @@ fn stale_functions_get_a_marker_that_draws() {
     }
     assert!(h.app.view_model().unwrap().is_stale(main));
 }
+
+#[cfg(unix)]
+mod bench;

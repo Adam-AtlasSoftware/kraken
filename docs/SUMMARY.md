@@ -13,6 +13,7 @@
 - [Running a model on this computer](local-models.md)
 - [.NET assemblies](dotnet.md)
 - [The native engine](native-engine.md)
+- [Performance](performance.md)
 - [Scripting with the CLI](cli.md)
 - [Scripting with Python](python.md)
 - [Security](security.md)

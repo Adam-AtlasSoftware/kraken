@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
@@ -63,6 +63,10 @@ pub struct NativeConfig {
     /// it in the engine directory of a project). Opening the same binary again restores them.
     /// `None` keeps everything in memory only.
     pub state_dir: Option<PathBuf>,
+    /// How many decompiler sessions the first open of a big binary uses (see
+    /// [`crate::discover::default_threads`]); `None` takes that default. The confined worker has
+    /// no environment and cannot read the memory figures, so its parent decides.
+    pub discovery_threads: Option<usize>,
 }
 
 impl NativeConfig {
@@ -75,6 +79,7 @@ impl NativeConfig {
             decompile_timeout: Some(DEFAULT_DECOMPILE_TIMEOUT),
             isolation: Isolation::default(),
             state_dir: None,
+            discovery_threads: None,
         }
     }
 
@@ -128,18 +133,39 @@ pub fn has_specs(root: &Path) -> bool {
 pub(crate) struct Funcs {
     pub(crate) map: BTreeMap<u64, Func>,
     /// The function each body instruction belongs to (the lowest entry when bodies share code).
-    owner: BTreeMap<u64, u64>,
+    owner: Arc<BTreeMap<u64, u64>>,
 }
 
 impl Funcs {
     pub(crate) fn new(map: BTreeMap<u64, Func>) -> Funcs {
         let mut owner = BTreeMap::new();
         for f in map.values() {
-            for a in &f.insns {
+            for a in f.insns.iter() {
                 owner.entry(*a).or_insert(f.entry);
             }
         }
-        Funcs { map, owner }
+        Funcs {
+            map,
+            owner: Arc::new(owner),
+        }
+    }
+
+    /// The table `map`, which differs from `old` only in what is not a body (names, flags), so
+    /// the owner of each instruction is the same.
+    pub(crate) fn same_bodies(map: BTreeMap<u64, Func>, old: &Funcs) -> Funcs {
+        let same = map.len() == old.map.len()
+            && map
+                .iter()
+                .zip(old.map.iter())
+                .all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(&a.insns, &b.insns));
+        if same {
+            Funcs {
+                map,
+                owner: old.owner.clone(),
+            }
+        } else {
+            Funcs::new(map)
+        }
     }
 
     pub(crate) fn get(&self, entry: u64) -> Option<&Func> {
@@ -211,9 +237,83 @@ pub(crate) struct Program {
     pub(crate) discovery_rounds: usize,
     /// Saved operations that did not apply again when the program was opened.
     replay_failed: AtomicUsize,
+    /// Decompiler output of the functions looked at recently, valid until the next edit.
+    decompiled: Mutex<DecompileCache>,
+    /// Counts edits (see [`Program::touch`]); a cached decompile from an older count is stale.
+    epoch: AtomicU64,
+}
+
+/// How many decompiled functions to keep.
+const DECOMPILE_CACHE_ENTRIES: usize = 128;
+/// Budget for the text and tokens of the cached decompiles, in bytes (roughly).
+const DECOMPILE_CACHE_BYTES: usize = 128 * 1024 * 1024;
+
+/// The most recent decompiles, oldest dropped first. One decompile depends on the names, types,
+/// prototypes and comments of the whole program, so every edit empties the cache.
+#[derive(Default)]
+struct DecompileCache {
+    epoch: u64,
+    order: std::collections::VecDeque<u64>,
+    items: BTreeMap<u64, Arc<engine_native_sys::Decompiled>>,
+    bytes: usize,
+}
+
+impl DecompileCache {
+    fn size_of(d: &engine_native_sys::Decompiled) -> usize {
+        d.text.len() + d.tokens.len() * std::mem::size_of::<engine_native_sys::Token>() + 256
+    }
+
+    fn clear_for(&mut self, epoch: u64) {
+        if self.epoch != epoch {
+            self.order.clear();
+            self.items.clear();
+            self.bytes = 0;
+            self.epoch = epoch;
+        }
+    }
+
+    fn get(&mut self, at: u64, epoch: u64) -> Option<Arc<engine_native_sys::Decompiled>> {
+        self.clear_for(epoch);
+        let d = self.items.get(&at)?.clone();
+        if let Some(i) = self.order.iter().position(|a| *a == at) {
+            self.order.remove(i);
+        }
+        self.order.push_back(at);
+        Some(d)
+    }
+
+    fn put(&mut self, at: u64, epoch: u64, d: Arc<engine_native_sys::Decompiled>) {
+        self.clear_for(epoch);
+        let size = Self::size_of(&d);
+        if size > DECOMPILE_CACHE_BYTES / 2 {
+            return;
+        }
+        if let Some(old) = self.items.insert(at, d) {
+            self.bytes -= Self::size_of(&old);
+            if let Some(i) = self.order.iter().position(|a| *a == at) {
+                self.order.remove(i);
+            }
+        }
+        self.order.push_back(at);
+        self.bytes += size;
+        while self.items.len() > DECOMPILE_CACHE_ENTRIES || self.bytes > DECOMPILE_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.items.remove(&oldest) {
+                self.bytes -= Self::size_of(&old);
+            }
+        }
+    }
 }
 
 impl Program {
+    /// Marks the program as edited: the decompiles cached so far no longer apply. Called before
+    /// and after every change to names, types, prototypes, comments or the function table.
+    pub(crate) fn touch(&self) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub(crate) fn session(&self) -> MutexGuard<'_, Session> {
         self.session.lock().unwrap_or_else(|p| p.into_inner())
     }
@@ -271,50 +371,71 @@ impl Program {
         }
     }
 
+    /// The reference index of the function table `funcs`: the bodies of the current functions,
+    /// plus code no function holds any more, which stays code as in Ghidra, and addresses defined
+    /// as code.
+    fn build_refs(&self, funcs: &Arc<Funcs>, edits: &Edits) -> RefIndex {
+        let insns = self.insns();
+        let mut loose: Vec<Instruction> = self.orphans.clone();
+        if !Arc::ptr_eq(funcs, &self.discovered) || !edits.defined.is_empty() {
+            let data: Vec<(u64, u64)> = edits
+                .defined
+                .iter()
+                .filter_map(|(a, d)| match d {
+                    Defined::Data { len, .. } => Some((*a, a + len)),
+                    Defined::Code => None,
+                })
+                .collect();
+            let is_data = |a: u64| data.iter().any(|(s, e)| *s <= a && a < *e);
+            let held = |a: u64| funcs.owner.contains_key(&a);
+            let gone = self
+                .discovered
+                .map
+                .values()
+                .filter(|d| funcs.get(d.entry).is_none_or(|f| f.insns != d.insns))
+                .flat_map(|d| d.insns.iter().copied());
+            let defined_code = edits
+                .defined
+                .iter()
+                .filter(|(_, d)| matches!(d, Defined::Code))
+                .map(|(a, _)| *a);
+            let mut seen: BTreeSet<u64> = BTreeSet::new();
+            for a in gone.chain(defined_code) {
+                if held(a) || is_data(a) || !seen.insert(a) {
+                    continue;
+                }
+                if let Some(i) = insns.get(&a) {
+                    loose.push(i.clone());
+                }
+            }
+        }
+        RefIndex::build(&self.loaded, &funcs.map, &insns, &loose)
+    }
+
     /// Rebuilds what depends on the function table: the reference index (the bodies of the
     /// current functions, plus code no function holds any more, which stays code as in Ghidra,
     /// and addresses defined as code), the exports (a renamed function renames its export) and
     /// the noreturn set (functions created or re-bounded since discovery are judged by the
     /// propagation rule; the decompiler learns the changes).
     pub(crate) fn reindex(&self) {
+        self.reindex_with(true);
+    }
+
+    /// [`Program::reindex`] for edits that leave the bodies of the functions alone (a rename, a
+    /// prototype): the reference index stays as it is, which is most of the work.
+    pub(crate) fn reindex_names(&self) {
+        self.reindex_with(false);
+    }
+
+    fn reindex_with(&self, rebuild_refs: bool) {
         let funcs = self.funcs();
         let (refs, noreturn_protos) = {
             let edits = self.edits();
-            let insns = self.insns();
-            let mut loose: Vec<Instruction> = self.orphans.clone();
-            if !Arc::ptr_eq(&funcs, &self.discovered) || !edits.defined.is_empty() {
-                let data: Vec<(u64, u64)> = edits
-                    .defined
-                    .iter()
-                    .filter_map(|(a, d)| match d {
-                        Defined::Data { len, .. } => Some((*a, a + len)),
-                        Defined::Code => None,
-                    })
-                    .collect();
-                let is_data = |a: u64| data.iter().any(|(s, e)| *s <= a && a < *e);
-                let held = |a: u64| funcs.owner.contains_key(&a);
-                let gone = self
-                    .discovered
-                    .map
-                    .values()
-                    .filter(|d| funcs.get(d.entry).is_none_or(|f| f.insns != d.insns))
-                    .flat_map(|d| d.insns.iter().copied());
-                let defined_code = edits
-                    .defined
-                    .iter()
-                    .filter(|(_, d)| matches!(d, Defined::Code))
-                    .map(|(a, _)| *a);
-                let mut seen: BTreeSet<u64> = BTreeSet::new();
-                for a in gone.chain(defined_code) {
-                    if held(a) || is_data(a) || !seen.insert(a) {
-                        continue;
-                    }
-                    if let Some(i) = insns.get(&a) {
-                        loose.push(i.clone());
-                    }
-                }
-            }
-            let refs = RefIndex::build(&self.loaded, &funcs.map, &insns, &loose);
+            let refs = if rebuild_refs {
+                Arc::new(self.build_refs(&funcs, &edits))
+            } else {
+                self.refs()
+            };
             let protos: BTreeSet<u64> = edits
                 .protos
                 .iter()
@@ -380,13 +501,16 @@ impl Program {
                 }
             }
         }
-        *self.refs.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(refs);
+        if rebuild_refs {
+            *self.refs.write().unwrap_or_else(|p| p.into_inner()) = refs;
+            self.strings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clear();
+        }
         *self.exports.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(exports);
         *self.noreturn.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(noreturn);
-        self.strings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
+        self.touch();
     }
 
     /// A snapshot of the current function table.
@@ -565,15 +689,27 @@ impl Program {
     }
 
     /// Decompiles `at` on a blocking thread; a cancelled `cancel` abandons it at the next action
-    /// break point through the stop flag.
+    /// break point through the stop flag. The result of an earlier decompile of `at` is returned
+    /// while nothing has been edited since; `remember` keeps the result for the next call (the
+    /// analysis job, which decompiles everything once, does not).
     pub(crate) async fn decompile(
         self: &Arc<Self>,
         at: u64,
         timeout: Option<Duration>,
+        remember: bool,
         cancel: &CancellationToken,
-    ) -> EngineResult<engine_native_sys::Decompiled> {
+    ) -> EngineResult<Arc<engine_native_sys::Decompiled>> {
         let _slot = self.decompile_slot.lock().await;
         check(cancel)?;
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        if let Some(d) = self
+            .decompiled
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(at, epoch)
+        {
+            return Ok(d);
+        }
         self.stop.store(false, Ordering::Relaxed);
         let stop = self.stop.clone();
         let token = cancel.clone();
@@ -598,7 +734,15 @@ impl Program {
         .await;
         watcher.abort();
         self.stop.store(false, Ordering::Relaxed);
-        r
+        let d = Arc::new(r?);
+        // an edit that raced the decompile may or may not be in it
+        if remember && self.epoch.load(Ordering::SeqCst) == epoch {
+            self.decompiled
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .put(at, epoch, d.clone());
+        }
+        Ok(d)
     }
 }
 
@@ -736,12 +880,22 @@ pub(crate) fn signature_of(text: &str, name: &str) -> Option<String> {
     (!sig.is_empty()).then_some(sig)
 }
 
+/// Returns freed heap pages to the system (glibc keeps them, one arena per thread, otherwise).
+fn release_free_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim only releases memory the allocator already considers free.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
 /// Loads, discovers and prepares a program (blocking).
 fn build_program(
     path: &Path,
     spec: &LoaderSpec,
     config: &NativeConfig,
     token: &CancellationToken,
+    progress: Option<&(dyn Fn(usize, usize) + Sync)>,
 ) -> EngineResult<Program> {
     let data = std::fs::read(path).map_err(|e| {
         ProtoError::new(
@@ -783,11 +937,38 @@ fn build_program(
         loaded.image.clone(),
     )
     .map_err(native)?;
-    let Some(mut found) =
-        discover(&loaded, &mut session, config.use_symbols, token).map_err(native)?
+    // the switch analysis dominates opening a big binary; the state directory keeps its answers
+    let sha256 = hex_bytes(&Sha256::digest(&data));
+    let cache = config
+        .state_dir
+        .as_deref()
+        .map_or_else(Default::default, |d| {
+            crate::jumpcache::load(d, &sha256, config.use_symbols)
+        });
+    let Some(mut found) = discover(
+        &loaded,
+        &mut session,
+        token,
+        crate::discover::Options {
+            cache,
+            progress,
+            threads: config
+                .discovery_threads
+                .unwrap_or_else(crate::discover::default_threads),
+            ..crate::discover::Options::new(config.use_symbols)
+        },
+    )
+    .map_err(native)?
     else {
         return Err(cancelled());
     };
+    // the sessions of the other threads are gone; give their memory back
+    release_free_memory();
+    if let Some(dir) = config.state_dir.as_deref()
+        && found.recovered > 0
+    {
+        crate::jumpcache::save(dir, &sha256, config.use_symbols, &found.jumps);
+    }
     // names as Ghidra shows them: from DWARF, else demangled; the symbol-table names stay as
     // labels and as the mangled name
     let raw_names: BTreeMap<u64, String> = found
@@ -993,7 +1174,7 @@ fn build_program(
         arch: loaded.language.id.to_string(),
         format: loaded.format.into(),
         base: Hex64(loaded.base),
-        sha256: hex_bytes(&Sha256::digest(&data)),
+        sha256,
         size: data.len() as u64,
     };
     let stop = session.stop_flag();
@@ -1021,6 +1202,8 @@ fn build_program(
         found_noreturn: noreturn,
         discovery_rounds: found.rounds,
         replay_failed: AtomicUsize::new(0),
+        decompiled: Mutex::new(DecompileCache::default()),
+        epoch: AtomicU64::new(0),
     };
     p.reindex();
     Ok(p)
@@ -1222,6 +1405,23 @@ impl Loader for InProcessEngine {
         spec: &LoaderSpec,
         cancel: &CancellationToken,
     ) -> EngineResult<ProgramInfo> {
+        self.open_reporting(path, spec, cancel, None).await
+    }
+}
+
+/// Called while a program opens with the number of functions found and the number still to walk.
+pub(crate) type OpenReport = Arc<dyn Fn(usize, usize) + Send + Sync>;
+
+impl InProcessEngine {
+    /// [`Loader::open_binary`] that reports how discovery is getting on, which can take many
+    /// minutes on a big binary the first time.
+    pub(crate) async fn open_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: Option<OpenReport>,
+    ) -> EngineResult<ProgramInfo> {
         check(cancel)?;
         if let Some(f) = spec.format.as_deref()
             && f != "elf"
@@ -1236,7 +1436,10 @@ impl Loader for InProcessEngine {
         let config = self.config.clone();
         let token = cancel.clone();
         let program = blocking(move || {
-            let p = build_program(&path, &spec, &config, &token)?;
+            let progress = report
+                .as_deref()
+                .map(|f| f as &(dyn Fn(usize, usize) + Sync));
+            let p = build_program(&path, &spec, &config, &token, progress)?;
             if let Some(dir) = &config.state_dir {
                 let saved = read_state(dir, &p.info.sha256);
                 p.signatures().extend(saved.signatures);
@@ -1356,26 +1559,26 @@ impl Decompiler for InProcessEngine {
             ));
         }
         let d = p
-            .decompile(at, self.config.decompile_timeout, cancel)
+            .decompile(at, self.config.decompile_timeout, true, cancel)
             .await?;
         check(cancel)?;
         Ok(DecompileResult {
             function: Locator::ram(at),
             language: LANGUAGE_C.to_string(),
-            text: d.text,
+            text: d.text.clone(),
             tokens: d
                 .tokens
-                .into_iter()
+                .iter()
                 .map(|t| Token {
                     start: t.start,
                     end: t.end,
                     kind: token_kind(t.kind),
                     target: t.target.map(Locator::ram),
-                    symbol: t.symbol,
-                    varnode: t.varnode,
+                    symbol: t.symbol.clone(),
+                    varnode: t.varnode.clone(),
                 })
                 .collect(),
-            warnings: d.warnings,
+            warnings: d.warnings.clone(),
             completeness: Completeness::Complete,
         })
     }
