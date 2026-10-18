@@ -1503,7 +1503,9 @@ impl KrakenApp {
                 };
                 // The agent scene ends with the agent waiting for an answer, so a busy run is fine.
                 let assist_quiet = !vm.assist.busy() || shot.scene == Scene::AssistantAgent;
-                if shot.settle > 18 && !vm.busy() && assist_quiet && views_ready {
+                // A menu fades in: give it time to be fully drawn.
+                let frames = if shot.scene == Scene::Menu { 60 } else { 18 };
+                if shot.settle > frames && !vm.busy() && assist_quiet && views_ready {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
                     shot.stage = ShotStage::Waiting;
                 }
