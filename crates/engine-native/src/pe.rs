@@ -444,7 +444,10 @@ fn load_pe<Pe: ImageNtHeaders>(
             readonly: false,
         });
     }
-    let image = Image { segments };
+    let image = Image {
+        segments,
+        context: Vec::new(),
+    };
 
     // thunks: `jmp [slot]` (rip-relative on x86-64, absolute on x86)
     let mut plt: BTreeMap<u64, String> = BTreeMap::new();
@@ -771,6 +774,7 @@ fn load_pe<Pe: ImageNtHeaders>(
         landing_pads,
         got_code: Vec::new(),
         default_names,
+        global_pointer: None,
     })
 }
 

@@ -524,12 +524,17 @@ impl Importer {
                     constants::DW_ATE_signed | constants::DW_ATE_unsigned => PrimitiveClass::Int,
                     _ => PrimitiveClass::Undefined,
                 };
-                let signed = matches!(
-                    constants::DwAte(enc),
-                    constants::DW_ATE_signed
-                        | constants::DW_ATE_signed_char
-                        | constants::DW_ATE_float
-                );
+                // plain `char` is Ghidra's `char` whatever its signedness (unsigned on ARM,
+                // AArch64 and RISC-V), so strings read as strings there too
+                let plain_char = constants::DwAte(enc) == constants::DW_ATE_unsigned_char
+                    && d.name.as_deref() == Some("char");
+                let signed = plain_char
+                    || matches!(
+                        constants::DwAte(enc),
+                        constants::DW_ATE_signed
+                            | constants::DW_ATE_signed_char
+                            | constants::DW_ATE_float
+                    );
                 // `long double` is 16 bytes in memory, 10 of them used
                 let size = if class == PrimitiveClass::Float && size == 16 {
                     10

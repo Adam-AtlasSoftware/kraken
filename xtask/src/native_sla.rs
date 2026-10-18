@@ -19,8 +19,9 @@ use crate::native_src::{PREFIX, SHA256, TAG, URL, extract, fetch_archive, source
 use crate::{Result, cache_dir};
 
 /// Processors compiled: x86 (`x86-64.sla` for x86-64, `x86.sla` for 32-bit ELF and PE32) first,
-/// AArch64 second (decision 95).
-const PROCESSORS: &[&str] = &["x86", "AARCH64"];
+/// AArch64 second (decision 95), then ARM (A32 and Thumb-2, `ARM8_le.sla`) and RISC-V
+/// (`riscv.lp64d.sla`, `riscv.ilp32d.sla`).
+const PROCESSORS: &[&str] = &["x86", "AARCH64", "ARM", "RISCV"];
 
 /// The Makefile's SLEIGH_NAMES: CORE, SLEIGH and SLACOMP.
 const COMPILER_SOURCES: &[&str] = &[

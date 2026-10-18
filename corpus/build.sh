@@ -6,8 +6,9 @@
 # "elf32" (32-bit x86 ELF, corpus/elf32/bin), "lib" (libkr as Linux and Windows libraries and
 # object files, corpus/lib/bin), and the cross-architecture sets "arm32" (armv7-a hard-float
 # Linux), "aarch64", "riscv64" (rv64gc Linux) and "riscv32" (rv32imac, static, picolibc with
-# riscv32/src/linux_rt.c), each in corpus/<set>/bin. Default: all eight. Name sets to build only
-# those:
+# riscv32/src/linux_rt.c), each in corpus/<set>/bin, and "xlib" (libkr of the lib set as object
+# files, static libraries and shared libraries for those four, corpus/xlib/bin). Default: all
+# nine. Name sets to build only those:
 #   corpus/build.sh pe elf32
 set -euo pipefail
 
@@ -41,7 +42,7 @@ PROGRAMSX=(
 )
 # riscv32 programs: all static (there is no riscv32 Linux userland to link against).
 PROGRAMSRV32=(static_strops pie_list stripped_calc switch_vm)
-XSETS=(arm32 aarch64 riscv64 riscv32)
+XSETS=(arm32 aarch64 riscv64 riscv32 xlib)
 
 if [[ "${1:-}" != "--inside" ]]; then
   SETS=("$@")
@@ -80,6 +81,11 @@ if [[ "${1:-}" != "--inside" ]]; then
       lib)
         (cd lib && find bin -type f | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256 \
           && sha256sum src/* ../tools/groundtruth_lib.py ../build.sh ../Containerfile \
+             >> MANIFEST.sha256)
+        ;;
+      xlib)
+        (cd xlib && find bin -type f | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256 \
+          && sha256sum ../lib/src/* ../tools/groundtruth_lib.py ../build.sh ../Containerfile \
              >> MANIFEST.sha256)
         ;;
       arm32|aarch64|riscv64|riscv32)
@@ -296,6 +302,50 @@ build_riscv32() {
   done
 }
 
+# libkr (lib/src) for the cross-architecture targets, -O2 -g like the lib set: per target an
+# object file of kr_core.c (kr-<set>.o), a static library of both objects (libkr-<set>.a) and,
+# for the Linux targets, a shared library (libkr-<set>.so). arm32 is Thumb-2, the armhf
+# default, with one A32 object besides (kr-arm32-a32.o); riscv32 uses the bare-metal compiler
+# with picolibc's headers and has no shared library.
+build_xlib() {
+  rm -rf xlib/bin xlib/.build && mkdir -p xlib/bin xlib/.build
+  local flags=(-O2 -g -ffile-prefix-map=/work=. -Wall -fPIC)
+  local targets=(
+    "arm32:arm-linux-gnueabihf:-march=armv7-a+fp -mfloat-abi=hard -mthumb"
+    "aarch64:aarch64-linux-gnu:-march=armv8-a"
+    "riscv64:riscv64-linux-gnu:-march=rv64gc -mabi=lp64d"
+    "riscv32:riscv64-unknown-elf:-march=rv32imac -mabi=ilp32 --specs=picolibc.specs"
+  )
+  {
+    echo "base-image: $(base_image)"
+    for spec in "${targets[@]}"; do
+      local t="${spec#*:}"; t="${t%%:*}"
+      echo "$t-gcc: $("$t-gcc" --version | head -1) (flags: ${spec##*:})"
+    done
+    dpkg-query -W gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu \
+      gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf | sed 's/\t/ /;s/^/dpkg: /'
+  } > xlib/TOOLCHAIN.txt
+  for spec in "${targets[@]}"; do
+    local set="${spec%%:*}" rest="${spec#*:}"
+    local t="${rest%%:*}" archflags
+    read -r -a archflags <<< "${rest#*:}"
+    local b="xlib/.build/$set"
+    mkdir -p "$b"
+    for m in kr_core kr_text; do
+      "$t-gcc" "${archflags[@]}" "${flags[@]}" -c "lib/src/$m.c" -o "$b/$m.o"
+    done
+    if [[ $set != riscv32 ]]; then
+      "$t-gcc" "${archflags[@]}" -shared -Wl,--build-id=none -Wl,-soname,libkr.so \
+        -o "xlib/bin/libkr-$set.so" "$b/kr_core.o" "$b/kr_text.o"
+    fi
+    "$t-ar" rcD "xlib/bin/libkr-$set.a" "$b/kr_core.o" "$b/kr_text.o"
+    cp "$b/kr_core.o" "xlib/bin/kr-$set.o"
+  done
+  arm-linux-gnueabihf-gcc -march=armv7-a+fp -mfloat-abi=hard -marm "${flags[@]}" \
+    -c lib/src/kr_core.c -o xlib/bin/kr-arm32-a32.o
+  for f in xlib/bin/*; do echo "built $f ($(stat -c %s "$f") bytes)"; done
+}
+
 # Runs every binary of a cross set under qemu-user with no arguments and compares exit status,
 # stdout and stderr with the x86-64 build of the same program (bin/<name>-O0 of the ELF set):
 # <set>/QEMU-CHECK.txt.
@@ -341,6 +391,7 @@ for set in "$@"; do
       check_cross riscv64 qemu-riscv64 /usr/riscv64-linux-gnu
       ;;
     riscv32) build_riscv32 && check_cross riscv32 qemu-riscv32 /nonexistent ;;
+    xlib) build_xlib ;;
     *) echo "unknown set $set" >&2; exit 2 ;;
   esac
 done

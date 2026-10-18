@@ -19,6 +19,7 @@ struct PcodeOpOut;
 struct DecompOut;
 struct JumpEdgeOut;
 struct CommentIn;
+struct ContextOut;
 
 // Registers the decompiler capabilities and scans `sleigh_home` (a Ghidra install root) for
 // language definitions. Idempotent; must run before `new_session`.

@@ -87,14 +87,17 @@ impl NativeProbe {
 pub type BinaryFit = Result<(), String>;
 
 const EM_386: u16 = 3;
+const EM_ARM: u16 = 40;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
+const EM_RISCV: u16 = 243;
 const PE_I386: u16 = 0x014c;
 const PE_AMD64: u16 = 0x8664;
 
 /// Reads the header of `path`: the native engine opens little-endian ELF files for x86-64,
-/// AArch64 and 32-bit x86, and PE images for x86 and x86-64, and nothing else yet. Unreadable
-/// files are reported as fitting, so the engine itself says what is wrong with them.
+/// 32-bit x86, ARM (A32 and Thumb), AArch64, RISC-V 64 and RISC-V 32, and PE images for x86
+/// and x86-64, and nothing else yet. Unreadable files are reported as fitting, so the engine
+/// itself says what is wrong with them.
 pub fn binary_fit(path: &Path) -> BinaryFit {
     let mut head = vec![0u8; 4096];
     let n = match std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) {
@@ -102,6 +105,52 @@ pub fn binary_fit(path: &Path) -> BinaryFit {
         Err(_) => return Ok(()),
     };
     fit_of_header(&head[..n])
+}
+
+/// [`binary_fit`], and whether the spec tree `specs` has the Sleigh specification the file's
+/// processor needs: a tree compiled before ARM and RISC-V were added holds x86 and AArch64
+/// only (`cargo xtask native-sla` again, or `kraken setup --native`, adds them).
+pub fn binary_fit_in(path: &Path, specs: Option<&Path>) -> BinaryFit {
+    binary_fit(path)?;
+    let mut head = [0u8; 20];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else {
+        return Ok(());
+    };
+    match (specs, sla_of_header(&head[..n])) {
+        (Some(root), Some((processor, sla))) => {
+            let file = root
+                .join("Ghidra/Processors")
+                .join(processor)
+                .join("data/languages")
+                .join(sla);
+            if file.is_file() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the compiled Sleigh files under {} lack {processor} ({sla}); run `kraken \
+                     setup --native` (or `cargo xtask native-sla` in a source checkout) to \
+                     compile them",
+                    root.display()
+                ))
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The processor directory and `.sla` file an ELF header needs, for the processors added after
+/// the first spec trees (ARM, RISC-V); `None` for the rest.
+fn sla_of_header(head: &[u8]) -> Option<(&'static str, &'static str)> {
+    if head.get(..4) != Some(b"\x7fELF") {
+        return None;
+    }
+    let machine = head.get(18..20).map(|b| u16::from_le_bytes([b[0], b[1]]))?;
+    match (machine, head.get(4)) {
+        (EM_ARM, _) => Some(("ARM", "ARM8_le.sla")),
+        (EM_RISCV, Some(2)) => Some(("RISCV", "riscv.lp64d.sla")),
+        (EM_RISCV, _) => Some(("RISCV", "riscv.ilp32d.sla")),
+        _ => None,
+    }
 }
 
 /// [`binary_fit`] over the first bytes of a file (the PE header has to be among them).
@@ -124,23 +173,24 @@ pub fn fit_of_header(head: &[u8]) -> BinaryFit {
         .get(18..20)
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .unwrap_or(0);
-    if head.get(4) != Some(&2) {
-        if head.get(5) == Some(&1) && machine == EM_386 {
-            return Ok(());
-        }
-        return Err(format!(
-            "it is a 32-bit ELF file for machine type {machine} (the native engine opens 32-bit \
-             x86 only)"
-        ));
-    }
     if head.get(5) != Some(&1) {
         return Err(
             "it is a big-endian ELF file (the native engine opens little-endian only)".into(),
         );
     }
-    if machine != EM_X86_64 && machine != EM_AARCH64 {
+    if head.get(4) != Some(&2) {
+        if matches!(machine, EM_386 | EM_ARM | EM_RISCV) {
+            return Ok(());
+        }
         return Err(format!(
-            "its machine type is {machine} (the native engine opens x86-64 and AArch64 only)"
+            "it is a 32-bit ELF file for machine type {machine} (the native engine opens 32-bit \
+             x86, ARM and RISC-V 32 only)"
+        ));
+    }
+    if !matches!(machine, EM_X86_64 | EM_AARCH64 | EM_RISCV) {
+        return Err(format!(
+            "its machine type is {machine} (the native engine opens x86-64, AArch64 and RISC-V \
+             64 only)"
         ));
     }
     Ok(())
@@ -255,8 +305,9 @@ pub fn choose(
                 kind: EngineKind::Native,
                 choice,
                 reason: "auto picked native: the native library and the compiled .sla files are \
-                         available and the binary is an ELF file (x86-64, AArch64 or 32-bit x86), \
-                         a PE image or an object file (x86 or x86-64)"
+                         available and the binary is an ELF file (x86-64, 32-bit x86, ARM, \
+                         AArch64, RISC-V), a PE image or an object file (x86, x86-64, or an ELF \
+                         object of those processors)"
                     .into(),
             },
             Some(why) => EngineSelection {
@@ -324,7 +375,12 @@ pub fn plan_setup(
     if force || (!sources && (probe.specs.is_none() || !probe.library)) {
         steps.push(SetupStep::Xtask("native-src"));
     }
-    if force || probe.specs.is_none() {
+    // a tree `cargo xtask native-sla` compiled before ARM and RISC-V were added is compiled
+    // again
+    let stale = probe.specs.as_deref().is_some_and(|s| {
+        engine_native::compiled_specs_dir().as_deref() == Some(s) && !has_all_processors(s)
+    });
+    if force || probe.specs.is_none() || stale {
         steps.push(SetupStep::Xtask("native-sla"));
     }
     if !probe.library || !probe.worker {
@@ -345,6 +401,21 @@ pub fn plan_setup(
                 .collect(),
         ),
     }
+}
+
+/// Whether the spec tree at `root` has every processor the native engine opens: x86, AArch64,
+/// ARM and RISC-V.
+pub fn has_all_processors(root: &Path) -> bool {
+    [
+        "x86/data/languages/x86-64.sla",
+        "x86/data/languages/x86.sla",
+        "AARCH64/data/languages/AARCH64.sla",
+        "ARM/data/languages/ARM8_le.sla",
+        "RISCV/data/languages/riscv.lp64d.sla",
+        "RISCV/data/languages/riscv.ilp32d.sla",
+    ]
+    .iter()
+    .all(|f| root.join("Ghidra/Processors").join(f).is_file())
 }
 
 /// The source checkout this binary was built from, or the current directory's, when it still
@@ -429,7 +500,7 @@ mod tests {
             (b"MZ\x90\0".to_vec(), "no PE header"),
             (b"\xca\xfe\xba\xbe".to_vec(), "not an ELF or PE file"),
             (pe_head(0x1c0), "PE machine type is 0x01c0"),
-            (elf_head(1, 1, 40), "32-bit ELF file for machine type 40"),
+            (elf_head(1, 1, 8), "32-bit ELF file for machine type 8"),
             (elf_head(2, 2, EM_X86_64), "big-endian"),
             (elf_head(2, 1, 8), "machine type is 8"),
         ] {
@@ -444,8 +515,41 @@ mod tests {
         }
         assert!(fit_of_header(&elf_head(2, 1, EM_AARCH64)).is_ok());
         assert!(fit_of_header(&elf_head(1, 1, EM_386)).is_ok());
+        assert!(fit_of_header(&elf_head(1, 1, EM_ARM)).is_ok());
+        assert!(fit_of_header(&elf_head(1, 1, EM_RISCV)).is_ok());
+        assert!(fit_of_header(&elf_head(2, 1, EM_RISCV)).is_ok());
+        assert!(
+            fit_of_header(&elf_head(1, 2, EM_ARM)).is_err(),
+            "big-endian ARM"
+        );
         assert!(fit_of_header(&pe_head(PE_I386)).is_ok());
         assert!(fit_of_header(&pe_head(PE_AMD64)).is_ok());
+    }
+
+    #[test]
+    fn arm_and_riscv_need_their_compiled_specs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let elf = dir.path().join("arm.elf");
+        std::fs::write(&elf, elf_head(1, 1, EM_ARM)).expect("write");
+        let specs = dir.path().join("specs");
+        let langs = specs.join("Ghidra/Processors/ARM/data/languages");
+        std::fs::create_dir_all(&langs).expect("mkdir");
+        let e = binary_fit_in(&elf, Some(&specs)).expect_err("no ARM .sla yet");
+        assert!(
+            e.contains("lack ARM") && e.contains("kraken setup --native"),
+            "{e}"
+        );
+        std::fs::write(langs.join("ARM8_le.sla"), b"").expect("write");
+        assert!(binary_fit_in(&elf, Some(&specs)).is_ok());
+        assert_eq!(
+            sla_of_header(&elf_head(2, 1, EM_RISCV)),
+            Some(("RISCV", "riscv.lp64d.sla"))
+        );
+        assert_eq!(
+            sla_of_header(&elf_head(1, 1, EM_RISCV)),
+            Some(("RISCV", "riscv.ilp32d.sla"))
+        );
+        assert_eq!(sla_of_header(&elf_head(2, 1, EM_X86_64)), None);
     }
 
     fn pe_head(machine: u16) -> Vec<u8> {

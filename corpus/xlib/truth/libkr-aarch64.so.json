@@ -1,0 +1,146 @@
+{
+  "binary": "libkr-aarch64.so",
+  "sha256": "ecd3df5de070dea29b2f16c3cdd61d1a0d740c2216c6fb4092caf2ba5bc9027b",
+  "kind": "Linux shared library",
+  "arch": "aarch64",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "call_weak_fn",
+      "demangled": "call_weak_fn",
+      "size": 20,
+      "entry": "0x720"
+    },
+    {
+      "member": null,
+      "name": "deregister_tm_clones",
+      "demangled": "deregister_tm_clones",
+      "size": 0,
+      "entry": "0x740"
+    },
+    {
+      "member": null,
+      "name": "register_tm_clones",
+      "demangled": "register_tm_clones",
+      "size": 0,
+      "entry": "0x770"
+    },
+    {
+      "member": null,
+      "name": "__do_global_dtors_aux",
+      "demangled": "__do_global_dtors_aux",
+      "size": 0,
+      "entry": "0x7ac"
+    },
+    {
+      "member": null,
+      "name": "frame_dummy",
+      "demangled": "frame_dummy",
+      "size": 0,
+      "entry": "0x800"
+    },
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 24,
+      "entry": "0x820"
+    },
+    {
+      "member": null,
+      "name": "_fini",
+      "demangled": "_fini",
+      "size": 0,
+      "entry": "0xae4"
+    },
+    {
+      "member": null,
+      "name": "_init",
+      "demangled": "_init",
+      "size": 0,
+      "entry": "0x640"
+    },
+    {
+      "member": null,
+      "name": "kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 116,
+      "entry": "0x9a0"
+    },
+    {
+      "member": null,
+      "name": "kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 52,
+      "entry": "0xa20"
+    },
+    {
+      "member": null,
+      "name": "kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 132,
+      "entry": "0xa60"
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 100,
+      "entry": "0x840"
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 236,
+      "entry": "0x8a4"
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "_ITM_deregisterTMCloneTable"
+    },
+    {
+      "name": "_ITM_registerTMCloneTable"
+    },
+    {
+      "name": "__ctype_toupper_loc"
+    },
+    {
+      "name": "__cxa_finalize"
+    },
+    {
+      "name": "__gmon_start__"
+    },
+    {
+      "name": "malloc"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

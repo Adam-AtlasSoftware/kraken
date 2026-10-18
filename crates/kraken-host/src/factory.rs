@@ -513,7 +513,9 @@ impl EngineFactory for HostEngineFactory {
                     Ok(()),
                 )
             } else {
-                (self.native.probe(), crate::native::binary_fit(binary))
+                let probe = self.native.probe();
+                let fit = crate::native::binary_fit_in(binary, probe.specs.as_deref());
+                (probe, fit)
             };
         self.select_with(binary, choice, &probe, &fit)
     }

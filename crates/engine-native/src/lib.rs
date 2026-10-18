@@ -20,7 +20,9 @@
 //! involved.
 
 mod analyze;
+pub mod arm;
 pub mod cfg;
+pub mod constprop;
 pub mod ctypes;
 mod data;
 pub mod demangle;
@@ -37,6 +39,7 @@ mod native;
 pub mod objfile;
 pub mod pe;
 pub mod refs;
+mod relocs;
 pub mod strings;
 pub mod symbols;
 pub mod typestore;

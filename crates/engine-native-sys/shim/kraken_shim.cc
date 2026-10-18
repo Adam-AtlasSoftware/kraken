@@ -104,6 +104,11 @@ public:
     if (!image->load_fill(addr.getOffset(), buf)) {
       std::ostringstream s;
       s << "unable to load " << size << " bytes at 0x" << std::hex << addr.getOffset();
+      // Sleigh fetches instructions 16 bytes at a time: code outside the image is a bad
+      // instruction, which the decompiler's flow truncates with a warning (a jump into data
+      // decoded as code can lead anywhere); other reads stay unavailable data
+      if (size == 16)
+        throw ghidra::BadDataError(s.str());
       throw ghidra::DataUnavailError(s.str());
     }
   }
@@ -450,6 +455,10 @@ struct Session::Impl {
   // call fixups of the compiler spec by the names of the functions they replace
   // (`__x86.get_pc_thunk.bx`): the C++ library keeps the payloads but drops the targets
   std::map<std::string, ghidra::int4> callFixups;
+  // whether a branch to the next instruction guards the instruction's effect (ARM's
+  // conditional execution, `if (!cond) goto inst_next`) rather than being a flow of its own;
+  // x86 keeps its historical reading (`CMOVcc` and friends)
+  bool condExec = false;
 };
 
 Session::Session(std::unique_ptr<Impl> i) : impl(std::move(i)) {}
@@ -493,11 +502,22 @@ std::unique_ptr<Session> new_session(rust::Str language_id, rust::Str compiler_i
       throw std::runtime_error("start_library has not run");
     auto impl = std::make_unique<Session::Impl>();
     std::string target = std::string(language_id) + ":" + std::string(compiler_id);
+    rust::Vec<ContextOut> painted = image->context_ranges();
     rust::Box<ImageSource> img = std::move(image);
     impl->arch = std::make_unique<KrakenArchitecture>(target, &impl->errs, &img, &impl->sleigh);
     ghidra::DocumentStorage store;
     impl->arch->init(store);
     impl->arch->readonlypropagate = true;
+    impl->condExec = target.compare(0, 4, "x86:") != 0;
+    // context the loader worked out (ARM's TMode where the code is Thumb), painted before
+    // anything is decoded; each range is its own region, so a `globalset` of an instruction
+    // (`blx` into the other mode) repaints at most up to the next range
+    {
+      AddrSpace *ram = impl->arch->getDefaultCodeSpace();
+      for (const ContextOut &c : painted)
+        impl->arch->context->setVariableRegion(std::string(c.name), Address(ram, c.start),
+                                               Address(ram, c.end), c.value);
+    }
     if (const ghidra::Element *spec = store.getTag("compiler_spec")) {
       for (const ghidra::Element *el : spec->getChildren()) {
         if (el->getName() != "callfixup")
@@ -586,8 +606,16 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
           row.fallthrough = falls;
         }
       };
+      const uint64_t after = at + static_cast<uint64_t>(len);
+      // conditional execution: the instruction does what its other p-code says, or nothing
+      bool guarded = false;
       for (const auto &op : pc.ops) {
         bool ramTarget = !op.in.empty() && op.in[0].space->getType() == ghidra::IPTR_PROCESSOR;
+        if (impl->condExec && op.opc == ghidra::CPUI_CBRANCH && ramTarget &&
+            op.in[0].offset == after) {
+          guarded = true;
+          continue;
+        }
         switch (op.opc) {
         case ghidra::CPUI_RETURN:
           set(6, FL_RETURN, false);
@@ -659,6 +687,13 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
             row.reg_reads.push_back((in.offset << 8) | (in.size & 0xff));
         if (op.has_out && op.out.space == regs)
           row.reg_writes.push_back((op.out.offset << 8) | (op.out.size & 0xff));
+      }
+      if (guarded) {
+        // a guarded branch is a conditional one; a guarded return, computed jump or call may
+        // also fall through
+        if (row.flow == FL_JUMP)
+          row.flow = FL_CJUMP;
+        row.fallthrough = true;
       }
       // A repeat prefix (`REP STOSQ`) is p-code that branches back to its own start and out to
       // the next instruction: the instruction loops internally and then falls through.

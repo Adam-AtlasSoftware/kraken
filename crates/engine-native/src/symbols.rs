@@ -13,10 +13,14 @@ use crate::discover::Func;
 use crate::elf::Loaded;
 
 /// The name a function or export at `addr` with symbol `raw` gets: its DWARF name, else the
-/// demangled name, else `raw`.
+/// demangled name, else `raw` (a placeholder `FUN_` name in the program's spelling, see
+/// [`Loaded::default_prefix`]).
 pub fn default_name(loaded: &Loaded, addr: u64, raw: &str) -> String {
     match loaded.debug.functions.get(&addr) {
         Some(f) => f.name.clone(),
+        None if raw == crate::discover::default_name(addr) => {
+            format!("{}{addr:08x}", loaded.default_prefix())
+        }
         None => display_name(raw),
     }
 }

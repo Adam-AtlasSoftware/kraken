@@ -94,7 +94,12 @@ pub fn build(
                 for t in f.switches.get(last).into_iter().flatten() {
                     add(*start, *t, CfgEdgeKind::Switch);
                 }
+                if i.fallthrough {
+                    add(*start, *end, CfgEdgeKind::Fallthrough);
+                }
             }
+            // a conditional return (ARM) falls through when it does not return
+            Flow::Return if i.fallthrough => add(*start, *end, CfgEdgeKind::Fallthrough),
             Flow::Return => {}
         }
     }
