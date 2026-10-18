@@ -1,7 +1,9 @@
 //! Ghidra's C++ decompiler and Sleigh, built from source, behind a small KRAKEN shim.
 //!
 //! The decompiler library keeps global state (capability registries, the language list, static
-//! caches) and is not thread-safe, so every call into it takes one process-wide lock. A crash or
+//! caches) and is not thread-safe, so every call into it takes one process-wide lock; only
+//! `decode` and `jump_tables`, which touch nothing but their own session, share it, so the
+//! analysis of one program can run on several sessions at once. A crash or
 //! hang in the C++ code takes the whole process with it; the plan (ADR 0014) is to move
 //! [`Session`] into a confined child process once the in-process phase has proven the glue.
 //!
@@ -14,7 +16,7 @@ use std::sync::atomic::AtomicBool;
 #[cfg(kraken_native)]
 use std::sync::atomic::Ordering;
 #[cfg(kraken_native)]
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 /// Errors from the native library.
@@ -339,11 +341,20 @@ fn unpack_regs(packed: &[u64]) -> Vec<(u64, u32)> {
 }
 
 #[cfg(kraken_native)]
-static LOCK: Mutex<()> = Mutex::new(());
+static LOCK: RwLock<()> = RwLock::new(());
 
+/// The exclusive lock every call takes unless it is one of the read-only analysis calls below.
 #[cfg(kraken_native)]
-fn lock() -> MutexGuard<'static, ()> {
-    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+fn lock() -> RwLockWriteGuard<'static, ()> {
+    LOCK.write().unwrap_or_else(|p| p.into_inner())
+}
+
+/// The shared lock of [`Session::decode`] and [`Session::jump_tables`]: they only read the
+/// session's own program image and Sleigh translator (no process-wide state), so calls on
+/// different sessions may overlap, but never with an exclusive call.
+#[cfg(kraken_native)]
+fn lock_shared() -> RwLockReadGuard<'static, ()> {
+    LOCK.read().unwrap_or_else(|p| p.into_inner())
 }
 
 #[cfg(kraken_native)]
@@ -584,7 +595,7 @@ impl Session {
     pub fn decode(&mut self, addr: u64, max: u32) -> NativeResult<Vec<Instruction>> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            let _g = lock_shared();
             let rows = self.pinned()?.decode(addr, max).map_err(real::err)?;
             Ok(rows
                 .into_iter()
@@ -699,7 +710,7 @@ impl Session {
     pub fn jump_tables(&mut self, addr: u64) -> NativeResult<Vec<JumpEdge>> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            let _g = lock_shared();
             let mut t: Vec<JumpEdge> = self
                 .pinned()?
                 .jump_tables(addr)

@@ -36,7 +36,7 @@ pub fn build(
         // Ghidra's block model gives a recovered switch's computed jump a block of its own
         leaders.insert(*op);
     }
-    for a in &f.insns {
+    for a in f.insns.iter() {
         let Some(i) = insns.get(a) else { continue };
         if matches!(i.flow, Flow::Jump | Flow::ConditionalJump) {
             leaders.extend(i.targets.iter().copied().filter(|t| body.contains(t)));
@@ -49,7 +49,7 @@ pub fn build(
     // blocks: (start, end, count, last instruction)
     let mut blocks: Vec<(u64, u64, u32, u64)> = Vec::new();
     let mut prev_end: Option<u64> = None;
-    for a in &f.insns {
+    for a in f.insns.iter() {
         let len = insns.get(a).map_or(1, |i| u64::from(i.length));
         let new_block = leaders.contains(a) || prev_end != Some(*a) || blocks.is_empty();
         if new_block {

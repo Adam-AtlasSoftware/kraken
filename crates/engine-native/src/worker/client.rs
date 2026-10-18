@@ -78,7 +78,9 @@ pub(crate) struct WorkerEngine {
 /// What a request is allowed while it runs.
 pub(crate) struct Limits<'a> {
     deadline: Duration,
-    progress: Option<(&'a mut JobSubscription, &'a ProgressSender)>,
+    /// Progress events of the request: each one restarts the deadline, and is passed on to the
+    /// sender when there is one.
+    progress: Option<(&'a mut JobSubscription, Option<&'a ProgressSender>)>,
 }
 
 impl WorkerEngine {
@@ -152,6 +154,11 @@ impl WorkerEngine {
             use_symbols: self.config.use_symbols,
             decompile_timeout_ms: self.config.decompile_timeout.map(duration_ms),
             state_dir: self.state_dir()?,
+            threads: Some(
+                self.config
+                    .discovery_threads
+                    .unwrap_or_else(crate::discover::default_threads),
+            ),
         };
         let _gate = self.edit_gate.lock().await;
         let mut slot = self.live.lock().await;
@@ -213,18 +220,26 @@ impl WorkerEngine {
         cancel: &CancellationToken,
     ) -> Result<(Arc<Live>, kraken_engine::ProgramInfo), ProtoError> {
         let live = Arc::new(self.spawn(open).await?);
+        // the deadline is for the gap between two reports of the discovery, not for the whole
+        // open: the first open of a big binary takes a long time
+        let job_id = format!(
+            "native-open-{}",
+            self.next_op.fetch_add(1, Ordering::Relaxed) + 1
+        );
+        let mut sub = live.client.subscribe_progress(&job_id);
         let info = self
             .exec(
                 &live,
                 "open",
-                json!({ "open": open }),
+                json!({ "open": open, "job_id": job_id }),
                 Limits {
                     deadline: self.opts.open_timeout,
-                    progress: None,
+                    progress: Some((&mut sub, None)),
                 },
                 cancel,
             )
             .await?;
+        drop(sub);
         let info = decode("open", info)?;
         let restored = decode::<NativeStats>(
             "stats",
@@ -287,7 +302,9 @@ impl WorkerEngine {
                 ],
                 cwd: home.path().to_path_buf(),
                 read_only: vec![program, spec_root, binary],
-                optional_read_only: vec!["/etc/ld.so.cache".into()],
+                // the memory figures let the sessions of a first open wait for each other when
+                // little is free
+                optional_read_only: vec!["/etc/ld.so.cache".into(), "/proc/meminfo".into()],
                 proc_self_read: false,
                 // besides its home, the worker may write the engine directory and nothing else
                 read_write: std::iter::once(home.path().to_path_buf())
@@ -362,7 +379,7 @@ impl WorkerEngine {
                 .decompile_limits()
                 .deadline
                 .max(self.opts.request_timeout),
-            progress: Some((&mut sub, &tx)),
+            progress: Some((&mut sub, Some(&tx))),
         };
         let v = self
             .exec(
@@ -440,7 +457,7 @@ impl WorkerEngine {
         }
         let Limits { deadline, progress } = limits;
         let (mut sub, tx) = match progress {
-            Some((sub, tx)) => (Some(sub), Some(tx)),
+            Some((sub, tx)) => (Some(sub), tx),
             None => (None, None),
         };
         let call = live.client.call(method, params, None, None);

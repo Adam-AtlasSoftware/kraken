@@ -224,6 +224,18 @@ impl KrakenApp {
         &self.dock
     }
 
+    /// Replaces the dock layout (benchmarks).
+    #[cfg(test)]
+    pub(crate) fn set_dock(&mut self, dock: DockState<Tab>) {
+        self.dock = dock;
+    }
+
+    /// Makes `tab` the visible one of its group on the next frame (benchmarks).
+    #[cfg(test)]
+    pub(crate) fn bring_to_front(&mut self, tab: Tab) {
+        self.state.bring_to_front = Some(tab);
+    }
+
     #[cfg(test)]
     pub fn theme(&self) -> KrakenTheme {
         self.theme

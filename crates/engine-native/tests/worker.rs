@@ -132,9 +132,13 @@ async fn worker_is_confined() {
         "unix_socket",
         "read_etc_passwd",
         "write_outside_home",
+        "read_proc_stat",
     ] {
         denied(&probe, key);
     }
+    // the memory figures are readable (and only those of /proc), so that discovery can wait for
+    // memory
+    assert_eq!(probe["read_meminfo"], "ok", "{probe}");
     assert_eq!(probe["write_tmp_home"], "ok", "{probe}");
     let mut env: Vec<&str> = probe["env"]
         .as_array()

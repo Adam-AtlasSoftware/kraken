@@ -53,10 +53,17 @@ pub fn scan(
         }
     }
     if !defined.is_empty() {
+        // a string inside a defined one is dropped: look the defined ones up by address, with the
+        // furthest end of everything that starts at or before each
+        defined.sort_by_key(|d| d.address);
+        let mut reach: Vec<u64> = Vec::with_capacity(defined.len());
+        for d in &defined {
+            let end = d.address.0 + u64::from(d.length);
+            reach.push(reach.last().map_or(end, |r| (*r).max(end)));
+        }
         out.retain(|s| {
-            !defined.iter().any(|d| {
-                d.address.0 <= s.address.0 && s.address.0 < d.address.0 + u64::from(d.length)
-            })
+            let i = defined.partition_point(|d| d.address.0 <= s.address.0);
+            i == 0 || reach[i - 1] <= s.address.0
         });
         out.extend(defined);
         out.sort_by_key(|s| s.address);
@@ -93,20 +100,29 @@ fn scan_block(base: u64, bytes: &[u8], min: usize, defined_utf8: bool, out: &mut
     while i + 1 < bytes.len() {
         let start = i;
         let mut units = Vec::new();
+        // plain text only, so ASCII byte strings are not read as UTF-16; the first other unit
+        // ends the attempt (reading on to the next zero pair could not make it succeed)
+        let mut plain = true;
         while i + 1 < bytes.len() {
             let u = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
             if u == 0 {
                 break;
             }
+            if !((0x20..0x7f).contains(&u) || matches!(u, 9 | 10 | 13)) {
+                plain = false;
+                break;
+            }
             units.push(u);
             i += 2;
         }
-        let terminated = i + 1 < bytes.len();
-        let text = String::from_utf16(&units).ok();
+        let terminated = plain && i + 1 < bytes.len();
+        let text = if terminated {
+            String::from_utf16(&units).ok()
+        } else {
+            None
+        };
         let ok = terminated
             && units.len() >= min.max(2)
-            // mostly plain text, so ASCII byte strings are not read as UTF-16
-            && units.iter().all(|u| (0x20..0x7f).contains(u) || matches!(u, 9 | 10 | 13))
             && text.as_deref().is_some_and(|t| t.chars().all(printable));
         if ok && let Some(t) = text {
             let end = i + 2;

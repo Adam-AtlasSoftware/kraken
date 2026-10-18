@@ -110,7 +110,7 @@ async fn run(
                 progress(&tx, stage, 0, total, "decompiling".into());
                 for (i, (at, name)) in todo.into_iter().enumerate() {
                     check(&token)?;
-                    match p.decompile(at, timeout, &token).await {
+                    match p.decompile(at, timeout, false, &token).await {
                         Ok(d) => {
                             if let Some(sig) = signature_of(&d.text, &name) {
                                 p.signatures().entry(at).or_insert(sig);

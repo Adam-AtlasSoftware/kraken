@@ -165,6 +165,9 @@ pub(crate) struct OpenParams {
     /// [`crate::NativeConfig::state_dir`]: the one directory the worker may write besides its
     /// home; opening replays the `native-state.json` saved there.
     pub state_dir: Option<PathBuf>,
+    /// [`crate::NativeConfig::discovery_threads`], decided by the parent.
+    #[serde(default)]
+    pub threads: Option<usize>,
 }
 
 /// [`engine_native_sys::Varnode`] on the wire.

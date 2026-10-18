@@ -39,6 +39,13 @@ fn xref(funcs: &Funcs, r: &Ref, from_function: Option<u64>) -> Xref {
 
 /// Defines a type (blocking) and journals it, so a reopened engine has it again.
 pub(crate) fn define(p: &Program, def: TypeDef) -> EngineResult<()> {
+    p.touch();
+    let r = define_inner(p, def);
+    p.touch();
+    r
+}
+
+fn define_inner(p: &Program, def: TypeDef) -> EngineResult<()> {
     let applied = {
         let mut types = p.types();
         let mut session = p.session();

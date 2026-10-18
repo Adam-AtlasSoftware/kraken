@@ -203,7 +203,7 @@ impl RefIndex {
             }
             let tails: BTreeSet<(u64, u64)> = f.tail_calls.iter().copied().collect();
             let mut leaders: BTreeSet<u64> = f.switches.values().flatten().copied().collect();
-            for a in &f.insns {
+            for a in f.insns.iter() {
                 if let Some(i) = insns.get(a)
                     && matches!(i.flow, Flow::Jump | Flow::ConditionalJump)
                 {
@@ -224,7 +224,7 @@ impl RefIndex {
                 bases.extend(loaded.pic_base.map(|g| ("EBX".to_string(), g, true)));
             }
             let mut thunk_reg: Option<&'static str> = None;
-            for a in &f.insns {
+            for a in f.insns.iter() {
                 let Some(i) = insns.get(a) else { continue };
                 if prev_end != Some(*a) || leaders.contains(a) {
                     held.clear();
@@ -302,10 +302,14 @@ impl RefIndex {
                 // Ghidra also refers to the address from the instruction that next copies the
                 // register it was loaded into, or addresses memory through it
                 // (`lea rax,[s]; mov rsi,rax`); arithmetic and compares do not count
-                let mnemonic = i.mnemonic.to_ascii_uppercase();
-                let copies = mnemonic.starts_with("MOV")
-                    || mnemonic.starts_with("LEA")
-                    || mnemonic == "PUSH";
+                let starts = |prefix: &str| {
+                    i.mnemonic
+                        .as_bytes()
+                        .get(..prefix.len())
+                        .is_some_and(|m| m.eq_ignore_ascii_case(prefix.as_bytes()))
+                };
+                let copies =
+                    starts("MOV") || starts("LEA") || i.mnemonic.eq_ignore_ascii_case("PUSH");
                 for (off, size, to) in &held {
                     if first && copies && i.reg_reads.iter().any(|r| overlaps(*r, (*off, *size))) {
                         b.add(*a, *to, XrefKind::Data);

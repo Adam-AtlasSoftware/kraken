@@ -8,6 +8,9 @@
 #include <map>
 #include <cstdio>
 #include <mutex>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -757,7 +760,8 @@ Funcdata *functionAt(ghidra::Architecture *a, uint64_t addr) {
 } // namespace
 
 rust::Vec<JumpEdgeOut> Session::jump_tables(uint64_t addr) {
-  return guarded("jump_tables", [&]() {
+  const auto began = std::chrono::steady_clock::now();
+  auto out = guarded("jump_tables", [&]() {
     ghidra::Architecture *a = impl->arch.get();
     Funcdata *fd = functionAt(a, addr);
     if (fd->isProcStarted())
@@ -778,6 +782,14 @@ rust::Vec<JumpEdgeOut> Session::jump_tables(uint64_t addr) {
     a->clearAnalysis(fd);
     return out;
   });
+#ifdef __GLIBC__
+  // the switch analysis of a big function allocates gigabytes in small pieces; without this the
+  // freed pages stay with the process (each thread has its own arena), and a long discovery on
+  // several threads grows without bound
+  if (std::chrono::steady_clock::now() - began > std::chrono::milliseconds(200))
+    malloc_trim(0);
+#endif
+  return out;
 }
 
 DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {

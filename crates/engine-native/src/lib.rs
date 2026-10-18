@@ -29,6 +29,7 @@ pub mod dwarf;
 pub mod eh;
 pub mod elf;
 mod engine;
+mod jumpcache;
 pub mod libc;
 pub mod listing;
 mod mutate;
