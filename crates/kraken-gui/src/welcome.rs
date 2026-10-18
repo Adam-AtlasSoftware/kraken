@@ -100,7 +100,9 @@ pub fn engine_label(e: EngineChoice) -> &'static str {
 pub fn engine_help(e: EngineChoice) -> &'static str {
     match e {
         EngineChoice::Ghidra => "Ghidra with Java: every format, and renames and comments.",
-        EngineChoice::Native => "No Java, fast start. 64-bit ELF programs only for now.",
+        EngineChoice::Native => {
+            "No Java, fast start. 64-bit ELF programs only for now. Needs `kraken setup --native` once."
+        }
         EngineChoice::Auto => "Native when it is installed and can open the program, else Ghidra.",
     }
 }

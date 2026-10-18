@@ -1,15 +1,15 @@
 # KRAKEN
 
-**Take a program apart and understand it, with a helping hand.** KRAKEN is an open-source reverse-engineering workbench built on Ghidra's analysis engine. You, your scripts and AI agents all work on the same project through one set of commands, and every edit is logged, attributed and undoable. You do not need to know reverse engineering to start: the app explains terms as you go and the [tutorial](docs/tutorial.md) walks you through a first session. The long-term goal is Rust rewrites of binaries, function by function, checked against the original.
+**Take a program apart and understand it, with a helping hand.** KRAKEN is an open-source reverse-engineering workbench built on Ghidra's decompiler, with a Java-free native engine and an optional full Ghidra engine. You, your scripts and AI agents all work on the same project through one set of commands, and every edit is logged, attributed and undoable. You do not need to know reverse engineering to start: the app explains terms as you go and the [tutorial](docs/tutorial.md) walks you through a first session. The long-term goal is Rust rewrites of binaries, function by function, checked against the original.
 
 ![KRAKEN with a stripped program opened: function list, decompiler, hex, listing and cross-references](docs/images/tutorial/hero.png)
 
-*A real project: `stripped_calc-O2-stripped` from this repository, after a few functions were named.*
+*A real native-engine project: `stripped_calc-O2-stripped` from this repository, after a few functions were named.*
 
 ## What it does
 
 **Analyze**
-- Finds functions and decompiles them to C-like code with Ghidra, for native ELF, PE and Mach-O programs.
+- Finds functions and decompiles them to C-like code with Ghidra's decompiler: through the native engine (no Java, 64-bit ELF) or the optional Ghidra engine (ELF, PE and Mach-O).
 - Listing, hex, control-flow graph, cross-references, strings, imports and exports, memory map.
 - Rename functions, set types and comments. Search, filter and jump between views.
 
@@ -34,6 +34,7 @@ KRAKEN is **pre-alpha** (0.1a). Expect rough edges and breaking changes.
 | | Linux x86_64 | macOS (Apple silicon) | Windows x86_64 |
 |---|---|---|---|
 | CLI, MCP server, GUI | Works | Builds, experimental | Builds, experimental |
+| Native engine, no Java (`kraken setup --native`) | Works (64-bit ELF) | Not yet | Not yet |
 | Analysis with Ghidra (`kraken setup`) | Works | Not yet | Not yet |
 | Sandbox around Ghidra | Landlock | Not yet | Not yet |
 | Local models | Works | Builds | Builds |
@@ -43,16 +44,20 @@ KRAKEN is **pre-alpha** (0.1a). Expect rough edges and breaking changes.
 
 ## Quick start
 
+The default path on Linux needs no Java and no Ghidra: KRAKEN's native engine runs Ghidra's decompiler as a library. From a checkout (the native pieces are not in the release archives yet):
+
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Adam-AtlasSoftware/kraken/main/scripts/install.sh | bash
-kraken setup                                              # downloads Ghidra and a JDK once
-kraken project-create --binary corpus/bin/stripped_calc-O2-stripped --project ~/kraken-projects/calc
+git clone https://github.com/Adam-AtlasSoftware/kraken && cd kraken
+cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native
+export PATH="$PWD/target/release:$PATH"
+kraken setup --native                  # once: fetches the pinned sources, compiles the Sleigh files (about a minute)
+kraken project-create --binary corpus/bin/stripped_calc-O2-stripped --engine native --project ~/kraken-projects/calc
 kraken analyze --project ~/kraken-projects/calc
 kraken list-functions --project ~/kraken-projects/calc --limit 20
-kraken-gui                                                # or open the project in the app
+kraken-gui                             # or open the project in the app (Engine: Native)
 ```
 
-The practice programs are in `corpus/bin/` of a checkout. To build from source instead, see [Install](docs/install.md).
+You need Rust and a C++ compiler. Set `engine = "native"` in `~/.config/kraken/config.toml` to make it the default for new projects. The practice programs are in `corpus/bin/`. Native handles 64-bit ELF (x86-64 and AArch64). For PE, Mach-O, 32-bit programs or debug-info types use the optional Ghidra engine: `kraken setup` downloads Ghidra and a JDK, and the release archives and the one-line installer cover that path (see [Install](docs/install.md)). The [native engine page](docs/native-engine.md) compares the two.
 
 Connect an agent: `claude mcp add kraken -- kraken mcp --project ~/kraken-projects/calc`.
 
@@ -73,7 +78,7 @@ Build the book with `mdbook build docs`. The command reference is generated: run
 
 ## Safety model
 
-Binaries you analyse are untrusted. Ghidra runs in a separate process confined with Landlock on Linux: no network, writes only to a throwaway home and the project folder, and a scrubbed environment. KRAKEN runs the program you open only when you ask for a whole-program rewrite, confined like the rest and after asking you. Everything that comes from the file (names, strings, comments, decompiled text) is handed to AI models only as clearly marked, untrusted data, never as instructions. Agent writes are additive or proposals: an agent may add a name to something still called `FUN_...` or add a comment, within a per-run cap, while anything that would overwrite your work waits for you to accept it. Code a model writes for the rewrite pipeline builds and runs only in a sandbox, and only you can accept it. See [Security](docs/security.md).
+Binaries you analyse are untrusted. Ghidra and the native engine's decompiler each run in a separate process confined with Landlock on Linux: no network, writes only to a throwaway home and the project folder, and a scrubbed environment. KRAKEN runs the program you open only when you ask for a whole-program rewrite, confined like the rest and after asking you. Everything that comes from the file (names, strings, comments, decompiled text) is handed to AI models only as clearly marked, untrusted data, never as instructions. Agent writes are additive or proposals: an agent may add a name to something still called `FUN_...` or add a comment, within a per-run cap, while anything that would overwrite your work waits for you to accept it. Code a model writes for the rewrite pipeline builds and runs only in a sandbox, and only you can accept it. See [Security](docs/security.md).
 
 ## License
 

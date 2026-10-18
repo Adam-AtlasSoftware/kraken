@@ -191,6 +191,7 @@ fn function(addr: u64, name: &str, text: &str, targets: &HashMap<String, u64>) -
             signature: Some(signature),
             fn_hash: Some(format!("h-{name}")),
             completeness: Completeness::Complete,
+            mangled: None,
         },
         DecompileResult {
             function: locator,
