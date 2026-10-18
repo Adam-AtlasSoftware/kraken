@@ -696,6 +696,20 @@ mod unix {
                 {
                     libc::_exit(1);
                 }
+                // No core dump of a process that parses hostile input: its memory may hold the
+                // user's data, and a crash is reported by the supervisor. 1, not 0: with a piped
+                // core_pattern (systemd-coredump) the kernel skips the dump only at exactly 1.
+                let core = libc::rlimit {
+                    rlim_cur: 1,
+                    rlim_max: 1,
+                };
+                if libc::setrlimit(libc::RLIMIT_CORE, &core) != 0 {
+                    let none = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    libc::setrlimit(libc::RLIMIT_CORE, &none);
+                }
                 // Belt and braces: no inherited descriptor survives exec (std already sets
                 // CLOEXEC on its own). Failure (old kernel) is harmless.
                 libc::syscall(

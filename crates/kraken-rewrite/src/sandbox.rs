@@ -723,7 +723,13 @@ mod imp {
                     };
                     libc::setrlimit(res, &l)
                 };
-                limit(libc::RLIMIT_CORE, 0);
+                // 1, not 0: with a piped core_pattern (systemd-coredump) the kernel still
+                // dumps at 0 and skips the dump only at exactly 1, so a crashing translation
+                // does not reach the host's crash handlers
+                if limit(libc::RLIMIT_CORE, 1) != 0 {
+                    // the hard limit is already 0 and cannot be raised
+                    limit(libc::RLIMIT_CORE, 0);
+                }
                 if scope == ReadScope::SystemLibraries {
                     limit(libc::RLIMIT_AS, RUNNER_MEMORY);
                     limit(libc::RLIMIT_CPU, RUNNER_CPU_SECONDS);
