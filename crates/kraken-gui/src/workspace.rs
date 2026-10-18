@@ -6,6 +6,7 @@ use egui::{Id, RichText, Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use kraken_gui_widgets::{TokenText, VirtualList};
 use kraken_proto::{Locator, TokenKind};
+use kraken_viewmodel::navtools::NavTab;
 use kraken_viewmodel::{Decompiled, FunctionItem, Load, ToastLevel, ViewModel};
 
 use crate::panels::{self, PanelState};
@@ -28,6 +29,8 @@ pub enum Tab {
     Proposals,
     Assistant,
     Rewrite,
+    Search,
+    Bookmarks,
 }
 
 impl Tab {
@@ -45,6 +48,8 @@ impl Tab {
             Tab::Proposals => "Proposals",
             Tab::Assistant => "Assistant",
             Tab::Rewrite => "Rewrite",
+            Tab::Search => "Search",
+            Tab::Bookmarks => "Bookmarks",
         }
     }
 
@@ -71,6 +76,12 @@ impl Tab {
             Tab::Rewrite => {
                 "Rewrite functions in Rust, check each against the original, and export what you accept."
             }
+            Tab::Search => {
+                "Find names, strings, byte patterns or instructions anywhere in the program. Ctrl+Shift+F."
+            }
+            Tab::Bookmarks => {
+                "Places you or an agent marked to come back to, with notes. Ctrl+D adds one."
+            }
         }
     }
 }
@@ -91,6 +102,8 @@ pub fn initial_dock() -> DockState<Tab> {
             Tab::History,
             Tab::Proposals,
             Tab::Rewrite,
+            Tab::Search,
+            Tab::Bookmarks,
         ],
     );
     dock
@@ -113,6 +126,8 @@ pub fn graph_dock() -> DockState<Tab> {
             Tab::History,
             Tab::Proposals,
             Tab::Rewrite,
+            Tab::Search,
+            Tab::Bookmarks,
         ],
     );
     dock
@@ -161,10 +176,22 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
     if std::mem::take(&mut vm.assist.show_requested) {
         state.bring_to_front = Some(Tab::Assistant);
     }
-    if let Some(tab) = state.bring_to_front.take()
-        && let Some(path) = dock.find_tab(&tab)
-    {
-        let _ = dock.set_active_tab(path);
+    if let Some(t) = vm.tools.take_tab() {
+        state.bring_to_front = Some(match t {
+            NavTab::Search => Tab::Search,
+            NavTab::Bookmarks => Tab::Bookmarks,
+            NavTab::History => Tab::History,
+            NavTab::Rewrite => Tab::Rewrite,
+        });
+    }
+    if let Some(tab) = state.bring_to_front.take() {
+        // A layout without the tab (a screenshot scene) gets it in the focused pane.
+        if dock.find_tab(&tab).is_none() && matches!(tab, Tab::Search | Tab::Bookmarks) {
+            dock.push_to_focused_leaf(tab);
+        }
+        if let Some(path) = dock.find_tab(&tab) {
+            let _ = dock.set_active_tab(path);
+        }
     }
     let style = Style::from_egui(ui.style().as_ref());
     let mut viewer = Viewer { vm, ui: state };
@@ -174,6 +201,7 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
         .show_leaf_close_all_buttons(false)
         .show_leaf_collapse_buttons(false)
         .show_inside(ui, &mut viewer);
+    panels::dialogs::show(ui.ctx(), viewer.vm);
 }
 
 impl TabViewer for Viewer<'_> {
@@ -211,8 +239,12 @@ impl TabViewer for Viewer<'_> {
             Tab::Functions => functions(ui, self.vm, self.ui),
             Tab::Decompiler => decompiler(ui, self.vm, self.ui),
             Tab::Hex => panels::hex::show(ui, self.vm, &mut self.ui.panels),
-            Tab::Listing => panels::listing::show(ui, self.vm, &mut self.ui.panels),
-            Tab::Graph => panels::graph::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Listing => {
+                panels::listing::show(ui, self.vm, &mut self.ui.panels, &mut self.ui.assist)
+            }
+            Tab::Graph => {
+                panels::graph::show(ui, self.vm, &mut self.ui.panels, &mut self.ui.assist)
+            }
             Tab::Xrefs => panels::xrefs::show(ui, self.vm, &mut self.ui.panels),
             Tab::Strings => panels::strings::show(ui, self.vm, &mut self.ui.panels),
             Tab::Symbols => panels::symbols::show(ui, self.vm, &mut self.ui.panels),
@@ -225,6 +257,8 @@ impl TabViewer for Viewer<'_> {
                 &mut self.ui.rewrite,
                 &mut self.ui.bring_to_front,
             ),
+            Tab::Search => panels::search::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Bookmarks => panels::bookmarks::show(ui, self.vm, &mut self.ui.panels),
         }
     }
 }
@@ -389,6 +423,7 @@ enum Act {
     Notice(&'static str),
     SyncListing(u64),
     RewriteThis,
+    Signature,
 }
 
 fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
@@ -434,6 +469,15 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                     .clicked()
                 {
                     acts.push(Act::Comment);
+                }
+                let blocked = vm.type_edit_blocked();
+                if ui
+                    .add_enabled(blocked.is_none(), egui::Button::new("Signature"))
+                    .on_hover_text("Edit the return type and parameters of this function as a C prototype  (Y)")
+                    .on_disabled_hover_text(blocked.unwrap_or(""))
+                    .clicked()
+                {
+                    acts.push(Act::Signature);
                 }
                 if ui
                     .add_enabled(vm.rewrite.can_run(), egui::Button::new("Rewrite in Rust"))
@@ -492,6 +536,7 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             Act::Rename => vm.begin_rename_current(),
             Act::Comment => vm.begin_comment_current(),
             Act::Retry => vm.refresh_current(),
+            Act::Signature => vm.begin_edit_signature_current(),
             Act::RenameAt(addr, name) => vm.begin_rename(addr, name.as_deref()),
             Act::Notice(t) => vm.toast(ToastLevel::Info, t),
             Act::SyncListing(a) => {

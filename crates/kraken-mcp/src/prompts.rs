@@ -6,6 +6,8 @@
 //! | `explain-function` | `address` (optional: the GUI selection) | explain one function in plain language |
 //! | `name-components` | `max_functions` (optional) | find the main components and name their functions |
 //! | `prepare-rewrite` | `address` | plan the Rust rewrite of one function |
+//! | `analyze-binary` | `path`, `project_dir` (optional) | open a binary, analyse it, overview and name the key functions |
+//! | `rewrite-program` | `cases` (optional) | rewrite the whole program in Rust, check it, export it |
 //!
 //! The instruction text is written here and is trusted. Anything that comes from the binary (the
 //! program summary, a decompile) is attached as a separate embedded resource, which carries its own
@@ -25,6 +27,13 @@ pub const EXPLAIN_FUNCTION: &str = "explain-function";
 pub const NAME_COMPONENTS: &str = "name-components";
 /// Plan a function's rewrite.
 pub const PREPARE_REWRITE: &str = "prepare-rewrite";
+/// Open and analyse a binary from scratch.
+pub const ANALYZE_BINARY: &str = "analyze-binary";
+/// Rewrite the whole program.
+pub const REWRITE_PROGRAM: &str = "rewrite-program";
+
+/// Longest `path`, `project_dir` or `cases` argument taken.
+const MAX_ARG_LEN: usize = 4096;
 
 const DEFAULT_COMPONENT_FUNCTIONS: u64 = 15;
 const MAX_COMPONENT_FUNCTIONS: u64 = 50;
@@ -97,6 +106,44 @@ pub fn list() -> Vec<Prompt> {
             ]),
         )
         .with_title("Prepare a Rust rewrite of a function"),
+        Prompt::new(
+            ANALYZE_BINARY,
+            Some(
+                "Open a binary from scratch: create a project, analyse it, wait for the job, \
+                 then give an overview (entry point, main, imports, strings of interest) and \
+                 name the most important unnamed functions.",
+            ),
+            Some(vec![
+                PromptArgument::new("path")
+                    .with_description("Path of the binary to analyse.")
+                    .with_required(true),
+                PromptArgument::new("project_dir")
+                    .with_description(
+                        "Directory for the new project (default: the binary's path plus \
+                         `.kraken`).",
+                    )
+                    .with_required(false),
+            ]),
+        )
+        .with_title("Open and analyse a binary"),
+        Prompt::new(
+            REWRITE_PROGRAM,
+            Some(
+                "Rewrite the whole analysed program in Rust: plan, translate and test it \
+                 against the original, explain what differs, export the crate, and say what the \
+                 person has to accept.",
+            ),
+            Some(vec![
+                PromptArgument::new("cases")
+                    .with_description(
+                        "Program test cases as a JSON array of {name, argv, stdin}, for example \
+                         [{\"name\":\"help\",\"argv\":[\"--help\"]}]. Leave out to let the agent \
+                         choose.",
+                    )
+                    .with_required(false),
+            ]),
+        )
+        .with_title("Rewrite the whole program in Rust"),
     ]
 }
 
@@ -120,6 +167,37 @@ fn address_arg(args: &JsonObject) -> Result<Option<String>, McpError> {
             a.chars().take(24).collect::<String>()
         ))),
     }
+}
+
+/// A free-text argument: no control characters, bounded length.
+fn text_arg(args: &JsonObject, name: &str) -> Result<Option<String>, McpError> {
+    let Some(s) = arg_str(args, name) else {
+        return Ok(None);
+    };
+    if s.chars().count() > MAX_ARG_LEN || s.chars().any(char::is_control) {
+        return Err(invalid(format!(
+            "`{name}` must be plain text of at most {MAX_ARG_LEN} characters"
+        )));
+    }
+    Ok(Some(s.to_string()))
+}
+
+/// `cases` must be a JSON array of at most 64 objects with a `name`; returned compact.
+fn cases_arg(args: &JsonObject) -> Result<Option<String>, McpError> {
+    let Some(text) = text_arg(args, "cases")? else {
+        return Ok(None);
+    };
+    let bad = || invalid("`cases` must be a JSON array of {name, argv, stdin} objects");
+    let v: Value = serde_json::from_str(&text).map_err(|_| bad())?;
+    let list = v.as_array().ok_or_else(bad)?;
+    if list.len() > 64
+        || !list
+            .iter()
+            .all(|c| c.get("name").and_then(Value::as_str).is_some())
+    {
+        return Err(bad());
+    }
+    Ok(Some(v.to_string()))
 }
 
 fn count_arg(args: &JsonObject, name: &str, default: u64, max: u64) -> Result<u64, McpError> {
@@ -180,10 +258,20 @@ pub(crate) async fn get(
                 .ok_or_else(|| invalid("`address` is required: a 0x... address in the function"))?;
             Ok(prepare_rewrite(&address, reader).await)
         }
+        ANALYZE_BINARY => {
+            let path = text_arg(&args, "path")?
+                .ok_or_else(|| invalid("`path` is required: the binary to analyse"))?;
+            let dir = text_arg(&args, "project_dir")?;
+            Ok(analyze_binary(&path, dir.as_deref()))
+        }
+        REWRITE_PROGRAM => {
+            let cases = cases_arg(&args)?;
+            Ok(rewrite_program(cases.as_deref(), reader).await)
+        }
         other => Err(McpError::invalid_params(
             format!(
                 "unknown prompt `{other}`; available: {GETTING_STARTED}, {EXPLAIN_FUNCTION}, \
-                 {NAME_COMPONENTS}, {PREPARE_REWRITE}"
+                 {NAME_COMPONENTS}, {PREPARE_REWRITE}, {ANALYZE_BINARY}, {REWRITE_PROGRAM}"
             ),
             None,
         )),
@@ -195,14 +283,17 @@ async fn getting_started(reader: &Reader<'_>) -> GetPromptResult {
     let text = format!(
         "You are helping a person reverse-engineer the program that is open in KRAKEN. Work in \
          this order.\n\
-         1. Read the program summary attached below (also `{SUMMARY_URI}`). If analysis has not \
-         run, call `analyze` and wait for it with `job_await`.\n\
+         1. Read the program summary attached below (also `{SUMMARY_URI}`). If no project is open, \
+         call `project_create` with the binary and a project directory first (or use the \
+         `analyze-binary` prompt). If analysis has not run, call `analyze` and wait for it with \
+         `job_await`.\n\
          2. In two or three sentences say what the program probably is, naming the imports, \
          strings and large functions that point to it.\n\
          3. Choose the three most promising functions, `decompile` each and explain what it does \
          in plain language.\n\
-         4. Finish with up to three concrete next steps and ask which to take. Do not rename \
-         everything unasked.\n\n\
+         4. Finish with up to three concrete next steps and ask which to take (naming functions \
+         with `apply_edits`, the `rewrite-program` prompt, `gui_navigate` to show something). Do \
+         not rename everything unasked.\n\n\
          {RULES}"
     );
     GetPromptResult::new(vec![
@@ -329,6 +420,84 @@ async fn prepare_rewrite(address: &str, reader: &Reader<'_>) -> GetPromptResult 
     GetPromptResult::new(messages).with_description(format!("Prepare to rewrite {address}"))
 }
 
+fn analyze_binary(path: &str, project_dir: Option<&str>) -> GetPromptResult {
+    let dir = project_dir.map_or_else(|| format!("{path}.kraken"), str::to_string);
+    let text = format!(
+        "Open the binary {path:?} in KRAKEN, analyse it, and tell the person what it is. Work in \
+         this order.\n\
+         1. If the `kraken://project/summary` resource already shows this binary, skip to step 3. \
+         Otherwise call `binary_probe` with {{\"path\": {path:?}}}: it says the format, the \
+         processor, whether names are stripped, and which engine should open it. If \
+         `supported` is false, tell the person why (`problem`) and stop. Then call \
+         `project_create` with {{\"binary\": {path:?}, \"project_dir\": {dir:?}}}, adding \
+         `\"engine\"` set to the probe's `recommended_engine`. A person is asked to approve it. \
+         If `project_create` is not offered, a project was chosen for you: go on with it.\n\
+         2. Call `analyze`, then `job_await` with the `job_id` until it succeeds (repeat on a \
+         timeout). If it fails, read the error, say it plainly and stop.\n\
+         3. Read `kraken://project/summary`. Report the format and architecture, the entry \
+         point, the function named `main` (or the function the entry point calls), the imports \
+         that say what the program does, and the strings of interest (`strings`, `imports`, \
+         `exports`; keep `limit` small).\n\
+         4. Name the most important unnamed functions: pick up to 15 that still have default \
+         `FUN_` names (large ones, those near `main`, those using the interesting imports or \
+         strings), `decompile` each, and apply the names and a one-line `plate` comment together \
+         with `apply_edits` (at most 200 items per call). Skip any function you cannot explain.\n\
+         5. If the person has a GUI open, `gui_navigate` shows them the function you consider \
+         most important.\n\
+         6. Finish with a short report: what the program probably is, what you named (a table of \
+         address, new name, confidence), proposals waiting for the person, and two or three next \
+         steps, such as the `rewrite-program` prompt.\n\n\
+         {RULES}"
+    );
+    GetPromptResult::new(vec![user(text)]).with_description("Open and analyse a binary")
+}
+
+async fn rewrite_program(cases: Option<&str>, reader: &Reader<'_>) -> GetPromptResult {
+    let status = reader.rewrite_status().await;
+    let cases_text = match cases {
+        Some(c) => format!("Use these cases for `inputs`: {c}."),
+        None => "Think of 3 to 6 `inputs` that exercise the program: no arguments, the usage \
+                 path (`--help`), a typical call, a bad argument. Each is {\"name\", \"argv\": \
+                 [...], \"stdin\": \"...\"}."
+            .to_string(),
+    };
+    let text = format!(
+        "Rewrite the whole open program in Rust and check the result. Work in this order.\n\
+         1. The analysis must be done (see `kraken://project/summary`); if not, `analyze` and \
+         `job_await`. Names help the translation, so run the `analyze-binary` steps first when \
+         most functions are still `FUN_...`.\n\
+         2. `rewrite_plan` with {{\"scope\": \"all\"}} lists every function, callees first, with \
+         flags (`needs_stubs`, `uses_syscalls`, `recursive`). Tell the person how many functions \
+         there are and which are risky.\n\
+         3. {cases_text}\n\
+         4. Call `rewrite_program` with {{\"inputs\": [...], \"generated_cases\": 8}}. It is a job: \
+         wait with `job_await` (it can take several minutes). It sends decompiles to the \
+         configured model provider and runs the original program inside a sandbox, so a person \
+         is asked to approve it; if they refuse, stop and say what is lost. Never pass \
+         `accept_verified`; it is refused for agents.\n\
+         5. Read `rewrite_program_status`. For every case that differed, say the input, what the \
+         original did, what the rewrite did, and which function you suspect. You may retry once \
+         or twice: `rewrite_function` on a suspect, or another `rewrite_program` after naming \
+         and typing functions better (`apply_edits`). Then stop and report.\n\
+         6. Call `rewrite_export` with {{\"dir\": \"rewrite-export\"}} (a job again). It exports \
+         only units a person has accepted, so say how many it wrote.\n\
+         7. Finish by telling the person exactly what to do next. Accepting is their step, not \
+         yours: in the GUI, open the Rewrite tab and accept the verified units, or run \
+         `kraken rewrite-accept --unit <id>` on the project. Give the project directory, the crate path from \
+         the status, the verdict, and how many units wait to be accepted.\n\n\
+         {RULES}"
+    );
+    GetPromptResult::new(vec![
+        user(text),
+        attach(
+            crate::resources::REWRITE_STATUS_URI,
+            "text/markdown",
+            status,
+        ),
+    ])
+    .with_description("Rewrite the whole program in Rust")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,7 +505,7 @@ mod tests {
     #[test]
     fn every_prompt_is_described_and_its_arguments_too() {
         let prompts = list();
-        assert_eq!(prompts.len(), 4);
+        assert_eq!(prompts.len(), 6);
         for p in &prompts {
             assert!(
                 p.description.as_deref().is_some_and(|d| d.len() > 20),

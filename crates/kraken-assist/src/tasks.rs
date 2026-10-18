@@ -6,6 +6,7 @@
 //! `<selection untrusted="true">` block.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use kraken_agent::AgentConfig;
 use kraken_proto::{Hex64, sanitize};
@@ -29,6 +30,8 @@ pub enum TaskKind {
     /// A read-only task whose instructions the caller wrote and whose answer is free text (the
     /// evaluation harness, `kraken eval`).
     Custom,
+    /// Work through the whole flow: analyse, understand, name, and optionally rewrite in Rust.
+    Automate,
 }
 
 impl TaskKind {
@@ -40,6 +43,7 @@ impl TaskKind {
             TaskKind::Overview => "overview",
             TaskKind::AutoName => "auto_name",
             TaskKind::Custom => "custom",
+            TaskKind::Automate => "automate",
         }
     }
 }
@@ -73,6 +77,70 @@ impl SelectionKind {
         }
     }
 }
+
+/// What `Automate` works towards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomateGoal {
+    /// Analyse if needed, give an overview, and name and comment the important functions.
+    #[default]
+    Understand,
+    /// Plan and rewrite the whole program in Rust, then export it.
+    Rewrite,
+    /// Understand first, then rewrite.
+    Both,
+}
+
+impl AutomateGoal {
+    /// Stable snake_case name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AutomateGoal::Understand => "understand",
+            AutomateGoal::Rewrite => "rewrite",
+            AutomateGoal::Both => "both",
+        }
+    }
+
+    /// Parses the snake_case name.
+    pub fn parse(s: &str) -> Option<AutomateGoal> {
+        Some(match s.trim() {
+            "understand" => AutomateGoal::Understand,
+            "rewrite" => AutomateGoal::Rewrite,
+            "both" => AutomateGoal::Both,
+            _ => return None,
+        })
+    }
+
+    /// One plain sentence for the person: what the goal does.
+    pub fn describe(self) -> &'static str {
+        match self {
+            AutomateGoal::Understand => {
+                "Look the program over, then give its important functions meaningful names and comments."
+            }
+            AutomateGoal::Rewrite => {
+                "Plan the Rust rewrite of the whole program, translate and test it against the original, and export the Rust project."
+            }
+            AutomateGoal::Both => "Understand the program first, then rewrite it in Rust.",
+        }
+    }
+
+    /// Whether the goal includes the rewrite.
+    pub fn rewrites(self) -> bool {
+        !matches!(self, AutomateGoal::Understand)
+    }
+
+    /// Whether the goal includes naming.
+    pub fn names(self) -> bool {
+        !matches!(self, AutomateGoal::Rewrite)
+    }
+}
+
+/// Commands the rewrite goals switch on, on top of the usual exclusions.
+pub const AUTOMATE_REWRITE_UNLOCK: &[&str] =
+    &["rewrite_function", "rewrite_program", "rewrite_export"];
+
+/// How long a tool call of `Automate` may wait for a job (a whole-program rewrite is long).
+pub const AUTOMATE_JOB_TIMEOUT: Duration = Duration::from_secs(3 * 3600);
 
 /// Run limits of a task.
 #[derive(Debug, Clone, PartialEq)]
@@ -130,6 +198,11 @@ pub struct Task {
     pub budget: Budget,
     /// Things this build could not offer (a missing command), for the result.
     pub notes: Vec<String>,
+    /// Commands excluded by default ([`DEFAULT_EXCLUDED`](crate::DEFAULT_EXCLUDED)) that this
+    /// task switches on. They still need to be in `allow`.
+    pub unlock: BTreeSet<String>,
+    /// How long a tool call waits for a job it started; the host default when `None`.
+    pub job_timeout: Option<Duration>,
     /// Options when `kind` is `AutoName`.
     pub autoname: Option<AutoNameOptions>,
 }
@@ -269,6 +342,8 @@ impl Task {
                 temperature: Some(0.2),
             },
             notes: ex.notes,
+            unlock: BTreeSet::new(),
+            job_timeout: None,
             autoname: None,
         })
     }
@@ -326,6 +401,8 @@ impl Task {
                 temperature: Some(0.2),
             },
             notes: ex.notes,
+            unlock: BTreeSet::new(),
+            job_timeout: None,
             autoname: None,
         })
     }
@@ -375,6 +452,8 @@ impl Task {
                 temperature: Some(0.3),
             },
             notes: ex.notes,
+            unlock: BTreeSet::new(),
+            job_timeout: None,
             autoname: None,
         }
     }
@@ -438,6 +517,8 @@ impl Task {
                 temperature: Some(0.2),
             },
             notes,
+            unlock: BTreeSet::new(),
+            job_timeout: None,
             autoname: Some(AutoNameOptions { limit, ..opts }),
         }
     }
@@ -458,6 +539,153 @@ impl Task {
             max_writes: None,
             budget,
             notes: Vec::new(),
+            unlock: BTreeSet::new(),
+            job_timeout: None,
+            autoname: None,
+        }
+    }
+
+    /// The Automate task: the whole flow towards `goal`. It reads, edits (through the registry's
+    /// usual policy: additive edits apply, overwrites become proposals) and, for the rewrite
+    /// goals, runs the rewrite jobs. `rewrite_accept`, proposals, undo and opening or creating
+    /// projects stay with the person. Commands that run code keep the approval the daemon asks
+    /// the person for.
+    pub fn automate(registry: &Registry, goal: AutomateGoal) -> Task {
+        let ex = extras(registry);
+        let mut names: Vec<&str> = vec![
+            "project_info",
+            "analyze",
+            "job_status",
+            "job_await",
+            "list_functions",
+            "get_function",
+            "decompile",
+            "disassemble",
+            "cfg",
+            "callers",
+            "callees",
+            "xrefs",
+            "strings",
+            "imports",
+            "exports",
+            "memory_map",
+        ];
+        if goal.names() {
+            names.extend(["rename_symbol", "set_comment", "set_type", "apply_edits"]);
+        }
+        if goal.rewrites() {
+            names.extend([
+                "rewrite_plan",
+                "rewrite_status",
+                "rewrite_function",
+                "rewrite_program",
+                "rewrite_program_status",
+                "rewrite_export",
+            ]);
+        }
+        let mut allow = core(registry, &names);
+        allow.extend(ex.names.iter().cloned());
+        let unlock: BTreeSet<String> = if goal.rewrites() {
+            core(registry, AUTOMATE_REWRITE_UNLOCK)
+        } else {
+            BTreeSet::new()
+        };
+        let mut notes = ex.notes.clone();
+        for need in ["analyze", "job_await"] {
+            if registry.get(need).is_none() {
+                notes.push(format!("this build has no `{need}` command"));
+            }
+        }
+        if goal.rewrites() && registry.get("rewrite_program").is_none() {
+            notes.push("this build has no whole-program rewrite".into());
+        }
+        let understand = "\
+Step 1, open: the project is already open. Call project_info. If analysis has not run, call \
+analyze and wait with job_await until it ends (repeat on a timeout). If analysis failed, say \
+why and stop.
+Step 2, look: list functions (a few pages at most), then decompile the entry point, main and \
+the functions that use the interesting imports and strings. Work out what the program is.
+Step 3, name: pick up to 15 functions that still have default names (FUN_..., sub_...). For \
+each one you can explain, decompile it, then apply a verb-first snake_case name and a one-line \
+plate comment. Use apply_edits to send several in one call. An edit that comes back \
+\"proposed\" is for the person to review: leave it. Skip a function you cannot explain.";
+        let rewrite = "\
+Step R1, plan: rewrite_plan with scope \"all\". Note how many functions there are and which are \
+flagged risky.
+Step R2, translate and test: choose 3 to 6 program test cases (inputs) that exercise the \
+program: no arguments, a usage or help path, a typical call, a bad argument. Call \
+rewrite_program with those as inputs. It is a long job; the person is asked to approve running \
+the original program in a sandbox. If they refuse, stop and say what is lost. Never try to \
+accept anything yourself.
+Step R3, read the result with rewrite_program_status. For each differing case say the input, \
+what the original did, what the rewrite did and which function is the likely cause. You may try \
+once or twice more (rewrite_function on a suspect function, or rewrite_program again after \
+better names and types), then stop.
+Step R4, export: rewrite_export with dir \"rewrite-export\". It only exports translations a \
+person has accepted, so tell the person how many it wrote.";
+        let ending = if goal.rewrites() {
+            "Finish with a short report in plain language: what the program is, what you \
+             named (address, new name), the rewrite verdict and where the Rust crate is, and \
+             exactly what the person must do next. Accepting verified rewrite units is the \
+             person's step: in the Rewrite tab, or with `kraken rewrite-accept`. Tell them how \
+             many units wait for it."
+        } else {
+            "Finish with a short report in plain language: what the program is, what you named \
+             (address, new name, why), what is left for the person to review (proposals), and \
+             two or three next steps."
+        };
+        let steps = match goal {
+            AutomateGoal::Understand => understand.to_string(),
+            AutomateGoal::Rewrite => format!(
+                "Step 1, open: the project is already open. Call project_info; if analysis \
+                 has not run, call analyze and wait with job_await. If it failed, say why \
+                 and stop.\n{rewrite}"
+            ),
+            AutomateGoal::Both => format!("{understand}\n{rewrite}"),
+        };
+        let system_extra = format!(
+            "{COMMON}\n\nTask: automate the work on the open project towards one goal: {}. \
+             Work through the steps below in order and do not skip ahead. Say in one line what \
+             you are doing before each step. Never invent addresses; use the ones tools \
+             returned. If a command fails, read the error, change what you do once, and \
+             otherwise report it. {extras}\n\n{steps}\n\n{ending} Write plain prose; there is no \
+             machine-readable block in this task.",
+            goal.describe(),
+            extras = extras_line(&ex)
+        );
+        let (max_steps, max_tool_calls) = match goal {
+            AutomateGoal::Understand => (60, 120),
+            AutomateGoal::Rewrite => (50, 100),
+            AutomateGoal::Both => (90, 180),
+        };
+        Task {
+            kind: TaskKind::Automate,
+            goal: match goal {
+                AutomateGoal::Understand => {
+                    "Analyse this program, tell me what it is, and name its important functions."
+                }
+                AutomateGoal::Rewrite => {
+                    "Rewrite this whole program in Rust, test it against the original, and export it."
+                }
+                AutomateGoal::Both => {
+                    "Understand this program and name its important functions, then rewrite it in Rust and export it."
+                }
+            }
+            .to_string(),
+            system_extra,
+            allow,
+            read_only: false,
+            max_writes: Some(if goal.names() { 60 } else { 20 }),
+            budget: Budget {
+                max_steps,
+                max_tool_calls,
+                token_budget: Some(900_000),
+                max_tokens: Some(3000),
+                temperature: Some(0.2),
+            },
+            notes,
+            unlock,
+            job_timeout: Some(AUTOMATE_JOB_TIMEOUT),
             autoname: None,
         }
     }
@@ -520,6 +748,61 @@ mod tests {
         assert_eq!(t.goal.matches("</selection>").count(), 1);
         assert!(!t.goal.contains('\u{1b}'));
         assert!(Task::explain_selection(&r, SelectionKind::Type, "  ", None).is_err());
+    }
+
+    #[test]
+    fn automate_offers_the_flow_and_nothing_that_is_the_persons() {
+        let r = Registry::standard();
+        let understand = Task::automate(&r, AutomateGoal::Understand);
+        for t in [
+            "analyze",
+            "job_await",
+            "decompile",
+            "rename_symbol",
+            "set_comment",
+            "set_type",
+            "apply_edits",
+        ] {
+            assert!(understand.allow.contains(t), "{t}");
+        }
+        assert!(!understand.allow.iter().any(|n| n.starts_with("rewrite_")));
+        assert!(understand.unlock.is_empty());
+        assert!(!understand.read_only);
+
+        for goal in [AutomateGoal::Rewrite, AutomateGoal::Both] {
+            let t = Task::automate(&r, goal);
+            for c in [
+                "rewrite_plan",
+                "rewrite_status",
+                "rewrite_function",
+                "rewrite_program",
+                "rewrite_program_status",
+                "rewrite_export",
+            ] {
+                assert!(t.allow.contains(c), "{goal:?} {c}");
+            }
+            assert_eq!(t.unlock.len(), 3);
+            assert!(t.system_extra.contains("kraken rewrite-accept"));
+            for never in [
+                "rewrite_accept",
+                "proposal_accept",
+                "undo",
+                "undo_run",
+                "project_create",
+                "project_open",
+                "rebuild",
+            ] {
+                assert!(!t.allow.contains(never), "{never}");
+                assert!(!t.unlock.contains(never), "{never}");
+            }
+        }
+        assert!(
+            !Task::automate(&r, AutomateGoal::Rewrite)
+                .allow
+                .contains("rename_symbol")
+        );
+        assert_eq!(AutomateGoal::parse("both"), Some(AutomateGoal::Both));
+        assert_eq!(AutomateGoal::parse("all"), None);
     }
 
     #[test]

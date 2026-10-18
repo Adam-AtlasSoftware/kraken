@@ -28,7 +28,9 @@ use tokio_util::sync::CancellationToken;
 
 pub use crate::agents::AgentEnv;
 pub use adapter::VmCommands;
-pub use kraken_assist::{AgentChoice, BackendInfo, BackendKind, Confidence, SelectionKind};
+pub use kraken_assist::{
+    AgentChoice, AutomateGoal, BackendInfo, BackendKind, Confidence, SelectionKind,
+};
 pub use learn::{PANEL_HELP, PanelHelp, panel_help};
 pub use provider::{
     ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, SECRETS_FILE, SECRETS_SERVICE,
@@ -52,6 +54,8 @@ pub enum RunKind {
     Overview,
     /// A dry-run auto-naming pass.
     AutoName,
+    /// The whole flow: understand, name, rewrite (the Automate dialog).
+    Automate,
 }
 
 impl RunKind {
@@ -63,6 +67,7 @@ impl RunKind {
             RunKind::ExplainSelection => "Reading the selection...",
             RunKind::Overview => "Looking over the program...",
             RunKind::AutoName => "Looking for better names...",
+            RunKind::Automate => "Working through the steps...",
         }
     }
 }

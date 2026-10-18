@@ -21,6 +21,7 @@ use crate::jobs::JobReporter;
 use crate::session::Session;
 
 use super::JobStarted;
+use super::rewrite_build::{RewriteBuildArgs, RewriteBuildResult};
 use super::rewrite_program::{
     RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
 };
@@ -1075,6 +1076,21 @@ pub trait RewriteBackend: Send + Sync {
         Err(ProtoError::new(
             ErrorCode::Unsupported,
             "this rewrite backend does not rewrite whole programs",
+        ))
+    }
+
+    /// The body of a `rewrite_build` job (the directory is resolved and checked to be a KRAKEN
+    /// export; the caller is approved).
+    async fn build(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteBuildArgs,
+        _job: &JobReporter,
+    ) -> Result<RewriteBuildResult, ProtoError> {
+        Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            "this rewrite backend does not build exported crates",
         ))
     }
 

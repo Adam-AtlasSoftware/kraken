@@ -515,7 +515,7 @@ fn readme_text(info: &ExportInfo, m: &Manifest, ffi_ident: &str) -> String {
     )
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), RewriteError> {
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), RewriteError> {
     std::fs::create_dir_all(to).map_err(|e| io(&to.display().to_string(), e))?;
     for entry in std::fs::read_dir(from).map_err(|e| io(&from.display().to_string(), e))? {
         let entry = entry.map_err(|e| io("read_dir", e))?;

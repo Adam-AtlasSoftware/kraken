@@ -7,6 +7,11 @@ use serde_json::json;
 
 const EXPECTED: &[&str] = &[
     "analyze",
+    "apply_edits",
+    "binary_probe",
+    "bookmark_add",
+    "bookmark_list",
+    "bookmark_remove",
     "callees",
     "callers",
     "cfg",
@@ -16,6 +21,7 @@ const EXPECTED: &[&str] = &[
     "disassemble",
     "exports",
     "get_function",
+    "gui_navigate",
     "history",
     "imports",
     "job_await",
@@ -23,6 +29,7 @@ const EXPECTED: &[&str] = &[
     "job_status",
     "list_functions",
     "memory_map",
+    "project_close",
     "project_create",
     "project_info",
     "project_open",
@@ -33,6 +40,7 @@ const EXPECTED: &[&str] = &[
     "rebuild",
     "rename_symbol",
     "rewrite_accept",
+    "rewrite_build",
     "rewrite_export",
     "rewrite_function",
     "rewrite_plan",
@@ -41,6 +49,7 @@ const EXPECTED: &[&str] = &[
     "rewrite_spec",
     "rewrite_status",
     "rewrite_unit",
+    "search",
     "set_calling_convention",
     "set_comment",
     "set_function_bounds",
@@ -522,4 +531,61 @@ async fn engine_refusal_is_a_structured_error_and_marked_in_the_log() {
     // nothing is pending afterwards
     let info = env.ok(&user(), "project_info", json!({})).await;
     assert_eq!(info["pending_entries"], 0);
+}
+
+#[tokio::test]
+async fn project_close_releases_the_project_and_is_harmless_twice() {
+    let env = Setup::new(tiny()).start().await;
+    let out = env.ok(&user(), "project_close", json!({})).await;
+    assert_eq!(out["closed"], true);
+    assert!(
+        out["project_dir"]
+            .as_str()
+            .is_some_and(|d| d.ends_with("proj"))
+    );
+    let e = env.err(&user(), "project_info", json!({})).await;
+    assert_eq!(e.code, ErrorCode::NotFound);
+    let again = env.ok(&user(), "project_close", json!({})).await;
+    assert_eq!(again, json!({"closed": false}));
+    // The project reopens with what it had.
+    let dir = env.project_dir.to_str().unwrap();
+    env.ok(&user(), "project_open", json!({"project_dir": dir}))
+        .await;
+}
+
+#[tokio::test]
+async fn binary_probe_needs_no_project_and_keeps_agents_out_of_hidden_folders() {
+    let env = Setup::new(tiny()).start().await;
+    let fresh = Session::new(env.factory.clone());
+    let r = Registry::standard();
+    let txt = env.tmp.path().join("notes.txt");
+    std::fs::write(&txt, b"hello").unwrap();
+    let out = r
+        .call_json(
+            "binary_probe",
+            &fresh,
+            &user(),
+            json!({"path": txt.to_str().unwrap()}),
+        )
+        .await
+        .expect("probe");
+    assert_eq!(out["format"], "unknown");
+    assert_eq!(out["supported"], false);
+    assert_eq!(out["size"], 5);
+
+    let Some(home) = kraken_registry::trust::home_dir() else {
+        return;
+    };
+    let hidden = home.join(".ssh").join("id_ed25519");
+    let e = r
+        .call_json(
+            "binary_probe",
+            &fresh,
+            &agent("r1"),
+            json!({"path": hidden.to_str().unwrap()}),
+        )
+        .await
+        .expect_err("refused");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    assert!(e.message.contains("refused for agents"), "{}", e.message);
 }

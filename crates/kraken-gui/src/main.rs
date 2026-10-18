@@ -1,12 +1,15 @@
 //! KRAKEN desktop GUI.
 
+mod activity;
 mod app;
 mod args;
 mod assist;
 mod chrome;
 mod fonts;
 mod history;
+mod import;
 mod infer;
+mod menu;
 mod overlays;
 mod panels;
 mod recent;

@@ -44,6 +44,20 @@ pub const DEFAULT_EXCLUDED: &[&str] = &[
     "rewrite_accept",
 ];
 
+/// Commands no task can switch on: the person's decisions.
+const PERSONS_OWN: &[&str] = &[
+    "project_create",
+    "project_open",
+    "rebuild",
+    "undo",
+    "undo_run",
+    "undo_entry",
+    "tainted_clear",
+    "proposal_accept",
+    "proposal_reject",
+    "rewrite_accept",
+];
+
 /// How a [`RegistryToolHost`] is set up.
 #[derive(Debug, Clone)]
 pub struct HostOptions {
@@ -59,6 +73,10 @@ pub struct HostOptions {
     pub max_writes: Option<usize>,
     /// How long a tool call waits for a job it started (for example `analyze`).
     pub job_timeout: Duration,
+    /// Commands of [`DEFAULT_EXCLUDED`] this host offers anyway (a task switches them on). Only
+    /// commands that stay inside the registry's policy belong here; never the person's own
+    /// decisions (`rewrite_accept`, proposals, undo, opening projects).
+    pub unlock: BTreeSet<String>,
 }
 
 impl Default for HostOptions {
@@ -70,6 +88,7 @@ impl Default for HostOptions {
             read_only: false,
             max_writes: None,
             job_timeout: Duration::from_secs(600),
+            unlock: BTreeSet::new(),
         }
     }
 }
@@ -159,7 +178,10 @@ impl RegistryToolHost {
         if spec.permission == RegPermission::Dangerous {
             return false;
         }
-        if DEFAULT_EXCLUDED.contains(&spec.name.as_str()) {
+        if DEFAULT_EXCLUDED.contains(&spec.name.as_str())
+            && !(self.opts.unlock.contains(&spec.name)
+                && !PERSONS_OWN.contains(&spec.name.as_str()))
+        {
             return false;
         }
         if self.opts.read_only && spec.permission != RegPermission::Safe {

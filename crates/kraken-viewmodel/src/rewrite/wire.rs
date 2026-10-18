@@ -67,6 +67,8 @@ pub(super) struct CountsWire {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct RowWire {
     #[serde(default)]
+    pub unit: String,
+    #[serde(default)]
     pub order: Option<u32>,
     pub address: Hex64,
     pub name: Untrusted<String>,

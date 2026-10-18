@@ -950,3 +950,46 @@ fn testing_a_pasted_key_does_not_save_it() {
     );
     assert!(!store.config_path.as_ref().expect("path").exists());
 }
+
+// ------------------------------------------------------------------ automate
+
+#[test]
+fn automate_runs_the_flow_with_bulk_edits_and_never_accepts_for_the_person() {
+    let mut r = rig(vec![
+        tool_call("a1", "project_info", json!({})),
+        tool_call(
+            "a2",
+            "apply_edits",
+            json!({"edits": [
+                {"op": "rename", "address": "0x401300", "name": "alloc_with_header"},
+                {"op": "comment", "address": "0x401300", "text": "Allocates a block with a header"}
+            ]}),
+        ),
+        tool_call("a3", "rewrite_accept", json!({})),
+        say("I named one function. Review it in the History tab."),
+    ]);
+    assert_eq!(r.name_of(0x401300), "FUN_00401300");
+    r.vm.assist_automate(kraken_assist::AutomateGoal::Understand);
+    assert!(r.vm.assist.busy());
+    r.settle();
+    assert_eq!(r.name_of(0x401300), "alloc_with_header");
+    let chips = r.tools();
+    let apply = chips
+        .iter()
+        .find(|c| c.name == "apply_edits")
+        .expect("chip");
+    assert!(!apply.is_error, "{apply:?}");
+    assert!(
+        chips
+            .iter()
+            .filter(|c| c.name == "rewrite_accept")
+            .all(|c| c.is_error),
+        "the person's step is not offered"
+    );
+    assert!(r.vm.assist.items.iter().any(|i| matches!(
+        i,
+        ChatItem::Notice(n) if n.starts_with("Automation finished")
+    )));
+    let entries = r.history_for("rename");
+    assert!(entries[0].by_agent);
+}

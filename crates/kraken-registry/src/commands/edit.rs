@@ -246,6 +246,10 @@ pub struct SetTypeArgs {
     /// The name of an existing type (give this or `prototype`).
     #[serde(default)]
     pub type_name: Option<String>,
+    /// A data type in the neutral type model, such as a pointer or an array (give exactly one of
+    /// `prototype`, `type_name` and `data_type`).
+    #[serde(default)]
+    pub data_type: Option<TypeRef>,
     /// Entity versions the edit is based on; see `get_function`.
     #[serde(default)]
     pub expect_versions: Option<BTreeMap<String, u64>>,
@@ -268,7 +272,7 @@ impl Command for SetType {
         )
         .doc(
             "Fixes what the decompiler shows for a function's signature or a data item. Give \
-             exactly one of `prototype` or `type_name`. An agent applies it at once only where \
+             exactly one of `prototype`, `type_name` or `data_type`. An agent applies it at once only where \
              no type is recorded yet; otherwise it becomes a proposal.\n\
              Example: set_type {\"address\": \"0x404040\", \"type_name\": \"config_t\"}",
         )
@@ -289,16 +293,24 @@ impl Command for SetType {
     ) -> Result<MutationOutput, ProtoError> {
         let project = s.project()?;
         let who = ctx.author.kind;
-        let new = match (args.prototype, args.type_name) {
-            (Some(p), None) => {
+        let new = match (args.prototype, args.type_name, args.data_type) {
+            (Some(p), None, None) => {
                 check_prototype(&p, who, 0)?;
                 TypeRef::Function(Box::new(p))
             }
-            (None, Some(name)) => {
+            (None, Some(name), None) => {
                 validate_name("type_name", &name, ctx.author.kind)?;
                 TypeRef::Named { name }
             }
-            _ => return Err(invalid("give exactly one of `prototype` and `type_name`")),
+            (None, None, Some(t)) => {
+                check_type_ref(&t, who, 0)?;
+                t
+            }
+            _ => {
+                return Err(invalid(
+                    "give exactly one of `prototype`, `type_name` and `data_type`",
+                ));
+            }
         };
         let r = anchor_for(&project, ctx, args.address).await?;
         let mut op = LogOp::SetType {

@@ -1200,6 +1200,49 @@ fn an_agent_edit_refreshes_everything_and_toasts_with_an_undo() {
 }
 
 #[test]
+fn an_agents_navigate_request_shows_the_function_and_asks_for_a_tab() {
+    let mut r = opened(base_backend());
+    assert_eq!(r.vm.take_focus_request(), None);
+    r.backend.emit(BackendEvent::Navigate {
+        address: 0x401000,
+        tab: None,
+        author: "claude".into(),
+    });
+    assert!(r.vm.block_until(WAIT, |vm| vm.nav.current() == Some(0x401000)));
+    assert_eq!(r.vm.take_focus_request().as_deref(), Some("decompiler"));
+    assert!(r.vm.toasts.iter().any(|t| t.text.contains("Agent claude")));
+    r.backend.emit(BackendEvent::Navigate {
+        address: 0x401040,
+        tab: Some("listing".into()),
+        author: String::new(),
+    });
+    assert!(r.vm.block_until(WAIT, |vm| vm.nav.current() == Some(0x401040)));
+    assert_eq!(r.vm.take_focus_request().as_deref(), Some("listing"));
+}
+
+#[test]
+fn agent_edits_and_jobs_feed_the_activity_summary() {
+    let mut r = opened(base_backend());
+    assert!(r.vm.agent_activity.summary(Instant::now()).is_none());
+    r.backend
+        .emit(BackendEvent::EntryApplied(change("claude", true, &[4])));
+    r.backend
+        .emit(BackendEvent::EntryApplied(change("adam", false, &[5])));
+    r.backend
+        .emit(BackendEvent::JobStarted(change("claude", true, &[])));
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.agent_activity
+            .summary(Instant::now())
+            .is_some_and(|s| s.jobs == 1)
+    }));
+    let s =
+        r.vm.agent_activity
+            .summary(Instant::now())
+            .expect("summary");
+    assert_eq!((s.who.as_str(), s.changes, s.jobs), ("claude", 1, 1));
+}
+
+#[test]
 fn a_persons_edit_elsewhere_refreshes_quietly() {
     let mut r = opened(base_backend());
     let n = r.backend.calls_to("list_functions").len();
@@ -1320,7 +1363,14 @@ fn palette_filters_and_runs_actions_keyboard_first() {
         PaletteTarget::Command("rename_symbol".into())
     );
     assert_eq!(r.vm.activate_palette(), None);
-    assert!(last_toast(&r.vm).1.contains("rename_symbol"));
+    // A command without a ready-made flow opens a form generated from its arguments.
+    let form = r.vm.tools.form.as_ref().expect("a generated form");
+    assert_eq!(form.command, "rename_symbol");
+    assert!(
+        form.fields
+            .iter()
+            .any(|f| f.name == "new_name" && f.required)
+    );
 }
 
 #[test]

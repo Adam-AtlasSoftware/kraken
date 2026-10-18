@@ -34,6 +34,12 @@ pub enum Scene {
     Rewrite,
     /// The Rewrite tab's whole-program view: function table, crate, a failing case's diff.
     RewriteProgram,
+    /// The step-by-step rewrite window over the demo's scripted pipeline.
+    RewriteWizard,
+    /// The import dialog after probing a program (no demo needed).
+    Import,
+    /// The File menu opened over the demo.
+    Menu,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,10 +57,14 @@ pub struct Options {
     pub open_project: Option<PathBuf>,
     /// Function a screenshot opens instead of `main` (hidden).
     pub function: Option<String>,
+    /// A program to import or a project folder to open, given as the positional argument.
+    pub path: Option<PathBuf>,
 }
 
 pub const USAGE: &str =
-    "kraken-gui [--renderer glow|wgpu] [--demo | --no-daemon] [--light] [--screenshot <png> [--scene S]]
+    "kraken-gui [PATH] [--renderer glow|wgpu] [--demo | --no-daemon] [--light] [--screenshot <png> [--scene S]]
+
+  PATH               a program to import (opens the import dialog) or a project folder to open
 
   --renderer R       graphics backend: wgpu (default) or glow
   --demo             open the built-in demo project at startup (fake engine, no daemon)
@@ -62,7 +72,8 @@ pub const USAGE: &str =
   --light            start with the light theme
   --screenshot FILE  with --demo or a hidden --open-project: select a function, render, save
                      FILE as a PNG and exit
-  --scene S          what --screenshot shows: main (default), graph, palette, rename, rewrite, rewrite-program or welcome
+  --scene S          what --screenshot shows: main (default), graph, palette, rename, rewrite,
+                     rewrite-program, rewrite-wizard, menu, welcome or import (import probes PATH, else a demo program)
   -h, --help         show this text";
 
 #[derive(Debug)]
@@ -81,6 +92,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
         no_daemon: false,
         open_project: None,
         function: None,
+        path: None,
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -122,9 +134,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     Some("assistant-agent") => Scene::AssistantAgent,
                     Some("rewrite") => Scene::Rewrite,
                     Some("rewrite-program") => Scene::RewriteProgram,
+                    Some("rewrite-wizard") => Scene::RewriteWizard,
+                    Some("import") => Scene::Import,
+                    Some("menu") => Scene::Menu,
                     other => {
                         return Err(format!(
-                            "--scene needs main, graph, palette, rename, welcome, rewrite or rewrite-program, got {}",
+                            "--scene needs main, graph, palette, rename, welcome, import, menu, rewrite, rewrite-program or rewrite-wizard, got {}",
                             other.unwrap_or("nothing")
                         ));
                     }
@@ -135,14 +150,29 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     it.next().ok_or("--screenshot needs a file name")?,
                 ));
             }
-            other => return Err(format!("unknown option `{other}`")),
+            other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
+            other => {
+                if o.path.is_some() {
+                    return Err(format!(
+                        "only one PATH can be given, got another: `{other}`"
+                    ));
+                }
+                o.path = Some(PathBuf::from(other));
+            }
         }
     }
-    if o.screenshot.is_some() && !o.demo && o.open_project.is_none() && o.scene != Scene::Welcome {
+    if o.screenshot.is_some()
+        && !o.demo
+        && o.open_project.is_none()
+        && !matches!(o.scene, Scene::Welcome | Scene::Import)
+    {
         return Err("--screenshot needs --demo".into());
     }
     if o.demo && o.open_project.is_some() {
         return Err("--demo and --open-project cannot be combined".into());
+    }
+    if o.path.is_some() && (o.demo || o.open_project.is_some()) {
+        return Err("PATH cannot be combined with --demo or --open-project".into());
     }
     Ok(Parsed::Run(o))
 }
@@ -214,5 +244,23 @@ mod tests {
         assert!(p(&["--demo", "--open-project", "/x"]).is_err());
         assert!(p(&["--scene", "x"]).unwrap_err().contains("palette"));
         assert!(p(&["--screenshot", "a.png", "--scene", "welcome"]).is_ok());
+        assert!(p(&["--screenshot", "a.png", "--scene", "import"]).is_ok());
+        assert!(p(&["a", "b"]).unwrap_err().contains("only one"));
+        assert!(p(&["--demo", "prog"]).is_err());
+    }
+
+    #[test]
+    fn a_positional_path_is_kept() {
+        match p(&["/bin/ls", "--light"]).unwrap() {
+            Parsed::Run(o) => {
+                assert_eq!(o.path, Some(PathBuf::from("/bin/ls")));
+                assert!(o.light);
+            }
+            Parsed::Help => panic!(),
+        }
+        match p(&["--demo", "--scene", "menu", "--screenshot", "m.png"]).unwrap() {
+            Parsed::Run(o) => assert_eq!(o.scene, Scene::Menu),
+            Parsed::Help => panic!(),
+        }
     }
 }

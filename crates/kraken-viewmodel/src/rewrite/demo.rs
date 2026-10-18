@@ -13,11 +13,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::{
-    ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend, RewriteExportResult,
-    RewriteFunctionArgs, RewriteFunctionResult, RewritePlanArgs, RewritePlanOut,
-    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
-    RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs,
-    RewriteUnitOut,
+    ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend, RewriteBuildArgs,
+    RewriteBuildResult, RewriteExportResult, RewriteFunctionArgs, RewriteFunctionResult,
+    RewritePlanArgs, RewritePlanOut, RewriteProgramArgs, RewriteProgramResult,
+    RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteSpecArgs, RewriteSpecResult,
+    RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 use serde::de::DeserializeOwned;
@@ -438,6 +438,17 @@ pub unsafe extern \"C\" fn log_error(msg: *const core::ffi::c_char, code: i32) {
     }
 }
 
+/// Writes the file that marks a folder as KRAKEN's own, so the build step accepts it. Nothing
+/// else is generated: the demo has no Rust project.
+fn write_marker(dir: &std::path::Path, file: &str, generator: &str) {
+    if std::fs::create_dir_all(dir).is_ok() {
+        let _ = std::fs::write(
+            dir.join(file),
+            format!("{{\"generator\":\"{generator}\",\"note\":\"written by the demo script\"}}"),
+        );
+    }
+}
+
 fn typed<T: DeserializeOwned>(v: Value) -> Result<T, ProtoError> {
     serde_json::from_value(v).map_err(|e| {
         ProtoError::new(
@@ -782,7 +793,7 @@ impl RewriteBackend for DemoRewrite {
         &self,
         _s: &Session,
         _ctx: &CallContext,
-        _args: RewriteProgramArgs,
+        args: RewriteProgramArgs,
         job: &JobReporter,
     ) -> Result<RewriteProgramResult, ProtoError> {
         let phases = [
@@ -810,10 +821,67 @@ impl RewriteBackend for DemoRewrite {
             let run = demo_program_run(n.max(2));
             let mut stored = run.clone();
             stored["run"] = json!(n);
+            if let Some(dir) = &args.dir {
+                write_marker(
+                    std::path::Path::new(dir),
+                    "kraken-program.json",
+                    "kraken-rewrite/program",
+                );
+                stored["crate_dir"] = json!(dir);
+            }
             st.program_runs.push(stored.clone());
             stored
         };
         typed(run)
+    }
+
+    async fn build(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteBuildArgs,
+        job: &JobReporter,
+    ) -> Result<RewriteBuildResult, ProtoError> {
+        let mut steps = vec![(
+            "build",
+            "cargo build --release\n   Compiling demo-server v0.1.0\n    Finished `release` profile [optimized] target(s) in 3.2s\n",
+        )];
+        if args.test.unwrap_or(true) {
+            steps.push((
+                "test",
+                "running 3 tests\ntest tests::checksum_of_empty_is_zero ... ok\ntest tests::checksum_matches ... ok\ntest tests::rejects_short_packets ... ok\n\ntest result: ok. 3 passed; 0 failed\n",
+            ));
+        }
+        if args.run_args.is_some() {
+            steps.push(("run", "status: 2 handled\n"));
+        }
+        let total = steps.len() as u64;
+        let mut out = Vec::new();
+        for (i, (name, log)) in steps.into_iter().enumerate() {
+            job.progress(JobProgress {
+                phase: name.into(),
+                done: i as u64,
+                total,
+                message: format!("cargo {name} in the sandbox"),
+            });
+            tokio::time::sleep(STEP).await;
+            out.push(json!({
+                "step": name, "passed": true, "exit": "exit 0", "seconds": 1.5,
+                "log_tail": {"untrusted": true, "value": log},
+            }));
+        }
+        let kind = if std::path::Path::new(&args.dir)
+            .join("kraken-program.json")
+            .exists()
+        {
+            "program"
+        } else {
+            "export"
+        };
+        typed(json!({
+            "dir": args.dir, "kind": kind, "passed": true, "steps": out,
+            "sandbox": "demo script (nothing was run)",
+        }))
     }
 
     async fn program_status(
@@ -862,6 +930,7 @@ impl RewriteBackend for DemoRewrite {
             message: "Writing the workspace".into(),
         });
         tokio::time::sleep(STEP).await;
+        write_marker(&request.dir, "manifest.json", "kraken-rewrite");
         let st = self.lock();
         let symbols: Vec<&str> = FUNCS
             .iter()

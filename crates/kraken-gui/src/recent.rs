@@ -105,6 +105,12 @@ impl Prefs {
         self.save();
     }
 
+    /// Forgets every project and saves.
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.save();
+    }
+
     fn save(&self) {
         let Some(file) = &self.file else {
             return;

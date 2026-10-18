@@ -147,7 +147,10 @@ impl Assistant {
                 allow: Some(task.allow.clone()),
                 read_only: task.read_only,
                 max_writes: task.max_writes,
-                ..HostOptions::default()
+                unlock: task.unlock.clone(),
+                job_timeout: task
+                    .job_timeout
+                    .unwrap_or_else(|| HostOptions::default().job_timeout),
             },
         )
     }
@@ -282,7 +285,7 @@ impl Assistant {
                         warnings.extend(w);
                         (Some(TaskOutput::Overview(o)), prose)
                     }
-                    TaskKind::Custom => (None, prose),
+                    TaskKind::Custom | TaskKind::Automate => (None, prose),
                     TaskKind::AutoName => {
                         let opts = task.autoname.unwrap_or_default();
                         let (r, w) = build_autoname(json, &stats, opts.dry_run, opts.limit);

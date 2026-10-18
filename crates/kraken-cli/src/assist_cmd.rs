@@ -175,6 +175,43 @@ pub(crate) async fn run_assist(
             err,
         );
     }
+    execute_task(
+        env,
+        sm,
+        project.as_deref(),
+        None,
+        selection,
+        task,
+        json_out,
+        out,
+        err,
+    )
+    .await
+    .0
+}
+
+/// A command backend already in use, with its session when it runs in this process.
+pub(crate) type SharedBackend = (
+    Arc<dyn kraken_host::backend::CommandBackend>,
+    Option<Arc<kraken_registry::Session>>,
+);
+
+/// Runs `task` on the assistant `selection` names and prints the result. With `shared`, a model
+/// API runs its tools through that backend (the caller keeps it open and shuts the engines
+/// down); without it this opens its own and cleans up. Returns the exit code and the result.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn execute_task(
+    env: &CliEnv,
+    sm: &ArgMatches,
+    project: Option<&str>,
+    shared: Option<SharedBackend>,
+    selection: Selection,
+    task: Task,
+    json_out: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> (i32, Option<TaskResult>) {
+    let owns_backend = shared.is_none();
     // A terminal agent reaches the project through its own `kraken mcp` server, so this process
     // does not open it; a model API runs its tools through this process's backend.
     let (engine, backend, local_session): (
@@ -183,24 +220,22 @@ pub(crate) async fn run_assist(
         _,
     ) = match selection {
         Selection::Api(p) => {
-            let (backend, session) = match env
-                .backend(project.as_deref(), env.no_daemon(sm), err)
-                .await
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    env.factory.shutdown().await;
-                    return fail(&e, json_out, err);
-                }
+            let (backend, session) = match shared {
+                Some(s) => s,
+                None => match env.backend(project, env.no_daemon(sm), err).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        env.factory.shutdown().await;
+                        return (fail(&e, json_out, err), None);
+                    }
+                },
             };
             (Arc::new(ApiBackend::new(p)), backend, session)
         }
-        Selection::Agent(choice) => {
-            match agent_backend(env, sm, &choice, project.as_deref(), err) {
-                Ok(engine) => (engine, Arc::new(UnusedBackend), None),
-                Err(e) => return fail(&e, json_out, err),
-            }
-        }
+        Selection::Agent(choice) => match agent_backend(env, sm, &choice, project, err) {
+            Ok(engine) => (engine, Arc::new(UnusedBackend), None),
+            Err(e) => return (fail(&e, json_out, err), None),
+        },
     };
 
     let info = engine.info();
@@ -307,15 +342,20 @@ pub(crate) async fn run_assist(
     }
 
     let code = finish(&result, json_out, streamed_text, out, err);
-    if writes && let Some(session) = &local_session {
+    if writes
+        && owns_backend
+        && let Some(session) = &local_session
+    {
         save(session, err).await;
     }
     for w in backend.take_warnings() {
         emit(err, &format!("warning: {w}\n"));
     }
     engine.close();
-    env.factory.shutdown().await;
-    code
+    if owns_backend {
+        env.factory.shutdown().await;
+    }
+    (code, Some(result))
 }
 
 fn finish(

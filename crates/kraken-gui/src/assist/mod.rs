@@ -6,6 +6,7 @@
 
 mod agent_demo;
 mod agents_ui;
+pub(crate) mod automate;
 mod chat;
 mod demo;
 mod learn;
@@ -35,8 +36,9 @@ pub use menu::{capture_decompiler, capture_function_row};
 // and the instruction right-click menu.
 #[allow(unused_imports)]
 pub use learn::{mnemonic_hover, term_hover};
-#[allow(unused_imports)]
-pub use menu::capture_instruction_row;
+#[cfg(test)]
+pub use menu::MenuState;
+pub use menu::capture_instruction_at;
 pub use settings_ai::{AiSettings, Change};
 pub use setup::AssistSetup;
 
@@ -71,6 +73,8 @@ pub struct AssistUi {
     pub seen_items: usize,
     /// Things for the app to do.
     pub requests: Vec<AssistRequest>,
+    /// The Automate dialog.
+    pub automate: automate::AutomateUi,
 }
 
 /// Adds the Assistant tab to the leaf that holds the Hex tab (or the focused leaf).
@@ -139,6 +143,7 @@ pub fn overlays(ctx: &egui::Context, vm: &mut ViewModel, a: &mut AssistUi) {
     overlays::banner(ctx, vm);
     overlays::autoname(ctx, vm);
     menu::show(ctx, vm, a);
+    automate::dialog(ctx, vm, &mut a.automate);
 }
 
 /// Hover help for the panel tabs; see [`learn::tab_tooltip`].

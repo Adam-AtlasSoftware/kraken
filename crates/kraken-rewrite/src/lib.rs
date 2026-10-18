@@ -12,6 +12,7 @@
 
 pub mod abi;
 pub mod blame;
+pub mod build;
 pub mod clib;
 pub mod collect;
 pub mod difftest;

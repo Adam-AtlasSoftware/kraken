@@ -137,6 +137,23 @@ pub fn changes_text(entries: u64) -> String {
     }
 }
 
+/// The engine's name as people say it.
+pub fn engine_name(kind: &str) -> &'static str {
+    match kind {
+        "ghidra" => "Ghidra",
+        "native" => "Native",
+        "dotnet" => ".NET",
+        _ => "Unknown",
+    }
+}
+
+/// `main at 0x401136`: the function being read, or `None`.
+pub fn current_text(vm: &ViewModel) -> Option<String> {
+    vm.current
+        .as_ref()
+        .map(|c| format!("{} at {:#x}", c.name, c.address))
+}
+
 /// The strip along the bottom.
 pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
     let p = pal(ui);
@@ -156,6 +173,33 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if let Some(info) = &vm.project {
+                if !info.engine.is_empty() {
+                    let tip = match &info.engine_reason {
+                        Some(why) => format!("The engine that reads this program. Why this one: {why}"),
+                        None => "The engine that reads this program.".to_string(),
+                    };
+                    ui.label(
+                        RichText::new(format!("Engine: {}", engine_name(&info.engine)))
+                            .size(12.0)
+                            .color(p.text_dim),
+                    )
+                    .on_hover_text(tip);
+                    ui.separator();
+                }
+                if let Some(n) = vm.analysis.function_count.or(vm.functions.total) {
+                    ui.label(
+                        RichText::new(format!("{n} functions"))
+                            .size(12.0)
+                            .color(p.text_dim),
+                    )
+                    .on_hover_text("Functions the analysis found in the program");
+                    ui.separator();
+                }
+                if let Some(cur) = current_text(vm) {
+                    ui.label(RichText::new(cur).monospace().size(12.0).color(p.text))
+                        .on_hover_text("The function you are reading, and where it starts");
+                    ui.separator();
+                }
                 ui.label(
                     RichText::new(changes_text(info.log_entries))
                         .size(12.0)
@@ -175,6 +219,7 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
                     );
                 }
             }
+            crate::activity::status_chip(ui, vm);
         });
     });
 }
@@ -257,7 +302,7 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
 
 #[cfg(test)]
 mod tests {
-    use super::{changes_text, toast_placement};
+    use super::{changes_text, engine_name, toast_placement};
     use egui::Align2;
 
     #[test]
@@ -268,6 +313,13 @@ mod tests {
         assert!((240.0..=360.0).contains(&width));
         assert_eq!(toast_placement(300.0).2, 240.0);
         assert_eq!(toast_placement(4000.0).2, 360.0);
+    }
+
+    #[test]
+    fn engines_have_plain_names() {
+        assert_eq!(engine_name("native"), "Native");
+        assert_eq!(engine_name("dotnet"), ".NET");
+        assert_eq!(engine_name(""), "Unknown");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `project_create`, `project_open`, `project_info`.
+//! `project_create`, `project_open`, `project_info`, `project_close`.
 
 use std::path::Path;
 
@@ -184,9 +184,9 @@ pub struct ProjectCreateArgs {
     pub binary: String,
     /// Directory for the new project; created if missing and must not hold a project yet.
     pub project_dir: String,
-    /// Engine for native code: `ghidra`, `native` (JVM-free, ELF only) or `auto` (native when
-    /// installed, else Ghidra). Default: the `engine` setting, else `ghidra`. .NET assemblies
-    /// always use the .NET engine.
+    /// Engine for native code: `ghidra`, `native` (JVM-free; ELF and PE, x86 and x86-64) or
+    /// `auto` (native when it can open the file, else Ghidra). Default: the `engine` setting.
+    /// .NET assemblies always use the .NET engine.
     #[serde(default)]
     pub engine: Option<EngineChoice>,
 }
@@ -326,5 +326,57 @@ impl Command for ProjectInfo {
     ) -> Result<ProjectInfoOut, ProtoError> {
         let project = s.project()?;
         info_of(&project).await
+    }
+}
+
+/// What `project_close` did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectCloseOut {
+    /// True when a project was open and is now closed.
+    pub closed: bool,
+    /// The directory of the project that was closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
+}
+
+/// Closes the open project.
+pub struct ProjectClose;
+
+#[async_trait]
+impl Command for ProjectClose {
+    type Args = NoArgs;
+    type Output = ProjectCloseOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "project_close",
+            "Close the current project and stop its engine",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        )
+        .doc(
+            "Cancels the project's running jobs, saves the engine's state and releases it, so \
+             the engine stops and its memory is freed. Renames, comments and other changes are \
+             already saved; nothing is lost. Closing when nothing is open does nothing.\n\
+             Example: project_close {}",
+        )
+        .details(
+            "Through krakend the daemon's session for the project is closed and its sidecars \
+             stop; the next command for that project opens it again. An agent may close only a \
+             project it was allowed to work on.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        _ctx: &CallContext,
+        _args: NoArgs,
+    ) -> Result<ProjectCloseOut, ProtoError> {
+        let dir = s.close_project().await;
+        Ok(ProjectCloseOut {
+            closed: dir.is_some(),
+            project_dir: dir.map(|d| d.to_string_lossy().into_owned()),
+        })
     }
 }

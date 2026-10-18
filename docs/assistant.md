@@ -240,6 +240,21 @@ Looks at up to N functions (default 10, at most 50) that still have default name
 
 Each suggestion carries a confidence label of low, medium or high. KRAKEN works it out itself by counting how many independent kinds of evidence agree (strings the function uses, library functions it calls or imports, how its callers use it, what it calls). The model's own opinion of its confidence is ignored. The label is a rough guide to what to review first. It is not a probability and is not calibrated.
 
+### `kraken auto <binary>`
+
+Does the whole flow for one program in one command: it checks the file, creates a project, runs the analysis and waits for it. Then, only if you ask:
+
+- `--names` lets the configured assistant look the program over and name its important functions (the Automate task below, goal "understand").
+- `--rewrite` plans a Rust rewrite of the whole program, translates it with the configured provider (see "Rewriting uses the same assistant"), runs the original and the rewrite on the same inputs inside a sandbox, and reports whether they agree. `--cases '[{"name": "help", "argv": ["--help"]}]'` adds your own test cases. `--no-function-tests` only compiles each function and leaves the program-level test as the only evidence.
+- `--accept-verified` (with `--rewrite`) accepts the rewritten functions that passed their own test and exports the Rust workspace to `<project>/rewrite-export`. You are the person deciding here. Without the flag the command tells you how to accept (`kraken rewrite-status`, then `kraken rewrite-accept --unit <id>`). If some function cannot be accepted (for example one that returns a pointer, which the function test cannot compare) and an accepted function calls it, the export is refused; the summary says so and the exit status is 4.
+
+```sh
+kraken auto ./a.out --names
+kraken auto ./a.out --project-dir ~/re/a --engine native --names --rewrite --accept-verified
+```
+
+Progress lines go to standard error (`[2/4] creating the project and analysing it`, then the jobs' own progress). The summary goes to standard output: program and format, project directory, function count, how many functions the assistant renamed, the rewrite verdict (`pass` means every test case agreed) and where the Rust crate and the export are. `--json` prints that summary as one object. The exit status is 0 when everything you asked for worked and the rewrite verdict is `pass`, 4 when the verdict is not `pass` or the export could not be made, and the usual codes for errors. `--names` needs a provider like the other assistant commands and checks for one before it creates anything. With a terminal agent, leave the daemon on (the default): the agent's own `kraken mcp` process opens the project too.
+
 ### `kraken glossary <term>`
 
 Looks up a term or an instruction mnemonic. It works offline and needs no project or provider.
@@ -251,6 +266,26 @@ kraken glossary adrp
 ```
 
 Typos are forgiven (`dissasembler` finds `disassembler`), and a query can match related terms too. `--json` prints the matches with their notes.
+
+## Automate: let the assistant work through the whole flow
+
+**Automate** is a task for the steps you would otherwise take one by one. It has three goals:
+
+| Goal | What the assistant does |
+| --- | --- |
+| Understand | Runs the analysis if needed, reads the entry point, imports and strings, then gives up to 15 important functions a name and a one-line comment (several at once with `apply_edits`) |
+| Rewrite | Plans the rewrite of the whole program, translates and tests it against the original (`rewrite_program`), explains any case that differs and retries once or twice, then exports (`rewrite_export`) |
+| Both | Understand first, then rewrite, so the translation starts from named functions |
+
+In the GUI, open it from **Automate with the assistant...** in the command palette or the menu: the dialog says in plain words what the chosen goal will do and what it will ask you. It runs with the assistant you chose under Settings > AI, a model or a terminal agent, and its steps and tool calls appear in the Assistant tab like any other task, with **Stop** at hand. From the command line, `kraken auto` runs the same task for `--names`.
+
+What the assistant can use is fixed by KRAKEN for each goal, not chosen by the model: the analysis and job commands, the read commands, `rename_symbol`, `set_comment`, `set_type`, `apply_edits`, and for the rewrite goals `rewrite_plan`, `rewrite_status`, `rewrite_function`, `rewrite_program`, `rewrite_program_status` and `rewrite_export`. A terminal agent holds all of KRAKEN's tools through its MCP server, so KRAKEN answers its permission requests from the same list: a KRAKEN tool outside the goal is refused. What stays yours either way:
+
+- Accepting rewrite results (`rewrite_accept`), deciding on proposals, undoing, and opening or creating projects are never offered. The run ends with a note telling you what to accept, in the Rewrite tab or with `kraken rewrite-accept`.
+- The approvals commands normally ask for still apply. `rewrite_program` runs the original program on test inputs inside a sandbox and sends decompiled code to your provider, so you are asked first.
+- Edits follow the usual policy: new names apply, anything that would overwrite someone's work becomes a proposal, and the whole run can be undone with `kraken undo-run --run-id <id>`.
+
+A run is bounded by a step budget, a tool-call budget and at most 60 edit calls, and a rewrite job may take up to three hours. If you stop it, nothing is half-applied that the History tab cannot undo.
 
 ## In the GUI
 
@@ -264,6 +299,7 @@ The GUI has one **Assistant** tab (next to Hex) and the same features whichever 
 - **Explain.** Right-click code in the decompiler (a word, its line, or the whole function) or a function in the list, then choose Explain. The answer is a card with clickable addresses and names you can try with one click (the rename box opens pre-filled; nothing changes until you confirm).
 - **First run.** When the first analysis finishes a banner offers an overview of the program.
 - **Suggest names.** The button above the function list asks for names for placeholder-named functions. You get a review table (old name, new name, evidence, how sure) and nothing changes until you press Apply. Applied names are your own edits, and Undo takes them back.
+- **Automate.** *Automate with the assistant...* in the command palette lets the assistant work through the flow on its own; see above.
 - **Learn mode.** The switch in the top bar adds a "?" to panel tabs and explains terms and assembly instructions on hover.
 
 With the daemon (the default) a terminal agent gets `kraken mcp --daemon --project <dir>`, so its edits reach the window as they happen, with the usual notification and Undo. With `--no-daemon` the agent uses its own session on the project and the window refreshes when each turn ends. Changing the project ends the agent's session; the next question starts a new one.
@@ -273,7 +309,7 @@ With the daemon (the default) a terminal agent gets `kraken mcp --daemon --proje
 The assistant reads code that came from a file you do not trust, so the same rules apply as for any agent (see [Security](security.md)):
 
 - Names, strings, comments and decompiled code reach the model only as delimited, untrusted data, and the model is told never to treat them as instructions. They are never put in the system prompt.
-- Which commands a model may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, deciding on proposals, and starting rewrites (translating, specs, accepting and exporting rewrite units) are never offered to the assistant as tools (the rewrite pipeline itself uses the same backends, as plain text requests; see above). Dangerous commands are never offered either. A terminal agent is told the same task rules, but it holds KRAKEN's tool server rather than a list KRAKEN chose: in a read-only task KRAKEN refuses its permission requests for KRAKEN tools that write, and the result calls out any change made anyway. The project's own `kraken mcp` server is bound to the project (it cannot open another).
+- Which commands a model may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, deciding on proposals, and starting rewrites (translating, specs, accepting and exporting rewrite units) are never offered to the assistant as tools, except that the Automate task below switches on `rewrite_function`, `rewrite_program` and `rewrite_export` for its rewrite goals (accepting stays yours) (the rewrite pipeline itself uses the same backends, as plain text requests; see above). Dangerous commands are never offered either. A terminal agent is told the same task rules, but it holds KRAKEN's tool server rather than a list KRAKEN chose: in a read-only task KRAKEN refuses its permission requests for KRAKEN tools that write, and the result calls out any change made anyway. The project's own `kraken mcp` server is bound to the project (it cannot open another).
 - Edits go through the registry's policy: additive edits are applied up to a per-run cap, overwrites become proposals.
 
 ## Measuring the assistant (`kraken eval`)

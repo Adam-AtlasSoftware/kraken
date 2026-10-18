@@ -58,17 +58,27 @@ Beyond the tools, `kraken mcp` offers what an agent needs to start well. In Clau
 | `explain-function` | `address` (optional) | Explain one function in plain language: purpose, steps, inputs and outputs, doubts. Without an address it uses the function selected in the GUI. Attaches the decompile |
 | `name-components` | `max_functions` (optional, default 15, at most 50) | Group functions into components, name them bottom-up with `rename_symbol` and `set_comment`, and finish with a table of components. Attaches the program summary |
 | `prepare-rewrite` | `address` | Plan the Rust rewrite of a function: signature, behaviour, callees that must come first, unknowns. It stops and asks before running `rewrite_function` |
+| `analyze-binary` | `path`, `project_dir` (optional, default the path plus `.kraken`) | Start from a file: `project_create` (you are asked to approve), `analyze` and `job_await`, then an overview (format, entry point, `main`, telling imports and strings) and naming up to 15 important functions in one or two `apply_edits` calls. There is no separate probe tool: the answer of `project_create` says the format and engine |
+| `rewrite-program` | `cases` (optional JSON array of `{name, argv, stdin}`) | Rewrite the whole program in Rust: `rewrite_plan`, `rewrite_program` with sensible test cases (a job; you are asked to approve running the original in the sandbox), explain every case that differs, `rewrite_export`, and finish by telling you exactly what to accept. Accepting is never the agent's step. Attaches the rewrite status |
 
 **Resources** are read-only context:
 
 | URI | What it holds |
 | --- | --- |
 | `kraken://project/summary` | The open program: format, architecture, analysis state, how many functions still have default names, the largest functions, imports, strings, and proposals waiting. Read it first |
+| `kraken://rewrite/status` | Where the Rust rewrite stands: units per status (planned, translated, verified, failed, accepted) and the latest whole-program run with its verdict and crate path |
 | `kraken://gui/selection` | What you have selected in the KRAKEN window (function, address) when the window and the MCP server share the daemon (`kraken mcp --daemon` with the GUI open on the same project). Answers "this function" and "what I selected". It reports the function and address in view, not text you highlight. It says when no window is attached, and when the last update is old |
 | `kraken://function/{address}/decompile` | One function's decompile as C text, for example `kraken://function/0x401136/decompile` (add `?module=<MVID>` for a .NET method) |
 | `kraken://glossary` and `kraken://glossary/{term}` | The glossary of terms and instruction mnemonics, or one entry (`kraken://glossary/jne`) |
 
 Everything derived from the binary in a prompt or resource sits in its own attached block, marked as data. The instruction text KRAKEN writes never contains it.
+
+**The order of work** an agent follows is also in the server's instructions: `project_create` or `project_open`; `analyze` and wait with `job_await`; read the summary, `decompile`, `xrefs`, `strings`, `imports`; name and describe with `rename_symbol`, `set_comment` and `set_type`, or many at once with `apply_edits`; then `rewrite_plan`, `rewrite_program`, `rewrite_program_status` and `rewrite_export`. Accepting results and deciding on proposals are for people.
+
+Two commands are made for agents:
+
+- `apply_edits` takes up to 200 renames, comments and types (`{"op": "rename" | "comment" | "set_type", "address", "name" | "text" | "type"}`) and applies each through the same checks as the single commands, in one run. Each item comes back `applied`, `queued`, `proposed` or `rejected` with a reason; one bad item does not stop the rest. The per-run cap counts every edit.
+- `gui_navigate` (`{"address": "0x401136", "tab": "decompiler"}`) makes every KRAKEN window that has the project open jump to an address and focus a tab (decompiler, listing, graph, hex, xrefs or functions). It changes nothing in the project and does nothing when no window is open. While an agent works, the window's status bar shows a chip such as "Claude Code: 4 changes, renaming..." that opens the History tab.
 
 **Tool descriptions** come from the command registry, the same text as the CLI help and the [command reference](reference/commands.md): a one-line summary, a short paragraph on when to use the command and what to look out for, a worked `Example:` call, and a description of every argument. A test keeps them honest: summaries stay short, every argument is described, and each example is valid JSON that uses real argument names and includes the required ones. Longer background lives in the reference only, so tool lists stay small.
 

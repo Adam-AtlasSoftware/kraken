@@ -6,17 +6,31 @@ use serde::Deserialize;
 
 use crate::command::Registry;
 
+mod bookmarks;
+mod bulk;
 mod data;
 mod edit;
+mod gui_navigate;
 mod history;
 mod jobs;
+mod probe;
 mod project;
 mod query;
 mod rebuild;
 mod rewrite;
+mod rewrite_build;
 mod rewrite_program;
+mod search;
 mod undo_entry;
 
+pub use bookmarks::{
+    BOOKMARK_PAGE_CAP, BookmarkAdd, BookmarkAddArgs, BookmarkList, BookmarkListArgs,
+    BookmarkRemove, BookmarkRemoveArgs, BookmarkRemoveOut, BookmarkView, MAX_BOOKMARK_NOTE,
+};
+pub use bulk::{
+    ApplyEdits, ApplyEditsArgs, ApplyEditsOut, BulkEdit, BulkItemResult, BulkOp, BulkOutcome,
+    MAX_BULK_EDITS,
+};
 pub use data::{
     CallGraphArgs, Callees, Callers, CfgArgs, CfgCommand, CfgOut, Disassemble, DisassembleArgs,
     Exports, Imports, MemoryMap, MemoryMapOut, ReadBytes, ReadBytesArgs, ReadBytesOut, Strings,
@@ -28,14 +42,16 @@ pub use edit::{
     SetCallingConventionArgs, SetComment, SetCommentArgs, SetFunctionBounds, SetFunctionBoundsArgs,
     SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
 };
+pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
 pub use history::{History, HistoryArgs, ProposalFilter, ProposalsList, ProposalsListArgs};
 pub use jobs::{
     Analyze, AnalyzeOut, AnalyzeResult, JobAwait, JobAwaitArgs, JobCancel, JobIdArgs, JobStatus,
     JobView,
 };
+pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
 pub use project::{
-    AnalysisView, ProjectCreate, ProjectCreateArgs, ProjectInfo, ProjectInfoOut, ProjectOpen,
-    ProjectOpenArgs, project_gate,
+    AnalysisView, ProjectClose, ProjectCloseOut, ProjectCreate, ProjectCreateArgs, ProjectInfo,
+    ProjectInfoOut, ProjectOpen, ProjectOpenArgs, project_gate,
 };
 pub use query::{
     Decompile, DecompileArgs, GetFunction, GetFunctionArgs, ListFunctions, ListFunctionsArgs,
@@ -50,12 +66,21 @@ pub use rewrite::{
     RewriteUnit, RewriteUnitArgs, RewriteUnitOut, StatusCounts, UnitRow, UnitSpecView, UnitStatus,
     UnitVersionView, is_inside,
 };
+pub use rewrite_build::{
+    BUILD_LOG_CAP, BUILD_SUMMARY, BuildStepResult, EXPORT_GENERATOR, MAX_RUN_ARGS,
+    PROGRAM_GENERATOR, RewriteBuild, RewriteBuildArgs, RewriteBuildResult, crate_kind,
+    manifest_kind,
+};
 pub use rewrite_program::{
     DEFAULT_PROGRAM_DIR, DEFAULT_REPAIR_ROUNDS, MAX_GENERATED_CASES, MAX_REPAIR_ROUNDS,
     MAX_USER_CASES, ProgramCaseResult, ProgramCaseSpec, ProgramFunctionRow, ProgramRepairView,
     ProgramRunSummary, ProgramRunView, ProgramVerdictView, RUN_ORIGINAL_SUMMARY, RewriteProgram,
     RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatus, RewriteProgramStatusArgs,
     RewriteProgramStatusOut,
+};
+pub use search::{
+    DEFAULT_SEARCH_HITS, MAX_SCAN_BYTES, MAX_SCAN_FUNCTIONS, MAX_SEARCH_HITS, Search, SearchArgs,
+    SearchHit, SearchKind, parse_pattern,
 };
 pub use undo_entry::{
     DependentView, TaintedClear, TaintedClearArgs, TaintedClearOut, TaintedFunction, TaintedList,
@@ -162,4 +187,17 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteExport);
     r.register(RewriteProgram);
     r.register(RewriteProgramStatus);
+    // Card SHELL: the open/import workflow.
+    r.register(BinaryProbe);
+    r.register(ProjectClose);
+    // Card REWRITE
+    r.register(RewriteBuild);
+    // Card AI
+    r.register(ApplyEdits);
+    r.register(GuiNavigate);
+    // Card NAV: search and bookmarks.
+    r.register(Search);
+    r.register(BookmarkAdd);
+    r.register(BookmarkRemove);
+    r.register(BookmarkList);
 }

@@ -151,6 +151,17 @@ pub enum BackendEvent {
     Disconnected(String),
     /// The connection is back; everything shown should be reloaded.
     Reconnected,
+    /// A client started a job; `by_agent` says whether it was an agent (`key` is the job id).
+    JobStarted(ChangeInfo),
+    /// An agent asked the GUI to show an address (`gui_navigate`).
+    Navigate {
+        /// Address to show.
+        address: u64,
+        /// Tab to focus (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`).
+        tab: Option<String>,
+        /// Agent id that asked.
+        author: String,
+    },
 }
 
 /// A dangerous command waiting for the person's decision.

@@ -17,6 +17,8 @@ use crate::fonts;
 use crate::services::Services;
 use crate::workspace::Tab;
 
+mod nav;
+
 const WAIT: Duration = Duration::from_secs(20);
 
 struct Harness {
@@ -45,6 +47,7 @@ impl Harness {
             no_daemon: false,
             open_project: None,
             function: None,
+            path: None,
         };
         let app = KrakenApp::new(&ctx, rt.clone(), Services::offline(), &opts);
         let mut h = Harness { ctx, app, _rt: rt };

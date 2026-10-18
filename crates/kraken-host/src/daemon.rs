@@ -137,6 +137,10 @@ pub mod event_kind {
     pub const APPROVAL_REQUESTED: &str = "approval_requested";
     /// A waiting approval ended (`allowed`, `denied`, `timed_out` or `abandoned`).
     pub const APPROVAL_RESOLVED: &str = "approval_resolved";
+    /// An agent asked the GUIs of a project to show an address (`gui_navigate`).
+    pub const GUI_NAVIGATE: &str = "gui_navigate";
+    /// A client started a job (`analyze`, `rewrite_program`, ...); says who.
+    pub const JOB_STARTED: &str = "job_started";
 }
 
 /// Params of the `call` method.

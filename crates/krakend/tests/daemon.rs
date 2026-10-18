@@ -414,6 +414,37 @@ async fn a_vanished_client_does_not_break_the_write_queue() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn gui_navigate_and_job_starts_reach_the_other_clients() {
+    let r = rig();
+    let watcher = r.client(ClientKind::Gui).await;
+    let mut rx = watcher.take_events().expect("event stream");
+    let worker = r.client(ClientKind::Cli).await;
+    let dir = r.create(&worker, "p").await;
+
+    let started = call(&worker, &dir, "analyze", json!({})).await.unwrap();
+    let ev = next_event(&mut rx, "job_started").await;
+    assert_eq!(ev["job_id"], started["job_id"]);
+    assert_eq!(ev["command"], "analyze");
+    assert_eq!(ev["author_kind"], "user");
+    next_event(&mut rx, "job_done").await;
+
+    let out = call(
+        &worker,
+        &dir,
+        "gui_navigate",
+        json!({"address": "0x401136", "tab": "listing"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["requested"], true);
+    let ev = next_event(&mut rx, "gui_navigate").await;
+    assert_eq!(ev["address"], "0x401136");
+    assert_eq!(ev["tab"], "listing");
+    assert_eq!(ev["author_id"], "tester");
+    r.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_second_client_sees_the_change_event_stream() {
     let r = rig();
     let watcher = r.client(ClientKind::Gui).await;
@@ -782,4 +813,38 @@ async fn a_second_daemon_in_the_same_directory_is_refused() {
 /// The canonical form the daemon publishes events under.
 fn canon(p: &Path) -> std::path::PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn binary_probe_makes_no_session_and_project_close_ends_one() {
+    let r = rig();
+    let c = r.client(ClientKind::Gui).await;
+    let probe = call(
+        &c,
+        &r.project("unused"),
+        "binary_probe",
+        json!({"path": r.binary}),
+    )
+    .await
+    .expect("binary_probe");
+    assert_eq!(probe["size"], 16);
+    assert_eq!(c.status().await.unwrap()["sessions"], json!([]));
+
+    let dir = r.create(&c, "p1").await;
+    assert_eq!(
+        c.status().await.unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let closed = call(&c, &dir, "project_close", json!({})).await.unwrap();
+    assert_eq!(closed["closed"], true);
+    assert_eq!(c.status().await.unwrap()["sessions"], json!([]));
+    let again = call(&c, &dir, "project_close", json!({})).await.unwrap();
+    assert_eq!(again["closed"], false);
+    // The next command opens it again.
+    let info = call(&c, &dir, "project_info", json!({})).await.unwrap();
+    assert_eq!(info["program"]["format"], "elf");
+    r.stop().await;
 }

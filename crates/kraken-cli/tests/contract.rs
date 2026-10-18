@@ -226,6 +226,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     assert!(s.mcp_session.project().is_ok());
 
     step!("project_info", json!({}));
+    step!("binary_probe", json!({"path": s.binary}));
 
     covered.extend(["analyze".to_string(), "job_await".to_string()]);
     let analysis = both_job(&s, "analyze").await;
@@ -312,6 +313,26 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         "rename_symbol",
         json!({"address": "0x401040", "new_name": "x", "bogus": 1})
     );
+    // An item without its name is refused on its own; nothing is logged.
+    let bulk = step!(
+        "apply_edits",
+        json!({"edits": [{"op": "rename", "address": "0x401040"}]})
+    );
+    assert_eq!(bulk["rejected"], 1, "{bulk}");
+    let nav = step!(
+        "gui_navigate",
+        json!({"address": "0x401040", "tab": "listing"})
+    );
+    assert_eq!(nav["requested"], true, "{nav}");
+
+    // Search and bookmarks.
+    step!("search", json!({"query": "main", "kind": "names"}));
+    step!(
+        "bookmark_add",
+        json!({"address": "0x401040", "note": "look here"})
+    );
+    step!("bookmark_list", json!({}));
+    step!("bookmark_remove", json!({"address": "0x401040"}));
 
     // Proposals and history.
     step!("proposals_list", json!({"status": "all"}));
@@ -344,6 +365,9 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     assert!(rebuilt["result"]["replayed"].is_number(), "{rebuilt}");
     step!("list_functions", json!({}));
 
+    let closed = step!("project_close", json!({}));
+    assert_eq!(closed["closed"], true, "{closed}");
+
     // Reopening the project through both surfaces.
     {
         covered.insert("project_open".to_string());
@@ -369,6 +393,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ("rewrite_function", json!({"address": "0x401040"})),
         ("rewrite_spec", json!({"scope": "all"})),
         ("rewrite_export", json!({"dir": "out"})),
+        ("rewrite_build", json!({"dir": "out"})),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
     ] {

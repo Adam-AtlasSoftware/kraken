@@ -3,6 +3,7 @@
 //! | URI | what |
 //! |---|---|
 //! | `kraken://project/summary` | the open program: format, analysis state, function counts, largest functions, imports, strings, proposals |
+//! | `kraken://rewrite/status` | the rewrite: plan, units per status, the latest whole-program run |
 //! | `kraken://gui/selection` | what the person has selected in a GUI attached through the daemon |
 //! | `kraken://function/{address}/decompile` | one function's decompile as C text |
 //! | `kraken://glossary` | the reverse-engineering glossary |
@@ -24,6 +25,8 @@ use serde_json::{Value, json};
 
 /// The open program's overview.
 pub const SUMMARY_URI: &str = "kraken://project/summary";
+/// The rewrite plan and the latest whole-program run.
+pub const REWRITE_STATUS_URI: &str = "kraken://rewrite/status";
 /// What a GUI attached through the daemon has selected.
 pub const SELECTION_URI: &str = "kraken://gui/selection";
 /// The whole glossary.
@@ -50,6 +53,14 @@ pub fn list() -> Vec<Resource> {
             .with_description(
                 "What the open program is: format, analysis state, how many functions have real \
                  names, the largest functions, imports and strings. Read it first.",
+            )
+            .with_mime_type(MARKDOWN),
+        Resource::new(REWRITE_STATUS_URI, "rewrite-status")
+            .with_title("Rewrite status")
+            .with_description(
+                "Where the Rust rewrite stands: units per status (planned, translated, verified, \
+                 failed, accepted) and the latest whole-program run with its verdict and crate \
+                 path. Read it to see what is left and what a person still has to accept.",
             )
             .with_mime_type(MARKDOWN),
         Resource::new(SELECTION_URI, "gui-selection")
@@ -149,6 +160,12 @@ impl Reader<'_> {
         match uri {
             SUMMARY_URI => {
                 let text = self.summary().await;
+                Ok(vec![
+                    ResourceContents::text(text, uri).with_mime_type(MARKDOWN),
+                ])
+            }
+            REWRITE_STATUS_URI => {
+                let text = self.rewrite_status().await;
                 Ok(vec![
                     ResourceContents::text(text, uri).with_mime_type(MARKDOWN),
                 ])
@@ -275,6 +292,61 @@ impl Reader<'_> {
                 "note": format!("The selection is not available: {}", e.message),
             }),
         }
+    }
+
+    /// The rewrite plan and latest program run in Markdown (see [`REWRITE_STATUS_URI`]).
+    pub async fn rewrite_status(&self) -> String {
+        let mut out = String::from("# Rewrite status\n\n");
+        match self.call("rewrite_status", json!({"limit": 1})).await {
+            Ok(v) => {
+                let c = &v["counts"];
+                let _ = writeln!(
+                    out,
+                    "- Plan: {}",
+                    if v["plan_present"].as_bool() == Some(true) {
+                        "stored"
+                    } else {
+                        "none yet (`rewrite_plan` makes one)"
+                    }
+                );
+                let _ = writeln!(
+                    out,
+                    "- Units: {} planned, {} translated, {} verified, {} failed, {} accepted",
+                    c["planned"], c["translated"], c["verified"], c["failed"], c["accepted"]
+                );
+            }
+            Err(e) if e.code == ErrorCode::NotFound => {
+                out.push_str("No project is open. Open one with `project_open`.\n");
+                return out;
+            }
+            Err(e) => {
+                let _ = writeln!(out, "Unavailable: {}", e.message);
+                return out;
+            }
+        }
+        match self.call("rewrite_program_status", json!({})).await {
+            Ok(v) if v["present"].as_bool() == Some(true) => {
+                let run = &v["runs"][0];
+                let _ = writeln!(
+                    out,
+                    "- Latest program run: #{}, verdict {}, {} of {} cases agreed, crate in {}",
+                    run["run"],
+                    code(run["verdict"].as_str().unwrap_or("?")),
+                    run["passed"],
+                    run["cases_run"],
+                    code(run["crate_dir"].as_str().unwrap_or("?")),
+                );
+            }
+            Ok(_) => out.push_str("- Program runs: none (`rewrite_program` makes one)\n"),
+            Err(e) => {
+                let _ = writeln!(out, "- Program runs unavailable: {}", e.message);
+            }
+        }
+        out.push_str(
+            "\nAccepting verified units (`rewrite_accept`, the GUI's Rewrite tab, or `kraken \
+             rewrite-accept`) is a person's step.\n",
+        );
+        out
     }
 
     /// The program overview in Markdown (see [`SUMMARY_URI`]).

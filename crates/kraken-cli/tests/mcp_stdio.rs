@@ -21,7 +21,7 @@ async fn kraken_mcp_serves_the_registry_over_stdio() {
     );
 
     let tools = client.list_all_tools().await.expect("tools");
-    assert_eq!(tools.len(), 47);
+    assert_eq!(tools.len(), kraken_registry::Registry::standard().len());
     assert!(tools.iter().any(|t| t.name == "decompile"));
 
     let r = client

@@ -1,9 +1,13 @@
 //! The program views: listing, hex, graph, cross-references, strings, imports and exports.
 //! Each panel draws state that lives in `ViewModel::views` and sends clicks back to it.
 
+pub mod bookmarks;
+pub mod context;
+pub mod dialogs;
 pub mod graph;
 pub mod hex;
 pub mod listing;
+pub mod search;
 pub mod strings;
 pub mod symbols;
 pub mod xrefs;
@@ -25,6 +29,7 @@ pub struct PanelState {
     pub strings: strings::StringsUi,
     pub symbols: symbols::SymbolsUi,
     pub xrefs: xrefs::XrefsUi,
+    pub search: search::SearchUi,
     /// Address under the pointer in the panel the person is working in; `X` asks about it.
     pub hot: Option<u64>,
     /// The listing or graph that was drawn last frame, so Space knows which one to swap out.
@@ -55,9 +60,48 @@ pub fn space_target(front: Option<Tab>) -> Tab {
     }
 }
 
+/// The editing and navigation keys of the workspace, read once per frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ToolKeys {
+    pub goto: bool,
+    pub search: bool,
+    pub retype: bool,
+    pub comment: bool,
+    pub bookmark: bool,
+    pub create_function: bool,
+    pub undo: bool,
+}
+
+/// Reads the tool keys. Single keys only count when no text field has the focus and no dialog
+/// is open; Ctrl+Shift+F works from a text field too.
+fn tool_keys(ctx: &Context, typing: bool, blocked: bool) -> ToolKeys {
+    if blocked {
+        return ToolKeys::default();
+    }
+    ctx.input_mut(|i| {
+        let search = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F);
+        if typing {
+            return ToolKeys {
+                search,
+                ..ToolKeys::default()
+            };
+        }
+        ToolKeys {
+            search,
+            goto: i.consume_key(Modifiers::NONE, Key::G),
+            retype: i.consume_key(Modifiers::NONE, Key::Y),
+            comment: i.consume_key(Modifiers::NONE, Key::Semicolon),
+            bookmark: i.consume_key(Modifiers::COMMAND, Key::D),
+            create_function: i.consume_key(Modifiers::NONE, Key::P),
+            undo: i.consume_key(Modifiers::COMMAND, Key::Z),
+        }
+    })
+}
+
 /// Window-wide keys of the program views: Space swaps listing and graph (like IDA), X lists the
-/// references to the address under the pointer. Also carries out the navigations the view-model
-/// asked to show.
+/// references to the address under the pointer, and the editing keys (G, Ctrl+Shift+F, Y, ;,
+/// Ctrl+D, P, Ctrl+Z) act on the address at the cursor. Also carries out
+/// the navigations the view-model asked to show.
 pub fn global_keys(
     ctx: &Context,
     dock: &mut DockState<Tab>,
@@ -66,7 +110,10 @@ pub fn global_keys(
 ) {
     switch_tab_by_key(ctx, dock);
     let typing = ctx.egui_wants_keyboard_input();
-    let (space, x) = if typing {
+    let blocked =
+        vm.palette.open || vm.tools.dialog_open() || vm.rename.is_some() || vm.comment.is_some();
+    let keys = tool_keys(ctx, typing, blocked);
+    let (space, x) = if typing || blocked {
         (false, false)
     } else {
         ctx.input_mut(|i| {
@@ -91,6 +138,28 @@ pub fn global_keys(
             Some(a) => vm.show_references(a, None),
             None => vm.references_to_cursor(),
         }
+    }
+    if keys.goto {
+        vm.open_goto();
+    }
+    if keys.search {
+        vm.open_search();
+    }
+    if keys.retype {
+        vm.begin_retype_here();
+    }
+    if keys.comment {
+        vm.begin_comment_here();
+    }
+    if keys.bookmark {
+        vm.ensure_bookmarks();
+        vm.begin_bookmark_here();
+    }
+    if keys.create_function {
+        vm.begin_create_function_here();
+    }
+    if keys.undo {
+        vm.undo_last_described();
     }
     st.hot = None;
     if let Some(r) = vm.views.take_reveal() {
@@ -176,6 +245,20 @@ fn switch_tab_by_key(ctx: &Context, dock: &mut DockState<Tab>) {
         let _ = dock.set_active_tab(*path);
         dock.set_focused_node_and_surface(node);
     }
+}
+
+/// Remembers where a control was drawn this frame, so headless tests can click it by name.
+pub fn remember_rect(ctx: &Context, key: impl std::hash::Hash + std::fmt::Debug, rect: egui::Rect) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(("kraken_rect", key)), rect));
+}
+
+/// Where [`remember_rect`] saw the control last.
+#[cfg(test)]
+pub fn remembered_rect(
+    ctx: &Context,
+    key: impl std::hash::Hash + std::fmt::Debug,
+) -> Option<egui::Rect> {
+    ctx.data(|d| d.get_temp(egui::Id::new(("kraken_rect", key))))
 }
 
 /// `0x401000` with a function name when the view-model knows one.

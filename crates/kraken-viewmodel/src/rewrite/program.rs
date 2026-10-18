@@ -337,6 +337,68 @@ impl ProgramRunDetail {
     }
 }
 
+/// One test case the person typed: how the program is started and what it is fed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProgramInput {
+    /// Label in the report.
+    pub name: String,
+    /// Arguments after the program name, as typed (quotes group words).
+    pub args: String,
+    /// Text written to standard input.
+    pub stdin: String,
+}
+
+impl ProgramInput {
+    /// Nothing typed in any field.
+    pub fn is_blank(&self) -> bool {
+        self.name.trim().is_empty() && self.args.trim().is_empty() && self.stdin.is_empty()
+    }
+}
+
+/// Splits typed arguments into words: spaces separate, single or double quotes group, a
+/// backslash escapes the next character outside single quotes.
+pub fn split_args(text: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut has = false;
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some('"'), '\\') | (None, '\\') => match chars.next() {
+                Some(n) => {
+                    cur.push(n);
+                    has = true;
+                }
+                None => return Err("The arguments end with a backslash.".into()),
+            },
+            (Some(_), c) => cur.push(c),
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                has = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if has {
+                    out.push(std::mem::take(&mut cur));
+                    has = false;
+                }
+            }
+            (None, c) => {
+                cur.push(c);
+                has = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err("A quote in the arguments is not closed.".into());
+    }
+    if has {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
 /// State of the Program view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramState {
@@ -360,6 +422,12 @@ pub struct ProgramState {
     pub repair_rounds: u32,
     /// The last Run was refused by the person; the sentence to show.
     pub declined: Option<String>,
+    /// Test cases the person added; they run on both programs.
+    pub inputs: Vec<ProgramInput>,
+    /// Folder for the generated crate; empty for the default inside the project.
+    pub output_dir: String,
+    /// Test every function against the original too (not only the whole program).
+    pub verify_functions: bool,
     pub(crate) generation: u64,
 }
 
@@ -376,6 +444,9 @@ impl Default for ProgramState {
             selected_function: None,
             repair_rounds: DEFAULT_REPAIR_ROUNDS,
             declined: None,
+            inputs: Vec::new(),
+            output_dir: String::new(),
+            verify_functions: true,
             generation: 0,
         }
     }
@@ -632,6 +703,68 @@ impl ViewModel {
         self.rewrite.program.repair_rounds = rounds.min(MAX_REPAIR_ROUNDS);
     }
 
+    /// Why the typed test cases cannot be used, if so.
+    pub fn rewrite_program_inputs_problem(&self) -> Option<String> {
+        let cases: Vec<&ProgramInput> = self
+            .rewrite
+            .program
+            .inputs
+            .iter()
+            .filter(|i| !i.is_blank())
+            .collect();
+        if cases.len() > kraken_registry::commands::MAX_USER_CASES {
+            return Some(format!(
+                "At most {} test cases can be added.",
+                kraken_registry::commands::MAX_USER_CASES
+            ));
+        }
+        for (n, c) in cases.iter().enumerate() {
+            if c.name.trim().is_empty() {
+                return Some(format!("Test case {} needs a name.", n + 1));
+            }
+            if let Err(e) = split_args(&c.args) {
+                return Some(format!("Test case \"{}\": {e}", c.name.trim()));
+            }
+            if c.args.contains('\0') || c.stdin.contains('\0') {
+                return Some(format!(
+                    "Test case \"{}\" contains a character that cannot be passed to a program.",
+                    c.name.trim()
+                ));
+            }
+        }
+        None
+    }
+
+    /// The `inputs` array of `rewrite_program` built from the typed cases.
+    fn rewrite_program_inputs_json(&self) -> Vec<serde_json::Value> {
+        self.rewrite
+            .program
+            .inputs
+            .iter()
+            .filter(|i| !i.is_blank())
+            .map(|i| {
+                let mut j = json!({
+                    "name": i.name.trim(),
+                    "argv": split_args(&i.args).unwrap_or_default(),
+                });
+                if !i.stdin.is_empty() {
+                    j["stdin"] = json!(i.stdin);
+                }
+                j
+            })
+            .collect()
+    }
+
+    /// Where the typed output folder is, relative to the project.
+    pub fn rewrite_program_dir_check(&self) -> Option<super::DirCheck> {
+        let dir = self.rewrite.program.output_dir.trim();
+        if dir.is_empty() {
+            return None;
+        }
+        let project = self.project.as_ref().map(|p| p.project_dir.as_str());
+        Some(super::check_export_dir(project, dir))
+    }
+
     /// A program rewrite is going.
     pub fn rewrite_program_running(&self) -> bool {
         self.rewrite
@@ -647,13 +780,35 @@ impl ViewModel {
         if !self.rewrite.can_run() || self.rewrite_program_running() {
             return;
         }
+        if let Some(why) = self.rewrite_program_inputs_problem() {
+            self.rewrite.program.error = Some(why);
+            return;
+        }
+        if let Some(super::DirCheck::Invalid(why)) = self.rewrite_program_dir_check() {
+            self.rewrite.program.error = Some(why);
+            return;
+        }
         self.rewrite.program.declined = None;
-        let rounds = self.rewrite.program.repair_rounds;
+        self.rewrite.program.error = None;
+        let st = &self.rewrite.program;
+        let mut args = json!({
+            "scope": "all",
+            "repair_rounds": st.repair_rounds,
+            "verify_functions": st.verify_functions,
+        });
+        let inputs = self.rewrite_program_inputs_json();
+        if !inputs.is_empty() {
+            args["inputs"] = json!(inputs);
+        }
+        let dir = st.output_dir.trim();
+        if !dir.is_empty() {
+            args["dir"] = json!(dir);
+        }
         self.rewrite_start_job(
             JobKind::Program,
             "Rewriting the whole program".into(),
             "rewrite_program",
-            json!({ "scope": "all", "repair_rounds": rounds }),
+            args,
         );
     }
 

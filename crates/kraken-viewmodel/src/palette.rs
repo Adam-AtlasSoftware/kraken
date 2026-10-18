@@ -38,13 +38,65 @@ pub enum AppAction {
     OpenDemo,
     /// Open the settings window.
     OpenSettings,
+    /// Close the open project and go back to the welcome screen.
+    CloseProject,
+    /// Forget the recent projects list.
+    ClearRecent,
+    /// Close the window.
+    Quit,
+    /// Open the command palette.
+    OpenPalette,
+    /// Turn learn mode (a short explanation on every panel) on or off.
+    ToggleLearnMode,
+    /// Show the keyboard shortcut cheat sheet.
+    ShowShortcuts,
+    /// Open the user guide.
+    OpenDocs,
+    /// Open `main`, or the entry point when there is no `main`.
+    GoToMain,
+    /// Ask the assistant for an overview of the program.
+    ExplainProgram,
+    /// Open the step-by-step rewrite window.
+    RewriteWizard,
+    /// Let the assistant work through the whole flow (the Automate dialog).
+    Automate,
+    /// Jump to an address, a function or a symbol by name.
+    GoTo,
+    /// Open the Search tab.
+    Search,
+    /// Change the type of the item at the cursor.
+    Retype,
+    /// Edit the C prototype of the function being viewed.
+    EditSignature,
+    /// Comment on the address at the cursor.
+    CommentHere,
+    /// List what refers to the address at the cursor.
+    ShowReferences,
+    /// Bookmark the address at the cursor.
+    AddBookmark,
+    /// Show the Bookmarks tab.
+    ShowBookmarks,
+    /// Mark the code at the cursor as a function.
+    CreateFunctionHere,
+    /// Remove the function being viewed.
+    DeleteFunction,
 }
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 16] = [
+    pub const ALL: [AppAction; 37] = [
+        AppAction::GoTo,
+        AppAction::Search,
         AppAction::RenameCurrent,
+        AppAction::Retype,
+        AppAction::EditSignature,
         AppAction::CommentCurrent,
+        AppAction::CommentHere,
+        AppAction::ShowReferences,
+        AppAction::AddBookmark,
+        AppAction::ShowBookmarks,
+        AppAction::CreateFunctionHere,
+        AppAction::DeleteFunction,
         AppAction::Back,
         AppAction::Forward,
         AppAction::FocusFunctionFilter,
@@ -59,6 +111,17 @@ impl AppAction {
         AppAction::NewProject,
         AppAction::OpenDemo,
         AppAction::OpenSettings,
+        AppAction::CloseProject,
+        AppAction::ClearRecent,
+        AppAction::Quit,
+        AppAction::OpenPalette,
+        AppAction::ToggleLearnMode,
+        AppAction::ShowShortcuts,
+        AppAction::OpenDocs,
+        AppAction::GoToMain,
+        AppAction::ExplainProgram,
+        AppAction::RewriteWizard,
+        AppAction::Automate,
     ];
 
     /// Palette title.
@@ -77,9 +140,30 @@ impl AppAction {
             AppAction::ShowHistory => "Show history",
             AppAction::ShowProposals => "Show proposals",
             AppAction::OpenProject => "Open project...",
-            AppAction::NewProject => "New project from a binary...",
+            AppAction::NewProject => "Open program...",
             AppAction::OpenDemo => "Open demo project",
             AppAction::OpenSettings => "Settings...",
+            AppAction::CloseProject => "Close project",
+            AppAction::ClearRecent => "Clear recent projects",
+            AppAction::Quit => "Quit",
+            AppAction::OpenPalette => "Search commands...",
+            AppAction::ToggleLearnMode => "Toggle learn mode",
+            AppAction::ShowShortcuts => "Keyboard shortcuts",
+            AppAction::OpenDocs => "User guide",
+            AppAction::GoToMain => "Go to main",
+            AppAction::ExplainProgram => "Explain this program",
+            AppAction::RewriteWizard => "Rewrite in Rust...",
+            AppAction::Automate => "Automate with the assistant...",
+            AppAction::GoTo => "Go to...",
+            AppAction::Search => "Search...",
+            AppAction::Retype => "Change type...",
+            AppAction::EditSignature => "Edit function signature...",
+            AppAction::CommentHere => "Comment at this address...",
+            AppAction::ShowReferences => "Show references",
+            AppAction::AddBookmark => "Bookmark this address",
+            AppAction::ShowBookmarks => "Show bookmarks",
+            AppAction::CreateFunctionHere => "Create function here",
+            AppAction::DeleteFunction => "Delete this function...",
         }
     }
 
@@ -99,9 +183,34 @@ impl AppAction {
             AppAction::ShowHistory => "See every change made to this project",
             AppAction::ShowProposals => "Review changes suggested by agents",
             AppAction::OpenProject => "Open a KRAKEN project folder",
-            AppAction::NewProject => "Start analysing an executable",
+            AppAction::NewProject => "Import an executable or library into a new project",
             AppAction::OpenDemo => "Try KRAKEN on a small built-in program",
             AppAction::OpenSettings => "Engine paths, theme, daemon status and setup",
+            AppAction::CloseProject => "Stop working on this project and go back to the start",
+            AppAction::ClearRecent => "Empty the list of recently opened projects",
+            AppAction::Quit => "Close KRAKEN. Your work is already saved",
+            AppAction::OpenPalette => "Find any action or command by typing part of its name",
+            AppAction::ToggleLearnMode => "Show a short explanation on every panel",
+            AppAction::ShowShortcuts => "List every keyboard shortcut",
+            AppAction::OpenDocs => "Open the KRAKEN documentation in your browser",
+            AppAction::GoToMain => "Open the program's main function, or where it starts",
+            AppAction::ExplainProgram => "Ask the assistant what this program does",
+            AppAction::RewriteWizard => {
+                "Turn the program into Rust step by step, checked against the original"
+            }
+            AppAction::Automate => {
+                "Let the assistant understand, name and rewrite the program step by step"
+            }
+            AppAction::GoTo => "Jump to an address, a function or a symbol by name",
+            AppAction::Search => "Find names, strings, bytes or instructions anywhere",
+            AppAction::Retype => "Set the type of the data or function at the cursor",
+            AppAction::EditSignature => "Fix the return type and parameters of this function",
+            AppAction::CommentHere => "Leave a note on the line at the cursor",
+            AppAction::ShowReferences => "List everything that uses the address at the cursor",
+            AppAction::AddBookmark => "Mark the address at the cursor to come back to",
+            AppAction::ShowBookmarks => "See every address you or an agent bookmarked",
+            AppAction::CreateFunctionHere => "Tell KRAKEN the code at the cursor is a function",
+            AppAction::DeleteFunction => "Remove a function the analysis got wrong",
         }
     }
 
@@ -113,6 +222,21 @@ impl AppAction {
             AppAction::RenameCurrent => Some("N"),
             AppAction::FocusFunctionFilter => Some("Ctrl+L"),
             AppAction::OpenSettings => Some("Ctrl+,"),
+            AppAction::NewProject => Some("Ctrl+O"),
+            AppAction::OpenProject => Some("Ctrl+Shift+O"),
+            AppAction::CloseProject => Some("Ctrl+W"),
+            AppAction::Quit => Some("Ctrl+Q"),
+            AppAction::OpenPalette => Some("Ctrl+K"),
+            AppAction::ShowShortcuts => Some("Ctrl+/"),
+            AppAction::OpenDocs => Some("F1"),
+            AppAction::UndoLast => Some("Ctrl+Z"),
+            AppAction::GoTo => Some("G"),
+            AppAction::Search => Some("Ctrl+Shift+F"),
+            AppAction::Retype => Some("Y"),
+            AppAction::CommentHere => Some(";"),
+            AppAction::ShowReferences => Some("X"),
+            AppAction::AddBookmark => Some("Ctrl+D"),
+            AppAction::CreateFunctionHere => Some("P"),
             _ => None,
         }
     }
@@ -126,10 +250,97 @@ impl AppAction {
             "project_info" => AppAction::RefreshAll,
             "history" => AppAction::ShowHistory,
             "proposals_list" => AppAction::ShowProposals,
+            "search" => AppAction::Search,
+            "bookmark_list" => AppAction::ShowBookmarks,
+            "bookmark_add" => AppAction::AddBookmark,
+            "create_function" => AppAction::CreateFunctionHere,
+            "delete_function" => AppAction::DeleteFunction,
             _ => return None,
         })
     }
 }
+
+/// One row of the keyboard cheat sheet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shortcut {
+    /// The keys, such as `Ctrl+Shift+F`.
+    pub keys: &'static str,
+    /// What they do, in one plain sentence.
+    pub what: &'static str,
+    /// Where they work.
+    pub place: &'static str,
+}
+
+const fn sc(keys: &'static str, what: &'static str, place: &'static str) -> Shortcut {
+    Shortcut { keys, what, place }
+}
+
+/// Every keyboard shortcut, for the cheat sheet. Single-letter keys do nothing while a text
+/// field has the focus.
+pub const SHORTCUTS: &[Shortcut] = &[
+    sc(
+        "Ctrl+O",
+        "Open a program (import it into a new project)",
+        "Anywhere",
+    ),
+    sc("Ctrl+Shift+O", "Open a KRAKEN project folder", "Anywhere"),
+    sc("Ctrl+W", "Close the project", "Project"),
+    sc("Ctrl+Q", "Quit KRAKEN", "Anywhere"),
+    sc("Ctrl+,", "Settings", "Anywhere"),
+    sc(
+        "Ctrl+K or Ctrl+Shift+P",
+        "Search every action and command",
+        "Project",
+    ),
+    sc("Ctrl+/", "This list of shortcuts", "Anywhere"),
+    sc("F1", "Open the user guide", "Anywhere"),
+    sc("G", "Go to an address, a function or a symbol", "Project"),
+    sc(
+        "Ctrl+Shift+F",
+        "Search names, strings, bytes or instructions",
+        "Project",
+    ),
+    sc("Ctrl+L", "Search functions", "Project"),
+    sc("Alt+Left", "Go back", "Project"),
+    sc("Alt+Right", "Go forward again", "Project"),
+    sc(
+        "N",
+        "Rename the name under the pointer, or this function",
+        "Code views",
+    ),
+    sc("Y", "Change the type at the cursor", "Code views"),
+    sc(";", "Comment at the cursor", "Code views"),
+    sc(
+        "X",
+        "Show what refers to the address under the pointer",
+        "Code views",
+    ),
+    sc("Ctrl+D", "Bookmark the address at the cursor", "Code views"),
+    sc("P", "Create a function at the cursor", "Code views"),
+    sc("Ctrl+Z", "Undo your last change", "Project"),
+    sc(
+        "Space",
+        "Swap between the listing and the graph",
+        "Code views",
+    ),
+    sc("F", "Fit the graph to the panel", "Graph"),
+    sc(
+        "Ctrl+Tab / Ctrl+Shift+Tab",
+        "Next or previous tab in the focused pane",
+        "Project",
+    ),
+    sc(
+        "Ctrl+1 ... Ctrl+9",
+        "Jump to a tab of the focused pane",
+        "Project",
+    ),
+    sc(
+        "Up / Down, Enter",
+        "Move through a list and open the row",
+        "Lists and palette",
+    ),
+    sc("Escape", "Close a dialog, menu or the palette", "Dialogs"),
+];
 
 /// Something only the window can do; the view-model hands these back to the GUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +361,18 @@ pub enum UiRequest {
     OpenDemo,
     /// Show the settings window.
     OpenSettings,
+    /// Close the project (asks first when a job runs).
+    CloseProject,
+    /// Empty the recent projects list.
+    ClearRecent,
+    /// Close the window.
+    Quit,
+    /// Show the shortcut cheat sheet.
+    ShowShortcuts,
+    /// Open the documentation.
+    OpenDocs,
+    /// Show the Automate dialog.
+    OpenAutomate,
 }
 
 /// What a palette row does when chosen.
@@ -357,6 +580,25 @@ mod tests {
         p.set_query("theme");
         p.move_selection(5);
         assert!(p.selected < p.visible().len());
+    }
+
+    #[test]
+    fn the_cheat_sheet_lists_every_action_shortcut() {
+        for a in AppAction::ALL {
+            if let Some(keys) = a.shortcut() {
+                assert!(
+                    SHORTCUTS.iter().any(|s| s.keys.contains(keys)),
+                    "{keys} ({}) is missing from SHORTCUTS",
+                    a.label()
+                );
+            }
+            assert!(!a.hint().is_empty());
+        }
+        let mut seen = std::collections::HashSet::new();
+        for s in SHORTCUTS {
+            assert!(!s.what.is_empty());
+            assert!(seen.insert(s.keys), "{} is listed twice", s.keys);
+        }
     }
 
     #[test]

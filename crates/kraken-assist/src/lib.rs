@@ -46,7 +46,10 @@ pub use provider::{
     SAMPLES, load_provider_config, load_rewrite_config, no_provider_message, provider_config_path,
     sample_config, text_backend, text_backend_from_config,
 };
-pub use tasks::{AutoNameOptions, Budget, SelectionKind, Task, TaskKind};
+pub use tasks::{
+    AUTOMATE_JOB_TIMEOUT, AUTOMATE_REWRITE_UNLOCK, AutoNameOptions, AutomateGoal, Budget,
+    SelectionKind, Task, TaskKind,
+};
 
 /// The agent id edits are logged under.
 pub const ASSISTANT_ID: &str = "kraken-assistant";
