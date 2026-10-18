@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use egui_kittest::kittest::Queryable;
+
 use kraken_viewmodel::{AnalysisPhase, AppAction, Connection, Load};
 
 use super::shell::{Kit, kit_from, kit_with};
@@ -101,8 +103,9 @@ fn screenshot_a_tour_step() {
 /// A real project, drawn without a window (the windowed `--screenshot` needs a compositor that
 /// draws, which an idle or locked session does not). `KRAKEN_SHOT_PROJECT=<dir>` opens it in
 /// this process, `KRAKEN_SHOT_FUNCTION=<name>` selects a function, `KRAKEN_SHOT_TAB=<title>`
-/// brings a tab forward, `KRAKEN_SHOT_ACTION=wizard` opens the rewrite wizard, and
-/// `KRAKEN_SHOT_NAME=<file.png>` names the picture in `KRAKEN_SHOT_DIR`.
+/// brings a tab forward, `KRAKEN_SHOT_ACTION=wizard` opens the rewrite wizard,
+/// `KRAKEN_SHOT_MENU=<menu>` opens a menu of the menu bar, and `KRAKEN_SHOT_NAME=<file.png>` names
+/// the picture in `KRAKEN_SHOT_DIR`.
 #[test]
 #[ignore = "writes PNG files and needs a GPU and a project; run by hand"]
 fn screenshot_a_project_from_the_environment() {
@@ -170,6 +173,9 @@ fn screenshot_a_project_from_the_environment() {
             .find(|t| t.title() == title)
     {
         k.h.state_mut().bring_to_front(tab);
+    }
+    if let Ok(menu) = std::env::var("KRAKEN_SHOT_MENU") {
+        k.h.get_by_label(&menu).click();
     }
     if std::env::var("KRAKEN_SHOT_ACTION").is_ok_and(|a| a == "wizard") {
         let ctx = k.h.ctx.clone();
