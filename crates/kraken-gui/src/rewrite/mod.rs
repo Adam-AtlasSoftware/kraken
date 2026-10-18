@@ -11,15 +11,18 @@ use kraken_viewmodel::{ViewModel, rewrite::status_explain};
 use crate::style::{self, chip, empty_state, medium, pal, primary_button};
 use crate::workspace::Tab;
 
+mod browse;
 mod detail;
 mod export;
 mod program;
 mod spec_view;
 #[cfg(test)]
 mod tests;
+mod wizard;
 
 pub use export::dialog as export_dialog;
 pub use program::ProgramUi;
+pub use wizard::window as wizard_window;
 
 /// The function the `--scene rewrite` screenshot opens: `checksum`, which the demo script has
 /// failed twice.
@@ -67,6 +70,8 @@ pub struct RewriteUi {
     pub view: DetailView,
     /// Spec of the whole program instead of the selected function.
     pub program_spec: bool,
+    /// The confirm question of "Accept all verified" is showing.
+    pub confirm_accept: bool,
 }
 
 /// What the person asked for in one frame; applied after the drawing borrow ends.
@@ -82,6 +87,10 @@ pub(crate) struct Acts {
     pub plan: bool,
     pub refresh: bool,
     pub export: bool,
+    pub wizard: bool,
+    pub translate_all: bool,
+    pub retry_all: bool,
+    pub stop_bulk: bool,
 }
 
 /// The colour of a status chip.
@@ -114,6 +123,9 @@ pub(crate) fn chip_button(ui: &mut Ui, text: &str, color: Color32, active: bool)
 /// The Rewrite tab.
 pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut RewriteUi, front: &mut Option<Tab>) {
     vm.rewrite_ensure_loaded();
+    if std::mem::take(&mut vm.rewrite.show_program_request) {
+        st.section = Section::Program;
+    }
     section_switch(ui, vm, st);
     if st.section == Section::Program {
         if let Some(note) = vm.rewrite.blocked_note() {
@@ -137,6 +149,8 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut RewriteUi, front: &mut Op
         );
     }
     jobs_strip(ui, vm);
+    bulk_strip(ui, vm, &mut acts);
+    confirm_accept_window(ui.ctx(), vm, st);
     if vm.rewrite.rows.is_empty() {
         empty(ui, vm, &mut acts);
     } else {
@@ -188,6 +202,18 @@ fn section_switch(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi) {
 }
 
 fn apply(vm: &mut ViewModel, st: &mut RewriteUi, acts: Acts, front: &mut Option<Tab>) {
+    if acts.wizard {
+        vm.rewrite_wizard_open();
+    }
+    if acts.translate_all {
+        vm.rewrite_bulk_translate_planned(RewriteMode::Incremental);
+    }
+    if acts.retry_all {
+        vm.rewrite_bulk_retry_failed();
+    }
+    if acts.stop_bulk {
+        vm.rewrite_bulk_cancel();
+    }
     if acts.plan {
         vm.rewrite_make_plan();
     }
@@ -257,40 +283,56 @@ fn header(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut Acts) {
             ui.label(RichText::new(r.coverage_line()).size(12.0).color(p.text_dim));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_export = r.counts.accepted > 0 && !r.exporting();
-            if ui
-                .add_enabled(can_export, egui::Button::new("Export..."))
-                .on_hover_text(if r.counts.accepted == 0 {
-                    "Accept at least one verified function first. Only accepted functions are exported."
-                } else {
-                    "Write the accepted functions as a Rust project with a shim that can stand in for the originals."
-                })
-                .clicked()
-            {
+            let export_blocker = if r.counts.accepted == 0 {
+                Some("Accept at least one verified function first. Only accepted functions are exported.")
+            } else if r.exporting() {
+                Some("An export is already running.")
+            } else {
+                None
+            };
+            if gated_button(
+                ui,
+                "Export...",
+                export_blocker,
+                "Write the accepted functions as a Rust project with a shim that can stand in for the originals.",
+            ) {
                 acts.export = true;
             }
-            if ui
-                .add_enabled(!r.loading, egui::Button::new("Refresh"))
-                .on_hover_text("Read the status of every function again.")
-                .clicked()
-            {
+            if gated_button(
+                ui,
+                "Refresh",
+                r.loading.then_some("Already reading."),
+                "Read the status of every function again.",
+            ) {
                 acts.refresh = true;
             }
             if !r.rows.is_empty()
-                && ui
-                    .add_enabled(!r.loading, egui::Button::new("Plan again"))
-                    .on_hover_text(
-                        "Work out the rewrite order again. Functions that are already translated keep their results.",
-                    )
-                    .clicked()
+                && gated_button(
+                    ui,
+                    "Plan again",
+                    r.loading.then_some("Already reading."),
+                    "Work out the rewrite order again. Functions that are already translated keep their results.",
+                )
             {
                 acts.plan = true;
+            }
+            if ui
+                .button("Guided rewrite...")
+                .on_hover_text(
+                    "Open the step-by-step window: choose what to rewrite, translate it, check it, accept it, export it and build it.",
+                )
+                .clicked()
+            {
+                acts.wizard = true;
             }
             if r.loading {
                 ui.spinner();
             }
         });
     });
+    if !r.rows.is_empty() {
+        bulk_row(ui, vm, st, acts);
+    }
     if r.truncated_list {
         ui.label(
             RichText::new("Only the first part of a very long plan is listed.")
@@ -299,6 +341,32 @@ fn header(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut Acts) {
         );
     }
     ui.separator();
+}
+
+/// A button that is off with its reason in the tooltip. Returns true when it was clicked.
+pub(crate) fn gated_button(ui: &mut Ui, label: &str, blocker: Option<&str>, tip: &str) -> bool {
+    let r = ui.add_enabled(blocker.is_none(), egui::Button::new(label));
+    match blocker {
+        None => r.on_hover_text(tip).clicked(),
+        Some(why) => {
+            r.on_disabled_hover_text(why);
+            false
+        }
+    }
+}
+
+/// [`gated_button`] drawn as the accent-filled primary button.
+pub(crate) fn gated_primary(ui: &mut Ui, label: &str, blocker: Option<&str>, tip: &str) -> bool {
+    let r = ui
+        .add_enabled_ui(blocker.is_none(), |ui| primary_button(ui, label))
+        .inner;
+    match blocker {
+        None => r.on_hover_text(tip).clicked(),
+        Some(why) => {
+            r.on_disabled_hover_text(why);
+            false
+        }
+    }
 }
 
 fn blocked_banner(ui: &mut Ui, note: &str, sandbox: bool) {
@@ -358,6 +426,152 @@ fn jobs_strip(ui: &mut Ui, vm: &ViewModel) {
         });
     }
     ui.add_space(2.0);
+}
+
+/// The three bulk buttons under the status chips.
+fn bulk_row(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut Acts) {
+    let p = pal(ui);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("All at once").size(12.0).color(p.text_dim))
+            .on_hover_text("Do one thing for many functions. Each runs the same commands as the buttons on one function.");
+        let planned = vm.rewrite_planned_count();
+        if gated_button(
+            ui,
+            &format!("Translate all planned ({planned})"),
+            vm.rewrite_bulk_translate_blocker().as_deref(),
+            "Translate every function that has not been translated yet, one after the other, callees first. Each one is checked against the original. This sends decompiled code to your assistant's service, one request per attempt.",
+        ) {
+            acts.translate_all = true;
+        }
+        let failed = vm.rewrite_failed_count();
+        if gated_button(
+            ui,
+            &format!("Retry all failed ({failed})"),
+            vm.rewrite_bulk_retry_blocker().as_deref(),
+            "Run every failed function again, in the mode it was last run in. Earlier attempts stay in each function's history.",
+        ) {
+            acts.retry_all = true;
+        }
+        let verified = vm.rewrite_verified_count();
+        if gated_button(
+            ui,
+            &format!("Accept all verified ({verified})"),
+            vm.rewrite_bulk_accept_blocker().as_deref(),
+            "Accept every function whose Rust agreed with the original on all tests, so they go into the export. KRAKEN asks you to confirm first. Read the code of the ones that matter before you do.",
+        ) {
+            st.confirm_accept = true;
+        }
+    });
+}
+
+/// Progress of a bulk translate, with a way to stop it.
+fn bulk_strip(ui: &mut Ui, vm: &ViewModel, acts: &mut Acts) {
+    let b = &vm.rewrite.bulk;
+    let p = pal(ui);
+    if b.active() {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(
+                medium(
+                    format!(
+                        "{}: {} of {} done",
+                        b.label,
+                        vm.rewrite_bulk_done(),
+                        b.total
+                    ),
+                    12.5,
+                )
+                .color(p.text_strong),
+            );
+            if ui
+                .button("Stop after this one")
+                .on_hover_text("Do not start the functions that are still waiting. The one in progress is asked to stop.")
+                .clicked()
+            {
+                acts.stop_bulk = true;
+            }
+        });
+    }
+    if let Some(a) = &b.accepting {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(
+                RichText::new(format!("Accepting: {} of {} answered", a.done, a.total))
+                    .size(12.5)
+                    .color(p.text_strong),
+            );
+        });
+    }
+}
+
+/// "Accept N functions?" with the names, before the bulk accept.
+fn confirm_accept_window(ctx: &egui::Context, vm: &mut ViewModel, st: &mut RewriteUi) {
+    if !st.confirm_accept {
+        return;
+    }
+    let names: Vec<String> = vm
+        .rewrite
+        .rows
+        .iter()
+        .filter(|r| r.status == UnitStatus::Verified && !r.unit.is_empty())
+        .map(|r| r.name.clone())
+        .collect();
+    let (mut yes, mut no) = (false, false);
+    egui::Window::new(medium("Accept the verified functions?", 15.0))
+        .id(Id::new("kraken_rewrite_confirm_accept"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .fixed_size(vec2(440.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "{} function{} will be accepted.",
+                names.len(),
+                if names.len() == 1 { "" } else { "s" }
+            ));
+            ui.label(
+                RichText::new(
+                    "Accepted functions go into the export, and later whole-program runs reuse them. A function passes when the Rust agreed with the original on every test, which is evidence, not proof. You can read each one in the detail view first.",
+                )
+                .size(12.0),
+            );
+            let shown: Vec<&str> = names.iter().take(8).map(String::as_str).collect();
+            let more = names.len().saturating_sub(shown.len());
+            ui.label(
+                RichText::new(format!(
+                    "{}{}",
+                    shown.join(", "),
+                    if more > 0 { format!(" and {more} more") } else { String::new() }
+                ))
+                .monospace()
+                .size(11.5),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if primary_button(ui, &format!("Accept {}", names.len()))
+                    .on_hover_text("Accept all of them now.")
+                    .clicked()
+                {
+                    yes = true;
+                }
+                if ui
+                    .button("Cancel")
+                    .on_hover_text("Close this question and accept nothing.")
+                    .clicked()
+                {
+                    no = true;
+                }
+            });
+        });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        no = true;
+    }
+    if yes {
+        vm.rewrite_bulk_accept_verified();
+    }
+    if yes || no {
+        st.confirm_accept = false;
+    }
 }
 
 fn empty(ui: &mut Ui, vm: &ViewModel, acts: &mut Acts) {

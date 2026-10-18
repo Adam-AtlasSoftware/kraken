@@ -359,6 +359,20 @@ impl SessionHost {
         tracing::info!(project = %entry.dir.display(), reason, "closed session");
     }
 
+    /// Closes the session of `key` at a client's request (`project_close`): its jobs are
+    /// cancelled, the engine saved and its sidecars stopped. Returns false when no session was
+    /// open for it.
+    pub async fn close_project(&self, key: &Path) -> bool {
+        let entry = lock(&self.inner.sessions).remove(key);
+        match entry {
+            Some(e) => {
+                self.close_entry(&e, "closed").await;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Stops accepting calls and closes every session and sidecar.
     pub async fn close_all(&self) {
         self.inner.stopping.store(true, Ordering::SeqCst);

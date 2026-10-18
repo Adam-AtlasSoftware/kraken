@@ -1,10 +1,12 @@
-//! The "Explain" right-click menu for the decompiler, the function list and the listing.
+//! The right-click menu of the decompiler, the function list, the listing and the graph: the
+//! editing and navigation items (`panels::context`) above the assistant's Explain items.
 
 use egui::{Align2, Frame, Id, Key, Margin, Pos2, RichText, Stroke, Ui};
 use kraken_viewmodel::ViewModel;
 use kraken_viewmodel::assist::SelectionKind;
 
 use super::AssistUi;
+use crate::panels::context::{self, NavChoice, Target, TargetKind};
 
 /// What the menu offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +21,8 @@ pub struct MenuState {
     pub line_kind: SelectionKind,
     /// The function the click was in.
     pub function: Option<u64>,
+    /// What the editing and navigation items act on.
+    pub target: Option<Target>,
 }
 
 fn pointer(ui: &Ui) -> Option<Pos2> {
@@ -51,6 +55,15 @@ pub fn capture_decompiler(
         .map(str::trim)
         .filter(|t| !t.is_empty())
         .map(str::to_string);
+    let target = Some(match tok {
+        Some(t) => context::token_target(t, text, function),
+        None => Target {
+            kind: TargetKind::Function,
+            address: Some(function),
+            name: None,
+            function: Some(function),
+        },
+    });
     let line = tok.and_then(|t| {
         let start = t.start as usize;
         let from = text.get(..start)?.rfind('\n').map_or(0, |i| i + 1);
@@ -69,6 +82,7 @@ pub fn capture_decompiler(
         line,
         line_kind: SelectionKind::Decompile,
         function: Some(function),
+        target,
     });
 }
 
@@ -85,23 +99,29 @@ pub fn capture_function_row(ui: &Ui, row: &egui::Response, function: u64, a: &mu
             line: None,
             line_kind: SelectionKind::Decompile,
             function: Some(function),
+            target: Some(Target {
+                kind: TargetKind::Function,
+                address: Some(function),
+                name: None,
+                function: Some(function),
+            }),
         });
     }
 }
 
-/// Call with the response of a listing row: a right-click offers to explain the instruction and
-/// the function it belongs to.
-#[allow(dead_code)] // a hook for the listing panel
-pub fn capture_instruction_row(
+/// Call when the pointer is over an instruction (a listing row, a graph block) inside `rect`: a
+/// right-click opens the menu for that address, with Explain for the instruction and the
+/// function.
+pub fn capture_instruction_at(
     ui: &Ui,
-    row: &egui::Response,
+    rect: egui::Rect,
+    address: u64,
     instruction: &str,
     function: Option<u64>,
     a: &mut AssistUi,
 ) {
-    if row.hovered()
+    if let Some(pos) = pointer(ui).filter(|p| rect.contains(*p))
         && right_clicked(ui)
-        && let Some(pos) = pointer(ui)
     {
         a.menu = Some(MenuState {
             pos,
@@ -109,6 +129,12 @@ pub fn capture_instruction_row(
             line: Some(instruction.trim().to_string()).filter(|l| !l.is_empty()),
             line_kind: SelectionKind::Instruction,
             function,
+            target: Some(Target {
+                kind: TargetKind::Code,
+                address: Some(address),
+                name: None,
+                function,
+            }),
         });
     }
 }
@@ -130,6 +156,20 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel, a: &mut AssistUi) {
     let dark = ctx.global_style().visuals.dark_mode;
     let p = kraken_gui_widgets::KrakenTheme { dark }.palette();
     let mut choice: Option<Choice> = None;
+    let mut nav: Option<NavChoice> = None;
+    let target = m.target.clone().map(|mut t| {
+        if t.name.is_none()
+            && t.kind == TargetKind::Function
+            && let Some(f) = t.address.and_then(|a| vm.functions.find(a))
+        {
+            t.name = Some(f.name.clone());
+        }
+        t
+    });
+    let nav_items = target
+        .as_ref()
+        .map(|t| context::items(vm, t))
+        .unwrap_or_default();
     let area = egui::Area::new(Id::new("kraken_explain_menu"))
         .order(egui::Order::Foreground)
         .fixed_pos(m.pos)
@@ -148,6 +188,11 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel, a: &mut AssistUi) {
                 })
                 .show(ui, |ui| {
                     ui.set_min_width(230.0);
+                    if let Some(t) = &target {
+                        context::heading(ui, t, p.text_dim);
+                        context::draw(ui, &nav_items, &mut nav);
+                        ui.separator();
+                    }
                     ui.label(
                         RichText::new("Ask the assistant")
                             .size(11.0)
@@ -182,6 +227,11 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel, a: &mut AssistUi) {
             .input(|i| i.pointer.interact_pos())
             .is_some_and(|p| !area.response.rect.contains(p));
     let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    if let (Some(n), Some(t)) = (nav, &target) {
+        a.menu = None;
+        context::run(ctx, vm, t, n);
+        return;
+    }
     match choice {
         Some(Choice::Function) => {
             if let Some(f) = m.function {

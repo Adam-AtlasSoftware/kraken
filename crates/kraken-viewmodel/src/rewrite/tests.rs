@@ -1016,3 +1016,538 @@ fn the_line_diff_pairs_equal_lines_and_groups_the_rest() {
     let long: String = (0..2000).map(|i| format!("{i}\n")).collect();
     assert!(line_diff(&long, &long).len() <= 400);
 }
+
+// ---------------------------------------------------------------- typed program inputs
+
+#[test]
+fn arguments_are_split_like_a_shell_would_without_running_one() {
+    assert_eq!(split_args("").expect("empty"), Vec::<String>::new());
+    assert_eq!(
+        split_args("-v  \"two words\" 'it''s' a\\ b").expect("quotes"),
+        ["-v", "two words", "its", "a b"]
+    );
+    assert_eq!(split_args("\"\"").expect("empty arg"), [""]);
+    assert!(split_args("\"open").is_err());
+    assert!(split_args("trailing\\").is_err());
+}
+
+#[test]
+fn the_run_sends_the_typed_cases_the_folder_and_the_function_check_setting() {
+    let b = base()
+        .reply("rewrite_program", json!({"job_id": "job-p"}))
+        .on("rewrite_program_status", |_| Ok(status_out(&[], None)));
+    let mut r = opened(b);
+    let p = &mut r.vm.rewrite.program;
+    p.inputs = vec![
+        ProgramInput {
+            name: "short".into(),
+            args: "-v \"two words\"".into(),
+            stdin: "hello".into(),
+        },
+        ProgramInput::default(),
+        ProgramInput {
+            name: "bare".into(),
+            ..ProgramInput::default()
+        },
+    ];
+    p.output_dir = " out/crate ".into();
+    p.verify_functions = false;
+    r.vm.rewrite_program_run();
+    r.idle();
+    let args = &r.backend.calls_to("rewrite_program")[0];
+    assert_eq!(args["verify_functions"], false);
+    assert_eq!(args["dir"], "out/crate");
+    let inputs = args["inputs"].as_array().expect("inputs");
+    assert_eq!(inputs.len(), 2, "the blank row is left out");
+    assert_eq!(inputs[0]["name"], "short");
+    assert_eq!(inputs[0]["argv"], json!(["-v", "two words"]));
+    assert_eq!(inputs[0]["stdin"], "hello");
+    assert_eq!(inputs[1]["argv"], json!([]));
+    assert!(inputs[1].get("stdin").is_none());
+}
+
+#[test]
+fn a_case_that_cannot_be_sent_is_explained_and_nothing_starts() {
+    let b = base().reply("rewrite_program", json!({"job_id": "job-p"}));
+    let mut r = opened(b);
+    r.vm.rewrite.program.inputs = vec![ProgramInput {
+        name: String::new(),
+        args: "-v".into(),
+        stdin: String::new(),
+    }];
+    r.vm.rewrite_program_run();
+    r.idle();
+    assert!(r.backend.calls_to("rewrite_program").is_empty());
+    assert_eq!(
+        r.vm.rewrite.program.error.as_deref(),
+        Some("Test case 1 needs a name.")
+    );
+    r.vm.rewrite.program.inputs[0].name = "x".into();
+    r.vm.rewrite.program.inputs[0].args = "\"open".into();
+    r.vm.rewrite_program_run();
+    assert!(
+        r.vm.rewrite
+            .program
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("quote"))
+    );
+    r.vm.rewrite.program.inputs.clear();
+    r.vm.rewrite.program.output_dir = "../escape".into();
+    r.vm.rewrite_program_run();
+    assert!(
+        r.vm.rewrite
+            .program
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains(".."))
+    );
+    assert!(r.backend.calls_to("rewrite_program").is_empty());
+}
+
+// ---------------------------------------------------------------- bulk actions
+
+fn unit_row(order: u32, addr: u64, name: &str, status: &str, unit: &str, mode: &str) -> Value {
+    let mut r = row(order, addr, name, status, u32::from(!unit.is_empty()), &[]);
+    r["unit"] = json!(unit);
+    r["mode"] = json!(mode);
+    r
+}
+
+fn bulk_backend() -> FakeBackend {
+    let counter = Arc::new(Mutex::new(0u32));
+    base()
+        .reply(
+            "rewrite_status",
+            status_page(
+                vec![
+                    unit_row(0, 0x401440, "leaf", "planned", "", "incremental"),
+                    unit_row(1, 0x401240, "checksum", "failed", "ru-1", "spec"),
+                    unit_row(2, 0x4012a0, "log_error", "planned", "", "incremental"),
+                    unit_row(3, 0x401300, "helper", "verified", "ru-4", "incremental"),
+                    unit_row(4, 0x401340, "cleanup", "verified", "ru-5", "incremental"),
+                ],
+                None,
+            ),
+        )
+        .on("rewrite_function", move |_| {
+            let mut n = counter.lock().expect("counter");
+            *n += 1;
+            Ok(json!({"job_id": format!("job-{n}")}))
+        })
+        .reply("rewrite_unit", json!({"versions": []}))
+        .reply(
+            "rewrite_accept",
+            json!({"status": "accepted", "unit": "ru", "address": "0x1", "version": 1}),
+        )
+        .reply(
+            "job_cancel",
+            json!({"job_id": "x", "command": "rewrite_function", "status": "cancelled"}),
+        )
+}
+
+#[test]
+fn translate_all_planned_runs_one_function_at_a_time_in_plan_order() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    assert_eq!(r.vm.rewrite_planned_count(), 2);
+    assert_eq!(r.vm.rewrite_bulk_translate_blocker(), None);
+    r.vm.rewrite_bulk_translate_planned(RewriteMode::Incremental);
+    // A second press while it runs is refused, with a reason.
+    assert!(r.vm.rewrite_bulk_translate_blocker().is_some());
+    r.idle();
+    let started = r.backend.calls_to("rewrite_function");
+    assert_eq!(started.len(), 1, "only the first is running: {started:?}");
+    assert_eq!(started[0]["address"], "0x401440");
+    assert_eq!(r.vm.rewrite.bulk.total, 2);
+    assert_eq!(r.vm.rewrite_bulk_done(), 0);
+
+    r.backend.emit(done(
+        "job-1",
+        "rewrite_function",
+        version_result("ru-9", 1, "verified", "pass"),
+    ));
+    r.until("the second function to start", |vm| {
+        vm.rewrite.running_for(0x4012a0).is_some()
+    });
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 2);
+    assert_eq!(r.vm.rewrite_bulk_done(), 1);
+    r.backend.emit(done(
+        "job-2",
+        "rewrite_function",
+        version_result("ru-10", 1, "verified", "pass"),
+    ));
+    r.until("the bulk run to end", |vm| !vm.rewrite.busy());
+    assert!(!r.vm.rewrite.bulk.active());
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 2);
+}
+
+#[test]
+fn stopping_a_bulk_run_keeps_the_rest_from_starting() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    r.vm.rewrite_bulk_translate_planned(RewriteMode::Spec);
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_function")[0]["mode"], "spec");
+    r.vm.rewrite_bulk_cancel();
+    assert!(!r.vm.rewrite.bulk.active());
+    r.idle();
+    assert_eq!(r.backend.calls_to("job_cancel")[0]["job_id"], "job-1");
+    r.backend.emit(BackendEvent::Job(job(
+        "job-1",
+        "rewrite_function",
+        JobState::Cancelled,
+    )));
+    r.until("the job to end", |vm| !vm.rewrite.busy());
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 1);
+}
+
+#[test]
+fn retry_all_failed_uses_the_mode_each_one_was_last_run_in() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    assert_eq!(r.vm.rewrite_failed_count(), 1);
+    r.vm.rewrite_bulk_retry_failed();
+    r.idle();
+    let call = &r.backend.calls_to("rewrite_function")[0];
+    assert_eq!(call["address"], "0x401240");
+    assert_eq!(call["mode"], "spec");
+}
+
+#[test]
+fn accept_all_verified_sends_every_unit_and_reports_once() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    assert_eq!(r.vm.rewrite_verified_count(), 2);
+    r.vm.rewrite_bulk_accept_verified();
+    assert!(r.vm.rewrite_bulk_accept_blocker().is_some());
+    r.idle();
+    let mut units: Vec<String> = r
+        .backend
+        .calls_to("rewrite_accept")
+        .iter()
+        .map(|c| c["unit"].as_str().unwrap_or_default().to_string())
+        .collect();
+    units.sort();
+    assert_eq!(units, ["ru-4", "ru-5"]);
+    assert!(r.vm.rewrite.bulk.accepting.is_none());
+    let toasts: Vec<&str> =
+        r.vm.toasts
+            .iter()
+            .filter(|t| t.text.starts_with("Accepted"))
+            .map(|t| t.text.as_str())
+            .collect();
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert!(toasts[0].contains("Accepted 2 functions"), "{toasts:?}");
+}
+
+#[test]
+fn bulk_buttons_explain_why_they_are_off() {
+    let mut r = opened(base());
+    r.vm.rewrite_refresh();
+    r.idle();
+    // The base plan has no verified function and one planned.
+    assert!(
+        r.vm.rewrite_bulk_accept_blocker()
+            .is_some_and(|w| w.contains("No function is verified"))
+    );
+    r.vm.rewrite.availability = Availability::NoConfinement("no sandbox here".into());
+    assert_eq!(
+        r.vm.rewrite_bulk_translate_blocker().as_deref(),
+        Some("no sandbox here")
+    );
+    assert_eq!(
+        r.vm.rewrite_bulk_retry_blocker().as_deref(),
+        Some("no sandbox here")
+    );
+    r.vm.rewrite_bulk_translate_planned(RewriteMode::Incremental);
+    assert!(r.backend.calls_to("rewrite_function").is_empty());
+}
+
+// ---------------------------------------------------------------- build
+
+fn program_dir_result(passed: bool) -> Value {
+    let step = |name: &str, ok: bool, log: &str| {
+        json!({"step": name, "passed": ok, "exit": if ok { "exit 0" } else { "exit 101" },
+               "seconds": 1.2, "log_tail": u(log)})
+    };
+    let steps = if passed {
+        vec![
+            step("build", true, "Finished"),
+            step("test", true, "test result: ok"),
+        ]
+    } else {
+        vec![
+            step("build", true, "Finished"),
+            step("test", false, "assertion failed"),
+        ]
+    };
+    json!({"dir": "/work/proj/rewrite-program", "kind": "program", "passed": passed,
+           "steps": steps, "sandbox": "landlock-v6+netns"})
+}
+
+#[test]
+fn building_sends_the_folder_the_test_flag_and_the_run_arguments_of_a_program_crate() {
+    let b = base()
+        .reply("rewrite_build", json!({"job_id": "job-b"}))
+        .on("rewrite_program_status", |_| {
+            Ok(status_out(&[(1, "pass")], Some(program_run_json(1, false))))
+        });
+    let mut r = opened(b);
+    r.vm.rewrite_program_refresh(None);
+    r.idle();
+    let dir =
+        r.vm.rewrite
+            .program
+            .detail
+            .as_ref()
+            .expect("run")
+            .crate_dir
+            .clone();
+    r.vm.rewrite.build.run = true;
+    r.vm.rewrite.build.run_args = "--count 3 \"a b\"".into();
+    r.vm.rewrite_build_start(&dir);
+    // A second press while it runs does nothing.
+    r.vm.rewrite_build_start(&dir);
+    assert!(r.vm.rewrite.building());
+    r.idle();
+    let calls = r.backend.calls_to("rewrite_build");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["dir"], dir.as_str());
+    assert_eq!(calls[0]["test"], true);
+    assert_eq!(calls[0]["run_args"], json!(["--count", "3", "a b"]));
+    r.backend
+        .emit(done("job-b", "rewrite_build", program_dir_result(true)));
+    r.until("the build to end", |vm| !vm.rewrite.building());
+    let out = r.vm.rewrite.build.result.clone().expect("result");
+    assert!(out.passed);
+    assert_eq!(out.steps.len(), 2);
+    assert_eq!(out.steps[1].title(), "Test");
+    assert!(r.vm.toasts.iter().any(|t| t.level == ToastLevel::Success));
+}
+
+#[test]
+fn a_failed_step_is_a_result_with_its_log_not_an_error() {
+    let b = base().reply("rewrite_build", json!({"job_id": "job-b"}));
+    let mut r = opened(b);
+    r.vm.rewrite_build_start("/work/proj/rewrite-export");
+    r.idle();
+    // Not a program crate: no run arguments even when asked for.
+    assert!(
+        r.backend.calls_to("rewrite_build")[0]
+            .get("run_args")
+            .is_none()
+    );
+    r.backend
+        .emit(done("job-b", "rewrite_build", program_dir_result(false)));
+    r.until("the build to end", |vm| !vm.rewrite.building());
+    let out = r.vm.rewrite.build.result.clone().expect("result");
+    assert!(!out.passed);
+    assert_eq!(out.steps[1].log, "assertion failed");
+    assert!(r.vm.rewrite.build.error.is_none());
+    assert!(
+        r.vm.toasts
+            .iter()
+            .any(|t| t.level == ToastLevel::Warning && t.text.contains("test step"))
+    );
+}
+
+#[test]
+fn a_build_the_person_does_not_allow_says_so_and_a_missing_sandbox_blocks_it() {
+    let b = base().on("rewrite_build", |_| {
+        Err(
+            ProtoError::new(ErrorCode::Unsupported, "approval denied: not approved")
+                .with_details(json!({"approval": "denied"})),
+        )
+    });
+    let mut r = opened(b);
+    r.vm.rewrite_build_start("/work/proj/rewrite-export");
+    r.until("the answer", |vm| vm.rewrite.build.declined.is_some());
+    assert!(!r.vm.rewrite.building());
+    assert!(
+        r.vm.rewrite
+            .build
+            .declined
+            .as_deref()
+            .is_some_and(|d| d.contains("you did not allow that"))
+    );
+    r.vm.rewrite.availability = Availability::NoConfinement("none".into());
+    let before = r.backend.calls_to("rewrite_build").len();
+    r.vm.rewrite_build_start("/work/proj/rewrite-export");
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_build").len(), before);
+}
+
+// ---------------------------------------------------------------- the wizard
+
+#[test]
+fn the_wizard_opens_on_the_plan_without_a_function_and_each_step_says_why_it_is_blocked() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    r.vm.perform(crate::AppAction::RewriteWizard);
+    let w = &r.vm.rewrite.wizard;
+    assert!(w.open);
+    assert_eq!(w.step, WizardStep::Scope);
+    assert_eq!((w.function, w.scope), (None, WizardScope::Plan));
+    r.vm.rewrite_wizard_set_scope(WizardScope::Function);
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("Choose a function"))
+    );
+    r.vm.rewrite_wizard_next();
+    assert_eq!(r.vm.rewrite.wizard.step, WizardStep::Scope, "blocked");
+    r.vm.rewrite_wizard_set_function(0x401240);
+    assert_eq!(r.vm.rewrite_wizard_blocker(), None);
+    r.vm.rewrite_wizard_next();
+    r.vm.rewrite_wizard_next();
+    assert_eq!(r.vm.rewrite.wizard.step, WizardStep::Check);
+    assert_eq!(
+        r.vm.rewrite_wizard_function_name().as_deref(),
+        Some("checksum")
+    );
+}
+
+#[test]
+fn the_check_step_reports_the_assistant_the_sandbox_the_analysis_and_the_size() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    r.vm.rewrite_wizard_open();
+    r.vm.rewrite_wizard_set_scope(WizardScope::Plan);
+    let checks = r.vm.rewrite_wizard_checks();
+    let find = |t: &str| checks.iter().find(|c| c.title == t).expect(t);
+    assert_eq!(find("Assistant").level, CheckLevel::Warn);
+    assert_eq!(find("Sandbox").level, CheckLevel::Ok);
+    assert_eq!(find("Analysis").level, CheckLevel::Ok);
+    let size = find("Size of the job");
+    assert!(
+        size.detail.starts_with("2 functions, up to 6 requests"),
+        "{}",
+        size.detail
+    );
+    assert_eq!(r.vm.rewrite_wizard_estimate(), (2, 6));
+    r.vm.rewrite_wizard_set_mode(RewriteMode::Spec);
+    assert_eq!(r.vm.rewrite_wizard_estimate(), (2, 8));
+
+    r.vm.rewrite.availability = Availability::NoConfinement("no sandbox here".into());
+    let checks = r.vm.rewrite_wizard_checks();
+    let sandbox = checks
+        .iter()
+        .find(|c| c.title == "Sandbox")
+        .expect("sandbox");
+    assert_eq!(sandbox.level, CheckLevel::Blocked);
+    assert_eq!(sandbox.detail, "no sandbox here");
+    r.vm.rewrite.wizard.step = WizardStep::Check;
+    assert_eq!(
+        r.vm.rewrite_wizard_blocker().as_deref(),
+        Some("Sandbox: no sandbox here")
+    );
+}
+
+#[test]
+fn the_whole_program_scope_has_no_spec_mode_and_no_export_step() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_wizard_open();
+    r.vm.rewrite_wizard_set_mode(RewriteMode::Spec);
+    r.vm.rewrite_wizard_set_scope(WizardScope::Program);
+    assert_eq!(r.vm.rewrite.wizard.mode, RewriteMode::Incremental);
+    r.vm.rewrite_wizard_set_mode(RewriteMode::Spec);
+    assert_eq!(r.vm.rewrite.wizard.mode, RewriteMode::Incremental);
+    assert!(r.vm.rewrite_wizard_skips(WizardStep::Export));
+    r.vm.rewrite.wizard.step = WizardStep::Accept;
+    assert_eq!(
+        r.vm.rewrite_wizard_blocker(),
+        None,
+        "accepting is optional here"
+    );
+    r.vm.rewrite_wizard_next();
+    assert_eq!(
+        r.vm.rewrite.wizard.step,
+        WizardStep::Build,
+        "export is passed over"
+    );
+    r.vm.rewrite_wizard_back();
+    assert_eq!(r.vm.rewrite.wizard.step, WizardStep::Accept);
+}
+
+#[test]
+fn the_run_step_waits_for_start_then_moves_on_by_itself_when_the_function_is_done() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    r.vm.rewrite_wizard_open();
+    r.vm.rewrite_wizard_set_scope(WizardScope::Function);
+    r.vm.rewrite_wizard_set_function(0x401440);
+    r.vm.rewrite.wizard.step = WizardStep::Run;
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("Press Start"))
+    );
+    r.vm.rewrite_wizard_start();
+    r.idle();
+    assert!(r.vm.rewrite_wizard_running());
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("running"))
+    );
+    r.vm.rewrite_wizard_tick();
+    assert_eq!(r.vm.rewrite.wizard.step, WizardStep::Run);
+    assert_eq!(
+        r.backend.calls_to("rewrite_function")[0]["address"],
+        "0x401440"
+    );
+    r.backend.emit(done(
+        "job-1",
+        "rewrite_function",
+        version_result("ru-9", 1, "verified", "pass"),
+    ));
+    r.until("the job to end", |vm| !vm.rewrite_wizard_running());
+    r.vm.rewrite_wizard_tick();
+    assert_eq!(r.vm.rewrite.wizard.step, WizardStep::Review);
+}
+
+#[test]
+fn review_and_accept_are_blocked_until_there_is_something_to_review_and_accept() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    r.vm.rewrite_wizard_open();
+    r.vm.rewrite_wizard_set_scope(WizardScope::Function);
+    r.vm.rewrite_wizard_set_function(0x401240);
+    r.vm.rewrite.wizard.step = WizardStep::Review;
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("failed"))
+    );
+    r.vm.rewrite_wizard_set_function(0x401300);
+    assert_eq!(r.vm.rewrite_wizard_blocker(), None, "helper is verified");
+    assert_eq!(r.vm.rewrite_wizard_accept_blocker(), None);
+    r.vm.rewrite_wizard_accept();
+    r.idle();
+    assert_eq!(
+        r.backend.calls_to("rewrite_accept")[0],
+        json!({"unit": "ru-4"})
+    );
+    r.vm.rewrite.wizard.step = WizardStep::Accept;
+    r.vm.rewrite.counts.accepted = 0;
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("Accept at least one"))
+    );
+    r.vm.rewrite.wizard.step = WizardStep::Export;
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("Export the accepted functions first"))
+    );
+    r.vm.rewrite.wizard.step = WizardStep::Build;
+    assert!(
+        r.vm.rewrite_wizard_blocker()
+            .is_some_and(|w| w.contains("Build the project first"))
+    );
+}

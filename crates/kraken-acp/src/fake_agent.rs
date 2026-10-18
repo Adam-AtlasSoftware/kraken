@@ -21,6 +21,10 @@
 //! for that task, like a real agent following the task prompt. `FAKE_ACP_TASK_PERMISSION=1`
 //! makes such a turn ask for permission to run a shell command first.
 //!
+//! A prompt that contains `Task: automate` is the Automate task: the agent calls a few KRAKEN
+//! tools, asks permission for `rewrite_program` and `rewrite_accept` (as Claude Code asks for
+//! each MCP tool) and says which were allowed.
+//!
 //! A prompt that contains `<kraken-eval id="...">` is an evaluation task (`kraken eval`): the
 //! agent replays the tool calls and the answer the JSON file named by `FAKE_ACP_EVAL_ANSWERS`
 //! holds for that id.
@@ -308,6 +312,7 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             "kraken" => self.kraken_turn(id),
             _ if text.starts_with("KRAKEN text-only request.") => self.completion_turn(id, &text),
             _ if text.contains("<kraken-eval id=\"") => self.eval_turn(id, &text),
+            _ if text.contains("Task: automate the work") => self.automate_turn(id),
             _ if text.contains("<kraken-result>") => self.task_turn(id, &text),
             _ if std::env::var("FAKE_ACP_SCRIPT").as_deref() == Ok("kraken") => {
                 self.kraken_turn(id)
@@ -544,6 +549,40 @@ impl<R: BufRead, W: Write> Fake<R, W> {
             Some(answer) => self.chunk(answer)?,
             None => self.chunk("I could not work this out.")?,
         }
+        self.end(id, "end_turn")
+    }
+
+    /// The Automate task: a few tool calls, then a permission question for two tools.
+    fn automate_turn(&mut self, id: &Value) -> io::Result<()> {
+        self.chunk("Starting. ")?;
+        self.tool("a1", "mcp__kraken__project_info", json!({}), "{}")?;
+        for (n, name) in ["rewrite_program", "rewrite_accept"].iter().enumerate() {
+            let (answer, cancelled) = self.ask(
+                "session/request_permission",
+                json!({
+                    "sessionId": SESSION_ID,
+                    "toolCall": {
+                        "toolCallId": format!("p{n}"),
+                        "title": format!("mcp__kraken__{name}"),
+                        "kind": "other",
+                        "rawInput": {}
+                    },
+                    "options": [
+                        {"optionId": "allow", "name": "Allow once", "kind": "allow_once"},
+                        {"optionId": "reject", "name": "Deny", "kind": "reject_once"}
+                    ]
+                }),
+            )?;
+            if cancelled {
+                return self.end(id, "cancelled");
+            }
+            let granted = answer["result"]["outcome"]["optionId"].as_str() == Some("allow");
+            self.chunk(&format!(
+                "({name} {}) ",
+                if granted { "allowed" } else { "denied" }
+            ))?;
+        }
+        self.chunk("Finished. Accepting units is for the person.")?;
         self.end(id, "end_turn")
     }
 

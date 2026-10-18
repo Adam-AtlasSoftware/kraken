@@ -345,11 +345,16 @@ impl Inner {
     async fn approved(&self, command: &str, args: &Value) -> Result<bool, ProtoError> {
         // `rewrite_program` runs the original binary natively (confined) unless it is only
         // asked to write the crate: it is not `dangerous` for the CLI, whose user typed it, but
-        // the GUI asks first like it does for a dangerous command.
+        // the GUI asks first like it does for a dangerous command. `rewrite_build` builds and
+        // runs generated code, so it asks the same way.
         let runs_original = command == "rewrite_program"
             && args.get("build").and_then(Value::as_bool).unwrap_or(true);
-        let summary = if runs_original {
-            let mut s = kraken_registry::commands::RUN_ORIGINAL_SUMMARY.to_string();
+        let summary = if runs_original || command == "rewrite_build" {
+            let mut s = if runs_original {
+                kraken_registry::commands::RUN_ORIGINAL_SUMMARY.to_string()
+            } else {
+                kraken_registry::commands::BUILD_SUMMARY.to_string()
+            };
             if let Some(first) = s.get_mut(0..1) {
                 first.make_ascii_uppercase();
             }
@@ -545,6 +550,10 @@ fn change(v: &Value) -> ChangeInfo {
     }
 }
 
+fn parse_hex(s: &str) -> Option<u64> {
+    u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
+}
+
 fn job_state(s: &str) -> JobState {
     match s {
         "succeeded" => JobState::Succeeded,
@@ -602,6 +611,15 @@ pub fn map_event(v: &Value, project_key: Option<&Path>) -> Option<BackendEvent> 
                 })
                 .unwrap_or(0),
         },
+        event_kind::JOB_STARTED => BackendEvent::JobStarted(ChangeInfo {
+            key: str_field(v, "job_id").map(str::to_string),
+            ..change(v)
+        }),
+        event_kind::GUI_NAVIGATE => BackendEvent::Navigate {
+            address: parse_hex(str_field(v, "address")?)?,
+            tab: str_field(v, "tab").map(str::to_string),
+            author: str_field(v, "author_id").unwrap_or_default().to_string(),
+        },
         event_kind::SESSION_OPENED => BackendEvent::SessionOpened,
         event_kind::SESSION_CLOSED => {
             BackendEvent::SessionClosed(str_field(v, "reason").unwrap_or("closed").to_string())
@@ -656,6 +674,26 @@ mod tests {
                 rejected: 0
             })
         );
+        let nav = json!({"project_dir": "/p", "kind": "gui_navigate", "address": "0x401136",
+            "tab": "listing", "author_id": "claude"});
+        assert_eq!(
+            map_event(&nav, Some(key)),
+            Some(BackendEvent::Navigate {
+                address: 0x401136,
+                tab: Some("listing".into()),
+                author: "claude".into()
+            })
+        );
+        let started = json!({"project_dir": "/p", "kind": "job_started", "job_id": "job-3",
+            "command": "analyze", "author_kind": "agent", "author_id": "claude"});
+        match map_event(&started, Some(key)) {
+            Some(BackendEvent::JobStarted(c)) => {
+                assert!(c.by_agent);
+                assert_eq!(c.key.as_deref(), Some("job-3"));
+                assert_eq!(c.command, "analyze");
+            }
+            other => panic!("{other:?}"),
+        }
         let closed = json!({"project_dir": "/p", "kind": "session_closed", "reason": "idle"});
         assert_eq!(
             map_event(&closed, Some(key)),

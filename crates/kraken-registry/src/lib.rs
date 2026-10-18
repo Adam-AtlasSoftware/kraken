@@ -29,6 +29,6 @@ pub use context::{
 };
 pub use jobs::{JobId, JobProgress, JobReporter, JobSnapshot, JobStatus, JobTable};
 pub use session::{
-    AnalysisPhase, EngineChoice, EngineFactory, EngineKind, EngineSelection, Epoch, Project,
-    ProjectMeta, ReplayReport, Session, SessionConfig,
+    AnalysisPhase, EngineChoice, EngineFactory, EngineKind, EngineSelection, EngineStatus, Epoch,
+    Project, ProjectMeta, ReplayReport, Session, SessionConfig,
 };

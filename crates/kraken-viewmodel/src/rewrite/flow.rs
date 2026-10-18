@@ -22,6 +22,7 @@ use crate::vm::{ViewModel, hex, parse};
 
 fn item(w: RowWire) -> UnitItem {
     UnitItem {
+        unit: w.unit,
         order: w.order,
         address: w.address.0,
         name: w.name.0,
@@ -394,15 +395,21 @@ impl ViewModel {
             .and_then(|d| d.get("approval"))
             .and_then(Value::as_str)
             == Some("denied");
-        if denied && self.rewrite.jobs[idx].kind == JobKind::Program {
-            // The person said no to running the original: not an error, nothing to report.
+        let kind = self.rewrite.jobs[idx].kind.clone();
+        if denied && matches!(kind, JobKind::Program | JobKind::Build) {
+            // The person said no to running generated code: not an error, nothing to report.
             let job = &mut self.rewrite.jobs[idx];
             job.state = JobState::Cancelled;
             job.outcome = Some("Not run: not allowed.".into());
-            self.rewrite_program_declined();
+            if kind == JobKind::Program {
+                self.rewrite_program_declined();
+            } else {
+                self.rewrite_build_declined();
+            }
             return;
         }
         self.rewrite_job_failed(idx, e);
+        self.rewrite_bulk_advance();
     }
 
     /// A job event from the backend; ignores everything but the `rewrite_*` jobs started here.
@@ -450,6 +457,7 @@ impl ViewModel {
                 job.outcome = Some("Cancelled.".into());
             }
         }
+        self.rewrite_bulk_advance();
     }
 
     fn rewrite_job_failed(&mut self, idx: usize, e: &ProtoError) {
@@ -492,6 +500,12 @@ impl ViewModel {
                 }
                 self.rewrite.program.error = Some(why.clone());
             }
+            JobKind::Build => {
+                if cannot_confine {
+                    self.rewrite.availability = Availability::NoConfinement(why.clone());
+                }
+                self.rewrite.build.error = Some(why.clone());
+            }
         }
         if !cannot_confine {
             self.toast(ToastLevel::Error, format!("{label} failed. {why}"));
@@ -506,6 +520,7 @@ impl ViewModel {
             JobKind::Spec { address } => self.rewrite_spec_done(address, result),
             JobKind::Export => self.rewrite_export_done(result),
             JobKind::Program => self.rewrite_program_done(result),
+            JobKind::Build => self.rewrite_build_done(result),
         };
         match outcome {
             Ok(text) => self.rewrite.jobs[idx].outcome = Some(text),

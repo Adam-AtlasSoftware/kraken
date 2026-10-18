@@ -1,6 +1,6 @@
 //! The eframe application: owns the view-model and draws the welcome screen or the workspace.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
@@ -12,13 +12,15 @@ use kraken_host::ManagedFactory;
 use kraken_viewmodel::agents::{AgentEnv, AgentsHub};
 use kraken_viewmodel::demo::demo_project;
 use kraken_viewmodel::{
-    AnalysisPhase, ApprovalBroker, Backend, BackendOptions, Connection, DaemonClientBackend,
-    InProcessBackend, Load, UiRequest, ViewModel,
+    AnalysisPhase, AppAction, ApprovalBroker, Backend, BackendOptions, Connection,
+    DaemonClientBackend, InProcessBackend, Load, UiRequest, ViewModel,
 };
 use tokio::runtime::Runtime;
 
 use crate::args::{Options, Scene};
 use crate::assist::{self, AssistRequest, AssistSetup, Change};
+use crate::import::{ImportAction, ImportDialog, Picked, Picker, is_project_dir};
+use crate::menu::{self, MenuCmd, MenuEnv};
 use crate::recent::{self, Prefs};
 use crate::services::{Mode, Services};
 use crate::settings::{Settings, SettingsAction, SettingsEnv};
@@ -27,6 +29,17 @@ use crate::workspace::{self, Tab, UiState};
 use crate::{chrome, overlays};
 
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// A step that stops a running job, waiting for the person to agree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Pending {
+    /// Open or create another project.
+    Open(Choice),
+    /// Close the project.
+    Close,
+    /// Close the window.
+    Quit,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ShotStage {
@@ -122,6 +135,22 @@ pub struct KrakenApp {
     /// Function a screenshot selects instead of `main`.
     function: Option<String>,
     shot: Option<Shot>,
+    /// The import dialog, when open.
+    import: Option<ImportDialog>,
+    /// File dialogs opened from the menus and shortcuts.
+    picker: Picker,
+    /// A step waiting for the person to agree to stop a running job.
+    confirm: Option<Pending>,
+    /// The shortcut cheat sheet is showing.
+    shortcuts_open: bool,
+    /// Analysis finished with this many functions: the next-steps notice is showing.
+    next_steps: Option<u64>,
+    /// The analysis was seen running, so its end shows the next-steps notice.
+    saw_running: bool,
+    /// The last address handed to the browser.
+    opened_url: Option<String>,
+    /// Keep the File menu open (the menu screenshot).
+    file_menu_open: bool,
 }
 
 impl KrakenApp {
@@ -161,11 +190,19 @@ impl KrakenApp {
             rename_focus: None,
             auto_analyze: false,
             function: opts.function.clone(),
+            import: None,
+            picker: Picker::default(),
+            confirm: None,
+            shortcuts_open: false,
+            next_steps: None,
+            saw_running: false,
+            opened_url: None,
+            file_menu_open: false,
             shot: opts.screenshot.clone().map(|path| Shot {
                 real: opts.open_project.is_some(),
                 scene: opts.scene,
                 path,
-                stage: if opts.scene == Scene::Welcome {
+                stage: if matches!(opts.scene, Scene::Welcome | Scene::Import) {
                     ShotStage::Settling
                 } else {
                     ShotStage::Loading
@@ -204,8 +241,109 @@ impl KrakenApp {
             app.start_real(Choice::OpenProject(dir.to_string_lossy().into_owned()), ctx);
             // Screenshot runs analyze a project that has not been analyzed yet.
             app.auto_analyze = opts.screenshot.is_some();
+        } else if opts.screenshot.is_some() && opts.scene == Scene::Import {
+            let binary = opts.path.clone().or_else(scene_binary);
+            match binary {
+                Some(b) => app.start_import(b.to_string_lossy().into_owned(), ctx),
+                None => app.welcome.error = Some("No program to show in the import dialog.".into()),
+            }
+        } else if let Some(path) = &opts.path {
+            app.open_path(path, ctx);
         }
         app
+    }
+
+    /// Opens what `path` names: a project folder is opened, a file goes to the import dialog.
+    pub(crate) fn open_path(&mut self, path: &Path, ctx: &egui::Context) {
+        if path.is_dir() {
+            if is_project_dir(path) {
+                self.request(
+                    Pending::Open(Choice::OpenProject(path.to_string_lossy().into_owned())),
+                    ctx,
+                );
+            } else {
+                self.problem(format!(
+                    "{} is a folder but not a KRAKEN project (it has no meta.json). Drop a program to import it, or a project folder to open it.",
+                    path.display()
+                ));
+            }
+        } else if path.exists() {
+            self.start_import(path.to_string_lossy().into_owned(), ctx);
+        } else {
+            self.problem(format!("{} does not exist.", path.display()));
+        }
+    }
+
+    /// Shows `msg` where the person is looking: a toast in a project, else on the welcome screen.
+    fn problem(&mut self, msg: String) {
+        match self
+            .vm
+            .as_mut()
+            .filter(|v| v.connection == Connection::Open)
+        {
+            Some(vm) => vm.toast(kraken_viewmodel::ToastLevel::Warning, msg),
+            None => self.welcome.error = Some(msg),
+        }
+    }
+
+    /// Opens the import dialog for `binary` and starts probing it.
+    pub(crate) fn start_import(&mut self, binary: String, ctx: &egui::Context) {
+        let mut cfg = self.services.cfg.clone();
+        cfg.engine = Some(self.welcome.engine);
+        self.import = Some(ImportDialog::start(&cfg, &binary, self.rt.handle(), ctx));
+    }
+
+    /// True while a job would be stopped by closing or switching the project.
+    fn job_running(&self) -> bool {
+        self.vm
+            .as_ref()
+            .is_some_and(|v| v.connection == Connection::Open && v.analysis.running())
+    }
+
+    /// Runs `step` now, or asks first when it would stop a running job.
+    pub(crate) fn request(&mut self, step: Pending, ctx: &egui::Context) {
+        if self.job_running() {
+            self.confirm = Some(step);
+        } else {
+            self.run_pending(step, ctx);
+        }
+    }
+
+    fn run_pending(&mut self, step: Pending, ctx: &egui::Context) {
+        match step {
+            Pending::Open(Choice::Demo) => self.start_demo(ctx),
+            Pending::Open(c) => self.start_real(c, ctx),
+            Pending::Close => self.close_project(),
+            Pending::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
+        }
+    }
+
+    /// Releases the open project (unless `keep` names its folder) before another one opens.
+    fn release_current(&mut self, keep: Option<&str>) {
+        let Some(vm) = self.vm.as_mut() else {
+            return;
+        };
+        let same = keep.is_some_and(|k| {
+            vm.project
+                .as_ref()
+                .is_some_and(|p| Path::new(&p.project_dir) == Path::new(k))
+        });
+        if !same {
+            vm.close_project();
+        }
+    }
+
+    /// Closes the project and returns to the welcome screen.
+    pub(crate) fn close_project(&mut self) {
+        self.release_current(None);
+        self.vm = None;
+        self.is_demo = false;
+        self.auto_analyze = false;
+        self.saw_running = false;
+        self.next_steps = None;
+        self.state = UiState::default();
+        self.welcome.busy = None;
+        self.welcome.error = None;
     }
 
     /// The view-model, if a project is open or opening.
@@ -234,6 +372,11 @@ impl KrakenApp {
     #[cfg(test)]
     pub(crate) fn bring_to_front(&mut self, tab: Tab) {
         self.state.bring_to_front = Some(tab);
+    }
+
+    #[cfg(test)]
+    pub fn automate_open(&self) -> bool {
+        self.state.assist.automate.open
     }
 
     #[cfg(test)]
@@ -276,6 +419,36 @@ impl KrakenApp {
         &self.approvals
     }
 
+    #[cfg(test)]
+    pub fn import_dialog(&self) -> Option<&ImportDialog> {
+        self.import.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn confirming(&self) -> Option<&Pending> {
+        self.confirm.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn shortcuts_open(&self) -> bool {
+        self.shortcuts_open
+    }
+
+    #[cfg(test)]
+    pub fn next_steps(&self) -> Option<u64> {
+        self.next_steps
+    }
+
+    #[cfg(test)]
+    pub fn opened_url(&self) -> Option<&str> {
+        self.opened_url.as_deref()
+    }
+
+    #[cfg(test)]
+    pub fn picker(&self) -> &Picker {
+        &self.picker
+    }
+
     fn new_vm(
         &mut self,
         backend: Arc<dyn kraken_viewmodel::Backend>,
@@ -290,6 +463,7 @@ impl KrakenApp {
     }
 
     pub fn start_demo(&mut self, ctx: &egui::Context) {
+        self.release_current(None);
         match demo_project() {
             Ok(d) => {
                 // The demo's engine lives in this process, so an agent cannot join it (see
@@ -386,7 +560,13 @@ impl KrakenApp {
     }
 
     fn launch(&mut self, choice: Choice, backend: Arc<dyn Backend>, ctx: &egui::Context) {
+        let keep = match &choice {
+            Choice::OpenProject(dir) => Some(dir.clone()),
+            _ => None,
+        };
+        self.release_current(keep.as_deref());
         self.is_demo = false;
+        self.next_steps = None;
         let mut vm = self.new_vm(backend, ctx);
         match choice {
             Choice::OpenProject(dir) => vm.open_project(dir),
@@ -394,9 +574,10 @@ impl KrakenApp {
                 binary,
                 project_dir,
                 engine,
+                analyze,
             } => {
                 vm.create_project_with(binary, project_dir, Some(engine));
-                self.auto_analyze = true;
+                self.auto_analyze = analyze;
             }
             Choice::Demo => return,
         }
@@ -423,11 +604,29 @@ impl KrakenApp {
             Connection::Opening(msg) => self.welcome.busy = Some(msg),
             Connection::Open => {
                 self.welcome.busy = None;
+                crate::activity::apply_requests(ctx, vm, &mut self.state);
                 if self.auto_analyze {
                     self.auto_analyze = false;
                     if vm.analysis.phase == AnalysisPhase::NotStarted {
                         vm.start_analysis();
+                        self.saw_running = true;
                     }
+                }
+                match vm.analysis.phase {
+                    AnalysisPhase::Running => self.saw_running = true,
+                    AnalysisPhase::Complete if self.saw_running && !vm.busy() => {
+                        self.saw_running = false;
+                        if self.shot.is_none() {
+                            let n = vm
+                                .analysis
+                                .function_count
+                                .or(vm.functions.total)
+                                .unwrap_or(vm.functions.items.len() as u64);
+                            self.next_steps = Some(n);
+                        }
+                    }
+                    AnalysisPhase::Failed | AnalysisPhase::Cancelled => self.saw_running = false,
+                    _ => {}
                 }
                 if !self.recorded
                     && !self.is_demo
@@ -446,6 +645,30 @@ impl KrakenApp {
     fn shortcuts(&mut self, ctx: &egui::Context, reqs: &mut Vec<UiRequest>) {
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma)) {
             self.settings.toggle();
+        }
+        let (open_project, open_binary, close, quit, cheat, docs) = ctx.input_mut(|i| {
+            // The shifted chord first: a plain Ctrl+O pattern also matches it.
+            let open_project = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::O);
+            (
+                open_project,
+                i.consume_key(Modifiers::COMMAND, Key::O),
+                i.consume_key(Modifiers::COMMAND, Key::W),
+                i.consume_key(Modifiers::COMMAND, Key::Q),
+                i.consume_key(Modifiers::COMMAND, Key::Slash),
+                i.consume_key(Modifiers::NONE, Key::F1),
+            )
+        });
+        for (pressed, action) in [
+            (open_project, AppAction::OpenProject),
+            (open_binary, AppAction::NewProject),
+            (close, AppAction::CloseProject),
+            (quit, AppAction::Quit),
+            (cheat, AppAction::ShowShortcuts),
+            (docs, AppAction::OpenDocs),
+        ] {
+            if pressed {
+                reqs.extend(self.action_request(action));
+            }
         }
         let Some(vm) = self
             .vm
@@ -484,19 +707,177 @@ impl KrakenApp {
         }
     }
 
+    /// What `a` asks of the window: the view-model decides while a project is open, the window
+    /// itself on the welcome screen (where only actions without a project make sense).
+    pub(crate) fn action_request(&mut self, a: AppAction) -> Option<UiRequest> {
+        if let Some(vm) = self
+            .vm
+            .as_mut()
+            .filter(|v| v.connection == Connection::Open)
+        {
+            return vm.perform(a);
+        }
+        match a {
+            AppAction::ToggleTheme => Some(UiRequest::ToggleTheme),
+            AppAction::OpenProject => Some(UiRequest::OpenProject),
+            AppAction::NewProject => Some(UiRequest::NewProject),
+            AppAction::OpenDemo => Some(UiRequest::OpenDemo),
+            AppAction::OpenSettings => Some(UiRequest::OpenSettings),
+            AppAction::ClearRecent => Some(UiRequest::ClearRecent),
+            AppAction::Quit => Some(UiRequest::Quit),
+            AppAction::ShowShortcuts => Some(UiRequest::ShowShortcuts),
+            AppAction::OpenDocs => Some(UiRequest::OpenDocs),
+            _ => None,
+        }
+    }
+
+    /// Runs `a` as a menu click or shortcut does.
+    pub(crate) fn dispatch(&mut self, a: AppAction, ctx: &egui::Context) {
+        if let Some(r) = self.action_request(a) {
+            self.handle(r, ctx);
+        }
+    }
+
     pub(crate) fn handle(&mut self, r: UiRequest, ctx: &egui::Context) {
         match r {
             UiRequest::ToggleTheme => self.theme.dark = !self.theme.dark,
             UiRequest::FocusFunctionFilter => self.state.focus_filter = true,
             UiRequest::ShowHistory => self.state.bring_to_front = Some(Tab::History),
             UiRequest::ShowProposals => self.state.bring_to_front = Some(Tab::Proposals),
-            UiRequest::OpenProject | UiRequest::NewProject => {
-                self.vm = None;
-                self.welcome.error = None;
-                self.welcome.busy = None;
+            UiRequest::OpenProject => {
+                let start = kraken_host::projects_root(&self.services.cfg).ok();
+                self.picker.project(self.rt.handle(), ctx, start);
             }
-            UiRequest::OpenDemo => self.start_demo(ctx),
+            UiRequest::NewProject => self.picker.binary(self.rt.handle(), ctx),
+            UiRequest::OpenDemo => self.request(Pending::Open(Choice::Demo), ctx),
             UiRequest::OpenSettings => self.settings.show_window(),
+            UiRequest::CloseProject => self.request(Pending::Close, ctx),
+            UiRequest::ClearRecent => self.prefs.clear(),
+            UiRequest::Quit => self.request(Pending::Quit, ctx),
+            UiRequest::ShowShortcuts => self.shortcuts_open = true,
+            UiRequest::OpenDocs => {
+                let url = docs_url();
+                if let Err(e) = open_in_browser(&url) {
+                    self.problem(format!(
+                        "Could not open the user guide ({e}). It is at {url}"
+                    ));
+                }
+                self.opened_url = Some(url);
+            }
+            UiRequest::OpenAutomate => self.state.assist.automate.show(),
+        }
+    }
+
+    fn take_picks(&mut self, ctx: &egui::Context) {
+        for p in self.picker.drain() {
+            match p {
+                Picked::Binary(b) => self.start_import(b, ctx),
+                Picked::Project(dir) => self.open_path(Path::new(&dir), ctx),
+                Picked::Location(_) => {}
+            }
+        }
+    }
+
+    fn menu_bar(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let recents = self.prefs.items().to_vec();
+        let vm = self
+            .vm
+            .as_ref()
+            .filter(|v| v.connection == Connection::Open);
+        let env = MenuEnv {
+            project: vm.is_some(),
+            analyzing: vm.is_some_and(|v| v.analysis.running()),
+            can_back: vm.is_some_and(|v| v.nav.can_back()),
+            can_forward: vm.is_some_and(|v| v.nav.can_forward()),
+            has_function: vm.is_some_and(|v| v.current.is_some()),
+            learn_mode: vm.is_some_and(|v| v.assist.learn_mode),
+            dark: self.theme.dark,
+            recents: &recents,
+            open_file: self.file_menu_open,
+        };
+        let pal = self.theme.palette();
+        let cmds = egui::Panel::top("kraken_menu")
+            .frame(
+                Frame::new()
+                    .fill(pal.panel)
+                    .inner_margin(Margin::symmetric(8, 2)),
+            )
+            .show(ui, |ui| menu::bar(ui, &env))
+            .inner;
+        for c in cmds {
+            match c {
+                MenuCmd::Action(a) => self.dispatch(a, ctx),
+                MenuCmd::ShowTab(tab) => {
+                    if self.dock.find_tab(&tab).is_none() {
+                        self.dock.push_to_focused_leaf(tab);
+                    }
+                    self.state.bring_to_front = Some(tab);
+                }
+                MenuCmd::OpenRecent(path) => {
+                    self.request(Pending::Open(Choice::OpenProject(path)), ctx)
+                }
+            }
+        }
+    }
+
+    /// The import dialog, the stop-the-job question, the cheat sheet and file drops.
+    fn dialogs(&mut self, ctx: &egui::Context) {
+        self.take_picks(ctx);
+        if let Some(d) = self.import.as_mut() {
+            match d.show(ctx, self.rt.handle()) {
+                Some(ImportAction::Import(c)) => {
+                    self.import = None;
+                    self.request(Pending::Open(c), ctx);
+                }
+                Some(ImportAction::Cancel) => self.import = None,
+                None => {}
+            }
+        }
+        if let Some(step) = self.confirm.clone() {
+            match confirm_dialog(ctx, &step) {
+                Some(true) => {
+                    self.confirm = None;
+                    if let Some(vm) = self.vm.as_mut() {
+                        vm.cancel_analysis();
+                    }
+                    self.run_pending(step, ctx);
+                }
+                Some(false) => self.confirm = None,
+                None => {}
+            }
+        }
+        menu::shortcuts_window(ctx, &mut self.shortcuts_open);
+        let (hovering, dropped) = ctx.input(|i| {
+            (
+                !i.raw.hovered_files.is_empty(),
+                i.raw
+                    .dropped_files
+                    .iter()
+                    .map(|f| f.path().to_path_buf())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        if hovering {
+            drop_overlay(ctx);
+        }
+        if let Some(path) = dropped.first() {
+            self.open_path(path, ctx);
+        }
+        if let Some(n) = self.next_steps
+            && let Some(vm) = self
+                .vm
+                .as_ref()
+                .filter(|v| v.connection == Connection::Open)
+        {
+            let has_main = vm.functions.items.iter().any(|f| f.name == "main");
+            match next_steps(ctx, n, has_main) {
+                Some(NextStep::Run(a)) => {
+                    self.next_steps = None;
+                    self.dispatch(a, ctx);
+                }
+                Some(NextStep::Dismiss) => self.next_steps = None,
+                None => {}
+            }
         }
     }
 
@@ -592,6 +973,9 @@ impl KrakenApp {
         self.shortcuts(&ctx, &mut reqs);
         let pal = self.theme.palette();
 
+        self.menu_bar(ui, &ctx);
+        // Before the panels, so the dialogs see Escape before any panel takes it.
+        self.dialogs(&ctx);
         let open = self
             .vm
             .as_ref()
@@ -623,6 +1007,7 @@ impl KrakenApp {
             overlays::comment_dialog(&ctx, vm);
             crate::history::dialog(&ctx, vm);
             crate::rewrite::export_dialog(&ctx, vm);
+            crate::rewrite::wizard_window(&ctx, vm, &mut self.state.bring_to_front);
             chrome::toasts(&ctx, vm);
             assist::overlays(&ctx, vm, &mut self.state.assist);
             if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
@@ -643,8 +1028,8 @@ impl KrakenApp {
                 .inner;
             for a in actions {
                 match a {
-                    WelcomeAction::Choose(Choice::Demo) => self.start_demo(&ctx),
-                    WelcomeAction::Choose(c) => self.start_real(c, &ctx),
+                    WelcomeAction::Choose(c) => self.request(Pending::Open(c), &ctx),
+                    WelcomeAction::Import(binary) => self.start_import(binary, &ctx),
                     WelcomeAction::Forget(path) => self.prefs.remove(&path),
                     WelcomeAction::Settings => self.settings.show_window(),
                 }
@@ -695,6 +1080,16 @@ impl KrakenApp {
                 }
             }
             ctx.send_viewport_cmd(ViewportCommand::Close);
+            return;
+        }
+        if shot.stage == ShotStage::Settling && shot.scene == Scene::Import {
+            if self.import.as_ref().is_some_and(|d| d.probed().is_some()) {
+                shot.settle += 1;
+                if shot.settle > 6 {
+                    ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
+                    shot.stage = ShotStage::Waiting;
+                }
+            }
             return;
         }
         if shot.stage == ShotStage::Settling && shot.scene == Scene::Welcome {
@@ -761,6 +1156,7 @@ impl KrakenApp {
                             | Scene::AssistantAgent
                             | Scene::Rewrite
                             | Scene::RewriteProgram
+                            | Scene::RewriteWizard
                     ) {
                         // Leave the placeholder names alone so there is something to suggest.
                         shot.stage = ShotStage::Settling;
@@ -791,12 +1187,14 @@ impl KrakenApp {
                             | Scene::AutoName
                             | Scene::AssistantAgent
                             | Scene::Rewrite
+                            | Scene::RewriteWizard
                     ));
                     let ids: Vec<u64> = vm.toasts.iter().rev().skip(keep).map(|t| t.id).collect();
                     for id in ids {
                         vm.dismiss_toast(id);
                     }
                     match shot.scene {
+                        Scene::Menu => self.file_menu_open = true,
                         Scene::Palette => {
                             vm.open_palette();
                             vm.palette.set_query("ren");
@@ -824,6 +1222,14 @@ impl KrakenApp {
                                 kraken_viewmodel::rewrite::Availability::Unknown;
                             vm.rewrite_ensure_loaded();
                             vm.rewrite_select(crate::rewrite::SCENE_FUNCTION);
+                        }
+                        Scene::RewriteWizard => {
+                            vm.rewrite.availability =
+                                kraken_viewmodel::rewrite::Availability::Unknown;
+                            vm.rewrite_ensure_loaded();
+                            vm.rewrite_wizard_open();
+                            vm.rewrite.wizard.scope = kraken_viewmodel::rewrite::WizardScope::Plan;
+                            vm.rewrite.wizard.step = kraken_viewmodel::rewrite::WizardStep::Review;
                         }
                         Scene::RewriteProgram => {
                             self.dock = crate::rewrite::scene_dock();
@@ -855,6 +1261,7 @@ impl KrakenApp {
                             })
                     }
                     Scene::RewriteProgram => vm.rewrite.program.detail.is_some(),
+                    Scene::RewriteWizard => vm.rewrite.loaded && !vm.rewrite.rows.is_empty(),
                     Scene::AssistantAgent => vm
                         .assist
                         .items
@@ -903,4 +1310,202 @@ impl KrakenApp {
             self.rt.block_on(f.shutdown());
         }
     }
+}
+
+/// A program to show in the import screenshot when none was given: the corpus of a source
+/// checkout.
+fn scene_binary() -> Option<PathBuf> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/bin/pie_list-O0");
+    p.is_file().then_some(p)
+}
+
+/// The user guide: the built book or the `docs` folder of a checkout or an install next to the
+/// executable, else the documentation on GitHub.
+pub(crate) fn docs_url() -> String {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf));
+    let local = exe_dir
+        .iter()
+        .flat_map(|d| {
+            [
+                d.join("docs"),
+                d.join("../docs"),
+                d.join("../../docs"),
+                d.join("../share/kraken/docs"),
+            ]
+        })
+        .find(|d| d.join("SUMMARY.md").is_file() || d.join("index.html").is_file())
+        .and_then(|d| d.canonicalize().ok());
+    match local {
+        Some(dir) => {
+            let page = [dir.join("book/index.html"), dir.join("index.html")]
+                .into_iter()
+                .find(|p| p.is_file())
+                .unwrap_or(dir);
+            format!("file://{}", page.display())
+        }
+        None => "https://github.com/Adam-AtlasSoftware/kraken/tree/main/docs".into(),
+    }
+}
+
+/// Opens `url` with the desktop's handler. Tests never start a browser.
+fn open_in_browser(url: &str) -> Result<(), String> {
+    if cfg!(test) {
+        return Ok(());
+    }
+    let mut cmd = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(url);
+        return c.spawn().map(|_| ()).map_err(|e| e.to_string());
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    cmd.arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Asks whether to stop the running job for `step`: `Some(true)` go on, `Some(false)` keep
+/// working.
+fn confirm_dialog(ctx: &egui::Context, step: &Pending) -> Option<bool> {
+    let mut answer = None;
+    let what = match step {
+        Pending::Open(_) => "open another project",
+        Pending::Close => "close the project",
+        Pending::Quit => "quit",
+    };
+    let modal = egui::Modal::new(egui::Id::new("kraken_confirm_job")).show(ctx, |ui| {
+        ui.set_width(420.0);
+        ui.heading("The analysis is still running");
+        ui.label(format!(
+            "To {what}, KRAKEN stops the analysis. What it found so far is kept, and you can run it again later."
+        ));
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui
+                .button("Stop it and continue")
+                .on_hover_text("Cancel the analysis and go on")
+                .clicked()
+            {
+                answer = Some(true);
+            }
+            if ui
+                .button("Keep working")
+                .on_hover_text("Let the analysis finish and stay here")
+                .clicked()
+            {
+                answer = Some(false);
+            }
+        });
+    });
+    if answer.is_none() && modal.should_close() {
+        answer = Some(false);
+    }
+    answer
+}
+
+/// The overlay while files are dragged over the window.
+fn drop_overlay(ctx: &egui::Context) {
+    let rect = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("kraken_drop"),
+    ));
+    let dark = ctx.global_style().visuals.dark_mode;
+    let p = KrakenTheme { dark }.palette();
+    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(170));
+    painter.rect_stroke(
+        rect.shrink(18.0),
+        12.0,
+        egui::Stroke::new(2.0, p.accent),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        DROP_TEXT,
+        egui::FontId::proportional(20.0),
+        egui::Color32::WHITE,
+    );
+}
+
+/// What the drop overlay says.
+pub(crate) const DROP_TEXT: &str =
+    "Drop a program to import it, or a KRAKEN project folder to open it";
+
+enum NextStep {
+    Run(AppAction),
+    Dismiss,
+}
+
+/// The notice after analysis: what was found and where to go next.
+fn next_steps(ctx: &egui::Context, functions: u64, has_main: bool) -> Option<NextStep> {
+    let dark = ctx.global_style().visuals.dark_mode;
+    let p = KrakenTheme { dark }.palette();
+    let mut out = None;
+    egui::Area::new(egui::Id::new("kraken_next_steps"))
+        .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -40.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            Frame::new()
+                .fill(p.surface)
+                .stroke(egui::Stroke::new(1.0, p.accent.gamma_multiply(0.6)))
+                .corner_radius(8)
+                .inner_margin(Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.set_max_width(380.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Analysis finished: {functions} functions found."
+                            ))
+                            .strong()
+                            .color(p.text_strong),
+                        );
+                        if ui
+                            .small_button("\u{00d7}")
+                            .on_hover_text("Dismiss")
+                            .clicked()
+                        {
+                            out = Some(NextStep::Dismiss);
+                        }
+                    });
+                    ui.label(egui::RichText::new("What next?").color(p.text_dim));
+                    ui.horizontal_wrapped(|ui| {
+                        let open = if has_main {
+                            "Open main"
+                        } else {
+                            "Open the entry point"
+                        };
+                        if ui
+                            .button(open)
+                            .on_hover_text(AppAction::GoToMain.hint())
+                            .clicked()
+                        {
+                            out = Some(NextStep::Run(AppAction::GoToMain));
+                        }
+                        if ui
+                            .button(AppAction::ExplainProgram.label())
+                            .on_hover_text(AppAction::ExplainProgram.hint())
+                            .clicked()
+                        {
+                            out = Some(NextStep::Run(AppAction::ExplainProgram));
+                        }
+                        if ui
+                            .button("Rewrite to Rust")
+                            .on_hover_text(AppAction::RewriteWizard.hint())
+                            .clicked()
+                        {
+                            out = Some(NextStep::Run(AppAction::RewriteWizard));
+                        }
+                    });
+                });
+        });
+    out
 }

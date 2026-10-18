@@ -147,4 +147,5 @@ The [full comparison](native-engine.md#native-or-ghidra) has the details.
 
 - [Concepts](concepts.md) explains the words used above.
 - [Connect an AI agent](mcp.md) to do the naming for you.
+- [Rewrite a program in Rust](rewrite.md), step by step, and check it against the original.
 - [Script the CLI](cli.md) with `--json` and `jq`.

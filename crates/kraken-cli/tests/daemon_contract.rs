@@ -294,6 +294,7 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
     assert_eq!(normalise(&direct.1, &s), normalise(&via_mcp.1, &s));
 
     step!("project_info", json!({}));
+    step!("binary_probe", json!({"path": s.binary}));
 
     covered.extend(["analyze".to_string(), "job_await".to_string()]);
     let analysis = all_job(&s, "analyze").await;
@@ -366,6 +367,21 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
         "rename_symbol",
         json!({"address": "0x401040", "new_name": "x", "bogus": 1})
     );
+    step!(
+        "apply_edits",
+        json!({"edits": [{"op": "rename", "address": "0x401040"}]})
+    );
+    step!(
+        "gui_navigate",
+        json!({"address": "0x401040", "tab": "listing"})
+    );
+    step!("search", json!({"query": "main", "kind": "names"}));
+    step!(
+        "bookmark_add",
+        json!({"address": "0x401040", "note": "look here"})
+    );
+    step!("bookmark_list", json!({}));
+    step!("bookmark_remove", json!({"address": "0x401040"}));
 
     step!("proposals_list", json!({"status": "all"}));
     let denied = step!("proposal_accept", json!({"id": 1}));
@@ -408,6 +424,8 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
     let rebuilt = all_job(&s, "rebuild").await;
     assert!(rebuilt["result"]["replayed"].is_number(), "{rebuilt}");
     step!("list_functions", json!({}));
+    let closed = step!("project_close", json!({}));
+    assert_eq!(closed["closed"], true, "{closed}");
 
     // Reopening: each surface opens its own directory. The one documented difference: in direct
     // mode this really reopens (the session forgets the transient analysis counters), while the
@@ -455,6 +473,7 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
         ("rewrite_function", json!({"address": "0x401040"})),
         ("rewrite_spec", json!({"scope": "all"})),
         ("rewrite_export", json!({"dir": "out"})),
+        ("rewrite_build", json!({"dir": "out"})),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
     ] {

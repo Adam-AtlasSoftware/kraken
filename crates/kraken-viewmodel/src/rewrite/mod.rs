@@ -20,6 +20,8 @@ use crate::backend::{JobProgress, JobState};
 pub use kraken_registry::commands::{RewriteMode, UnitStatus};
 pub use spec::{Inline, SpecBlock, citations, parse_spec};
 
+mod build;
+mod bulk;
 mod flow;
 mod highlight;
 mod program;
@@ -27,18 +29,21 @@ mod spec;
 #[cfg(test)]
 mod tests;
 mod wire;
+mod wizard;
 
 #[cfg(feature = "demo")]
 pub mod demo;
 #[cfg(all(test, feature = "demo"))]
 mod demo_tests;
 
+pub use build::{BuildOutcome, BuildState, BuildStepItem};
 pub use highlight::highlight_rust;
 pub use program::{
     DEFAULT_REPAIR_ROUNDS, DiffKind, DiffLine, MAX_REPAIR_ROUNDS, ProgramCaseItem,
-    ProgramFunctionItem, ProgramRepairItem, ProgramRunDetail, ProgramRunItem, ProgramState,
-    ProgramVerdictItem, RunSide, line_diff, verdict_line,
+    ProgramFunctionItem, ProgramInput, ProgramRepairItem, ProgramRunDetail, ProgramRunItem,
+    ProgramState, ProgramVerdictItem, RunSide, line_diff, split_args, verdict_line,
 };
+pub use wizard::{Check, CheckLevel, WizardScope, WizardState, WizardStep, wizard_scope_explain};
 
 /// Rows loaded into the plan view at most (the daemon pages 200 at a time).
 pub(crate) const MAX_ROWS: usize = 5000;
@@ -124,6 +129,8 @@ pub fn status_explain(s: UnitStatus) -> &'static str {
 /// One function in the plan view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitItem {
+    /// Id of the newest version (`ru-...`); empty when nothing was translated.
+    pub unit: String,
     /// Position in the rewrite order, from 0 (callees first).
     pub order: Option<u32>,
     /// Entry address.
@@ -374,6 +381,8 @@ pub enum JobKind {
     Export,
     /// `rewrite_program`.
     Program,
+    /// `rewrite_build`.
+    Build,
 }
 
 /// A job started from the tab.
@@ -602,6 +611,14 @@ pub struct RewriteState {
     pub export: ExportState,
     /// The Program view.
     pub program: ProgramState,
+    /// The build and test of an exported crate.
+    pub build: BuildState,
+    /// The step-by-step rewrite window.
+    pub wizard: WizardState,
+    /// Bulk actions of the plan list: the functions still waiting to be translated.
+    pub bulk: bulk::BulkState,
+    /// The window should show the Program section of the Rewrite tab.
+    pub show_program_request: bool,
     pub(crate) generation: u64,
     pub(crate) next_seq: u64,
     pub(crate) stash: Vec<(String, crate::backend::JobInfo)>,
@@ -630,6 +647,10 @@ impl Default for RewriteState {
             program_spec: None,
             export: ExportState::default(),
             program: ProgramState::default(),
+            build: BuildState::default(),
+            wizard: WizardState::default(),
+            bulk: bulk::BulkState::default(),
+            show_program_request: false,
             generation: 0,
             next_seq: 1,
             stash: Vec::new(),
@@ -676,6 +697,13 @@ impl RewriteState {
     /// Any job is running.
     pub fn busy(&self) -> bool {
         self.jobs.iter().any(RewriteJob::running)
+    }
+
+    /// The build job is running.
+    pub fn building(&self) -> bool {
+        self.jobs
+            .iter()
+            .any(|j| j.running() && j.kind == JobKind::Build)
     }
 
     /// The export job is running.

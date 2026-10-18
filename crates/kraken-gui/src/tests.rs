@@ -33,6 +33,7 @@ fn options(demo: bool) -> Options {
         no_daemon: false,
         open_project: None,
         function: None,
+        path: None,
     }
 }
 
@@ -383,7 +384,7 @@ fn ui_requests_change_the_window_state() {
     h.step();
     h.app.handle(UiRequest::FocusFunctionFilter, &ctx);
     h.step();
-    h.app.handle(UiRequest::OpenProject, &ctx);
+    h.app.handle(UiRequest::CloseProject, &ctx);
     h.step();
     assert!(h.app.view_model().is_none(), "back to the welcome screen");
     h.app.handle(UiRequest::OpenDemo, &ctx);
@@ -464,13 +465,15 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         Tab::History,
         Tab::Proposals,
         Tab::Rewrite,
+        Tab::Search,
+        Tab::Bookmarks,
     ] {
         assert!(!t.title().is_empty());
         let tip = t.tooltip();
         assert!(tip.ends_with('.'), "{tip}");
         assert!(tip.len() < 100, "one plain sentence: {tip}");
     }
-    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 11);
+    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 13);
 }
 
 #[test]
@@ -603,6 +606,7 @@ mod live {
                 binary,
                 project_dir: project.to_string_lossy().into_owned(),
                 engine: Default::default(),
+                analyze: true,
             },
             &ctx,
         );
@@ -657,6 +661,49 @@ mod live {
     }
 
     #[test]
+    fn closing_the_project_releases_the_daemon_session() {
+        let mut r = Rig::new();
+        let ctx = r.h.ctx.clone();
+        let (binary, project) = (r.binary(), r.project());
+        r.h.app.start_real(
+            Choice::NewProject {
+                binary,
+                project_dir: project.to_string_lossy().into_owned(),
+                engine: Default::default(),
+                analyze: false,
+            },
+            &ctx,
+        );
+        r.h.run_until("the project to open", |a| {
+            a.view_model()
+                .is_some_and(|vm| vm.connection == Connection::Open && !vm.busy())
+        });
+        assert_eq!(
+            r.h.app.view_model().unwrap().analysis.phase,
+            AnalysisPhase::NotStarted,
+            "Analyze after import was off"
+        );
+        let c = r.h._rt.block_on(async {
+            let c = Client::connect(&r.dir, &ClientHello::new(ClientKind::Cli, BUILD))
+                .await
+                .expect("connect");
+            DaemonClient::from_client(c, BUILD)
+        });
+        let sessions = |c: &DaemonClient, r: &Rig| {
+            r.h._rt
+                .block_on(async { c.status().await.expect("status")["sessions"].clone() })
+        };
+        assert_eq!(sessions(&c, &r).as_array().unwrap().len(), 1);
+        r.h.key(Key::W, CTRL);
+        assert!(r.h.app.view_model().is_none());
+        let deadline = Instant::now() + WAIT;
+        while sessions(&c, &r).as_array().is_some_and(|a| !a.is_empty()) {
+            assert!(Instant::now() < deadline, "the session was not released");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
     fn a_missing_binary_is_reported_by_the_daemon() {
         let mut r = Rig::new();
         let ctx = r.h.ctx.clone();
@@ -665,6 +712,7 @@ mod live {
                 binary: r.tmp.path().join("nope").to_string_lossy().into_owned(),
                 project_dir: r.project().to_string_lossy().into_owned(),
                 engine: Default::default(),
+                analyze: true,
             },
             &ctx,
         );
@@ -774,3 +822,83 @@ fn stale_functions_get_a_marker_that_draws() {
 
 #[cfg(unix)]
 mod bench;
+mod shell;
+
+fn active_tab_is(h: &Harness, tab: Tab) -> bool {
+    let dock = h.app.dock();
+    dock.find_tab(&tab).is_some_and(|path| {
+        dock.leaf(path.node_path())
+            .is_ok_and(|leaf| leaf.active == path.tab)
+    })
+}
+
+fn agent_change(author: &str, command: &str) -> kraken_viewmodel::ChangeInfo {
+    kraken_viewmodel::ChangeInfo {
+        command: command.into(),
+        by_agent: true,
+        author: author.into(),
+        run_id: None,
+        entry_ids: Vec::new(),
+        key: None,
+    }
+}
+
+#[test]
+fn agent_activity_shows_in_the_status_bar_and_its_click_opens_history() {
+    let mut h = Harness::ready_demo();
+    let now = Instant::now();
+    {
+        let vm = h.app.view_model_mut().unwrap();
+        let c = agent_change("claude", "rename_symbol");
+        vm.agent_activity.applied(&c, now);
+        vm.agent_activity.applied(&c, now);
+    }
+    h.step();
+    h.app.bring_to_front(Tab::Hex);
+    h.step();
+    assert!(active_tab_is(&h, Tab::Hex));
+    // The chip sets this flag when it is clicked.
+    h.ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::new("kraken_activity_open_history"), true);
+    });
+    h.step();
+    assert!(active_tab_is(&h, Tab::History));
+}
+
+#[test]
+fn an_agents_navigate_request_focuses_the_asked_tab() {
+    let mut h = Harness::ready_demo();
+    let main = h.select_main();
+    h.app.bring_to_front(Tab::Functions);
+    h.step();
+    h.app
+        .view_model_mut()
+        .unwrap()
+        .on_event(kraken_viewmodel::BackendEvent::Navigate {
+            address: main,
+            tab: Some("listing".into()),
+            author: "claude".into(),
+        });
+    h.step();
+    h.step();
+    assert!(active_tab_is(&h, Tab::Listing));
+    assert_eq!(h.app.view_model().unwrap().nav.current(), Some(main));
+}
+
+#[test]
+fn the_automate_action_opens_a_dialog_that_cannot_start_without_an_assistant() {
+    use kraken_viewmodel::AppAction;
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    let req = h.app.view_model_mut().unwrap().perform(AppAction::Automate);
+    assert_eq!(req, Some(UiRequest::OpenAutomate));
+    h.app.handle(UiRequest::OpenAutomate, &ctx);
+    h.step();
+    h.step();
+    assert!(h.app.automate_open());
+    // No assistant is set up in the offline demo: Start is disabled, so nothing runs.
+    assert!(!h.app.view_model().unwrap().assist.busy());
+    h.key(Key::Escape, Modifiers::NONE);
+    h.step();
+    assert!(!h.app.automate_open());
+}

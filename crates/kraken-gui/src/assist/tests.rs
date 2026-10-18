@@ -37,6 +37,7 @@ fn options() -> Options {
         no_daemon: false,
         open_project: None,
         function: None,
+        path: None,
     }
 }
 
@@ -303,6 +304,7 @@ fn the_explain_menu_closes_on_escape() {
         line: Some("helper(argc);".into()),
         line_kind: kraken_viewmodel::assist::SelectionKind::Decompile,
         function: Some(0x401000),
+        target: None,
     });
     h.step();
     h.step();

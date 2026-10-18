@@ -14,11 +14,11 @@ use kraken_assist::{ApiBackend, AssistBackend};
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
     CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanScope, RewriteAcceptArgs,
-    RewriteAcceptOut, RewriteBackend, RewriteExportResult, RewriteFunctionArgs,
-    RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut, RewriteProgramArgs,
-    RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteSpecArgs,
-    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
-    StatusCounts, UnitRow, UnitSpecView, UnitStatus, UnitVersionView,
+    RewriteAcceptOut, RewriteBackend, RewriteBuildArgs, RewriteBuildResult, RewriteExportResult,
+    RewriteFunctionArgs, RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut,
+    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
+    RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs,
+    RewriteUnitOut, StatusCounts, UnitRow, UnitSpecView, UnitStatus, UnitVersionView,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 
@@ -1337,6 +1337,52 @@ impl RewriteBackend for RewriteService {
         job: &JobReporter,
     ) -> Result<RewriteProgramResult, ProtoError> {
         self.run_program(s, ctx, args, job).await
+    }
+
+    async fn build(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteBuildArgs,
+        job: &JobReporter,
+    ) -> Result<RewriteBuildResult, ProtoError> {
+        self.require_sandbox()?;
+        let dir = PathBuf::from(&args.dir);
+        let test = args.test.unwrap_or(true);
+        let confinement = self.cfg.confinement.clone();
+        let total = 1 + u64::from(test) + u64::from(args.run_args.is_some());
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        let job2 = job.clone();
+        let report = tokio::task::spawn_blocking(move || {
+            crate::build::build_and_test(
+                &dir,
+                test,
+                args.run_args.as_deref(),
+                &confinement,
+                &|step| {
+                    let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let what = match step {
+                        "build" => "cargo build in the sandbox",
+                        "test" => "cargo test in the sandbox",
+                        _ => "running the program in the sandbox",
+                    };
+                    progress(&job2, step, n, total, what);
+                },
+            )
+            .map(|r| (dir, r))
+        })
+        .await
+        .map_err(|e| internal(format!("build task failed: {e}")))?
+        .map_err(proto)?;
+        let (dir, report) = report;
+        progress(job, "done", total, total, "finished");
+        Ok(RewriteBuildResult {
+            dir: dir.display().to_string(),
+            kind: report.kind.to_string(),
+            passed: report.passed(),
+            steps: report.steps,
+            sandbox: report.sandbox,
+        })
     }
 
     async fn program_status(

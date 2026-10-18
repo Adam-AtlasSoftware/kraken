@@ -523,6 +523,7 @@ pub fn build_cli(registry: &Registry) -> Command {
                     .help("Only suggest; write nothing"),
             ),
     )
+    .subcommand(crate::auto_cmd::command())
     .subcommand(crate::eval_cmd::command())
     .subcommand(
         Command::new("glossary")
@@ -728,7 +729,7 @@ pub fn build_args(entry: &Entry, sm: &ArgMatches) -> Result<Value, ProtoError> {
     Ok(Value::Object(obj))
 }
 
-fn absolute(p: &Path) -> PathBuf {
+pub(crate) fn absolute(p: &Path) -> PathBuf {
     std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
@@ -753,7 +754,7 @@ pub(crate) fn fail(e: &ProtoError, json: bool, err: &mut dyn Write) -> i32 {
 }
 
 /// Adds `project_dir` to project_create / project_open args from `--project` / the default.
-fn fill_project_dir(
+pub(crate) fn fill_project_dir(
     env: &CliEnv,
     name: &str,
     args: &mut Value,
@@ -842,7 +843,7 @@ fn commands_table(registry: &Registry) -> String {
     crate::render::table(&["command", "kind", "permission", "summary"], &rows)
 }
 
-async fn wait_for_job(
+pub(crate) async fn wait_for_job(
     env: &CliEnv,
     backend: &dyn CommandBackend,
     ctx: &CallContext,
@@ -1178,6 +1179,7 @@ pub async fn run_with_provider(
         "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
         "glossary" => crate::assist_cmd::run_glossary(sm, json_out, out, err),
         "eval" => crate::eval_cmd::run_eval(env, sm, json_out, provider, out, err).await,
+        "auto" => crate::auto_cmd::run_auto(env, sm, json_out, provider, out, err).await,
         "explain" | "overview" | "auto-name" => {
             crate::assist_cmd::run_assist(env, sub, sm, json_out, provider, out, err).await
         }

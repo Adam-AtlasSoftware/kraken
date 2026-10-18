@@ -176,7 +176,7 @@ impl Rig {
 }
 
 #[tokio::test]
-async fn the_server_offers_four_prompts_and_the_resources() {
+async fn the_server_offers_six_prompts_and_the_resources() {
     let rig = rig(false, false, None).await;
     let prompts = rig.client.list_all_prompts().await.expect("prompts");
     let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
@@ -186,13 +186,16 @@ async fn the_server_offers_four_prompts_and_the_resources() {
             "getting-started",
             "explain-function",
             "name-components",
-            "prepare-rewrite"
+            "prepare-rewrite",
+            "analyze-binary",
+            "rewrite-program"
         ]
     );
     let resources = rig.client.list_all_resources().await.expect("resources");
     let uris: Vec<&str> = resources.iter().map(|r| r.uri.as_str()).collect();
     assert!(uris.contains(&"kraken://project/summary"));
     assert!(uris.contains(&"kraken://gui/selection"));
+    assert!(uris.contains(&"kraken://rewrite/status"));
     assert!(uris.contains(&"kraken://glossary"));
     let templates = rig
         .client
@@ -391,4 +394,85 @@ async fn prepare_rewrite_needs_an_address_and_stops_before_running_anything() {
     );
     assert!(t.contains("Show this to the person and stop"));
     assert!(rig.prompt("no-such-prompt", json!({})).await.is_err());
+}
+
+#[tokio::test]
+async fn analyze_binary_walks_from_project_create_to_naming() {
+    let rig = rig(true, false, None).await;
+    assert!(rig.prompt("analyze-binary", json!({})).await.is_err());
+    assert!(
+        rig.prompt("analyze-binary", json!({"path": "bad\npath"}))
+            .await
+            .is_err()
+    );
+    let m = rig
+        .prompt("analyze-binary", json!({"path": "/bin/true"}))
+        .await
+        .expect("prompt");
+    let t = &m[0].0;
+    for needle in [
+        "project_create",
+        "/bin/true.kraken",
+        "analyze",
+        "job_await",
+        "apply_edits",
+        "rename",
+    ] {
+        assert!(t.contains(needle), "{needle} missing: {t}");
+    }
+    let m = rig
+        .prompt(
+            "analyze-binary",
+            json!({"path": "/bin/true", "project_dir": "/tmp/p"}),
+        )
+        .await
+        .expect("prompt");
+    assert!(m[0].0.contains("\"/tmp/p\""));
+}
+
+#[tokio::test]
+async fn rewrite_program_ends_with_what_the_person_accepts() {
+    let rig = rig(true, false, None).await;
+    let m = rig
+        .prompt("rewrite-program", json!({}))
+        .await
+        .expect("prompt");
+    let t = &m[0].0;
+    for needle in [
+        "rewrite_plan",
+        "rewrite_program",
+        "rewrite_program_status",
+        "rewrite_export",
+        "kraken rewrite-accept",
+        "Never pass `accept_verified`",
+    ] {
+        assert!(t.contains(needle), "{needle} missing: {t}");
+    }
+    assert!(m[1].1, "the rewrite status is attached as a resource");
+    let m = rig
+        .prompt(
+            "rewrite-program",
+            json!({"cases": "[{\"name\":\"help\",\"argv\":[\"--help\"]}]"}),
+        )
+        .await
+        .expect("prompt");
+    assert!(m[0].0.contains("\"--help\""));
+    assert!(
+        rig.prompt("rewrite-program", json!({"cases": "not json"}))
+            .await
+            .is_err()
+    );
+    assert!(
+        rig.prompt("rewrite-program", json!({"cases": "[{\"argv\":[]}]"}))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn the_rewrite_status_resource_reads_without_a_rewrite() {
+    let rig = rig(true, false, None).await;
+    let s = rig.resource("kraken://rewrite/status").await;
+    assert!(s.contains("# Rewrite status"), "{s}");
+    assert!(s.contains("Unavailable"), "{s}");
 }

@@ -57,7 +57,7 @@ kraken decompile --address 0x1189 || echo "failed with $?"
 
 ## Assistant commands
 
-Beside the registry commands, `kraken explain <address>`, `kraken overview`, `kraken auto-name [--limit N] [--dry-run]` and `kraken glossary <term>` use the built-in assistant. They are described in [The built-in assistant](assistant.md). `kraken eval list` and `kraken eval run` measure the configured assistant (a model or a terminal agent) on the test corpus and write a JSON and Markdown report; see [Measuring the assistant](assistant.md#measuring-the-assistant-kraken-eval).
+Beside the registry commands, `kraken explain <address>`, `kraken overview`, `kraken auto-name [--limit N] [--dry-run]` and `kraken glossary <term>` use the built-in assistant. `kraken auto <binary> [--names] [--rewrite] [--accept-verified]` opens, analyses, names and rewrites a program in one go. They are described in [The built-in assistant](assistant.md). `kraken eval list` and `kraken eval run` measure the configured assistant (a model or a terminal agent) on the test corpus and write a JSON and Markdown report; see [Measuring the assistant](assistant.md#measuring-the-assistant-kraken-eval).
 
 ## Rewriting
 

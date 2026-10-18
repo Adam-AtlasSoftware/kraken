@@ -763,6 +763,13 @@ impl Job {
         if !kraken {
             return None;
         }
+        // A task names the tools it may use; the agent's MCP server offers all of them, so
+        // anything else is refused here.
+        if matches!(self.spec.purpose, Purpose::Task { .. })
+            && !self.spec.tools.tools().iter().any(|t| t.name == name)
+        {
+            return Some(req.reject());
+        }
         let entry = self.registry.get(&name)?;
         let spec = entry.spec();
         if spec.permission == RegPermission::Dangerous {

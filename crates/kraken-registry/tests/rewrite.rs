@@ -12,11 +12,11 @@ use kraken_engine::SharedEngine;
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
     ExportCoverage, ExportRequest, PlanScope, ProgramVerdictView, RewriteAcceptArgs,
-    RewriteAcceptOut, RewriteBackend, RewriteExportResult, RewriteFunctionArgs,
-    RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut, RewriteProgramArgs,
-    RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteSpecArgs,
-    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
-    StatusCounts, UnitStatus,
+    RewriteAcceptOut, RewriteBackend, RewriteBuildArgs, RewriteBuildResult, RewriteExportResult,
+    RewriteFunctionArgs, RewriteFunctionResult, RewriteMode, RewritePlanArgs, RewritePlanOut,
+    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
+    RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs,
+    RewriteUnitOut, StatusCounts, UnitStatus,
 };
 use kraken_registry::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, CommandKind,
@@ -43,6 +43,7 @@ struct Mock {
     calls: Mutex<Vec<String>>,
     exports: Mutex<Vec<ExportRequest>>,
     programs: Mutex<Vec<RewriteProgramArgs>>,
+    builds: Mutex<Vec<RewriteBuildArgs>>,
 }
 
 impl Mock {
@@ -225,6 +226,25 @@ impl RewriteBackend for Mock {
         Ok(program_result())
     }
 
+    async fn build(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteBuildArgs,
+        _job: &JobReporter,
+    ) -> Result<RewriteBuildResult, ProtoError> {
+        self.log("build");
+        let dir = args.dir.clone();
+        self.builds.lock().expect("builds").push(args);
+        Ok(RewriteBuildResult {
+            dir,
+            kind: "export".into(),
+            passed: true,
+            steps: vec![],
+            sandbox: "mock".into(),
+        })
+    }
+
     async fn program_status(
         &self,
         _s: &Session,
@@ -352,6 +372,7 @@ fn kinds_and_permissions_of_the_rewrite_commands() {
             CommandKind::Query,
             Permission::Safe,
         ),
+        ("rewrite_build", CommandKind::Job, Permission::Mutating),
     ];
     for (name, kind, permission) in expect {
         let spec = r.get(name).unwrap_or_else(|| panic!("{name}")).spec();
@@ -838,4 +859,142 @@ async fn program_needs_the_sandbox_and_asks_before_writing_outside_the_project()
     let seen = r.mock.programs.lock().expect("programs");
     assert_eq!(seen[0].dir.as_deref(), target.to_str());
     assert_eq!(seen[0].build, Some(false));
+}
+
+// ---- rewrite_build ----------------------------------------------------------------------------
+
+fn write_marker(dir: &Path, file: &str, generator: &str) {
+    std::fs::create_dir_all(dir).expect("mkdir");
+    std::fs::write(dir.join(file), format!("{{\"generator\":\"{generator}\"}}")).expect("marker");
+}
+
+#[tokio::test]
+async fn build_refuses_a_folder_kraken_did_not_export_before_the_backend_sees_it() {
+    let r = rig(true).await;
+    let plain = r.dir.join("notes");
+    std::fs::create_dir_all(&plain).expect("mkdir");
+    std::fs::write(plain.join("Cargo.toml"), "[package]").expect("file");
+    for dir in ["notes", "missing", "/"] {
+        let e = r
+            .call(&user(), "rewrite_build", json!({ "dir": dir }))
+            .await
+            .expect_err("not an export");
+        assert_eq!(e.code, ErrorCode::InvalidArgument, "{dir}: {e:?}");
+    }
+    let e = r
+        .call(&user(), "rewrite_build", json!({"dir": "../up"}))
+        .await
+        .expect_err("..");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    // A manifest from someone else is not the marker.
+    write_marker(&r.dir.join("foreign"), "manifest.json", "cargo");
+    let e = r
+        .call(&user(), "rewrite_build", json!({"dir": "foreign"}))
+        .await
+        .expect_err("foreign manifest");
+    assert!(
+        e.message.contains("not a crate KRAKEN exported"),
+        "{}",
+        e.message
+    );
+    assert!(r.mock.calls().is_empty(), "nothing reached the backend");
+}
+
+#[tokio::test]
+async fn build_needs_the_sandbox_and_checks_its_arguments() {
+    let r = rig(false).await;
+    write_marker(&r.dir.join("exp"), "manifest.json", "kraken-rewrite");
+    let e = r
+        .call(&user(), "rewrite_build", json!({"dir": "exp"}))
+        .await
+        .expect_err("no sandbox");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert!(e.message.contains("no sandbox here"));
+
+    let r = rig(true).await;
+    write_marker(&r.dir.join("exp"), "manifest.json", "kraken-rewrite");
+    write_marker(
+        &r.dir.join("prog"),
+        "kraken-program.json",
+        "kraken-rewrite/program",
+    );
+    // An export is a library: nothing to run.
+    let e = r
+        .call(
+            &user(),
+            "rewrite_build",
+            json!({"dir": "exp", "run_args": ["x"]}),
+        )
+        .await
+        .expect_err("library");
+    assert!(e.message.contains("program crate"), "{}", e.message);
+    let many: Vec<String> = (0..40).map(|i| i.to_string()).collect();
+    let e = r
+        .call(
+            &user(),
+            "rewrite_build",
+            json!({"dir": "prog", "run_args": many}),
+        )
+        .await
+        .expect_err("too many");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    let e = r
+        .call(
+            &user(),
+            "rewrite_build",
+            json!({"dir": "prog", "run_args": ["a\u{0}b"]}),
+        )
+        .await
+        .expect_err("nul");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    assert!(r.mock.calls().is_empty());
+}
+
+#[tokio::test]
+async fn build_runs_as_a_job_with_the_resolved_directory_and_asks_agents_first() {
+    let r = rig(true).await;
+    write_marker(&r.dir.join("exp"), "manifest.json", "kraken-rewrite");
+    write_marker(
+        &r.dir.join("prog"),
+        "kraken-program.json",
+        "kraken-rewrite/program",
+    );
+    // A person typing the command is the approval.
+    let out = r
+        .job(&user(), "rewrite_build", json!({"dir": "exp"}))
+        .await
+        .expect("job");
+    assert_eq!(out["passed"], true);
+    assert_eq!(out["sandbox"], "mock");
+    {
+        let seen = r.mock.builds.lock().expect("builds");
+        assert_eq!(seen[0].dir, r.dir.join("exp").to_str().expect("utf8"));
+        assert_eq!(seen[0].test, None);
+    }
+    // An agent acts for a person, who must approve running generated code.
+    let agent = CallContext::agent("bot", "run-1", Surface::Test);
+    let e = r
+        .call(&agent, "rewrite_build", json!({"dir": "prog"}))
+        .await
+        .expect_err("needs approval");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert_eq!(
+        e.details.as_ref().map(|d| d["approval"].clone()),
+        Some(json!("denied"))
+    );
+    assert_eq!(r.mock.builds.lock().expect("builds").len(), 1);
+    let approved = agent.with_approval(Arc::new(AutoApprove));
+    r.job(
+        &approved,
+        "rewrite_build",
+        json!({"dir": "prog", "test": false, "run_args": ["-v", "x y"]}),
+    )
+    .await
+    .expect("approved");
+    let seen = r.mock.builds.lock().expect("builds");
+    assert_eq!(seen[1].test, Some(false));
+    assert_eq!(
+        seen[1].run_args.as_deref(),
+        Some(&["-v".to_string(), "x y".to_string()][..])
+    );
 }

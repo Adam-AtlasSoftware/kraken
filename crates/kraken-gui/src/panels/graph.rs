@@ -44,7 +44,12 @@ pub fn model_of(data: &GraphData) -> CfgModel {
     }
 }
 
-pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
+pub fn show(
+    ui: &mut Ui,
+    vm: &mut ViewModel,
+    st: &mut PanelState,
+    assist: &mut crate::assist::AssistUi,
+) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
     st.front = Some(Tab::Graph);
@@ -132,6 +137,26 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
         && let Some(b) = selected
     {
         vm.graph_open(b);
+    }
+    if out.response.secondary_clicked()
+        && let Some(b) = selected
+    {
+        let line = vm
+            .views
+            .graph
+            .data
+            .as_ref()
+            .and_then(|d| d.blocks.iter().find(|x| x.id == b))
+            .map(|x| x.title.clone())
+            .unwrap_or_default();
+        crate::assist::capture_instruction_at(
+            ui,
+            out.response.rect,
+            b,
+            &line,
+            vm.views.graph.function.or(vm.views.function),
+            assist,
+        );
     }
     if let Some(b) = selected {
         st.hot = Some(b);

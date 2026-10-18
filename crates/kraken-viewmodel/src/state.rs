@@ -425,6 +425,8 @@ pub enum ToastAction {
         /// The run to undo.
         run_id: String,
     },
+    /// Bring the History tab forward.
+    OpenHistory,
 }
 
 impl ToastAction {
@@ -432,6 +434,7 @@ impl ToastAction {
     pub fn label(&self) -> &'static str {
         match self {
             ToastAction::UndoRun { .. } => "Undo",
+            ToastAction::OpenHistory => "Open History",
         }
     }
 }

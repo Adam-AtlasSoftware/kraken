@@ -8,6 +8,7 @@
 //! over the `krakend` socket and turns its change events into [`BackendEvent`]s. [`testing::FakeBackend`] scripts
 //! replies for tests.
 
+pub mod activity;
 pub mod agents;
 mod approval;
 pub mod assist;
@@ -17,6 +18,7 @@ mod fuzzy;
 pub mod history;
 pub mod infer;
 mod nav;
+pub mod navtools;
 mod palette;
 pub mod rewrite;
 mod state;
@@ -48,7 +50,10 @@ pub use fuzzy::score as fuzzy_score;
 #[cfg(feature = "inprocess")]
 pub use inprocess::{ExtraQuery, GUI_USER, InProcessBackend};
 pub use nav::NavHistory;
-pub use palette::{AppAction, PaletteItem, PaletteState, PaletteTarget, UiRequest};
+pub use palette::{
+    AppAction, PaletteItem, PaletteState, PaletteTarget, SHORTCUTS, Shortcut, UiRequest,
+    humanize_command,
+};
 pub use state::*;
 pub use tokens::tokenize;
 pub use views::{

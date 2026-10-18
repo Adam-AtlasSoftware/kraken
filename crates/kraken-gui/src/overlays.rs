@@ -202,10 +202,21 @@ pub fn rename_dialog(ctx: &egui::Context, vm: &mut ViewModel, focus: &mut Option
     let validation = d.validate();
     let untouched = d.input == d.old_name;
 
-    dialog_window("Rename function", "kraken_rename").show(ctx, |ui| {
-        ui.label(
-            RichText::new("Give this function a name that says what it does.").color(p.text_dim),
-        );
+    let is_function = vm.functions.find(d.address).is_some()
+        || vm.current.as_ref().is_some_and(|c| c.address == d.address);
+    let (title, intro) = if is_function {
+        (
+            "Rename function",
+            "Give this function a name that says what it does.",
+        )
+    } else {
+        (
+            "Rename / add label",
+            "Name this address. The name shows wherever the address is used.",
+        )
+    };
+    dialog_window(title, "kraken_rename").show(ctx, |ui| {
+        ui.label(RichText::new(intro).color(p.text_dim));
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Current name").size(12.0).color(p.text_dim));

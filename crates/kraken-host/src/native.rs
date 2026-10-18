@@ -73,7 +73,9 @@ impl NativeProbe {
         }
         if !self.worker {
             return Some(format!(
-                "its worker `kraken-native-worker` was not found next to this executable; build                  it with `{}` (or set KRAKEN_NATIVE_WORKER, or `native_in_process = true` in the                  configuration to run the decompiler unconfined inside this process)",
+                "its worker `kraken-native-worker` was not found next to this executable; build \
+                 it with `{}` (or set KRAKEN_NATIVE_WORKER, or `native_in_process = true` in the \
+                 configuration to run the decompiler unconfined inside this process)",
                 SETUP_COMMANDS[2]
             ));
         }
@@ -308,6 +310,16 @@ pub fn sources_dir() -> Option<PathBuf> {
     .filter(|p| p.is_file())
 }
 
+/// `binary_probe` for a person's tools (the GUI's import dialog) without a session: what
+/// `path` is and which engine of this machine should open it, under `cfg`. Blocking.
+pub fn probe_binary(
+    cfg: &crate::KrakenConfig,
+    path: &Path,
+) -> Result<kraken_registry::commands::BinaryProbeOut, ProtoError> {
+    let factory = crate::HostEngineFactory::new(cfg.clone());
+    kraken_registry::commands::probe_binary(&factory, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +505,78 @@ mod tests {
             panic!("expected instructions");
         };
         assert_eq!(cmds, SETUP_COMMANDS.map(String::from).to_vec());
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use std::path::{Path, PathBuf};
+
+    use kraken_registry::EngineKind;
+    use kraken_registry::commands::BinaryFormat;
+
+    use crate::KrakenConfig;
+
+    fn corpus(rel: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus")
+            .join(rel)
+    }
+
+    fn bare() -> KrakenConfig {
+        KrakenConfig {
+            ghidra_home: Some("/nonexistent/ghidra".into()),
+            java_home: Some("/nonexistent/jdk".into()),
+            ext_jar: Some("/nonexistent/k.jar".into()),
+            dotnet_root: Some("/nonexistent/kraken-dotnet".into()),
+            dotnet_ext: Some("/nonexistent/kraken-dotnet.dll".into()),
+            native_specs: Some("/nonexistent/specs".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_engine_is_listed_with_what_it_lacks() {
+        let out = super::probe_binary(&bare(), &corpus("bin/pie_list-O0")).unwrap();
+        assert_eq!(out.format, BinaryFormat::Elf);
+        let kinds: Vec<_> = out.engines.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            [EngineKind::Ghidra, EngineKind::Native, EngineKind::Dotnet]
+        );
+        let ghidra = &out.engines[0];
+        assert!(!ghidra.usable);
+        assert!(
+            ghidra
+                .problem
+                .as_deref()
+                .is_some_and(|p| p.contains("kraken setup"))
+        );
+        let dotnet = &out.engines[2];
+        assert!(!dotnet.usable && dotnet.problem.is_some());
+        // Nothing is installed in this configuration, so the problem names the engine.
+        assert!(out.problem.is_some());
+    }
+
+    #[test]
+    fn pe_dotnet_and_text_files_get_the_right_engine() {
+        let pe =
+            super::probe_binary(&bare(), &corpus("pe/bin/win_tls-x64-O2-stripped.exe")).unwrap();
+        assert_eq!(pe.format, BinaryFormat::Pe);
+        assert_eq!(pe.arch.as_deref(), Some("x86-64"));
+        assert_eq!(pe.recommended_engine, Some(EngineKind::Ghidra));
+        assert!(pe.recommended_reason.contains("auto picked Ghidra"));
+
+        let net = super::probe_binary(&bare(), &corpus("dotnet/bin/kraken-corpus.dll")).unwrap();
+        assert_eq!(net.format, BinaryFormat::Dotnet);
+        assert_eq!(net.recommended_engine, Some(EngineKind::Dotnet));
+        assert!(net.recommended_reason.contains("kraken setup --dotnet"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let txt = dir.path().join("readme.txt");
+        std::fs::write(&txt, "hello").unwrap();
+        let t = super::probe_binary(&bare(), &txt).unwrap();
+        assert_eq!(t.format, BinaryFormat::Unknown);
+        assert!(!t.supported);
     }
 }

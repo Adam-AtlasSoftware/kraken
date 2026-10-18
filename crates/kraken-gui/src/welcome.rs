@@ -1,13 +1,13 @@
 //! The screen shown when no project is open.
 
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::path::Path;
 
 use egui::{Align, Layout, RichText, Ui, vec2};
 use kraken_host::KrakenConfig;
 use kraken_registry::EngineChoice;
 use tokio::runtime::Handle;
 
+use crate::import::{Picked, Picker};
 use crate::recent::{self, RecentProject};
 use crate::style::{self, card, medium, pal};
 
@@ -18,11 +18,13 @@ pub enum Choice {
     Demo,
     /// An existing project folder.
     OpenProject(String),
-    /// A binary to start a project from, and the folder the project goes in.
+    /// A binary to start a project from, the folder the project goes in, the engine, and
+    /// whether to analyze it right away.
     NewProject {
         binary: String,
         project_dir: String,
         engine: EngineChoice,
+        analyze: bool,
     },
 }
 
@@ -31,34 +33,26 @@ pub enum Choice {
 pub enum WelcomeAction {
     /// Open or create a project.
     Choose(Choice),
+    /// Show the import dialog for this program.
+    Import(String),
     /// Remove a project from the recent list.
     Forget(String),
     /// Show the settings window.
     Settings,
 }
 
-enum Picked {
-    Folder(String),
-    Binary(String),
-    ProjectFolder(String),
-}
-
 pub struct Welcome {
     pub open_path: String,
     pub binary_path: String,
-    /// Folder of the project a new binary gets.
-    pub project_dir: String,
-    /// Engine for the new project; starts as the default from the settings.
+    /// Engine for a new project when the import dialog has no recommendation; starts as the
+    /// default from the settings.
     pub engine: EngineChoice,
-    /// The person typed or chose the folder, so a new binary no longer overwrites it.
-    dir_edited: bool,
     /// Why the last attempt failed.
     pub error: Option<String>,
     /// Set while a project is being opened.
     pub busy: Option<String>,
     cfg: KrakenConfig,
-    tx: Sender<Picked>,
-    rx: Receiver<Picked>,
+    picker: Picker,
 }
 
 impl Default for Welcome {
@@ -140,104 +134,30 @@ pub fn project_dir_problem(dir: &str) -> Option<String> {
 
 impl Welcome {
     pub fn new(cfg: KrakenConfig) -> Self {
-        let (tx, rx) = channel();
         Welcome {
             open_path: String::new(),
             binary_path: String::new(),
-            project_dir: String::new(),
             engine: cfg.engine.unwrap_or_default(),
-            dir_edited: false,
             error: None,
             busy: None,
             cfg,
-            tx,
-            rx,
+            picker: Picker::default(),
         }
     }
 
-    fn pick(&self, rt: &Handle, ctx: &egui::Context, what: PickWhat) {
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let start: Option<PathBuf> = match what {
-            PickWhat::ProjectFolder => kraken_host::projects_root(&self.cfg).ok().map(|root| {
-                // The dialog cannot open a folder that does not exist yet.
-                if root.is_dir() {
-                    root
-                } else {
-                    root.parent().map(Path::to_path_buf).unwrap_or(root)
-                }
-            }),
-            _ => None,
-        };
-        rt.spawn(async move {
-            let msg = match what {
-                PickWhat::OpenFolder => rfd::AsyncFileDialog::new()
-                    .set_title("Open a KRAKEN project folder")
-                    .pick_folder()
-                    .await
-                    .map(|h| Picked::Folder(h.path().to_string_lossy().into_owned())),
-                PickWhat::Binary => rfd::AsyncFileDialog::new()
-                    .set_title("Choose a program to analyze")
-                    .pick_file()
-                    .await
-                    .map(|h| Picked::Binary(h.path().to_string_lossy().into_owned())),
-                PickWhat::ProjectFolder => {
-                    let mut d =
-                        rfd::AsyncFileDialog::new().set_title("Where should the project be saved?");
-                    if let Some(s) = &start {
-                        d = d.set_directory(s);
-                    }
-                    d.pick_folder()
-                        .await
-                        .map(|h| Picked::ProjectFolder(h.path().to_string_lossy().into_owned()))
-                }
-            };
-            if let Some(m) = msg {
-                let _ = tx.send(m);
-                ctx.request_repaint();
-            }
-        });
-    }
-
-    /// Uses `binary` for a new project and suggests a folder for it.
-    pub fn set_binary(&mut self, binary: String) {
-        if !self.dir_edited || self.project_dir.trim().is_empty() {
-            self.project_dir = default_project_dir(&self.cfg, &binary);
-            self.dir_edited = false;
-        }
-        self.binary_path = binary;
-    }
-
-    fn drain_picks(&mut self) {
-        while let Ok(p) = self.rx.try_recv() {
+    /// Takes the answers of file dialogs; a chosen program goes straight to the import dialog.
+    fn drain_picks(&mut self, actions: &mut Vec<WelcomeAction>) {
+        for p in self.picker.drain() {
             match p {
-                Picked::Folder(f) => self.open_path = f,
-                Picked::Binary(b) => self.set_binary(b),
-                Picked::ProjectFolder(dir) => {
-                    // A chosen existing folder holds the project in a sub-folder named for the
-                    // program, unless it is empty.
-                    let chosen = Path::new(&dir);
-                    let empty = std::fs::read_dir(chosen).is_ok_and(|mut e| e.next().is_none());
-                    self.project_dir = if empty || self.binary_path.trim().is_empty() {
-                        dir
-                    } else {
-                        let name = Path::new(self.binary_path.trim())
-                            .file_name()
-                            .map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
-                        chosen.join(name).to_string_lossy().into_owned()
-                    };
-                    self.dir_edited = true;
+                Picked::Project(f) => self.open_path = f,
+                Picked::Binary(b) => {
+                    self.binary_path = b.clone();
+                    actions.push(WelcomeAction::Import(b));
                 }
+                Picked::Location(_) => {}
             }
         }
     }
-}
-
-#[derive(Clone, Copy)]
-enum PickWhat {
-    OpenFolder,
-    Binary,
-    ProjectFolder,
 }
 
 /// The "Try the demo" card; the main button when the person is new.
@@ -273,11 +193,11 @@ pub fn show(
     recents: &[RecentProject],
     now_ms: u64,
 ) -> Vec<WelcomeAction> {
-    w.drain_picks();
+    let mut actions = Vec::new();
+    w.drain_picks(&mut actions);
     let p = pal(ui);
     let s = style::status(style::dark(ui));
     let ctx = ui.ctx().clone();
-    let mut actions = Vec::new();
     let busy = w.busy.is_some();
     // Nothing opened before: point a newcomer at the demo first.
     let first_run = recents.is_empty();
@@ -329,7 +249,7 @@ pub fn show(
                         ui.set_width(ui.available_width());
                         ui.label(medium("New project from a program", 16.0).color(p.text_strong));
                         ui.label(
-                            RichText::new("Pick an executable (ELF, PE or Mach-O). KRAKEN loads it and finds the functions.")
+                            RichText::new("Pick an executable or library (ELF, PE, Mach-O or .NET). KRAKEN looks at it first and tells you what it found. You can also drop a file on this window.")
                                 .color(p.text_dim),
                         );
                         ui.add_space(6.0);
@@ -337,57 +257,33 @@ pub fn show(
                             ui.add(
                                 egui::TextEdit::singleline(&mut w.binary_path)
                                     .hint_text("Path to the program")
-                                    .desired_width(ui.available_width() - 90.0),
-                            );
-                            if ui.button("Browse...").clicked() {
-                                w.pick(rt, &ctx, PickWhat::Binary);
-                            }
-                        });
-                        ui.add_space(4.0);
-                        ui.label(RichText::new("Save the project in").size(12.0).color(p.text_dim));
-                        ui.horizontal(|ui| {
-                            let r = ui.add(
-                                egui::TextEdit::singleline(&mut w.project_dir)
-                                    .hint_text("Folder for the project")
-                                    .desired_width(ui.available_width() - 90.0),
-                            );
-                            if r.changed() {
-                                w.dir_edited = true;
-                            }
-                            if ui.button("Choose...").clicked() {
-                                w.pick(rt, &ctx, PickWhat::ProjectFolder);
-                            }
-                        });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Engine").size(12.0).color(p.text_dim));
-                            engine_choice(ui, &mut w.engine);
-                        });
-                        ui.label(
-                            RichText::new(engine_help(w.engine)).size(12.0).color(p.text_dim),
-                        );
-                        let have_binary = !w.binary_path.trim().is_empty();
-                        let problem = have_binary.then(|| project_dir_problem(&w.project_dir)).flatten();
-                        if let Some(msg) = &problem {
-                            ui.label(RichText::new(msg).size(12.0).color(s.warning));
-                        }
-                        ui.add_space(4.0);
-                        let ready = !busy && have_binary && problem.is_none();
-                        ui.add_enabled_ui(ready, |ui| {
-                            if style::primary_button(ui, "Create project and analyze")
-                                .on_disabled_hover_text(if have_binary {
-                                    "Fix the folder problem above first."
-                                } else {
-                                    "Choose a program above first."
-                                })
+                                    .desired_width(ui.available_width() - 178.0),
+                            )
+                            .on_hover_text("Type or paste the path of the program, or use Browse");
+                            if ui
+                                .add_enabled(!busy, egui::Button::new("Browse..."))
+                                .on_hover_text("Choose a program to import  (Ctrl+O)")
+                                .on_disabled_hover_text("Wait until the project that is opening is ready.")
                                 .clicked()
                             {
-                                actions.push(WelcomeAction::Choose(Choice::NewProject {
-                                    binary: w.binary_path.trim().to_string(),
-                                    project_dir: w.project_dir.trim().to_string(),
-                                    engine: w.engine,
-                                }));
+                                w.picker.binary(rt, &ctx);
                             }
+                            let have_binary = !w.binary_path.trim().is_empty();
+                            ui.add_enabled_ui(!busy && have_binary, |ui| {
+                                if style::primary_button(ui, "Import...")
+                                    .on_hover_text("Look at the program and choose how to import it")
+                                    .on_disabled_hover_text(if busy {
+                                        "Wait until the project that is opening is ready."
+                                    } else {
+                                        "Choose a program first."
+                                    })
+                                    .clicked()
+                                {
+                                    actions.push(WelcomeAction::Import(
+                                        w.binary_path.trim().to_string(),
+                                    ));
+                                }
+                            });
                         });
                     });
                     ui.add_space(10.0);
@@ -403,11 +299,21 @@ pub fn show(
                                     .hint_text("Path to the project folder")
                                     .desired_width(ui.available_width() - 178.0),
                             );
-                            if ui.button("Browse...").clicked() {
-                                w.pick(rt, &ctx, PickWhat::OpenFolder);
+                            if ui
+                                .button("Browse...")
+                                .on_hover_text("Choose a KRAKEN project folder  (Ctrl+Shift+O)")
+                                .clicked()
+                            {
+                                let start = kraken_host::projects_root(&w.cfg).ok();
+                                w.picker.project(rt, &ctx, start);
                             }
                             ui.add_enabled_ui(!busy && !w.open_path.trim().is_empty(), |ui| {
-                                if ui.button("Open").clicked() {
+                                if ui
+                                    .button("Open")
+                                    .on_hover_text("Open this project folder")
+                                    .on_disabled_hover_text("Type or choose a project folder first.")
+                                    .clicked()
+                                {
                                     actions.push(WelcomeAction::Choose(Choice::OpenProject(
                                         w.open_path.trim().to_string(),
                                     )));
@@ -468,7 +374,11 @@ pub fn show(
                                 .size(12.5)
                                 .color(p.text_dim),
                         );
-                        if ui.small_button("Settings (Ctrl+,)").clicked() {
+                        if ui
+                            .small_button("Settings (Ctrl+,)")
+                            .on_hover_text("Engine paths, theme, daemon status and setup")
+                            .clicked()
+                        {
                             actions.push(WelcomeAction::Settings);
                         }
                     });
@@ -501,20 +411,6 @@ mod tests {
         std::fs::write(Path::new(&first).join("x"), b"1").unwrap();
         let second = default_project_dir(&cfg, "/other/ls");
         assert_eq!(Path::new(&second), tmp.path().join("ls-2"));
-    }
-
-    #[test]
-    fn picking_a_binary_suggests_a_folder_until_the_person_chooses_one() {
-        let tmp = crate::testutil::tempdir();
-        let mut w = Welcome::new(cfg_in(tmp.path()));
-        w.set_binary("/x/prog_a".into());
-        assert_eq!(Path::new(&w.project_dir), tmp.path().join("prog_a"));
-        w.set_binary("/x/prog_b".into());
-        assert_eq!(Path::new(&w.project_dir), tmp.path().join("prog_b"));
-        w.project_dir = "/mine".into();
-        w.dir_edited = true;
-        w.set_binary("/x/prog_c".into());
-        assert_eq!(w.project_dir, "/mine", "a chosen folder is kept");
     }
 
     #[test]

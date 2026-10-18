@@ -112,7 +112,12 @@ impl ListingSource for Source<'_> {
     }
 }
 
-pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
+pub fn show(
+    ui: &mut Ui,
+    vm: &mut ViewModel,
+    st: &mut PanelState,
+    assist: &mut crate::assist::AssistUi,
+) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
     st.front = Some(Tab::Listing);
@@ -223,7 +228,18 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
     if let Some(li) = out.row_hovered
         && let Some(i) = row_of_line(li)
     {
-        st.hot = Some(vm.views.listing.rows[i].address);
+        let row = &vm.views.listing.rows[i];
+        st.hot = Some(row.address);
+        let ops: String = row.operands.iter().map(|o| o.text.as_str()).collect();
+        let text = format!("{} {ops}", row.mnemonic);
+        crate::assist::capture_instruction_at(
+            ui,
+            ui.max_rect(),
+            row.address,
+            &text,
+            vm.views.listing.function,
+            assist,
+        );
     }
     if let Some((_, target)) = out.target_hovered {
         st.hot = Some(target);

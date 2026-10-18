@@ -12,7 +12,7 @@ use engine_dotnet::{
 use engine_ghidra::{EngineConfig, GhidraEngine, GhidraInstall, InstallConfig, SidecarEvent};
 use kraken_engine::SharedEngine;
 use kraken_proto::{ErrorCode, ProtoError};
-use kraken_registry::{EngineChoice, EngineFactory, EngineKind, EngineSelection};
+use kraken_registry::{EngineChoice, EngineFactory, EngineKind, EngineSelection, EngineStatus};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -512,6 +512,27 @@ impl EngineFactory for HostEngineFactory {
             (self.native.probe(), crate::native::binary_fit(binary))
         };
         self.select_with(binary, choice, &probe, &fit)
+    }
+
+    fn engine_status(&self) -> Vec<EngineStatus> {
+        let status = |kind, problem: Option<String>| EngineStatus {
+            kind,
+            usable: problem.is_none(),
+            problem,
+        };
+        let ghidra = GhidraInstall::discover(&self.ghidra.install_config())
+            .err()
+            .map(|e| {
+                let mut msg = ProtoError::from(e).message;
+                msg.push_str("; run `kraken setup` to download Ghidra and a JDK");
+                msg
+            });
+        let dotnet = self.dotnet.engine_config().err().map(|e| e.message);
+        vec![
+            status(EngineKind::Ghidra, ghidra),
+            status(EngineKind::Native, self.native.probe().problem()),
+            status(EngineKind::Dotnet, dotnet),
+        ]
     }
 
     async fn create_kind(

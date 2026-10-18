@@ -126,6 +126,11 @@ pub struct ViewModel {
     job_watch: JobWatch,
     /// The Rewrite tab: plan, jobs, generated Rust, spec and export.
     pub rewrite: crate::rewrite::RewriteState,
+    /// What agents did lately, for the status bar.
+    pub agent_activity: crate::activity::AgentActivity,
+    focus_request: Option<String>,
+    /// Go to, Search, Bookmarks, the type and function dialogs and generated command forms.
+    pub tools: crate::navtools::NavTools,
 }
 
 /// Bookkeeping of the analysis fallback poll (see [`ViewModel::watch_analysis`]).
@@ -261,6 +266,11 @@ pub fn validate_name(input: &str, old_name: &str) -> Result<String, String> {
 }
 
 impl ViewModel {
+    /// The runtime the calls run on, for dialogs the window opens (a folder chooser).
+    pub fn runtime_handle(&self) -> Handle {
+        self.rt.clone()
+    }
+
     /// Creates a view-model over `backend`; calls run on `rt`.
     pub fn new(backend: Arc<dyn Backend>, rt: Handle) -> Self {
         let (tx, rx) = channel();
@@ -301,6 +311,9 @@ impl ViewModel {
                 inflight: false,
             },
             rewrite: crate::rewrite::RewriteState::default(),
+            agent_activity: crate::activity::AgentActivity::default(),
+            focus_request: None,
+            tools: crate::navtools::NavTools::default(),
         };
         vm.start_event_forwarder();
         vm
@@ -363,16 +376,17 @@ impl ViewModel {
 
     // ---------------------------------------------------------------- plumbing
 
-    pub(crate) fn call<F>(&mut self, command: &'static str, args: Value, apply: F)
+    pub(crate) fn call<F>(&mut self, command: impl Into<String>, args: Value, apply: F)
     where
         F: FnOnce(&mut ViewModel, Result<Value, ProtoError>) + Send + 'static,
     {
         self.pending += 1;
+        let command = command.into();
         let backend = self.backend.clone();
         let tx = self.tx.clone();
         let repaint = self.repaint.clone();
         self.rt.spawn(async move {
-            let res = backend.call(command, args).await;
+            let res = backend.call(&command, args).await;
             let _ = tx.send(Msg {
                 counted: true,
                 apply: Box::new(move |vm| apply(vm, res)),
@@ -511,6 +525,9 @@ impl ViewModel {
         self.dismiss_toast(id);
         match action {
             Some(ToastAction::UndoRun { run_id }) => self.undo_run(run_id),
+            Some(ToastAction::OpenHistory) => {
+                self.tools.request_tab(crate::navtools::NavTab::History);
+            }
             None => {}
         }
     }
@@ -548,6 +565,7 @@ impl ViewModel {
         self.detail_seq += 1;
         self.decompile_seq += 1;
         self.views.reset();
+        self.tools = crate::navtools::NavTools::default();
     }
 
     /// Opens the project in `dir`.
@@ -664,6 +682,9 @@ impl ViewModel {
         self.refresh_proposals();
         self.refresh_tainted();
         self.refresh_current();
+        if self.tools.bookmarks.loaded {
+            self.refresh_bookmarks();
+        }
     }
 
     /// Status bar text for the current state.
@@ -759,7 +780,8 @@ impl ViewModel {
         });
     }
 
-    fn on_event(&mut self, ev: BackendEvent) {
+    /// Applies one backend event, as [`poll`](Self::poll) does for the ones it receives.
+    pub fn on_event(&mut self, ev: BackendEvent) {
         match ev {
             BackendEvent::Job(info) => {
                 self.rewrite_on_job(&info);
@@ -767,12 +789,14 @@ impl ViewModel {
             }
             BackendEvent::ProjectChanged => self.refresh_after_edit(),
             BackendEvent::EntryApplied(change) => {
+                self.agent_activity.applied(&change, Instant::now());
                 self.refresh_after_edit();
                 if change.by_agent {
                     self.announce_agent_edit(change);
                 }
             }
             BackendEvent::ProposalCreated(change) => {
+                self.agent_activity.proposed(&change, Instant::now());
                 self.refresh_proposals();
                 self.refresh_project();
                 self.refresh_history();
@@ -810,6 +834,28 @@ impl ViewModel {
                 self.toast(ToastLevel::Info, text);
                 self.refresh_all();
             }
+            BackendEvent::JobStarted(change) => {
+                self.agent_activity.job_started(&change, Instant::now());
+            }
+            BackendEvent::Navigate {
+                address,
+                tab,
+                author,
+            } => {
+                if self.connection == Connection::Open {
+                    self.navigate_to(address);
+                    self.focus_request = Some(tab.unwrap_or_else(|| "decompiler".into()));
+                    let who = if author.is_empty() {
+                        "An agent".to_string()
+                    } else {
+                        format!("Agent {author}")
+                    };
+                    self.toast(
+                        ToastLevel::Info,
+                        format!("{who} is showing you {address:#x}."),
+                    );
+                }
+            }
             BackendEvent::SessionOpened | BackendEvent::SessionClosed(_) => {}
             BackendEvent::Disconnected(why) => {
                 if self.link == LinkState::Connected {
@@ -829,6 +875,12 @@ impl ViewModel {
                 }
             }
         }
+    }
+
+    /// The tab an agent asked the window to focus with `gui_navigate`, once. The window maps the
+    /// name (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`) to a tab.
+    pub fn take_focus_request(&mut self) -> Option<String> {
+        self.focus_request.take()
     }
 
     /// Looks the agent's new log entries up and tells the person what changed, with an Undo.
@@ -1246,7 +1298,10 @@ impl ViewModel {
             .filter(|r| r.address == address && !r.submitting)
         {
             r.versions = Some(d.versions);
-            r.old_name = d.function.name.0;
+            // An address inside a function names a label, not the function around it.
+            if d.function.address.0 == address {
+                r.old_name = d.function.name.0;
+            }
         }
     }
 
@@ -1333,7 +1388,7 @@ impl ViewModel {
         }
     }
 
-    fn toast_mutation(&mut self, m: &MutationWire, done: &str, what: &str) {
+    pub(crate) fn toast_mutation(&mut self, m: &MutationWire, done: &str, what: &str) {
         match m.status.as_str() {
             "queued" => self.toast(
                 ToastLevel::Info,
@@ -1652,12 +1707,7 @@ impl ViewModel {
         match item.target {
             PaletteTarget::Action(a) => self.perform(a),
             PaletteTarget::Command(name) => {
-                self.toast(
-                    ToastLevel::Info,
-                    format!(
-                        "`{name}` has no form in the GUI yet. Run it from the command line or let the assistant call it."
-                    ),
-                );
+                self.open_command_form(&name);
                 None
             }
         }
@@ -1675,6 +1725,21 @@ impl ViewModel {
                 | AppAction::Forward
                 | AppAction::RenameCurrent
                 | AppAction::CommentCurrent
+                | AppAction::CloseProject
+                | AppAction::GoToMain
+                | AppAction::ExplainProgram
+                | AppAction::RewriteWizard
+                | AppAction::Automate
+                | AppAction::GoTo
+                | AppAction::Search
+                | AppAction::Retype
+                | AppAction::EditSignature
+                | AppAction::CommentHere
+                | AppAction::ShowReferences
+                | AppAction::AddBookmark
+                | AppAction::ShowBookmarks
+                | AppAction::CreateFunctionHere
+                | AppAction::DeleteFunction
         );
         if needs_project && self.connection != Connection::Open {
             self.toast(ToastLevel::Info, "Open a project first.");
@@ -1683,7 +1748,7 @@ impl ViewModel {
         match action {
             AppAction::Analyze => self.start_analysis(),
             AppAction::CancelAnalysis => self.cancel_analysis(),
-            AppAction::UndoLast => self.undo_last(),
+            AppAction::UndoLast => self.undo_last_described(),
             AppAction::RefreshAll => self.refresh_all(),
             AppAction::Back => self.go_back(),
             AppAction::Forward => self.go_forward(),
@@ -1697,8 +1762,73 @@ impl ViewModel {
             AppAction::NewProject => return Some(UiRequest::NewProject),
             AppAction::OpenDemo => return Some(UiRequest::OpenDemo),
             AppAction::OpenSettings => return Some(UiRequest::OpenSettings),
+            AppAction::CloseProject => return Some(UiRequest::CloseProject),
+            AppAction::ClearRecent => return Some(UiRequest::ClearRecent),
+            AppAction::Quit => return Some(UiRequest::Quit),
+            AppAction::OpenPalette => self.open_palette(),
+            AppAction::ToggleLearnMode => self.assist.learn_mode = !self.assist.learn_mode,
+            AppAction::ShowShortcuts => return Some(UiRequest::ShowShortcuts),
+            AppAction::OpenDocs => return Some(UiRequest::OpenDocs),
+            AppAction::GoToMain => self.go_to_main(),
+            AppAction::ExplainProgram => self.assist_overview(),
+            AppAction::RewriteWizard => self.rewrite_wizard_open(),
+            AppAction::Automate => return Some(UiRequest::OpenAutomate),
+            AppAction::GoTo => self.open_goto(),
+            AppAction::Search => self.open_search(),
+            AppAction::Retype => self.begin_retype_here(),
+            AppAction::EditSignature => self.begin_edit_signature_current(),
+            AppAction::CommentHere => self.begin_comment_here(),
+            AppAction::ShowReferences => self.references_to_cursor(),
+            AppAction::AddBookmark => self.begin_bookmark_here(),
+            AppAction::ShowBookmarks => self.show_bookmarks(),
+            AppAction::CreateFunctionHere => self.begin_create_function_here(),
+            AppAction::DeleteFunction => self.begin_delete_current(),
         }
         None
+    }
+
+    /// The function to open first: `main`, else the entry point, else the first function.
+    pub fn main_function(&self) -> Option<u64> {
+        let items = &self.functions.items;
+        items
+            .iter()
+            .find(|f| f.name == "main")
+            .or_else(|| {
+                items
+                    .iter()
+                    .find(|f| matches!(f.name.as_str(), "_main" | "wmain" | "WinMain"))
+            })
+            .or_else(|| {
+                items
+                    .iter()
+                    .find(|f| matches!(f.name.as_str(), "entry" | "_start" | "start"))
+            })
+            .or_else(|| items.first())
+            .map(|f| f.address)
+    }
+
+    /// Opens [`main_function`](Self::main_function).
+    pub fn go_to_main(&mut self) {
+        match self.main_function() {
+            Some(addr) => self.navigate_to(addr),
+            None => self.toast(
+                ToastLevel::Info,
+                "No functions yet. Run Analyze to find them.",
+            ),
+        }
+    }
+
+    /// Asks the backend to release the open project (the daemon stops its engine). The answer
+    /// is not waited for: the window drops this view-model right after.
+    pub fn close_project(&mut self) {
+        if self.connection != Connection::Open {
+            return;
+        }
+        let backend = self.backend.clone();
+        self.rt.spawn(async move {
+            let _ = backend.call("project_close", json!({})).await;
+        });
+        self.connection = Connection::NoProject;
     }
 
     /// Entity versions of the function being viewed, as sent with edits.

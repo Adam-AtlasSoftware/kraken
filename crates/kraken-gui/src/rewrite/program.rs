@@ -6,10 +6,11 @@ use egui::{Color32, Frame, Margin, RichText, Sense, Ui, vec2};
 use kraken_gui_widgets::Palette;
 use kraken_viewmodel::ViewModel;
 use kraken_viewmodel::rewrite::{
-    DiffKind, DiffLine, MAX_REPAIR_ROUNDS, ProgramCaseItem, ProgramFunctionItem, ProgramRepairItem,
-    ProgramRunDetail, UnitStatus, status_explain, verdict_line,
+    DiffKind, DiffLine, MAX_REPAIR_ROUNDS, ProgramCaseItem, ProgramFunctionItem, ProgramInput,
+    ProgramRepairItem, ProgramRunDetail, UnitStatus, status_explain, verdict_line,
 };
 
+use super::browse::{FolderField, Purpose, folder_field};
 use super::{chip_button, status_color};
 use crate::style::{self, chip, empty_state, medium, pal, primary_button};
 use crate::workspace::Tab;
@@ -50,6 +51,7 @@ pub(super) fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut ProgramUi, front: 
     vm.rewrite_program_ensure_loaded();
     let mut acts = ProgramActs::default();
     toolbar(ui, vm, &mut acts);
+    options(ui, vm);
     if let Some(note) = &vm.rewrite.program.declined {
         let s = style::status(style::dark(ui));
         ui.label(RichText::new(note).size(12.0).color(s.warning));
@@ -64,6 +66,154 @@ pub(super) fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut ProgramUi, front: 
         Some(d) => run_view(ui, vm, st, &d, &mut acts),
     }
     apply(vm, acts, front);
+}
+
+/// Output folder, the per-function check and the test cases, folded away until wanted.
+pub(super) fn options(ui: &mut Ui, vm: &mut ViewModel) {
+    let p = pal(ui);
+    let running = vm.rewrite_program_running();
+    let typed = vm
+        .rewrite
+        .program
+        .inputs
+        .iter()
+        .filter(|i| !i.is_blank())
+        .count();
+    let summary = format!(
+        "Options: {typed} test case{}, {}{}",
+        if typed == 1 { "" } else { "s" },
+        if vm.rewrite.program.output_dir.trim().is_empty() {
+            "default folder"
+        } else {
+            "own folder"
+        },
+        if vm.rewrite.program.verify_functions {
+            ""
+        } else {
+            ", functions not checked one by one"
+        },
+    );
+    egui::CollapsingHeader::new(RichText::new(summary).size(12.5).color(p.text))
+        .id_salt("kraken_program_options")
+        .show(ui, |ui| {
+            ui.label(RichText::new("Folder for the Rust crate").size(12.0).color(p.text_dim));
+            let check = vm.rewrite_program_dir_check();
+            let mut dir = vm.rewrite.program.output_dir.clone();
+            folder_field(
+                ui,
+                vm,
+                &mut dir,
+                check.as_ref(),
+                !running,
+                &FolderField {
+                    id: "kraken_program_dir",
+                    hint: "rewrite-program (inside the project)",
+                    purpose: Purpose::Program,
+                    title: "Where should the Rust crate be written?",
+                    tip: "Leave empty for the folder rewrite-program inside the project. The folder must be empty, or an earlier whole-program rewrite.",
+                },
+            );
+            vm.rewrite.program.output_dir = dir;
+            ui.add_space(4.0);
+            ui.add_enabled(
+                !running,
+                egui::Checkbox::new(
+                    &mut vm.rewrite.program.verify_functions,
+                    "Check every function too",
+                ),
+            )
+            .on_hover_text(
+                "Besides comparing the whole programs, test each function on its own against the original. Slower, but a failure then points at one function. Turn it off to only compile the functions and rely on the whole-program comparison.",
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new("Test cases").size(12.0).color(p.text_dim))
+                .on_hover_text("Each case starts both programs with the arguments and input you give, and compares what they print and how they end.");
+            inputs_editor(ui, vm, running);
+        });
+}
+
+/// The rows of test cases: name, arguments, standard input, and a button to remove the row.
+pub(crate) fn inputs_editor(ui: &mut Ui, vm: &mut ViewModel, locked: bool) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    ui.label(
+        RichText::new(
+            "KRAKEN also runs a baseline case and generated ones. Add your own for what matters to you: how the program is started, and what it reads.",
+        )
+        .size(11.5)
+        .color(p.text_dim),
+    );
+    let mut remove = None;
+    let mut add = false;
+    ui.add_enabled_ui(!locked, |ui| {
+        egui::Grid::new("kraken_program_inputs")
+            .num_columns(4)
+            .spacing([6.0, 4.0])
+            .show(ui, |ui| {
+                if !vm.rewrite.program.inputs.is_empty() {
+                    for h in ["Name", "Arguments", "Standard input", ""] {
+                        ui.label(RichText::new(h).size(11.5).color(p.text_dim));
+                    }
+                    ui.end_row();
+                }
+                for (i, row) in vm.rewrite.program.inputs.iter_mut().enumerate() {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut row.name)
+                            .id_salt(("rw_in_name", i))
+                            .hint_text("short-run")
+                            .desired_width(110.0),
+                    )
+                    .on_hover_text("A short label for this case in the report.");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut row.args)
+                            .id_salt(("rw_in_args", i))
+                            .hint_text("-v --count 3")
+                            .desired_width(170.0),
+                    )
+                    .on_hover_text(
+                        "What follows the program's name on the command line. Quotes group words: \"two words\".",
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut row.stdin)
+                            .id_salt(("rw_in_stdin", i))
+                            .hint_text("text the program reads")
+                            .desired_width(170.0),
+                    )
+                    .on_hover_text(
+                        "Text written to the program's standard input, what it would read if you typed. Leave empty for none.",
+                    );
+                    if ui
+                        .small_button("Remove")
+                        .on_hover_text("Delete this test case.")
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+        let full = vm.rewrite.program.inputs.len() >= kraken_registry::commands::MAX_USER_CASES;
+        if ui
+            .add_enabled(!full, egui::Button::new("Add a test case"))
+            .on_hover_text(if full {
+                "The most test cases a run takes is reached."
+            } else {
+                "Add a row: a name, the arguments to start the program with, and the text it should read."
+            })
+            .clicked()
+        {
+            add = true;
+        }
+    });
+    if let Some(i) = remove {
+        vm.rewrite.program.inputs.remove(i);
+    }
+    if add {
+        vm.rewrite.program.inputs.push(ProgramInput::default());
+    }
+    if let Some(why) = vm.rewrite_program_inputs_problem() {
+        ui.label(RichText::new(why).size(12.0).color(s.danger));
+    }
 }
 
 fn apply(vm: &mut ViewModel, acts: ProgramActs, front: &mut Option<Tab>) {
@@ -283,21 +433,7 @@ fn crate_row(ui: &mut Ui, d: &ProgramRunDetail) {
             return;
         }
         ui.label(RichText::new(&d.crate_dir).monospace().size(12.0).color(p.text_strong));
-        if ui
-            .small_button("Copy path")
-            .on_hover_text("Copy the folder of the generated crate.")
-            .clicked()
-        {
-            ui.ctx().copy_text(d.crate_dir.clone());
-        }
-        if ui
-            .small_button("Open folder")
-            .on_hover_text("Open the crate in the file manager. Read the code before you trust it: it is the model's.")
-            .clicked()
-        {
-            ui.ctx()
-                .open_url(egui::OpenUrl::new_tab(format!("file://{}", d.crate_dir)));
-        }
+        super::browse::open_buttons(ui, &d.crate_dir);
         if d.built {
             chip(ui, "built", style::status(style::dark(ui)).success)
                 .on_hover_text("The crate was built in the sandbox with cargo.");

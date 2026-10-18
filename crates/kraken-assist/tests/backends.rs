@@ -868,3 +868,69 @@ async fn the_rewrite_table_overrides_the_provider_and_either_may_be_a_terminal_a
     assert_eq!(r.provider.id, "wrapped");
     backend.close();
 }
+
+#[tokio::test]
+async fn automate_on_a_terminal_agent_may_use_only_the_tools_of_its_goal() {
+    use kraken_assist::AutomateGoal;
+    let rig = rig().await;
+    let ask = |goal| {
+        let rig = &rig;
+        async move {
+            let task = Task::automate(&rig.registry, goal);
+            let (t, _) = run_on(rig, acp(rig, &[]), task).await;
+            assert_eq!(t.stop, StopReason::Completed, "{:?}", t.error);
+            t.text
+        }
+    };
+    let understand = ask(AutomateGoal::Understand).await;
+    assert!(
+        understand.contains("(rewrite_program denied)"),
+        "{understand}"
+    );
+    assert!(
+        understand.contains("(rewrite_accept denied)"),
+        "{understand}"
+    );
+    let both = ask(AutomateGoal::Both).await;
+    assert!(both.contains("(rewrite_program allowed)"), "{both}");
+    assert!(
+        both.contains("(rewrite_accept denied)"),
+        "accepting stays the person's: {both}"
+    );
+}
+
+#[tokio::test]
+async fn automate_on_a_model_api_exposes_the_same_tools() {
+    use kraken_assist::AutomateGoal;
+    let rig = rig().await;
+    let a = Assistant::with_engine(
+        rig.registry.clone(),
+        rig.backend.clone(),
+        Arc::new(ApiBackend::new(Arc::new(ReplayProvider::scripted(vec![
+            say("Nothing to do."),
+        ])))),
+    );
+    let names = |goal| -> Vec<String> {
+        use kraken_agent::ToolHost;
+        a.host_for(&Task::automate(&rig.registry, goal))
+            .tools()
+            .into_iter()
+            .map(|t| t.name)
+            .collect()
+    };
+    let understand = names(AutomateGoal::Understand);
+    assert!(understand.contains(&"apply_edits".to_string()));
+    assert!(!understand.contains(&"rewrite_program".to_string()));
+    let rewrite = names(AutomateGoal::Rewrite);
+    for t in ["rewrite_plan", "rewrite_program", "rewrite_export"] {
+        assert!(rewrite.contains(&t.to_string()), "{t}");
+    }
+    for t in [
+        "rewrite_accept",
+        "proposal_accept",
+        "undo_run",
+        "project_create",
+    ] {
+        assert!(!rewrite.contains(&t.to_string()), "{t}");
+    }
+}

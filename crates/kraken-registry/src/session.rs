@@ -73,6 +73,28 @@ pub trait EngineFactory: Send + Sync {
             reason: "this build has a single engine".into(),
         })
     }
+
+    /// Each engine this factory can build and whether it can run on this machine (for
+    /// `binary_probe`). Reads the file system, so call it off the async threads.
+    fn engine_status(&self) -> Vec<EngineStatus> {
+        vec![EngineStatus {
+            kind: EngineKind::Ghidra,
+            usable: true,
+            problem: None,
+        }]
+    }
+}
+
+/// Whether one engine can run here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EngineStatus {
+    /// The engine.
+    pub kind: EngineKind,
+    /// True when it is installed and can start.
+    pub usable: bool,
+    /// What is missing and how to get it, when it cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
 }
 
 /// What the person asked for when creating a project: an engine, or `auto`.
@@ -82,7 +104,7 @@ pub enum EngineChoice {
     /// The Ghidra sidecar (JVM).
     #[default]
     Ghidra,
-    /// The JVM-free native engine (ELF only for now).
+    /// The JVM-free native engine (ELF and PE for x86 and x86-64, and AArch64 ELF).
     Native,
     /// Native when its library and compiled `.sla` files are available and it can open the
     /// binary, else Ghidra.
@@ -268,7 +290,7 @@ fn io_err(what: &str, path: &Path, e: std::io::Error) -> ProtoError {
     ProtoError::new(code, format!("{what} {}: {e}", path.display()))
 }
 
-fn hash_file(path: &Path) -> Result<String, ProtoError> {
+pub(crate) fn hash_file(path: &Path) -> Result<String, ProtoError> {
     let mut f = std::fs::File::open(path).map_err(|e| io_err("cannot read", path, e))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
@@ -726,6 +748,22 @@ impl Session {
     /// The current project's engine.
     pub fn engine(&self) -> Result<SharedEngine, ProtoError> {
         Ok(self.project()?.engine())
+    }
+
+    /// Detaches the current project: cancels its jobs, saves the engine's own state and drops
+    /// it. Returns the directory of the project that was open, if any.
+    pub async fn close_project(&self) -> Option<PathBuf> {
+        let project = self
+            .project
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()?;
+        self.jobs.cancel_all();
+        let _guard = project.write_lock.lock().await;
+        if let Some(m) = project.engine().mutator() {
+            let _ = m.save(&CancellationToken::new()).await;
+        }
+        Some(project.dir().to_path_buf())
     }
 
     fn attach(&self, project: Arc<Project>) {

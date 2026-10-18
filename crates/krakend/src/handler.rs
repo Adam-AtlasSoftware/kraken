@@ -220,6 +220,29 @@ fn events_for(
     result: &Value,
     ctx: &CallContext,
 ) -> Vec<(&'static str, Value)> {
+    if name == "gui_navigate" {
+        let mut ev = json!({"author_kind": ctx.author.kind, "author_id": ctx.author.id});
+        for k in ["address", "tab"] {
+            if let Some(v) = result.get(k) {
+                ev[k] = v.clone();
+            }
+        }
+        return vec![(event_kind::GUI_NAVIGATE, ev)];
+    }
+    if kind == CommandKind::Job && name != "job_cancel" {
+        let mut ev = json!({
+            "command": name,
+            "author_kind": ctx.author.kind,
+            "author_id": ctx.author.id,
+        });
+        if let Some(r) = &ctx.run_id {
+            ev["run_id"] = json!(r.0);
+        }
+        if let Some(id) = result.get("job_id") {
+            ev["job_id"] = id.clone();
+        }
+        return vec![(event_kind::JOB_STARTED, ev)];
+    }
     if kind != CommandKind::Mutation
         || matches!(
             name,
@@ -281,6 +304,20 @@ impl DaemonHandler {
             )
         })?;
         let spec = entry.spec().clone();
+        if p.command == "binary_probe" {
+            // About a file, not a project: no session is made for it. The command applies the
+            // agent path policy itself.
+            let ctx = context(&p, conn, &self.approvals, Path::new(&p.project_dir));
+            let session = kraken_registry::Session::new(self.host.factory().clone());
+            let result = registry
+                .call_json(&p.command, &session, &ctx, p.args.clone())
+                .await?;
+            return serde_json::to_value(CallResult {
+                result,
+                warnings: Vec::new(),
+            })
+            .map_err(|e| internal(format!("cannot encode the reply: {e}")));
+        }
         let dir = PathBuf::from(&p.project_dir);
         if !dir.is_absolute() {
             return Err(invalid(format!(
@@ -289,6 +326,9 @@ impl DaemonHandler {
             )));
         }
         let key = canonical_key(&dir)?;
+        if p.command == "project_close" {
+            return self.close_project(conn, &key).await;
+        }
         let mut ctx = context(&p, conn, &self.approvals, &key);
         let creating = matches!(p.command.as_str(), "project_create" | "project_open");
         let agent = conn.class == CredentialClass::Agent;
@@ -392,6 +432,28 @@ impl DaemonHandler {
         }
         serde_json::to_value(CallResult { result, warnings })
             .map_err(|e| internal(format!("cannot encode the reply: {e}")))
+    }
+
+    /// `project_close`: ends the daemon's session for `key` without opening it first. An agent
+    /// may close only a project it was allowed to work on.
+    async fn close_project(&self, conn: &ConnInfo, key: &Path) -> Result<Value, ProtoError> {
+        if conn.class == CredentialClass::Agent && !self.is_granted(key) {
+            return Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "an agent may close only a project it was allowed to work on",
+            ));
+        }
+        let closed = self.host.close_project(key).await;
+        let result = serde_json::to_value(kraken_registry::commands::ProjectCloseOut {
+            closed,
+            project_dir: closed.then(|| key.to_string_lossy().into_owned()),
+        })
+        .map_err(|e| internal(e.to_string()))?;
+        serde_json::to_value(CallResult {
+            result,
+            warnings: Vec::new(),
+        })
+        .map_err(|e| internal(format!("cannot encode the reply: {e}")))
     }
 
     fn set_gui_selection(&self, params: Value) -> Result<Value, ProtoError> {

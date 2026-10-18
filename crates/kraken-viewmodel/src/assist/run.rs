@@ -6,8 +6,9 @@ use kraken_agent::{
     AgentConfig, AgentEvent, ApprovalDecision, ApprovalHandle, Message, StopReason,
 };
 use kraken_assist::{
-    ASSISTANT_ID, AcpBackend, ApiBackend, AssistBackend, Assistant, AutoNameOptions, HostOptions,
-    Purpose, RegistryToolHost, RunSpec, SelectionKind, Task, TaskKind, TaskOutput, TaskResult,
+    ASSISTANT_ID, AcpBackend, ApiBackend, AssistBackend, Assistant, AutoNameOptions, AutomateGoal,
+    HostOptions, Purpose, RegistryToolHost, RunSpec, SelectionKind, Task, TaskKind, TaskOutput,
+    TaskResult,
 };
 use kraken_host::backend::CommandBackend;
 use kraken_proto::{Hex64, ProtoError, sanitize};
@@ -562,6 +563,28 @@ impl ViewModel {
         self.spawn_task(seq, engine, task, cancel);
     }
 
+    /// Starts the Automate task: the assistant works through the whole flow towards `goal`,
+    /// showing each step and tool call in the chat. Changes follow the usual rules (new names
+    /// apply, overwrites become proposals); anything that runs code asks first; accepting
+    /// rewrite results stays with the person.
+    pub fn assist_automate(&mut self, goal: AutomateGoal) {
+        let task = Task::automate(&self.assist.registry, goal);
+        let line = match goal {
+            AutomateGoal::Understand => "Automate: understand this program and name its functions",
+            AutomateGoal::Rewrite => "Automate: rewrite this program in Rust",
+            AutomateGoal::Both => "Automate: understand this program, then rewrite it in Rust",
+        };
+        let Some((seq, engine, cancel)) = self.assist_begin(
+            RunKind::Automate,
+            line.to_string(),
+            "Automate".to_string(),
+            None,
+        ) else {
+            return;
+        };
+        self.spawn_task(seq, engine, task, cancel);
+    }
+
     /// Asks the run in flight to stop.
     pub fn assist_stop(&mut self) {
         if let Some(run) = self.assist.run.as_mut() {
@@ -872,6 +895,13 @@ impl ViewModel {
             },
             // Not started from the GUI; whatever streamed stays as the answer.
             TaskKind::Custom => {}
+            TaskKind::Automate => {
+                self.refresh_all();
+                self.assist.items.push(ChatItem::Notice(
+                    "Automation finished. Review its changes in the History and Proposals tabs; accepting rewrite results is up to you in the Rewrite tab."
+                        .to_string(),
+                ));
+            }
             TaskKind::AutoName => {
                 drop_prose(&mut self.assist.items);
                 let review = build_review(self, &result);

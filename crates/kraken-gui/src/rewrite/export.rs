@@ -4,8 +4,8 @@
 use egui::{Align2, Key, RichText, vec2};
 use kraken_gui_widgets::KrakenTheme;
 use kraken_viewmodel::ViewModel;
-use kraken_viewmodel::rewrite::DirCheck;
 
+use super::browse::{FolderField, Purpose, folder_field, open_buttons};
 use crate::style::{self, medium, primary_button};
 
 /// Draws the dialog while it is open.
@@ -17,7 +17,6 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let p = KrakenTheme { dark }.palette();
     let s = style::status(dark);
     let check = vm.rewrite_export_check();
-    let project = vm.project.as_ref().map(|p| p.project_dir.clone());
     let running = vm.rewrite.exporting();
     let blocked = vm.rewrite.blocked_note().map(str::to_string);
     let mut dir = vm.rewrite.export.dir.clone();
@@ -53,35 +52,20 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             );
             ui.add_space(6.0);
             ui.label("Folder to write to");
-            ui.add_enabled_ui(!running, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut dir)
-                        .hint_text("rewrite-export")
-                        .desired_width(f32::INFINITY),
-                );
-            });
-            match (&check, &project) {
-                (DirCheck::Inside, Some(proj)) => {
-                    ui.label(
-                        RichText::new(format!("Inside your project ({proj})."))
-                            .size(11.5)
-                            .color(p.text_dim),
-                    );
-                }
-                (DirCheck::Outside, _) => {
-                    ui.label(
-                        RichText::new(
-                            "This folder is outside your project. KRAKEN will ask before writing there.",
-                        )
-                        .size(12.0)
-                        .color(s.warning),
-                    );
-                }
-                (DirCheck::Invalid(why), _) => {
-                    ui.label(RichText::new(why).size(12.0).color(s.danger));
-                }
-                _ => {}
-            }
+            folder_field(
+                ui,
+                vm,
+                &mut dir,
+                Some(&check),
+                !running,
+                &FolderField {
+                    id: "kraken_export_dir",
+                    hint: "rewrite-export",
+                    purpose: Purpose::Export,
+                    title: "Where should the Rust project be written?",
+                    tip: "A folder name inside your project, or a full path. It must be empty, or an earlier export.",
+                },
+            );
             ui.add_space(4.0);
             ui.add_enabled_ui(!running, |ui| {
                 ui.horizontal(|ui| {
@@ -172,6 +156,7 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                         ui.label(
                             RichText::new(r.symbols.join(", ")).monospace().size(11.5).color(p.text_dim),
                         );
+                        open_buttons(ui, &r.dir);
                     });
             }
             ui.add_space(8.0);

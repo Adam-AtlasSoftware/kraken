@@ -8,6 +8,7 @@
 - [Install](install.md)
 - [Getting started](getting-started.md)
 - [Concepts](concepts.md)
+- [Rewrite a program in Rust](rewrite.md)
 - [Connecting AI agents (MCP)](mcp.md)
 - [The built-in assistant (AI models and terminal agents)](assistant.md)
 - [Running a model on this computer](local-models.md)
