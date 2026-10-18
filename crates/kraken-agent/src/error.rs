@@ -23,4 +23,7 @@ pub enum AgentError {
     Cassette(String),
     #[error("cancelled")]
     Cancelled,
+    /// A call was refused because the work reached a limit (calls, estimated cost, daily budget).
+    #[error("{0}")]
+    Limit(String),
 }

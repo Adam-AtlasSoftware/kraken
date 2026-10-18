@@ -45,7 +45,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, History, Proposals, Assistant, Rewrite. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, History, Proposals, Assistant, Rewrite, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -97,6 +97,7 @@ Ask the assistant about the program, or let it do the work.
 | Explain this program | Ask the assistant what this program does |  |
 | Automate with the assistant... | Let the assistant understand, name and rewrite the program step by step |  |
 | Show the Assistant tab | Show the Assistant tab and bring it to the front. |  |
+| Show AI activity | See which AI work runs, on which model, what it has cost so far, and stop it |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 
 ### Help
@@ -306,6 +307,18 @@ How to use it:
 - Open Rewrite > Rewrite in Rust to start the step-by-step wizard.
 - Review each function's plan, translation and test result in this tab.
 - Accept the ones you trust, then export and build.
+
+### AI Activity
+
+Which AI work runs, on which model, what it has cost so far, and a Stop button for each.
+
+Every piece of AI work on this project shows here: rewrite jobs started from this window, from the command line or by an agent, and the assistant's runs in this window. Each row says which model it asks, who started it, how many model calls it made and an estimate of the cost. Terminal agents are billed by their own subscription; local models are free.
+
+How to use it:
+
+- Press Stop on a row to end that work. What it finished is kept.
+- Click the AI chip in the top bar to come here while work runs.
+- Set limits and a daily budget in Settings > AI.
 
 ## Keyboard shortcuts
 

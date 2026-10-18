@@ -115,6 +115,11 @@ impl JobReporter {
     pub fn cancel_token(&self) -> CancellationToken {
         self.entry.cancel.clone()
     }
+
+    /// The job's id.
+    pub fn id(&self) -> JobId {
+        self.entry.tx.borrow().id.clone()
+    }
 }
 
 #[derive(Default)]

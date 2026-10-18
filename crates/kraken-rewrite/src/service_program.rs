@@ -342,6 +342,7 @@ impl RewriteService {
         ctx: &CallContext,
         args: RewriteProgramArgs,
         job: &JobReporter,
+        ai: &crate::metering::JobAi,
     ) -> Result<RewriteProgramResult, ProtoError> {
         self.require_sandbox()?;
         let project = s.project()?;
@@ -519,7 +520,7 @@ impl RewriteService {
         };
 
         // 2. Translate, callees first.
-        let backend = self.backends.backend()?;
+        let backend = ai.backend()?;
         let provider_info = backend.provider_info();
         let defaults = DiffOptions::default();
         let opts = DiffOptions {

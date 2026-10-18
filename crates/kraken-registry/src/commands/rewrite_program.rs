@@ -104,6 +104,13 @@ pub struct RewriteProgramArgs {
     /// off). Each round re-translates the functions likeliest to cause the first differing case.
     #[serde(default)]
     pub repair_rounds: Option<u32>,
+    /// Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else
+    /// `[provider]`) or `assistant` (`[provider]`, the assistant's model).
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Use this model name instead of the configured one, for this run only (not saved).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// One function of a program rewrite.
@@ -405,6 +412,8 @@ impl Command for RewriteProgram {
                 "every input case needs a name, and arguments cannot contain NUL",
             ));
         }
+        super::rewrite::check_provider(args.provider.as_deref())?;
+        backend.check_budget()?;
         if args.accept_verified == Some(true) && ctx.author.kind != AuthorKind::User {
             return Err(ProtoError::new(
                 ErrorCode::RejectedHumanPriority,
@@ -444,11 +453,28 @@ impl Command for RewriteProgram {
         // command uses). A person typing the command at the CLI is the approval.
         if args.build.unwrap_or(true) && (ctx.needs_user_approval() || ctx.surface == Surface::Gui)
         {
+            let raw = serde_json::json!({
+                "provider": args.provider,
+                "model": args.model,
+                "max_attempts": args.max_attempts,
+                "repair_rounds": args.repair_rounds,
+            });
+            let summary = match backend.estimate(s, ctx, "rewrite_program", &raw).await {
+                Some(e) => format!(
+                    "{RUN_ORIGINAL_SUMMARY}. It also asks the model for every translation: {}",
+                    e.text().replace('\n', " ")
+                ),
+                None => format!(
+                    "{RUN_ORIGINAL_SUMMARY}. It also asks the model for every translation (up \
+                     to 3 requests per function, plus repair rounds); see `ai_usage` for what \
+                     it cost"
+                ),
+            };
             let decision = ctx
                 .approval
                 .request(ApprovalRequest {
                     command: "rewrite_program".into(),
-                    summary: RUN_ORIGINAL_SUMMARY.into(),
+                    summary,
                     args: serde_json::json!({ "run_original": true }),
                     author: ctx.author.clone(),
                     surface: ctx.surface,

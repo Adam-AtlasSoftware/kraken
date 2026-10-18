@@ -135,6 +135,10 @@ async fn rig(binary: &str, provider: Arc<dyn ChatProvider>) -> Rig {
 }
 
 async fn rig_with(binary: &str, backend: Arc<dyn AssistBackend>) -> Rig {
+    rig_source(binary, Arc::new(Source(backend))).await
+}
+
+async fn rig_source(binary: &str, source: Arc<dyn BackendSource>) -> Rig {
     let fx = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/fixtures")
         .join(format!("{binary}.json"));
@@ -144,7 +148,7 @@ async fn rig_with(binary: &str, backend: Arc<dyn AssistBackend>) -> Rig {
         .tempdir()
         .expect("tempdir");
     let service = Arc::new(RewriteService::new(
-        Arc::new(Source(backend)),
+        source,
         RewriteConfig {
             oracle: config(),
             ..RewriteConfig::default()
@@ -1400,4 +1404,64 @@ async fn pie_list_is_checked_function_by_function_and_as_a_program() {
     }
     assert_eq!(function(&out, "node_new")["check"], "compile_only");
     assert_eq!(out["verdict"]["verdict"], "pass");
+}
+
+/// A source with limits.
+struct Capped(Arc<dyn AssistBackend>, kraken_assist::AiLimits);
+
+impl BackendSource for Capped {
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
+        Ok(self.0.clone())
+    }
+
+    fn limits(&self) -> kraken_assist::AiLimits {
+        self.1.clone()
+    }
+}
+
+#[tokio::test]
+async fn a_call_cap_stops_a_program_rewrite_cleanly_and_keeps_what_it_finished() {
+    if !sandbox_available() {
+        return;
+    }
+    let provider: Arc<dyn ChatProvider> = Arc::new(ReferenceProvider::new(VM));
+    let source = Capped(
+        Arc::new(ApiBackend::new(provider)),
+        kraken_assist::AiLimits {
+            max_calls_per_run: Some(2),
+            ..kraken_assist::AiLimits::default()
+        },
+    );
+    let r = rig_source("switch_vm-O0", Arc::new(source)).await;
+    let err = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false, "max_attempts": 1}),
+        )
+        .await
+        .expect_err("stopped at the cap");
+    assert_eq!(err.code, ErrorCode::Cancelled, "{err}");
+    assert!(err.message.contains("limit of 2 model calls"), "{err}");
+    assert!(err.message.contains("What it finished is kept"), "{err}");
+
+    let jobs = r
+        .call(&user(), "ai_jobs", json!({}))
+        .await
+        .expect("ai_jobs");
+    let j = &jobs["jobs"][0];
+    assert_eq!(j["status"], "limited", "{jobs:#}");
+    assert_eq!(j["usage"]["calls"], 2);
+
+    // The two translations made before the cap are stored.
+    let status = r
+        .call(&user(), "rewrite_status", json!({}))
+        .await
+        .expect("status");
+    let c = &status["counts"];
+    let made: u64 = ["translated", "verified", "failed", "accepted"]
+        .iter()
+        .filter_map(|k| c[*k].as_u64())
+        .sum();
+    assert_eq!(made, 2, "{status:#}");
 }

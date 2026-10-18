@@ -210,9 +210,45 @@ agent = "claude"
 
 `[rewrite]` alone also works. The file is read on every call, so a change applies to the next rewrite without restarting `krakend`. A rewrite with no provider anywhere stops with the same error that shows examples.
 
+In the window, **Settings > AI > Rewriting** writes the `[rewrite]` table: "Use the assistant's model" (the default, no table) or its own model (an API with a model and the name of the environment variable that holds the key, a local model, or a terminal agent), and it shows which model each feature uses. The rewrite wizard's Check step can pick another model for one run without saving it. The rewrite commands take the same choice as arguments: `provider` (`rewrite`, the default, or `assistant` for `[provider]`) and `model` (another model name for this run only), so `kraken rewrite-function --address 0x401136 --model claude-haiku-4-5` tries a cheaper model once.
+
 **What a terminal agent does here.** A rewrite request is plain text in, plain text out. KRAKEN starts the agent in a fresh, empty scratch folder (not the project), without the KRAKEN tool server, and sends it the same prompts a model gets, after a short note that this is a text-only request. The agent answers with the translation or the spec in the usual format: Rust between `<kraken-rust>` tags and the `<kraken-result>` block, or the Markdown spec. KRAKEN parses it, lints it, and builds and tests it in its own sandbox. The agent does not build or test anything, and it cannot write files or run commands for KRAKEN: every permission request for the agent's own tools (its shell, its file tools) is denied during a rewrite, with no prompt, and KRAKEN notes that it happened. A tool the agent may use without asking (by its own settings or an auto-accept mode) is outside what KRAKEN can stop, as everywhere else in this page. The scratch folder is only its working directory, not a sandbox: the prompt carries code and strings from the binary, so a tool the agent runs on its own can still read your files. If that matters for a binary, use a model API for `[rewrite]`, or run the agent with its tools turned off in its own settings. Each model call is a new agent session, so a repair attempt is a new request that carries the failed code and the counterexample, as it is for a model.
 
 As with any terminal agent, the decompiled code of the functions being rewritten goes to the agent's service. Models served on your own computer keep it there.
+
+## What costs money
+
+Cloud models (Anthropic, OpenAI, Gemini and other API services) are billed per token by their provider. KRAKEN never calls a model by itself: only when you, or an agent you started, ask for AI work.
+
+**When KRAKEN calls a model.** Every chat message, explanation and overview; Suggest names (`kraken auto-name`); every step of Automate (`kraken auto`); and in the Rust rewrite every translation, spec, test fix and repair. A rewrite tries up to 3 times per function, so rewriting a whole program takes about 3 requests per function plus the repair rounds: often around 60 requests. Evaluation runs (`kraken eval`) call it once per task step.
+
+**What it costs.** Local models (Ollama, LM Studio, llama-server, `kraken infer`) are free. Terminal agents (Claude Code, Codex, Gemini CLI) are billed by their own subscription and report no tokens, so KRAKEN counts their calls and time only. For API models KRAKEN estimates the cost from the tokens the provider reports and a price table. The table has list prices of well-known models (estimates, they go stale); correct them or add your own model in config.toml:
+
+```toml
+[pricing]                                    # US dollars per million tokens
+"claude-sonnet-5-5" = { input = 3.0, output = 15.0 }
+"my-finetune" = { input = 0.5, output = 1.5 }
+```
+
+A name matches exactly or by its longest known start (`claude-sonnet-4-5-20250929` finds `claude-sonnet`). Money is always an estimate; your provider's bill is what counts.
+
+**Before it starts.** Every way to start AI work shows an estimate first: the most model calls it can make, the model, and the cost range ("billed by your subscription" for a terminal agent). In the window that is a question with Start and Cancel; on the command line (`rewrite-function`, `rewrite-program`, `rewrite-spec`, `explain`, `overview`, `auto-name`, `auto`) the estimate is printed and you answer `y`. Without a terminal to ask on, these commands refuse unless you pass `--yes`. Free local models never ask. An agent working over MCP is asked to approve a whole-program rewrite (it runs the original program), and that question includes the estimate.
+
+**While it runs.** A chip in the top bar and the status bar shows the feature, the model, the calls so far and the estimated cost. Click it for the **AI Activity** tab: running and recent AI work, who started it (you, the command line or an agent), its usage, and a **Stop** button each. A finished run leaves a notice with its totals. `kraken ai-jobs` lists the same, and the daemon publishes `ai_started`, `ai_progress` and `ai_done` events. Closing the project or quitting while AI work runs asks whether to stop it or leave it running in `krakend`, where it keeps costing until it ends.
+
+**What was spent.** Every call is recorded in the project database (provider, model, feature, job or run, tokens, time, estimated cost), and the daily totals of all projects in `ai-usage-daily.json` in the KRAKEN data folder (`~/.local/share/kraken`). Read them with `kraken ai-usage` (this project), `kraken ai-usage --scope today` (all projects, today, UTC) or `kraken ai-usage --scope run --run-id job-3`.
+
+**Limits.** Set them in **Settings > AI** or in config.toml:
+
+```toml
+[ai_limits]
+max_calls_per_run = 200    # a run stops cleanly after this many model calls
+max_cost_per_run = 5.0     # ... or once its estimated cost reaches this (US dollars)
+daily_budget = 10.0        # no new AI work once today's estimated total reaches this
+skip_confirm_under = 0.10  # start without asking when the estimate stays below this
+```
+
+A run that reaches a limit stops with a message saying which, and keeps what it finished (every translation attempt is stored as it is made). The daily budget refuses new AI work until the next day (midnight UTC), or until you raise it. Changes apply to the next model call, also in a running daemon.
 
 ## Commands
 

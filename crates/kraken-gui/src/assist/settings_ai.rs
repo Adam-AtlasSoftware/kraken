@@ -42,6 +42,9 @@ pub struct AiSettings {
     change: Option<Change>,
     hub: Option<AgentsHub>,
     agents_dirty: bool,
+    rewrite: super::settings_cost::RewriteForm,
+    limits: super::settings_cost::LimitsForm,
+    policy_dirty: bool,
 }
 
 impl Default for AiSettings {
@@ -56,6 +59,9 @@ impl Default for AiSettings {
             change: None,
             hub: None,
             agents_dirty: false,
+            rewrite: super::settings_cost::RewriteForm::default(),
+            limits: super::settings_cost::LimitsForm::default(),
+            policy_dirty: false,
         }
     }
 }
@@ -70,6 +76,18 @@ impl AiSettings {
     /// The terminal agents hub, once there is one.
     pub fn hub_mut(&mut self) -> Option<&mut AgentsHub> {
         self.hub.as_mut()
+    }
+
+    /// True once after the rewrite model, the limits or the assistant's model were saved, so
+    /// the app can reload the open project's AI settings.
+    pub fn take_policy_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.policy_dirty)
+    }
+
+    /// The rewriting form (for tests).
+    #[cfg(test)]
+    pub fn rewrite_form(&mut self) -> &mut super::settings_cost::RewriteForm {
+        &mut self.rewrite
     }
 
     /// True once when the agents' configuration or notice changed, so the app can tell the
@@ -166,6 +184,7 @@ impl AiSettings {
                     msg.push_str(n);
                 }
                 self.configured = true;
+                self.policy_dirty = true;
                 self.draft = ProviderDraft::from_config(&out.config);
                 match self.store.choice(&out.config) {
                     Ok(choice) => {
@@ -417,6 +436,14 @@ impl AiSettings {
                 ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
             }
             None => {}
+        }
+        ui.separator();
+        if self.rewrite.show(ui, config_path) {
+            self.policy_dirty = true;
+        }
+        ui.separator();
+        if self.limits.show(ui, config_path) {
+            self.policy_dirty = true;
         }
         if agent && let Some(h) = &self.hub {
             match &h.test {

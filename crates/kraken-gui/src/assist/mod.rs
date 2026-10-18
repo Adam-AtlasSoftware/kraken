@@ -13,6 +13,7 @@ mod learn;
 mod menu;
 mod overlays;
 mod settings_ai;
+mod settings_cost;
 mod setup;
 #[cfg(test)]
 mod tests;

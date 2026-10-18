@@ -39,9 +39,14 @@ impl EngineFactory for FakeFactory {
 }
 
 /// A provider that can be set after the rig exists, so a test can first ask the service what it
-/// would send, build the cassette for it, and then run the command.
+/// would send, build the cassette for it, and then run the command. Limits, the daily totals and
+/// the model named for estimates can be set too.
 #[derive(Default)]
-struct Slot(Mutex<Option<Arc<dyn ChatProvider>>>);
+struct Slot(
+    Mutex<Option<Arc<dyn ChatProvider>>>,
+    Mutex<kraken_assist::AiLimits>,
+    Mutex<Option<kraken_model::DailyLedger>>,
+);
 
 impl Slot {
     fn set(&self, p: Arc<dyn ChatProvider>) {
@@ -57,6 +62,33 @@ impl BackendSource for Slot {
             .clone()
             .map(|p| Arc::new(ApiBackend::new(p)) as Arc<dyn AssistBackend>)
             .ok_or_else(|| ProtoError::new(ErrorCode::Internal, "no provider set in the test"))
+    }
+
+    fn choice(
+        &self,
+        which: kraken_assist::RewriteModel,
+        model: Option<&str>,
+    ) -> Option<kraken_assist::ModelChoice> {
+        let cfg = kraken_agent::ProviderConfig::Anthropic {
+            model: Some(model.unwrap_or("claude-sonnet-5-5").to_string()),
+            api_key: kraken_agent::SecretRef::Env("K".into()),
+            base_url: None,
+            max_tokens: None,
+            context_window: None,
+        };
+        let source = match which {
+            kraken_assist::RewriteModel::Assistant => kraken_assist::ModelSource::Assistant,
+            kraken_assist::RewriteModel::Configured => kraken_assist::ModelSource::Rewrite,
+        };
+        Some(kraken_assist::ModelChoice::new(cfg, source))
+    }
+
+    fn limits(&self) -> kraken_assist::AiLimits {
+        self.1.lock().expect("slot").clone()
+    }
+
+    fn daily(&self) -> Option<kraken_model::DailyLedger> {
+        self.2.lock().expect("slot").clone()
     }
 }
 
@@ -1146,4 +1178,209 @@ async fn without_a_backend_the_commands_say_so() {
         .expect_err("no backend");
     assert_eq!(err.code, ErrorCode::Unsupported);
     assert!(err.message.contains("not attached"), "{err}");
+}
+
+// ----- AI usage, estimates and limits -----
+
+async fn spec_rig() -> Rig {
+    let r = rig("switch_vm-O0").await;
+    let prepared = r
+        .service
+        .prepare(&r.session, &user(), 0x101255)
+        .await
+        .expect("prepare");
+    let md = include_str!("../references/spec_vm_run.md");
+    r.use_cassette(Cassette {
+        entries: vec![entry(
+            &prepared.spec_task(&Budget::default()).request(),
+            md.to_string(),
+        )],
+        ..Cassette::default()
+    });
+    r
+}
+
+#[tokio::test]
+async fn a_spec_job_shows_on_the_ai_board_and_in_the_usage_ledger() {
+    let r = spec_rig().await;
+    let args = json!({"scope": "function", "address": "0x101255"});
+    let started = r
+        .call(&user(), "rewrite_spec", args.clone())
+        .await
+        .expect("start");
+    let job = started["job_id"].as_str().expect("job").to_string();
+    r.call(
+        &user(),
+        "job_await",
+        json!({"job_id": job, "timeout_ms": 600_000}),
+    )
+    .await
+    .expect("await");
+
+    let jobs = r
+        .call(&user(), "ai_jobs", json!({}))
+        .await
+        .expect("ai_jobs");
+    let list = jobs["jobs"].as_array().expect("jobs");
+    assert_eq!(list.len(), 1, "{jobs:#}");
+    let j = &list[0];
+    assert_eq!(j["feature"], "rewrite");
+    assert_eq!(j["job_id"], job);
+    assert_eq!(j["status"], "succeeded");
+    assert_eq!(j["provider"], "replay");
+    assert_eq!(j["usage"]["calls"], 1);
+    assert_eq!(jobs["running"], 0);
+
+    let usage = r
+        .call(&user(), "ai_usage", json!({}))
+        .await
+        .expect("ai_usage");
+    assert_eq!(usage["totals"]["calls"], 1, "{usage:#}");
+    assert_eq!(usage["groups"][0]["feature"], "rewrite");
+    assert_eq!(usage["recent"][0]["job_id"], job);
+    assert!(
+        usage["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("estimates"))
+    );
+    let run = r
+        .call(&user(), "ai_usage", json!({"scope": "run", "run_id": job}))
+        .await
+        .expect("run");
+    assert_eq!(run["totals"]["calls"], 1);
+
+    // The stored spec answers a repeat: no model call, no new AI work.
+    r.job(&user(), "rewrite_spec", args).await.expect("again");
+    let jobs = r
+        .call(&user(), "ai_jobs", json!({}))
+        .await
+        .expect("ai_jobs");
+    assert_eq!(jobs["jobs"].as_array().map(Vec::len), Some(1));
+}
+
+#[tokio::test]
+async fn a_used_up_daily_budget_refuses_new_rewrite_work() {
+    let r = spec_rig().await;
+    let daily = kraken_model::DailyLedger::at(r.dir.join("daily.json"));
+    daily
+        .add(&kraken_proto::AiCallRecord {
+            ts_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_millis() as i64,
+            feature: kraken_proto::AiFeature::Assistant,
+            provider_kind: kraken_proto::AiProviderKind::Api,
+            provider: "anthropic".into(),
+            model: "claude".into(),
+            job_id: None,
+            run_id: None,
+            origin: kraken_proto::AiOrigin::Gui,
+            input_tokens: Some(1),
+            output_tokens: Some(1),
+            wall_ms: 1,
+            cost_usd: Some(3.0),
+            billing: kraken_proto::AiBilling::Metered,
+        })
+        .expect("daily");
+    *r.slot.1.lock().expect("limits") = kraken_assist::AiLimits {
+        daily_budget: Some(2.0),
+        ..kraken_assist::AiLimits::default()
+    };
+    *r.slot.2.lock().expect("daily") = Some(daily);
+    let err = r
+        .call(
+            &user(),
+            "rewrite_spec",
+            json!({"scope": "function", "address": "0x101255"}),
+        )
+        .await
+        .expect_err("over budget");
+    assert_eq!(err.code, ErrorCode::Cancelled);
+    assert!(err.message.contains("Today's AI budget of $2.00"), "{err}");
+    assert_eq!(
+        err.details.as_ref().and_then(|d| d.get("ai_limit")),
+        Some(&json!(true))
+    );
+    let jobs = r
+        .call(&user(), "ai_jobs", json!({}))
+        .await
+        .expect("ai_jobs");
+    assert_eq!(jobs["jobs"].as_array().map(Vec::len), Some(0));
+}
+
+#[tokio::test]
+async fn a_call_cap_stops_a_job_and_the_board_says_why() {
+    let r = spec_rig().await;
+    *r.slot.1.lock().expect("limits") = kraken_assist::AiLimits {
+        max_calls_per_run: Some(0),
+        ..kraken_assist::AiLimits::default()
+    };
+    let err = r
+        .job(
+            &user(),
+            "rewrite_spec",
+            json!({"scope": "function", "address": "0x101255"}),
+        )
+        .await
+        .expect_err("capped");
+    assert_eq!(err.code, ErrorCode::Cancelled);
+    assert!(err.message.contains("limit of 0 model calls"), "{err}");
+    let jobs = r
+        .call(&user(), "ai_jobs", json!({}))
+        .await
+        .expect("ai_jobs");
+    let j = &jobs["jobs"][0];
+    assert_eq!(j["status"], "limited", "{jobs:#}");
+    assert!(
+        j["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("max_calls_per_run"))
+    );
+}
+
+#[tokio::test]
+async fn estimates_count_every_planned_function_and_the_repair_rounds() {
+    let r = rig("stripped_calc-O0").await;
+    let plan = r
+        .call(&user(), "rewrite_plan", json!({"scope": "all"}))
+        .await
+        .expect("plan");
+    let n = plan["functions_planned"].as_u64().expect("planned");
+    assert!(n > 0);
+    let e = r
+        .service
+        .estimate(&r.session, &user(), "rewrite_program", &json!({}))
+        .await
+        .expect("estimate");
+    assert_eq!(
+        e.max_calls,
+        n * 3 + 2 * 3 * 2,
+        "3 attempts each and 2 repair rounds"
+    );
+    assert_eq!(e.billing, kraken_proto::AiBilling::Metered);
+    assert!(e.cost_high_usd.expect("high") > e.cost_low_usd.expect("low"));
+    assert!(e.cost_text().contains("(estimate)"));
+    let lean = r
+        .service
+        .estimate(
+            &r.session,
+            &user(),
+            "rewrite_program",
+            &json!({"max_attempts": 1, "repair_rounds": 0, "model": "claude-haiku-4-5"}),
+        )
+        .await
+        .expect("estimate");
+    assert_eq!(lean.max_calls, n);
+    assert_eq!(lean.model, "claude-haiku-4-5");
+    let one = r
+        .service
+        .estimate(
+            &r.session,
+            &user(),
+            "rewrite_function",
+            &json!({"mode": "spec"}),
+        )
+        .await
+        .expect("estimate");
+    assert_eq!(one.max_calls, 4);
 }

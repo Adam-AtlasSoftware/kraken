@@ -188,6 +188,18 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         keys: &[],
         terms: &["function", "decompiler", "calling convention"],
     },
+    PanelHelp {
+        panel: "AI Activity",
+        short: "Which AI work runs, on which model, what it has cost so far, and a Stop button for each.",
+        text: "Every piece of AI work on this project shows here: rewrite jobs started from this window, from the command line or by an agent, and the assistant's runs in this window. Each row says which model it asks, who started it, how many model calls it made and an estimate of the cost. Terminal agents are billed by their own subscription; local models are free.",
+        how: &[
+            "Press Stop on a row to end that work. What it finished is kept.",
+            "Click the AI chip in the top bar to come here while work runs.",
+            "Set limits and a daily budget in Settings > AI.",
+        ],
+        keys: &[],
+        terms: &[],
+    },
 ];
 
 /// The help for the panel titled `panel`.

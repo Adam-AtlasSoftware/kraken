@@ -485,6 +485,27 @@ impl ViewModel {
                 ),
             },
         });
+        out.push(match self.ai_estimate(&crate::ai::AiAction::WizardStart) {
+            Some(e) => Check {
+                title: "Model and cost",
+                level: CheckLevel::Ok,
+                detail: format!(
+                    "The rewrite uses {}{}. Cost: {}. You can pick another model for this run below.",
+                    e.model_label(),
+                    if self.ai.run_override.is_some() {
+                        " (for this run only)"
+                    } else {
+                        ""
+                    },
+                    e.cost_text()
+                ),
+            },
+            None => Check {
+                title: "Model and cost",
+                level: CheckLevel::Warn,
+                detail: "No rewrite model is set up in your KRAKEN config file, so the cost cannot be estimated. Choose one under Settings > AI > Rewriting.".into(),
+            },
+        });
         out
     }
 
@@ -588,6 +609,10 @@ impl ViewModel {
         if self.rewrite_wizard_running() {
             return;
         }
+        if !self.ai_gate(crate::ai::AiAction::WizardStart) {
+            return;
+        }
+        let was = std::mem::replace(&mut self.ai.bypass, true);
         let (scope, mode, function) = {
             let w = &self.rewrite.wizard;
             (w.scope, w.mode, w.function)
@@ -602,6 +627,7 @@ impl ViewModel {
             WizardScope::Plan => self.rewrite_bulk_translate_planned(mode),
             WizardScope::Program => self.rewrite_program_run(),
         }
+        self.ai.bypass = was;
         self.rewrite.wizard.started = true;
     }
 

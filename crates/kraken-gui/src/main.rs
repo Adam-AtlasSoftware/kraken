@@ -1,6 +1,7 @@
 //! KRAKEN desktop GUI.
 
 mod activity;
+mod ai_activity;
 mod app;
 mod args;
 mod assist;

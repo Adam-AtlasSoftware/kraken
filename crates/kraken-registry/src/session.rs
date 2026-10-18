@@ -818,6 +818,7 @@ pub struct Session {
     factory: Arc<dyn EngineFactory>,
     config: SessionConfig,
     jobs: JobTable,
+    ai: crate::ai::AiBoard,
     project: Arc<RwLock<Option<Arc<Project>>>>,
     rewrite: Option<Arc<dyn RewriteBackend>>,
 }
@@ -835,6 +836,7 @@ impl Session {
             factory,
             config: SessionConfig::default(),
             jobs: JobTable::new(),
+            ai: crate::ai::AiBoard::new(),
             project: Arc::new(RwLock::new(None)),
             rewrite: None,
         }
@@ -890,6 +892,11 @@ impl Session {
     /// The job table.
     pub fn jobs(&self) -> &JobTable {
         &self.jobs
+    }
+
+    /// The board of AI work (rewrite jobs and anything else that calls a model here).
+    pub fn ai(&self) -> &crate::ai::AiBoard {
+        &self.ai
     }
 
     /// The engine factory.

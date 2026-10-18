@@ -89,7 +89,7 @@ async fn explain_runs_on_the_selected_terminal_agent() {
     let r = rig(CliAuthor::User("tester".into()), world.select(FAKE));
     let dir = project(&r.env, &work).await;
 
-    let run = kraken(&r.env, &["--project", &dir, "explain", "0x401000"]).await;
+    let run = kraken(&r.env, &["--yes", "--project", &dir, "explain", "0x401000"]).await;
     assert_eq!(run.code, 0, "{}", run.stderr);
     // The same rendering as with a model API: streamed prose, then the structured sections.
     assert!(
@@ -117,7 +117,7 @@ async fn explain_runs_on_the_selected_terminal_agent() {
     assert!(run.stderr.contains("undo-run"), "{}", run.stderr);
 
     // The notice is shown once.
-    let again = kraken(&r.env, &["--project", &dir, "explain", "0x401000"]).await;
+    let again = kraken(&r.env, &["--yes", "--project", &dir, "explain", "0x401000"]).await;
     assert_eq!(again.code, 0, "{}", again.stderr);
     assert!(!again.stderr.contains(kraken_acp::WARNING_TITLE));
 }
@@ -129,7 +129,7 @@ async fn json_output_has_the_same_shape_for_a_terminal_agent() {
     let r = rig(CliAuthor::User("tester".into()), world.select(FAKE));
     let dir = project(&r.env, &work).await;
 
-    let run = kraken(&r.env, &["--json", "--project", &dir, "overview"]).await;
+    let run = kraken(&r.env, &["--yes", "--json", "--project", &dir, "overview"]).await;
     assert_eq!(run.code, 0, "{}", run.stderr);
     let v = run.json();
     assert_eq!(v["task"], "overview");
@@ -157,7 +157,11 @@ async fn auto_name_reports_what_the_agents_edits_did() {
     let r = rig(CliAuthor::User("tester".into()), world.select(FAKE));
     let dir = project(&r.env, &work).await;
 
-    let run = kraken(&r.env, &["--project", &dir, "auto-name", "--limit", "2"]).await;
+    let run = kraken(
+        &r.env,
+        &["--yes", "--project", &dir, "auto-name", "--limit", "2"],
+    )
+    .await;
     assert_eq!(run.code, 0, "{}", run.stderr);
     assert!(run.stdout.contains("program_main"), "{}", run.stdout);
     assert!(run.stdout.contains("rename: applied"), "{}", run.stdout);
@@ -180,7 +184,7 @@ async fn an_agent_that_is_not_set_up_is_explained() {
         world.select("[provider]\nkind = \"terminal_agent\"\nagent = \"claude\"\n"),
     );
     let dir = project(&r.env, &work).await;
-    let run = kraken(&r.env, &["--project", &dir, "explain", "0x401000"]).await;
+    let run = kraken(&r.env, &["--yes", "--project", &dir, "explain", "0x401000"]).await;
     assert_ne!(run.code, 0);
     assert!(
         run.stderr.contains("kraken agents setup claude") || run.stderr.contains("Node.js"),
@@ -199,7 +203,7 @@ async fn an_unknown_agent_lists_the_known_ones() {
         world.select("[provider]\nkind = \"terminal_agent\"\nagent = \"nope\"\n"),
     );
     let dir = project(&r.env, &work).await;
-    let run = kraken(&r.env, &["--project", &dir, "overview"]).await;
+    let run = kraken(&r.env, &["--yes", "--project", &dir, "overview"]).await;
     assert_ne!(run.code, 0);
     assert!(
         run.stderr.contains("no agent called `nope`"),

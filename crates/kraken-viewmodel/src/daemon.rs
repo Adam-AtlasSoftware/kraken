@@ -657,6 +657,9 @@ pub fn map_event(v: &Value, project_key: Option<&Path>) -> Option<BackendEvent> 
             tab: str_field(v, "tab").map(str::to_string),
             author: str_field(v, "author_id").unwrap_or_default().to_string(),
         },
+        event_kind::AI_STARTED | event_kind::AI_PROGRESS | event_kind::AI_DONE => BackendEvent::Ai(
+            Box::new(serde_json::from_value::<kraken_proto::AiJobView>(v.get("ai")?.clone()).ok()?),
+        ),
         event_kind::SESSION_OPENED => BackendEvent::SessionOpened,
         event_kind::SESSION_CLOSED => {
             BackendEvent::SessionClosed(str_field(v, "reason").unwrap_or("closed").to_string())
@@ -691,6 +694,21 @@ mod tests {
         elsewhere["project_dir"] = json!("/q");
         assert!(map_event(&elsewhere, Some(key)).is_none());
         assert!(map_event(&applied, None).is_none());
+
+        let ai = json!({"project_dir": "/p", "kind": "ai_progress", "ai": {
+            "id": "ai-1", "job_id": "job-4", "feature": "rewrite", "label": "Rewriting main",
+            "provider_kind": "api", "provider": "anthropic", "model": "claude-sonnet-5-5",
+            "origin": "cli", "started_by": "adam", "status": "running", "started_ms": 5,
+            "usage": {"calls": 2, "input_tokens": 10, "output_tokens": 4, "wall_ms": 9,
+                      "cost_usd": 0.01}}});
+        match map_event(&ai, Some(key)) {
+            Some(BackendEvent::Ai(v)) => {
+                assert_eq!(v.job_id.as_deref(), Some("job-4"));
+                assert_eq!(v.usage.calls, 2);
+                assert_eq!(v.origin, kraken_proto::AiOrigin::Cli);
+            }
+            other => panic!("{other:?}"),
+        }
 
         let done = json!({"project_dir": "/p", "kind": "job_done", "job_id": "job-1",
             "command": "analyze", "status": "failed",

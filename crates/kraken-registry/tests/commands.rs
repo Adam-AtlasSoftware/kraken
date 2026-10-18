@@ -6,6 +6,8 @@ use kraken_registry::{CommandKind, Permission, Registry, Session};
 use serde_json::json;
 
 const EXPECTED: &[&str] = &[
+    "ai_jobs",
+    "ai_usage",
     "analyze",
     "apply_edits",
     "binary_probe",

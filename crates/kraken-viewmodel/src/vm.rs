@@ -134,6 +134,8 @@ pub struct ViewModel {
     focus_request: Option<String>,
     /// Go to, Search, Bookmarks, the type and function dialogs and generated command forms.
     pub tools: crate::navtools::NavTools,
+    /// AI work: what runs and what it costs, and the question asked before it starts.
+    pub ai: crate::ai::AiState,
 }
 
 /// Bookkeeping of the analysis fallback poll (see [`ViewModel::watch_analysis`]).
@@ -318,6 +320,7 @@ impl ViewModel {
             agent_activity: crate::activity::AgentActivity::default(),
             focus_request: None,
             tools: crate::navtools::NavTools::default(),
+            ai: crate::ai::AiState::default(),
         };
         vm.start_event_forwarder();
         vm
@@ -411,6 +414,7 @@ impl ViewModel {
             changed = true;
         }
         self.watch_analysis();
+        self.ai_tick();
         changed | self.expire_toasts(Instant::now())
     }
 
@@ -532,6 +536,7 @@ impl ViewModel {
             Some(ToastAction::OpenHistory) => {
                 self.tools.request_tab(crate::navtools::NavTab::History);
             }
+            Some(ToastAction::OpenAiActivity) => self.ai_show_activity(),
             None => {}
         }
     }
@@ -798,6 +803,9 @@ impl ViewModel {
     pub fn on_event(&mut self, ev: BackendEvent) {
         match ev {
             BackendEvent::Job(info) => {
+                if info.command.starts_with("rewrite_") {
+                    self.ai.wake = true;
+                }
                 self.rewrite_on_job(&info);
                 self.on_job(info);
             }
@@ -848,7 +856,9 @@ impl ViewModel {
                 self.toast(ToastLevel::Info, text);
                 self.refresh_all();
             }
+            BackendEvent::Ai(view) => self.ai_on_event(*view),
             BackendEvent::JobStarted(change) => {
+                self.ai.wake = true;
                 self.agent_activity.job_started(&change, Instant::now());
             }
             BackendEvent::OpenProgress(p) => self.on_open_progress(*p),
@@ -1790,6 +1800,10 @@ impl ViewModel {
             AppAction::ExplainProgram => self.assist_overview(),
             AppAction::RewriteWizard => self.rewrite_wizard_open(),
             AppAction::Automate => return Some(UiRequest::OpenAutomate),
+            AppAction::ShowAiActivity => {
+                self.ai.wake = true;
+                return Some(UiRequest::ShowAiActivity);
+            }
             AppAction::GoTo => self.open_goto(),
             AppAction::Search => self.open_search(),
             AppAction::Retype => self.begin_retype_here(),

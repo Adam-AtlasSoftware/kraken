@@ -789,6 +789,9 @@ impl ViewModel {
             self.rewrite.program.error = Some(why);
             return;
         }
+        if !self.ai_gate(crate::ai::AiAction::RewriteProgram) {
+            return;
+        }
         self.rewrite.program.declined = None;
         self.rewrite.program.error = None;
         let st = &self.rewrite.program;
@@ -805,6 +808,7 @@ impl ViewModel {
         if !dir.is_empty() {
             args["dir"] = json!(dir);
         }
+        self.ai_rewrite_args(&mut args);
         self.rewrite_start_job(
             JobKind::Program,
             "Rewriting the whole program".into(),

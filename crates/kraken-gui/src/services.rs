@@ -36,6 +36,8 @@ pub struct Services {
     pub agents: Option<kraken_viewmodel::agents::AgentsConfig>,
     /// Offer the guided tour on the first launch.
     pub first_run_tour: bool,
+    /// The daily totals of AI usage (for the daily budget); `None` keeps none.
+    pub ai_daily: Option<kraken_model::DailyLedger>,
 }
 
 impl Services {
@@ -59,6 +61,7 @@ impl Services {
             ghidra,
             agents: kraken_viewmodel::agents::AgentsConfig::from_env(!no_daemon),
             first_run_tour: true,
+            ai_daily: kraken_model::DailyLedger::standard(),
         }
     }
 
@@ -76,6 +79,7 @@ impl Services {
             ghidra: None,
             agents: Some(offline_agents()),
             first_run_tour: false,
+            ai_daily: None,
         }
     }
 

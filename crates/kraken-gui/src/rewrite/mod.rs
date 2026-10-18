@@ -424,8 +424,24 @@ fn jobs_strip(ui: &mut Ui, vm: &ViewModel) {
                 ui.label(RichText::new(&pr.message).size(11.5).color(p.text_dim));
             }
         });
+        if let Some(line) = job_ai_line(vm, j) {
+            ui.label(RichText::new(line).size(11.5).color(p.text_dim))
+                .on_hover_text(
+                    "The model this job asks, the calls it made so far and what they cost. Money is an estimate. Stop the job in the AI Activity tab.",
+                );
+        }
     }
     ui.add_space(2.0);
+}
+
+/// "Model: claude-sonnet-5-5. So far: 4 calls, 21k tokens, about $0.09 (estimate)."
+pub(crate) fn job_ai_line(vm: &ViewModel, j: &RewriteJob) -> Option<String> {
+    let ai = vm.ai_for_job(j.job_id.as_deref()?)?;
+    Some(format!(
+        "Model: {}. So far: {}.",
+        ai.model_label(),
+        ai.usage.line()
+    ))
 }
 
 /// The three bulk buttons under the status chips.

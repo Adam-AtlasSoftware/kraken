@@ -49,7 +49,10 @@ impl Topic {
             Topic::Panel(t) => format!("What the {} panel shows and how to use it", t.title()),
             Topic::Shortcuts => "Every keyboard shortcut, generated from the real list".into(),
             Topic::Glossary => "Reverse-engineering words in plain language. Searchable".into(),
-            Topic::Ai => "The assistant, local models, terminal agents, MCP and privacy".into(),
+            Topic::Ai => {
+                "The assistant, local models, terminal agents, what costs money, MCP and privacy"
+                    .into()
+            }
             Topic::Rewriting => "Plan, translate, verify, accept, export and build".into(),
         }
     }
@@ -300,6 +303,8 @@ impl HelpUi {
 
     fn topic_list(&mut self, ui: &mut Ui) {
         let p = pal(ui);
+        // Compact, so every topic fits on a laptop screen without scrolling.
+        ui.spacing_mut().item_spacing.y = 1.0;
         let mut picked = None;
         for (i, t) in topics().into_iter().enumerate() {
             if i == 1 {
@@ -560,6 +565,23 @@ fn ai_page(ui: &mut Ui) {
         ui,
         "Any MCP client can use KRAKEN as a set of tools: run kraken mcp and point the client at it. From a terminal, kraken auto <program> opens, analyses, names and rewrites a program in one go. Both use the same commands and the same safety rules as this window.",
     );
+    heading(ui, "What costs money");
+    body(
+        ui,
+        "Cloud models are billed per token by their provider. KRAKEN calls a model only when you (or an agent you started) ask for AI work, and it shows an estimate first.",
+    );
+    bullets(
+        ui,
+        &[
+            "When KRAKEN calls a model: every chat message, explanation and overview, Suggest names, every step of Automate, and in the Rust rewrite every translation, spec, test fix and repair. Rewriting a whole program takes about 3 requests per function, plus repair rounds: often around 60.",
+            "Before it starts: rewrite runs, Suggest names, explanations and Automate show how many model calls they can make at most, which model, and the cost range. Local models are free and never ask. Terminal agents are billed by their own subscription.",
+            "While it runs: a chip in the top bar and the status bar shows the feature, the model, the calls so far and the estimated cost. Click it for the AI Activity tab.",
+            "Stopping: press Stop in the AI Activity tab. What was finished is kept. Closing the project or quitting while AI work runs asks whether to stop it or leave it running in the background engine, where it keeps costing until it ends.",
+            "Limits: Settings > AI has a most-calls and most-cost limit per run, a daily budget, and the amount under which KRAKEN starts without asking. A run that reaches a limit stops cleanly and keeps what it finished; the daily budget refuses new AI work until the next day (UTC).",
+            "A separate rewrite model: Settings > AI > Rewriting can give the rewrite its own model, for example a cheaper or a local one, and the rewrite wizard can change it for one run.",
+            "Money is always an estimate from list prices (correct them in the [pricing] table of config.toml). Your provider's bill is what counts. The command ai_usage and the AI Activity tab show what was spent.",
+        ],
+    );
     heading(ui, "Privacy: what is sent where");
     bullets(
         ui,
@@ -594,6 +616,11 @@ fn rewriting_page(ui: &mut Ui) {
     body(
         ui,
         "Start with one function to see how it looks. The plan does every function in turn. The whole program mode writes one standalone Rust program and compares it with the original program run on the same inputs.",
+    );
+    heading(ui, "What it costs");
+    body(
+        ui,
+        "Every translation, spec and repair is a request to a model. Before a run starts, KRAKEN shows the most requests it can make, the model and the cost range, and waits for you. The chip in the top bar shows the running total, and the AI Activity tab has a Stop button. The rewrite can use its own model (Settings > AI > Rewriting), and the wizard's Check step can change it for one run.",
     );
     heading(ui, "The sandbox");
     body(

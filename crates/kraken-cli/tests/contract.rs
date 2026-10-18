@@ -334,6 +334,15 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     step!("bookmark_list", json!({}));
     step!("bookmark_remove", json!({"address": "0x401040"}));
 
+    // AI usage: nothing called a model here, so the ledger is empty on every surface.
+    let usage = step!("ai_usage", json!({}));
+    assert_eq!(usage["totals"]["calls"], 0, "{usage}");
+    step!("ai_usage", json!({"scope": "run", "run_id": "job-1"}));
+    let bad = step!("ai_usage", json!({"scope": "run"}));
+    assert_eq!(bad["code"], "invalid_argument", "{bad}");
+    let jobs = step!("ai_jobs", json!({}));
+    assert_eq!(jobs["running"], 0, "{jobs}");
+
     // Proposals and history.
     step!("proposals_list", json!({"status": "all"}));
     let denied = step!("proposal_accept", json!({"id": 1}));

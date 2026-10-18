@@ -453,3 +453,65 @@ async fn glossary_looks_up_terms_mnemonics_and_typos() {
     assert_eq!(none.code, 3);
     assert!(none.stderr.contains("no glossary entry"));
 }
+
+#[tokio::test]
+async fn paid_ai_work_needs_yes_without_a_terminal_and_prints_the_estimate() {
+    let tmp = tempfile::Builder::new()
+        .prefix("kraken-cli-cost-")
+        .tempdir()
+        .expect("tempdir");
+    let cfg = tmp.path().join("config.toml");
+    // A cloud model with a known price; nothing is sent, the question comes first.
+    std::fs::write(
+        &cfg,
+        "[provider]\nkind = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\nmodel = \"gpt-4.1\"\n",
+    )
+    .expect("write config");
+    let (r, _w, dir) = project_rig(vec![
+        ("KRAKEN_CONFIG", path_str(&cfg)),
+        (
+            "KRAKEN_AI_USAGE_FILE",
+            path_str(&tmp.path().join("daily.json")),
+        ),
+    ])
+    .await;
+    for args in [
+        vec!["--project", &dir, "explain", "0x401000"],
+        vec!["--project", &dir, "auto-name", "--dry-run"],
+        vec![
+            "--project",
+            &dir,
+            "rewrite-function",
+            "--address",
+            "0x401000",
+        ],
+        vec!["--project", &dir, "rewrite-program"],
+    ] {
+        let run = kraken(&r.env, &args).await;
+        assert_eq!(run.code, 2, "{args:?}: {}", run.stderr);
+        assert!(run.stderr.contains("--yes"), "{args:?}: {}", run.stderr);
+        assert!(run.stderr.contains("This uses AI."), "{}", run.stderr);
+        assert!(run.stderr.contains("gpt-4.1"), "{}", run.stderr);
+        assert!(run.stderr.contains("(estimate)"), "{}", run.stderr);
+    }
+    // With --yes the question is answered (this rig has no rewrite pipeline, so it stops there).
+    let run = kraken(
+        &r.env,
+        &[
+            "--yes",
+            "--project",
+            &dir,
+            "rewrite-function",
+            "--address",
+            "0x401000",
+        ],
+    )
+    .await;
+    assert!(!run.stderr.contains("--yes"), "{}", run.stderr);
+    assert!(run.stderr.contains("This uses AI."), "{}", run.stderr);
+
+    // Nothing was spent.
+    let usage = kraken(&r.env, &["--json", "--project", &dir, "ai-usage"]).await;
+    assert_eq!(usage.code, 0, "{}", usage.stderr);
+    assert_eq!(usage.json()["totals"]["calls"], 0);
+}

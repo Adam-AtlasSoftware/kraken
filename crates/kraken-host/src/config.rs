@@ -142,6 +142,14 @@ pub struct KrakenConfig {
     /// pipeline's model calls. Kept opaque like `provider`; absent means `[provider]` is used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rewrite: Option<serde_json::Value>,
+    /// The optional `[ai_limits]` table: per-run caps, the daily budget and the confirmation
+    /// threshold of AI work. Kept opaque; parsed by `kraken-assist` (`AiLimits`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_limits: Option<serde_json::Value>,
+    /// The optional `[pricing]` table: model prices for cost estimates, per million tokens.
+    /// Kept opaque; parsed by `kraken-assist` (`Pricing`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<serde_json::Value>,
 }
 
 impl KrakenConfig {

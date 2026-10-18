@@ -39,7 +39,7 @@ pub struct MenuEnv<'a> {
 }
 
 /// The tabs the View menu lists, in menu order.
-pub const VIEW_TABS: [Tab; 14] = [
+pub const VIEW_TABS: [Tab; 15] = [
     Tab::Functions,
     Tab::Decompiler,
     Tab::Listing,
@@ -54,6 +54,7 @@ pub const VIEW_TABS: [Tab; 14] = [
     Tab::Proposals,
     Tab::Assistant,
     Tab::Rewrite,
+    Tab::AiActivity,
 ];
 
 const NEED_PROJECT: &str = "Open a project first.";
@@ -89,6 +90,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::ShowBookmarks
             | AppAction::CreateFunctionHere
             | AppAction::DeleteFunction
+            | AppAction::ShowAiActivity
     );
     if needs_project && !env.project {
         return Some(NEED_PROJECT);
@@ -295,6 +297,8 @@ pub fn bar(ui: &mut Ui, env: &MenuEnv<'_>) -> Vec<MenuCmd> {
                 item(ui, AppAction::ExplainProgram, env, &mut out);
                 item(ui, AppAction::Automate, env, &mut out);
                 tab_item(ui, Tab::Assistant, "Show the Assistant tab", env, &mut out);
+                ui.separator();
+                item(ui, AppAction::ShowAiActivity, env, &mut out);
                 toggle(
                     ui,
                     AppAction::ToggleLearnMode,

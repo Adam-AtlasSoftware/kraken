@@ -95,6 +95,17 @@ The Rust comes from a model, so KRAKEN treats it as untrusted. It is built and r
 
 Model requests send decompiled code to the assistant's service. The Check step shows which assistant is used and where requests go.
 
+## What costs money
+
+Every translation, spec, test fix and repair is a request to a model. A function takes up to 3 translation attempts (one more for its spec in spec mode); a whole-program rewrite takes that for every function the entry point reaches, plus up to 6 requests per repair round: often around 60 requests in all. On a cloud API that costs money; on a local model it is free; a terminal agent is billed by its own subscription.
+
+- **Before a run** (the wizard's Start, Translate all planned, Retry all failed, Rewrite in Rust on one function, the whole-program run) KRAKEN shows the most requests, the model and the estimated cost range, and waits for you. `kraken rewrite-function` and `kraken rewrite-program` print the same and ask; without a terminal they need `--yes`.
+- **While it runs** the job strip of the Rewrite tab shows the model and the calls, tokens and estimated cost so far, and so does the AI chip in the top bar. Stop a run in the **AI Activity** tab (or with `job_cancel`).
+- **Limits** (Settings > AI, or `[ai_limits]` in config.toml) stop a run cleanly at a number of calls or an estimated cost, keeping every version already made; a daily budget refuses new runs until the next day.
+- **A cheaper model for rewriting**: Settings > AI > Rewriting gives the rewrite its own model, and the Check step can change it for one run. The commands take `provider` and `model` for the same.
+
+Costs are estimates from list prices; see [What costs money](assistant.md#what-costs-money) for the price table, the usage commands and the limits.
+
 ## Using it from an assistant or a script
 
 Everything above is a command, so an assistant connected through [MCP](mcp.md) or a script using the [CLI](cli.md) can run the whole flow:

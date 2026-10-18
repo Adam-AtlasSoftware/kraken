@@ -934,3 +934,219 @@ async fn automate_on_a_model_api_exposes_the_same_tools() {
         assert!(!rewrite.contains(&t.to_string()), "{t}");
     }
 }
+
+// ---- metering ----------------------------------------------------------------------------
+
+fn said_with_usage(text: &str, input: u64, output: u64) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::TextDelta { text: text.into() },
+        StreamEvent::Usage(kraken_agent::Usage {
+            input_tokens: input,
+            output_tokens: output,
+        }),
+        StreamEvent::Finish {
+            reason: FinishReason::Stop,
+        },
+    ]
+}
+
+fn priced() -> kraken_assist::Pricing {
+    let mut p = kraken_assist::Pricing::empty();
+    p.set(
+        "cassette",
+        kraken_assist::Price {
+            input: 2.0,
+            output: 10.0,
+        },
+    );
+    p
+}
+
+#[tokio::test]
+async fn metering_records_tokens_and_cost_of_a_model_api_in_the_ledger() {
+    use kraken_proto::{AiBilling, AiFeature, AiOrigin};
+    let rig = rig().await;
+    let db = rig.tmp.path().join("p").join("project.kraken.sqlite");
+    let daily = kraken_model::DailyLedger::at(rig.tmp.path().join("daily.json"));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    let meter = kraken_assist::Meter::builder(
+        kraken_assist::MeterSpec::new(AiFeature::Rewrite, AiOrigin::Cli).job("job-7"),
+    )
+    .pricing(priced())
+    .sink(Arc::new(kraken_model::ProjectLedger::new(&db)))
+    .daily(Some(daily.clone()))
+    .observer(Arc::new(move |r, t| {
+        seen2.lock().unwrap().push((r.clone(), *t));
+    }))
+    .build();
+    let backend = meter.wrap(Arc::new(ApiBackend::new(Arc::new(
+        ReplayProvider::scripted(vec![
+            said_with_usage("one", 1_000_000, 100_000),
+            said_with_usage("two", 500_000, 0),
+        ]),
+    ))));
+    for _ in 0..2 {
+        backend
+            .complete_text(text_request("x"), CancellationToken::new())
+            .await
+            .expect("reply");
+    }
+    let t = meter.totals();
+    assert_eq!(t.calls, 2);
+    assert_eq!(t.input_tokens, 1_500_000);
+    assert_eq!(t.output_tokens, 100_000);
+    // 1.5M input at $2 plus 0.1M output at $10.
+    assert!((t.cost_usd - 4.0).abs() < 1e-9, "{t:?}");
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0.billing, AiBilling::Metered);
+        assert_eq!(seen[0].0.job_id.as_deref(), Some("job-7"));
+        assert_eq!(seen[1].1.calls, 2);
+    }
+
+    let store = kraken_model::Store::open(&db).expect("db");
+    let (all, _) = store
+        .ai_usage_summary(&kraken_model::UsageFilter::default())
+        .expect("summary");
+    assert_eq!(all.calls, 2);
+    assert_eq!(all.input_tokens, 1_500_000);
+    assert_eq!(daily.today().calls, 2);
+    assert!((daily.today().cost_usd - 4.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn metering_counts_the_model_calls_of_an_assistant_task() {
+    use kraken_proto::{AiFeature, AiOrigin};
+    let rig = rig().await;
+    let meter = kraken_assist::Meter::builder(kraken_assist::MeterSpec::new(
+        AiFeature::Assistant,
+        AiOrigin::Gui,
+    ))
+    .pricing(priced())
+    .build();
+    let mut events = answer("Here is what I found.", &explain_json());
+    events.insert(
+        1,
+        StreamEvent::Usage(kraken_agent::Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+        }),
+    );
+    let engine = meter.wrap(Arc::new(ApiBackend::new(Arc::new(
+        ReplayProvider::scripted(vec![events]),
+    ))));
+    let task = Task::explain_function(&rig.registry, "0x401000").expect("task");
+    let (r, _) = run_on(&rig, engine, task).await;
+    assert_eq!(kind_of(&r.output), "explanation");
+    assert_eq!(meter.totals().calls, 1);
+    assert_eq!(meter.totals().input_tokens, 10);
+}
+
+#[tokio::test]
+async fn metering_a_terminal_agent_counts_calls_and_time_but_no_tokens() {
+    use kraken_proto::{AiBilling, AiFeature, AiOrigin, AiProviderKind};
+    let rig = rig().await;
+    let answers = answers_file(&rig, &json!([{"match": "hello", "reply": "hi there"}]));
+    let agent = acp(
+        &rig,
+        &[
+            ("FAKE_ACP_ALLOW_NO_MCP", "1"),
+            ("FAKE_ACP_COMPLETION_ANSWERS", answers.as_str()),
+        ],
+    );
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    let meter = kraken_assist::Meter::builder(kraken_assist::MeterSpec::new(
+        AiFeature::Rewrite,
+        AiOrigin::Gui,
+    ))
+    .observer(Arc::new(move |r, _| seen2.lock().unwrap().push(r.clone())))
+    .build();
+    let backend = meter.wrap(agent);
+    let r = backend
+        .complete_text(text_request("hello"), CancellationToken::new())
+        .await
+        .expect("reply");
+    assert_eq!(r.text, "hi there");
+    let t = meter.totals();
+    assert_eq!(t.calls, 1);
+    assert_eq!(t.subscription_calls, 1);
+    assert_eq!(t.input_tokens + t.output_tokens, 0);
+    assert_eq!(t.cost_text(), "billed by the agent's subscription");
+    let rec = seen.lock().unwrap()[0].clone();
+    assert_eq!(rec.provider_kind, AiProviderKind::TerminalAgent);
+    assert_eq!(rec.billing, AiBilling::Subscription);
+    assert!(rec.input_tokens.is_none() && rec.cost_usd.is_none());
+    backend.close();
+}
+
+#[tokio::test]
+async fn a_call_cap_stops_the_run_and_the_daily_budget_refuses_new_work() {
+    use kraken_proto::{AiFeature, AiOrigin};
+    let rig = rig().await;
+    let scripted = || {
+        Arc::new(ApiBackend::new(Arc::new(ReplayProvider::scripted(vec![
+            said_with_usage("a", 1_000_000, 0),
+            said_with_usage("b", 1_000_000, 0),
+        ])))) as Arc<dyn AssistBackend>
+    };
+    let meter = kraken_assist::Meter::builder(kraken_assist::MeterSpec::new(
+        AiFeature::Rewrite,
+        AiOrigin::Cli,
+    ))
+    .pricing(priced())
+    .limits(kraken_assist::AiLimits {
+        max_calls_per_run: Some(1),
+        ..kraken_assist::AiLimits::default()
+    })
+    .build();
+    let b = meter.wrap(scripted());
+    b.complete_text(text_request("x"), CancellationToken::new())
+        .await
+        .expect("first call");
+    let e = b
+        .complete_text(text_request("x"), CancellationToken::new())
+        .await
+        .expect_err("over the cap");
+    assert!(matches!(e, kraken_agent::AgentError::Limit(_)), "{e}");
+    assert!(e.to_string().contains("limit of 1 model calls"), "{e}");
+    assert!(meter.limit_message().is_some());
+    assert_eq!(meter.totals().calls, 1);
+
+    let daily = kraken_model::DailyLedger::at(rig.tmp.path().join("budget.json"));
+    let limits = kraken_assist::AiLimits {
+        daily_budget: Some(1.5),
+        ..kraken_assist::AiLimits::default()
+    };
+    let first = kraken_assist::Meter::builder(kraken_assist::MeterSpec::new(
+        AiFeature::Assistant,
+        AiOrigin::Gui,
+    ))
+    .pricing(priced())
+    .daily(Some(daily.clone()))
+    .limits(limits.clone())
+    .build();
+    first
+        .wrap(scripted())
+        .complete_text(text_request("x"), CancellationToken::new())
+        .await
+        .expect("under the budget");
+    assert!((daily.today().cost_usd - 2.0).abs() < 1e-9);
+    let later = kraken_assist::Meter::builder(kraken_assist::MeterSpec::new(
+        AiFeature::Rewrite,
+        AiOrigin::Gui,
+    ))
+    .pricing(priced())
+    .daily(Some(daily.clone()))
+    .limits(limits)
+    .build();
+    let e = later
+        .wrap(scripted())
+        .complete_text(text_request("x"), CancellationToken::new())
+        .await
+        .expect_err("budget used up");
+    assert!(e.to_string().contains("Today's AI budget of $1.50"), "{e}");
+    assert_eq!(later.totals().calls, 0);
+}

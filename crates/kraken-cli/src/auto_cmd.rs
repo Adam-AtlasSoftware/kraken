@@ -286,6 +286,18 @@ async fn auto(
     } else {
         None
     };
+    // Without a terminal to ask on, refuse before any work rather than half-way.
+    let policy = crate::cost::policy(env);
+    let yes = sm.get_flag("yes");
+    if want_names && provider.is_none() {
+        let task = Task::automate(&env.registry, AutomateGoal::Understand);
+        let e = policy.estimate(task.kind.feature(), 1, task.max_model_calls());
+        crate::cost::refuse_unattended(env, &policy, e.as_ref(), yes)?;
+    }
+    if want_rewrite {
+        let e = crate::cost::command_estimate(env, &policy, "rewrite_program", &json!({}), None);
+        crate::cost::refuse_unattended(env, &policy, e.as_ref(), yes)?;
+    }
     let total = 2 + usize::from(want_names) + if want_rewrite { 2 } else { 0 };
     let mut n = 0;
 
@@ -377,6 +389,7 @@ async fn auto(
             selection,
             task,
             false,
+            provider.is_some(),
             shown,
             err,
         )
@@ -410,6 +423,14 @@ async fn auto(
                 plan["functions_planned"], plan["functions_total"]
             ),
         );
+        let estimate = crate::cost::command_estimate(
+            env,
+            &policy,
+            "rewrite_program",
+            &json!({}),
+            plan["functions_planned"].as_u64(),
+        );
+        crate::cost::confirm(env, &policy, estimate.as_ref(), yes, err)?;
         n += 1;
         step(
             err,

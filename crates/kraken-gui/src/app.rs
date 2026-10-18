@@ -144,6 +144,12 @@ pub struct KrakenApp {
     picker: Picker,
     /// A step waiting for the person to agree to stop a running job.
     confirm: Option<Pending>,
+    /// A step waiting for the person to say what happens to AI work that runs.
+    confirm_ai: Option<Pending>,
+    /// Closing this project leaves its AI work running in the daemon.
+    leave_running: bool,
+    /// The person agreed to quit; the next close request goes through.
+    quit_agreed: bool,
     /// The shortcut cheat sheet is showing.
     shortcuts_open: bool,
     /// The help window.
@@ -207,6 +213,9 @@ impl KrakenApp {
             import: None,
             picker: Picker::default(),
             confirm: None,
+            confirm_ai: None,
+            leave_running: false,
+            quit_agreed: false,
             shortcuts_open: false,
             help: HelpUi::default(),
             tour: Tour::default(),
@@ -327,9 +336,18 @@ impl KrakenApp {
             .is_some_and(|v| v.connection == Connection::Open && v.analysis.running())
     }
 
+    /// True while AI work runs that closing or quitting would stop or leave running.
+    fn ai_running(&self) -> bool {
+        self.vm
+            .as_ref()
+            .is_some_and(|v| v.connection == Connection::Open && v.ai_work_running())
+    }
+
     /// Runs `step` now, or asks first when it would stop a running job.
     pub(crate) fn request(&mut self, step: Pending, ctx: &egui::Context) {
-        if self.job_running() {
+        if self.ai_running() {
+            self.confirm_ai = Some(step);
+        } else if self.job_running() {
             self.confirm = Some(step);
         } else {
             self.run_pending(step, ctx);
@@ -341,7 +359,10 @@ impl KrakenApp {
             Pending::Open(Choice::Demo) => self.start_demo(ctx),
             Pending::Open(c) => self.start_real(c, ctx),
             Pending::Close => self.close_project(),
-            Pending::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
+            Pending::Quit => {
+                self.quit_agreed = true;
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
         }
     }
 
@@ -355,7 +376,7 @@ impl KrakenApp {
                 .as_ref()
                 .is_some_and(|p| Path::new(&p.project_dir) == Path::new(k))
         });
-        if !same {
+        if !same && !std::mem::take(&mut self.leave_running) {
             vm.close_project();
         }
     }
@@ -515,6 +536,12 @@ impl KrakenApp {
         let mut vm = ViewModel::new(backend, self.rt.handle().clone());
         let ctx = ctx.clone();
         vm.set_repaint(Arc::new(move || ctx.request_repaint()));
+        let daily = self
+            .services
+            .ai_daily
+            .clone()
+            .filter(|_| self.shot.is_none());
+        vm.ai_configure(self.services.config_path.clone(), daily);
         let agents = self.agent_env();
         self.assist.apply(&mut vm, agents);
         vm
@@ -684,6 +711,7 @@ impl KrakenApp {
             Connection::Open => {
                 self.welcome.busy = None;
                 crate::activity::apply_requests(ctx, vm, &mut self.state);
+                crate::ai_activity::apply_requests(ctx, vm, &mut self.state);
                 if self.auto_analyze {
                     self.auto_analyze = false;
                     if vm.analysis.phase == AnalysisPhase::NotStarted {
@@ -872,6 +900,12 @@ impl KrakenApp {
                 self.help.show_topic(help::topic_for_tab(tab));
             }
             UiRequest::TakeTour => self.tour.start(),
+            UiRequest::ShowAiActivity => {
+                if let Some(vm) = self.vm.as_mut() {
+                    vm.ai_refresh();
+                }
+                self.state.bring_to_front = Some(Tab::AiActivity);
+            }
         }
     }
 
@@ -938,6 +972,34 @@ impl KrakenApp {
                     self.request(Pending::Open(c), ctx);
                 }
                 Some(ImportAction::Cancel) => self.import = None,
+                None => {}
+            }
+        }
+        if let Some(step) = self.confirm_ai.clone() {
+            let daemon = self.services.mode == Mode::Daemon && !self.is_demo;
+            let line = self.vm.as_ref().and_then(|v| v.ai_chip()).map(|c| c.text());
+            match ai_close_dialog(ctx, &step, daemon, line.as_deref()) {
+                Some(AiClose::Stop) => {
+                    self.confirm_ai = None;
+                    if let Some(vm) = self.vm.as_mut() {
+                        vm.ai_stop_all();
+                        if vm.analysis.running() {
+                            vm.cancel_analysis();
+                        }
+                        // The cancel requests must reach the daemon before the window goes.
+                        vm.block_until_idle(Duration::from_secs(3));
+                    }
+                    self.run_pending(step, ctx);
+                }
+                Some(AiClose::Leave) => {
+                    self.confirm_ai = None;
+                    if let Some(vm) = self.vm.as_mut() {
+                        vm.assist_stop();
+                    }
+                    self.leave_running = true;
+                    self.run_pending(step, ctx);
+                }
+                Some(AiClose::Keep) => self.confirm_ai = None,
                 None => {}
             }
         }
@@ -1016,6 +1078,11 @@ impl KrakenApp {
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
                 SettingsAction::DefaultEngine(engine) => self.welcome.engine = engine,
             }
+        }
+        if self.settings.ai.take_policy_dirty()
+            && let Some(vm) = self.vm.as_mut()
+        {
+            vm.ai_reload();
         }
         if let Some(change) = self.settings.ai.take_change() {
             match change {
@@ -1145,6 +1212,11 @@ impl KrakenApp {
     /// Draws one frame. Separate from `eframe::App::ui` so tests can drive it headlessly.
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        // The window's close button: ask first while AI work runs.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_agreed && self.ai_running() {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            self.confirm_ai = Some(Pending::Quit);
+        }
         if self.applied != Some(self.theme) {
             self.theme.apply(&ctx);
             self.applied = Some(self.theme);
@@ -1194,6 +1266,24 @@ impl KrakenApp {
             crate::rewrite::wizard_window(&ctx, vm, &mut self.state.bring_to_front);
             chrome::toasts(&ctx, vm);
             assist::overlays(&ctx, vm, &mut self.state.assist);
+            if let Some(crate::ai_activity::ConfirmAnswer::Start(Some(under))) =
+                crate::ai_activity::confirm_dialog(&ctx, vm, &mut self.state.ai_confirm)
+            {
+                match save_skip_threshold(self.services.config_path.as_deref(), under) {
+                    Ok(()) => vm.toast(
+                        kraken_viewmodel::ToastLevel::Info,
+                        format!(
+                            "KRAKEN will not ask again before AI work estimated under {}. Change it in Settings > AI.",
+                            kraken_proto::money(under)
+                        ),
+                    ),
+                    Err(e) => vm.toast(
+                        kraken_viewmodel::ToastLevel::Warning,
+                        format!("The setting could not be saved: {e}"),
+                    ),
+                }
+                vm.ai_reload();
+            }
             if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
                 ctx.request_repaint_after(Duration::from_millis(400));
             }
@@ -1632,6 +1722,91 @@ fn confirm_dialog(ctx: &egui::Context, step: &Pending) -> Option<bool> {
         answer = Some(false);
     }
     answer
+}
+
+/// What to do with AI work that runs when the project closes or the window quits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AiClose {
+    /// Stop it, then go on.
+    Stop,
+    /// Leave the daemon's work running, then go on.
+    Leave,
+    /// Do not close.
+    Keep,
+}
+
+/// The words of the question about running AI work.
+pub(crate) fn ai_close_text(step: &Pending, daemon: bool, line: Option<&str>) -> String {
+    let what = match step {
+        Pending::Open(_) => "open another project",
+        Pending::Close => "close the project",
+        Pending::Quit => "quit",
+    };
+    let mut t = format!(
+        "You asked to {what}, but AI work is still running{}.",
+        line.map(|l| format!(" ({l})")).unwrap_or_default()
+    );
+    if daemon {
+        t.push_str(" Stop it, or leave it running in the background engine (krakend)? Work left running keeps asking the model, so it keeps costing money until it ends. Open the project again to see it in the AI Activity tab. The assistant's own answers in this window always stop.");
+    } else {
+        t.push_str(" It runs inside this window, so it stops.");
+    }
+    t
+}
+
+/// Asks what to do with AI work that runs.
+fn ai_close_dialog(
+    ctx: &egui::Context,
+    step: &Pending,
+    daemon: bool,
+    line: Option<&str>,
+) -> Option<AiClose> {
+    let mut answer = None;
+    let modal = egui::Modal::new(egui::Id::new("kraken_confirm_ai_close")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.heading("AI work is still running");
+        ui.label(ai_close_text(step, daemon, line));
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui
+                .button("Stop it and continue")
+                .on_hover_text("Stop all AI work of this project and go on. What it finished is kept.")
+                .clicked()
+            {
+                answer = Some(AiClose::Stop);
+            }
+            let leave = ui
+                .add_enabled(daemon, egui::Button::new("Leave it running"))
+                .on_hover_text(
+                    "Go on and let the rewrite jobs finish in krakend. They keep costing money until they end.",
+                )
+                .on_disabled_hover_text(
+                    "This work runs inside the window (no background engine), so it cannot keep running.",
+                );
+            if leave.clicked() {
+                answer = Some(AiClose::Leave);
+            }
+            if ui
+                .button("Keep working")
+                .on_hover_text("Stay here and let the work go on")
+                .clicked()
+            {
+                answer = Some(AiClose::Keep);
+            }
+        });
+    });
+    if answer.is_none() && modal.should_close() {
+        answer = Some(AiClose::Keep);
+    }
+    answer
+}
+
+/// Saves "do not ask before AI work estimated under `under` dollars" to the config file.
+fn save_skip_threshold(path: Option<&Path>, under: f64) -> Result<(), String> {
+    let path = path.ok_or_else(|| "there is no settings file (HOME is not set)".to_string())?;
+    let mut limits = kraken_assist::AiLimits::load(Some(path));
+    limits.skip_confirm_under = Some(under);
+    limits.save(path)
 }
 
 /// The overlay while files are dragged over the window.

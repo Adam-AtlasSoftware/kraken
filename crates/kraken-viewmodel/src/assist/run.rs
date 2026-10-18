@@ -224,6 +224,12 @@ impl ViewModel {
         };
         self.assist.seq += 1;
         let seq = self.assist.seq;
+        let feature = match kind {
+            RunKind::AutoName => kraken_proto::AiFeature::AutoName,
+            RunKind::Automate => kraken_proto::AiFeature::Automate,
+            _ => kraken_proto::AiFeature::Assistant,
+        };
+        let engine = self.ai_meter_local(feature, &user_line, seq, engine);
         let cancel = CancellationToken::new();
         self.assist.items.push(ChatItem::User(user_line));
         let first_item = self.assist.items.len();
@@ -451,6 +457,9 @@ impl ViewModel {
 
     /// Explains the function at `address` (a card in the Assistant tab).
     pub fn assist_explain_function(&mut self, address: u64) {
+        if !self.ai_gate(crate::ai::AiAction::ExplainFunction(address)) {
+            return;
+        }
         let name = self
             .functions
             .find(address)
@@ -491,6 +500,13 @@ impl ViewModel {
         text: &str,
         address: Option<u64>,
     ) {
+        if !self.ai_gate(crate::ai::AiAction::ExplainSelection {
+            kind,
+            text: text.to_string(),
+            address,
+        }) {
+            return;
+        }
         let addr_text = address.map(|a| format!("{a:#x}"));
         let task = match Task::explain_selection(
             &self.assist.registry,
@@ -523,6 +539,9 @@ impl ViewModel {
 
     /// Starts the guided overview of the program.
     pub fn assist_overview(&mut self) {
+        if !self.ai_gate(crate::ai::AiAction::Overview) {
+            return;
+        }
         let task = Task::overview(&self.assist.registry);
         self.assist.overview_offer = OverviewOffer::Hidden;
         let Some((seq, engine, cancel)) = self.assist_begin(
@@ -544,6 +563,9 @@ impl ViewModel {
     /// Looks for better names for default-named functions without changing anything; the
     /// result is a review table (`vm.assist.autoname`).
     pub fn assist_auto_name(&mut self, limit: usize) {
+        if !self.ai_gate(crate::ai::AiAction::AutoName(limit)) {
+            return;
+        }
         let task = Task::auto_name(
             &self.assist.registry,
             AutoNameOptions {
@@ -568,6 +590,9 @@ impl ViewModel {
     /// apply, overwrites become proposals); anything that runs code asks first; accepting
     /// rewrite results stays with the person.
     pub fn assist_automate(&mut self, goal: AutomateGoal) {
+        if !self.ai_gate(crate::ai::AiAction::Automate(goal)) {
+            return;
+        }
         let task = Task::automate(&self.assist.registry, goal);
         let line = match goal {
             AutomateGoal::Understand => "Automate: understand this program and name its functions",

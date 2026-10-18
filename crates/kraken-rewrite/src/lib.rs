@@ -23,6 +23,7 @@ pub mod image;
 pub mod infer;
 pub mod lift;
 pub mod lint;
+pub mod metering;
 pub mod native;
 pub mod oracle;
 pub mod pipeline;

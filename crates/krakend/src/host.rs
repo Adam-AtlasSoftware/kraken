@@ -101,6 +101,8 @@ pub struct SessionEntry {
     inflight: AtomicUsize,
     last_active: Mutex<Duration>,
     jobs_seen: Mutex<HashMap<String, SeenJob>>,
+    /// The AI board version last published, and what each piece of work looked like then.
+    ai_seen: Mutex<(u64, HashMap<String, kraken_proto::AiJobView>)>,
 }
 
 impl SessionEntry {
@@ -270,6 +272,7 @@ impl SessionHost {
             inflight: AtomicUsize::new(0),
             last_active: Mutex::new(self.inner.clock.now()),
             jobs_seen: Mutex::new(HashMap::new()),
+            ai_seen: Mutex::new((0, HashMap::new())),
         })
     }
 
@@ -560,6 +563,37 @@ impl SessionHost {
         running
     }
 
+    /// Publishes `ai_started`, `ai_progress` and `ai_done` events for what changed on the
+    /// session's AI board since the last pass.
+    fn watch_ai(&self, entry: &Arc<SessionEntry>) {
+        let board = entry.session.ai();
+        let version = board.version();
+        let mut seen = lock(&entry.ai_seen);
+        if seen.0 == version {
+            return;
+        }
+        seen.0 = version;
+        for job in board.list() {
+            let before = seen.1.get(&job.id);
+            if before == Some(&job) {
+                continue;
+            }
+            let kind = match before {
+                None if !job.status.is_terminal() => event_kind::AI_STARTED,
+                Some(b) if b.status.is_terminal() => continue,
+                _ if job.status.is_terminal() => event_kind::AI_DONE,
+                _ => event_kind::AI_PROGRESS,
+            };
+            if let Ok(v) = serde_json::to_value(&job) {
+                self.inner.hub.publish(&entry.key, kind, json!({ "ai": v }));
+            }
+            seen.1.insert(job.id.clone(), job);
+        }
+        let live: std::collections::HashSet<String> =
+            board.list().into_iter().map(|j| j.id).collect();
+        seen.1.retain(|k, _| live.contains(k));
+    }
+
     /// Saves the engine behind the write queue, off the caller's path.
     fn save_in_background(&self, entry: &Arc<SessionEntry>) {
         let entry = entry.clone();
@@ -580,6 +614,7 @@ impl SessionHost {
         let now = self.inner.clock.now();
         for e in self.entries() {
             let r = self.watch_jobs(&e);
+            self.watch_ai(&e);
             running += r;
             let idle_for = now.saturating_sub(*lock(&e.last_active));
             if r == 0

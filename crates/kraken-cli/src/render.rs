@@ -948,6 +948,63 @@ fn plain(stdout: String) -> Rendered {
 }
 
 /// Renders the result of command `name` for people.
+fn ai_usage(v: &Value) -> String {
+    let scope = v["scope"].as_str().unwrap_or("project");
+    let mut s = format!(
+        "AI usage ({}): {}\n",
+        match scope {
+            "today" => "today, all projects",
+            "run" => "this run",
+            _ => "this project",
+        },
+        v["summary"].as_str().unwrap_or("")
+    );
+    let totals = |t: &Value| -> String {
+        serde_json::from_value::<kraken_proto::AiUsageTotals>(t.clone())
+            .map(|t| t.line())
+            .unwrap_or_default()
+    };
+    for g in v["groups"].as_array().into_iter().flatten() {
+        let feature = kraken_proto::AiFeature::parse(g["feature"].as_str().unwrap_or(""));
+        s.push_str(&format!(
+            "  {:<14} {:<28} {}\n",
+            feature.label(),
+            g["model"].as_str().unwrap_or(""),
+            totals(&g["totals"])
+        ));
+    }
+    if let Some(n) = v["note"].as_str() {
+        s.push_str(&format!("{n}\n"));
+    }
+    s
+}
+
+fn ai_jobs(v: &Value) -> String {
+    let jobs: Vec<kraken_proto::AiJobView> =
+        serde_json::from_value(v["jobs"].clone()).unwrap_or_default();
+    if jobs.is_empty() {
+        return "No AI work in this session.\n".into();
+    }
+    let mut s = String::new();
+    for j in jobs {
+        s.push_str(&format!(
+            "{:<12} {}: {} - {} - started by {} - {}{}\n",
+            j.status.label(),
+            j.feature.label(),
+            j.label,
+            j.model_label(),
+            j.origin.label(),
+            j.usage.line(),
+            j.job_id
+                .as_deref()
+                .map(|id| format!(" (stop it: kraken job-cancel --job-id {id})"))
+                .filter(|_| !j.status.is_terminal())
+                .unwrap_or_default()
+        ));
+    }
+    s
+}
+
 pub fn render(name: &str, output: &Value) -> Rendered {
     let v = unwrap_untrusted(output);
     match name {
@@ -967,6 +1024,8 @@ pub fn render(name: &str, output: &Value) -> Rendered {
         "rewrite_status" => plain(rewrite_status(&v)),
         "rewrite_unit" => plain(rewrite_unit(&v)),
         "rewrite_program_status" => plain(rewrite_program_status(&v)),
+        "ai_usage" => plain(ai_usage(&v)),
+        "ai_jobs" => plain(ai_jobs(&v)),
         "rewrite_program"
             if v.get("result")
                 .is_some_and(|r| r.get("functions").is_some())
