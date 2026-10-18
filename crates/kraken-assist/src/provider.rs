@@ -6,10 +6,13 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use kraken_agent::ProviderConfig;
+use kraken_agent::{ProviderConfig, SecretResolver};
 use kraken_host::KrakenConfig;
 
+use crate::acp::{AcpBackend, AgentChoice, find_kraken_exe, plan_agent};
+use crate::backend::{ApiBackend, AssistBackend};
 use crate::error::AssistError;
 
 /// Example `[provider]` tables: a heading and the TOML for each supported kind.
@@ -113,6 +116,86 @@ pub fn load_provider_config(path: Option<&Path>) -> Result<ProviderConfig, Assis
     }
     ProviderConfig::from_toml(&text)
         .map_err(|e| AssistError::Config(format!("{}: {e}", p.display())))
+}
+
+/// Reads the optional `[rewrite]` table from the file at `path`: a provider override for the
+/// rewrite pipeline, with the same keys as `[provider]`. `None` when the file or the table is
+/// missing (the rewrite pipeline then uses `[provider]`); [`AssistError::Config`] when the table
+/// does not parse.
+pub fn load_rewrite_config(path: Option<&Path>) -> Result<Option<ProviderConfig>, AssistError> {
+    let Some(p) = path else {
+        return Ok(None);
+    };
+    let text = match std::fs::read_to_string(p) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(AssistError::Config(format!(
+                "cannot read {}: {e}",
+                p.display()
+            )));
+        }
+    };
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e| AssistError::Config(format!("{}: {e}", p.display())))?;
+    let Some(rewrite) = table.get("rewrite") else {
+        return Ok(None);
+    };
+    rewrite
+        .clone()
+        .try_into::<ProviderConfig>()
+        .map(Some)
+        .map_err(|e| AssistError::Config(format!("{}: [rewrite]: {e}", p.display())))
+}
+
+/// The backend a text-only task (the rewrite pipeline) runs on: `[rewrite]` when the file has
+/// one, else `[provider]`. Re-read on every call, so a changed file applies without a restart.
+pub fn text_backend_from_config(
+    env: &dyn Fn(&str) -> Option<OsString>,
+    secrets: &dyn SecretResolver,
+) -> Result<Arc<dyn AssistBackend>, AssistError> {
+    let path = provider_config_path(env);
+    let cfg = match load_rewrite_config(path.as_deref())? {
+        Some(c) => c,
+        None => load_provider_config(path.as_deref())?,
+    };
+    text_backend(&cfg, env, secrets)
+}
+
+/// The backend for `cfg`: a chat model API ([`ApiBackend`]), or the terminal agent a
+/// `kind = "terminal_agent"` table names ([`AcpBackend`], used text-only: no KRAKEN tools, every
+/// permission request denied; see [`AssistBackend::complete_text`]).
+pub fn text_backend(
+    cfg: &ProviderConfig,
+    env: &dyn Fn(&str) -> Option<OsString>,
+    secrets: &dyn SecretResolver,
+) -> Result<Arc<dyn AssistBackend>, AssistError> {
+    let Some(choice) = AgentChoice::from_config(cfg) else {
+        return Ok(Arc::new(ApiBackend::new(cfg.build(secrets)?)));
+    };
+    let profiles = kraken_acp::load_catalogue(kraken_acp::config_dir_with(env).as_deref())
+        .map_err(|e| AssistError::Config(e.to_string()))?;
+    let paths = kraken_acp::AgentPaths::from_env_with(env).ok_or_else(|| {
+        AssistError::Config(
+            "cannot place agent files: neither XDG_DATA_HOME nor HOME is set".to_string(),
+        )
+    })?;
+    let resolver = kraken_acp::Resolver {
+        paths,
+        platform: kraken_acp::Platform::current(),
+        path_env: env("PATH"),
+    };
+    // A text-only request never starts KRAKEN's MCP server; the entry only fills the slot.
+    let exe = find_kraken_exe(env("PATH").as_deref()).unwrap_or_else(|| PathBuf::from("kraken"));
+    let scratch = std::env::temp_dir();
+    let mcp = kraken_acp::McpServerConfig::project(exe, &scratch);
+    let settings = plan_agent(&resolver, &profiles, &choice, &scratch, mcp)
+        .map_err(|e| AssistError::Config(e.to_string()))?;
+    Ok(Arc::new(AcpBackend::new(
+        settings,
+        Arc::new(kraken_registry::Registry::standard()),
+    )))
 }
 
 #[cfg(test)]

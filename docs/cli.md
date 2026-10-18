@@ -61,7 +61,7 @@ Beside the registry commands, `kraken explain <address>`, `kraken overview`, `kr
 
 ## Rewriting
 
-The `rewrite-*` commands translate functions to Rust and check them against the original. They are described in [The rewrite pipeline](design/0013-rewrite-pipeline.md) and the [command reference](reference/commands.md).
+The `rewrite-*` commands translate functions to Rust and check them against the original, using the assistant's model or terminal agent (`[provider]`, or a separate `[rewrite]` table; see [the assistant](assistant.md)). They are described in [The rewrite pipeline](design/0013-rewrite-pipeline.md) and the [command reference](reference/commands.md).
 
 ```sh
 kraken rewrite-plan                                   # callees first; flags what cannot be tested yet

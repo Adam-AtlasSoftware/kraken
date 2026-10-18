@@ -10,10 +10,17 @@
 //! Both turn a [`RunSpec`] into an [`AgentRun`], the same stream of [`AgentEvent`]s, so tasks,
 //! chat, the CLI and the GUI do not care which one is selected.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use kraken_agent::{Agent, AgentConfig, AgentRun, ChatProvider, Message, ProviderInfo, ToolHost};
+use futures_util::StreamExt;
+use kraken_agent::{
+    Agent, AgentConfig, AgentError, AgentRun, ChatProvider, ChatRequest, Message, ProviderInfo,
+    StreamAssembler, ToolHost, Usage,
+};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::host::HostStats;
 
@@ -76,6 +83,20 @@ pub struct RunSpec {
     pub purpose: Purpose,
 }
 
+/// What a text-only completion returns.
+#[derive(Debug, Clone)]
+pub struct TextReply {
+    /// The reply text, as the model or agent wrote it.
+    pub text: String,
+    /// Token usage; zero for a terminal agent, which does not report it.
+    pub usage: Usage,
+    /// Who answered.
+    pub provider: ProviderInfo,
+}
+
+/// The future of [`AssistBackend::complete_text`].
+pub type TextFuture<'a> = Pin<Box<dyn Future<Output = Result<TextReply, AgentError>> + Send + 'a>>;
+
 /// Something that answers runs. Implementations must be cheap to share.
 pub trait AssistBackend: Send + Sync {
     /// What to show about the backend.
@@ -101,6 +122,14 @@ pub trait AssistBackend: Send + Sync {
 
     /// Ends anything kept between runs (a terminal agent's session).
     fn close(&self) {}
+
+    /// One text-only request: `req.system` and `req.messages` in, the reply text out. No KRAKEN
+    /// tools are offered (`req.tools` is ignored) and nothing is run on the backend's side: the
+    /// rewrite pipeline sends everything the model needs in the prompt and builds and tests the
+    /// answer itself, in its own sandbox. A terminal agent is started in an empty scratch
+    /// directory without the KRAKEN MCP server, and every permission request for its own tools
+    /// is denied.
+    fn complete_text(&self, req: ChatRequest, cancel: CancellationToken) -> TextFuture<'_>;
 }
 
 /// A chat model API behind the `kraken-agent` loop.
@@ -137,6 +166,26 @@ impl AssistBackend for ApiBackend {
             self.provider.clone(),
             spec.config,
         )
+    }
+
+    fn complete_text(&self, req: ChatRequest, cancel: CancellationToken) -> TextFuture<'_> {
+        Box::pin(async move {
+            let req = ChatRequest {
+                tools: Vec::new(),
+                ..req
+            };
+            let mut stream = self.provider.complete(req, cancel).await?;
+            let mut asm = StreamAssembler::default();
+            while let Some(ev) = stream.next().await {
+                asm.push(&ev?);
+            }
+            let done = asm.finish();
+            Ok(TextReply {
+                text: done.text,
+                usage: done.usage,
+                provider: self.provider.info(),
+            })
+        })
     }
 }
 

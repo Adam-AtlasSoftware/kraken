@@ -40,5 +40,6 @@ landlock = "0.4.7"
 
 [dev-dependencies]
 engine-fake = { path = "../engine-fake", version = "0.0.0" }
+kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
 tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "process"] }

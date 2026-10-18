@@ -191,6 +191,29 @@ This runs one prompt in an agent without the assistant's task prompts and result
 - `did not answer within 60 seconds`: the agent printed something instead of speaking ACP; the last lines it wrote are shown. Run the agent's own program to see what is wrong.
 - Agent still running after a crash: KRAKEN stops the agent and everything it started (SIGTERM, then SIGKILL) when the command ends or the project closes, and the agent is killed if KRAKEN itself dies.
 
+## Rewriting uses the same assistant
+
+The rewrite pipeline (`rewrite_function`, its repair attempts, spec mode, and `rewrite_program`; see [ADR 0013](design/0013-rewrite-pipeline.md)) makes every model call through the same backends as the assistant: a model API or a terminal agent, chosen by the same `[provider]` table. A `kind = "terminal_agent"` provider therefore works for rewriting too, and so does any local or cloud model.
+
+To use a different one for rewriting only, add an optional `[rewrite]` table. It takes exactly the keys of `[provider]` and, when present, replaces it for the rewrite commands (the assistant keeps using `[provider]`):
+
+```toml
+[provider]                 # the assistant: a local model
+kind = "openai_compatible"
+base_url = "http://localhost:11434/v1"
+model = "qwen3:14b"
+
+[rewrite]                  # rewrites: Claude Code
+kind = "terminal_agent"
+agent = "claude"
+```
+
+`[rewrite]` alone also works. The file is read on every call, so a change applies to the next rewrite without restarting `krakend`. A rewrite with no provider anywhere stops with the same error that shows examples.
+
+**What a terminal agent does here.** A rewrite request is plain text in, plain text out. KRAKEN starts the agent in a fresh, empty scratch folder (not the project), without the KRAKEN tool server, and sends it the same prompts a model gets, after a short note that this is a text-only request. The agent answers with the translation or the spec in the usual format: Rust between `<kraken-rust>` tags and the `<kraken-result>` block, or the Markdown spec. KRAKEN parses it, lints it, and builds and tests it in its own sandbox. The agent does not build or test anything, and it cannot write files or run commands for KRAKEN: every permission request for the agent's own tools (its shell, its file tools) is denied during a rewrite, with no prompt, and KRAKEN notes that it happened. A tool the agent may use without asking is outside what KRAKEN can stop, as everywhere else in this page; the empty scratch folder limits what it can see. Each model call is a new agent session, so a repair attempt is a new request that carries the failed code and the counterexample, as it is for a model.
+
+As with any terminal agent, the decompiled code of the functions being rewritten goes to the agent's service. Models served on your own computer keep it there.
+
 ## Commands
 
 All of them take `--project <dir>` (or `KRAKEN_PROJECT`) like the other commands, and use whatever the `[provider]` table selects, a model or a terminal agent. Text streams to standard output and tool calls go to standard error, so you can see what the assistant looked at. With `--json`, standard output holds one structured result instead (it says which kind of backend answered).
@@ -250,7 +273,7 @@ With the daemon (the default) a terminal agent gets `kraken mcp --daemon --proje
 The assistant reads code that came from a file you do not trust, so the same rules apply as for any agent (see [Security](security.md)):
 
 - Names, strings, comments and decompiled code reach the model only as delimited, untrusted data, and the model is told never to treat them as instructions. They are never put in the system prompt.
-- Which commands a model may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, deciding on proposals, and starting rewrites (translating, specs, accepting and exporting rewrite units) are never offered. Dangerous commands are never offered either. A terminal agent is told the same task rules, but it holds KRAKEN's tool server rather than a list KRAKEN chose: in a read-only task KRAKEN refuses its permission requests for KRAKEN tools that write, and the result calls out any change made anyway. The project's own `kraken mcp` server is bound to the project (it cannot open another).
+- Which commands a model may call is decided by KRAKEN for each task, not by the model or the binary. Explaining and the overview are read-only. Opening, creating or rebuilding projects, undoing, deciding on proposals, and starting rewrites (translating, specs, accepting and exporting rewrite units) are never offered to the assistant as tools (the rewrite pipeline itself uses the same backends, as plain text requests; see above). Dangerous commands are never offered either. A terminal agent is told the same task rules, but it holds KRAKEN's tool server rather than a list KRAKEN chose: in a read-only task KRAKEN refuses its permission requests for KRAKEN tools that write, and the result calls out any change made anyway. The project's own `kraken mcp` server is bound to the project (it cannot open another).
 - Edits go through the registry's policy: additive edits are applied up to a per-run cap, overwrites become proposals.
 
 ## Measuring the assistant (`kraken eval`)

@@ -14,13 +14,14 @@ use kraken_agent::{
     Cassette, CassetteEntry, ChatProvider, ChatRequest, Fingerprint, FinishReason, ReplayProvider,
     StreamEvent,
 };
+use kraken_assist::{ApiBackend, AssistBackend};
 use kraken_engine::SharedEngine;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{AutoApprove, CallContext, EngineFactory, Registry, Session, Surface};
 use kraken_rewrite::export::{build_in_sandbox, crate_prefix};
 use kraken_rewrite::sandbox::Confinement;
-use kraken_rewrite::service::{ProviderSource, RewriteConfig, RewriteService};
+use kraken_rewrite::service::{BackendSource, RewriteConfig, RewriteService};
 use kraken_rewrite::store::RewriteStore;
 use kraken_rewrite::targets::target;
 use kraken_rewrite::task::{Budget, RewriteTask, SpecScope, SpecTask};
@@ -48,12 +49,13 @@ impl Slot {
     }
 }
 
-impl ProviderSource for Slot {
-    fn provider(&self) -> Result<Arc<dyn ChatProvider>, ProtoError> {
+impl BackendSource for Slot {
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
         self.0
             .lock()
             .expect("slot")
             .clone()
+            .map(|p| Arc::new(ApiBackend::new(p)) as Arc<dyn AssistBackend>)
             .ok_or_else(|| ProtoError::new(ErrorCode::Internal, "no provider set in the test"))
     }
 }

@@ -24,11 +24,12 @@ use kraken_agent::{
     AgentError, Cassette, ChatProvider, ChatRequest, FinishReason, Message, RecordingProvider,
     ReplayProvider, StreamEvent,
 };
+use kraken_assist::{ApiBackend, AssistBackend};
 use kraken_engine::SharedEngine;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{AutoApprove, CallContext, EngineFactory, Registry, Session, Surface};
-use kraken_rewrite::service::{ProviderSource, RewriteConfig, RewriteService};
+use kraken_rewrite::service::{BackendSource, RewriteConfig, RewriteService};
 use kraken_rewrite::store::RewriteStore;
 use kraken_rewrite::task::RewriteTask;
 use serde_json::{Value, json};
@@ -45,10 +46,10 @@ impl EngineFactory for FakeFactory {
     }
 }
 
-struct Source(Arc<dyn ChatProvider>);
+struct Source(Arc<dyn AssistBackend>);
 
-impl ProviderSource for Source {
-    fn provider(&self) -> Result<Arc<dyn ChatProvider>, ProtoError> {
+impl BackendSource for Source {
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
         Ok(self.0.clone())
     }
 }
@@ -130,6 +131,10 @@ struct Rig {
 }
 
 async fn rig(binary: &str, provider: Arc<dyn ChatProvider>) -> Rig {
+    rig_with(binary, Arc::new(ApiBackend::new(provider))).await
+}
+
+async fn rig_with(binary: &str, backend: Arc<dyn AssistBackend>) -> Rig {
     let fx = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/fixtures")
         .join(format!("{binary}.json"));
@@ -139,7 +144,7 @@ async fn rig(binary: &str, provider: Arc<dyn ChatProvider>) -> Rig {
         .tempdir()
         .expect("tempdir");
     let service = Arc::new(RewriteService::new(
-        Arc::new(Source(provider)),
+        Arc::new(Source(backend)),
         RewriteConfig {
             oracle: config(),
             ..RewriteConfig::default()

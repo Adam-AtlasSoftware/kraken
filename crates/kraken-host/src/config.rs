@@ -138,6 +138,10 @@ pub struct KrakenConfig {
     /// `kraken-assist` (`kraken_agent::ProviderConfig`); present so the file still loads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<serde_json::Value>,
+    /// The optional `[rewrite]` table: a provider (same keys as `[provider]`) for the rewrite
+    /// pipeline's model calls. Kept opaque like `provider`; absent means `[provider]` is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rewrite: Option<serde_json::Value>,
 }
 
 impl KrakenConfig {

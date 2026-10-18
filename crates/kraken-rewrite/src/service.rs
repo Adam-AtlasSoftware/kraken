@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_agent::{ChatProvider, EnvSecrets};
+use kraken_assist::{ApiBackend, AssistBackend};
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
     CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanScope, RewriteAcceptArgs,
@@ -60,51 +61,59 @@ const DEFAULT_SPEC_FUNCTIONS: u32 = 30;
 /// Most bytes of one function's decompile that go into a program-level spec prompt.
 const SPEC_DECOMPILE_BYTES: usize = 6000;
 
-/// Where the chat provider comes from.
-pub trait ProviderSource: Send + Sync {
-    /// The provider to use for the next model call.
-    fn provider(&self) -> Result<Arc<dyn ChatProvider>, ProtoError>;
+/// Where the assistant backend that answers the model calls comes from.
+pub trait BackendSource: Send + Sync {
+    /// The backend to use for the next model call: a model API or a terminal agent, the same
+    /// [`AssistBackend`]s the assistant runs on.
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError>;
 }
 
-/// Always the same provider (tests, embedding).
+/// Always the same backend (tests, embedding).
+pub struct FixedBackend(pub Arc<dyn AssistBackend>);
+
+impl BackendSource for FixedBackend {
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Always the same chat model API, wrapped as an [`ApiBackend`] (tests, embedding).
 pub struct FixedProvider(pub Arc<dyn ChatProvider>);
 
-impl ProviderSource for FixedProvider {
-    fn provider(&self) -> Result<Arc<dyn ChatProvider>, ProtoError> {
-        Ok(self.0.clone())
+impl BackendSource for FixedProvider {
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
+        Ok(Arc::new(ApiBackend::new(self.0.clone())))
     }
 }
 
 type EnvLookup = Box<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
 
-/// The `[provider]` table of `config.toml`, as the assistant reads it (re-read on every call, so
-/// a changed config applies without a restart).
-pub struct ConfigProvider {
+/// The backend `config.toml` selects, as the assistant reads it: the optional `[rewrite]` table
+/// when there is one, else `[provider]`. Either may be a model API or a terminal agent
+/// (`kind = "terminal_agent"`). Re-read on every call, so a changed config applies without a
+/// restart.
+pub struct ConfigBackend {
     env: EnvLookup,
 }
 
-impl ConfigProvider {
+impl ConfigBackend {
     /// Reads the process environment.
     pub fn from_env() -> Self {
-        ConfigProvider {
+        ConfigBackend {
             env: Box::new(|k| std::env::var_os(k)),
         }
     }
 
     /// Reads `env` instead of the process environment.
     pub fn with_env(env: EnvLookup) -> Self {
-        ConfigProvider { env }
+        ConfigBackend { env }
     }
 }
 
-impl ProviderSource for ConfigProvider {
-    fn provider(&self) -> Result<Arc<dyn ChatProvider>, ProtoError> {
-        let bad = |m: String| ProtoError::new(ErrorCode::InvalidArgument, m);
-        let path = kraken_assist::provider_config_path(&|k| (self.env)(k));
-        let cfg =
-            kraken_assist::load_provider_config(path.as_deref()).map_err(|e| bad(e.to_string()))?;
-        cfg.build(&EnvSecrets)
-            .map_err(|e| bad(format!("provider: {e}")))
+impl BackendSource for ConfigBackend {
+    fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
+        kraken_assist::text_backend_from_config(&|k| (self.env)(k), &EnvSecrets)
+            .map_err(|e| ProtoError::new(ErrorCode::InvalidArgument, e.to_string()))
     }
 }
 
@@ -138,20 +147,20 @@ impl Default for RewriteConfig {
 
 /// Runs the `rewrite_*` commands.
 pub struct RewriteService {
-    providers: Arc<dyn ProviderSource>,
+    backends: Arc<dyn BackendSource>,
     cfg: RewriteConfig,
 }
 
 impl RewriteService {
     /// A service with the given provider source and settings.
-    pub fn new(providers: Arc<dyn ProviderSource>, cfg: RewriteConfig) -> Self {
-        RewriteService { providers, cfg }
+    pub fn new(backends: Arc<dyn BackendSource>, cfg: RewriteConfig) -> Self {
+        RewriteService { backends, cfg }
     }
 
     /// The service the CLI and `krakend` attach: provider from `config.toml`, default settings.
     pub fn standard() -> Self {
         Self::new(
-            Arc::new(ConfigProvider::from_env()),
+            Arc::new(ConfigBackend::from_env()),
             RewriteConfig::default(),
         )
     }
@@ -479,10 +488,10 @@ impl RewriteService {
             }
         }
         progress(job, "spec", 0, 1, "writing the behavioural spec");
-        let provider = self.providers.provider()?;
+        let backend = self.backends.backend()?;
         let task = function_spec_task(f, callees, &self.cfg.budget);
         let (spec, reply) = task
-            .run(provider.as_ref(), job.cancel_token())
+            .run(backend.as_ref(), job.cancel_token())
             .await
             .map_err(proto)?;
         let mut stored = StoredSpec {
@@ -654,7 +663,7 @@ impl RewriteService {
         w: Work,
         dir: &Path,
         binary_path: &str,
-        provider: &dyn ChatProvider,
+        backend: &dyn AssistBackend,
         oracle: &OracleThread,
         job: Option<&JobReporter>,
     ) -> Result<repair::RepairRun, RewriteError> {
@@ -683,7 +692,7 @@ impl RewriteService {
         let (translated_with, reused_direct) = (task.callees.clone(), reuse.direct.clone());
         let cancel = job.map(JobReporter::cancel_token).unwrap_or_default();
         let (dir, binary_path) = (dir.to_path_buf(), binary_path.to_string());
-        repair::run(&task, provider, cancel.clone(), max_attempts, |attempt| {
+        repair::run(&task, backend, cancel.clone(), max_attempts, |attempt| {
             let (f2, sig2, opts2, inputs2) = (f.clone(), sig.clone(), opts.clone(), inputs.clone());
             let (callees2, reused2, prelude2) = (
                 translated_with.clone(),
@@ -1023,7 +1032,7 @@ impl RewriteBackend for RewriteService {
         progress(job, "lift", 0, 4, "reading the function");
         let (f, callees) = self.function_with_callees(&lift, args.address.0).await?;
         let prepared = self.prepared(f, callees)?;
-        let provider = self.providers.provider()?;
+        let backend = self.backends.backend()?;
 
         let mut task = prepared.task.clone();
         let mut spec_id = None;
@@ -1089,7 +1098,7 @@ impl RewriteBackend for RewriteService {
                 work,
                 &dir,
                 &binary_path,
-                provider.as_ref(),
+                backend.as_ref(),
                 &oracle,
                 Some(job),
             )
@@ -1207,14 +1216,14 @@ impl RewriteBackend for RewriteService {
                         .join("|"),
                 );
                 progress(job, "spec", 1, 3, "writing the behavioural spec");
-                let provider = self.providers.provider()?;
+                let backend = self.backends.backend()?;
                 let task = SpecTask {
                     scope: SpecScope::Program,
                     functions,
                     budget: self.cfg.budget.clone(),
                 };
                 let (spec, reply) = task
-                    .run(provider.as_ref(), job.cancel_token())
+                    .run(backend.as_ref(), job.cancel_token())
                     .await
                     .map_err(proto)?;
                 let mut stored = StoredSpec {

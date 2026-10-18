@@ -7,12 +7,13 @@
 //! - [`SpecTask`]: write a behavioural spec (purpose, inputs, outputs, side effects, invariants)
 //!   of a function or the whole program, as Markdown with address citations.
 //!
-//! Both run against any [`ChatProvider`], including a `ReplayProvider` cassette.
+//! Both run against any [`AssistBackend`]: a model API (including a `ReplayProvider` cassette) or a
+//! terminal agent over ACP.
 
 use std::collections::BTreeSet;
 
-use futures_util::StreamExt;
-use kraken_agent::{ChatProvider, ChatRequest, Message, ProviderInfo, StreamAssembler, Usage};
+use kraken_agent::{ChatRequest, Message, ProviderInfo, Usage};
+use kraken_assist::AssistBackend;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -54,9 +55,9 @@ pub struct ModelReply {
     pub prompt_hash: String,
 }
 
-/// Runs one request without tools and collects the text.
+/// Runs one text-only request on the backend: no tools, nothing run on its side.
 pub async fn complete_text(
-    provider: &dyn ChatProvider,
+    backend: &dyn AssistBackend,
     req: ChatRequest,
     cancel: CancellationToken,
 ) -> Result<ModelReply, RewriteError> {
@@ -72,16 +73,11 @@ pub async fn complete_text(
             .collect::<Vec<_>>()
             .join("\n")
     ));
-    let mut stream = provider.complete(req, cancel).await?;
-    let mut asm = StreamAssembler::default();
-    while let Some(ev) = stream.next().await {
-        asm.push(&ev?);
-    }
-    let done = asm.finish();
+    let reply = backend.complete_text(req, cancel).await?;
     Ok(ModelReply {
-        text: done.text,
-        usage: done.usage,
-        provider: provider.info(),
+        text: reply.text,
+        usage: reply.usage,
+        provider: reply.provider,
         prompt_hash,
     })
 }
@@ -331,13 +327,13 @@ impl RewriteTask {
         })
     }
 
-    /// Runs the task on `provider`.
+    /// Runs the task on `backend`.
     pub async fn run(
         &self,
-        provider: &dyn ChatProvider,
+        backend: &dyn AssistBackend,
         cancel: CancellationToken,
     ) -> Result<(RewriteOutput, ModelReply), RewriteError> {
-        let reply = complete_text(provider, self.request(), cancel).await?;
+        let reply = complete_text(backend, self.request(), cancel).await?;
         let out = self.parse(&reply.text)?;
         Ok((out, reply))
     }
@@ -567,13 +563,13 @@ impl SpecTask {
         })
     }
 
-    /// Runs the task on `provider`.
+    /// Runs the task on `backend`.
     pub async fn run(
         &self,
-        provider: &dyn ChatProvider,
+        backend: &dyn AssistBackend,
         cancel: CancellationToken,
     ) -> Result<(Spec, ModelReply), RewriteError> {
-        let reply = complete_text(provider, self.request(), cancel).await?;
+        let reply = complete_text(backend, self.request(), cancel).await?;
         let spec = self.parse(&reply.text)?;
         Ok((spec, reply))
     }
