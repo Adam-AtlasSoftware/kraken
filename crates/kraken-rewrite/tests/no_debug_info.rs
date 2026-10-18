@@ -5,9 +5,10 @@
 //! drop that dependency, and `Cargo.toml` of the workspace may not patch it, so the ignore stays.
 //! It is sound only while no KRAKEN code calls the one icicle entry point that parses debug
 //! information of a program image: `icicle_cpu::debug_info::DebugInfo::add_file`, reached through
-//! the PE loader (`icicle_cpu::pe`) and the Linux layer (`icicle-linux`). The oracle maps
-//! `PT_LOAD` segments itself and reads symbols with `object`'s ELF reader, never DWARF. This test
-//! fails if source under `src/` starts naming any of those, so the ignore cannot go stale quietly.
+//! the PE loader (`icicle_cpu::pe`) and the Linux layer (`icicle-linux`). The oracle runs on
+//! kraken-emu, which maps `PT_LOAD` segments itself and reads symbols with `object`'s ELF reader,
+//! never DWARF (guarded by `crates/kraken-emu/tests/no_debug_info.rs`). This test fails if source
+//! under `src/` starts naming any of those, so the ignore cannot go stale quietly.
 
 use std::path::Path;
 
@@ -61,16 +62,24 @@ fn kraken_code_never_loads_debug_information_of_a_program_image() {
     );
 }
 
-#[test]
-fn the_crate_depends_on_icicle_only_through_the_three_crates_the_oracle_needs() {
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-            .expect("manifest");
-    let icicle: Vec<&str> = manifest
+fn icicle_deps(manifest: &Path) -> Vec<String> {
+    std::fs::read_to_string(manifest)
+        .expect("manifest")
         .lines()
         .filter(|l| l.contains("icicle-emu/icicle-emu"))
         .filter_map(|l| l.split('=').next())
-        .map(str::trim)
-        .collect();
-    assert_eq!(icicle, ["icicle-cpu", "icicle-vm", "pcode"]);
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
+/// The oracle reaches icicle only through kraken-emu (which has its own guard test), and
+/// kraken-emu only through the crates the CPU, the p-code types and the disassembler need.
+#[test]
+fn the_crate_depends_on_icicle_only_through_kraken_emu() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(icicle_deps(&dir.join("Cargo.toml")).is_empty());
+    assert_eq!(
+        icicle_deps(&dir.join("../kraken-emu/Cargo.toml")),
+        ["icicle-cpu", "icicle-vm", "pcode", "sleigh-runtime"]
+    );
 }

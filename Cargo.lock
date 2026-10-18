@@ -2770,6 +2770,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-emu"
+version = "0.0.0"
+dependencies = [
+ "icicle-cpu",
+ "icicle-vm",
+ "kraken-sidecar",
+ "libc",
+ "object 0.38.1",
+ "pcode",
+ "serde",
+ "serde_json",
+ "sleigh-runtime",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "kraken-engine"
 version = "0.0.0"
 dependencies = [
@@ -3030,11 +3047,10 @@ dependencies = [
  "cpp_demangle",
  "engine-fake",
  "futures-util",
- "icicle-cpu",
- "icicle-vm",
  "kraken-acp",
  "kraken-agent",
  "kraken-assist",
+ "kraken-emu",
  "kraken-engine",
  "kraken-host",
  "kraken-model",
@@ -3043,7 +3059,6 @@ dependencies = [
  "landlock",
  "libc",
  "object 0.38.1",
- "pcode",
  "rusqlite",
  "serde",
  "serde_json",

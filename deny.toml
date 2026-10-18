@@ -15,10 +15,12 @@ ignore = [
     # sections). icicle-cpu has no feature to drop that and the workspace manifest may not patch
     # it. The only icicle entry point that parses a program image's debug info is
     # icicle_cpu::debug_info::DebugInfo::add_file, called by icicle's PE loader and icicle-linux;
-    # the kraken-rewrite oracle maps PT_LOAD segments itself and reads ELF symbols and relocations
-    # with object's ELF reader, never DWARF. crates/kraken-rewrite/tests/no_debug_info.rs fails if
-    # that changes. Details: docs/design/0013-rewrite-pipeline.md.
-    { id = "RUSTSEC-2026-0344", reason = "ruzstd is unreachable from KRAKEN: only icicle's DebugInfo::add_file (PE loader, icicle-linux) decodes compressed debug sections, and kraken-rewrite never calls it (guarded by tests/no_debug_info.rs); no icicle feature drops the dependency (ADR 0013). Revisit when object moves to ruzstd >= 0.9.1" },
+    # kraken-emu (the emulation layer the kraken-rewrite oracle runs on) maps PT_LOAD segments
+    # itself, reads ELF symbols and relocations with object's ELF reader, never DWARF, and has its
+    # own Linux syscall layer instead of icicle-linux. crates/kraken-emu/tests/no_debug_info.rs
+    # and crates/kraken-rewrite/tests/no_debug_info.rs fail if that changes. Details:
+    # docs/design/0013-rewrite-pipeline.md.
+    { id = "RUSTSEC-2026-0344", reason = "ruzstd is unreachable from KRAKEN: only icicle's DebugInfo::add_file (PE loader, icicle-linux) decodes compressed debug sections, and neither kraken-emu nor kraken-rewrite calls it (guarded by their tests/no_debug_info.rs); no icicle feature drops the dependency (ADR 0013). Revisit when object moves to ruzstd >= 0.9.1" },
 ]
 
 [licenses]
@@ -103,6 +105,6 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# icicle-emu is not on crates.io. One repository, pinned by commit in crates/kraken-rewrite/Cargo.toml
+# icicle-emu is not on crates.io. One repository, pinned by commit in crates/kraken-emu/Cargo.toml
 # (Cargo.lock holds the same commit). Decision record: spikes/rewrite-loop/NOTES.md.
 allow-git = ["https://github.com/icicle-emu/icicle-emu"]

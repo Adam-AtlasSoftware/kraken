@@ -223,6 +223,18 @@ pub fn place_object(n: usize, len: usize) -> (u64, u64, u64) {
     (base, map, (base + map - len as u64) & !7)
 }
 
+/// [`place_object`] for a program with `bits`-bit pointers: the same addresses on 64-bit
+/// targets, a layout below 4 GiB (base `0x6000_0000`, 2 MiB apart) on 32-bit ones, which the
+/// native x86-64 runner does not use.
+pub fn place_object_for(bits: u32, n: usize, len: usize) -> (u64, u64, u64) {
+    if bits == 64 {
+        return place_object(n, len);
+    }
+    let base = 0x6000_0000 + 0x20_0000 * n as u64;
+    let map = (len.max(1) as u64).div_ceil(OBJECT_PAGE) * OBJECT_PAGE;
+    (base, map, (base + map - len as u64) & !7)
+}
+
 /// Checks a graph argument's structure: at least one object, links inside the objects.
 pub fn check_graph(objects: &[Vec<u8>], links: &[Link]) -> Result<(), String> {
     if objects.is_empty() {
