@@ -1,0 +1,167 @@
+{
+  "program": "pie_list",
+  "source_file": "src/pie_list.c",
+  "reference": "bin/pie_list-O0",
+  "reference_sha256": "da3e76001058cd181079298912560dc5875ecd8a7251e6eacb04ef13b922beb6",
+  "cases": [
+    {
+      "name": "baseline",
+      "origin": "baseline",
+      "argv": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-0",
+      "origin": "corpus",
+      "argv": [
+        "gamma"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-1",
+      "origin": "corpus",
+      "argv": [
+        "delta"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-2",
+      "origin": "corpus",
+      "argv": [
+        "alpha"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-3",
+      "origin": "corpus",
+      "argv": [
+        "beta"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-4",
+      "origin": "corpus",
+      "argv": [
+        "by id"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-5",
+      "origin": "corpus",
+      "argv": [
+        "by name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-6",
+      "origin": "corpus",
+      "argv": [
+        "by distance"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-all-literals-ignored",
+      "origin": "corpus",
+      "argv": [
+        "gamma",
+        "delta",
+        "alpha",
+        "beta",
+        "by id",
+        "by name",
+        "by distance"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-flag-ignored",
+      "origin": "corpus",
+      "argv": [
+        "--help"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-literals-ignored",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "gamma\ndelta\nalpha\nbeta\nby id\nby name\nby distance\n",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-0",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "gamma",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-1",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "delta",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-2",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "alpha",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-3",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "beta",
+      "exit": 0,
+      "stdout": "by id:\n  #1 delta  (-2,7) 1.2\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #4 beta   (1,1) 0.5\nby name:\n  #2 alpha  (0,3) 9.0\n  #4 beta   (1,1) 0.5\n  #1 delta  (-2,7) 1.2\n  #3 gamma  (5,1) 2.5\nby distance:\n  #4 beta   (1,1) 0.5\n  #2 alpha  (0,3) 9.0\n  #3 gamma  (5,1) 2.5\n  #1 delta  (-2,7) 1.2\ncount=4 total=13.25\n",
+      "stderr": ""
+    }
+  ]
+}

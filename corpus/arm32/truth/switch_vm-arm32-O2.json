@@ -1,0 +1,33 @@
+{
+  "binary": "switch_vm-arm32-O2",
+  "ground_truth_from": "switch_vm-arm32-O2",
+  "sha256": "0b15dfd32d06afb37106f5873f9009208a8ec00a4628156529ec67caabf88f07",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x464",
+      "size": 96
+    },
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x5c0",
+      "size": 68
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x604",
+      "size": 1436
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xba0",
+      "size": 288
+    }
+  ]
+}

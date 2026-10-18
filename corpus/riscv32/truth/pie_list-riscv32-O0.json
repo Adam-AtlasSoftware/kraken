@@ -1,0 +1,75 @@
+{
+  "binary": "pie_list-riscv32-O0",
+  "ground_truth_from": "pie_list-riscv32-O0",
+  "sha256": "8e5a79aa6f3198012e74720b58691ef9625113dec85211abc3e8aa0fc8d28481",
+  "source_file": "src/pie_list.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0x100e4",
+      "size": 136
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0x1016c",
+      "size": 64
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0x101ac",
+      "size": 42
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0x101d6",
+      "size": 50
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0x10208",
+      "size": 114
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0x1027a",
+      "size": 162
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0x1031c",
+      "size": 76
+    },
+    {
+      "name": "print_rec",
+      "demangled": "print_rec",
+      "entry": "0x10368",
+      "size": 76
+    },
+    {
+      "name": "sum_weight",
+      "demangled": "sum_weight",
+      "entry": "0x103b4",
+      "size": 60
+    },
+    {
+      "name": "list_free",
+      "demangled": "list_free",
+      "entry": "0x103f0",
+      "size": 70
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x10436",
+      "size": 330
+    }
+  ]
+}

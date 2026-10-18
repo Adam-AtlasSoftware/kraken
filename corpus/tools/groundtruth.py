@@ -6,10 +6,14 @@ For every unstripped binary in corpus/bin this reads DWARF via `readelf --debug-
 mangled and demangled). Stripped binaries (`*-stripped`) get the truth of their unstripped
 twin: strip does not move code, so addresses are identical (verified via section headers).
 
-`--set elf32` does the same for the 32-bit set (corpus/elf32/bin -> corpus/elf32/truth).
+`--set <set>` does the same for another ELF set: corpus/<set>/bin -> corpus/<set>/truth, for the
+32-bit x86 set (elf32) and the cross-architecture sets (arm32, aarch64, riscv64, riscv32). The
+host `readelf` and `nm` read the symbol tables and DWARF of every architecture.
 
 Output: corpus/truth/<binary>.json
   {binary, ground_truth_from, sha256, source_file, opt, functions:[{name, demangled, entry, size}]}
+On 32-bit ARM, functions compiled as Thumb carry `"thumb": true`; their `entry` is the address of
+the first instruction (DWARF low_pc), one less than the odd symbol value.
 """
 import hashlib
 import json
@@ -53,8 +57,12 @@ def parse_dies(path):
     return dies
 
 
-def parse_nm(path, demangle):
-    """Return {addr: (name, size)} for sized text symbols."""
+def is_arm32(path):
+    return re.search(r"Machine:\s+ARM$", run("readelf", "-h", str(path)), re.M) is not None
+
+
+def parse_nm(path, demangle, arm=False):
+    """Return {addr: (name, size)} for sized text symbols (ARM: Thumb bit cleared, see thumbs)."""
     args = ["nm", "--defined-only", "-S", "-n"] + (["-C"] if demangle else []) + [str(path)]
     out = {}
     for line in run(*args).splitlines():
@@ -62,7 +70,17 @@ def parse_nm(path, demangle):
         if len(parts) != 4 or parts[2] not in "TtWw":
             continue
         addr, size = int(parts[0], 16), int(parts[1], 16)
-        out.setdefault(addr, (parts[3], size))
+        out.setdefault(addr & ~1 if arm else addr, (parts[3], size))
+    return out
+
+
+def thumbs(path):
+    """Addresses (Thumb bit cleared) of the Thumb function symbols of a 32-bit ARM file."""
+    out = set()
+    for line in run("nm", "--defined-only", "-n", str(path)).splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[1] in "TtWw" and int(parts[0], 16) & 1:
+            out.add(int(parts[0], 16) & ~1)
     return out
 
 
@@ -89,8 +107,10 @@ def dwarf_name(die, by_off):
 def truth_for(path):
     dies = parse_dies(path)
     by_off = {d["off"]: d for d in dies}
-    mangled = parse_nm(path, False)
-    pretty = parse_nm(path, True)
+    arm = is_arm32(path)
+    mangled = parse_nm(path, False, arm)
+    pretty = parse_nm(path, True, arm)
+    thumb = thumbs(path) if arm else set()
     by_name = {}  # symbol name (mangled or plain) -> addr
     for addr, (n, _) in mangled.items():
         by_name.setdefault(n, addr)
@@ -124,6 +144,8 @@ def truth_for(path):
         demangled = pretty.get(entry, (name, 0))[0]
         funcs[entry] = {"name": name, "demangled": demangled,
                         "entry": f"0x{entry:x}", "size": size}
+        if entry in thumb:
+            funcs[entry]["thumb"] = True
     return source_file, [funcs[k] for k in sorted(funcs)]
 
 
@@ -139,10 +161,11 @@ def text_layout(path):
 
 def main():
     global BIN, TRUTH
-    if sys.argv[1:] == ["--set", "elf32"]:
-        BIN, TRUTH = CORPUS / "elf32" / "bin", CORPUS / "elf32" / "truth"
+    sets = ("elf32", "arm32", "aarch64", "riscv64", "riscv32")
+    if len(sys.argv) == 3 and sys.argv[1] == "--set" and sys.argv[2] in sets:
+        BIN, TRUTH = CORPUS / sys.argv[2] / "bin", CORPUS / sys.argv[2] / "truth"
     elif sys.argv[1:] not in ([], ["--set", "elf"]):
-        sys.exit("usage: groundtruth.py [--set elf|elf32]")
+        sys.exit(f"usage: groundtruth.py [--set elf|{'|'.join(sets)}]")
     TRUTH.mkdir(exist_ok=True)
     for old in TRUTH.glob("*.json"):
         old.unlink()

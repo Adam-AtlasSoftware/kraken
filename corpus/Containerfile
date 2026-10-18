@@ -2,7 +2,7 @@
 # Base image pinned by digest (debian:trixie-slim as pulled 2026-10-16).
 # Package versions are whatever trixie provides at rebuild time; build.sh records
 # them in TOOLCHAIN.txt of each set and the READMEs list the ones used for committed binaries.
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS native
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc g++ make binutils libc6-dev \
@@ -16,3 +16,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
+
+# The cross-architecture sets: arm32 (armhf), aarch64 and riscv64 Linux cross compilers with their
+# glibc, the bare-metal RISC-V compiler with picolibc for the riscv32 set, and qemu-user to check
+# every cross binary's output. A third layer on top of the two above, in its own stage: Debian's
+# gcc-multilib conflicts with the Linux cross compilers (apt removes it here), so the elf, pe,
+# elf32 and lib sets keep building in the "native" stage, as they were.
+FROM native AS cross
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu \
+       libc6-dev-armhf-cross libc6-dev-arm64-cross libc6-dev-riscv64-cross \
+       gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf qemu-user \
+    && rm -rf /var/lib/apt/lists/*

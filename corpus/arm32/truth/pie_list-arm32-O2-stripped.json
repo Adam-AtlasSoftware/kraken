@@ -1,0 +1,57 @@
+{
+  "binary": "pie_list-arm32-O2-stripped",
+  "ground_truth_from": "pie_list-arm32-O2",
+  "sha256": "1057fe81e1b68481aee97babd3e4e6ff463b3427964144a75a2d40f7f7d76a3e",
+  "source_file": "src/pie_list.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x4d8",
+      "size": 468
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0x7a8",
+      "size": 16
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0x7b8",
+      "size": 40
+    },
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0x7e0",
+      "size": 100
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0x844",
+      "size": 12
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0x850",
+      "size": 24
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0x868",
+      "size": 112
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0x8d8",
+      "size": 52
+    }
+  ]
+}

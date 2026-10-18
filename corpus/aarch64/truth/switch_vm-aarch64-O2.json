@@ -1,0 +1,33 @@
+{
+  "binary": "switch_vm-aarch64-O2",
+  "ground_truth_from": "switch_vm-aarch64-O2",
+  "sha256": "41109a4d3b05162843837c3a6728c63b89671586831ad6713f107462f57f0b2d",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x700",
+      "size": 92
+    },
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x8c0",
+      "size": 48
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x8f0",
+      "size": 972
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xcc0",
+      "size": 224
+    }
+  ]
+}

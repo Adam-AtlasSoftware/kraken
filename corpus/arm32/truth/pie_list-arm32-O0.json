@@ -1,0 +1,75 @@
+{
+  "binary": "pie_list-arm32-O0",
+  "ground_truth_from": "pie_list-arm32-O0",
+  "sha256": "00d5e05e53b01d547d5b5dc295f6562ebcbf49075ee9d6ddfa0b3389454ad216",
+  "source_file": "src/pie_list.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0x5d0",
+      "size": 160
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0x670",
+      "size": 84
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0x6c4",
+      "size": 56
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0x6fc",
+      "size": 64
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0x73c",
+      "size": 144
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0x7cc",
+      "size": 224
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0x8ac",
+      "size": 100
+    },
+    {
+      "name": "print_rec",
+      "demangled": "print_rec",
+      "entry": "0x910",
+      "size": 108
+    },
+    {
+      "name": "sum_weight",
+      "demangled": "sum_weight",
+      "entry": "0x97c",
+      "size": 64
+    },
+    {
+      "name": "list_free",
+      "demangled": "list_free",
+      "entry": "0x9bc",
+      "size": 96
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0xa1c",
+      "size": 480
+    }
+  ]
+}

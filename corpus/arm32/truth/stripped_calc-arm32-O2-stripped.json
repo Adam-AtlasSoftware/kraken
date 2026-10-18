@@ -1,0 +1,33 @@
+{
+  "binary": "stripped_calc-arm32-O2-stripped",
+  "ground_truth_from": "stripped_calc-arm32-O2",
+  "sha256": "d210e684459baab6dba0933e12eb0532e89f9251cc1a0765377001bacc53d1c5",
+  "source_file": "src/stripped_calc.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x460",
+      "size": 244
+    },
+    {
+      "name": "parse_atom",
+      "demangled": "parse_atom",
+      "entry": "0x650",
+      "size": 244
+    },
+    {
+      "name": "parse_term",
+      "demangled": "parse_term",
+      "entry": "0x744",
+      "size": 196
+    },
+    {
+      "name": "parse_expr",
+      "demangled": "parse_expr",
+      "entry": "0x808",
+      "size": 112
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+# riscv32 under qemu-riscv32 version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1), compared with the x86-64 build (bin/<name>-O0)
+pie_list-riscv32-O0: exit 0, same output as x86-64
+pie_list-riscv32-O0-stripped: exit 0, same output as x86-64
+pie_list-riscv32-O2: exit 0, same output as x86-64
+pie_list-riscv32-O2-stripped: exit 0, same output as x86-64
+static_strops-riscv32-O0: exit 0 (x86-64: exit 0), output differs:
+  7c7
+  < hash=6490
+  ---
+  > hash=36474
+static_strops-riscv32-O0-stripped: exit 0 (x86-64: exit 0), output differs:
+  7c7
+  < hash=6490
+  ---
+  > hash=36474
+static_strops-riscv32-O2: exit 0 (x86-64: exit 0), output differs:
+  7c7
+  < hash=6490
+  ---
+  > hash=36474
+static_strops-riscv32-O2-stripped: exit 0 (x86-64: exit 0), output differs:
+  7c7
+  < hash=6490
+  ---
+  > hash=36474
+stripped_calc-riscv32-O0: exit 0, same output as x86-64
+stripped_calc-riscv32-O0-stripped: exit 0, same output as x86-64
+stripped_calc-riscv32-O2: exit 0, same output as x86-64
+stripped_calc-riscv32-O2-stripped: exit 0, same output as x86-64
+switch_vm-riscv32-O0: exit 0, same output as x86-64
+switch_vm-riscv32-O0-stripped: exit 0, same output as x86-64
+switch_vm-riscv32-O2: exit 0, same output as x86-64
+switch_vm-riscv32-O2-stripped: exit 0, same output as x86-64

@@ -1,0 +1,9 @@
+base-image: debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+riscv64-linux-gnu-gcc: riscv64-linux-gnu-gcc (Debian 14.2.0-19) 14.2.0
+ld: GNU ld (GNU Binutils for Debian) 2.44
+flags: -march=rv64gc -mabi=lp64d
+dpkg: binutils-riscv64-linux-gnu 2.44-3
+dpkg: gcc-14-riscv64-linux-gnu 14.2.0-19cross1
+dpkg: gcc-riscv64-linux-gnu 4:14.2.0-1
+dpkg: libc6-dev-riscv64-cross 2.41-11cross1
+dpkg: qemu-user 1:10.0.13+ds-0+deb13u1

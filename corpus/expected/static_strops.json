@@ -1,0 +1,155 @@
+{
+  "program": "static_strops",
+  "source_file": "src/static_strops.c",
+  "reference": "bin/static_strops-O0",
+  "reference_sha256": "100e62dca585ce18d4f3f12f40ce3ed019c62c4b872b08a657e8ad09d51390a2",
+  "cases": [
+    {
+      "name": "baseline",
+      "origin": "baseline",
+      "argv": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-0",
+      "origin": "corpus",
+      "argv": [
+        "static"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-1",
+      "origin": "corpus",
+      "argv": [
+        "linking"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-2",
+      "origin": "corpus",
+      "argv": [
+        "keeps"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-3",
+      "origin": "corpus",
+      "argv": [
+        "libc"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-4",
+      "origin": "corpus",
+      "argv": [
+        "inside"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-5",
+      "origin": "corpus",
+      "argv": [
+        "level"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-all-literals-ignored",
+      "origin": "corpus",
+      "argv": [
+        "static",
+        "linking",
+        "keeps",
+        "libc",
+        "inside",
+        "level"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-flag-ignored",
+      "origin": "corpus",
+      "argv": [
+        "--help"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-literals-ignored",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "static\nlinking\nkeeps\nlibc\ninside\nlevel\n",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-0",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "static",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-1",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "linking",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-2",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "keeps",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-3",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "libc",
+      "exit": 0,
+      "stdout": "joined: static linking keeps libc inside (32)\nreversed: edisni cbil speek gniknil citats\nupper: EDISNI CBIL SPEEK GNIKNIL CITATS\ncount of i: 6\npalindrome(level)=1 palindrome(buf)=0\ncaesar changed 28 chars: vwdwlf olqnlqj nhhsv olef lqvlgh\nhash=6490\n",
+      "stderr": ""
+    }
+  ]
+}

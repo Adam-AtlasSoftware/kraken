@@ -1,0 +1,17 @@
+# aarch64 under qemu-aarch64 version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1), compared with the x86-64 build (bin/<name>-O0)
+pie_list-aarch64-O0: exit 0, same output as x86-64
+pie_list-aarch64-O0-stripped: exit 0, same output as x86-64
+pie_list-aarch64-O2: exit 0, same output as x86-64
+pie_list-aarch64-O2-stripped: exit 0, same output as x86-64
+static_strops-aarch64-O0: exit 0, same output as x86-64
+static_strops-aarch64-O0-stripped: exit 0, same output as x86-64
+static_strops-aarch64-O2: exit 0, same output as x86-64
+static_strops-aarch64-O2-stripped: exit 0, same output as x86-64
+stripped_calc-aarch64-O0: exit 0, same output as x86-64
+stripped_calc-aarch64-O0-stripped: exit 0, same output as x86-64
+stripped_calc-aarch64-O2: exit 0, same output as x86-64
+stripped_calc-aarch64-O2-stripped: exit 0, same output as x86-64
+switch_vm-aarch64-O0: exit 0, same output as x86-64
+switch_vm-aarch64-O0-stripped: exit 0, same output as x86-64
+switch_vm-aarch64-O2: exit 0, same output as x86-64
+switch_vm-aarch64-O2-stripped: exit 0, same output as x86-64
