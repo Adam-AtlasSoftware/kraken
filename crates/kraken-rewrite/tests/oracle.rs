@@ -238,3 +238,54 @@ fn calls_are_independent() {
     assert_eq!(a, b);
     assert_eq!(a.ret, Some(5));
 }
+
+fn run_on(path: &std::path::Path, code: &[u8]) -> kraken_rewrite::abi::Observation {
+    let mut o = oracle(path);
+    let entry = o.symbol("vm_run").expect("vm_run");
+    let mut padded = code.to_vec();
+    padded.extend_from_slice(&[0; 8]);
+    o.call(
+        entry,
+        &vm_run_sig(),
+        &[
+            buf(vm_state()),
+            buf(padded),
+            Arg::Int {
+                value: code.len() as u64,
+            },
+        ],
+    )
+    .expect("call")
+}
+
+/// The oracle runs the same function built for ARM (A32 and Thumb), AArch64 and RISC-V through
+/// kraken-emu's calling conventions: same result, same VM state, the printf stub answered on the
+/// dynamic builds (the RISC-V 32 one is static with picolibc's printf inside, so it is left out
+/// of the print case).
+#[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+fn vm_run_agrees_across_architectures() {
+    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus");
+    let compute: &[u8] = &[1, 6, 1, 7, 4, 0];
+    let print: &[u8] = &[1, 0xfb, 11, 0];
+    let reference = run(compute);
+    for (set, name) in [
+        ("arm32", "switch_vm-arm32-O0"),
+        ("arm32", "switch_vm-arm32-thumb-O2"),
+        ("aarch64", "switch_vm-aarch64-O2"),
+        ("riscv64", "switch_vm-riscv64-O0"),
+        ("riscv32", "switch_vm-riscv32-O2"),
+    ] {
+        let path = corpus.join(set).join("bin").join(name);
+        let r = run_on(&path, compute);
+        assert_eq!(r.termination, Termination::Returned, "{name}: {r:?}");
+        assert_eq!(r.ret, Some(42), "{name}");
+        // sp and pc are the same on every target; `steps` is 32-bit on the ILP32 ones.
+        assert_eq!(r.buffers[0][..140], reference.buffers[0][..140], "{name}");
+        if set != "riscv32" {
+            let p = run_on(&path, print);
+            assert_eq!(p.termination, Termination::Returned, "{name}: {p:?}");
+            assert_eq!(p.stdout, b"out: -5\n", "{name}");
+        }
+    }
+}

@@ -12,11 +12,9 @@ async-trait = "0.1.89"
 # Names of C++ globals for the prompt (already in the tree through engine-native).
 cpp_demangle = "0.5.1"
 futures-util = "0.3"
-# icicle-emu is not on crates.io; pinned by commit (see deny.toml [sources] and
-# spikes/rewrite-loop/NOTES.md). MIT OR Apache-2.0.
-icicle-cpu = { version = "0.1.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
-icicle-vm = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
-pcode = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
+# The emulator: icicle-emu (pinned by commit in kraken-emu; see deny.toml [sources] and
+# spikes/rewrite-loop/NOTES.md) behind KRAKEN's architecture layer.
+kraken-emu = { path = "../kraken-emu", version = "0.0.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }

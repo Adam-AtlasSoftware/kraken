@@ -1,51 +1,40 @@
-//! The function oracle: runs one function of an x86-64 System V ELF under emulation and reports
-//! what it did.
+//! The function oracle: runs one function of an ELF program under emulation and reports what it
+//! did.
 //!
-//! The emulator is icicle-emu (SLEIGH p-code interpreter, `MIT OR Apache-2.0`), driven as a bare
-//! CPU: the ELF's `PT_LOAD` segments are mapped by hand, relocations are applied, every import
-//! slot is pointed at a stub address, and a call is set up per the System V AMD64 convention
-//! (integer arguments in registers, a sentinel return address). Stubs are handled by the host
-//! when the program counter reaches them (a breakpoint), never emulated.
+//! The emulator is kraken-emu (icicle-emu's SLEIGH p-code interpreter underneath), driven as a
+//! bare CPU of the program's architecture: x86-64, x86, ARM/Thumb, AArch64, RISC-V 64 or 32. The
+//! ELF's `PT_LOAD` segments are mapped by kraken-emu's loader, its dynamic relocations applied,
+//! every import slot pointed at a stub address, and a call is set up per the architecture's C
+//! calling convention (`kraken_emu::call`: SysV, cdecl, AAPCS-VFP, AAPCS64, RISC-V lp64d/ilp32)
+//! with a sentinel return address. Stubs are handled by the host when the program counter
+//! reaches them (a breakpoint), never emulated.
 //!
-//! What it passes: integers and pointers in the integer registers, `double`s in `xmm0` to `xmm7`,
-//! pointer graphs placed where the native runner places them, and two host callbacks for
-//! function-pointer parameters (see `abi`). What it deliberately does not do: run `main`, the
-//! dynamic loader or libc; single-precision floats and vector arguments; stack-passed arguments;
-//! threads; syscalls (a `syscall` instruction faults); floating-point `printf`.
+//! What it passes: integers and pointers, `double`s and `float`s where the convention puts them,
+//! pointer graphs placed where the native runner places them (on 64-bit targets; 32-bit targets
+//! get the same layout below 4 GiB), and two host callbacks for function-pointer parameters (see
+//! `abi`). What it deliberately does not do: run `main`, the dynamic loader or libc; vector
+//! arguments; more parameters than the x86-64 registers hold (the native runner's limit); threads;
+//! syscalls (a system call ends the case as a fault); floating-point `printf`.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use icicle_cpu::mem::{Mapping, perm};
-use icicle_cpu::{Config, VmExit};
-use icicle_vm::Vm;
-use object::elf;
-use object::read::elf::{ElfFile64, ProgramHeader};
-use object::{Object, ObjectSymbol, RelocationFlags, RelocationTarget};
+use kraken_emu::call::{
+    RetKind, Value, incoming_float_arg, incoming_int_arg, read_return, return_to_caller,
+    set_float_return, set_int_return, setup_call,
+};
+use kraken_emu::loader::{Image, SlotKind};
+use kraken_emu::{Arch, EmuError, Machine, Perm, SpecRoots, Stop};
 
 use crate::abi::{
     Arg, Callback, GlobalWrite, Observation, Param, Ret, Signature, Termination, callback_tag,
-    check_graph, mask, place_object,
+    check_graph, mask, place_object_for,
 };
 use crate::clib::{ctype_b_table, format_printf};
 use crate::error::RewriteError;
 
 const PAGE: u64 = 0x1000;
-const STACK_BASE: u64 = 0x7ffd_0000_0000;
-const STACK_SIZE: u64 = 0x1_0000;
-const STUB_BASE: u64 = 0x7ffe_0000_0000;
-const RETURN_ADDR: u64 = STUB_BASE + 0xff0;
-/// The host callbacks a function pointer parameter can be given (`Callback::index` apart).
-const CALLBACK_BASE: u64 = STUB_BASE + 0xfd0;
-const STUB_DATA: u64 = STUB_BASE + 0x1_0000;
-const CTYPE_PTR_CELL: u64 = STUB_DATA;
-const STDOUT_CELL: u64 = STUB_DATA + 0x10;
-const STDERR_CELL: u64 = STUB_DATA + 0x18;
-const CTYPE_TABLE: u64 = STUB_DATA + 0x100;
-/// The `FILE *` values `stdout` and `stderr` hold inside the oracle.
-const STDOUT_FILE: u64 = STUB_DATA + 0x20;
-const STDERR_FILE: u64 = STUB_DATA + 0x30;
 const MAX_BUFFER: usize = 0x10_0000;
+const STACK_CANARY: u64 = 0x2f8b_1c3a_5d6e_7f00;
 
 /// Imports the oracle models (everything else a function calls ends the case as unsupported).
 /// The planner flags functions that call anything outside this list.
@@ -118,24 +107,93 @@ pub const STUBBED_IMPORTS: &[&str] = &[
     "atan2f",
 ];
 
-/// Where the emulator's `malloc` hands out memory (a bump allocator; `free` does nothing).
-const HEAP_BASE: u64 = 0x7ffc_0000_0000;
-const HEAP_SIZE: u64 = 0x100_0000;
-/// The thread block `fs:` points at; `fs:0x28` holds the stack protector's canary.
-const TLS_BASE: u64 = STUB_BASE + 0x4_0000;
-const STACK_CANARY: u64 = 0x2f8b_1c3a_5d6e_7f00;
+/// Where the oracle puts its own memory. 64-bit targets keep the addresses the x86-64 oracle has
+/// always used; 32-bit targets get the same shape below 4 GiB.
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    stack_base: u64,
+    stack_size: u64,
+    stub_base: u64,
+    heap_base: u64,
+    heap_size: u64,
+}
+
+impl Layout {
+    fn for_arch(arch: Arch) -> Layout {
+        if arch.bits() == 64 {
+            Layout {
+                stack_base: 0x7ffd_0000_0000,
+                stack_size: 0x1_0000,
+                stub_base: 0x7ffe_0000_0000,
+                heap_base: 0x7ffc_0000_0000,
+                heap_size: 0x100_0000,
+            }
+        } else {
+            Layout {
+                stack_base: 0xbe00_0000,
+                stack_size: 0x1_0000,
+                stub_base: 0xbf00_0000,
+                heap_base: 0x7000_0000,
+                heap_size: 0x100_0000,
+            }
+        }
+    }
+    fn return_addr(&self) -> u64 {
+        self.stub_base + 0xff0
+    }
+    /// The host callbacks a function pointer parameter can be given (`Callback::index` apart).
+    fn callback_base(&self) -> u64 {
+        self.stub_base + 0xfd0
+    }
+    fn stub_data(&self) -> u64 {
+        self.stub_base + 0x1_0000
+    }
+    fn ctype_ptr_cell(&self) -> u64 {
+        self.stub_data()
+    }
+    fn stdout_cell(&self) -> u64 {
+        self.stub_data() + 0x10
+    }
+    fn stderr_cell(&self) -> u64 {
+        self.stub_data() + 0x18
+    }
+    /// The `FILE *` values `stdout` and `stderr` hold inside the oracle.
+    fn stdout_file(&self) -> u64 {
+        self.stub_data() + 0x20
+    }
+    fn stderr_file(&self) -> u64 {
+        self.stub_data() + 0x30
+    }
+    /// `__stack_chk_guard` for the architectures that read the canary from a global.
+    fn canary_cell(&self) -> u64 {
+        self.stub_data() + 0x40
+    }
+    fn ctype_table(&self) -> u64 {
+        self.stub_data() + 0x100
+    }
+    /// The thread block `fs:` (x86-64) or `gs:` (x86) points at; the canary lives at `fs:0x28` /
+    /// `gs:0x14`.
+    fn tls_base(&self) -> u64 {
+        self.stub_base + 0x4_0000
+    }
+}
 
 /// Oracle settings.
 #[derive(Debug, Clone)]
 pub struct OracleConfig {
-    /// A Ghidra install (the oracle compiles its x86 SLEIGH spec). Default: `KRAKEN_GHIDRA_HOME`,
-    /// else the runtime `kraken setup` provisioned.
+    /// A Ghidra install (the oracle compiles the SLEIGH spec of the program's architecture from
+    /// its processor sources). Default: `KRAKEN_GHIDRA_HOME`, else the runtime `kraken setup`
+    /// provisioned, else the spec roots kraken-emu discovers.
     pub ghidra_home: Option<PathBuf>,
     /// Instruction budget per call.
     pub max_instructions: u64,
-    /// Where a position-independent executable is loaded.
+    /// Where a position-independent executable is loaded (64-bit targets; 32-bit ones use
+    /// [`PIE_BASE_32`]).
     pub load_base: u64,
 }
+
+/// Load address of a 32-bit position-independent executable.
+pub const PIE_BASE_32: u64 = 0x0040_0000;
 
 impl Default for OracleConfig {
     fn default() -> Self {
@@ -147,65 +205,48 @@ impl Default for OracleConfig {
     }
 }
 
-/// `Ghidra/Processors` of the configured install.
-pub fn find_processors(cfg: &OracleConfig) -> Result<PathBuf, RewriteError> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
+/// The spec roots the oracle builds its CPU from: the configured Ghidra install,
+/// `KRAKEN_GHIDRA_HOME`, the provisioned runtime, then kraken-emu's discovery.
+pub fn spec_roots(cfg: &OracleConfig) -> SpecRoots {
+    let mut first: Vec<PathBuf> = Vec::new();
     if let Some(h) = &cfg.ghidra_home {
-        candidates.push(h.clone());
+        first.push(h.clone());
     }
     if let Some(h) = std::env::var_os("KRAKEN_GHIDRA_HOME").filter(|v| !v.is_empty()) {
-        candidates.push(PathBuf::from(h));
+        first.push(PathBuf::from(h));
     }
     if let Some(layout) = kraken_host::provision::Layout::from_env()
         && let Some(h) = layout.provisioned().ghidra_home
     {
-        candidates.push(h);
+        first.push(h);
     }
-    candidates
-        .into_iter()
-        .map(|h| h.join("Ghidra/Processors"))
-        .find(|p| p.join("x86/data/languages/x86.ldefs").is_file())
-        .ok_or(RewriteError::NoProcessors)
+    SpecRoots::discover_with(first)
+}
+
+/// `Ghidra/Processors` of the configured spec roots for x86-64 (kept for callers that only
+/// check that the oracle can be built).
+pub fn find_processors(cfg: &OracleConfig) -> Result<PathBuf, RewriteError> {
+    spec_roots(cfg)
+        .processors_for(Arch::X86_64)
+        .map_err(|_| RewriteError::NoProcessors)
 }
 
 /// Where a call's arguments went.
 #[derive(Default)]
 struct Laid {
-    /// Integer register arguments in order.
-    ints: Vec<u64>,
-    /// `double` arguments as bit patterns, in order.
-    doubles: Vec<u64>,
+    /// Argument values in parameter order.
+    values: Vec<Value>,
     /// Every object: address and length.
     buffers: Vec<(u64, usize)>,
 }
 
-struct Region {
-    /// Runtime address of the first byte.
-    addr: u64,
-    /// Initial contents.
-    bytes: Vec<u8>,
-    writable: bool,
-}
-
-struct Regs {
-    xmm: [pcode::VarNode; 8],
-    rax: pcode::VarNode,
-    rsp: pcode::VarNode,
-    /// The base of `fs:`, where the thread block and its stack canary live.
-    fs: pcode::VarNode,
-    args: [pcode::VarNode; 6],
-}
-
 /// A loaded program image plus the emulator that runs functions of it.
 pub struct FunctionOracle {
-    vm: Vm,
-    regs: Regs,
-    bias: u64,
-    is_pie: bool,
-    symbols: BTreeMap<String, u64>,
+    m: Machine,
+    image: Image,
+    layout: Layout,
     /// Stub index to the import it stands for.
     stub_names: Vec<String>,
-    regions: Vec<Region>,
     max_instructions: u64,
     stdout: Vec<u8>,
     /// The objects of the call in progress (base address and length), for callback tags.
@@ -220,7 +261,8 @@ pub struct FunctionOracle {
 impl std::fmt::Debug for FunctionOracle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FunctionOracle")
-            .field("bias", &self.bias)
+            .field("arch", &self.image.arch)
+            .field("bias", &self.image.bias)
             .field("imports", &self.stub_names)
             .finish_non_exhaustive()
     }
@@ -230,20 +272,14 @@ fn emu(e: impl std::fmt::Display) -> RewriteError {
     RewriteError::Emulator(e.to_string())
 }
 
-fn align_down(v: u64) -> u64 {
-    v & !(PAGE - 1)
+fn from_emu(e: EmuError) -> RewriteError {
+    match e {
+        EmuError::Image(m) => RewriteError::Image(m),
+        EmuError::Unsupported(m) => RewriteError::Image(m),
+        EmuError::NoSpecs { .. } => RewriteError::NoProcessors,
+        other => RewriteError::Emulator(other.to_string()),
+    }
 }
-
-fn checked_align_up(v: u64) -> Option<u64> {
-    Some(v.checked_add(PAGE - 1)? & !(PAGE - 1))
-}
-
-/// Highest address a segment may end at (the x86-64 user half).
-const MAX_ADDRESS: u64 = 1 << 47;
-/// Most memory the emulated image may take.
-const MAX_IMAGE_BYTES: u64 = 256 << 20;
-/// Most dynamic relocations processed.
-const MAX_RELOCATIONS: usize = 1 << 20;
 
 impl FunctionOracle {
     /// Loads the ELF at `path` and builds the emulator.
@@ -255,304 +291,108 @@ impl FunctionOracle {
 
     /// Loads an ELF from memory.
     pub fn from_bytes(data: &[u8], cfg: &OracleConfig) -> Result<Self, RewriteError> {
-        let file = ElfFile64::<object::Endianness>::parse(data)
-            .map_err(|e| RewriteError::Image(e.to_string()))?;
-        let endian = file.endian();
-        if file.elf_header().e_machine.get(endian) != elf::EM_X86_64 {
-            return Err(RewriteError::Image("not an x86-64 ELF".into()));
-        }
-        let is_pie = file.elf_header().e_type.get(endian) == elf::ET_DYN;
-        let bias = if is_pie { cfg.load_base } else { 0 };
-
-        // Segments, merged into page regions.
-        let mut loads: Vec<(u64, u64, u64, u64, bool)> = Vec::new(); // vaddr, off, filesz, memsz, w
-        for ph in file.elf_program_headers() {
-            if ph.p_type(endian) == elf::PT_LOAD {
-                loads.push((
-                    ph.p_vaddr(endian),
-                    ph.p_offset(endian),
-                    ph.p_filesz(endian),
-                    ph.p_memsz(endian),
-                    ph.p_flags(endian) & elf::PF_W != 0,
-                ));
-            }
-        }
-        if loads.is_empty() {
-            return Err(RewriteError::Image("no PT_LOAD segments".into()));
-        }
-        loads.sort_by_key(|l| l.0);
-        let bad = |m: &str| RewriteError::Image(m.to_string());
-        let mut ranges: Vec<(u64, u64, bool)> = Vec::new();
-        for &(vaddr, off, filesz, memsz, w) in &loads {
-            if filesz > memsz {
-                return Err(bad("segment file size exceeds its memory size"));
-            }
-            if off
-                .checked_add(filesz)
-                .is_none_or(|e| e > data.len() as u64)
-            {
-                return Err(bad("segment beyond end of file"));
-            }
-            let end = vaddr
-                .checked_add(memsz)
-                .and_then(checked_align_up)
-                .ok_or_else(|| bad("segment address range overflows"))?;
-            if end > MAX_ADDRESS || bias.checked_add(end).is_none() {
-                return Err(bad("segment lies beyond the 47-bit address space"));
-            }
-            let (s, e) = (align_down(vaddr), end);
-            match ranges.last_mut() {
-                Some(last) if s <= last.1 => {
-                    last.1 = last.1.max(e);
-                    last.2 |= w;
-                }
-                _ => ranges.push((s, e, w)),
-            }
-        }
-        // The emulated image is bounded: a hostile program header must not make the daemon
-        // allocate gigabytes (or abort on a failed allocation).
-        let total = ranges
-            .iter()
-            .try_fold(0u64, |acc, r| acc.checked_add(r.1 - r.0));
-        if total.is_none_or(|t| t > MAX_IMAGE_BYTES) {
-            return Err(bad("the loadable segments need more than 256 MiB"));
-        }
-        let mut regions: Vec<Region> = Vec::with_capacity(ranges.len());
-        for &(s, e, _) in &ranges {
-            let len = usize::try_from(e - s).map_err(|_| bad("segment too large"))?;
-            let mut bytes = Vec::new();
-            bytes
-                .try_reserve_exact(len)
-                .map_err(|_| bad("cannot allocate the segment"))?;
-            bytes.resize(len, 0);
-            regions.push(Region {
-                addr: bias + s,
-                bytes,
-                writable: false,
-            });
-        }
-        for &(vaddr, off, filesz, _, w) in &loads {
-            let idx = ranges
-                .iter()
-                .position(|r| r.0 <= vaddr && vaddr < r.1)
-                .ok_or_else(|| bad("segment outside its range"))?;
-            let start = usize::try_from(vaddr - ranges[idx].0).map_err(emu)?;
-            let (lo, hi) = (
-                usize::try_from(off).map_err(emu)?,
-                usize::try_from(off + filesz).map_err(emu)?,
-            );
-            let src = data
-                .get(lo..hi)
-                .ok_or_else(|| bad("segment beyond end of file"))?;
-            let dst = start
-                .checked_add(src.len())
-                .and_then(|e| regions[idx].bytes.get_mut(start..e))
-                .ok_or_else(|| bad("segment data does not fit its range"))?;
-            dst.copy_from_slice(src);
-            regions[idx].writable |= w;
-        }
-
-        // Symbols.
-        let mut symbols = BTreeMap::new();
-        for s in file.symbols() {
-            if let Ok(name) = s.name()
-                && !name.is_empty()
-                && s.address() != 0
-            {
-                symbols.entry(name.to_string()).or_insert(s.address());
-            }
-        }
-
-        // Relocations: every import slot gets a stub address.
+        let arch = Arch::from_elf(data).map_err(from_emu)?;
+        let layout = Layout::for_arch(arch);
+        let pie_base = if arch.bits() == 64 {
+            cfg.load_base
+        } else {
+            PIE_BASE_32
+        };
+        // Every import slot gets a stub address, except the C library's data the oracle models.
         let mut stub_names: Vec<String> = Vec::new();
-        let mut patches: Vec<(u64, u64)> = Vec::new(); // runtime address, value
-        // Symbol names by index, built once (a lookup per relocation would be quadratic).
-        let dyn_names: std::collections::HashMap<_, String> = file
-            .dynamic_symbols()
-            .filter_map(|s| s.name().ok().map(|n| (s.index(), n.to_string())))
-            .collect();
-        if let Some(relocs) = file.dynamic_relocations() {
-            for (offset, rel) in relocs {
-                let RelocationFlags::Elf { r_type } = rel.flags() else {
-                    continue;
-                };
-                let name = match rel.target() {
-                    RelocationTarget::Symbol(idx) => {
-                        dyn_names.get(&idx).cloned().unwrap_or_default()
-                    }
-                    _ => String::new(),
-                };
-                if patches.len() >= MAX_RELOCATIONS {
-                    return Err(bad("too many relocations"));
-                }
-                let slot = bias.wrapping_add(offset);
-                match r_type {
-                    elf::R_X86_64_RELATIVE => {
-                        patches.push((slot, bias.wrapping_add(rel.addend() as u64)));
-                    }
-                    elf::R_X86_64_JUMP_SLOT | elf::R_X86_64_64 | elf::R_X86_64_GLOB_DAT
-                        if !name.is_empty() =>
-                    {
-                        let value = match name.as_str() {
-                            "stdout" if r_type == elf::R_X86_64_GLOB_DAT => STDOUT_CELL,
-                            "stderr" if r_type == elf::R_X86_64_GLOB_DAT => STDERR_CELL,
-                            _ => {
-                                stub_names.push(name);
-                                STUB_BASE + 0x10 * stub_names.len() as u64
-                            }
-                        };
-                        patches.push((slot, value));
-                    }
-                    elf::R_X86_64_COPY => match name.as_str() {
-                        "stdout" => patches.push((slot, STDOUT_FILE)),
-                        "stderr" => patches.push((slot, STDERR_FILE)),
-                        _ => {}
-                    },
-                    _ => {}
-                }
+        let image = Image::load(data, pie_base, |name, kind, _slot| match (kind, name) {
+            (SlotKind::GlobDat, "stdout") => Some(layout.stdout_cell()),
+            (SlotKind::GlobDat, "stderr") => Some(layout.stderr_cell()),
+            (SlotKind::GlobDat | SlotKind::Absolute, "__stack_chk_guard") => {
+                Some(layout.canary_cell())
             }
-        }
-        for (addr, value) in patches {
-            let region = regions
-                .iter_mut()
-                .find(|r| {
-                    addr.checked_add(8).is_some_and(|end| {
-                        r.addr <= addr && end <= r.addr.saturating_add(r.bytes.len() as u64)
-                    })
-                })
-                .ok_or_else(|| RewriteError::Image(format!("relocation at {addr:#x} unmapped")))?;
-            let off = usize::try_from(addr - region.addr).map_err(emu)?;
-            region
-                .bytes
-                .get_mut(off..off + 8)
-                .ok_or_else(|| bad("relocation outside its segment"))?
-                .copy_from_slice(&value.to_le_bytes());
+            (SlotKind::Copy, "stdout") => Some(layout.stdout_file()),
+            (SlotKind::Copy, "stderr") => Some(layout.stderr_file()),
+            (SlotKind::Copy, "__stack_chk_guard") => Some(STACK_CANARY),
+            (SlotKind::Copy, _) => None,
+            _ => {
+                stub_names.push(name.to_string());
+                Some(layout.stub_base + 0x10 * stub_names.len() as u64)
+            }
+        })
+        .map_err(from_emu)?;
+        if stub_names.len() * 0x10 >= 0xfc0 {
+            return Err(RewriteError::Image(
+                "too many imports for the stub page".into(),
+            ));
         }
 
-        // The emulator.
-        let processors = find_processors(cfg)?;
-        let mut config = Config::from_target_triple("x86_64-none");
-        config.enable_jit = false;
-        config.enable_shadow_stack = false;
-        let mut vm = icicle_vm::build_with_path(&config, &processors)
-            .map_err(|e| RewriteError::Emulator(format!("{e:?}")))?;
-        let var = |vm: &Vm, n: &str| {
-            vm.cpu
-                .arch
-                .sleigh
-                .get_varnode(n)
-                .ok_or_else(|| RewriteError::Emulator(format!("no register {n}")))
-        };
-        let regs = Regs {
-            xmm: [
-                var(&vm, "XMM0")?,
-                var(&vm, "XMM1")?,
-                var(&vm, "XMM2")?,
-                var(&vm, "XMM3")?,
-                var(&vm, "XMM4")?,
-                var(&vm, "XMM5")?,
-                var(&vm, "XMM6")?,
-                var(&vm, "XMM7")?,
-            ],
-            rax: var(&vm, "RAX")?,
-            rsp: var(&vm, "RSP")?,
-            fs: var(&vm, "FS_OFFSET")?,
-            args: [
-                var(&vm, "RDI")?,
-                var(&vm, "RSI")?,
-                var(&vm, "RDX")?,
-                var(&vm, "RCX")?,
-                var(&vm, "R8")?,
-                var(&vm, "R9")?,
-            ],
-        };
-        let rwx = perm::READ | perm::WRITE | perm::EXEC;
-        let mut map = |addr: u64, len: u64| {
-            if vm.cpu.mem.map_memory_len(
-                addr,
-                len,
-                Mapping {
-                    perm: rwx,
-                    value: 0,
-                },
-            ) {
-                Ok(())
-            } else {
-                Err(RewriteError::Emulator(format!(
-                    "cannot map {len:#x} bytes at {addr:#x}"
-                )))
-            }
-        };
-        for r in &regions {
-            map(r.addr, r.bytes.len() as u64)?;
-        }
-        map(STACK_BASE, STACK_SIZE)?;
-        map(STUB_BASE, PAGE)?;
-        map(STUB_DATA, 0x2000)?;
-        map(HEAP_BASE, HEAP_SIZE)?;
-        map(TLS_BASE, PAGE)?;
+        let specs = spec_roots(cfg);
+        let mut m = Machine::new(arch, &specs).map_err(from_emu)?;
+        image.map_into(&mut m).map_err(from_emu)?;
+        let map =
+            |m: &mut Machine, addr: u64, len: u64, p: Perm| m.map(addr, len, p).map_err(from_emu);
+        map(&mut m, layout.stack_base, layout.stack_size, Perm::RW)?;
+        map(&mut m, layout.stub_base, PAGE, Perm::RX)?;
+        map(&mut m, layout.stub_data(), 0x2000, Perm::RW)?;
+        map(&mut m, layout.heap_base, layout.heap_size, Perm::RW)?;
+        map(&mut m, layout.tls_base(), PAGE, Perm::RW)?;
 
-        // Stub code page: `ret`, so a stray fall-through returns; the data page.
-        let ret_page = vec![0xc3u8; PAGE as usize];
-        vm.cpu
-            .mem
-            .write_bytes(STUB_BASE, &ret_page, perm::NONE)
-            .map_err(|e| emu(format!("{e:?}")))?;
-        let table = ctype_b_table();
-        let w = |vm: &mut Vm, addr: u64, b: &[u8]| {
-            vm.cpu
-                .mem
-                .write_bytes(addr, b, perm::NONE)
-                .map_err(|e| emu(format!("{e:?}")))
-        };
-        w(&mut vm, CTYPE_TABLE, &table)?;
+        // Stub code page: an instruction that decodes (the CPU stops on the stubs' breakpoints
+        // first; on x86 it is `ret`, so a stray fall-through returns).
+        m.write_mem(layout.stub_base, &kraken_emu::call::stub_fill(arch))
+            .map_err(from_emu)?;
+        let ps = arch.ptr_size();
+        let w = |m: &mut Machine, addr: u64, v: u64| m.write_uint(addr, ps, v).map_err(from_emu);
+        m.write_mem(layout.ctype_table(), &ctype_b_table())
+            .map_err(from_emu)?;
         w(
-            &mut vm,
-            CTYPE_PTR_CELL,
-            &(CTYPE_TABLE + 128 * 2).to_le_bytes(),
+            &mut m,
+            layout.ctype_ptr_cell(),
+            layout.ctype_table() + 128 * 2,
         )?;
-        w(&mut vm, STDOUT_CELL, &STDOUT_FILE.to_le_bytes())?;
-        w(&mut vm, STDERR_CELL, &STDERR_FILE.to_le_bytes())?;
-        w(&mut vm, TLS_BASE + 0x28, &STACK_CANARY.to_le_bytes())?;
-        vm.add_breakpoint(RETURN_ADDR);
+        w(&mut m, layout.stdout_cell(), layout.stdout_file())?;
+        w(&mut m, layout.stderr_cell(), layout.stderr_file())?;
+        w(&mut m, layout.canary_cell(), STACK_CANARY)?;
+        let canary_at = if arch == Arch::X86 { 0x14 } else { 0x28 };
+        w(&mut m, layout.tls_base() + canary_at, STACK_CANARY)?;
+        m.add_breakpoint(layout.return_addr());
         for cb in Callback::ALL {
-            vm.add_breakpoint(CALLBACK_BASE + 0x10 * cb.index());
+            m.add_breakpoint(layout.callback_base() + 0x10 * cb.index());
         }
         for i in 0..stub_names.len() {
-            vm.add_breakpoint(STUB_BASE + 0x10 * (i as u64 + 1));
+            m.add_breakpoint(layout.stub_base + 0x10 * (i as u64 + 1));
         }
 
         Ok(FunctionOracle {
-            vm,
-            regs,
-            bias,
-            is_pie,
-            symbols,
+            m,
+            image,
+            layout,
             stub_names,
-            regions,
             max_instructions: cfg.max_instructions,
             objects: Vec::new(),
             callbacks: Vec::new(),
             stdout: Vec::new(),
             stderr: Vec::new(),
-            heap_next: HEAP_BASE,
+            heap_next: layout.heap_base,
         })
+    }
+
+    /// The program's architecture.
+    pub fn arch(&self) -> Arch {
+        self.image.arch
     }
 
     /// The ELF virtual address of the function KRAKEN reports at `address` for a program loaded
     /// at `image_base`: a position-independent executable's addresses include the image base
     /// Ghidra chose, a fixed-address executable's are the ELF addresses themselves.
     pub fn elf_vaddr(&self, address: u64, image_base: u64) -> u64 {
-        if self.is_pie {
+        if self.image.is_pie {
             address.wrapping_sub(image_base)
         } else {
             address
         }
     }
 
-    /// The ELF virtual address of a symbol (not including the load bias).
+    /// The ELF virtual address of a symbol (not including the load bias; Thumb functions keep
+    /// bit 0, so the value is a code address).
     pub fn symbol(&self, name: &str) -> Option<u64> {
-        self.symbols.get(name).copied()
+        self.image.symbols.get(name).copied()
     }
 
     /// Imports the program has (every one gets a stub address; unmodelled ones end a call that
@@ -588,16 +428,15 @@ impl FunctionOracle {
         self.stdout.clear();
         self.stderr.clear();
         self.callbacks.clear();
-        self.heap_next = HEAP_BASE;
+        self.heap_next = self.layout.heap_base;
         self.objects.clear();
 
         let mut mapped: Vec<(u64, u64)> = Vec::new();
         // A bug in the emulator (an arithmetic overflow on a wild address) must not take the
         // whole run down: the case is one the oracle could not evaluate.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.lay_out(args, sig, &mut mapped).and_then(|laid| {
-                self.run_call(entry, sig, &laid.ints, &laid.doubles, &laid.buffers)
-            })
+            self.lay_out(args, sig, &mut mapped)
+                .and_then(|laid| self.run_call(entry, sig, &laid.values, &laid.buffers))
         }))
         .unwrap_or_else(|_| {
             Ok(Observation::failed(Termination::Unsupported {
@@ -606,13 +445,14 @@ impl FunctionOracle {
         });
         self.objects.clear();
         for (addr, len) in mapped {
-            self.vm.cpu.mem.unmap_memory_len(addr, len);
+            self.m.unmap(addr, len);
         }
         result
     }
 
     /// Maps one object into its own region, page padded with unmapped space around it, the data
-    /// flush against the end (rounded down to 8 bytes) so a read past it faults. Returns where the data starts.
+    /// flush against the end (rounded down to 8 bytes) so a read past it faults. Returns where
+    /// the data starts.
     fn map_object(
         &mut self,
         data: &[u8],
@@ -622,22 +462,12 @@ impl FunctionOracle {
         if data.len() > MAX_BUFFER {
             return Err(RewriteError::Unsupported("buffer over 1 MiB".into()));
         }
-        let (addr, len, at) = place_object(n, data.len());
-        let rw = perm::READ | perm::WRITE;
-        if !self
-            .vm
-            .cpu
-            .mem
-            .map_memory_len(addr, len, Mapping { perm: rw, value: 0 })
-        {
-            return Err(emu("cannot map buffer"));
-        }
+        let (addr, len, at) = place_object_for(self.image.arch.bits(), n, data.len());
+        self.m
+            .map(addr, len, Perm::RW)
+            .map_err(|_| emu("cannot map buffer"))?;
         mapped.push((addr, len));
-        self.vm
-            .cpu
-            .mem
-            .write_bytes(at, data, perm::NONE)
-            .map_err(|e| emu(format!("{e:?}")))?;
+        self.m.write_mem(at, data).map_err(from_emu)?;
         Ok(at)
     }
 
@@ -647,21 +477,30 @@ impl FunctionOracle {
         sig: &Signature,
         mapped: &mut Vec<(u64, u64)>,
     ) -> Result<Laid, RewriteError> {
+        let arch = self.image.arch;
+        let ptr = |v: u64| Value::ptr(arch, v);
         let mut laid = Laid::default();
         for (i, (p, a)) in sig.params.iter().zip(args).enumerate() {
             match (p, a) {
-                (Param::Int { bits, .. }, Arg::Int { value }) => {
-                    laid.ints.push(value & mask(*bits));
+                (Param::Int { bits, signed }, Arg::Int { value }) => {
+                    laid.values.push(Value::Int {
+                        bits: *bits,
+                        signed: *signed,
+                        value: value & mask(*bits),
+                    });
                 }
-                (Param::Double, Arg::Double { bits }) => laid.doubles.push(*bits),
-                (Param::Float, Arg::Float { bits }) => laid.doubles.push(u64::from(*bits)),
+                (Param::Double, Arg::Double { bits }) => {
+                    laid.values.push(Value::F64 { bits: *bits })
+                }
+                (Param::Float, Arg::Float { bits }) => laid.values.push(Value::F32 { bits: *bits }),
                 (Param::FnPtr, Arg::FnPtr { callback }) => {
-                    laid.ints.push(CALLBACK_BASE + 0x10 * callback.index());
+                    laid.values
+                        .push(ptr(self.layout.callback_base() + 0x10 * callback.index()));
                 }
                 (Param::Buf, Arg::Buf { data }) => {
                     let at = self.map_object(data, mapped, laid.buffers.len())?;
                     laid.buffers.push((at, data.len()));
-                    laid.ints.push(at);
+                    laid.values.push(ptr(at));
                 }
                 (Param::Buf, Arg::Graph { objects, links }) => {
                     check_graph(objects, links).map_err(RewriteError::Unsupported)?;
@@ -673,13 +512,9 @@ impl FunctionOracle {
                     for l in links {
                         let target = laid.buffers[first + l.to].0 + l.to_offset as u64;
                         let at = laid.buffers[first + l.from].0 + l.offset as u64;
-                        self.vm
-                            .cpu
-                            .mem
-                            .write_bytes(at, &target.to_le_bytes(), perm::NONE)
-                            .map_err(|e| emu(format!("{e:?}")))?;
+                        self.m.write_ptr(at, target).map_err(from_emu)?;
                     }
-                    laid.ints.push(laid.buffers[first].0);
+                    laid.values.push(ptr(laid.buffers[first].0));
                 }
                 _ => {
                     return Err(RewriteError::Unsupported(format!(
@@ -693,18 +528,47 @@ impl FunctionOracle {
     }
 
     fn reset_memory(&mut self) -> Result<(), RewriteError> {
-        for r in &self.regions {
-            self.vm
-                .cpu
-                .mem
-                .write_bytes(r.addr, &r.bytes, perm::NONE)
-                .map_err(|e| emu(format!("{e:?}")))?;
+        self.image.reset(&mut self.m).map_err(from_emu)?;
+        self.m
+            .write_mem(
+                self.layout.stack_base,
+                &vec![0u8; self.layout.stack_size as usize],
+            )
+            .map_err(from_emu)?;
+        Ok(())
+    }
+
+    /// Clears the registers a call reads, so no value from an earlier case leaks into this one.
+    fn clear_registers(&mut self) -> Result<(), RewriteError> {
+        let arch = self.image.arch;
+        let mut regs: Vec<&str> = arch.int_arg_regs().to_vec();
+        regs.extend(arch.int_ret_regs());
+        let fp: &[&str] = match arch {
+            Arch::X86_64 => &[
+                "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7",
+            ],
+            Arch::Arm => &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+            Arch::Aarch64 => &["q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"],
+            Arch::Riscv64 => &["fa0", "fa1", "fa2", "fa3", "fa4", "fa5", "fa6", "fa7"],
+            Arch::X86 | Arch::Riscv32 => &[],
+        };
+        regs.extend(fp);
+        for r in regs {
+            if self.m.has_reg(r) {
+                self.m.write_reg(r, 0).map_err(from_emu)?;
+            }
         }
-        self.vm
-            .cpu
-            .mem
-            .fill_mem(STACK_BASE, STACK_SIZE, 0)
-            .map_err(|e| emu(format!("{e:?}")))?;
+        match arch {
+            Arch::X86_64 => self
+                .m
+                .write_reg("FS_OFFSET", self.layout.tls_base())
+                .map_err(from_emu)?,
+            Arch::X86 => self
+                .m
+                .write_reg("GS_OFFSET", self.layout.tls_base())
+                .map_err(from_emu)?,
+            _ => {}
+        }
         Ok(())
     }
 
@@ -712,43 +576,35 @@ impl FunctionOracle {
         &mut self,
         entry: u64,
         sig: &Signature,
-        values: &[u64],
-        doubles: &[u64],
+        values: &[Value],
         buffers: &[(u64, usize)],
     ) -> Result<Observation, RewriteError> {
-        let cpu = &mut self.vm.cpu;
-        for reg in [self.regs.rax].iter().chain(&self.regs.args) {
-            cpu.write_reg(*reg, 0);
-        }
-        for reg in &self.regs.xmm {
-            cpu.write_reg(*reg, 0);
-        }
-        for (reg, v) in self.regs.args.iter().zip(values) {
-            cpu.write_reg(*reg, *v);
-        }
-        for (reg, v) in self.regs.xmm.iter().zip(doubles) {
-            cpu.write_reg(*reg, *v);
-        }
-        // Entry stack alignment: (rsp + 8) % 16 == 0 after the return address is pushed.
-        let sp = STACK_BASE + STACK_SIZE - 0x100 - 8;
-        cpu.mem
-            .write_bytes(sp, &RETURN_ADDR.to_le_bytes(), perm::NONE)
-            .map_err(|e| emu(format!("{e:?}")))?;
-        cpu.write_reg(self.regs.rsp, sp);
-        cpu.write_reg(self.regs.fs, TLS_BASE);
-        cpu.write_pc(self.bias + entry);
+        self.clear_registers()?;
+        // The call-site stack pointer is 16-byte aligned (8 on ARM); x86 then pushes the return
+        // address.
+        let top = self.layout.stack_base + self.layout.stack_size - 0x100 + 0x40;
+        setup_call(
+            &mut self.m,
+            self.image.bias + entry,
+            values,
+            top,
+            self.layout.return_addr(),
+        )
+        .map_err(from_emu)?;
 
-        let start = self.vm.cpu.icount;
-        self.vm.icount_limit = start.saturating_add(self.max_instructions);
+        let start = self.m.icount();
         let termination = loop {
-            match self.vm.run() {
-                VmExit::Breakpoint => {
-                    let pc = self.vm.cpu.read_pc();
-                    if pc == RETURN_ADDR {
+            let used = self.m.icount() - start;
+            if used >= self.max_instructions {
+                break Termination::Timeout;
+            }
+            match self.m.run(self.max_instructions - used) {
+                Stop::Breakpoint { pc } => {
+                    if pc == self.layout.return_addr() {
                         break Termination::Returned;
                     }
                     if let Some(cb) = pc
-                        .checked_sub(CALLBACK_BASE)
+                        .checked_sub(self.layout.callback_base())
                         .filter(|d| d % 0x10 == 0 && d / 0x10 < Callback::ALL.len() as u64)
                         .map(|d| Callback::ALL[(d / 0x10) as usize])
                     {
@@ -758,7 +614,7 @@ impl FunctionOracle {
                         continue;
                     }
                     let idx = pc
-                        .checked_sub(STUB_BASE + 0x10)
+                        .checked_sub(self.layout.stub_base + 0x10)
                         .filter(|d| d % 0x10 == 0)
                         .map(|d| (d / 0x10) as usize)
                         .filter(|i| *i < self.stub_names.len());
@@ -772,12 +628,17 @@ impl FunctionOracle {
                         break end;
                     }
                 }
-                VmExit::InstructionLimit => break Termination::Timeout,
-                VmExit::UnhandledException((code, value)) => {
+                Stop::Budget => continue,
+                Stop::Fault { detail, pc } => {
+                    break Termination::Fault {
+                        detail: format!("{detail} at pc {:#x}", pc.wrapping_sub(self.image.bias)),
+                    };
+                }
+                Stop::Syscall => {
                     break Termination::Fault {
                         detail: format!(
-                            "{code:?} ({value:#x}) at pc {:#x}",
-                            self.vm.cpu.read_pc().wrapping_sub(self.bias)
+                            "system call at pc {:#x}",
+                            self.m.pc().wrapping_sub(self.image.bias)
                         ),
                     };
                 }
@@ -788,7 +649,7 @@ impl FunctionOracle {
                 }
             }
         };
-        let instructions = self.vm.cpu.icount.saturating_sub(start);
+        let instructions = self.m.icount().saturating_sub(start);
         let mut obs = Observation::failed(termination.clone());
         obs.instructions = instructions;
         obs.stdout = self.stdout.clone();
@@ -796,24 +657,18 @@ impl FunctionOracle {
         obs.global_writes = self.global_writes()?;
         obs.callbacks = self.callbacks.clone();
         if termination == Termination::Returned {
-            match sig.ret {
-                Ret::Int { bits, .. } => {
-                    obs.ret = Some(self.vm.cpu.read_reg(self.regs.rax) & mask(bits));
-                }
-                Ret::Double => obs.ret = Some(self.vm.cpu.read_reg(self.regs.xmm[0])),
-                Ret::Float => {
-                    obs.ret = Some(self.vm.cpu.read_reg(self.regs.xmm[0]) & 0xffff_ffff);
-                }
-                Ret::Void | Ret::Ptr => {}
+            let kind = match sig.ret {
+                Ret::Int { bits, .. } => Some(RetKind::Int { bits }),
+                Ret::Double => Some(RetKind::F64),
+                Ret::Float => Some(RetKind::F32),
+                Ret::Void | Ret::Ptr => None,
+            };
+            if let Some(k) = kind {
+                obs.ret = read_return(&mut self.m, k).map_err(from_emu)?;
             }
             for &(addr, len) in buffers {
-                let mut b = vec![0u8; len];
-                self.vm
-                    .cpu
-                    .mem
-                    .read_bytes(addr, &mut b, perm::NONE)
-                    .map_err(|e| emu(format!("{e:?}")))?;
-                obs.buffers.push(b);
+                obs.buffers
+                    .push(self.m.read_vec(addr, len).map_err(from_emu)?);
             }
         }
         Ok(obs)
@@ -824,14 +679,8 @@ impl FunctionOracle {
     fn run_callback(&mut self, cb: Callback) -> Option<Termination> {
         let (a, b) = (self.stub_arg(0), self.stub_arg(1));
         let objects = self.objects.clone();
-        let cpu = &mut self.vm.cpu;
-        let mut read32 = |addr: u64| {
-            let mut w = [0u8; 4];
-            cpu.mem
-                .read_bytes(addr, &mut w, perm::NONE)
-                .ok()
-                .map(|_| i32::from_le_bytes(w))
-        };
+        let m = &mut self.m;
+        let mut read32 = |addr: u64| m.read_uint(addr, 4).ok().map(|v| v as u32 as i32);
         let (ta, tb) = (
             callback_tag(a, &objects, &mut read32),
             callback_tag(b, &objects, &mut read32),
@@ -852,13 +701,9 @@ impl FunctionOracle {
 
     fn global_writes(&mut self) -> Result<Vec<GlobalWrite>, RewriteError> {
         let mut out: Vec<GlobalWrite> = Vec::new();
-        for r in self.regions.iter().filter(|r| r.writable) {
-            let mut now = vec![0u8; r.bytes.len()];
-            self.vm
-                .cpu
-                .mem
-                .read_bytes(r.addr, &mut now, perm::NONE)
-                .map_err(|e| emu(format!("{e:?}")))?;
+        let bias = self.image.bias;
+        for r in self.image.regions.iter().filter(|r| r.writable) {
+            let now = self.m.read_vec(r.addr, r.bytes.len()).map_err(from_emu)?;
             let mut i = 0;
             while i < now.len() {
                 if now[i] == r.bytes[i] {
@@ -870,7 +715,7 @@ impl FunctionOracle {
                     i += 1;
                 }
                 out.push(GlobalWrite {
-                    vaddr: r.addr - self.bias + s as u64,
+                    vaddr: r.addr - bias + s as u64,
                     before: r.bytes[s..i].to_vec(),
                     after: now[s..i].to_vec(),
                 });
@@ -884,33 +729,11 @@ impl FunctionOracle {
 
     /// The `n`th integer argument of the stubbed call at the current stop.
     fn stub_arg(&mut self, n: usize) -> u64 {
-        if let Some(reg) = self.regs.args.get(n) {
-            return self.vm.cpu.read_reg(*reg);
-        }
-        let sp = self.vm.cpu.read_reg(self.regs.rsp);
-        let mut b = [0u8; 8];
-        let at = sp.wrapping_add(8 + 8 * (n as u64 - 6));
-        if self.vm.cpu.mem.read_bytes(at, &mut b, perm::NONE).is_err() {
-            return 0;
-        }
-        u64::from_le_bytes(b)
+        incoming_int_arg(&mut self.m, n)
     }
 
     fn read_cstr(&mut self, addr: u64) -> Option<Vec<u8>> {
-        let mut out = Vec::new();
-        for i in 0..0x1_0000u64 {
-            let mut b = [0u8; 1];
-            self.vm
-                .cpu
-                .mem
-                .read_bytes(addr.wrapping_add(i), &mut b, perm::NONE)
-                .ok()?;
-            if b[0] == 0 {
-                return Some(out);
-            }
-            out.push(b[0]);
-        }
-        None
+        self.m.read_cstr(addr, 0xffff)
     }
 
     fn format(&mut self, fmt_addr: u64, first_arg: usize) -> Result<Vec<u8>, String> {
@@ -932,6 +755,7 @@ impl FunctionOracle {
     /// Runs the stub for import `name`. `None` means the call continues (returned to the caller).
     fn run_stub(&mut self, name: &str) -> Option<Termination> {
         let unsupported = |detail: String| Some(Termination::Unsupported { detail });
+        let (stdout_file, stderr_file) = (self.layout.stdout_file(), self.layout.stderr_file());
         let ret: u64 = match name {
             "exit" | "_exit" | "_Exit" => {
                 let status = self.stub_arg(0) as i32;
@@ -963,12 +787,12 @@ impl FunctionOracle {
                 match self.format(f, 2) {
                     Ok(b) => {
                         let n = b.len() as u64;
-                        match stream {
-                            STDOUT_FILE => self.stdout.extend_from_slice(&b),
-                            STDERR_FILE => self.stderr.extend_from_slice(&b),
-                            other => {
-                                return unsupported(format!("fprintf to FILE* {other:#x}"));
-                            }
+                        if stream == stdout_file {
+                            self.stdout.extend_from_slice(&b);
+                        } else if stream == stderr_file {
+                            self.stderr.extend_from_slice(&b);
+                        } else {
+                            return unsupported(format!("fprintf to FILE* {stream:#x}"));
                         }
                         n
                     }
@@ -1028,31 +852,19 @@ impl FunctionOracle {
                 let mut bytes = vec![0u8; n as usize];
                 if name == "memset" {
                     bytes.fill(a1 as u8);
-                } else if self
-                    .vm
-                    .cpu
-                    .mem
-                    .read_bytes(a1, &mut bytes, perm::NONE)
-                    .is_err()
-                {
+                } else if self.m.read_mem(a1, &mut bytes).is_err() {
                     return Some(Termination::Fault {
                         detail: format!("{name} source {a1:#x} unreadable"),
                     });
                 }
-                if self
-                    .vm
-                    .cpu
-                    .mem
-                    .write_bytes(dst, &bytes, perm::NONE)
-                    .is_err()
-                {
+                if self.m.write_mem(dst, &bytes).is_err() {
                     return Some(Termination::Fault {
                         detail: format!("{name} destination {dst:#x} unwritable"),
                     });
                 }
                 dst
             }
-            "__ctype_b_loc" => CTYPE_PTR_CELL,
+            "__ctype_b_loc" => self.layout.ctype_ptr_cell(),
             "fputc" | "putc" => {
                 let (c, stream) = (self.stub_arg(0), self.stub_arg(1));
                 if let Some(end) = self.write_stream(stream, &[c as u8], name) {
@@ -1082,13 +894,7 @@ impl FunctionOracle {
                     return unsupported(format!("fwrite of {total} bytes"));
                 }
                 let mut bytes = vec![0u8; total as usize];
-                if self
-                    .vm
-                    .cpu
-                    .mem
-                    .read_bytes(p, &mut bytes, perm::NONE)
-                    .is_err()
-                {
+                if self.m.read_mem(p, &mut bytes).is_err() {
                     return Some(Termination::Fault {
                         detail: format!("fwrite source {p:#x} unreadable"),
                     });
@@ -1132,7 +938,8 @@ impl FunctionOracle {
                 // Memory the function allocated itself is let go; freeing an object the test
                 // passed in cannot be reproduced by the native side (its allocator never saw it).
                 let p = self.stub_arg(0);
-                if p != 0 && !(HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&p) {
+                let heap = self.layout.heap_base..self.layout.heap_base + self.layout.heap_size;
+                if p != 0 && !heap.contains(&p) {
                     return unsupported(format!("{name} of memory the function did not allocate"));
                 }
                 0
@@ -1161,7 +968,7 @@ impl FunctionOracle {
     /// Bump allocation from the emulated heap; null when it is used up.
     fn allocate(&mut self, n: u64) -> u64 {
         let size = n.max(1).div_ceil(16) * 16;
-        if self.heap_next + size > HEAP_BASE + HEAP_SIZE {
+        if self.heap_next + size > self.layout.heap_base + self.layout.heap_size {
             return 0;
         }
         let p = self.heap_next;
@@ -1176,20 +983,16 @@ impl FunctionOracle {
         bytes: &[u8],
         name: &str,
     ) -> Option<Option<Termination>> {
-        match stream {
-            STDOUT_FILE => self.stdout.extend_from_slice(bytes),
-            STDERR_FILE => self.stderr.extend_from_slice(bytes),
-            other => {
-                return Some(Some(Termination::Unsupported {
-                    detail: format!("{name} to FILE* {other:#x}"),
-                }));
-            }
+        if stream == self.layout.stdout_file() {
+            self.stdout.extend_from_slice(bytes);
+        } else if stream == self.layout.stderr_file() {
+            self.stderr.extend_from_slice(bytes);
+        } else {
+            return Some(Some(Termination::Unsupported {
+                detail: format!("{name} to FILE* {stream:#x}"),
+            }));
         }
         None
-    }
-
-    fn xmm(&mut self, n: usize) -> u64 {
-        self.vm.cpu.read_reg(self.regs.xmm[n])
     }
 
     /// The C library's math functions, computed by the host's (the same library the original
@@ -1197,7 +1000,13 @@ impl FunctionOracle {
     fn math(&mut self, name: &str) -> Option<Result<(), Termination>> {
         let d = |v: u64| f64::from_bits(v);
         let f = |v: u64| f32::from_bits(v as u32);
-        let (a, b) = (self.xmm(0), self.xmm(1));
+        if !STUBBED_IMPORTS.contains(&name) {
+            return None;
+        }
+        // The `float` variants end in `f`; every double one does not.
+        let double = !name.ends_with('f');
+        let a = incoming_float_arg(&mut self.m, 0, double);
+        let b = incoming_float_arg(&mut self.m, 1, double);
         enum R {
             D(f64),
             F(f32),
@@ -1250,36 +1059,55 @@ impl FunctionOracle {
         };
         let ret = match r {
             R::D(v) => {
-                self.vm.cpu.write_reg(self.regs.xmm[0], v.to_bits());
-                0
+                if set_float_return(&mut self.m, v.to_bits(), true).is_err() {
+                    return Some(Err(Termination::Fault {
+                        detail: format!("{name}: cannot set the result"),
+                    }));
+                }
+                None
             }
             R::F(v) => {
-                self.vm
-                    .cpu
-                    .write_reg(self.regs.xmm[0], u64::from(v.to_bits()));
-                0
+                if set_float_return(&mut self.m, u64::from(v.to_bits()), false).is_err() {
+                    return Some(Err(Termination::Fault {
+                        detail: format!("{name}: cannot set the result"),
+                    }));
+                }
+                None
             }
-            R::I(v) => v as u64,
+            R::I(v) => Some(v as u64),
         };
-        Some(match self.return_from_stub(ret) {
+        // A floating-point result leaves the integer result register zero (as the x86-64 oracle
+        // always did), except on soft-float RISC-V 32, where they are the same registers.
+        let end = match ret {
+            Some(v) => self.return_from_stub(v),
+            None if self.image.arch != Arch::Riscv32 => self.return_from_stub(0),
+            None => self.return_only(),
+        };
+        Some(match end {
             None => Ok(()),
             Some(end) => Err(end),
         })
     }
 
-    /// Returns to the caller of a stub with `ret` in RAX: pops the return address.
+    /// Returns to the caller of a stub with `ret` as its integer result.
     fn return_from_stub(&mut self, ret: u64) -> Option<Termination> {
-        let sp = self.vm.cpu.read_reg(self.regs.rsp);
-        let mut b = [0u8; 8];
-        if self.vm.cpu.mem.read_bytes(sp, &mut b, perm::NONE).is_err() {
+        if set_int_return(&mut self.m, ret).is_err() {
             return Some(Termination::Fault {
-                detail: "stub return address unreadable".into(),
+                detail: "cannot set the stub's result".into(),
             });
         }
-        self.vm.cpu.write_reg(self.regs.rax, ret);
-        self.vm.cpu.write_reg(self.regs.rsp, sp.wrapping_add(8));
-        self.vm.cpu.write_pc(u64::from_le_bytes(b));
-        None
+        self.return_only()
+    }
+
+    /// Returns to the caller of a stub, leaving the result registers as they are.
+    fn return_only(&mut self) -> Option<Termination> {
+        if return_to_caller(&mut self.m) {
+            None
+        } else {
+            Some(Termination::Fault {
+                detail: "stub return address unreadable".into(),
+            })
+        }
     }
 }
 
@@ -1330,7 +1158,7 @@ mod tests {
     #[test]
     fn a_huge_memsz_is_refused_not_allocated() {
         let m = refused(0x1000, 0, 16, 1 << 46);
-        assert!(m.contains("256 MiB") || m.contains("47-bit"), "{m}");
+        assert!(m.contains("256 MiB") || m.contains("address space"), "{m}");
         let m = refused(0x1000, 0, 16, 300 << 20);
         assert!(m.contains("256 MiB"), "{m}");
     }
@@ -1338,9 +1166,9 @@ mod tests {
     #[test]
     fn address_arithmetic_overflow_is_refused() {
         let m = refused(u64::MAX - 8, 0, 0, 0x2000);
-        assert!(m.contains("overflow") || m.contains("47-bit"), "{m}");
+        assert!(m.contains("overflow") || m.contains("address space"), "{m}");
         let m = refused(0x1000, 0, 0, u64::MAX);
-        assert!(m.contains("overflow") || m.contains("47-bit"), "{m}");
+        assert!(m.contains("overflow") || m.contains("address space"), "{m}");
         let m = refused(0x1000, u64::MAX - 4, 16, 16);
         assert!(m.contains("beyond end of file"), "{m}");
     }

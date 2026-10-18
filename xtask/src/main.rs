@@ -1,5 +1,6 @@
 mod bench;
 mod docs;
+mod emu_sysroots;
 mod gui_docs;
 mod native_licenses;
 mod native_sla;
@@ -31,6 +32,10 @@ Commands:
                c++/cc) and compile the x86 and AArch64 specifications into
                ~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, so the native engine needs no
                Ghidra install.
+  emu-sysroots Extract the armhf, arm64 and riscv64 glibc sysroots (loader and shared libraries)
+               from the corpus cross image (kraken-corpus-builder:cross, see corpus/build.sh) into
+               ~/.cache/kraken-dev/emu-sysroots/<set>, so kraken-emu runs the dynamic corpus
+               binaries. KRAKEN_CORPUS_IMAGE and KRAKEN_EMU_SYSROOTS override the image and place.
   bench        Run the performance benchmarks in release mode and print their tables.
                `cargo xtask bench [engine|daemon|gui|widgets|all] [binary...]`: with no suite, the
                engine one. The binaries (default: the system's libpython, cargo and libQt6Widgets)
@@ -61,6 +66,7 @@ fn main() -> ExitCode {
         Some("dotnet-ext") => dotnet_ext(),
         Some("native-src") => native_src::native_src(),
         Some("native-sla") => native_sla::native_sla(),
+        Some("emu-sysroots") => emu_sysroots::emu_sysroots(),
         Some("bench") => bench::bench(&args[1..]),
         Some("schema") => schema(),
         Some("samples") => write_samples(),
