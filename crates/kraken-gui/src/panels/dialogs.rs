@@ -109,14 +109,16 @@ fn goto_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             .color(p.text_dim),
         );
         ui.add_space(4.0);
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut input)
-                .id(Id::new("kraken_goto_input"))
-                .font(egui::TextStyle::Monospace)
-                .hint_text("0x401000, main, printf...")
-                .desired_width(f32::INFINITY)
-                .margin(Margin::symmetric(8, 6)),
-        );
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut input)
+                    .id(Id::new("kraken_goto_input"))
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("0x401000, main, printf...")
+                    .desired_width(f32::INFINITY)
+                    .margin(Margin::symmetric(8, 6)),
+            )
+            .on_hover_text("An address, or the name of a function or symbol. Enter jumps there");
         if !r.has_focus() {
             r.request_focus();
         }
@@ -207,12 +209,14 @@ fn bookmark_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 ui.label(RichText::new(n).monospace().color(p.text_strong));
             }
         });
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut input)
-                .id(Id::new("kraken_bookmark_input"))
-                .hint_text("A short note, e.g. parses the config file (optional)")
-                .desired_width(f32::INFINITY),
-        );
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut input)
+                    .id(Id::new("kraken_bookmark_input"))
+                    .hint_text("A short note, e.g. parses the config file (optional)")
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text("A note to remember why this place matters. It can stay empty");
         if !r.has_focus() && !d.submitting {
             r.request_focus();
         }
@@ -288,7 +292,8 @@ fn type_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 .hint_text(hint)
                 .desired_width(f32::INFINITY)
                 .margin(Margin::symmetric(8, 6)),
-        );
+        )
+        .on_hover_text("Write it as you would in C. Enter saves it");
         if !r.has_focus() && !d.submitting {
             r.request_focus();
         }
@@ -367,7 +372,8 @@ fn function_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                         .font(egui::TextStyle::Monospace)
                         .hint_text("Name (optional), e.g. handle_request")
                         .desired_width(f32::INFINITY),
-                );
+                )
+                .on_hover_text("A name for the new function. Leave it empty for a default name");
                 if !r.has_focus() && !d.submitting {
                     r.request_focus();
                 }
@@ -477,7 +483,8 @@ fn command_form(ctx: &egui::Context, vm: &mut ViewModel) {
                                                     &mut values[i],
                                                     String::new(),
                                                     "(not set)",
-                                                );
+                                                )
+                                                .on_hover_text("Leave this option out");
                                             }
                                             for (v, doc) in opts {
                                                 ui.selectable_value(&mut values[i], v.clone(), v)

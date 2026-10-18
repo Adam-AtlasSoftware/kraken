@@ -193,6 +193,8 @@ fn file_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
 }
 
 fn help_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
+    item(ui, AppAction::ShowHelp, env, out);
+    item(ui, AppAction::TakeTour, env, out);
     item(ui, AppAction::OpenPalette, env, out);
     toggle(ui, AppAction::ToggleLearnMode, env.learn_mode, env, out);
     item(ui, AppAction::ShowShortcuts, env, out);
@@ -306,7 +308,7 @@ pub fn bar(ui: &mut Ui, env: &MenuEnv<'_>) -> Vec<MenuCmd> {
         }
         ui.menu_button("Help", |ui| help_menu(ui, env, &mut out))
             .response
-            .on_hover_text("Shortcuts, learn mode and the user guide");
+            .on_hover_text("Help pages, the tour, shortcuts, learn mode and the user guide");
     });
     out
 }

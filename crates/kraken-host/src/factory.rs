@@ -456,6 +456,9 @@ impl HostEngineFactory {
                     .into(),
             });
         }
+        if let Some(what) = crate::native::native_only(binary) {
+            return crate::native::choose_native_only(choice, probe, fit, what);
+        }
         crate::native::choose(choice, probe, fit)
     }
 
@@ -499,18 +502,19 @@ impl EngineFactory for HostEngineFactory {
     ) -> Result<EngineSelection, ProtoError> {
         let choice_now = choice.unwrap_or(self.default_choice);
         // Only the choices that can end up native need the probe and the file header.
-        let (probe, fit) = if choice_now == EngineChoice::Ghidra {
-            (
-                crate::native::NativeProbe {
-                    library: false,
-                    specs: None,
-                    worker: false,
-                },
-                Ok(()),
-            )
-        } else {
-            (self.native.probe(), crate::native::binary_fit(binary))
-        };
+        let (probe, fit) =
+            if choice_now == EngineChoice::Ghidra && crate::native::native_only(binary).is_none() {
+                (
+                    crate::native::NativeProbe {
+                        library: false,
+                        specs: None,
+                        worker: false,
+                    },
+                    Ok(()),
+                )
+            } else {
+                (self.native.probe(), crate::native::binary_fit(binary))
+            };
         self.select_with(binary, choice, &probe, &fit)
     }
 
@@ -744,6 +748,57 @@ mod tests {
             .unwrap();
         assert_eq!(s.kind, EngineKind::Ghidra);
         assert_eq!(s.choice, EngineChoice::Ghidra);
+    }
+
+    #[test]
+    fn libraries_go_to_the_native_engine_and_objects_prefer_it() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/lib/bin");
+        let f = HostEngineFactory::new(without_dotnet());
+        let not_ready = crate::native::NativeProbe {
+            library: false,
+            specs: None,
+            worker: false,
+        };
+        for archive in ["libkr.a", "kr-x64.lib", "libkr-x64.dll.a"] {
+            let path = corpus.join(archive);
+            let fit = crate::native::binary_fit(&path);
+            assert!(fit.is_ok(), "{archive}");
+            // native whatever was asked for: Ghidra does not load archives
+            for choice in [
+                EngineChoice::Ghidra,
+                EngineChoice::Auto,
+                EngineChoice::Native,
+            ] {
+                let s = f
+                    .select_with(&path, Some(choice), &ready_probe(), &fit)
+                    .unwrap();
+                assert_eq!(s.kind, EngineKind::Native, "{archive} {choice:?}");
+                assert!(s.reason.contains("only the native engine"), "{}", s.reason);
+            }
+            let e = f
+                .select_with(&path, Some(EngineChoice::Auto), &not_ready, &fit)
+                .unwrap_err();
+            assert_eq!(e.code, ErrorCode::Unsupported);
+            assert!(
+                e.message.contains("only the native engine opens"),
+                "{}",
+                e.message
+            );
+        }
+        // objects fit the native engine, and fall back to Ghidra (which reads them) without it
+        for object in ["kr-x64.obj", "kr-x86.obj", "kr.o"] {
+            let path = corpus.join(object);
+            let fit = crate::native::binary_fit(&path);
+            assert!(fit.is_ok(), "{object}: {fit:?}");
+            let s = f
+                .select_with(&path, Some(EngineChoice::Auto), &ready_probe(), &fit)
+                .unwrap();
+            assert_eq!(s.kind, EngineKind::Native, "{object}");
+            let s = f
+                .select_with(&path, Some(EngineChoice::Auto), &not_ready, &fit)
+                .unwrap();
+            assert_eq!(s.kind, EngineKind::Ghidra, "{object}");
+        }
     }
 
     #[test]

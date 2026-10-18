@@ -176,7 +176,8 @@ fn jump_table_loop_counts_down() {
 #[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn unknown_import_is_reported_not_guessed() {
     // pie_list main-less: call list_sort's callee through a null function pointer faults, and an
-    // import with no model ends the call as unsupported. node_new calls calloc.
+    // import with no model ends the call as unsupported. node_new calls calloc (modelled), then
+    // strncpy (not).
     let mut o = oracle(&corpus_bin("pie_list-O0"));
     let entry = o.symbol("node_new").expect("node_new");
     let sig = Signature {
@@ -209,7 +210,7 @@ fn unknown_import_is_reported_not_guessed() {
         )
         .expect("call");
     assert!(
-        matches!(&r.termination, Termination::Unsupported { detail } if detail.contains("calloc")),
+        matches!(&r.termination, Termination::Unsupported { detail } if detail.contains("strncpy")),
         "{:?}",
         r.termination
     );

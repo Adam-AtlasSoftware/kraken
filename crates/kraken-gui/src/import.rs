@@ -41,7 +41,8 @@ impl Default for Picker {
 
 /// The picker's filters. A portal filter cannot say "no extension", and most Linux programs
 /// have none, so "Programs" also lists every file.
-const PROGRAM_EXTENSIONS: [&str; 7] = ["", "exe", "dll", "so", "elf", "bin", "o"];
+const PROGRAM_EXTENSIONS: [&str; 10] =
+    ["", "exe", "dll", "so", "elf", "bin", "o", "obj", "a", "lib"];
 
 impl Picker {
     fn spawn(
@@ -176,23 +177,12 @@ pub fn describe(p: &BinaryProbeOut) -> String {
             human_size(p.size)
         );
     }
-    let kind = match p.kind.as_str() {
-        "executable" => "program",
-        "shared_library" => "library",
-        "object" => "object file (not linked yet)",
-        "core" => "core dump",
-        _ => "file",
+    let mut chars = p.description.chars();
+    let mut s = match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect::<String>(),
+        None => format!("A {} file", p.format.label()),
     };
-    let article = if p.format == BinaryFormat::Elf {
-        "An"
-    } else {
-        "A"
-    };
-    let mut s = format!("{article} {} {kind}", p.format.label());
-    if let Some(arch) = &p.arch {
-        s.push_str(&format!(" for {arch}"));
-    }
-    let mut extra = Vec::new();
+    let mut extra: Vec<String> = p.arch.iter().cloned().collect();
     if let Some(b) = p.bits {
         extra.push(format!("{b}-bit"));
     }
@@ -204,6 +194,21 @@ pub fn describe(p: &BinaryProbeOut) -> String {
     }
     s.push_str(&format!(", {}.", human_size(p.size)));
     s
+}
+
+/// What happens to an archive's members, in a sentence; `None` for other files.
+pub fn members_note(p: &BinaryProbeOut) -> Option<String> {
+    let count = p.member_count?;
+    Some(match p.kind.as_str() {
+        "import_library" => format!(
+            "An import library has no code. The project lists the symbols it imports and the \
+             DLL each comes from ({count} members)."
+        ),
+        _ => format!(
+            "All {count} members are loaded together into one project, one after another. \
+             Calls between members are linked up."
+        ),
+    })
 }
 
 /// The facts below the summary, as (label, value, explanation) rows.
@@ -431,7 +436,14 @@ impl ImportDialog {
                     if p.recommended_engine == Some(kind) {
                         label.push_str(" (recommended)");
                     }
-                    let r = ui.radio_value(&mut self.engine, choice, label);
+                    // Ghidra does not load archives
+                    let ruled_out =
+                        p.format == BinaryFormat::Archive && choice == EngineChoice::Ghidra;
+                    let r = ui
+                        .add_enabled_ui(!ruled_out, |ui| {
+                            ui.radio_value(&mut self.engine, choice, label)
+                        })
+                        .inner;
                     let tip = if usable {
                         engine_help(choice).to_string()
                     } else {
@@ -441,7 +453,10 @@ impl ImportDialog {
                             status.and_then(|e| e.problem.clone()).unwrap_or_default()
                         )
                     };
-                    r.on_hover_text(tip);
+                    r.on_hover_text(tip).on_disabled_hover_text(
+                        "Ghidra cannot open static or import libraries. The native engine reads \
+                         them.",
+                    );
                 }
             });
         }
@@ -547,6 +562,36 @@ impl ImportDialog {
                                 ui.end_row();
                             }
                         });
+                    if let Some(note) = members_note(pr) {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(note).size(12.0).color(p.text_dim));
+                        let shown = pr.members.len() as u64;
+                        let title = match pr.member_count {
+                            Some(n) if n > shown => format!("Members ({shown} of {n} shown)"),
+                            _ => format!("Members ({shown})"),
+                        };
+                        egui::CollapsingHeader::new(title)
+                            .id_salt("kraken_import_members")
+                            .show(ui, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .max_height(140.0)
+                                    .show(ui, |ui| {
+                                        for m in &pr.members {
+                                            ui.label(
+                                                RichText::new(m.0.as_str())
+                                                    .monospace()
+                                                    .size(12.0)
+                                                    .color(p.text),
+                                            );
+                                        }
+                                    });
+                            })
+                            .header_response
+                            .on_hover_text(
+                                "The files inside the library, in the order they are stored. \
+                                 This list is for reading only.",
+                            );
+                    }
                 } else if let Some(problem) = &pr.problem {
                     ui.add_space(4.0);
                     ui.label(RichText::new(problem).color(s.warning));
@@ -670,7 +715,7 @@ mod tests {
         let d = probed(&cfg, "bin/pie_list-O0");
         let p = d.probed().unwrap();
         let text = describe(p);
-        assert!(text.starts_with("An ELF program for x86-64"), "{text}");
+        assert!(text.starts_with("Linux program (x86-64"), "{text}");
         assert!(plain_reason("auto picked Ghidra: no specs").starts_with("the native engine"));
         assert!(text.contains("64-bit"), "{text}");
         assert!(
@@ -703,6 +748,28 @@ mod tests {
         assert!(d.blocker().unwrap().contains("slashes"));
         d.name = String::new();
         assert!(d.blocker().unwrap().contains("name"));
+    }
+
+    #[test]
+    fn libraries_say_what_happens_to_their_members() {
+        let tmp = crate::testutil::tempdir();
+        let cfg = cfg_in(tmp.path());
+        let a = probed(&cfg, "lib/bin/kr-x64.lib");
+        let p = a.probed().unwrap();
+        assert!(
+            describe(p).starts_with("Windows static library with 2 objects (x86-64, 64-bit"),
+            "{}",
+            describe(p)
+        );
+        assert!(members_note(p).unwrap().contains("All 2 members"));
+        assert_eq!(a.engine, EngineChoice::Native);
+        let i = probed(&cfg, "lib/bin/libkr-x64.dll.a");
+        let p = i.probed().unwrap();
+        assert!(describe(p).starts_with("Import library for kr.dll"));
+        assert!(members_note(p).unwrap().contains("no code"));
+        let o = probed(&cfg, "lib/bin/kr-x86.obj");
+        assert!(describe(o.probed().unwrap()).starts_with("COFF object"));
+        assert!(members_note(o.probed().unwrap()).is_none());
     }
 
     #[test]

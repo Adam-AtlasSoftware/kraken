@@ -820,9 +820,13 @@ fn stale_functions_get_a_marker_that_draws() {
     assert!(h.app.view_model().unwrap().is_stale(main));
 }
 
+mod audit;
 #[cfg(unix)]
 mod bench;
+mod help;
+mod loading;
 mod shell;
+mod shots;
 
 fn active_tab_is(h: &Harness, tab: Tab) -> bool {
     let dock = h.app.dock();

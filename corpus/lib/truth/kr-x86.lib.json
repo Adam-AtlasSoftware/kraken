@@ -1,0 +1,82 @@
+{
+  "binary": "kr-x86.lib",
+  "sha256": "65bdfc50015b477002e39adff8dbea0264b78ce342bb1a44c2631f3dba67188a",
+  "kind": "Windows static library with 2 objects",
+  "arch": "x86",
+  "members": [
+    "kr_core.obj",
+    "kr_text.obj"
+  ],
+  "functions": [
+    {
+      "member": "kr_core.obj",
+      "name": "_bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 8
+    },
+    {
+      "member": "kr_core.obj",
+      "name": "_kr_classify",
+      "demangled": "kr_classify",
+      "size": 27
+    },
+    {
+      "member": "kr_core.obj",
+      "name": "_kr_report",
+      "demangled": "kr_report",
+      "size": 228
+    },
+    {
+      "member": "kr_text.obj",
+      "name": "_kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 22
+    },
+    {
+      "member": "kr_text.obj",
+      "name": "_kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 57
+    },
+    {
+      "member": "kr_text.obj",
+      "name": "_kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 92
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "malloc"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    },
+    {
+      "name": "toupper"
+    }
+  ]
+}

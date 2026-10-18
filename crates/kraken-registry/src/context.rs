@@ -104,7 +104,12 @@ pub struct CallContext {
     /// True once the call went through `project_gate` (the daemon runs it before it creates a
     /// session), so `project_create` and `project_open` do not ask a second time.
     pub gate_passed: bool,
+    /// Hears the progress of `project_create` and `project_open` while they run.
+    pub open_progress: Option<OpenProgressSink>,
 }
+
+/// Receives the progress of opening a project.
+pub type OpenProgressSink = Arc<dyn Fn(&kraken_proto::OpenProgress) + Send + Sync>;
 
 impl CallContext {
     /// A context for a human on `surface`, with the default deny-by-default approval.
@@ -117,6 +122,7 @@ impl CallContext {
             cancel: CancellationToken::new(),
             quota_key: None,
             gate_passed: false,
+            open_progress: None,
         }
     }
 
@@ -130,6 +136,7 @@ impl CallContext {
             cancel: CancellationToken::new(),
             quota_key: None,
             gate_passed: false,
+            open_progress: None,
         }
     }
 
@@ -191,6 +198,12 @@ impl CallContext {
     /// Replaces the cancellation token.
     pub fn with_cancel(mut self, cancel: CancellationToken) -> Self {
         self.cancel = cancel;
+        self
+    }
+
+    /// Sends the progress of `project_create` and `project_open` to `sink`.
+    pub fn with_open_progress(mut self, sink: OpenProgressSink) -> Self {
+        self.open_progress = Some(sink);
         self
     }
 }

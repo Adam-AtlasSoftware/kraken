@@ -178,6 +178,12 @@ impl Backend for InProcessBackend {
         if let Some(approver) = approver {
             ctx = ctx.with_approval(Arc::new(Adapter(approver)));
         }
+        if matches!(command, "project_create" | "project_open") {
+            let events = self.events.clone();
+            ctx = ctx.with_open_progress(Arc::new(move |p| {
+                let _ = events.send(BackendEvent::OpenProgress(Box::new(p.clone())));
+            }));
+        }
         let out = self
             .registry
             .call_json(command, &self.session, &ctx, args)

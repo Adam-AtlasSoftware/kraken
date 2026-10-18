@@ -941,7 +941,12 @@ impl Command for RewriteExport {
              units; the export fails if that does not hold, leaving the files for inspection. \
              Writing outside the project directory asks for approval first, as a dangerous \
              command does; inside it the command is `mutating`. Only accepted units are \
-             exported.",
+             exported. The library carries the runtime shim (`rt`) the translations call; the \
+             shim exports `kraken_attach_image` to tell functions that use globals where the \
+             original program's data is. When an accepted function calls one that is not \
+             accepted, the export declares the original function by its name and calls it (the \
+             README and `manifest.json` list these calls; one without a C name stops with a \
+             message instead).",
         )
     }
 

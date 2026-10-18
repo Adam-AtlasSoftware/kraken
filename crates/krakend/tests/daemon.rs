@@ -848,3 +848,100 @@ async fn binary_probe_makes_no_session_and_project_close_ends_one() {
     assert_eq!(info["program"]["format"], "elf");
     r.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_open_reports_progress_and_job_cancel_stops_it_cleanly() {
+    let r = rig();
+    let watcher = r.client(ClientKind::Gui).await;
+    let mut rx = watcher.take_events().expect("event stream");
+    let opener = Arc::new(r.client(ClientKind::Cli).await);
+    let dir = r.project("slow");
+
+    // a quick open first: stages in order, the fraction never goes back and ends at 1
+    let quick = r.project("quick");
+    r.create(&opener, "quick").await;
+    let mut stages = Vec::new();
+    let mut fractions = Vec::new();
+    loop {
+        let ev = next_event(&mut rx, "open_progress").await;
+        assert_eq!(
+            Path::new(ev["project_dir"].as_str().unwrap()),
+            canon(&quick)
+        );
+        assert_eq!(ev["command"], "project_create");
+        assert_eq!(ev["program"], "prog.bin");
+        if let Some(f) = ev["fraction"].as_f64() {
+            fractions.push(f);
+        }
+        let stage = ev["stage"].as_str().unwrap().to_string();
+        stages.push(stage.clone());
+        if stage == "ready" {
+            break;
+        }
+    }
+    assert_eq!(stages.first().map(String::as_str), Some("prepare"));
+    assert!(fractions.windows(2).all(|w| w[0] <= w[1]), "{fractions:?}");
+    assert_eq!(fractions.last(), Some(&1.0));
+
+    // a slow one, cancelled through its job from another connection
+    r.ctl.open_delay_ms.store(60_000, Ordering::SeqCst);
+    let create = {
+        let (c, dir, binary) = (opener.clone(), dir.clone(), r.binary.clone());
+        tokio::spawn(async move {
+            call(
+                &c,
+                &dir,
+                "project_create",
+                json!({"binary": binary, "project_dir": dir}),
+            )
+            .await
+        })
+    };
+    let job = loop {
+        let ev = next_event(&mut rx, "open_progress").await;
+        if ev["stage"] == "functions" {
+            assert!(ev["elapsed_ms"].is_u64());
+            assert!(ev["found"].is_u64() && ev["queued"].is_u64());
+            break ev["job_id"].as_str().unwrap().to_string();
+        }
+    };
+    let canceller = r.client(ClientKind::Gui).await;
+    let status = call(&canceller, &dir, "job_status", json!({ "job_id": job }))
+        .await
+        .expect("job_status during the open");
+    assert_eq!(status["status"], "running");
+    assert_eq!(status["open_progress"]["stage"], "functions");
+    let started = std::time::Instant::now();
+    call(&canceller, &dir, "job_cancel", json!({ "job_id": job }))
+        .await
+        .expect("job_cancel");
+    let e = tokio::time::timeout(Duration::from_secs(10), create)
+        .await
+        .expect("the open stops")
+        .unwrap()
+        .expect_err("cancelled");
+    assert_eq!(e.code, ErrorCode::Cancelled, "{e:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let sessions = canceller.status().await.unwrap()["sessions"].clone();
+    assert!(
+        sessions
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| canon(Path::new(s["project_dir"].as_str().unwrap())) != canon(&dir)),
+        "no half-open session: {sessions}"
+    );
+    assert!(
+        r.ctl
+            .closed
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|d| canon(d) == canon(&dir)),
+        "the engine of the cancelled open was stopped"
+    );
+    // the same folder can be used right away
+    r.ctl.open_delay_ms.store(0, Ordering::SeqCst);
+    r.create(&opener, "slow").await;
+    r.stop().await;
+}

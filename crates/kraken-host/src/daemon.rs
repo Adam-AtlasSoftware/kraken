@@ -141,6 +141,32 @@ pub mod event_kind {
     pub const GUI_NAVIGATE: &str = "gui_navigate";
     /// A client started a job (`analyze`, `rewrite_program`, ...); says who.
     pub const JOB_STARTED: &str = "job_started";
+    /// A project is opening: the fields are a `kraken_proto::OpenProgress` (stage list, stage,
+    /// fraction, counts, elapsed time and the job that `job_cancel` stops it with). At most a
+    /// few per second; every change of stage is sent.
+    pub const OPEN_PROGRESS: &str = "open_progress";
+}
+
+/// `path` with the symlinks of its existing part resolved and the rest kept: the form the daemon
+/// publishes events under, also for a project folder that does not exist yet.
+pub fn canonical_prefix(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(mut c) = std::fs::canonicalize(&existing) {
+            for part in tail.iter().rev() {
+                c.push(part);
+            }
+            return c;
+        }
+        let Some(name) = existing.file_name().map(|n| n.to_os_string()) else {
+            return path.to_path_buf();
+        };
+        tail.push(name);
+        if !existing.pop() {
+            return path.to_path_buf();
+        }
+    }
 }
 
 /// Params of the `call` method.

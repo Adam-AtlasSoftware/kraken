@@ -17,6 +17,7 @@ mod errors;
 mod fuzzy;
 pub mod history;
 pub mod infer;
+mod loading;
 mod nav;
 pub mod navtools;
 mod palette;
@@ -49,6 +50,7 @@ pub use errors::plain_error;
 pub use fuzzy::score as fuzzy_score;
 #[cfg(feature = "inprocess")]
 pub use inprocess::{ExtraQuery, GUI_USER, InProcessBackend};
+pub use loading::{LoadingState, clock, thousands};
 pub use nav::NavHistory;
 pub use palette::{
     AppAction, PaletteItem, PaletteState, PaletteTarget, SHORTCUTS, Shortcut, UiRequest,

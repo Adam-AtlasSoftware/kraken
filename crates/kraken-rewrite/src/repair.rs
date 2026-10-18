@@ -86,6 +86,7 @@ pub fn describe_counterexample(c: &Counterexample) -> String {
                 format!("buffer of {} bytes {shown}{more}", data.len())
             }
             Arg::Double { bits } => format!("{} (bits {bits:#x})", f64::from_bits(*bits)),
+            Arg::Float { bits } => format!("{} (float bits {bits:#x})", f32::from_bits(*bits)),
             Arg::FnPtr { callback } => format!("the host callback {callback:?}"),
             Arg::Graph { objects, links } => {
                 let mut s = String::from("pointer graph:");

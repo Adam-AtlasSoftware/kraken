@@ -269,11 +269,11 @@ kraken binary-probe --path <string>
 - Kind: query
 - Permission: safe
 
-Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET or unknown), processor, 32 or 64 bit, size, SHA-256, whether it is stripped or has debug info, the entry point, the recommended engine with the reason, and which engines are installed. Needs no open project. Agents may not probe files in hidden folders of the home directory.
+Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, COFF object, library archive or unknown), the kind in plain words (`Linux shared library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, size, SHA-256, whether it is stripped or has debug info, the entry point, the recommended engine with the reason, and which engines are installed. Needs no open project. Agents may not probe files in hidden folders of the home directory.
 
 Example: `binary_probe {"path": "/usr/bin/ls"}`
 
-`recommended_engine` is what `project_create` picks with `engine: auto`. `supported` is false for files no engine opens; `problem` says why, or which engine still has to be installed (`kraken setup`).
+`recommended_engine` is what `project_create` picks with `engine: auto`. `supported` is false for files no engine opens; `problem` says why, or which engine still has to be installed (`kraken setup`). For an archive, `members` lists up to 200 member names and `member_count` has the total; a static library loads all its members into one project, and an import library opens as its list of imported symbols. Archives need the native engine.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -306,6 +306,16 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
         {
           "const": "dotnet",
           "description": "A .NET assembly (a PE image with managed code).",
+          "type": "string"
+        },
+        {
+          "const": "coff",
+          "description": "A COFF object file (`.obj`, Windows code that is not linked yet) or a single import\nmember.",
+          "type": "string"
+        },
+        {
+          "const": "archive",
+          "description": "An `ar` archive: a static library (`.a`, `.lib`) or a Windows import library\n(`.dll.a`, `.lib`).",
           "type": "string"
         },
         {
@@ -409,6 +419,10 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
         "null"
       ]
     },
+    "description": {
+      "description": "What the file is, in plain words: `Linux shared library`, `Windows static library with\n12 objects`, `COFF object (a Windows object file)`, `import library for KERNEL32.dll`.",
+      "type": "string"
+    },
     "endian": {
       "description": "`little` or `big`; absent when unknown.",
       "type": [
@@ -439,8 +453,24 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
       "description": "Container format."
     },
     "kind": {
-      "description": "`executable`, `shared_library`, `object`, `core` or `unknown`.",
+      "description": "`executable`, `shared_library`, `object`, `static_library`, `import_library`, `core` or\n`unknown`.",
       "type": "string"
+    },
+    "member_count": {
+      "description": "How many members the archive has; absent for other files.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "members": {
+      "description": "The members of an archive in file order, at most [`MAX_LISTED_MEMBERS`]; empty for other\nfiles. Names come from the file, so they are untrusted.",
+      "items": {
+        "$ref": "#/$defs/Untrusted_string"
+      },
+      "type": "array"
     },
     "path": {
       "$ref": "#/$defs/Untrusted_string",
@@ -494,6 +524,7 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
     "path",
     "format",
     "kind",
+    "description",
     "size",
     "sha256",
     "recommended_reason",
@@ -3157,6 +3188,164 @@ Example: `job_await {"job_id": "job-1", "timeout_ms": 60000}`
         }
       ]
     },
+    "OpenProgress": {
+      "description": "Progress of a running `project_create` or `project_open`, as clients see it.",
+      "properties": {
+        "code_bytes": {
+          "description": "Bytes of code in the program.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "The command that opens the project.",
+          "type": "string"
+        },
+        "covered_bytes": {
+          "description": "Bytes of code inside the functions found so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "elapsed_ms": {
+          "description": "Milliseconds since the open started.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "description": "The engine opening it (`native`, `ghidra`, `dotnet`), once it is known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "description": "Functions found so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fraction": {
+          "description": "Overall share done, 0 to 1; absent while the current stage cannot tell. Never decreases.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "from_cache": {
+          "description": "True when the engine reads results saved by an earlier open (a reopen).",
+          "type": "boolean"
+        },
+        "job_id": {
+          "description": "The job that tracks the open; `job_cancel` with it stops the open.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "default": "",
+          "description": "One line for people; may contain engine text.",
+          "type": "string"
+        },
+        "program": {
+          "description": "File name of the program.",
+          "type": "string"
+        },
+        "queued": {
+          "description": "Functions waiting to be looked at.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stage": {
+          "$ref": "#/$defs/OpenStage",
+          "description": "The current stage."
+        },
+        "stage_fraction": {
+          "description": "Share done of the current stage, when known.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stages": {
+          "description": "Every stage of this open, in order.",
+          "items": {
+            "$ref": "#/$defs/OpenStage"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command",
+        "program",
+        "stages",
+        "stage",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "OpenStage": {
+      "description": "One step of opening a program, in order.",
+      "oneOf": [
+        {
+          "const": "prepare",
+          "description": "Checking the file and the project folder, hashing the file.",
+          "type": "string"
+        },
+        {
+          "const": "start_engine",
+          "description": "Starting the engine process.",
+          "type": "string"
+        },
+        {
+          "const": "read_file",
+          "description": "Reading the file (Ghidra: importing it; .NET: loading the assemblies).",
+          "type": "string"
+        },
+        {
+          "const": "symbols",
+          "description": "Loading the symbol table and debug information.",
+          "type": "string"
+        },
+        {
+          "const": "functions",
+          "description": "Finding the functions (the slow part of a first open).",
+          "type": "string"
+        },
+        {
+          "const": "types",
+          "description": "Types and signatures of known library functions.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Restoring the changes saved in the project.",
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "Done.",
+          "type": "string"
+        }
+      ]
+    },
     "ProtoError": {
       "description": "A protocol error: a stable code, a human-readable message and optional structured details.",
       "properties": {
@@ -3200,6 +3389,17 @@ Example: `job_await {"job_id": "job-1", "timeout_ms": 60000}`
     "job_id": {
       "description": "Job id.",
       "type": "string"
+    },
+    "open_progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OpenProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "For a `project_create` or `project_open` job: the stage list, the current stage, the\noverall fraction and the function counts."
     },
     "progress": {
       "anyOf": [
@@ -3247,13 +3447,13 @@ kraken job-cancel --job-id <string>
 - Kind: mutation
 - Permission: mutating
 
-Asks a running job to stop. It stops cooperatively: `job_await` shows when it ends as `cancelled`.
+Asks a running job to stop. It stops cooperatively: `job_await` shows when it ends as `cancelled`. Cancelling an `open-N` job stops opening that project; nothing of it stays open.
 
 Example: `job_cancel {"job_id": "job-1"}`
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
-| `job_id` | `--job-id` | string | yes | Job id such as `job-1`. |
+| `job_id` | `--job-id` | string | yes | Job id such as `job-1`, or `open-1` for a project that is opening. |
 
 <details>
 <summary>Output schema</summary>
@@ -3373,6 +3573,164 @@ Example: `job_cancel {"job_id": "job-1"}`
         }
       ]
     },
+    "OpenProgress": {
+      "description": "Progress of a running `project_create` or `project_open`, as clients see it.",
+      "properties": {
+        "code_bytes": {
+          "description": "Bytes of code in the program.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "The command that opens the project.",
+          "type": "string"
+        },
+        "covered_bytes": {
+          "description": "Bytes of code inside the functions found so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "elapsed_ms": {
+          "description": "Milliseconds since the open started.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "description": "The engine opening it (`native`, `ghidra`, `dotnet`), once it is known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "description": "Functions found so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fraction": {
+          "description": "Overall share done, 0 to 1; absent while the current stage cannot tell. Never decreases.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "from_cache": {
+          "description": "True when the engine reads results saved by an earlier open (a reopen).",
+          "type": "boolean"
+        },
+        "job_id": {
+          "description": "The job that tracks the open; `job_cancel` with it stops the open.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "default": "",
+          "description": "One line for people; may contain engine text.",
+          "type": "string"
+        },
+        "program": {
+          "description": "File name of the program.",
+          "type": "string"
+        },
+        "queued": {
+          "description": "Functions waiting to be looked at.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stage": {
+          "$ref": "#/$defs/OpenStage",
+          "description": "The current stage."
+        },
+        "stage_fraction": {
+          "description": "Share done of the current stage, when known.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stages": {
+          "description": "Every stage of this open, in order.",
+          "items": {
+            "$ref": "#/$defs/OpenStage"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command",
+        "program",
+        "stages",
+        "stage",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "OpenStage": {
+      "description": "One step of opening a program, in order.",
+      "oneOf": [
+        {
+          "const": "prepare",
+          "description": "Checking the file and the project folder, hashing the file.",
+          "type": "string"
+        },
+        {
+          "const": "start_engine",
+          "description": "Starting the engine process.",
+          "type": "string"
+        },
+        {
+          "const": "read_file",
+          "description": "Reading the file (Ghidra: importing it; .NET: loading the assemblies).",
+          "type": "string"
+        },
+        {
+          "const": "symbols",
+          "description": "Loading the symbol table and debug information.",
+          "type": "string"
+        },
+        {
+          "const": "functions",
+          "description": "Finding the functions (the slow part of a first open).",
+          "type": "string"
+        },
+        {
+          "const": "types",
+          "description": "Types and signatures of known library functions.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Restoring the changes saved in the project.",
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "Done.",
+          "type": "string"
+        }
+      ]
+    },
     "ProtoError": {
       "description": "A protocol error: a stable code, a human-readable message and optional structured details.",
       "properties": {
@@ -3416,6 +3774,17 @@ Example: `job_cancel {"job_id": "job-1"}`
     "job_id": {
       "description": "Job id.",
       "type": "string"
+    },
+    "open_progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OpenProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "For a `project_create` or `project_open` job: the stage list, the current stage, the\noverall fraction and the function counts."
     },
     "progress": {
       "anyOf": [
@@ -3463,13 +3832,13 @@ kraken job-status --job-id <string>
 - Kind: query
 - Permission: safe
 
-Looks at a job without waiting: `status` is `running`, `succeeded`, `failed` or `cancelled`, with `progress` while it runs and the `result` once it succeeded. To block until it ends use `job_await`.
+Looks at a job without waiting: `status` is `running`, `succeeded`, `failed` or `cancelled`, with `progress` while it runs and the `result` once it succeeded. A project that is opening is the job `open-N` (named in its progress events), with its stages in `open_progress`. To block until it ends use `job_await`.
 
 Example: `job_status {"job_id": "job-1"}`
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
-| `job_id` | `--job-id` | string | yes | Job id such as `job-1`. |
+| `job_id` | `--job-id` | string | yes | Job id such as `job-1`, or `open-1` for a project that is opening. |
 
 <details>
 <summary>Output schema</summary>
@@ -3589,6 +3958,164 @@ Example: `job_status {"job_id": "job-1"}`
         }
       ]
     },
+    "OpenProgress": {
+      "description": "Progress of a running `project_create` or `project_open`, as clients see it.",
+      "properties": {
+        "code_bytes": {
+          "description": "Bytes of code in the program.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "The command that opens the project.",
+          "type": "string"
+        },
+        "covered_bytes": {
+          "description": "Bytes of code inside the functions found so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "elapsed_ms": {
+          "description": "Milliseconds since the open started.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "description": "The engine opening it (`native`, `ghidra`, `dotnet`), once it is known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "description": "Functions found so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fraction": {
+          "description": "Overall share done, 0 to 1; absent while the current stage cannot tell. Never decreases.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "from_cache": {
+          "description": "True when the engine reads results saved by an earlier open (a reopen).",
+          "type": "boolean"
+        },
+        "job_id": {
+          "description": "The job that tracks the open; `job_cancel` with it stops the open.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "default": "",
+          "description": "One line for people; may contain engine text.",
+          "type": "string"
+        },
+        "program": {
+          "description": "File name of the program.",
+          "type": "string"
+        },
+        "queued": {
+          "description": "Functions waiting to be looked at.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stage": {
+          "$ref": "#/$defs/OpenStage",
+          "description": "The current stage."
+        },
+        "stage_fraction": {
+          "description": "Share done of the current stage, when known.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stages": {
+          "description": "Every stage of this open, in order.",
+          "items": {
+            "$ref": "#/$defs/OpenStage"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command",
+        "program",
+        "stages",
+        "stage",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "OpenStage": {
+      "description": "One step of opening a program, in order.",
+      "oneOf": [
+        {
+          "const": "prepare",
+          "description": "Checking the file and the project folder, hashing the file.",
+          "type": "string"
+        },
+        {
+          "const": "start_engine",
+          "description": "Starting the engine process.",
+          "type": "string"
+        },
+        {
+          "const": "read_file",
+          "description": "Reading the file (Ghidra: importing it; .NET: loading the assemblies).",
+          "type": "string"
+        },
+        {
+          "const": "symbols",
+          "description": "Loading the symbol table and debug information.",
+          "type": "string"
+        },
+        {
+          "const": "functions",
+          "description": "Finding the functions (the slow part of a first open).",
+          "type": "string"
+        },
+        {
+          "const": "types",
+          "description": "Types and signatures of known library functions.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Restoring the changes saved in the project.",
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "Done.",
+          "type": "string"
+        }
+      ]
+    },
     "ProtoError": {
       "description": "A protocol error: a stable code, a human-readable message and optional structured details.",
       "properties": {
@@ -3632,6 +4159,17 @@ Example: `job_status {"job_id": "job-1"}`
     "job_id": {
       "description": "Job id.",
       "type": "string"
+    },
+    "open_progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OpenProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "For a `project_create` or `project_open` job: the stage list, the current stage, the\noverall fraction and the function counts."
     },
     "progress": {
       "anyOf": [
@@ -4085,7 +4623,7 @@ Starts a project for a binary and loads it. Analysis is separate: run `analyze` 
 
 Example: `project_create {"binary": "./a.out", "project_dir": "./a.kraken"}`
 
-Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary. `engine` picks the engine and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it.
+Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary. `engine` picks the engine and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it. The first load of a big program can take minutes: while it runs it is the job `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon sends `open_progress` events), and `job_cancel` stops it without leaving a project behind.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -4279,9 +4817,32 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
           "$ref": "#/$defs/Hex64",
           "description": "Image base."
         },
+        "description": {
+          "description": "What the file is, in plain words (`Linux static library with 2 objects`); absent when\nthe engine does not say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "format": {
           "description": "Container format.",
           "type": "string"
+        },
+        "member_count": {
+          "description": "How many members the library has; absent for other files.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "The members of a static or import library, in file order (at most\n[`ProgramView::MAX_MEMBERS`]); all of a static library's members are loaded together.\nNames come from the file, so they are untrusted.",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
         },
         "sha256": {
           "description": "SHA-256 as reported by the engine.",
@@ -4618,9 +5179,32 @@ Arguments: none.
           "$ref": "#/$defs/Hex64",
           "description": "Image base."
         },
+        "description": {
+          "description": "What the file is, in plain words (`Linux static library with 2 objects`); absent when\nthe engine does not say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "format": {
           "description": "Container format.",
           "type": "string"
+        },
+        "member_count": {
+          "description": "How many members the library has; absent for other files.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "The members of a static or import library, in file order (at most\n[`ProgramView::MAX_MEMBERS`]); all of a static library's members are loaded together.\nNames come from the file, so they are untrusted.",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
         },
         "sha256": {
           "description": "SHA-256 as reported by the engine.",
@@ -4769,7 +5353,7 @@ Opens a project made earlier, with all its renames and comments. If the result r
 
 Example: `project_open {"project_dir": "./a.kraken"}`
 
-Opens the project database and the engine cache. `epoch_stale` means the engine build, options or binary differ from the recorded epoch; `rebuild` recreates the engine project from the log.
+Opens the project database and the engine cache. `epoch_stale` means the engine build, options or binary differ from the recorded epoch; `rebuild` recreates the engine project from the log. While it runs it is the job `open-N`, with the same progress and cancel as `project_create`; a reopen reads the engine's saved results and takes seconds.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -4961,9 +5545,32 @@ Opens the project database and the engine cache. `epoch_stale` means the engine 
           "$ref": "#/$defs/Hex64",
           "description": "Image base."
         },
+        "description": {
+          "description": "What the file is, in plain words (`Linux static library with 2 objects`); absent when\nthe engine does not say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "format": {
           "description": "Container format.",
           "type": "string"
+        },
+        "member_count": {
+          "description": "How many members the library has; absent for other files.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "The members of a static or import library, in file order (at most\n[`ProgramView::MAX_MEMBERS`]); all of a static library's members are loaded together.\nNames come from the file, so they are untrusted.",
+          "items": {
+            "$ref": "#/$defs/Untrusted_string"
+          },
+          "type": "array"
         },
         "sha256": {
           "description": "SHA-256 as reported by the engine.",
@@ -5895,7 +6502,7 @@ Writes the accepted Rust functions as a Cargo workspace plus an `extern "C"` shi
 
 Example: `rewrite_export {"dir": "export"}`
 
-Writes a workspace with two crates: a library holding the accepted units, one module per function, and an FFI shim crate that exposes one `extern "C"` function per unit with the original name and signature, plus a README with the coverage and how to link the shim in place of the originals (strangler pattern: functions not yet rewritten keep running from the original binary). With `build` (the default) the workspace is built in the sandbox and its exported symbols are checked against the units; the export fails if that does not hold, leaving the files for inspection. Writing outside the project directory asks for approval first, as a dangerous command does; inside it the command is `mutating`. Only accepted units are exported.
+Writes a workspace with two crates: a library holding the accepted units, one module per function, and an FFI shim crate that exposes one `extern "C"` function per unit with the original name and signature, plus a README with the coverage and how to link the shim in place of the originals (strangler pattern: functions not yet rewritten keep running from the original binary). With `build` (the default) the workspace is built in the sandbox and its exported symbols are checked against the units; the export fails if that does not hold, leaving the files for inspection. Writing outside the project directory asks for approval first, as a dangerous command does; inside it the command is `mutating`. Only accepted units are exported. The library carries the runtime shim (`rt`) the translations call; the shim exports `kraken_attach_image` to tell functions that use globals where the original program's data is. When an accepted function calls one that is not accepted, the export declares the original function by its name and calls it (the README and `manifest.json` list these calls; one without a C name stops with a message instead).
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -6262,11 +6869,11 @@ kraken rewrite-program [options]
 - Kind: job
 - Permission: mutating
 
-Translates every function the entry point reaches, writes a standalone Rust crate, builds it in a sandbox and runs the original and the rewrite on the same inputs, comparing exit status, stdout and stderr. Returns a `job_id`; read the result with `rewrite_program_status`. Runs the original binary natively (confined), so a person is asked to approve a call from an agent. Sends decompiled code to the provider.
+Translates every function the entry point reaches, writes a standalone Rust crate, builds it in a sandbox and runs the original and the rewrite on the same inputs, comparing exit status, stdout, stderr and the files written. Returns a `job_id`; read the result with `rewrite_program_status`. Runs the original binary natively (confined), so a person is asked to approve a call from an agent. Sends decompiled code to the provider.
 
 Example: `rewrite_program {"repair_rounds": 2}`
 
-Plans the program bottom-up (callees first, recursive groups together), translates every non-library function the entry point reaches by direct calls with the configured provider (reusing callees that are already translated, repairing failures as `rewrite_function` does), then writes a standalone Rust binary crate: one module per function, a small runtime shim (`rt`) that maps the libc calls the corpus programs use (printf, puts, strlen, malloc, free, exit, ...) to Rust `std`, and a `main` that calls the translated entry point. The crate is built in the sandbox and the original and the rewritten program are run on the same inputs (a baseline run, cases derived from the program's source when it is a corpus program, generated and given cases), both inside the sandbox with no network. Exit status, stdout and stderr are compared; the result is a `ProgramVerdict` with the per-case differences, stored in `rewrite.sqlite` and readable with `rewrite_program_status`. A function-level verdict is evidence about one function; only the program verdict says the whole program behaves the same on the inputs tried. The original binary runs natively, confined, so this command refuses to run on hosts that cannot confine (Linux with Landlock today), and a call made for a person (an agent, MCP) asks for approval first, because it executes the binary under analysis. When the program verdict is `fail`, up to `repair_rounds` rounds of program-level repair follow: the rewritten program is run again on the first differing case with a trace that prints its call stack where the first differing output byte is written; the functions on that stack, then their callees, unverified ones before those that passed their own test against the original, are the suspects; the first two are re-translated with the case, both outputs and the stack as evidence (the provider sees program output); a translation that fails its own function-level check is not used; the crate is rebuilt and every case runs again. The rounds are in `repairs`. It sends decompiled code to the provider. It adds artifacts only; `accept_verified` (users only) additionally accepts the functions that passed their own test.
+Plans the program bottom-up (callees first, recursive groups together), translates every non-library function the entry point reaches (by direct calls, by function pointers it hands on, through tables of function pointers in the data that a reached function uses, and static constructors) with the configured provider (reusing callees that are already translated, repairing failures as `rewrite_function` does). A translation that builds but fails its function-level test, or that the test cannot run, is still used (check `unchecked`): the program-level test judges it. Then it writes a standalone Rust binary crate: one module per function, the original program's data as a shared image that the translations reach their globals through, a runtime shim (`rt`) that maps the C library and the C++ runtime basics (stdio with files, string, math, conversions, malloc, operator new, uncaught exceptions) to Rust `std`, and a `main` that calls the translated entry point. The crate is built in the sandbox and the original and the rewritten program are run on the same inputs (a baseline run, cases derived from the program's source when it is a corpus program, generated and given cases), both inside the sandbox with no network. Exit status, stdout, stderr and the files each program writes in its working directory are compared; the result is a `ProgramVerdict` with the per-case differences, stored in `rewrite.sqlite` and readable with `rewrite_program_status`. A function-level verdict is evidence about one function; only the program verdict says the whole program behaves the same on the inputs tried. The original binary runs natively, confined, so this command refuses to run on hosts that cannot confine (Linux with Landlock today), and a call made for a person (an agent, MCP) asks for approval first, because it executes the binary under analysis. When the program verdict is `fail`, up to `repair_rounds` rounds of program-level repair follow: the rewritten program is run again on the first differing case with a trace that prints its call stack where the first differing output byte is written; the functions on that stack, then their callees, unverified ones before those that passed their own test against the original, are the suspects; the first two are re-translated with the case, both outputs and the stack as evidence (the provider sees program output); a translation that fails its own function-level check is not used; the crate is rebuilt and every case runs again. The rounds are in `repairs`. It sends decompiled code to the provider. It adds artifacts only; `accept_verified` (users only) additionally accepts the functions that passed their own test.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -6410,7 +7017,7 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
           "type": "integer"
         },
         "check": {
-          "description": "`differential` (checked against the original under emulation), `compile_only` (built, not\ncompared), `stored` (an accepted unit from an earlier run, not translated again),\n`skipped` (not reachable from the entry point by direct calls, so not translated) or\n`none` (nothing could be translated; the note says why).",
+          "description": "`differential` (checked against the original under emulation), `unchecked` (in the crate\nalthough the function-level test failed or could not run it; the program-level test\njudges it), `compile_only` (built, not compared), `stored` (an accepted unit from an\nearlier run, not translated again), `skipped` (not reachable from the entry point, so not\ntranslated) or `none` (nothing could be translated; the note says why).",
           "type": "string"
         },
         "check_note": {
@@ -6774,7 +7381,7 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
           "type": "array"
         },
         "reused_from_store": {
-          "description": "Functions taken from accepted units of earlier runs.",
+          "description": "Functions taken from earlier runs: accepted units, and translations made from the same\ndecompile that passed their own test or could not be compared.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -6787,7 +7394,7 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
         },
         "skipped": {
           "default": 0,
-          "description": "Functions left out because the entry point cannot reach them by direct calls (loader and\ncompiler glue in a binary without names, dead code).",
+          "description": "Functions left out because the entry point cannot reach them (loader and\ncompiler glue in a binary without names, dead code).",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -6798,9 +7405,23 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
           "minimum": 0,
           "type": "integer"
         },
+        "unchecked": {
+          "default": 0,
+          "description": "Functions whose translation is in the crate although the function-level test failed or\ncould not run it (check `unchecked`): only the program-level test judges them.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "verdict": {
           "$ref": "#/$defs/ProgramVerdictView",
           "description": "The program-level verdict (after the repair rounds, if there were any)."
+        },
+        "verified": {
+          "default": 0,
+          "description": "Functions whose translation passed the function-level test against the original.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [

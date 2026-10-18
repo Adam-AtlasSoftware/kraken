@@ -379,6 +379,21 @@ impl Reader<'_> {
             program["size"],
             code(info["binary_sha256"].as_str().unwrap_or("?")),
         );
+        if let Some(d) = program["description"].as_str() {
+            let _ = writeln!(out, "- Kind: {d}");
+        }
+        // a static library: all members are loaded into the one program
+        if let Some(n) = program["member_count"].as_u64() {
+            let names: Vec<String> = program["members"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(20)
+                .map(|m| code(text_of(m)))
+                .collect();
+            let more = if n > names.len() as u64 { ", ..." } else { "" };
+            let _ = writeln!(out, "- Members ({n}): {}{more}", names.join(", "));
+        }
         let caps: Vec<&str> = info["capabilities"]
             .as_array()
             .map(|a| a.iter().filter_map(Value::as_str).collect())

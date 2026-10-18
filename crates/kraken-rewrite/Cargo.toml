@@ -9,6 +9,8 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
+# Names of C++ globals for the prompt (already in the tree through engine-native).
+cpp_demangle = "0.5.1"
 futures-util = "0.3"
 # icicle-emu is not on crates.io; pinned by commit (see deny.toml [sources] and
 # spikes/rewrite-loop/NOTES.md). MIT OR Apache-2.0.

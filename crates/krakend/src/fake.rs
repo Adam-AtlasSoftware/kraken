@@ -30,6 +30,8 @@ pub struct FakeControl {
     pub fail_pushes_as_cancelled: AtomicBool,
     /// Latency of every push in milliseconds.
     pub push_delay_ms: AtomicU64,
+    /// How long opening a binary takes, in milliseconds (engines created afterwards).
+    pub open_delay_ms: AtomicU64,
     /// Pushes running right now.
     pub pushes_in_flight: AtomicUsize,
     /// Most pushes that ever ran at the same time.
@@ -50,6 +52,7 @@ impl FakeControl {
         FakeControl {
             fail_pushes_as_cancelled: AtomicBool::new(false),
             push_delay_ms: AtomicU64::new(0),
+            open_delay_ms: AtomicU64::new(0),
             pushes_in_flight: AtomicUsize::new(0),
             max_pushes_in_flight: AtomicUsize::new(0),
             pushes: AtomicUsize::new(0),
@@ -192,8 +195,12 @@ impl EngineFactory for FakeFactory {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(engine_dir.to_path_buf());
-        let inner =
-            Arc::new(FakeEngine::new(self.fixture.clone()).with_stage_delay(self.stage_delay));
+        let open_delay = Duration::from_millis(self.ctl.open_delay_ms.load(Ordering::SeqCst));
+        let inner = Arc::new(
+            FakeEngine::new(self.fixture.clone())
+                .with_stage_delay(self.stage_delay)
+                .with_open_delay(open_delay),
+        );
         Ok(Arc::new(Controlled {
             mutator: ControlledMutator {
                 inner: inner.clone(),

@@ -96,6 +96,7 @@ fn counterexample() -> Counterexample {
         stderr: Vec::new(),
         callbacks: Vec::new(),
         global_writes: Vec::new(),
+        global_writes_observed: false,
         instructions: 0,
     };
     Counterexample {

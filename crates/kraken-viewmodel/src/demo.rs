@@ -234,6 +234,8 @@ pub fn demo_fixture() -> FixtureFile {
 pub struct DemoEngineFactory {
     fixture: FixtureFile,
     stage_delay: Duration,
+    /// Make the open take this long, counting to this many functions.
+    slow_open: Option<(Duration, u64)>,
 }
 
 impl DemoEngineFactory {
@@ -242,6 +244,7 @@ impl DemoEngineFactory {
         DemoEngineFactory {
             fixture,
             stage_delay,
+            slow_open: None,
         }
     }
 }
@@ -249,10 +252,32 @@ impl DemoEngineFactory {
 #[async_trait]
 impl EngineFactory for DemoEngineFactory {
     async fn create(&self, _engine_dir: &Path) -> Result<SharedEngine, ProtoError> {
-        Ok(Arc::new(
-            FakeEngine::new(self.fixture.clone()).with_stage_delay(self.stage_delay),
-        ))
+        let mut engine = FakeEngine::new(self.fixture.clone()).with_stage_delay(self.stage_delay);
+        if let Some((delay, functions)) = self.slow_open {
+            engine = engine.with_open_delay(delay).with_open_functions(functions);
+        }
+        Ok(Arc::new(engine))
     }
+}
+
+/// The demo with an open that takes `delay` and counts to `functions` while it finds them:
+/// the loading screen of a big program, for screenshots and tests.
+pub fn demo_project_loading(delay: Duration, functions: u64) -> std::io::Result<DemoProject> {
+    let tmp = tempfile::tempdir()?;
+    let binary = tmp.path().join("libpython3.14.so");
+    std::fs::write(&binary, b"\x7fELF placeholder for the KRAKEN demo project")?;
+    let project_dir = tmp.path().join("project");
+    let factory = DemoEngineFactory {
+        slow_open: Some((delay, functions)),
+        ..DemoEngineFactory::new(demo_fixture(), DEMO_STAGE_DELAY)
+    };
+    let session = kraken_registry::Session::new(Arc::new(factory));
+    let backend = InProcessBackend::with_session(session).with_keepalive(Box::new(tmp));
+    Ok(DemoProject {
+        backend: Arc::new(backend),
+        binary,
+        project_dir,
+    })
 }
 
 /// Everything needed to open the demo project through a [`ViewModel`](crate::ViewModel).

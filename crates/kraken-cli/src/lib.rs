@@ -27,6 +27,7 @@ mod daemon_cmd;
 mod eval_cmd;
 mod exit;
 mod infer_cmd;
+mod progress;
 pub mod render;
 pub mod schema;
 mod setup;

@@ -47,7 +47,10 @@ pub fn notice_card(ui: &mut Ui, p: &Palette, s: &style::Status, button: &str) ->
                 ui.add_space(4.0);
             }
             ui.horizontal(|ui| {
-                if style::primary_button(ui, button).clicked() {
+                if style::primary_button(ui, button)
+                    .on_hover_text("Close this message")
+                    .clicked()
+                {
                     understood = true;
                 }
             });
@@ -106,7 +109,11 @@ fn result_card(
             ui.label(medium(title, 13.5).color(color));
             ui.add(egui::Label::new(RichText::new(body).size(12.5).color(p.text)).wrap());
             ui.add_space(4.0);
-            if ui.button(button).clicked() {
+            if ui
+                .button(button)
+                .on_hover_text("Close this message")
+                .clicked()
+            {
                 act = Some(SetupAct::Dismiss);
             }
         });
@@ -154,10 +161,17 @@ fn confirm_card(ui: &mut Ui, p: &Palette, s: &style::Status, plan: &SetupPlan) -
             );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if style::primary_button(ui, "Download and install").clicked() {
+                if style::primary_button(ui, "Download and install")
+                    .on_hover_text("Download and install what is listed above")
+                    .clicked()
+                {
                     act = Some(SetupAct::Confirm);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui
+                    .button("Cancel")
+                    .on_hover_text("Do not download anything")
+                    .clicked()
+                {
                     act = Some(SetupAct::Dismiss);
                 }
             });

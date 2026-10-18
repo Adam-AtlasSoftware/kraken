@@ -18,11 +18,12 @@ pub struct LoaderSpec {
 }
 
 /// Facts about the loaded program.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgramInfo {
     /// Architecture/language id.
     pub arch: String,
-    /// Container format such as `"elf"`, `"pe"`, `"macho"`.
+    /// Container format such as `"elf"`, `"pe"`, `"macho"`, `"coff"` (an object file) or
+    /// `"ar"` (a static or import library).
     pub format: String,
     /// Image base.
     pub base: Hex64,
@@ -30,6 +31,13 @@ pub struct ProgramInfo {
     pub sha256: String,
     /// File size in bytes.
     pub size: u64,
+    /// What the file is, in plain words (`Linux shared library`, `Windows static library with
+    /// 2 objects`); absent when the engine does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The members of a static or import library, in file order; empty for other files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
 }
 
 /// A staged analysis pass (decisions 75, 90).

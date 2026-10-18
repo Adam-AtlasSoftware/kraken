@@ -11,13 +11,13 @@ use engine_native_sys::{Instruction, NativeError, Session, TokenKind as NativeKi
 use kraken_engine::{
     Analyzer, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected,
     EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator,
-    ProgramInfo, StringLister, SymbolLister, TypeStore, Watermark, XrefProvider,
+    OpenReporter, ProgramInfo, StringLister, SymbolLister, TypeStore, Watermark, XrefProvider,
 };
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
-    FlowKind, FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, OperandKind, OperandToken,
-    Page, PageRequest, ProtoError, StringEntry, SymbolEntry, Token, TokenKind, TypeDef, TypeRef,
-    VersionedLogOp, hex_bytes,
+    FlowKind, FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, OpenStage, OpenUpdate,
+    OperandKind, OperandToken, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, Token,
+    TokenKind, TypeDef, TypeRef, VersionedLogOp, hex_bytes,
 };
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -895,14 +895,27 @@ fn build_program(
     spec: &LoaderSpec,
     config: &NativeConfig,
     token: &CancellationToken,
-    progress: Option<&(dyn Fn(usize, usize) + Sync)>,
+    report: Option<&OpenReporter>,
 ) -> EngineResult<Program> {
+    let say = |stage: OpenStage, message: String| {
+        if let Some(r) = report {
+            r(OpenUpdate::stage(stage, message));
+        }
+    };
+    say(OpenStage::ReadFile, "Reading the file".into());
     let data = std::fs::read(path).map_err(|e| {
         ProtoError::new(
             ErrorCode::NotFound,
             format!("cannot read {}: {e}", path.display()),
         )
     })?;
+    say(
+        OpenStage::Symbols,
+        format!(
+            "Loading symbols and debug info ({:.1} MB)",
+            data.len() as f64 / 1e6
+        ),
+    );
     let mut loaded = load(&data, spec.base.map(|b| b.0))?;
     if !config.use_symbols {
         // a stripped binary has neither
@@ -945,6 +958,31 @@ fn build_program(
         .map_or_else(Default::default, |d| {
             crate::jumpcache::load(d, &sha256, config.use_symbols)
         });
+    let from_cache = !cache.is_empty();
+    say(
+        OpenStage::Functions,
+        if from_cache {
+            "Reading the results saved by the last open".into()
+        } else {
+            "Looking for functions".into()
+        },
+    );
+    let last_report = Mutex::new(None::<std::time::Instant>);
+    let on_discovery = |d: &crate::discover::DiscoverProgress| {
+        let Some(r) = report else {
+            return;
+        };
+        {
+            let mut last = last_report.lock().unwrap_or_else(|p| p.into_inner());
+            // the end of a round always goes out
+            if d.queued > 0 && last.is_some_and(|t| t.elapsed() < Duration::from_millis(200)) {
+                return;
+            }
+            *last = Some(std::time::Instant::now());
+        }
+        r(discovery_update(d, from_cache));
+    };
+    let progress = report.map(|_| &on_discovery as crate::discover::ProgressFn<'_>);
     let Some(mut found) = discover(
         &loaded,
         &mut session,
@@ -964,6 +1002,13 @@ fn build_program(
     };
     // the sessions of the other threads are gone; give their memory back
     release_free_memory();
+    say(
+        OpenStage::Types,
+        format!(
+            "{} functions found; adding types and signatures",
+            found.functions.len()
+        ),
+    );
     if let Some(dir) = config.state_dir.as_deref()
         && found.recovered > 0
     {
@@ -1172,10 +1217,12 @@ fn build_program(
     let imports = crate::symbols::imports(&loaded);
     let info = ProgramInfo {
         arch: loaded.language.id.to_string(),
-        format: loaded.format.into(),
+        format: loaded.container.into(),
         base: Hex64(loaded.base),
         sha256,
         size: data.len() as u64,
+        description: (!loaded.description.is_empty()).then(|| loaded.description.clone()),
+        members: loaded.members.clone(),
     };
     let stop = session.stop_flag();
     let p = Program {
@@ -1407,10 +1454,60 @@ impl Loader for InProcessEngine {
     ) -> EngineResult<ProgramInfo> {
         self.open_reporting(path, spec, cancel, None).await
     }
+
+    async fn open_binary_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: OpenReporter,
+    ) -> EngineResult<ProgramInfo> {
+        self.open_reporting(path, spec, cancel, Some(report)).await
+    }
 }
 
-/// Called while a program opens with the number of functions found and the number still to walk.
-pub(crate) type OpenReport = Arc<dyn Fn(usize, usize) + Send + Sync>;
+/// The report of the function search: the share of the code covered by the functions found so
+/// far is the fraction of the first round (nearly all of the time); later rounds walk again
+/// with what they learnt about calls that never return.
+pub(crate) fn discovery_update(
+    d: &crate::discover::DiscoverProgress,
+    from_cache: bool,
+) -> OpenUpdate {
+    let covered = if d.code > 0 {
+        (d.covered as f64 / d.code as f64).min(1.0)
+    } else {
+        0.0
+    };
+    let fraction = if d.round <= 1 {
+        0.9 * covered
+    } else {
+        0.9 + 0.1 * covered
+    };
+    let message = if d.round > 1 {
+        format!(
+            "Checking calls that never return (pass {}): {} functions",
+            d.round, d.found
+        )
+    } else if from_cache {
+        format!(
+            "Reading saved results: {} functions found, {} to look at",
+            d.found, d.queued
+        )
+    } else {
+        format!("{} functions found, {} to look at", d.found, d.queued)
+    };
+    OpenUpdate {
+        stage: OpenStage::Functions,
+        stage_fraction: Some(fraction),
+        // a later pass counts from zero again: its counts would read as going backwards
+        found: (d.round <= 1).then_some(d.found as u64),
+        queued: (d.round <= 1).then_some(d.queued as u64),
+        covered_bytes: Some(d.covered.min(d.code)),
+        code_bytes: Some(d.code),
+        from_cache,
+        message,
+    }
+}
 
 impl InProcessEngine {
     /// [`Loader::open_binary`] that reports how discovery is getting on, which can take many
@@ -1420,7 +1517,7 @@ impl InProcessEngine {
         path: &Path,
         spec: &LoaderSpec,
         cancel: &CancellationToken,
-        report: Option<OpenReport>,
+        report: Option<OpenReporter>,
     ) -> EngineResult<ProgramInfo> {
         check(cancel)?;
         if let Some(f) = spec.format.as_deref()
@@ -1436,14 +1533,17 @@ impl InProcessEngine {
         let config = self.config.clone();
         let token = cancel.clone();
         let program = blocking(move || {
-            let progress = report
-                .as_deref()
-                .map(|f| f as &(dyn Fn(usize, usize) + Sync));
-            let p = build_program(&path, &spec, &config, &token, progress)?;
+            let p = build_program(&path, &spec, &config, &token, report.as_ref())?;
             if let Some(dir) = &config.state_dir {
                 let saved = read_state(dir, &p.info.sha256);
                 p.signatures().extend(saved.signatures);
                 let replayed = !saved.entries.is_empty();
+                if replayed && let Some(r) = &report {
+                    r(OpenUpdate::stage(
+                        OpenStage::Replay,
+                        format!("Restoring {} saved changes", saved.entries.len()),
+                    ));
+                }
                 for entry in saved.entries {
                     let ok = match entry {
                         // one rebuild of the references at the end instead of one per edit

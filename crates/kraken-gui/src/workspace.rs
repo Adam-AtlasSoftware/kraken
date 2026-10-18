@@ -53,36 +53,9 @@ impl Tab {
         }
     }
 
-    /// One plain sentence for the tab's tooltip (decision 20, staged).
+    /// One plain sentence for the tab's tooltip, from the panel help.
     pub fn tooltip(self) -> &'static str {
-        match self {
-            Tab::Functions => "Every function KRAKEN found in the program. Click one to read it.",
-            Tab::Decompiler => {
-                "The selected function rewritten as readable C-like code. Click a call to follow it."
-            }
-            Tab::Hex => "The raw bytes of the program, as hexadecimal numbers and text.",
-            Tab::Listing => "The machine instructions behind the code, one per line.",
-            Tab::Graph => {
-                "The same code as boxes joined by arrows. Space swaps it with the listing."
-            }
-            Tab::Xrefs => "Who calls this function, what it calls, and what refers to any address.",
-            Tab::Strings => "Text found inside the program. Double-click one to see what uses it.",
-            Tab::Symbols => "What the program borrows from libraries, and what it makes available.",
-            Tab::History => "Every change made to this project, who made it, and a way to undo it.",
-            Tab::Proposals => "Changes suggested by AI assistants that wait for your approval.",
-            Tab::Assistant => {
-                "Ask the assistant (an AI model or a terminal agent) about this program in plain language."
-            }
-            Tab::Rewrite => {
-                "Rewrite functions in Rust, check each against the original, and export what you accept."
-            }
-            Tab::Search => {
-                "Find names, strings, byte patterns or instructions anywhere in the program. Ctrl+Shift+F."
-            }
-            Tab::Bookmarks => {
-                "Places you or an agent marked to come back to, with notes. Ctrl+D adds one."
-            }
-        }
+        kraken_viewmodel::assist::panel_help(self.title()).map_or("", |h| h.short)
     }
 }
 
@@ -149,6 +122,8 @@ pub struct UiState {
     pub panels: PanelState,
     pub assist: crate::assist::AssistUi,
     pub rewrite: crate::rewrite::RewriteUi,
+    /// A tab menu asked for the help of this panel.
+    pub help_request: Option<Tab>,
 }
 
 impl UiState {
@@ -226,6 +201,17 @@ impl TabViewer for Viewer<'_> {
         false
     }
 
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: egui_dock::NodePath) {
+        if ui
+            .button("Help for this panel")
+            .on_hover_text("Open the help page that explains this panel (F1)")
+            .clicked()
+        {
+            self.ui.help_request = Some(*tab);
+            ui.close();
+        }
+    }
+
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
         let tab = *tab;
         let vm = &*self.vm;
@@ -235,6 +221,11 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
+        crate::tour::note_spot(
+            ui.ctx(),
+            crate::tour::Spot::Panel(tab.title()),
+            ui.max_rect().expand(4.0),
+        );
         match tab {
             Tab::Functions => functions(ui, self.vm, self.ui),
             Tab::Decompiler => decompiler(ui, self.vm, self.ui),
@@ -273,7 +264,9 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
         .id(filter_id)
         .hint_text("Filter functions  (Ctrl+L)")
         .desired_width(f32::INFINITY);
-    let resp = ui.add(edit);
+    let resp = ui
+        .add(edit)
+        .on_hover_text("Type part of a function name to narrow the list. Escape clears it");
     if st.focus_filter {
         st.focus_filter = false;
         resp.request_focus();
@@ -316,7 +309,11 @@ fn functions(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     if let Some(err) = vm.functions.error.clone() {
         let s = style::status(style::dark(ui));
         ui.label(RichText::new(err).color(s.danger));
-        if ui.button("Try again").clicked() {
+        if ui
+            .button("Try again")
+            .on_hover_text("Ask for it again")
+            .clicked()
+        {
             vm.refresh_functions();
         }
         return;
@@ -484,6 +481,11 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                     .on_hover_text(vm.rewrite.blocked_note().unwrap_or(
                         "Translate this function to Rust and check it against the original. See the Rewrite tab.",
                     ))
+                    .on_disabled_hover_text(
+                        vm.rewrite
+                            .blocked_note()
+                            .unwrap_or("Wait for the rewrite that is running"),
+                    )
                     .clicked()
                 {
                     acts.push(Act::RewriteThis);
@@ -524,7 +526,11 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                 ui.add_space(8.0);
                 ui.label(RichText::new("This function could not be decompiled.").color(s.danger));
                 ui.label(RichText::new(msg).color(p.text_dim));
-                if ui.button("Try again").clicked() {
+                if ui
+                    .button("Try again")
+                    .on_hover_text("Ask for it again")
+                    .clicked()
+                {
                     acts.push(Act::Retry);
                 }
             }
@@ -670,10 +676,17 @@ fn proposals(ui: &mut Ui, vm: &mut ViewModel) {
                             .color(p.text_dim),
                     );
                     ui.horizontal(|ui| {
-                        if style::primary_button(ui, "Accept").clicked() {
+                        if style::primary_button(ui, "Accept")
+                            .on_hover_text("Apply this change. You can undo it from History")
+                            .clicked()
+                        {
                             accept = Some(pr.id);
                         }
-                        if ui.button("Reject").clicked() {
+                        if ui
+                            .button("Reject")
+                            .on_hover_text("Throw this suggestion away. Nothing is changed")
+                            .clicked()
+                        {
                             reject = Some(pr.id);
                         }
                     });

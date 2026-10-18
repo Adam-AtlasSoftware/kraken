@@ -124,7 +124,8 @@ pub(super) fn options(ui: &mut Ui, vm: &mut ViewModel) {
             )
             .on_hover_text(
                 "Besides comparing the whole programs, test each function on its own against the original. Slower, but a failure then points at one function. Turn it off to only compile the functions and rely on the whole-program comparison.",
-            );
+            )
+            .on_disabled_hover_text("Wait for the run to finish");
             ui.add_space(4.0);
             ui.label(RichText::new("Test cases").size(12.0).color(p.text_dim))
                 .on_hover_text("Each case starts both programs with the arguments and input you give, and compares what they print and how they end.");
@@ -195,11 +196,10 @@ pub(crate) fn inputs_editor(ui: &mut Ui, vm: &mut ViewModel, locked: bool) {
         let full = vm.rewrite.program.inputs.len() >= kraken_registry::commands::MAX_USER_CASES;
         if ui
             .add_enabled(!full, egui::Button::new("Add a test case"))
-            .on_hover_text(if full {
-                "The most test cases a run takes is reached."
-            } else {
-                "Add a row: a name, the arguments to start the program with, and the text it should read."
-            })
+            .on_hover_text(
+                "Add a row: a name, the arguments to start the program with, and the text it should read.",
+            )
+            .on_disabled_hover_text("The most test cases a run takes is reached.")
             .clicked()
         {
             add = true;
@@ -271,6 +271,8 @@ fn toolbar(ui: &mut Ui, vm: &ViewModel, acts: &mut ProgramActs) {
                 !running,
                 egui::DragValue::new(&mut rounds).range(0..=MAX_REPAIR_ROUNDS),
             )
+            .on_hover_text("How many times KRAKEN may repair the program. Drag or type. 0 turns it off")
+            .on_disabled_hover_text("Wait for the run to finish")
             .changed()
         {
             acts.rounds = Some(rounds);
@@ -282,13 +284,14 @@ fn toolbar(ui: &mut Ui, vm: &ViewModel, acts: &mut ProgramActs) {
             if ui
                 .add_enabled(!r.program.loading, egui::Button::new("Refresh"))
                 .on_hover_text("Read the stored runs again.")
+                .on_disabled_hover_text("Already reading")
                 .clicked()
             {
                 acts.refresh = true;
             }
             if r.program.runs.len() > 1 || r.program.detail.is_some() {
                 let shown = r.program.detail.as_ref().map(|d| d.run);
-                egui::ComboBox::from_id_salt("kraken_program_run")
+                let runs = egui::ComboBox::from_id_salt("kraken_program_run")
                     .selected_text(
                         shown.map_or("No run".to_string(), |n| format!("Run {n}")),
                     )
@@ -297,12 +300,15 @@ fn toolbar(ui: &mut Ui, vm: &ViewModel, acts: &mut ProgramActs) {
                             let label = format!("Run {} - {}", run.run, run.verdict);
                             if ui
                                 .selectable_label(shown == Some(run.run), label)
+                                .on_hover_text("Show this run")
                                 .clicked()
                             {
                                 acts.show_run = Some(run.run);
                             }
                         }
                     });
+                runs.response
+                    .on_hover_text("Earlier runs of the whole-program rewrite");
             }
         });
     });

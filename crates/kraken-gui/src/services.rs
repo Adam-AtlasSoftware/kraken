@@ -34,6 +34,8 @@ pub struct Services {
     pub ghidra: Option<Arc<HostEngineFactory>>,
     /// Where terminal agents are found (`None`: the user's directories, on first use).
     pub agents: Option<kraken_viewmodel::agents::AgentsConfig>,
+    /// Offer the guided tour on the first launch.
+    pub first_run_tour: bool,
 }
 
 impl Services {
@@ -56,6 +58,7 @@ impl Services {
             connector: None,
             ghidra,
             agents: kraken_viewmodel::agents::AgentsConfig::from_env(!no_daemon),
+            first_run_tour: true,
         }
     }
 
@@ -72,6 +75,7 @@ impl Services {
             })),
             ghidra: None,
             agents: Some(offline_agents()),
+            first_run_tour: false,
         }
     }
 

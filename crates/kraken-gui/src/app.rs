@@ -19,11 +19,13 @@ use tokio::runtime::Runtime;
 
 use crate::args::{Options, Scene};
 use crate::assist::{self, AssistRequest, AssistSetup, Change};
+use crate::help::{self, HelpDo, HelpEnv, HelpUi};
 use crate::import::{ImportAction, ImportDialog, Picked, Picker, is_project_dir};
 use crate::menu::{self, MenuCmd, MenuEnv};
 use crate::recent::{self, Prefs};
 use crate::services::{Mode, Services};
 use crate::settings::{Settings, SettingsAction, SettingsEnv};
+use crate::tour::{self, Spot, Tour, TourEvent};
 use crate::welcome::{self, Choice, Welcome, WelcomeAction};
 use crate::workspace::{self, Tab, UiState};
 use crate::{chrome, overlays};
@@ -72,13 +74,14 @@ struct Shot {
 
 /// Hidden environment switches for documentation screenshots of a real project:
 /// `KRAKEN_GUI_SHOT_TAB=<tab title>` brings that tab to the front, `KRAKEN_GUI_SHOT_LAYOUT=graph`
-/// uses the graph layout, `KRAKEN_GUI_SHOT_NO_EDIT=1` skips the scripted rename and
+/// uses the graph layout, `KRAKEN_GUI_SHOT_EDIT=1` makes one scripted rename (so History has an
+/// entry; without it a real project is not changed) and
 /// `KRAKEN_GUI_SHOT_STRINGS_FILTER=<text>` types into the Strings filter.
 #[derive(Default)]
 struct ShotTweaks {
     tab: Option<Tab>,
     graph_layout: bool,
-    no_edit: bool,
+    edit: bool,
     strings_filter: Option<String>,
 }
 
@@ -103,7 +106,7 @@ impl ShotTweaks {
         ShotTweaks {
             tab,
             graph_layout: std::env::var("KRAKEN_GUI_SHOT_LAYOUT").is_ok_and(|v| v == "graph"),
-            no_edit: std::env::var_os("KRAKEN_GUI_SHOT_NO_EDIT").is_some(),
+            edit: std::env::var_os("KRAKEN_GUI_SHOT_EDIT").is_some(),
             strings_filter: std::env::var("KRAKEN_GUI_SHOT_STRINGS_FILTER").ok(),
         }
     }
@@ -143,6 +146,12 @@ pub struct KrakenApp {
     confirm: Option<Pending>,
     /// The shortcut cheat sheet is showing.
     shortcuts_open: bool,
+    /// The help window.
+    help: HelpUi,
+    /// The first-run tour.
+    tour: Tour,
+    /// The tour step whose panel was last brought to the front.
+    tour_fronted: Option<usize>,
     /// Analysis finished with this many functions: the next-steps notice is showing.
     next_steps: Option<u64>,
     /// The analysis was seen running, so its end shows the next-steps notice.
@@ -194,6 +203,9 @@ impl KrakenApp {
             picker: Picker::default(),
             confirm: None,
             shortcuts_open: false,
+            help: HelpUi::default(),
+            tour: Tour::default(),
+            tour_fronted: None,
             next_steps: None,
             saw_running: false,
             opened_url: None,
@@ -230,12 +242,22 @@ impl KrakenApp {
             hub.configure(cfg);
         }
         app.settings.ai.set_hub(hub);
+        if app.services.first_run_tour
+            && app.prefs.persistent()
+            && !app.prefs.tour_done()
+            && opts.screenshot.is_none()
+            && !opts.demo
+        {
+            app.tour.start();
+        }
         if opts.screenshot.is_some()
             && let Some((p, b)) = assist::provider_for(opts.scene)
         {
             app.assist.set(p, b);
         }
-        if opts.demo {
+        if opts.screenshot.is_some() && opts.scene == Scene::Loading {
+            app.start_loading_demo(ctx, Duration::from_secs(20));
+        } else if opts.demo {
             app.start_demo(ctx);
         } else if let Some(dir) = &opts.open_project {
             app.start_real(Choice::OpenProject(dir.to_string_lossy().into_owned()), ctx);
@@ -429,6 +451,37 @@ impl KrakenApp {
         self.confirm.as_ref()
     }
 
+    /// The page the help window shows, when it is open.
+    #[cfg(test)]
+    pub fn help_topic(&self) -> Option<help::Topic> {
+        self.help.is_open().then(|| self.help.topic())
+    }
+
+    /// Hides the notices that float over the window, so a screenshot shows one thing.
+    #[cfg(test)]
+    pub fn hide_notices(&mut self) {
+        self.next_steps = None;
+        if let Some(vm) = self.vm.as_mut() {
+            vm.assist_dismiss_offer();
+            let ids: Vec<u64> = vm.toasts.iter().map(|t| t.id).collect();
+            for id in ids {
+                vm.dismiss_toast(id);
+            }
+        }
+    }
+
+    /// Starts the tour at step `n` (documentation screenshots).
+    #[cfg(test)]
+    pub fn start_tour_at(&mut self, n: usize) {
+        self.tour.start_at(n);
+    }
+
+    /// Whether the tour is showing, and its step.
+    #[cfg(test)]
+    pub fn tour_step(&self) -> Option<usize> {
+        self.tour.is_active().then(|| self.tour.step())
+    }
+
     #[cfg(test)]
     pub fn shortcuts_open(&self) -> bool {
         self.shortcuts_open
@@ -460,6 +513,23 @@ impl KrakenApp {
         let agents = self.agent_env();
         self.assist.apply(&mut vm, agents);
         vm
+    }
+
+    /// The loading-screen screenshot: the demo opening slowly, as a big program would.
+    pub(crate) fn start_loading_demo(&mut self, ctx: &egui::Context, open_time: Duration) {
+        match kraken_viewmodel::demo::demo_project_loading(open_time, 14_963) {
+            Ok(d) => {
+                self.is_demo = true;
+                let mut vm = self.new_vm(d.backend, ctx);
+                vm.create_project(
+                    d.binary.to_string_lossy().into_owned(),
+                    d.project_dir.to_string_lossy().into_owned(),
+                );
+                self.vm = Some(vm);
+                self.welcome.busy = Some("Opening...".into());
+            }
+            Err(e) => self.welcome.error = Some(format!("Could not set up the demo: {e}")),
+        }
     }
 
     pub fn start_demo(&mut self, ctx: &egui::Context) {
@@ -638,15 +708,32 @@ impl KrakenApp {
                 }
                 self.state.flush_pending_nav(vm, ctx);
             }
-            Connection::NoProject => {}
+            Connection::NoProject => {
+                // the open was cancelled: back to the welcome screen
+                if vm.loading.is_none() && self.welcome.busy.is_some() {
+                    self.vm = None;
+                    self.welcome.busy = None;
+                    self.auto_analyze = false;
+                }
+            }
         }
+    }
+
+    /// The project that is opening, once it has taken long enough to show the loading screen.
+    fn loading_shown(&self) -> bool {
+        self.vm.as_ref().is_some_and(|v| {
+            matches!(v.connection, Connection::Opening(_))
+                && v.loading
+                    .as_ref()
+                    .is_some_and(|l| l.started.elapsed() >= crate::loading::SHOW_AFTER)
+        })
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context, reqs: &mut Vec<UiRequest>) {
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma)) {
             self.settings.toggle();
         }
-        let (open_project, open_binary, close, quit, cheat, docs) = ctx.input_mut(|i| {
+        let (open_project, open_binary, close, quit, cheat, help) = ctx.input_mut(|i| {
             // The shifted chord first: a plain Ctrl+O pattern also matches it.
             let open_project = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::O);
             (
@@ -664,7 +751,7 @@ impl KrakenApp {
             (close, AppAction::CloseProject),
             (quit, AppAction::Quit),
             (cheat, AppAction::ShowShortcuts),
-            (docs, AppAction::OpenDocs),
+            (help, AppAction::ShowHelp),
         ] {
             if pressed {
                 reqs.extend(self.action_request(action));
@@ -727,6 +814,8 @@ impl KrakenApp {
             AppAction::Quit => Some(UiRequest::Quit),
             AppAction::ShowShortcuts => Some(UiRequest::ShowShortcuts),
             AppAction::OpenDocs => Some(UiRequest::OpenDocs),
+            AppAction::ShowHelp => Some(UiRequest::ShowHelp),
+            AppAction::TakeTour => Some(UiRequest::TakeTour),
             _ => None,
         }
     }
@@ -765,6 +854,15 @@ impl KrakenApp {
                 self.opened_url = Some(url);
             }
             UiRequest::OpenAutomate => self.state.assist.automate.show(),
+            UiRequest::ShowHelp => {
+                let open = self
+                    .vm
+                    .as_ref()
+                    .is_some_and(|v| v.connection == Connection::Open);
+                let tab = if open { self.focused_tab() } else { None };
+                self.help.show_topic(help::topic_for_tab(tab));
+            }
+            UiRequest::TakeTour => self.tour.start(),
         }
     }
 
@@ -796,14 +894,15 @@ impl KrakenApp {
             open_file: self.file_menu_open,
         };
         let pal = self.theme.palette();
-        let cmds = egui::Panel::top("kraken_menu")
+        let bar = egui::Panel::top("kraken_menu")
             .frame(
                 Frame::new()
                     .fill(pal.panel)
                     .inner_margin(Margin::symmetric(8, 2)),
             )
-            .show(ui, |ui| menu::bar(ui, &env))
-            .inner;
+            .show(ui, |ui| menu::bar(ui, &env));
+        tour::note_spot(ctx, Spot::Menu, bar.response.rect);
+        let cmds = bar.inner;
         for c in cmds {
             match c {
                 MenuCmd::Action(a) => self.dispatch(a, ctx),
@@ -847,6 +946,7 @@ impl KrakenApp {
             }
         }
         menu::shortcuts_window(ctx, &mut self.shortcuts_open);
+        self.help_window(ctx);
         let (hovering, dropped) = ctx.input(|i| {
             (
                 !i.raw.hovered_files.is_empty(),
@@ -961,6 +1061,78 @@ impl KrakenApp {
         }
     }
 
+    /// The tab in front in the dock pane that was clicked last, if any was.
+    fn focused_tab(&self) -> Option<Tab> {
+        let path = self.dock.focused_leaf()?;
+        let leaf = self.dock[path.surface][path.node].get_leaf()?;
+        leaf.tabs.get(leaf.active.0).copied()
+    }
+
+    /// Makes the pane holding `tab` the focused one (tests).
+    #[cfg(test)]
+    pub(crate) fn focus_tab(&mut self, tab: Tab) {
+        if let Some(path) = self.dock.find_tab(&tab) {
+            self.dock.set_focused_node_and_surface(path.node_path());
+            let _ = self.dock.set_active_tab(path);
+        }
+    }
+
+    /// The help window, and what its "Do it" buttons ask for.
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.help.is_open() {
+            return;
+        }
+        let vm = self
+            .vm
+            .as_ref()
+            .filter(|v| v.connection == Connection::Open);
+        let menu_env = MenuEnv {
+            project: vm.is_some(),
+            analyzing: vm.is_some_and(|v| v.analysis.running()),
+            can_back: vm.is_some_and(|v| v.nav.can_back()),
+            can_forward: vm.is_some_and(|v| v.nav.can_forward()),
+            has_function: vm.is_some_and(|v| v.current.is_some()),
+            learn_mode: vm.is_some_and(|v| v.assist.learn_mode),
+            dark: self.theme.dark,
+            recents: &[],
+            open_file: false,
+        };
+        let env = HelpEnv {
+            menu: &menu_env,
+            vm,
+        };
+        match self.help.window(ctx, &env) {
+            Some(HelpDo::Action(a)) => self.dispatch(a, ctx),
+            Some(HelpDo::ShowTab(tab)) => {
+                if self.dock.find_tab(&tab).is_none() {
+                    self.dock.push_to_focused_leaf(tab);
+                }
+                self.state.bring_to_front = Some(tab);
+            }
+            None => {}
+        }
+    }
+
+    /// The first-run tour: brings the panel of the current step forward and draws the card.
+    fn tour_card(&mut self, ctx: &egui::Context, project: bool) {
+        if !self.tour.is_active() {
+            return;
+        }
+        if project
+            && self.tour_fronted != Some(self.tour.step())
+            && let Some(name) = self.tour.panel()
+        {
+            self.tour_fronted = Some(self.tour.step());
+            if let Some(tab) = menu::VIEW_TABS.into_iter().find(|t| t.title() == name) {
+                self.state.bring_to_front = Some(tab);
+            }
+        }
+        if self.tour.show(ctx, project) == Some(TourEvent::Ended) {
+            self.tour_fronted = None;
+            self.prefs.set_tour_done();
+        }
+    }
+
     /// Draws one frame. Separate from `eframe::App::ui` so tests can drive it headlessly.
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
@@ -1002,6 +1174,9 @@ impl KrakenApp {
                 .show(ui, |ui| {
                     workspace::show(ui, &mut self.dock, vm, &mut self.state)
                 });
+            if let Some(tab) = self.state.help_request.take() {
+                self.help.show_topic(help::Topic::Panel(tab));
+            }
             overlays::palette(&ctx, vm, &mut reqs);
             overlays::rename_dialog(&ctx, vm, &mut self.rename_focus);
             overlays::comment_dialog(&ctx, vm);
@@ -1012,6 +1187,17 @@ impl KrakenApp {
             assist::overlays(&ctx, vm, &mut self.state.assist);
             if !vm.toasts.is_empty() || vm.link != kraken_viewmodel::LinkState::Connected {
                 ctx.request_repaint_after(Duration::from_millis(400));
+            }
+        } else if self.loading_shown() {
+            let cancel = egui::CentralPanel::default()
+                .frame(Frame::new().fill(pal.bg).inner_margin(24))
+                .show(ui, |ui| {
+                    let loading = self.vm.as_ref().and_then(|v| v.loading.as_ref());
+                    loading.is_some_and(|l| crate::loading::show(ui, l, Instant::now()))
+                })
+                .inner;
+            if cancel && let Some(vm) = self.vm.as_mut() {
+                vm.cancel_open();
             }
         } else {
             let actions = egui::CentralPanel::default()
@@ -1032,6 +1218,8 @@ impl KrakenApp {
                     WelcomeAction::Import(binary) => self.start_import(binary, &ctx),
                     WelcomeAction::Forget(path) => self.prefs.remove(&path),
                     WelcomeAction::Settings => self.settings.show_window(),
+                    WelcomeAction::Help => self.help.show_topic(help::Topic::Start),
+                    WelcomeAction::Tour => self.tour.start(),
                 }
             }
         }
@@ -1039,6 +1227,7 @@ impl KrakenApp {
             self.handle(r, &ctx);
         }
         self.settings.ai.poll();
+        self.tour_card(&ctx, open);
         self.assist_requests();
         self.settings_window(&ctx);
         overlays::approval_dialog(&ctx, &self.approvals);
@@ -1100,6 +1289,28 @@ impl KrakenApp {
             }
             return;
         }
+        if shot.scene == Scene::Loading {
+            // halfway through finding functions, with the screen up
+            let mid = self
+                .vm
+                .as_ref()
+                .and_then(|v| v.loading.as_ref())
+                .is_some_and(|l| {
+                    l.stage() == kraken_proto::OpenStage::Functions
+                        && l.fraction().is_some_and(|f| f >= 0.4)
+                });
+            if mid && shot.stage == ShotStage::Loading {
+                shot.stage = ShotStage::Settling;
+            }
+            if shot.stage == ShotStage::Settling {
+                shot.settle += 1;
+                if shot.settle > 6 {
+                    ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
+                    shot.stage = ShotStage::Waiting;
+                }
+            }
+            return;
+        }
         let Some(vm) = self.vm.as_mut() else {
             return;
         };
@@ -1133,7 +1344,7 @@ impl KrakenApp {
                     .is_some_and(|c| matches!(c.decompiled, Load::Ready(_)));
                 if ready && !vm.busy() {
                     // One real edit so the History tab has something to show.
-                    if shot.real && shot.tweaks.no_edit {
+                    if shot.real && !shot.tweaks.edit {
                         shot.stage = ShotStage::Settling;
                     } else if shot.real {
                         let target = vm
@@ -1195,6 +1406,8 @@ impl KrakenApp {
                     }
                     match shot.scene {
                         Scene::Menu => self.file_menu_open = true,
+                        Scene::Help => self.help.show_topic(help::Topic::Start),
+                        Scene::Tour => self.tour.start_at(3),
                         Scene::Palette => {
                             vm.open_palette();
                             vm.palette.set_query("ren");

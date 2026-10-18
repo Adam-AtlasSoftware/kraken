@@ -702,14 +702,17 @@ fn program_case(c: &Value, out: &mut String) {
 fn rewrite_program(v: &Value) -> String {
     let verdict = v.get("verdict").cloned().unwrap_or(Value::Null);
     let mut out = format!(
-        "run {}: entry {} {} -- {} functions planned ({} not reached from the entry), {} translated, \
-         {} taken from accepted units, {} without a usable translation, {} in the crate\n",
+        "run {}: entry {} {} -- {} functions planned ({} not reached from the entry), {} translated \
+         ({} verified, {} unchecked at function level), {} taken from earlier runs, {} without \
+         a usable translation, {} in the crate\n",
         str_of(v.get("run")),
         str_of(v.get("entry_name")),
         str_of(v.get("entry")),
         count(v, "functions_planned"),
         count(v, "skipped"),
         count(v, "translated"),
+        count(v, "verified"),
+        count(v, "unchecked"),
         count(v, "reused_from_store"),
         count(v, "failed"),
         count(v, "included"),

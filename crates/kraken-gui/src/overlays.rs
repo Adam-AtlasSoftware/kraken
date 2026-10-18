@@ -91,7 +91,9 @@ pub fn palette(ctx: &egui::Context, vm: &mut ViewModel, reqs: &mut Vec<UiRequest
                         .font(egui::FontId::new(15.0, egui::FontFamily::Proportional))
                         .desired_width(f32::INFINITY)
                         .margin(Margin::symmetric(10, 8));
-                    let r = ui.add(edit);
+                    let r = ui
+                        .add(edit)
+                        .on_hover_text("Type part of what you want to do, then press Enter");
                     r.request_focus();
                     ui.add_space(6.0);
 
@@ -234,6 +236,10 @@ pub fn rename_dialog(ctx: &egui::Context, vm: &mut ViewModel, focus: &mut Option
             .desired_width(f32::INFINITY)
             .margin(Margin::symmetric(8, 6));
         let out = edit.show(ui);
+        out.response
+            .response
+            .clone()
+            .on_hover_text("Type the new name. Enter saves it, Escape cancels");
         if *focus != Some(d.address) {
             *focus = Some(d.address);
             out.response.request_focus();
@@ -269,11 +275,18 @@ pub fn rename_dialog(ctx: &egui::Context, vm: &mut ViewModel, focus: &mut Option
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_enabled_ui(validation.is_ok() && !d.submitting, |ui| {
-                if style::primary_button(ui, "Rename").clicked() {
+                if style::primary_button(ui, "Rename")
+                    .on_hover_text("Save the new name. You can undo it")
+                    .clicked()
+                {
                     submit = true;
                 }
             });
-            if ui.button("Cancel").clicked() {
+            if ui
+                .button("Cancel")
+                .on_hover_text("Close without changing anything")
+                .clicked()
+            {
                 cancel = true;
             }
             if d.submitting {
@@ -304,6 +317,16 @@ fn kind_label(k: CommentKind) -> &'static str {
     }
 }
 
+fn kind_help(k: CommentKind) -> &'static str {
+    match k {
+        CommentKind::Plate => "A block of text shown above the function",
+        CommentKind::Pre => "A line of text shown before this line",
+        CommentKind::Eol => "A short note at the end of this line",
+        CommentKind::Post => "A line of text shown after this line",
+        CommentKind::Repeatable => "A note that also shows wherever this address is used",
+    }
+}
+
 /// The comment dialog.
 pub fn comment_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let Some(d) = vm.comment.clone() else {
@@ -322,7 +345,7 @@ pub fn comment_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 .color(p.text_dim),
         );
         ui.add_space(4.0);
-        egui::ComboBox::from_id_salt("kraken_comment_kind")
+        let kinds = egui::ComboBox::from_id_salt("kraken_comment_kind")
             .selected_text(kind_label(kind))
             .show_ui(ui, |ui| {
                 for k in [
@@ -332,15 +355,20 @@ pub fn comment_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                     CommentKind::Post,
                     CommentKind::Repeatable,
                 ] {
-                    ui.selectable_value(&mut kind, k, kind_label(k));
+                    ui.selectable_value(&mut kind, k, kind_label(k))
+                        .on_hover_text(kind_help(k));
                 }
             });
+        kinds
+            .response
+            .on_hover_text("Where the comment shows: above the line, beside it or below it");
         let r = ui.add(
             egui::TextEdit::multiline(&mut input)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
                 .hint_text("Write a note. Leave it empty and save to remove the comment."),
         );
+        let r = r.on_hover_text("The note is saved with the project");
         if !r.has_focus() && !d.submitting && d.input.is_empty() && input.is_empty() {
             r.request_focus();
         }
@@ -350,11 +378,18 @@ pub fn comment_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!d.submitting, |ui| {
-                if style::primary_button(ui, "Save").clicked() {
+                if style::primary_button(ui, "Save")
+                    .on_hover_text("Save the comment. You can undo it")
+                    .clicked()
+                {
                     submit = true;
                 }
             });
-            if ui.button("Cancel").clicked() {
+            if ui
+                .button("Cancel")
+                .on_hover_text("Close without changing anything")
+                .clicked()
+            {
                 cancel = true;
             }
             if d.submitting {
@@ -411,10 +446,17 @@ pub fn approval_dialog(ctx: &egui::Context, broker: &ApprovalBroker) {
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if style::primary_button(ui, "Allow").clicked() {
+                if style::primary_button(ui, "Allow")
+                    .on_hover_text("Let the agent do this once")
+                    .clicked()
+                {
                     answer = Some(true);
                 }
-                if ui.button("Deny").clicked() {
+                if ui
+                    .button("Deny")
+                    .on_hover_text("Refuse. The agent cannot do this")
+                    .clicked()
+                {
                     answer = Some(false);
                 }
             });

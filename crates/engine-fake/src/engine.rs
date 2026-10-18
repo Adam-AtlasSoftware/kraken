@@ -10,14 +10,14 @@ use async_trait::async_trait;
 use kraken_engine::{
     AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
     DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph,
-    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, ProgramInfo, Progress, Stage,
-    StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider, XrefRequest,
-    type_def_name,
+    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, Progress,
+    Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider,
+    XrefRequest, type_def_name,
 };
 use kraken_proto::{
     BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, LogOp,
-    MemoryBlock, OperandKind, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef,
-    VersionedLogOp, Xref,
+    MemoryBlock, OpenStage, OpenUpdate, OperandKind, Page, PageRequest, ProtoError, StringEntry,
+    SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 
 use crate::data::DataView;
@@ -49,6 +49,8 @@ pub struct FakeEngine {
     ghidra_version: String,
     caps: BTreeSet<Cap>,
     stage_delay: Duration,
+    open_delay: Duration,
+    open_functions: Option<u64>,
 }
 
 fn cancelled() -> ProtoError {
@@ -105,6 +107,8 @@ impl FakeEngine {
             ghidra_version: fixture.ghidra_version,
             caps: Cap::ALL.into_iter().collect(),
             stage_delay: DEFAULT_STAGE_DELAY,
+            open_delay: Duration::ZERO,
+            open_functions: None,
         }
     }
 
@@ -127,6 +131,20 @@ impl FakeEngine {
     /// Sets the sleep per analysis step (three steps per stage); zero makes analysis instant.
     pub fn with_stage_delay(mut self, delay: Duration) -> Self {
         self.stage_delay = delay;
+        self
+    }
+
+    /// Makes a reported open take `delay`, spread over the scripted steps of finding functions
+    /// (for progress displays and cancelling an open); zero by default.
+    pub fn with_open_delay(mut self, delay: Duration) -> Self {
+        self.open_delay = delay;
+        self
+    }
+
+    /// Makes the scripted function search of a reported open count to `n` functions instead
+    /// of the fixture's (screenshots of a big program opening).
+    pub fn with_open_functions(mut self, n: u64) -> Self {
+        self.open_functions = Some(n);
         self
     }
 
@@ -217,7 +235,55 @@ impl Loader for FakeEngine {
         }
         Ok(info)
     }
+
+    async fn open_binary_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: OpenReporter,
+    ) -> EngineResult<ProgramInfo> {
+        check(cancel)?;
+        report(OpenUpdate::stage(OpenStage::ReadFile, "Reading the file"));
+        report(OpenUpdate::stage(
+            OpenStage::Symbols,
+            "Loading symbols and debug info",
+        ));
+        let (total, code) = {
+            let st = self.lock();
+            (
+                self.open_functions.unwrap_or(st.functions.len() as u64),
+                st.program.size.max(1),
+            )
+        };
+        let step = self.open_delay / OPEN_STEPS as u32;
+        for i in 0..=OPEN_STEPS {
+            let found = total * i / OPEN_STEPS;
+            report(OpenUpdate {
+                stage_fraction: Some(i as f64 / OPEN_STEPS as f64),
+                found: Some(found),
+                queued: Some(total - found),
+                covered_bytes: Some(code * i / OPEN_STEPS),
+                code_bytes: Some(code),
+                ..OpenUpdate::stage(
+                    OpenStage::Functions,
+                    format!("{found} functions found, {} to look at", total - found),
+                )
+            });
+            if i < OPEN_STEPS && !step.is_zero() {
+                tokio::select! {
+                    () = tokio::time::sleep(step) => {}
+                    () = cancel.cancelled() => return Err(cancelled()),
+                }
+            }
+        }
+        report(OpenUpdate::stage(OpenStage::Types, "Types and signatures"));
+        self.open_binary(path, spec, cancel).await
+    }
 }
+
+/// Steps of the scripted function search of a reported open.
+const OPEN_STEPS: u64 = 10;
 
 #[async_trait]
 impl Analyzer for FakeEngine {

@@ -26,6 +26,7 @@ use kraken_registry::{
 use serde_json::{Map, Value, json};
 
 use crate::exit::exit_code;
+use crate::progress::ProgressPrinter;
 use crate::render::render;
 use crate::schema::{FlagKind, FlagSpec, flags_from_schema, kebab, parse_flag_value};
 
@@ -856,6 +857,7 @@ pub(crate) async fn wait_for_job(
         .ok_or_else(|| ProtoError::new(ErrorCode::Internal, "job command returned no job_id"))?
         .to_string();
     let mut last: Option<Value> = None;
+    let mut printer = ProgressPrinter::new(env.interactive && std::io::stderr().is_terminal());
     loop {
         let wait = backend.call("job_await", ctx, json!({"job_id": id, "timeout_ms": 500}));
         let view = if env.interactive {
@@ -873,19 +875,20 @@ pub(crate) async fn wait_for_job(
         if let Some(p) = view.get("progress")
             && last.as_ref() != Some(p)
         {
-            emit(
+            printer.job(
+                p["phase"].as_str().unwrap_or(""),
+                p["done"].as_u64().unwrap_or(0),
+                p["total"].as_u64().unwrap_or(0),
+                p["message"].as_str().unwrap_or(""),
                 err,
-                &format!(
-                    "[{}] {}/{} {}\n",
-                    p["phase"].as_str().unwrap_or(""),
-                    p["done"],
-                    p["total"],
-                    p["message"].as_str().unwrap_or("")
-                ),
             );
             last = Some(p.clone());
         }
-        match view.get("status").and_then(Value::as_str) {
+        let status = view.get("status").and_then(Value::as_str);
+        if status != Some("running") {
+            printer.finish(err);
+        }
+        match status {
             Some("running") => {}
             Some("failed") | Some("cancelled") => {
                 let status = view["status"].as_str().unwrap_or("failed").to_string();
@@ -904,6 +907,46 @@ pub(crate) async fn wait_for_job(
             _ => return Ok(view),
         }
     }
+}
+
+/// Runs `project_create` / `project_open` with a progress display on stderr. Ctrl+C cancels
+/// the open (the engine stops and nothing of the project stays open).
+async fn run_open(
+    env: &CliEnv,
+    backend: &dyn CommandBackend,
+    ctx: CallContext,
+    name: &str,
+    args: Value,
+    err: &mut dyn Write,
+) -> Result<Value, ProtoError> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<kraken_proto::OpenProgress>();
+    let cancel = CancellationToken::new();
+    let ctx = ctx
+        .with_cancel(cancel.clone())
+        .with_open_progress(Arc::new(move |p| {
+            let _ = tx.send(p.clone());
+        }));
+    let mut printer = ProgressPrinter::new(env.interactive && std::io::stderr().is_terminal());
+    let call = backend.call(name, &ctx, args);
+    tokio::pin!(call);
+    let mut cancelling = false;
+    let result = loop {
+        tokio::select! {
+            r = &mut call => break r,
+            Some(p) = rx.recv() => printer.open(&p, err),
+            _ = tokio::signal::ctrl_c(), if env.interactive && !cancelling => {
+                cancelling = true;
+                printer.finish(err);
+                emit(err, "cancelling...\n");
+                cancel.cancel();
+            }
+        }
+    };
+    while let Ok(p) = rx.try_recv() {
+        printer.open(&p, err);
+    }
+    printer.finish(err);
+    result
 }
 
 async fn run_registry_command(
@@ -958,7 +1001,11 @@ async fn run_registry_command(
             return fail(&e, json_out, err);
         }
     };
-    let first = backend.call(name, &ctx, args).await;
+    let first = if creating {
+        run_open(env, backend.as_ref(), ctx.clone(), name, args, err).await
+    } else {
+        backend.call(name, &ctx, args).await
+    };
     let result = match first {
         Ok(v) if entry.spec().kind == CommandKind::Job && !no_wait => {
             wait_for_job(env, backend.as_ref(), &ctx, &v, err).await

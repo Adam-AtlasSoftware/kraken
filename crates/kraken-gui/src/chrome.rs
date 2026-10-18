@@ -90,19 +90,40 @@ fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
     let p = pal(ui);
     match vm.analysis.phase {
         AnalysisPhase::Running => {
-            let text = vm.analysis.progress.as_ref().map_or_else(
-                || "Analyzing".to_string(),
-                |pr| format!("Analyzing: {}", pr.phase),
-            );
-            let bar = egui::ProgressBar::new(vm.analysis.fraction().unwrap_or(0.0))
-                .desired_width(240.0)
+            let a = &vm.analysis;
+            let mut text = match a.stage_label() {
+                Some(stage) => format!("Analyzing: {stage}"),
+                None => "Analyzing".to_string(),
+            };
+            if let Some(counts) = a.counts_text() {
+                text.push_str(&format!("  {counts}"));
+            }
+            let fraction = a.fraction();
+            if let Some(f) = fraction {
+                text.push_str(&format!("  {}%", (f * 100.0).floor()));
+            }
+            let bar = egui::ProgressBar::new(fraction.unwrap_or(0.0))
+                .desired_width(340.0)
                 .fill(p.accent.gamma_multiply(0.55))
                 .text(RichText::new(text).size(12.0).color(p.text_strong))
                 .animate(true);
-            ui.add(bar).on_hover_text(
-                "KRAKEN is finding functions in the program. You can keep working; edits wait until it finishes.",
+            let mut tip = String::from(
+                "KRAKEN is analyzing the program. You can keep working; edits wait until it finishes.",
             );
-            if ui.small_button("Cancel").clicked() {
+            if let Some(msg) = a
+                .progress
+                .as_ref()
+                .map(|pr| pr.message.as_str())
+                .filter(|m| !m.is_empty())
+            {
+                tip.push_str(&format!("\n\nNow: {msg}"));
+            }
+            ui.add(bar).on_hover_text(tip);
+            if ui
+                .small_button("Cancel")
+                .on_hover_text("Stop the analysis. What it found so far is kept.")
+                .clicked()
+            {
                 vm.cancel_analysis();
             }
         }
@@ -275,7 +296,10 @@ pub fn toasts(ctx: &egui::Context, vm: &mut ViewModel) {
                             );
                             ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
                                 if let Some(a) = &t.action
-                                    && ui.small_button(a.label()).clicked()
+                                    && ui
+                                        .small_button(a.label())
+                                        .on_hover_text("Do what this message offers")
+                                        .clicked()
                                 {
                                     act.push(t.id);
                                 }

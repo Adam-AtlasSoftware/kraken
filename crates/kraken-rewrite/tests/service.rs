@@ -342,7 +342,7 @@ async fn pie_list_plan_flags_what_the_oracle_cannot_model() {
     assert!(pos(&n, "node_new") < pos(&n, "main"));
     assert!(pos(&n, "list_free") < pos(&n, "main"));
     assert_eq!(n.last().map(String::as_str), Some("main"), "{n:?}");
-    // calloc/strncpy/free are not stubbed in the oracle.
+    // strncpy is not stubbed in the oracle; calloc and free are.
     let node_new = entry_named(&plan, "node_new");
     let stubs: Vec<&str> = node_new["needs_stubs"]
         .as_array()
@@ -350,7 +350,8 @@ async fn pie_list_plan_flags_what_the_oracle_cannot_model() {
         .iter()
         .filter_map(|v| v["value"].as_str())
         .collect();
-    assert!(stubs.contains(&"calloc"), "{stubs:?}");
+    assert!(stubs.contains(&"strncpy"), "{stubs:?}");
+    assert!(!stubs.contains(&"calloc"), "{stubs:?}");
     assert!(
         node_new["flags"]
             .as_array()
@@ -358,7 +359,7 @@ async fn pie_list_plan_flags_what_the_oracle_cannot_model() {
             .contains(&json!("needs_stubs"))
     );
     assert!(
-        entry_named(&plan, "list_free")["needs_stubs"]
+        !entry_named(&plan, "list_free")["needs_stubs"]
             .as_array()
             .expect("stubs")
             .iter()
@@ -1001,7 +1002,10 @@ async fn export_builds_a_workspace_in_the_sandbox_and_the_symbol_table_matches()
             .as_str()
             .is_some_and(|s| s.starts_with("landlock"))
     );
-    assert_eq!(out["symbols"], json!(["cmp_dist", "cmp_id"]));
+    assert_eq!(
+        out["symbols"],
+        json!(["cmp_dist", "cmp_id", "kraken_attach_image"])
+    );
     assert_eq!(out["coverage"]["accepted"], 2);
     assert!(out["coverage"]["planned"].as_u64().unwrap_or(0) > 10);
     assert_eq!(
@@ -1045,7 +1049,7 @@ async fn export_builds_a_workspace_in_the_sandbox_and_the_symbol_table_matches()
     let built = build_in_sandbox(&ws, "pie-list-o0-ffi", &Confinement::default())
         .expect("the exported workspace builds in the sandbox");
     let symbols: Vec<&str> = built.symbols.iter().map(String::as_str).collect();
-    assert_eq!(symbols, ["cmp_dist", "cmp_id"]);
+    assert_eq!(symbols, ["cmp_dist", "cmp_id", "kraken_attach_image"]);
     assert!(built.sandbox.starts_with("landlock"));
 }
 

@@ -37,7 +37,7 @@ pub struct ProgramFunctionItem {
     pub status: UnitStatus,
     /// Function-level verdict: `pass`, `fail`, `rejected`, `inconclusive` or `none`.
     pub verdict: String,
-    /// `differential`, `compile_only`, `stored`, `skipped` or `none`.
+    /// `differential`, `unchecked`, `compile_only`, `stored`, `skipped` or `none`.
     pub check: String,
     /// Why the function-level test could not compare, if it could not.
     pub check_note: Option<String>,
@@ -55,6 +55,7 @@ impl ProgramFunctionItem {
         match self.check.as_str() {
             "differential" => "compared with the original",
             "compile_only" => "compiled only",
+            "unchecked" => "not checked on its own",
             "stored" => "accepted earlier",
             "skipped" => "not part of the program",
             _ => "not translated",

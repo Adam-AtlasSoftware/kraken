@@ -272,6 +272,8 @@ fn program_result() -> RewriteProgramResult {
         translated: 1,
         reused_from_store: 0,
         failed: 0,
+        verified: 1,
+        unchecked: 0,
         included: 1,
         functions: vec![],
         crate_dir: "/tmp/crate".into(),

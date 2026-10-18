@@ -63,7 +63,7 @@ pub fn undecorate(name: &str) -> Option<String> {
 }
 
 /// Whether `name` has a prototype in the library tables (C library or Win32 and the C runtime).
-fn known_library_name(name: &str) -> bool {
+pub(crate) fn known_library_name(name: &str) -> bool {
     use std::sync::OnceLock;
     static NAMES: OnceLock<BTreeSet<String>> = OnceLock::new();
     NAMES
@@ -737,8 +737,17 @@ fn load_pe<Pe: ImageNtHeaders>(
         .map(|(a, f)| (at(a), f))
         .collect();
 
+    let dll = nt.file_header().characteristics.get(LE) & pe::IMAGE_FILE_DLL != 0;
     Ok(Loaded {
         format: "pe",
+        container: "pe",
+        description: if dll {
+            "Windows DLL"
+        } else {
+            "Windows program"
+        }
+        .into(),
+        members: Vec::new(),
         language,
         base,
         image,

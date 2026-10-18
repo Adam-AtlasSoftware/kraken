@@ -11,14 +11,14 @@ use kraken_engine::ProgressSender;
 use kraken_engine::{
     AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
     DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph,
-    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, ProgramInfo, Progress, Stage,
-    StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider, XrefRequest,
-    type_def_name, unsupported,
+    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, Progress,
+    Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider,
+    XrefRequest, type_def_name, unsupported,
 };
 use kraken_proto::{
     Anchor, BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Hex64, Locator,
-    LogOp, MemoryBlock, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef,
-    VersionedLogOp, Xref,
+    LogOp, MemoryBlock, OpenStage, OpenUpdate, Page, PageRequest, ProtoError, StringEntry,
+    SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -315,6 +315,36 @@ impl Loader for GhidraEngine {
         spec: &LoaderSpec,
         cancel: &CancellationToken,
     ) -> EngineResult<ProgramInfo> {
+        self.open(path, spec, cancel, None).await
+    }
+
+    async fn open_binary_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: OpenReporter,
+    ) -> EngineResult<ProgramInfo> {
+        self.open(path, spec, cancel, Some(&report)).await
+    }
+}
+
+impl GhidraEngine {
+    /// Opens `path`; the sidecar reports nothing while it imports, so `report` hears the coarse
+    /// stages: starting Ghidra, then importing (or reopening the Ghidra project kept from an
+    /// earlier open).
+    async fn open(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: Option<&OpenReporter>,
+    ) -> EngineResult<ProgramInfo> {
+        let say = |u: OpenUpdate| {
+            if let Some(r) = report {
+                r(u);
+            }
+        };
         if cancel.is_cancelled() {
             return Err(cancelled("open_binary"));
         }
@@ -340,6 +370,11 @@ impl Loader for GhidraEngine {
             ));
         }
         let project_dir = prepare_project_dir(&self.cfg.project_dir).await?;
+        let cached = project_dir.join("kraken.gpr").is_file();
+        say(OpenUpdate::stage(
+            OpenStage::StartEngine,
+            "Starting Ghidra (a Java program; this takes a few seconds)",
+        ));
         let plan = LaunchPlan {
             binary_size: meta.len(),
             heap_mb: heap_mb(meta.len(), self.cfg.max_heap_mb, physical_memory_mb()),
@@ -348,6 +383,17 @@ impl Loader for GhidraEngine {
         };
         let running = self.sup.ensure(plan.clone()).await?;
         let request = open_request(&plan.binary, &plan.project_dir, loader_spec.as_deref());
+        say(OpenUpdate {
+            from_cache: cached,
+            ..OpenUpdate::stage(
+                OpenStage::ReadFile,
+                if cached {
+                    "Opening the Ghidra project saved by the last open"
+                } else {
+                    "Importing the file into Ghidra (a big program takes minutes)"
+                },
+            )
+        });
         let info: WireProgramInfo = running
             .client
             .call_typed(
@@ -374,6 +420,7 @@ impl Loader for GhidraEngine {
             base: info.image_base,
             sha256: info.sha256,
             size,
+            ..ProgramInfo::default()
         })
     }
 }

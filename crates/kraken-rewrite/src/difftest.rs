@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::abi::{Arg, Callback, Link, Observation, Param, Signature, Termination};
 use crate::error::RewriteError;
-use crate::native::{Build, NativeRunner, build};
+use crate::native::{Build, NativeRunner, RunnerImage, build_full};
 use crate::oracle::FunctionOracle;
 use crate::sandbox::Confinement;
 
@@ -156,6 +156,8 @@ pub enum ParamGen {
     LenOf(usize),
     /// A `double`: edge values and small multiples of 1/8.
     Double,
+    /// A `float`: the same values in single precision.
+    Float,
     /// One of the host callbacks.
     FnPtr,
     /// A pointer to an object that holds pointers to further objects (see [`ObjectGen`]).
@@ -465,6 +467,12 @@ fn gen_param(
             },
             0,
         ),
+        ParamGen::Float => (
+            Arg::Float {
+                bits: (f64::from_bits(gen_double(rng)) as f32).to_bits(),
+            },
+            0,
+        ),
         ParamGen::FnPtr => {
             let cb =
                 Callback::ALL[usize::try_from(rng.below(Callback::ALL.len() as u64)).unwrap_or(0)];
@@ -513,6 +521,12 @@ impl InputSpec {
                         }
                     }
                 }
+                // Without parameters every case is the same call.
+                let random = if params.is_empty() {
+                    random.min(1)
+                } else {
+                    random
+                };
                 for _ in 0..random {
                     out.push(build(&mut rng, None));
                 }
@@ -538,6 +552,11 @@ pub struct DiffOptions {
     pub max_counterexamples: usize,
     /// Sandbox settings for building and running the translation.
     pub confinement: Confinement,
+    /// KRAKEN's own source compiled in front of the translation without the translation lint (the
+    /// runtime shim).
+    pub trusted_prelude: String,
+    /// The program image the runner installs, so translations can use the program's globals.
+    pub image: Option<RunnerImage>,
 }
 
 impl Default for DiffOptions {
@@ -547,6 +566,8 @@ impl Default for DiffOptions {
             random_cases: 200,
             max_counterexamples: 3,
             confinement: Confinement::default(),
+            trusted_prelude: String::new(),
+            image: None,
         }
     }
 }
@@ -683,7 +704,39 @@ pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
             native.callbacks.len()
         ));
     }
-    if !orig.global_writes.is_empty() {
+    if native.global_writes_observed {
+        // Writes are compared for a call that returned; one that exited or faulted has already
+        // been compared by how it ended and what it printed.
+        if orig.termination != Termination::Returned {
+            return d;
+        }
+        let shown = |w: &[crate::abi::GlobalWrite]| -> Vec<(u64, Vec<u8>)> {
+            w.iter().map(|g| (g.vaddr, g.after.clone())).collect()
+        };
+        let (a, b) = (shown(&orig.global_writes), shown(&native.global_writes));
+        if a != b {
+            let at = a
+                .iter()
+                .zip(&b)
+                .position(|(x, y)| x != y)
+                .unwrap_or(a.len().min(b.len()));
+            let describe = |w: Option<&(u64, Vec<u8>)>| match w {
+                Some((v, bytes)) => format!(
+                    "{} byte(s) at {v:#x} set to {}",
+                    bytes.len(),
+                    crate::abi::to_hex(&bytes[..bytes.len().min(16)])
+                ),
+                None => "nothing".to_string(),
+            };
+            d.push(format!(
+                "writes to globals differ ({} vs {} changed ranges): original {}, translation {}",
+                a.len(),
+                b.len(),
+                describe(a.get(at)),
+                describe(b.get(at))
+            ));
+        }
+    } else if !orig.global_writes.is_empty() {
         d.push(format!(
             "the original writes {} global location(s), which a translation cannot reproduce",
             orig.global_writes.len()
@@ -695,7 +748,7 @@ pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
 fn input_size(args: &[Arg]) -> usize {
     args.iter()
         .map(|a| match a {
-            Arg::Int { .. } | Arg::Double { .. } | Arg::FnPtr { .. } => 1,
+            Arg::Int { .. } | Arg::Double { .. } | Arg::Float { .. } | Arg::FnPtr { .. } => 1,
             Arg::Buf { data } => data.len(),
             Arg::Graph { objects, .. } => objects.iter().map(Vec::len).sum(),
         })
@@ -722,7 +775,7 @@ pub fn run_differential(
         cases: Vec::new(),
         sandbox: String::new(),
     };
-    let runner: NativeRunner = match build(sig, rust_code, &opts.confinement)? {
+    let runner: NativeRunner = match build_full(sig, rust_code, opts)? {
         Build::Ready(r) => r,
         Build::Rejected(reason) => {
             report.verdict = Verdict::Rejected { reason };
@@ -817,7 +870,7 @@ pub fn compile_only(
         cases: Vec::new(),
         sandbox: String::new(),
     };
-    match build(sig, rust_code, &opts.confinement)? {
+    match build_full(sig, rust_code, opts)? {
         Build::Ready(r) => report.sandbox = r.build_confinement.label(),
         Build::Rejected(reason) => report.verdict = Verdict::Rejected { reason },
     }
@@ -842,6 +895,7 @@ fn check_shapes(sig: &Signature, spec: &InputSpec) -> Result<(), RewriteError> {
                     (Arg::Int { .. }, Param::Int { .. })
                         | (Arg::Buf { .. } | Arg::Graph { .. }, Param::Buf)
                         | (Arg::Double { .. }, Param::Double)
+                        | (Arg::Float { .. }, Param::Float)
                         | (Arg::FnPtr { .. }, Param::FnPtr)
                 )
             });

@@ -274,14 +274,18 @@ impl AiSettings {
         let mut pick: Option<Pick> = None;
         ui.horizontal(|ui| {
             ui.label("Assistant");
-            egui::ComboBox::from_id_salt("kraken_ai_kind")
+            let combo = egui::ComboBox::from_id_salt("kraken_ai_kind")
                 .selected_text(self.picked_label())
                 .width(320.0)
                 .show_ui(ui, |ui| {
                     ui.label(RichText::new("AI models").size(11.5).color(p.text_dim));
                     for k in ProviderKind::ALL {
                         let on = !self.draft.kind.is_agent() && self.draft.kind == k;
-                        if ui.selectable_label(on, k.label()).clicked() {
+                        if ui
+                            .selectable_label(on, k.label())
+                            .on_hover_text(k.help())
+                            .clicked()
+                        {
                             pick = Some(Pick::Api(k));
                         }
                     }
@@ -296,7 +300,11 @@ impl AiSettings {
                             let on = self.draft.kind.is_agent() && self.draft.agent == row.id;
                             let text =
                                 format!("{}  \u{2014}  {}", row.name, row.availability.label());
-                            if ui.selectable_label(on, text).clicked() {
+                            if ui
+                                .selectable_label(on, text)
+                                .on_hover_text(format!("Use {} as the assistant", row.name))
+                                .clicked()
+                            {
                                 pick = Some(Pick::Agent(row.id.clone()));
                             }
                         }
@@ -305,6 +313,9 @@ impl AiSettings {
                         }
                     }
                 });
+            combo.response.on_hover_text(
+                "Choose what answers: an AI service, a local model or a terminal agent",
+            );
         });
         match pick {
             Some(Pick::Api(k)) => {
@@ -337,7 +348,8 @@ impl AiSettings {
             let can_save = (self.store.config_path.is_some() || config_path.is_some())
                 && (!agent || agent_ready);
             ui.add_enabled_ui(can_save, |ui| {
-                if style::primary_button(ui, "Save and use").clicked() {
+                if style::primary_button(ui, "Save and use")
+.on_hover_text("Save these settings and use this assistant from now on").clicked() {
                     self.save(config_path);
                 }
             });
@@ -435,7 +447,8 @@ impl AiSettings {
                         egui::TextEdit::singleline(&mut self.draft.base_url)
                             .hint_text("http://localhost:11434/v1")
                             .desired_width(380.0),
-                    );
+                    )
+                    .on_hover_text("The address of the server that runs the model");
                     ui.end_row();
                 }
                 ui.label("Model");
@@ -447,7 +460,8 @@ impl AiSettings {
                             _ => "model name",
                         })
                         .desired_width(380.0),
-                );
+                )
+                .on_hover_text("The name of the model to ask");
                 ui.end_row();
 
                 let optional = !self.draft.kind.needs_key();
@@ -465,6 +479,9 @@ impl AiSettings {
                                     "name of an environment variable, e.g. ANTHROPIC_API_KEY",
                                 )
                                 .desired_width(380.0),
+                        )
+                        .on_hover_text(
+                            "KRAKEN reads the key from this environment variable when it starts",
                         );
                     });
                     ui.add(
@@ -476,6 +493,9 @@ impl AiSettings {
                                 "or paste the key itself"
                             })
                             .desired_width(380.0),
+                    )
+                    .on_hover_text(
+                        "Paste the key here. It is saved in a file only you can read, never in the main settings file",
                     );
                 });
                 ui.end_row();
@@ -563,6 +583,7 @@ impl AiSettings {
                         && ui
                             .add_enabled(!hub.setup.running(), egui::Button::new("Set up..."))
                             .on_hover_text("Shows what would be downloaded and asks first")
+                            .on_disabled_hover_text("A setup is already running")
                             .clicked()
                     {
                         setup_request = Some(row.id.clone());
@@ -570,6 +591,7 @@ impl AiSettings {
                     if ui
                         .add_enabled(!hub.loading, egui::Button::new("Check again").small())
                         .on_hover_text("Look again at what is installed")
+                        .on_disabled_hover_text("Already looking")
                         .clicked()
                     {
                         refresh = true;
@@ -628,6 +650,9 @@ impl AiSettings {
                     egui::TextEdit::singleline(&mut self.draft.model)
                         .hint_text("leave empty to let the agent choose")
                         .desired_width(380.0),
+                )
+                .on_hover_text(
+                    "Ask the agent for this model. Leave it empty for the agent's own choice",
                 );
                 ui.end_row();
                 ui.label("Extra arguments (optional)");
@@ -635,7 +660,8 @@ impl AiSettings {
                     egui::TextEdit::singleline(&mut self.draft.agent_args)
                         .hint_text("passed to the agent as they are, separated by spaces")
                         .desired_width(380.0),
-                );
+                )
+                .on_hover_text("Extra command-line arguments for the agent program");
                 ui.end_row();
             });
         ui.label(

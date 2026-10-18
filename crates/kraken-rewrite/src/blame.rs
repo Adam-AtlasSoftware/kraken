@@ -35,7 +35,7 @@ use crate::process::{Exit, Outcome};
 const MAX_FRAMES: usize = 64;
 
 /// What to trace in the rewritten program.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceSpec {
     /// The call that writes byte `n` of stdout.
     Out(usize),
@@ -43,26 +43,35 @@ pub enum TraceSpec {
     Err(usize),
     /// The call to `exit`.
     Exit,
+    /// The write that covers byte `at` of the file `name` (in the working directory).
+    File {
+        /// The file's path relative to the working directory.
+        name: String,
+        /// The byte offset.
+        at: u64,
+    },
 }
 
 impl TraceSpec {
     /// The value of `KRAKEN_TRACE_AT`.
-    pub fn env_value(self) -> String {
+    pub fn env_value(&self) -> String {
         match self {
             TraceSpec::Out(n) => format!("out:{n}"),
             TraceSpec::Err(n) => format!("err:{n}"),
             TraceSpec::Exit => "exit".to_string(),
+            TraceSpec::File { name, at } => format!("file:{at}:{name}"),
         }
     }
 
     /// A phrase for the feedback text.
-    pub fn describe(self) -> String {
+    pub fn describe(&self) -> String {
         match self {
             TraceSpec::Out(n) => format!("writing byte {n} of its standard output"),
             TraceSpec::Err(n) => format!("writing byte {n} of its standard error"),
             TraceSpec::Exit => {
                 "ending (it stopped producing output or chose its exit status)".to_string()
             }
+            TraceSpec::File { name, at } => format!("writing byte {at} of the file {name}"),
         }
     }
 }
@@ -96,7 +105,40 @@ pub fn trace_for(original: &Outcome, rewritten: &Outcome) -> Option<TraceSpec> {
             TraceSpec::Exit
         });
     }
-    (original.exit != rewritten.exit).then_some(TraceSpec::Exit)
+    if original.exit != rewritten.exit {
+        return Some(TraceSpec::Exit);
+    }
+    // A file both wrote, differently: the write of the first byte of the first block that
+    // differs (or of the end of the shorter file).
+    for f in &original.files {
+        let Some(g) = rewritten.files.iter().find(|g| g.name == f.name) else {
+            continue;
+        };
+        if f.sha256 == g.sha256 {
+            continue;
+        }
+        let at = match f.head.iter().zip(&g.head).position(|(x, y)| x != y) {
+            Some(i) => i as u64,
+            None => {
+                let block = f
+                    .blocks
+                    .iter()
+                    .zip(&g.blocks)
+                    .position(|(x, y)| x != y)
+                    .unwrap_or(f.blocks.len().min(g.blocks.len()));
+                (block as u64 * 4096).min(f.size.min(g.size))
+            }
+        };
+        return Some(if at < g.size {
+            TraceSpec::File {
+                name: f.name.clone(),
+                at,
+            }
+        } else {
+            TraceSpec::Exit
+        });
+    }
+    None
 }
 
 /// The Rust symbols of translated functions on the stack in `stderr` of a traced run, innermost
@@ -153,6 +195,8 @@ pub struct Candidate {
     pub verified: bool,
     /// Entries of the functions it calls, among the candidates.
     pub callees: Vec<u64>,
+    /// How many earlier repair rounds of this run translated it again.
+    pub tried: u32,
 }
 
 /// A function suspected of causing a difference.
@@ -258,6 +302,10 @@ pub fn rank(stack: &[String], all: &[Candidate], max: usize) -> Vec<Suspect> {
              produced",
         );
     }
+    // A function an earlier round already translated again comes after those not tried yet, so
+    // the rounds move on through the suspects instead of repeating the same two.
+    let tried: BTreeMap<u64, u32> = all.iter().map(|c| (c.address, c.tried)).collect();
+    out.sort_by_key(|s| tried.get(&s.address).copied().unwrap_or(0));
     out.truncate(max);
     out
 }
@@ -278,7 +326,7 @@ pub struct FeedbackInput<'a> {
     /// What differs.
     pub differences: &'a [String],
     /// What was traced.
-    pub trace: Option<TraceSpec>,
+    pub trace: Option<&'a TraceSpec>,
     /// The Rust symbols on the stack at the trace, innermost first.
     pub stack: &'a [String],
     /// The function the feedback is for.
@@ -373,6 +421,7 @@ mod tests {
             exit: Exit::Code(code),
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
+            files: Vec::new(),
         }
     }
 
@@ -383,6 +432,7 @@ mod tests {
             symbol: name.into(),
             verified,
             callees: callees.to_vec(),
+            tried: 0,
         }
     }
 
@@ -406,6 +456,29 @@ mod tests {
         assert_eq!(trace_for(&a, &f), Some(TraceSpec::Exit));
         assert_eq!(TraceSpec::Out(12).env_value(), "out:12");
         assert_eq!(TraceSpec::Exit.env_value(), "exit");
+        // Same output, a file that differs: trace the write of the first differing block.
+        let file = |data: &[u8]| {
+            let mut o = out("out: 5\nout: 4\n", "", 0);
+            o.files = vec![crate::process::WrittenFile::of("mix.wav".into(), data)];
+            o
+        };
+        let mut long = vec![7u8; 10_000];
+        let g = file(&long);
+        long[9_000] = 8;
+        let h = file(&long);
+        let spec = trace_for(&g, &h).expect("file difference");
+        assert_eq!(
+            spec,
+            TraceSpec::File {
+                name: "mix.wav".into(),
+                at: 8192
+            }
+        );
+        assert_eq!(spec.env_value(), "file:8192:mix.wav");
+        assert_eq!(
+            trace_for(&file(b"RIFFa"), &file(b"RIFFb")).map(|s| s.env_value()),
+            Some("file:4:mix.wav".into())
+        );
     }
 
     fn modules() -> BTreeMap<String, String> {
@@ -456,6 +529,13 @@ mod tests {
         assert!(s[3].why.contains("passed its function-level test"));
         // Only two are asked for.
         assert_eq!(rank(&["main".to_string()], &all, 2).len(), 2);
+        // A later round moves on to the suspects an earlier round did not translate again.
+        let mut again = all.clone();
+        again[3].tried = 1;
+        again[2].tried = 1;
+        let s = rank(&["main".to_string()], &again, 2);
+        let names: Vec<&str> = s.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, ["parse_expr", "skip_ws"]);
     }
 
     #[test]
@@ -499,7 +579,7 @@ mod tests {
             original: &a,
             rewritten: &b,
             differences: &["stdout: first difference at byte 5".to_string()],
-            trace: Some(TraceSpec::Out(5)),
+            trace: Some(&TraceSpec::Out(5)),
             stack: &["vm_run".to_string(), "main".to_string()],
             suspect: &s,
             own_check: "compiled only",

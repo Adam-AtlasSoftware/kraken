@@ -367,6 +367,14 @@ impl<'ast> Visit<'ast> for Lint {
         let name = segs.last().cloned().unwrap_or_default();
         let rooted_ok =
             segs.len() == 1 || (segs.len() == 2 && STD_ROOTS.contains(&segs[0].as_str()));
+        // `addr_of!(place)` and `addr_of_mut!(place)` only take an address.
+        let addr_of = matches!(name.as_str(), "addr_of" | "addr_of_mut")
+            && (segs.len() == 1
+                || (segs.len() == 3 && STD_ROOTS.contains(&segs[0].as_str()) && segs[1] == "ptr"));
+        if addr_of {
+            self.check_macro_args(&name, m);
+            return;
+        }
         if !rooted_ok || !MACROS.contains(&name.as_str()) {
             self.deny(
                 format!("{}!", segs.join("::")),

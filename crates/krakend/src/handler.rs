@@ -380,6 +380,9 @@ impl DaemonHandler {
             // Already open here: report instead of reopening (which would restart the sidecar).
             name = "project_info".into();
             args = Value::Null;
+        } else if name.starts_with("job_") && lease.entry().session().project().is_err() {
+            // the job table needs no project: an open in progress is watched and cancelled
+            // through its job without starting a second open
         } else if !matches!(name.as_str(), "project_create" | "project_open") {
             match self.host.ensure_open(&lease).await {
                 Ok(w) => {
@@ -389,7 +392,7 @@ impl DaemonHandler {
                         .collect();
                 }
                 Err(e) => {
-                    self.host.discard_if_unopened(&lease);
+                    self.host.discard_unopened(&lease).await;
                     return Err(e);
                 }
             }
@@ -397,6 +400,9 @@ impl DaemonHandler {
 
         // The command runs in its own task: a client that disconnects mid-call must not leave a
         // half-finished mutation or free the write queue early.
+        if creating {
+            ctx = ctx.with_open_progress(self.host.open_sink(&key));
+        }
         let cancel = ctx.cancel.clone();
         let guard = (spec.kind == CommandKind::Query).then(|| cancel.drop_guard());
         let host = self.host.clone();
@@ -414,7 +420,7 @@ impl DaemonHandler {
                         host.hub().publish(entry.key(), k, fields);
                     }
                 }
-                Err(_) if creating => host.discard_if_unopened(&lease),
+                Err(_) if creating => host.discard_unopened(&lease).await,
                 Err(_) => {}
             }
             result

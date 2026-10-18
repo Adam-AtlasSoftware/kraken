@@ -395,6 +395,32 @@ impl AnalysisState {
         self.phase == AnalysisPhase::Running
     }
 
+    /// The running stage in words, such as `Decompiling every function`.
+    pub fn stage_label(&self) -> Option<String> {
+        let p = self.progress.as_ref()?;
+        Some(
+            match p.phase.as_str() {
+                "load" => "Loading the program",
+                "core" => "Finding references and strings",
+                "expensive" => "Decompiling every function",
+                other => other,
+            }
+            .to_string(),
+        )
+    }
+
+    /// `1,234 of 11,270`, when the stage counts functions (more than a handful of steps).
+    pub fn counts_text(&self) -> Option<String> {
+        let p = self.progress.as_ref()?;
+        (p.total > 3).then(|| {
+            format!(
+                "{} of {}",
+                crate::loading::thousands(p.done),
+                crate::loading::thousands(p.total)
+            )
+        })
+    }
+
     /// True once the run ended, however it ended.
     pub fn is_finished(&self) -> bool {
         matches!(

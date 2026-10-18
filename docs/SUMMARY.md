@@ -7,6 +7,7 @@
 - [Tutorial: your first reverse-engineering session](tutorial.md)
 - [Install](install.md)
 - [Getting started](getting-started.md)
+- [The GUI, menu by menu](gui.md)
 - [Concepts](concepts.md)
 - [Rewrite a program in Rust](rewrite.md)
 - [Connecting AI agents (MCP)](mcp.md)

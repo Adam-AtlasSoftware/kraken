@@ -135,6 +135,8 @@ fn the_export_links_a_reusing_unit_to_its_callees_module() {
             planned: 0,
             functions_total: 2,
         },
+        originals: Vec::new(),
+        symbols: Default::default(),
     };
 
     let target = dir.path().join("out");

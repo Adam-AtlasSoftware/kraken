@@ -16,10 +16,18 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, addr: u64, a
         .map_or_else(|| format!("{addr:#x}"), |r| r.name.clone());
     let target = if st.program_spec { None } else { Some(addr) };
     ui.horizontal(|ui| {
-        if ui.selectable_label(!st.program_spec, format!("Spec of {name}")).clicked() {
+        if ui
+            .selectable_label(!st.program_spec, format!("Spec of {name}"))
+            .on_hover_text("The description of this function")
+            .clicked()
+        {
             st.program_spec = false;
         }
-        if ui.selectable_label(st.program_spec, "Spec of the program").clicked() {
+        if ui
+            .selectable_label(st.program_spec, "Spec of the program")
+            .on_hover_text("The description of the whole program")
+            .clicked()
+        {
             st.program_spec = true;
         }
         let writing = vm
@@ -35,6 +43,11 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, addr: u64, a
             .on_hover_text(
                 "Have the AI provider describe what this does, citing the address behind every fact. Nothing is run. The decompiled code is sent to the provider.",
             )
+            .on_disabled_hover_text(if writing {
+                "A spec is being written"
+            } else {
+                "The assistant is not available here. Settings > AI explains why"
+            })
             .clicked()
         {
             acts.spec = Some(target);

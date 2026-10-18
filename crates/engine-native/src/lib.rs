@@ -34,6 +34,7 @@ pub mod libc;
 pub mod listing;
 mod mutate;
 mod native;
+pub mod objfile;
 pub mod pe;
 pub mod refs;
 pub mod strings;

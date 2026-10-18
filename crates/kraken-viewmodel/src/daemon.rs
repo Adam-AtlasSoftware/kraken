@@ -16,7 +16,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use kraken_host::daemon::{
     CallParams, DaemonClient, METHOD_APPROVAL_DECIDE, METHOD_APPROVALS, METHOD_EVENT, StartOptions,
-    absolute, event_kind,
+    absolute, canonical_prefix, event_kind,
 };
 use kraken_ipc::{ClientKind, RuntimeDir};
 use kraken_model::AuthorKind;
@@ -124,6 +124,9 @@ struct Inner {
     /// Project the GUI works on: the absolute path commands are sent with, and its canonical
     /// form the daemon labels events with.
     project: Mutex<Option<(PathBuf, PathBuf)>>,
+    /// Project being created or opened: the path commands about it are sent with (cancelling
+    /// it) and the canonical form its progress events carry.
+    opening: Mutex<Option<(PathBuf, PathBuf)>>,
     commands: Mutex<Vec<CommandInfo>>,
     events: broadcast::Sender<BackendEvent>,
     approver: Mutex<Option<Arc<dyn Approver>>>,
@@ -166,6 +169,7 @@ impl DaemonClientBackend {
             backoff: opts.backoff,
             author: opts.author,
             project: Mutex::new(None),
+            opening: Mutex::new(None),
             commands: Mutex::new(Vec::new()),
             events,
             approver: Mutex::new(None),
@@ -261,6 +265,13 @@ impl Inner {
                 }
                 if str_field(&n.params, "kind") == Some(event_kind::APPROVAL_REQUESTED) {
                     self.clone().ask_about(&n.params);
+                    continue;
+                }
+                if str_field(&n.params, "kind") == Some(event_kind::OPEN_PROGRESS) {
+                    let opening = lock(&self.opening).as_ref().map(|(_, k)| k.clone());
+                    if let Some(ev) = map_open_progress(&n.params, opening.as_deref()) {
+                        self.emit(ev);
+                    }
                     continue;
                 }
                 let key = lock(&self.project).as_ref().map(|(_, k)| k.clone());
@@ -480,11 +491,20 @@ impl DaemonClientBackend {
         let client = self.inner.client()?;
         absolutize(command, &mut args);
         let creating = matches!(command, "project_create" | "project_open");
+        let opening = lock(&self.inner.opening).as_ref().map(|(p, _)| p.clone());
         let project_dir = if creating {
-            args.get("project_dir")
+            let dir = args
+                .get("project_dir")
                 .and_then(Value::as_str)
                 .map(PathBuf::from)
-                .ok_or_else(|| ProtoError::new(ErrorCode::InvalidArgument, "missing project_dir"))?
+                .ok_or_else(|| {
+                    ProtoError::new(ErrorCode::InvalidArgument, "missing project_dir")
+                })?;
+            *lock(&self.inner.opening) = Some((dir.clone(), canonical_prefix(&dir)));
+            dir
+        } else if let Some(dir) = opening.filter(|_| command.starts_with("job_")) {
+            // watching or cancelling the open in progress
+            dir
         } else {
             self.current_project().ok_or_else(|| {
                 ProtoError::new(
@@ -503,7 +523,14 @@ impl DaemonClientBackend {
             surface: None,
             approved,
         };
-        let reply = client.call(&params).await?;
+        let reply = client.call(&params).await;
+        if creating {
+            let mut opening = lock(&self.inner.opening);
+            if opening.as_ref().is_some_and(|(p, _)| *p == project_dir) {
+                *opening = None;
+            }
+        }
+        let reply = reply?;
         if creating {
             let key = std::fs::canonicalize(&project_dir).unwrap_or_else(|_| project_dir.clone());
             *lock(&self.inner.project) = Some((project_dir, key));
@@ -561,6 +588,16 @@ fn job_state(s: &str) -> JobState {
         "cancelled" => JobState::Cancelled,
         _ => JobState::Running,
     }
+}
+
+/// The progress of the project being opened (`opening`, canonical) in an `open_progress` event.
+pub fn map_open_progress(v: &Value, opening: Option<&Path>) -> Option<BackendEvent> {
+    let dir = str_field(v, "project_dir")?;
+    if opening != Some(Path::new(dir)) {
+        return None;
+    }
+    let p: kraken_proto::OpenProgress = serde_json::from_value(v.clone()).ok()?;
+    Some(BackendEvent::OpenProgress(Box::new(p)))
 }
 
 /// Maps one daemon `event` payload to a [`BackendEvent`]. Events of other projects than
@@ -706,6 +743,24 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn open_progress_events_of_the_project_being_opened_map() {
+        let ev = json!({"seq": 3, "project_dir": "/p", "kind": "open_progress",
+            "command": "project_create", "program": "a.out", "job_id": "open-1",
+            "stages": ["prepare", "functions", "ready"], "stage": "functions",
+            "fraction": 0.5, "found": 12, "queued": 3, "message": "m", "elapsed_ms": 900});
+        match map_open_progress(&ev, Some(Path::new("/p"))) {
+            Some(BackendEvent::OpenProgress(p)) => {
+                assert_eq!(p.job_id.as_deref(), Some("open-1"));
+                assert_eq!(p.found, Some(12));
+                assert_eq!(p.fraction, Some(0.5));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(map_open_progress(&ev, Some(Path::new("/q"))).is_none());
+        assert!(map_open_progress(&ev, None).is_none());
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod commands;
 pub mod context;
 pub mod jobs;
 mod mutate;
+mod opening;
 pub mod session;
 pub mod trust;
 pub mod validate;
@@ -25,9 +26,10 @@ pub mod views_data;
 pub use command::{Command, CommandKind, CommandSpec, Entry, Permission, Registry};
 pub use context::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, DenyApprover,
-    Surface,
+    OpenProgressSink, Surface,
 };
-pub use jobs::{JobId, JobProgress, JobReporter, JobSnapshot, JobStatus, JobTable};
+pub use jobs::{JobId, JobProgress, JobReporter, JobSnapshot, JobStatus, JobTable, TrackedJob};
+pub use opening::OpenOptions;
 pub use session::{
     AnalysisPhase, EngineChoice, EngineFactory, EngineKind, EngineSelection, EngineStatus, Epoch,
     Project, ProjectMeta, ReplayReport, Session, SessionConfig,

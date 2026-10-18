@@ -48,10 +48,12 @@ pub fn banner(ctx: &egui::Context, vm: &mut ViewModel) {
                             );
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.small_button("Not now").clicked() {
+                            if ui.small_button("Not now")
+.on_hover_text("Hide this offer. You can ask for an overview any time from the AI menu").clicked() {
                                 dismiss = true;
                             }
-                            if style::primary_button(ui, "Get an overview of this program").clicked() {
+                            if style::primary_button(ui, "Get an overview of this program")
+.on_hover_text("Ask the assistant for a short tour of what this program does").clicked() {
                                 start = true;
                             }
                         });
@@ -100,14 +102,22 @@ pub fn autoname(ctx: &egui::Context, vm: &mut ViewModel) {
                     );
                 });
                 ui.add_space(6.0);
-                if ui.button("Stop").clicked() {
+                if ui
+                    .button("Stop")
+                    .on_hover_text("Stop looking for names. Nothing is changed")
+                    .clicked()
+                {
                     acts.push(Act::Stop);
                 }
             }
             AutoNameState::Failed(why) => {
                 let s = style::status(style::dark(ui));
                 ui.add(egui::Label::new(RichText::new(why).color(s.danger)).wrap());
-                if ui.button("Close").clicked() {
+                if ui
+                    .button("Close")
+                    .on_hover_text("Close this window")
+                    .clicked()
+                {
                     acts.push(Act::Close);
                 }
             }
@@ -149,7 +159,11 @@ fn review(ui: &mut egui::Ui, r: &AutoNameReview, acts: &mut Vec<Act>) {
             )
             .color(p.text_dim),
         );
-        if ui.button("Close").clicked() {
+        if ui
+            .button("Close")
+            .on_hover_text("Close this window")
+            .clicked()
+        {
             acts.push(Act::Close);
         }
         return;
@@ -202,24 +216,41 @@ fn review(ui: &mut egui::Ui, r: &AutoNameReview, acts: &mut Vec<Act>) {
                     .fill(p.accent)
                     .min_size(vec2(0.0, 28.0)),
                 )
+                .on_hover_text("Rename the ticked functions. You can undo it")
+                .on_disabled_hover_text("Tick at least one name that can be applied")
                 .clicked()
             {
                 acts.push(Act::Apply(ApplyWhich::Selected));
             }
-            if ui.button("Apply all").clicked() {
+            if ui
+                .button("Apply all")
+                .on_hover_text(
+                    "Rename every function in the list that can be renamed. You can undo it",
+                )
+                .clicked()
+            {
                 acts.push(Act::Apply(ApplyWhich::All));
             }
             if ui
                 .add_enabled(r.undoable > 0, egui::Button::new("Undo"))
                 .on_hover_text("Reverse the changes the last Apply made")
+                .on_disabled_hover_text("Nothing has been applied yet")
                 .clicked()
             {
                 acts.push(Act::Undo);
             }
-            if ui.small_button("Select all").clicked() {
+            if ui
+                .small_button("Select all")
+                .on_hover_text("Tick every name in the list")
+                .clicked()
+            {
                 acts.push(Act::SelectAll(true));
             }
-            if ui.small_button("Select none").clicked() {
+            if ui
+                .small_button("Select none")
+                .on_hover_text("Untick every name in the list")
+                .clicked()
+            {
                 acts.push(Act::SelectAll(false));
             }
         });
@@ -227,7 +258,11 @@ fn review(ui: &mut egui::Ui, r: &AutoNameReview, acts: &mut Vec<Act>) {
             ui.spinner();
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.button("Close").clicked() {
+            if ui
+                .button("Close")
+                .on_hover_text("Close this window")
+                .clicked()
+            {
                 acts.push(Act::Close);
             }
         });
@@ -245,7 +280,12 @@ fn row_cells(ui: &mut egui::Ui, i: usize, row: &ReviewRow, acts: &mut Vec<Act>) 
     let mut sel = row.selected;
     let applied = matches!(row.status, RowStatus::Applied);
     ui.add_enabled_ui(!applied, |ui| {
-        if ui.checkbox(&mut sel, "").changed() {
+        if ui
+            .checkbox(&mut sel, "")
+            .on_hover_text("Tick to apply this name")
+            .on_disabled_hover_text("This name is already applied")
+            .changed()
+        {
             acts.push(Act::Select(i, sel));
         }
     });

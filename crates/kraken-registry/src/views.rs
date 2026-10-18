@@ -360,6 +360,23 @@ pub struct ProgramView {
     pub sha256: String,
     /// File size in bytes.
     pub size: u64,
+    /// What the file is, in plain words (`Linux static library with 2 objects`); absent when
+    /// the engine does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The members of a static or import library, in file order (at most
+    /// [`ProgramView::MAX_MEMBERS`]); all of a static library's members are loaded together.
+    /// Names come from the file, so they are untrusted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<Untrusted<String>>,
+    /// How many members the library has; absent for other files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_count: Option<u64>,
+}
+
+impl ProgramView {
+    /// How many member names the view lists.
+    pub const MAX_MEMBERS: usize = 200;
 }
 
 impl From<&ProgramInfo> for ProgramView {
@@ -370,6 +387,14 @@ impl From<&ProgramInfo> for ProgramView {
             base: p.base,
             sha256: sanitize(&p.sha256),
             size: p.size,
+            description: p.description.as_deref().map(sanitize),
+            members: p
+                .members
+                .iter()
+                .take(Self::MAX_MEMBERS)
+                .map(|m| Untrusted::sanitized(m))
+                .collect(),
+            member_count: (!p.members.is_empty()).then_some(p.members.len() as u64),
         }
     }
 }

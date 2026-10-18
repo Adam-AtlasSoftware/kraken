@@ -2,10 +2,28 @@
 
 KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It has two analysis engines:
 
-- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN, and the processor specifications are compiled once by `kraken setup --native`. It opens ELF programs (x86-64, AArch64, 32-bit x86) and Windows PE images (x86, x86-64). This is the shortest path for a new Linux user; today it is installed from a source checkout (see [Install from source](#install-from-source)), because the release archives do not carry the native worker or the compiled specifications yet.
+- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN, and the processor specifications are compiled once by `kraken setup --native`. It opens Linux and Windows programs and libraries of every kind (see [Supported files](#supported-files)). This is the shortest path for a new Linux user; today it is installed from a source checkout (see [Install from source](#install-from-source)), because the release archives do not carry the native worker or the compiled specifications yet.
 - **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 21 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
 
 The [native engine page](native-engine.md#native-or-ghidra) compares them.
+
+## Supported files
+
+| File | Example | Native engine | Ghidra engine |
+|---|---|---|---|
+| Linux program (ELF, static or dynamic, PIE or not) | `/usr/bin/ls` | x86-64, 32-bit x86, AArch64 | yes |
+| Linux shared library (ELF) | `libkr.so` | x86-64, 32-bit x86, AArch64 | yes |
+| Linux object file (ELF relocatable) | `kr.o` | x86-64, 32-bit x86 | yes |
+| Linux static library (`ar` archive of objects) | `libkr.a` | x86-64, 32-bit x86: all members in one project | no |
+| Windows program or DLL (PE) | `app.exe`, `kr.dll` | x86, x86-64 | yes |
+| Windows object file (COFF) | `kr.obj` | x86, x86-64 | yes |
+| Windows static library (COFF archive) | `kr.lib`, mingw `libkr.a` | x86, x86-64: all members in one project | no |
+| Windows import library | `kernel32.lib`, `libkr.dll.a` | the list of imported symbols and their DLL (no code) | no |
+| .NET assembly (exe or dll) | `app.dll` | goes to the .NET engine | goes to the .NET engine |
+
+`kraken binary-probe --path <file>` (and the import dialog in the GUI) says what a file is in
+plain words, lists the members of a library, and names the engine `auto` would pick. Libraries
+(archives) open with the native engine only.
 
 Platforms: Linux x86_64 is supported today. macOS (Apple silicon) and Windows (x86_64) archives are published when their builds succeed and are experimental.
 

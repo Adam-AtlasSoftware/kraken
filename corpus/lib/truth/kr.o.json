@@ -1,0 +1,55 @@
+{
+  "binary": "kr.o",
+  "sha256": "eae09d033d023c45b877292341cf3f8c19382dd5a485c2e10169086401079fff",
+  "kind": "Linux object file",
+  "arch": "x86-64",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 11
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 93
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 212
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

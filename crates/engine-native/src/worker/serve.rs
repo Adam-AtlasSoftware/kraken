@@ -13,10 +13,12 @@ use std::time::Duration;
 
 use kraken_engine::{
     AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, FlowGraph, FunctionLister,
-    MemoryReader, Mutator, StringLister, StringsRequest, SymbolLister, TypeStore, XrefProvider,
-    XrefRequest,
+    MemoryReader, Mutator, OpenReporter, StringLister, StringsRequest, SymbolLister, TypeStore,
+    XrefProvider, XrefRequest,
 };
-use kraken_proto::{ErrorCode, Locator, PageRequest, ProtoError, TypeDef, VersionedLogOp};
+use kraken_proto::{
+    ErrorCode, Locator, OpenUpdate, PageRequest, ProtoError, TypeDef, VersionedLogOp,
+};
 use kraken_sidecar::rpc::{read_frame, write_frame};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -25,7 +27,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::{CORE_DUMPS_ARG, OpenParams, TEST_HOOKS_ARG, WirePcodeOp, rpc_error};
-use crate::engine::{InProcessEngine, NativeConfig, OpenReport};
+use crate::engine::{InProcessEngine, NativeConfig};
 use crate::worker::Isolation;
 
 struct State {
@@ -197,26 +199,27 @@ async fn handle(
             let engine = Arc::new(InProcessEngine::new(config));
             // a first open of a big binary can take minutes; the progress tells the parent's
             // watchdog that the worker is alive
-            let report: Option<OpenReport> =
+            let report: Option<OpenReporter> =
                 params.get("job_id").and_then(Value::as_str).map(|job_id| {
                     let job_id = job_id.to_string();
                     let out = state.out.clone();
-                    Arc::new(move |found: usize, queued: usize| {
+                    Arc::new(move |u: OpenUpdate| {
                         let msg = json!({
                             "jsonrpc": "2.0",
                             "method": "progress",
                             "params": {
                                 "job_id": job_id,
                                 "stage": "load",
-                                "done": found,
-                                "total": found + queued,
-                                "message": format!("{found} functions found, {queued} to walk"),
+                                "done": u.found.unwrap_or(0),
+                                "total": u.found.unwrap_or(0) + u.queued.unwrap_or(0),
+                                "message": u.message,
+                                "detail": u,
                             },
                         });
                         if let Ok(body) = serde_json::to_vec(&msg) {
                             let _ = out.send(body);
                         }
-                    }) as OpenReport
+                    }) as OpenReporter
                 });
             let info = engine.open_reporting(&p.path, &p.spec, c, report).await?;
             *lock(&state.engine) = Some(engine);

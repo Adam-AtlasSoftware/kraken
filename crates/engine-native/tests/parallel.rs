@@ -78,8 +78,9 @@ fn lanes_and_the_cache_do_not_change_what_is_found() {
 
             // the progress report says how many functions were found so far
             let reports = std::sync::Mutex::new(Vec::new());
-            let report =
-                |found: usize, queued: usize| reports.lock().unwrap().push((found, queued));
+            let report = |d: &engine_native::discover::DiscoverProgress| {
+                reports.lock().unwrap().push((d.found, d.queued))
+            };
             let loaded = load(&data, None).expect("load");
             let mut session = Session::new(
                 loaded.language.id,

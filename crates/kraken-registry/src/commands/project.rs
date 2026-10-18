@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
+use crate::opening::OpenOptions;
 use crate::session::{
     AnalysisPhase, EngineChoice, EngineKind, Epoch, Project, Session, peek_binary,
 };
@@ -215,7 +216,11 @@ impl Command for ProjectCreate {
         .details(
             "Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, \
              `meta.json`), starts the engine and loads the binary. `engine` picks the engine \
-             and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it.",
+             and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it. \
+             The first load of a big program can take minutes: while it runs it is the job \
+             `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon \
+             sends `open_progress` events), and `job_cancel` stops it without leaving a \
+             project behind.",
         )
     }
 
@@ -232,10 +237,11 @@ impl Command for ProjectCreate {
         )
         .await?;
         let project = s
-            .create_project_with(
+            .create_project_opts(
                 Path::new(&args.project_dir),
                 Path::new(&args.binary),
                 args.engine,
+                OpenOptions::from_context(ctx),
             )
             .await?;
         info_of(&project).await
@@ -274,7 +280,9 @@ impl Command for ProjectOpen {
         .details(
             "Opens the project database and the engine cache. `epoch_stale` means the engine \
              build, options or binary differ from the recorded epoch; `rebuild` recreates the \
-             engine project from the log.",
+             engine project from the log. While it runs it is the job `open-N`, with the same \
+             progress and cancel as `project_create`; a reopen reads the engine's saved \
+             results and takes seconds.",
         )
     }
 
@@ -290,7 +298,9 @@ impl Command for ProjectOpen {
             ctx,
         )
         .await?;
-        let project = s.open_project(Path::new(&args.project_dir)).await?;
+        let project = s
+            .open_project_opts(Path::new(&args.project_dir), OpenOptions::from_context(ctx))
+            .await?;
         info_of(&project).await
     }
 }

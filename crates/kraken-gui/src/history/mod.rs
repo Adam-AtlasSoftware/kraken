@@ -27,7 +27,11 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel) {
         {
             vm.undo_last();
         }
-        if ui.button("Refresh").clicked() {
+        if ui
+            .button("Refresh")
+            .on_hover_text("Reload the list")
+            .clicked()
+        {
             vm.refresh_history();
         }
         if vm.history.loading {
@@ -66,7 +70,12 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel) {
                     }
                 }
             }
-            if vm.history.next_cursor.is_some() && ui.button("Load older changes").clicked() {
+            if vm.history.next_cursor.is_some()
+                && ui
+                    .button("Load older changes")
+                    .on_hover_text("Show the next older changes")
+                    .clicked()
+            {
                 acts.more = true;
             }
         });
@@ -216,10 +225,17 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!d.running, |ui| {
-                    if style::primary_button(ui, d.confirm_label()).clicked() {
+                    if style::primary_button(ui, d.confirm_label())
+                        .on_hover_text("Go ahead with the undo")
+                        .clicked()
+                    {
                         confirm = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button("Cancel")
+                        .on_hover_text("Close this window without changing anything")
+                        .clicked()
+                    {
                         cancel = true;
                     }
                 });

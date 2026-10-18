@@ -1,7 +1,8 @@
 # KRAKEN test corpus
 
 Small prebuilt x86_64 ELF programs with DWARF-derived ground truth (decisions 23, 65, 78), plus
-two smaller sets: Windows PE images (`pe/`) and 32-bit x86 ELF programs (`elf32/`), see below.
+three smaller sets: Windows PE images (`pe/`), 32-bit x86 ELF programs (`elf32/`) and one library
+built as every kind of library and object file (`lib/`), see below.
 Binaries are committed. Rebuilding is a manual job: it should open a PR, never run in normal CI.
 
 ## Programs (`src/`)
@@ -58,16 +59,40 @@ distribution default, `-O0`/`-O2` with `-stripped` twins: `elf32/bin/<name>-i386
 from DWARF as for the main set (`python3 -I corpus/tools/groundtruth.py --set elf32`, link-time
 addresses; Ghidra loads these at 0x10000). All eight have Ghidra fixtures in `elf32/fixtures/`.
 
+## The library set (`lib/`)
+
+One small C library, libkr (`lib/src/kr_core.c` with a dense switch, a static helper and calls to
+the other file and to the C library; `lib/src/kr_text.c` with strings, a switch over them, a loop,
+`malloc` and `toupper`), built at `-O2 -g` as every kind of library and object file:
+
+| file | what it is |
+|---|---|
+| `lib/bin/libkr.so` | Linux shared library (x86-64, `-fPIC`, no entry point) |
+| `lib/bin/libkr.a` | Linux static library: `kr_core.o` and `kr_text.o` |
+| `lib/bin/kr.o`, `lib/bin/kr-i386.o` | Linux object files (`kr_core.c`, x86-64 and `-m32`), with GOT and PLT relocations |
+| `lib/bin/kr-<arch>.dll` | Windows DLL (mingw-w64, `lib/src/kr.def`: `kr_checksum` exported by ordinal 4 only, `kr_calls` as data), linked without debug information |
+| `lib/bin/kr-<arch>.lib` | Windows static library (a COFF archive of `kr_core.obj` and `kr_text.obj`) |
+| `lib/bin/libkr-<arch>.dll.a` | the DLL's import library (`ld --out-implib`: GNU `.idata$` members) |
+| `lib/bin/kr-<arch>.obj` | Windows object file (`kr_core.c`) |
+
+`<arch>` is `x64` or `x86`. Objects and archives keep their DWARF. The truth
+(`lib/truth/<file>.json`, `python3 -I corpus/tools/groundtruth_lib.py`, host binutils with PE
+support) comes from the toolchain's view of each file: function symbols per member (ELF
+`st_size`, COFF lengths from the objects' DWARF), the DLL's COFF symbols and export table, the
+undefined symbols, and for the import libraries each symbol with its DLL. The objects behind the
+DLLs stay in the ignored `lib/.build/`.
+
 ## Rebuild
 
 ```
-corpus/build.sh [elf] [pe] [elf32]    # needs docker; builds image, compiles in container
+corpus/build.sh [elf] [pe] [elf32] [lib]    # needs docker; builds image, compiles in container
 python3 -I corpus/tools/groundtruth.py               # host, stdlib only; needs binutils (readelf, nm)
 python3 -I corpus/tools/groundtruth.py --set elf32
 python3 -I corpus/tools/groundtruth_pe.py            # host binutils with PE support (nm, objdump)
+python3 -I corpus/tools/groundtruth_lib.py           # host binutils with PE support (readelf, objdump, ar)
 ```
 
-With no set named, all three are built. The PE and 32-bit sets were added with a second
+With no set named, all four are built. The PE and 32-bit sets were added with a second
 Containerfile layer (`gcc-mingw-w64-*-win32`, `gcc-multilib`), so the first layer and the ELF set
 built with it did not change; each set has its own `MANIFEST.sha256` and `TOOLCHAIN.txt`.
 
@@ -86,7 +111,7 @@ toolchain is recorded in `TOOLCHAIN.txt` on every build.
   mingw-w64 runtime 12.0.0-5 (`pe/TOOLCHAIN.txt`)
 - 32-bit ELF: gcc-multilib 4:14.2.0-1, libc6-dev-i386 2.41-12+deb13u4 (`elf32/TOOLCHAIN.txt`)
 
-Two builds of the PE and 32-bit sets gave identical hashes.
+Two builds of the PE, 32-bit and library sets gave identical hashes.
 
 Packages are unpinned beyond the image digest, so rebuilding later may pull newer trixie
 updates; check `TOOLCHAIN.txt` and the manifest diff.

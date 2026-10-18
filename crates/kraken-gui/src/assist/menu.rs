@@ -199,7 +199,10 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel, a: &mut AssistUi) {
                             .color(p.text_dim),
                     );
                     if let Some(t) = &m.token
-                        && ui.button(format!("Explain `{}`", clip(t, 28))).clicked()
+                        && ui
+                            .button(format!("Explain `{}`", clip(t, 28)))
+                            .on_hover_text("Ask the assistant what this name means")
+                            .clicked()
                     {
                         choice = Some(Choice::Text(m.line_kind, t.clone()));
                     }
@@ -217,7 +220,12 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel, a: &mut AssistUi) {
                             choice = Some(Choice::Text(m.line_kind, l.clone()));
                         }
                     }
-                    if m.function.is_some() && ui.button("Explain this function").clicked() {
+                    if m.function.is_some()
+                        && ui
+                            .button("Explain this function")
+                            .on_hover_text("Ask the assistant what the whole function does")
+                            .clicked()
+                    {
                         choice = Some(Choice::Function);
                     }
                 });

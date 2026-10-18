@@ -1,0 +1,78 @@
+{
+  "binary": "kr-x64.dll",
+  "sha256": "82b6936003d1ea3169792c691f74f36d82fa87748d63dad53f348d155da13896",
+  "kind": "Windows DLL",
+  "arch": "x86-64",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 8,
+      "entry": "0x2042f1380"
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 105,
+      "entry": "0x2042f1390"
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 212,
+      "entry": "0x2042f1400"
+    },
+    {
+      "member": null,
+      "name": "kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 112,
+      "entry": "0x2042f14e0"
+    },
+    {
+      "member": null,
+      "name": "kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 36,
+      "entry": "0x2042f1550"
+    },
+    {
+      "member": null,
+      "name": "kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 112,
+      "entry": "0x2042f1580"
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls",
+      "ordinal": 6
+    },
+    {
+      "name": "kr_classify",
+      "ordinal": 1
+    },
+    {
+      "name": "kr_dup_upper",
+      "ordinal": 5
+    },
+    {
+      "name": "kr_kind_name",
+      "ordinal": 3
+    },
+    {
+      "name": "kr_report",
+      "ordinal": 2
+    },
+    {
+      "name": null,
+      "ordinal": 4
+    }
+  ],
+  "imports": []
+}

@@ -6,6 +6,8 @@ We will take apart a small program that has had its names stripped out. At the s
 
 **What "reverse engineering" means here.** A compiled program is a pile of machine instructions with no explanation. Reverse engineering is working out what it does and writing that down, usually by giving the pieces good names. KRAKEN does the heavy lifting (finding the functions, turning machine code back into C-like code) and keeps a careful record of everything you change.
 
+**Help is built in.** Press **F1** at any time. The help window has the whole flow in order (each step has a button that does it for you), a page for every panel, the keyboard shortcuts and a glossary. **Help > Take the tour** walks through the main areas of the window. Hover any button or menu item to see what it does. Every menu, panel and shortcut is listed in the [GUI reference](gui.md).
+
 A note on the pictures. Screenshots marked **real** were made with KRAKEN's own screenshot mode against the exact project in this tutorial, using the native engine (no Java, no Ghidra). Screenshots marked **illustrative** need a language model to answer, so they were made with KRAKEN's built-in demo project and a scripted answer. They show the layout and what to look for, not what a model will say about this program.
 
 You need:
@@ -29,13 +31,17 @@ kraken setup --native
 
 ## 2. Create a project
 
-**Do:** start the GUI with `kraken-gui`. Under **New project from a program**, press **Browse...** and choose `corpus/bin/stripped_calc-O2-stripped` from your checkout (or paste the path). Choose **Native** next to **Engine** (or set `engine = "native"` in `config.toml` to have it chosen for you), leave the project folder as proposed and press **Create project and analyze**.
+**Do:** start the GUI with `kraken-gui`. Choose **File > Open program** (`Ctrl+O`), or press **Browse...** under **New project from a program**, and choose `corpus/bin/stripped_calc-O2-stripped` from your checkout. You can also drag the file from your file manager and drop it on the window.
 
-![The KRAKEN welcome screen with the new-project, open-project and demo sections](images/tutorial/welcome.png)
+![The KRAKEN welcome screen with the menu bar and the demo, program and project sections](images/tutorial/welcome.png)
 
-*Real: the welcome screen with the native engine chosen. The demo button is a good way to look around before you have a program of your own.*
+*The welcome screen. The demo button is a good way to look around before you have a program of your own.*
 
-**You should see:** a short progress bar while KRAKEN finds and decompiles the functions. For this tiny program it takes a second or two (the Ghidra engine needs about a minute).
+**You should see:** the **import dialog**. KRAKEN looks at the file first (it does not run it) and says what it found: the format (ELF, PE or Mach-O, or a .NET assembly), the processor, whether it is a program or a library, and which engine it recommends. If something is not possible, it says why in plain words. Under **Engine**, keep the recommended one (**Native** needs no Java or Ghidra; you can also set `engine = "native"` in `config.toml`), leave the project name and folder as proposed and press **Import**.
+
+A program and a library are opened the same way. A library has no `main`, so after the analysis start from the **Imports / Exports** tab, where its exports are listed.
+
+You then see a progress bar while KRAKEN finds and decompiles the functions. For this tiny program it takes a second or two (the Ghidra engine needs about a minute). You can keep reading while it runs, and **Analysis > Cancel analysis** stops it.
 
 **Prefer the terminal?** The same step is
 
@@ -57,7 +63,7 @@ kraken analyze
 
 Read down the list. Some names are real: `printf`, `__ctype_b_loc` and `__cxa_finalize` are library functions the program imports, so their names survive stripping. `entry` is where the operating system starts the program. `_DT_INIT`, `_DT_FINI`, `_INIT_0` and `_FINI_0` are startup and shutdown scaffolding that KRAKEN recognises from the file structure. The ones called `FUN_` followed by an address are functions it found but knows nothing about: `FUN_00101080`, `FUN_00101280`, `FUN_001013c0` and `FUN_001014b0` are the program's own code, and they are the ones we want to understand. (`FUN_00101020` is the start of the import table and `FUN_00101190` is a C runtime helper; step 13 names it.)
 
-**Do:** click `FUN_00101080`. Use the filter box (Ctrl+L) to narrow the list if it grows long.
+**Do:** click `FUN_00101080`. Use the filter box (Ctrl+L) to narrow the list if it grows long. Press `G` (**Navigate > Go to**) to jump to an address or a name from anywhere, and **Navigate > Go to main** to open `main` (this program has no symbol for it, so KRAKEN opens the entry point).
 
 **Why it matters:** compilers throw function names away when a program is "stripped", which is how almost all software is shipped. Recovering meaning without them is the everyday job of reverse engineering.
 
@@ -68,6 +74,8 @@ Read down the list. Some names are real: `printf`, `__ctype_b_loc` and `__cxa_fi
 **You should see:** the **Decompiler** tab in the middle shows `FUN_00101080` as C-like code. It will not look like the original source, with variables named `uVar7` and `local_48`, but the shape is readable: a loop, a few calls, two `printf` calls with format strings.
 
 Even without a single good name you can read a lot from it. The function walks a table of pointers in a loop. For each entry it calls `FUN_001014b0`, then calls `printf` with either `"%-18s = %ld\n"` or `"%-18s : error\n"`, counts the errors and prints `"errors: %d\n"` at the end. That is a test driver: it runs something on a list of inputs and prints a result for each.
+
+**Right-click** a name or a line in the code for the context menu: rename, change type, edit the signature, comment, show references, copy the address or name, bookmark, create or delete a function, rewrite in Rust, and ask the assistant to explain it. The same items are in the menus, with their shortcuts: `N` renames, `Y` changes the type, `;` comments, `X` shows references, `Ctrl+D` bookmarks and `Ctrl+Z` undoes.
 
 **Why it matters:** the decompiler (Ghidra's, run by the native engine) turns machine instructions back into C-like text. It cannot recover names, comments or types the compiler discarded, so treat it as a very good guess, not the truth. If something looks odd, check it against the instructions in the next step.
 
@@ -127,6 +135,14 @@ Put the clues together. The inputs are arithmetic expressions, one of them divid
 
 **Why it matters:** strings are the cheapest clue there is. Programs print error messages, file names and format strings, and every one of them is a label written by the original author.
 
+## 8b. Search and bookmarks
+
+**Do:** press `Ctrl+Shift+F` (**Navigate > Search**). Choose what to look for (names, strings, byte patterns or instructions), type, and press Enter. Click a result to go there.
+
+**Do:** put the cursor on a place you want to come back to and press `Ctrl+D` (**Navigate > Bookmark this address**). Add a short note if you like. The **Bookmarks** tab lists them, and you or an agent can add more.
+
+**Why it matters:** search finds a clue anywhere in the program, not only in the function in front of you, and bookmarks keep the places you found so the next session starts where you stopped. Both are saved in the project.
+
 ## 9. Ask the assistant to explain a function
 
 You need something to answer for this step: a language model, or a terminal agent such as Claude Code if you already use one. Open **Settings > AI** (Ctrl+,) and pick one from the list (a local model such as Ollama keeps everything on your computer; an agent that shows *Needs setup* has a **Set up...** button that asks before it downloads anything), press **Test connection** (or **Test agent**), then **Save and use**. Both kinds work the same way in the Assistant tab. [The built-in assistant](assistant.md) and [Running a model on this computer](local-models.md) cover the choices.
@@ -138,6 +154,8 @@ You need something to answer for this step: a language model, or a terminal agen
 *Illustrative: the demo project with a scripted answer. With a model configured you get the same kind of card for your own function.*
 
 **You should see:** a card with a short summary, a "What it does" list, a "Names worth considering" section with a button that opens the rename box with the name already typed in, and a **Not sure about** section for what the assistant could not check. Addresses in the text are clickable. Small chips above the card show which commands the assistant ran to look at the code.
+
+When you want the assistant to do more than explain, use **AI > Automate with the assistant...**. The Automate dialog lets it work through the whole flow (look at the program, name functions and, if you ask, rewrite it in Rust) while you watch each step. It asks before it overwrites anything you wrote, and you can stop it at any time. The help page **Using AI** says what the assistant can and cannot do and what is sent where.
 
 **Why it matters:** an assistant reads decompiled code quickly, but it can be wrong and can be misled by whatever the program's text says. KRAKEN hands it the program's strings and names as clearly marked untrusted data, and the explain feature cannot change your project. Check its claims against what you saw in steps 4 to 8.
 
@@ -218,7 +236,7 @@ The agent can add names and comments by itself, because adding to a placeholder 
 
 The goal KRAKEN is built toward is turning a binary back into Rust you can read, one function at a time, with each translation tested against the original. This step needs a language model and a Linux kernel with Landlock, because the model writes code that KRAKEN has to run in a sandbox. Do it once you are comfortable with the rest.
 
-**Do:** select a small function (here, `parse_atom` at `0x101280` is a fair test, or pick the leaf), press **Rewrite in Rust**, and open the **Rewrite** tab. The **Plan** lists functions callees first, because it is easiest to test a function whose helpers are already done.
+**Do:** choose **Rewrite > Rewrite in Rust...**. The rewrite wizard walks through the whole job: **Scope** (one function, the plan or the whole program), **Mode**, **Check** (is everything in place?), **Run**, **Review**, **Accept**, **Export**, **Build** and **Open**. Each step says in one sentence what it does, and when **Next** is off it says why. Closing the wizard loses nothing: a running job keeps going and every result is in the **Rewrite** tab. To start with one function instead, select a small one (here, `parse_atom` at `0x101280` is a fair test, or pick the leaf), press **Rewrite in Rust** and open the **Rewrite** tab. The **Plan** lists functions callees first, because it is easiest to test a function whose helpers are already done.
 
 ![The Rewrite tab with a plan on the left and decompiled C beside generated Rust on the right, with a counterexample for a failed version](images/tutorial/rewrite.png)
 
@@ -242,7 +260,8 @@ You see the program verdict, the table of functions with how each translation wa
 
 You went from a stripped program with no names to a map of how it works: an entry point (`main`) that drives a four-function expression parser (`parse_expr` calls `parse_term` calls `parse_atom`, which starts over at `parse_expr` for anything in parentheses), plus the C runtime's startup helpers. You can check yourself against the source, `corpus/src/stripped_calc.c`. We recommend not reading it until you have tried.
 
-- Learn the vocabulary: [Concepts](concepts.md).
+- Learn the vocabulary: [Concepts](concepts.md), or the glossary in the help window (F1).
+- Look up any menu, panel or shortcut: [the GUI reference](gui.md).
 - Script what you did: [the CLI](cli.md) and [Python](python.md).
 - Use Claude Code, Codex or Gemini CLI as the assistant itself, in the same chat: [The built-in assistant](assistant.md#terminal-agents).
 - Try a harder program: `corpus/bin/cpp_shapes-O2-stripped` (C++ with virtual calls) or `corpus/bin/static_strops-O2-stripped`.

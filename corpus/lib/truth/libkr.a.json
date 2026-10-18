@@ -1,0 +1,82 @@
+{
+  "binary": "libkr.a",
+  "sha256": "e29a0a5fd4082eb1487debd150f907619ca040b328a8c8fd0522460f277c0bb3",
+  "kind": "Linux static library with 2 objects",
+  "arch": "x86-64",
+  "members": [
+    "kr_core.o",
+    "kr_text.o"
+  ],
+  "functions": [
+    {
+      "member": "kr_core.o",
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 11
+    },
+    {
+      "member": "kr_core.o",
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 93
+    },
+    {
+      "member": "kr_core.o",
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 212
+    },
+    {
+      "member": "kr_text.o",
+      "name": "kr_kind_name",
+      "demangled": "kr_kind_name",
+      "size": 112
+    },
+    {
+      "member": "kr_text.o",
+      "name": "kr_checksum",
+      "demangled": "kr_checksum",
+      "size": 41
+    },
+    {
+      "member": "kr_text.o",
+      "name": "kr_dup_upper",
+      "demangled": "kr_dup_upper",
+      "size": 106
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "__ctype_toupper_loc"
+    },
+    {
+      "name": "malloc"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

@@ -153,6 +153,8 @@ pub enum BackendEvent {
     Reconnected,
     /// A client started a job; `by_agent` says whether it was an agent (`key` is the job id).
     JobStarted(ChangeInfo),
+    /// The project being created or opened made progress.
+    OpenProgress(Box<kraken_proto::OpenProgress>),
     /// An agent asked the GUI to show an address (`gui_navigate`).
     Navigate {
         /// Address to show.

@@ -85,6 +85,10 @@ pub struct WireProgress {
     /// Ghidra's current task text.
     #[serde(default)]
     pub message: String,
+    /// Structured detail of the event (the native worker sends a `kraken_proto::OpenUpdate`
+    /// while it opens a program).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
 }
 
 fn exited() -> ProtoError {

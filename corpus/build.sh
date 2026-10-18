@@ -3,7 +3,8 @@
 # inside the container; "--inside" is the in-container step.
 #
 # Sets: "elf" (x86-64 ELF, corpus/bin), "pe" (PE32 and PE32+ with mingw-w64, corpus/pe/bin),
-# "elf32" (32-bit x86 ELF, corpus/elf32/bin). Default: all three. Name sets to build only those:
+# "elf32" (32-bit x86 ELF, corpus/elf32/bin), "lib" (libkr as Linux and Windows libraries and
+# object files, corpus/lib/bin). Default: all four. Name sets to build only those:
 #   corpus/build.sh pe elf32
 set -euo pipefail
 
@@ -28,7 +29,7 @@ PROGRAMS32=(
 
 if [[ "${1:-}" != "--inside" ]]; then
   SETS=("$@")
-  [[ ${#SETS[@]} -eq 0 ]] && SETS=(elf pe elf32)
+  [[ ${#SETS[@]} -eq 0 ]] && SETS=(elf pe elf32 lib)
   docker build -q -f "$HERE/Containerfile" -t "$IMAGE" "$HERE" >/dev/null
   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -v "$HERE:/work" -w /work "$IMAGE" bash /work/build.sh --inside "${SETS[@]}"
@@ -49,10 +50,15 @@ if [[ "${1:-}" != "--inside" ]]; then
           && sha256sum ../src/pie_list.c ../src/switch_vm.c ../tools/groundtruth.py \
              ../build.sh ../Containerfile >> MANIFEST.sha256)
         ;;
+      lib)
+        (cd lib && find bin -type f | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256 \
+          && sha256sum src/* ../tools/groundtruth_lib.py ../build.sh ../Containerfile \
+             >> MANIFEST.sha256)
+        ;;
     esac
   done
-  echo "corpus built; now run: python3 -I corpus/tools/groundtruth.py [--set elf32]" \
-    "and python3 -I corpus/tools/groundtruth_pe.py"
+  echo "corpus built; now run: python3 -I corpus/tools/groundtruth.py [--set elf32]," \
+    "python3 -I corpus/tools/groundtruth_pe.py and python3 -I corpus/tools/groundtruth_lib.py"
   exit 0
 fi
 
@@ -141,11 +147,49 @@ build_pe() {
   done
 }
 
+# libkr (lib/src) as every kind of library and object: for x86-64 Linux a shared library, a static
+# library and an object (plus a 32-bit object for the i386 relocations); for x64 and x86 Windows a
+# DLL, a static library (a COFF archive), the DLL's import library and an object. Objects and
+# archives keep their DWARF; the DLL is linked without it, like the PE set.
+build_lib() {
+  rm -rf lib/bin lib/.build && mkdir -p lib/bin lib/.build
+  {
+    echo "base-image: $(sed -n 's/^FROM //p' Containerfile)"
+    echo "gcc: $(gcc --version | head -1)"
+    echo "ar: $(ar --version | head -1)"
+    echo "x86_64-w64-mingw32-gcc: $(x86_64-w64-mingw32-gcc --version | head -1)"
+    echo "i686-w64-mingw32-gcc: $(i686-w64-mingw32-gcc --version | head -1)"
+    dpkg-query -W gcc gcc-multilib binutils gcc-mingw-w64-x86-64-win32 gcc-mingw-w64-i686-win32 \
+      binutils-mingw-w64-x86-64 binutils-mingw-w64-i686 | sed 's/\t/ /;s/^/dpkg: /'
+  } > lib/TOOLCHAIN.txt
+  local flags=(-O2 -g -ffile-prefix-map=/work=. -Wall)
+  local b=lib/.build/linux-x64
+  mkdir -p "$b"
+  for m in kr_core kr_text; do gcc "${flags[@]}" -fPIC -c "lib/src/$m.c" -o "$b/$m.o"; done
+  gcc -shared -Wl,--build-id=none -Wl,-soname,libkr.so -o lib/bin/libkr.so "$b/kr_core.o" \
+    "$b/kr_text.o"
+  ar rcD lib/bin/libkr.a "$b/kr_core.o" "$b/kr_text.o"
+  cp "$b/kr_core.o" lib/bin/kr.o
+  gcc -m32 "${flags[@]}" -fPIC -c lib/src/kr_core.c -o lib/bin/kr-i386.o
+  for arch in x64 x86; do
+    if [[ $arch == x64 ]]; then t=x86_64-w64-mingw32; else t=i686-w64-mingw32; fi
+    b="lib/.build/$arch"
+    mkdir -p "$b"
+    for m in kr_core kr_text; do "$t-gcc" "${flags[@]}" -c "lib/src/$m.c" -o "$b/$m.obj"; done
+    "$t-gcc" -shared -O2 -Wl,--no-insert-timestamp -Wl,--strip-debug -o "lib/bin/kr-$arch.dll" \
+      "$b/kr_core.obj" "$b/kr_text.obj" lib/src/kr.def "-Wl,--out-implib,lib/bin/libkr-$arch.dll.a"
+    "$t-ar" rcD "lib/bin/kr-$arch.lib" "$b/kr_core.obj" "$b/kr_text.obj"
+    cp "$b/kr_core.obj" "lib/bin/kr-$arch.obj"
+  done
+  for f in lib/bin/*; do echo "built $f ($(stat -c %s "$f") bytes)"; done
+}
+
 for set in "$@"; do
   case "$set" in
     elf) build_elf ;;
     elf32) build_elf32 ;;
     pe) build_pe ;;
+    lib) build_lib ;;
     *) echo "unknown set $set" >&2; exit 2 ;;
   esac
 done
