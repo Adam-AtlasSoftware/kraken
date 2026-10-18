@@ -18,7 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::native_src::{PREFIX, SHA256, TAG, URL, extract, fetch_archive, source_root};
 use crate::{Result, cache_dir};
 
-/// Processors compiled: Linux x86-64 first, AArch64 second (decision 95).
+/// Processors compiled: x86 (`x86-64.sla` for x86-64, `x86.sla` for 32-bit ELF and PE32) first,
+/// AArch64 second (decision 95).
 const PROCESSORS: &[&str] = &["x86", "AARCH64"];
 
 /// The Makefile's SLEIGH_NAMES: CORE, SLEIGH and SLACOMP.

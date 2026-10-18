@@ -33,10 +33,12 @@ pub mod libc;
 pub mod listing;
 mod mutate;
 mod native;
+pub mod pe;
 pub mod refs;
 pub mod strings;
 pub mod symbols;
 pub mod typestore;
+pub mod win32;
 pub mod worker;
 
 pub use engine::{

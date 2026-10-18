@@ -84,14 +84,17 @@ impl NativeProbe {
 /// Whether the native loader opens a binary.
 pub type BinaryFit = Result<(), String>;
 
+const EM_386: u16 = 3;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
+const PE_I386: u16 = 0x014c;
+const PE_AMD64: u16 = 0x8664;
 
-/// Reads the ELF header of `path`: the native engine opens 64-bit little-endian x86-64 and
-/// AArch64 ELF files and nothing else yet. Unreadable files are reported as fitting, so the
-/// engine itself says what is wrong with them.
+/// Reads the header of `path`: the native engine opens little-endian ELF files for x86-64,
+/// AArch64 and 32-bit x86, and PE images for x86 and x86-64, and nothing else yet. Unreadable
+/// files are reported as fitting, so the engine itself says what is wrong with them.
 pub fn binary_fit(path: &Path) -> BinaryFit {
-    let mut head = [0u8; 20];
+    let mut head = vec![0u8; 4096];
     let n = match std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) {
         Ok(n) => n,
         Err(_) => return Ok(()),
@@ -99,29 +102,59 @@ pub fn binary_fit(path: &Path) -> BinaryFit {
     fit_of_header(&head[..n])
 }
 
-/// [`binary_fit`] over the first bytes of a file.
+/// [`binary_fit`] over the first bytes of a file (the PE header has to be among them).
 pub fn fit_of_header(head: &[u8]) -> BinaryFit {
+    if head.get(..2) == Some(b"MZ") {
+        return pe_fit(head);
+    }
     if head.get(..4) != Some(b"\x7fELF") {
-        return Err("it is not an ELF file (the native engine opens ELF only for now)".into());
-    }
-    if head.get(4) != Some(&2) {
-        return Err("it is a 32-bit ELF file (the native engine opens 64-bit ELF only)".into());
-    }
-    if head.get(5) != Some(&1) {
         return Err(
-            "it is a big-endian ELF file (the native engine opens little-endian only)".into(),
+            "it is neither an ELF nor a PE file (the native engine opens ELF and PE only for now)"
+                .into(),
         );
     }
     let machine = head
         .get(18..20)
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .unwrap_or(0);
+    if head.get(4) != Some(&2) {
+        if head.get(5) == Some(&1) && machine == EM_386 {
+            return Ok(());
+        }
+        return Err(format!(
+            "it is a 32-bit ELF file for machine type {machine} (the native engine opens 32-bit \
+             x86 only)"
+        ));
+    }
+    if head.get(5) != Some(&1) {
+        return Err(
+            "it is a big-endian ELF file (the native engine opens little-endian only)".into(),
+        );
+    }
     if machine != EM_X86_64 && machine != EM_AARCH64 {
         return Err(format!(
             "its machine type is {machine} (the native engine opens x86-64 and AArch64 only)"
         ));
     }
     Ok(())
+}
+
+/// A PE image: the `PE\0\0` header the DOS stub points at, for x86 or x86-64.
+fn pe_fit(head: &[u8]) -> BinaryFit {
+    let at = head
+        .get(0x3c..0x40)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    let machine = at
+        .and_then(|o| head.get(o..o + 6))
+        .filter(|h| h.starts_with(b"PE\0\0"))
+        .map(|h| u16::from_le_bytes([h[4], h[5]]));
+    match machine {
+        Some(PE_I386 | PE_AMD64) => Ok(()),
+        Some(m) => Err(format!(
+            "its PE machine type is {m:#06x} (the native engine opens x86 and x86-64 PE only)"
+        )),
+        None => Err("it is an MS-DOS program or a damaged PE file (no PE header)".into()),
+    }
 }
 
 /// The engine for a native-code binary under `choice`. Managed assemblies are decided by the
@@ -158,7 +191,8 @@ pub fn choose(
                 kind: EngineKind::Native,
                 choice,
                 reason: "auto picked native: the native library and the compiled .sla files are \
-                         available and the binary is a 64-bit little-endian x86-64 or AArch64 ELF"
+                         available and the binary is an ELF file (x86-64, AArch64 or 32-bit x86) or \
+                         a PE image (x86 or x86-64)"
                     .into(),
             },
             Some(why) => EngineSelection {
@@ -318,8 +352,10 @@ mod tests {
     #[test]
     fn auto_falls_back_for_binaries_the_loader_cannot_open() {
         for (head, needle) in [
-            (b"MZ\x90\0".to_vec(), "not an ELF"),
-            (elf_head(1, 1, 3), "32-bit"),
+            (b"MZ\x90\0".to_vec(), "no PE header"),
+            (b"\xca\xfe\xba\xbe".to_vec(), "neither an ELF nor a PE"),
+            (pe_head(0x1c0), "PE machine type is 0x01c0"),
+            (elf_head(1, 1, 40), "32-bit ELF file for machine type 40"),
             (elf_head(2, 2, EM_X86_64), "big-endian"),
             (elf_head(2, 1, 8), "machine type is 8"),
         ] {
@@ -333,6 +369,18 @@ mod tests {
             assert!(s.reason.contains(needle), "{}", s.reason);
         }
         assert!(fit_of_header(&elf_head(2, 1, EM_AARCH64)).is_ok());
+        assert!(fit_of_header(&elf_head(1, 1, EM_386)).is_ok());
+        assert!(fit_of_header(&pe_head(PE_I386)).is_ok());
+        assert!(fit_of_header(&pe_head(PE_AMD64)).is_ok());
+    }
+
+    fn pe_head(machine: u16) -> Vec<u8> {
+        let mut h = vec![0u8; 0x80];
+        h[..2].copy_from_slice(b"MZ");
+        h[0x3c] = 0x40;
+        h[0x40..0x44].copy_from_slice(b"PE\0\0");
+        h[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+        h
     }
 
     #[test]
@@ -349,9 +397,9 @@ mod tests {
         assert!(e.message.contains("kraken setup --native"), "{}", e.message);
         assert!(e.message.contains("--engine ghidra"), "{}", e.message);
 
-        let pe = fit_of_header(b"MZ");
-        let e = choose(EngineChoice::Native, &probe(true, true), &pe).unwrap_err();
-        assert!(e.message.contains("not an ELF"), "{}", e.message);
+        let dos = fit_of_header(b"MZ");
+        let e = choose(EngineChoice::Native, &probe(true, true), &dos).unwrap_err();
+        assert!(e.message.contains("no PE header"), "{}", e.message);
     }
 
     #[test]

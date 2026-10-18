@@ -1,0 +1,57 @@
+{
+  "binary": "pie_list-i386-O2-stripped",
+  "ground_truth_from": "pie_list-i386-O2",
+  "sha256": "da6d17f9932418252bf8dcc9f0eb40f8602b3cf577d49d304a7222cdcc6d767d",
+  "source_file": "src/pie_list.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x10b0",
+      "size": 475
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0x13c0",
+      "size": 13
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0x13d0",
+      "size": 41
+    },
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0x1400",
+      "size": 112
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0x1470",
+      "size": 41
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0x14a0",
+      "size": 20
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0x14c0",
+      "size": 128
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0x1540",
+      "size": 53
+    }
+  ]
+}

@@ -1,14 +1,15 @@
 //! ELF loading with the `object` crate: segments for the decompiler's image, sections for the
 //! memory map, function symbols, PLT stubs and the entry point. Addresses follow Ghidra's
 //! convention so anchors stay compatible with Ghidra projects: a position-independent image whose
-//! lowest address is 0 is loaded at 0x100000.
+//! lowest address is 0 is loaded at 0x100000 (0x10000 for 32-bit x86).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
 use object::elf::{
-    PF_W, PF_X, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE,
+    PF_W, PF_X, R_386_IRELATIVE, R_386_JMP_SLOT, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC,
+    SHF_EXECINSTR, SHF_WRITE,
 };
 use object::read::{Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable};
 use object::{
@@ -16,8 +17,10 @@ use object::{
     SectionFlags, SectionKind, SegmentFlags, SymbolKind,
 };
 
-/// Ghidra's default image base for ELF objects linked at 0.
+/// Ghidra's default image base for 64-bit ELF objects linked at 0.
 pub const PIE_BASE: u64 = 0x10_0000;
+/// Ghidra's default image base for 32-bit ELF objects linked at 0.
+pub const PIE_BASE_32: u64 = 0x1_0000;
 
 /// Sleigh language and compiler spec for a supported architecture.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,10 +45,13 @@ pub struct CodeSymbol {
 /// A symbol the program imports from a shared library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportSymbol {
-    /// Name as in the dynamic symbol table.
+    /// Name as in the dynamic symbol table, or the PE import's name (`Ordinal_<n>` for an
+    /// import by ordinal, as Ghidra names them).
     pub name: String,
     /// Function (`STT_FUNC` and untyped symbols, as Ghidra treats them) or data.
     pub kind: ProtoSymbolKind,
+    /// The library a PE import comes from (`KERNEL32.DLL`); ELF does not say.
+    pub library: Option<String>,
 }
 
 /// A symbol other modules can see (global or weak, defined).
@@ -60,6 +66,8 @@ pub struct ExportSymbol {
 /// Everything the engine needs from the file.
 #[derive(Debug, Clone)]
 pub struct Loaded {
+    /// File format: `elf` or `pe`.
+    pub format: &'static str,
     /// Language for Sleigh and the decompiler.
     pub language: Language,
     /// Image base (0 or [`PIE_BASE`]).
@@ -75,8 +83,26 @@ pub struct Loaded {
     pub code_symbols: BTreeMap<u64, Vec<String>>,
     /// Types and function prototypes from DWARF, with the function addresses rebased.
     pub debug: crate::dwarf::Debug,
-    /// PLT stubs, by address, named after the imported symbol.
+    /// PLT stubs (ELF) and import thunks (PE: a `jmp [IAT slot]`), by address, named after the
+    /// imported symbol.
     pub plt: BTreeMap<u64, String>,
+    /// PE import address table slots, by address, with the import each one holds. The loaded
+    /// image holds [`Loaded::externals`] addresses in them, so a `call [slot]` reaches a named
+    /// function in the decompiler.
+    pub import_slots: BTreeMap<u64, String>,
+    /// Synthetic addresses past the image that stand for imported functions (Ghidra's
+    /// `EXTERNAL` block), by address; not mapped memory.
+    pub externals: BTreeMap<u64, String>,
+    /// Function starts from the PE exception directory (`.pdata`), ascending; like FDE starts
+    /// they cover stripped binaries.
+    pub pdata_starts: Vec<u64>,
+    /// The value 32-bit x86 position-independent code keeps in its PIC register (`ebx` after
+    /// `call __x86.get_pc_thunk.bx; add ebx, ...`): the start of `.got.plt` (else `.got`),
+    /// after rebasing. PLT entries address through it.
+    pub pic_base: Option<u64>,
+    /// Calling conventions known for functions, by entry: from x86 COFF decorations
+    /// (`_f@12` is `__stdcall`, `@f@8` `__fastcall`) and from the library prototypes applied.
+    pub conventions: BTreeMap<u64, String>,
     /// Entry point after rebasing, if any.
     pub entry: Option<u64>,
     /// Function pointers from `.init_array`, `.fini_array` and `.preinit_array`, and the start
@@ -112,6 +138,26 @@ impl Loaded {
             .any(|b| b.initialized && b.perms.ends_with('x') && b.start.0 <= addr && addr < b.end.0)
     }
 
+    /// Pointer size in bytes.
+    pub fn pointer_size(&self) -> usize {
+        self.language.pointer_size as usize
+    }
+
+    /// The C data model: ILP32 on 32-bit targets, LLP64 for 64-bit Windows, else LP64.
+    pub fn data_model(&self) -> crate::ctypes::DataModel {
+        use crate::ctypes::DataModel;
+        match (self.language.pointer_size, self.format) {
+            (4, _) => DataModel::ILP32,
+            (_, "pe") => DataModel::LLP64,
+            _ => DataModel::LP64,
+        }
+    }
+
+    /// Whether this is a Windows (PE) image.
+    pub fn is_pe(&self) -> bool {
+        self.format == "pe"
+    }
+
     /// Whether `addr` lies in a PLT section.
     pub fn in_plt(&self, addr: u64) -> bool {
         self.blocks
@@ -131,6 +177,11 @@ fn language(arch: Architecture) -> Result<Language, ProtoError> {
             compiler: "gcc",
             pointer_size: 8,
         }),
+        Architecture::I386 => Ok(Language {
+            id: "x86:LE:32:default",
+            compiler: "gcc",
+            pointer_size: 4,
+        }),
         Architecture::Aarch64 => Ok(Language {
             id: "AARCH64:LE:64:v8A",
             compiler: "default",
@@ -143,9 +194,12 @@ fn language(arch: Architecture) -> Result<Language, ProtoError> {
     }
 }
 
-/// Parses an ELF file. Other formats are `unsupported`.
+/// Parses an ELF or PE file. Other formats are `unsupported`.
 pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError> {
     let file = object::File::parse(data).map_err(|e| bad(format!("cannot parse binary: {e}")))?;
+    if file.format() == BinaryFormat::Pe {
+        return crate::pe::load(data, base_override);
+    }
     if file.format() != BinaryFormat::Elf {
         return Err(ProtoError::new(
             ErrorCode::Unsupported,
@@ -162,6 +216,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         ));
     }
     let language = language(file.architecture())?;
+    let ptr = language.pointer_size as usize;
 
     let lowest = file
         .segments()
@@ -170,7 +225,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         .min()
         .unwrap_or(0);
     let default_base = if matches!(file.kind(), ObjectKind::Dynamic) && lowest == 0 {
-        PIE_BASE
+        if ptr == 4 { PIE_BASE_32 } else { PIE_BASE }
     } else {
         lowest
     };
@@ -270,7 +325,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         .collect();
 
     let plt = if language.id.starts_with("x86") {
-        x86_plt(&file, data, bias, &functions)
+        x86_plt(&file, data, bias, &functions, ptr)
     } else {
         BTreeMap::new()
     };
@@ -279,12 +334,28 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
 
     let mut init_pointers = Vec::new();
     let mut default_names: BTreeMap<u64, String> = BTreeMap::new();
+    // REL relocations (32-bit x86) keep the addend in the slot
+    let slot_word = |off: u64| -> i64 {
+        let mut buf = vec![0u8; ptr];
+        if image.read(at(off), &mut buf) {
+            le_word(&buf) as i64
+        } else {
+            0
+        }
+    };
     let relative: BTreeMap<u64, i64> = file
         .dynamic_relocations()
         .into_iter()
         .flatten()
         .filter(|(_, r)| matches!(r.target(), RelocationTarget::Absolute))
-        .map(|(off, r)| (off, r.addend()))
+        .map(|(off, r)| {
+            let addend = if r.has_implicit_addend() {
+                slot_word(off)
+            } else {
+                r.addend()
+            };
+            (off, addend)
+        })
         .collect();
     for sec in file.sections() {
         let Ok(name) = sec.name() else { continue };
@@ -297,13 +368,14 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
             ".fini_array" => "_FINI_",
             _ => "_PREINIT_",
         };
-        for (i, chunk) in bytes.as_chunks::<8>().0.iter().enumerate() {
-            let slot = sec.address() + (i as u64) * 8;
-            let mut v = u64::from_le_bytes(*chunk);
+        let all_ones = if ptr == 4 { 0xffff_ffff } else { u64::MAX };
+        for (i, chunk) in bytes.chunks_exact(ptr).enumerate() {
+            let slot = sec.address() + (i * ptr) as u64;
+            let mut v = le_word(chunk);
             if v == 0 {
                 v = relative.get(&slot).map(|a| *a as u64).unwrap_or(0);
             }
-            if v != 0 && v != u64::MAX {
+            if v != 0 && v != all_ones {
                 init_pointers.push(at(v));
                 default_names
                     .entry(at(v))
@@ -315,12 +387,8 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     if let Some(dynamic) = file.section_by_name(".dynamic")
         && let Ok(bytes) = dynamic.data()
     {
-        for e in bytes.as_chunks::<16>().0 {
-            let mut tag = [0u8; 8];
-            let mut val = [0u8; 8];
-            tag.copy_from_slice(&e[..8]);
-            val.copy_from_slice(&e[8..]);
-            let (tag, val) = (u64::from_le_bytes(tag), u64::from_le_bytes(val));
+        for e in bytes.chunks_exact(2 * ptr) {
+            let (tag, val) = (le_word(&e[..ptr]), le_word(&e[ptr..]));
             let name = match tag {
                 12 => "_DT_INIT",
                 13 => "_DT_FINI",
@@ -353,9 +421,9 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
                 continue;
             }
             let Ok(bytes) = sec.data() else { continue };
-            let skip = (sec.address() % 8) as usize;
-            for chunk in bytes.get(skip..).unwrap_or_default().as_chunks::<8>().0 {
-                let v = u64::from_le_bytes(*chunk);
+            let skip = (sec.address() % ptr as u64) as usize;
+            for chunk in bytes.get(skip..).unwrap_or_default().chunks_exact(ptr) {
+                let v = le_word(chunk);
                 if v != 0 {
                     data_pointers.push(at(v));
                 }
@@ -384,6 +452,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
             Some(ImportSymbol {
                 name: name.to_string(),
                 kind,
+                library: None,
             })
         })
         .collect();
@@ -438,15 +507,20 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     // lazy binding: a GOT slot of an imported function first holds the address of code in the
     // PLT that pushes the slot index and jumps to the resolver
     let mut got_code: Vec<u64> = Vec::new();
+    let jump_slot = if ptr == 4 {
+        R_386_JMP_SLOT
+    } else {
+        R_X86_64_JUMP_SLOT
+    };
     for (off, rel) in file.dynamic_relocations().into_iter().flatten() {
-        if !matches!(rel.flags(), RelocationFlags::Elf { r_type } if r_type == R_X86_64_JUMP_SLOT)
+        if !matches!(rel.flags(), RelocationFlags::Elf { r_type } if r_type == jump_slot)
             || !language.id.starts_with("x86")
         {
             continue;
         }
-        let mut buf = [0u8; 8];
+        let mut buf = vec![0u8; ptr];
         if image.read(at(off), &mut buf) {
-            let v = u64::from_le_bytes(buf);
+            let v = le_word(&buf);
             if v != 0 {
                 got_code.push(at(v));
             }
@@ -470,6 +544,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
                     .or_else(|| file.section_by_name(".got"))
                     .map(|s| s.address()),
                 read: &read,
+                address_size: ptr as u8,
             })
         }
         None => crate::eh::Frames::default(),
@@ -482,6 +557,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         .collect();
 
     Ok(Loaded {
+        format: "elf",
         language,
         base,
         image,
@@ -490,6 +566,17 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         code_symbols,
         debug,
         plt,
+        import_slots: BTreeMap::new(),
+        externals: BTreeMap::new(),
+        pdata_starts: Vec::new(),
+        conventions: BTreeMap::new(),
+        pic_base: (ptr == 4)
+            .then(|| {
+                file.section_by_name(".got.plt")
+                    .or_else(|| file.section_by_name(".got"))
+                    .map(|s| at(s.address()))
+            })
+            .flatten(),
         entry,
         init_pointers,
         data_pointers,
@@ -503,14 +590,25 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     })
 }
 
-/// Names x86-64 PLT entries after the symbol of the GOT slot their `jmp [rip+disp32]` reads.
-/// In a static binary the slots carry IRELATIVE relocations instead, and an entry is named after
-/// the IFUNC symbol at the relocation's resolver (as Ghidra names them), or `FUN_<address>`.
+/// A little-endian word of up to 8 bytes.
+pub(crate) fn le_word(b: &[u8]) -> u64 {
+    let n = b.len().min(8);
+    let mut w = [0u8; 8];
+    w[..n].copy_from_slice(&b[..n]);
+    u64::from_le_bytes(w)
+}
+
+/// Names x86 PLT entries after the symbol of the GOT slot their indirect `jmp` reads: `jmp
+/// [rip+disp32]` on x86-64, `jmp [abs32]` (`ff 25`) or `jmp [ebx+disp32]` (`ff a3`, position
+/// independent, relative to `.got.plt`) on 32-bit x86. In a static binary the slots carry
+/// IRELATIVE relocations instead, and an entry is named after the IFUNC symbol at the
+/// relocation's resolver (as Ghidra names them), or `FUN_<address>`.
 fn x86_plt(
     file: &object::File<'_>,
     data: &[u8],
     bias: u64,
     functions: &BTreeMap<u64, String>,
+    ptr: usize,
 ) -> BTreeMap<u64, String> {
     let mut slots: BTreeMap<u64, Option<String>> = BTreeMap::new();
     let dynsyms = file.dynamic_symbol_table();
@@ -529,55 +627,92 @@ fn x86_plt(
             slots.insert(off, Some(name));
         }
     }
+    let file_bytes = |sec: &object::Section<'_, '_>| -> Option<&[u8]> {
+        let (foff, fsize) = sec.file_range()?;
+        data.get(foff as usize..(foff + fsize) as usize)
+    };
     for sec in file.sections() {
-        if !matches!(sec.name(), Ok(".rela.plt" | ".rela.iplt")) {
-            continue;
-        }
+        let (rela, irelative) = match sec.name() {
+            Ok(".rela.plt" | ".rela.iplt") => (true, R_X86_64_IRELATIVE),
+            Ok(".rel.plt" | ".rel.iplt") => (false, R_386_IRELATIVE),
+            _ => continue,
+        };
         let Ok(bytes) = sec.data() else { continue };
-        for r in bytes.as_chunks::<24>().0 {
-            let word = |i: usize| {
-                let mut b = [0u8; 8];
-                b.copy_from_slice(&r[i..i + 8]);
-                u64::from_le_bytes(b)
-            };
-            if word(8) & 0xffff_ffff == u64::from(R_X86_64_IRELATIVE) {
-                let resolver = word(16).wrapping_add(bias);
-                slots
-                    .entry(word(0))
-                    .or_insert_with(|| functions.get(&resolver).cloned());
+        let size = if rela { 3 * ptr } else { 2 * ptr };
+        for r in bytes.chunks_exact(size) {
+            let word = |i: usize| le_word(&r[i * ptr..(i + 1) * ptr]);
+            // the relocation type is the low byte of a 32-bit r_info, the low word of a 64-bit one
+            let mask = if ptr == 4 { 0xff } else { 0xffff_ffff };
+            if word(1) & mask != u64::from(irelative) {
+                continue;
             }
+            // REL keeps the resolver in the slot
+            let resolver = if rela {
+                word(2)
+            } else {
+                file.sections()
+                    .find_map(|s| {
+                        let (lo, hi) = (s.address(), s.address() + s.size());
+                        if !(lo..hi).contains(&word(0)) {
+                            return None;
+                        }
+                        let b = file_bytes(&s)?;
+                        let at = (word(0) - lo) as usize;
+                        b.get(at..at + ptr).map(le_word)
+                    })
+                    .unwrap_or(0)
+            }
+            .wrapping_add(bias);
+            slots
+                .entry(word(0))
+                .or_insert_with(|| functions.get(&resolver).cloned());
         }
     }
+    let got_plt = file
+        .section_by_name(".got.plt")
+        .or_else(|| file.section_by_name(".got"))
+        .map(|s| s.address());
     let mut out = BTreeMap::new();
     for sec in file.sections() {
         let Ok(name) = sec.name() else { continue };
         if !matches!(name, ".plt" | ".plt.sec" | ".plt.got" | ".iplt") {
             continue;
         }
-        let Some((foff, fsize)) = sec.file_range() else {
+        let Some(bytes) = file_bytes(&sec) else {
             continue;
         };
-        let Some(bytes) = data.get(foff as usize..(foff + fsize) as usize) else {
-            continue;
-        };
-        // every `jmp [rip+disp32]` through a known slot starts an entry, together with the
-        // `bnd` prefix and `endbr64` in front of it (`.plt.sec`)
+        // every indirect jump through a known slot starts an entry, together with the `bnd`
+        // prefix and `endbr64`/`endbr32` in front of it (`.plt.sec`)
         let mut j = 0;
         while j + 6 <= bytes.len() {
-            if bytes[j] != 0xff || bytes[j + 1] != 0x25 {
+            let modrm = bytes[j + 1];
+            if bytes[j] != 0xff || !(modrm == 0x25 || (ptr == 4 && modrm == 0xa3)) {
                 j += 1;
                 continue;
             }
             let mut d = [0u8; 4];
             d.copy_from_slice(&bytes[j + 2..j + 6]);
-            let disp = i64::from(i32::from_le_bytes(d));
-            let got = (sec.address() + j as u64 + 6).wrapping_add_signed(disp);
+            let got = match (ptr, modrm) {
+                (8, _) => (sec.address() + j as u64 + 6)
+                    .wrapping_add_signed(i64::from(i32::from_le_bytes(d))),
+                (_, 0x25) => u64::from(u32::from_le_bytes(d)),
+                _ => match got_plt {
+                    Some(g) => {
+                        (g.wrapping_add_signed(i64::from(i32::from_le_bytes(d)))) & 0xffff_ffff
+                    }
+                    None => {
+                        j += 6;
+                        continue;
+                    }
+                },
+            };
             if let Some(n) = slots.get(&got) {
                 let mut start = j;
                 if start >= 1 && bytes[start - 1] == 0xf2 {
                     start -= 1;
                 }
-                if start >= 4 && bytes[start - 4..start] == [0xf3, 0x0f, 0x1e, 0xfa] {
+                if start >= 4 && matches!(bytes[start - 4..start], [0xf3, 0x0f, 0x1e, 0xfa | 0xfb])
+                {
                     start -= 4;
                 }
                 let entry = (sec.address() + start as u64).wrapping_add(bias);

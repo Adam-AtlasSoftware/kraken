@@ -173,3 +173,29 @@ cargo test -p xtask native_licenses                            # committed texts
 - **Signatures carry the name they were made with.** A name with parentheses (`operator()`) broke the old name replacement, which took the first `(`; the parameter list is now the parenthesis matching the last one, and the name is replaced when the head ends with the name the signature was made with.
 - **Deleted code stays code.** Ghidra keeps instructions and their references when a function is deleted; the index does too (the calls into a deleted function stay, with no callee name), until data is defined over them.
 
+
+## Phase 6: PE and 32-bit x86
+
+How it works is in the ADR (PE and 32-bit x86). Code: `crates/engine-native/src/{pe,win32}.rs`,
+the data models in `ctypes.rs`, PIC and `.refptr` references in `refs.rs`, `pc_thunk_name` in
+`discover.rs`, call fixups and core types in the shim; corpus sets `corpus/pe` and
+`corpus/elf32`.
+
+```sh
+corpus/build.sh pe elf32                                       # mingw-w64 and multilib in the container
+python3 -I corpus/tools/groundtruth_pe.py && python3 -I corpus/tools/groundtruth.py --set elf32
+cargo run -p kraken-record -- --corpus corpus/pe --function-cap 32 corpus/pe/bin/<image>
+cargo test -p engine-native --test windows                     # truth, Win32 calls, TLS, exports, contract suite
+KRAKEN_AGREEMENT_SET=corpus/pe cargo test -p engine-native --test agreement agreement_over_the_corpus -- --ignored --nocapture
+```
+
+### Traps
+
+- **The C++ decompiler drops call-fixup targets.** `PcodeInjectLibrary::registerCallFixup` keeps the payload but not the `<target name=...>` list, which Ghidra's Java side applies by function name. Without it `__x86.get_pc_thunk.bx` is an ordinary call and every PIC access reads `unaff_EBX + 0xb2e`. The shim reads the targets from the compiler spec's DOM after `init` and sets the inject id when a function of that name is added.
+- **Stand-ins need bytes.** A call whose target is an address with no bytes makes the switch analysis throw `unable to load 16 bytes`; the import stand-ins hold `ret` (`ret n` for a 32-bit stdcall function, so the purge matches) and are writable, or a load through a data import folds to `0xc3c3c3c3`.
+- **`.eh_frame` is `.eh_fram` in an image.** ld writes 8-byte section names into PE images (no string table entry), so the long name lookup misses it. objdump's `--dwarf=frames` misses it too.
+- **The x86 Windows default convention is `__stdcall` with `extrapop="unknown"`**, not `__cdecl`: marking Win32 functions `__stdcall` changes nothing printed, the C runtime has to be marked `__cdecl` explicitly, and x86-64 has only `__fastcall` (`__stdcall`/`__cdecl` are aliases).
+- **`long` is not 8 bytes everywhere.** The core types were LP64; a 32-bit or Windows prototype with `size_t` or `long` declared 8-byte parameters and shifted every stack argument. The shim now registers `longlong`/`ulonglong` as the 8-byte names there and the type store spells declarations through `DataModel::spell`.
+- **Ghidra's PE names are not one rule.** On x86 it strips `_`/`@n` from static C symbols but not from library or global ones (`_main`, `_printf`, `_DllMain@12` stay; `_mainCRTStartup`, an entry, does not); on x86-64 its TLS label beats the symbol; some functions with both a symbol and a `.text` section symbol at their address are called `.text` (x86-64 only, with no rule visible from outside). The first two are copied, the last is not.
+- **x87 instructions refer to themselves.** Sleigh sets the FPU instruction pointer to `inst_start`, an address-sized constant; it is not a reference.
+- **mingw puts a `nop` after a call that never returns** (so the return address stays inside the unwind range). The body ends at the call, as Ghidra's does; the compiler's DWARF size counts the `nop`.

@@ -30,7 +30,7 @@ pub fn imports(loaded: &Loaded) -> Vec<SymbolEntry> {
         .map(|i| SymbolEntry {
             name: display_name(&i.name),
             address: stubs.get(i.name.as_str()).map(|a| Hex64(*a)),
-            library: None,
+            library: i.library.clone(),
             kind: i.kind,
             mangled: mangled(&i.name),
         })

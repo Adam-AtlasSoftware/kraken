@@ -16,13 +16,13 @@ use kraken_engine::{
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
     FlowKind, FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, OperandKind, OperandToken,
-    Page, PageRequest, ProtoError, StringEntry, SymbolEntry, Token, TokenKind, TypeDef,
+    Page, PageRequest, ProtoError, StringEntry, SymbolEntry, Token, TokenKind, TypeDef, TypeRef,
     VersionedLogOp, hex_bytes,
 };
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::ctypes::{base_definitions, parse_prototype, signature};
+use crate::ctypes::{base_definitions_in, parse_prototype_in, signature};
 use crate::discover::{Func, discover};
 use crate::elf::{Loaded, load};
 use crate::listing::{flow_kind, operands};
@@ -829,16 +829,45 @@ fn build_program(
         }
     }
 
+    // the functions PE imports stand for (IAT slots point at them), so calls through the slots
+    // name and type their callee
+    for (at, name) in &loaded.externals {
+        session.add_function(*at, name).map_err(native)?;
+    }
+
     // types: the base typedefs, then the prototypes of known library functions present here
-    // (by their symbol-table names)
-    let mut by_name: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
-    for (entry, name) in &raw_names {
-        by_name.entry(name.as_str()).or_default().push(*entry);
+    // (by their symbol-table names; x86 PE names also without their decoration, `_printf`)
+    let model = loaded.data_model();
+    let mut by_name: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    for (entry, name) in raw_names.iter().chain(&loaded.externals) {
+        by_name.entry(name.clone()).or_default().push(*entry);
+        if loaded.is_pe()
+            && model.pointer == 4
+            && let Some(c) = crate::pe::undecorate(name)
+        {
+            by_name.entry(c).or_default().push(*entry);
+        }
     }
     let named = |n: &str| by_name.get(n).cloned().unwrap_or_default();
-    let mut types = TypeModel::default();
+    let mut types = TypeModel::new(model);
     let mut signatures = BTreeMap::new();
-    for d in base_definitions() {
+    let mut base = base_definitions_in(model);
+    if loaded.is_pe() {
+        // Windows' wchar_t is UTF-16
+        for d in &mut base {
+            if let TypeDef::Typedef(t) = d
+                && t.name == "wchar_t"
+            {
+                t.target = TypeRef::Primitive(kraken_proto::Primitive {
+                    class: kraken_proto::PrimitiveClass::Char,
+                    size: 2,
+                    signed: true,
+                });
+            }
+        }
+        base.extend(crate::win32::base_definitions(model));
+    }
+    for d in base {
         types.define(d, &mut session, &named)?;
     }
     let mut noreturn: BTreeSet<u64> = found
@@ -847,26 +876,67 @@ fn build_program(
         .filter(|f| f.noreturn)
         .map(|f| f.entry)
         .collect();
-    for src in crate::libc::PROTOTYPES {
+    let mut library_conventions: Vec<(u64, String)> = Vec::new();
+    let tables: &[&[&str]] = if loaded.is_pe() {
+        &[crate::libc::PROTOTYPES, crate::win32::PROTOTYPES]
+    } else {
+        &[crate::libc::PROTOTYPES]
+    };
+    for src in tables.iter().flat_map(|t| t.iter()) {
         let (name, mut proto) =
-            parse_prototype(src).map_err(|e| ProtoError::new(ErrorCode::Internal, e))?;
+            parse_prototype_in(src, model).map_err(|e| ProtoError::new(ErrorCode::Internal, e))?;
         if !by_name.contains_key(name.as_str()) {
             continue;
         }
-        // the parameter names of the C library headers, as Ghidra shows them (`__format`)
-        for param in &mut proto.params {
-            if let Some(n) = param.name.as_mut().filter(|n| !n.starts_with("__")) {
-                n.insert_str(0, "__");
+        // the parameter names of the C library headers, as Ghidra shows them (`__format`);
+        // the Windows tables carry the Windows headers' names
+        if !loaded.is_pe() {
+            for param in &mut proto.params {
+                if let Some(n) = param.name.as_mut().filter(|n| !n.starts_with("__")) {
+                    n.insert_str(0, "__");
+                }
             }
+        } else if let Some((_, names)) = crate::win32::CRT_PARAMETER_NAMES
+            .iter()
+            .find(|(n, p)| *n == name && p.len() == proto.params.len())
+        {
+            for (param, n) in proto.params.iter_mut().zip(names.iter()) {
+                param.name = Some((*n).to_string());
+            }
+        }
+        // one convention on x86-64 Windows
+        if model.pointer == 8 {
+            proto.calling_convention.clear();
+        } else if loaded.is_pe() && proto.calling_convention.is_empty() {
+            // the 32-bit Windows default is `__stdcall` with the stack purge left open; the C
+            // runtime's functions are `__cdecl`
+            proto.calling_convention = "__cdecl".into();
         }
         if proto.noreturn {
             noreturn.extend(named(&name));
         }
+        let convention = proto.calling_convention.clone();
         for (at, text) in types.define(TypeDef::Function(proto), &mut session, &named)? {
+            if !convention.is_empty() {
+                library_conventions.push((at, convention.clone()));
+            }
             signatures.insert(at, text);
         }
     }
     drop(by_name);
+    // conventions from decorations, and the library's, kept for rebuilt decompiler functions
+    for (at, c) in library_conventions {
+        loaded.conventions.entry(at).or_insert(c);
+    }
+    for (at, c) in &loaded.conventions {
+        // a convention the compiler spec does not have leaves the default
+        let _ = session.set_convention(*at, c);
+    }
+    // the listed signatures are the functions', not the stand-ins' of imports
+    for at in loaded.externals.keys() {
+        signatures.remove(at);
+        noreturn.remove(at);
+    }
     let mut locked = signatures.clone();
 
     // DWARF: its named types, then the prototypes of the functions it describes
@@ -921,7 +991,7 @@ fn build_program(
     let imports = crate::symbols::imports(&loaded);
     let info = ProgramInfo {
         arch: loaded.language.id.to_string(),
-        format: "elf".into(),
+        format: loaded.format.into(),
         base: Hex64(loaded.base),
         sha256: hex_bytes(&Sha256::digest(&data)),
         size: data.len() as u64,

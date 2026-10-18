@@ -1,0 +1,70 @@
+{
+  "binary": "win_tls-x64-O0.exe",
+  "ground_truth_from": "win_tls-x64-O0.exe",
+  "sha256": "853c3c0fcdd0a3b3a6cc48804bb126e9aebefb7b93ec08384956d7b190ac049a",
+  "source_file": "pe/src/win_tls.c",
+  "opt": "O0",
+  "arch": "x64",
+  "functions": [
+    {
+      "name": "printf",
+      "demangled": "printf",
+      "entry": "0x140001450",
+      "size": 84
+    },
+    {
+      "name": "on_tls",
+      "demangled": "on_tls",
+      "entry": "0x1400014a4",
+      "size": 62
+    },
+    {
+      "name": "by_key",
+      "demangled": "by_key",
+      "entry": "0x1400014e2",
+      "size": 54
+    },
+    {
+      "name": "by_name",
+      "demangled": "by_name",
+      "entry": "0x140001518",
+      "size": 62
+    },
+    {
+      "name": "classify",
+      "demangled": "classify",
+      "entry": "0x140001556",
+      "size": 129
+    },
+    {
+      "name": "checksum",
+      "demangled": "checksum",
+      "entry": "0x1400015d7",
+      "size": 71
+    },
+    {
+      "name": "apply_all",
+      "demangled": "apply_all",
+      "entry": "0x14000161e",
+      "size": 97
+    },
+    {
+      "name": "probe_kernel",
+      "demangled": "probe_kernel",
+      "entry": "0x14000167f",
+      "size": 108
+    },
+    {
+      "name": "copy_upper",
+      "demangled": "copy_upper",
+      "entry": "0x1400016eb",
+      "size": 220
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x1400017c7",
+      "size": 588
+    }
+  ]
+}

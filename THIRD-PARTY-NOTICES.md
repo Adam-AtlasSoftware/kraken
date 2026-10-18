@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-593 crates in 30 license groups.
+594 crates in 31 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -21305,6 +21305,91 @@ No license file in the source of: r-efi 5.3.0, r-efi 6.0.0. They are distributed
     2. Altered source versions must be plainly marked as such, and must not be
        misrepresented as being the original software.
     3. This notice may not be removed or altered from any source distribution.
+
+### MIT OR NCSA
+
+- msvc-demangler 0.11.0 (<https://github.com/mstange/msvc-demangler-rust>)
+
+**LICENSE.LLVM** — msvc-demangler 0.11.0
+
+    ==============================================================================
+    LLVM Release License
+    ==============================================================================
+    University of Illinois/NCSA
+    Open Source License
+
+    Copyright (c) 2003-2017 University of Illinois at Urbana-Champaign.
+    All rights reserved.
+
+    Developed by:
+
+        LLVM Team
+
+        University of Illinois at Urbana-Champaign
+
+        http://llvm.org
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of
+    this software and associated documentation files (the "Software"), to deal with
+    the Software without restriction, including without limitation the rights to
+    use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+    of the Software, and to permit persons to whom the Software is furnished to do
+    so, subject to the following conditions:
+
+        * Redistributions of source code must retain the above copyright notice,
+          this list of conditions and the following disclaimers.
+
+        * Redistributions in binary form must reproduce the above copyright notice,
+          this list of conditions and the following disclaimers in the
+          documentation and/or other materials provided with the distribution.
+
+        * Neither the names of the LLVM Team, University of Illinois at
+          Urbana-Champaign, nor the names of its contributors may be used to
+          endorse or promote products derived from this Software without specific
+          prior written permission.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+    FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+    CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+    SOFTWARE.
+
+    ==============================================================================
+    Copyrights and Licenses for Third Party Software Distributed with LLVM:
+    ==============================================================================
+    The LLVM software contains code written by third parties.  Such software will
+    have its own individual LICENSE.TXT file in the directory in which it appears.
+    This file will describe the copyrights, license, and restrictions which apply
+    to that code.
+
+    The disclaimer of warranty in the University of Illinois Open Source License
+    applies to all code in the LLVM Distribution, and nothing in any of the
+    other licenses gives permission to use the names of the LLVM Team or the
+    University of Illinois to endorse or promote products derived from this
+    Software.
+
+    The following pieces of software have additional or alternate copyrights,
+    licenses, and/or restrictions:
+
+    Program             Directory
+    -------             ---------
+    Google Test         llvm/utils/unittest/googletest
+    OpenBSD regex       llvm/lib/Support/{reg*, COPYRIGHT.regex}
+    pyyaml tests        llvm/test/YAMLParser/{*.data, LICENSE.TXT}
+    ARM contributions   llvm/lib/Target/ARM/LICENSE.TXT
+    md5 contributions   llvm/lib/Support/MD5.cpp llvm/include/llvm/Support/MD5.h
+
+**LICENSE.MIT** — msvc-demangler 0.11.0
+
+    Copyright 2017-2018 Google, Mozilla
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### MIT OR Zlib OR Apache-2.0
 

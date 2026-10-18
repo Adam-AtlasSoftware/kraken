@@ -137,7 +137,7 @@ Then create projects with `--engine ghidra` (the default when `engine` is not se
 | | Native | Ghidra |
 |---|---|---|
 | Needs Java and a Ghidra download | No | Yes |
-| Formats | 64-bit ELF (x86-64, AArch64) | ELF, PE, Mach-O, 32-bit, many processors |
+| Formats | ELF (x86-64, AArch64, 32-bit x86) and PE (x86, x86-64) | ELF, PE, Mach-O, many processors |
 | Decompiler, listing, graph, xrefs, strings, rename and undo | Yes | Yes |
 | Debug-info types, C++ demangling | Not yet | Yes |
 

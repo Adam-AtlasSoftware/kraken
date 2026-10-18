@@ -1,0 +1,58 @@
+{
+  "binary": "win_dll-x86-O0.dll",
+  "ground_truth_from": "win_dll-x86-O0.dll",
+  "sha256": "7a79dbbc89db6d1de8e3cacaa29d55cb198c5fe52c317a416f08c91e1b6eefc3",
+  "source_file": "pe/src/win_dll.c",
+  "opt": "O0",
+  "arch": "x86",
+  "functions": [
+    {
+      "name": "_op_sub",
+      "demangled": "op_sub",
+      "entry": "0x6ae814d0",
+      "size": 11
+    },
+    {
+      "name": "_op_xor",
+      "demangled": "op_xor",
+      "entry": "0x6ae814db",
+      "size": 11
+    },
+    {
+      "name": "_op_min",
+      "demangled": "op_min",
+      "entry": "0x6ae814e6",
+      "size": 16
+    },
+    {
+      "name": "_kr_add",
+      "demangled": "kr_add",
+      "entry": "0x6ae814f6",
+      "size": 26
+    },
+    {
+      "name": "_kr_mul",
+      "demangled": "kr_mul",
+      "entry": "0x6ae81510",
+      "size": 60
+    },
+    {
+      "name": "_kr_secret",
+      "demangled": "kr_secret",
+      "entry": "0x6ae8154c",
+      "size": 73
+    },
+    {
+      "name": "_kr_version",
+      "demangled": "kr_version",
+      "entry": "0x6ae81595",
+      "size": 10
+    },
+    {
+      "name": "_DllMain@12",
+      "demangled": "DllMain",
+      "entry": "0x6ae8159f",
+      "size": 28
+    }
+  ]
+}

@@ -4,7 +4,8 @@
 //! skips otherwise.
 //!
 //! `cargo test -p engine-native --test agreement -- --nocapture` prints the numbers for the
-//! guarded binaries; `-- --ignored --nocapture` prints them for all 20. Names are compared by
+//! guarded binaries; `-- --ignored --nocapture` prints them for all 20 (and with
+//! `KRAKEN_AGREEMENT_SET=corpus/pe` or `corpus/elf32` for those sets). Names are compared by
 //! entry, signatures without spacing (exactly, and by types alone).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -113,16 +114,21 @@ struct Report {
 }
 
 async fn compare(binary: &str, c: NativeConfig) -> Report {
+    compare_in("corpus", binary, c).await
+}
+
+/// [`compare`] for a binary of the corpus set in `set` (`corpus`, `corpus/pe`, `corpus/elf32`).
+async fn compare_in(set: &str, binary: &str, c: NativeConfig) -> Report {
     let e = NativeEngine::new(c);
     let cancel = CancellationToken::new();
     e.open_binary(
-        &root().join("corpus/bin").join(binary),
+        &root().join(set).join("bin").join(binary),
         &LoaderSpec::default(),
         &cancel,
     )
     .await
     .expect("open");
-    let text = std::fs::read_to_string(root().join(format!("corpus/fixtures/{binary}.json")))
+    let text = std::fs::read_to_string(root().join(set).join(format!("fixtures/{binary}.json")))
         .expect("fixture");
     let fx: Value = serde_json::from_str(&text).expect("json");
     let mut r = Report::default();
@@ -552,6 +558,56 @@ async fn agrees_with_ghidra_on_the_guarded_binaries() {
     }
 }
 
+/// PE images (mingw-w64, PE32+ and PE32, a DLL, a stripped PE32+ found through `.pdata`) and
+/// 32-bit PIC ELF against Ghidra's fixtures (`corpus/pe`, `corpus/elf32`; the PE fixtures hold
+/// the first 32 functions of each image). The PE sweep over all 14 full recordings is in the ADR.
+#[tokio::test(flavor = "multi_thread")]
+async fn agrees_with_ghidra_on_pe_and_elf32() {
+    for (set, binary) in [
+        ("corpus/pe", "win_tls-x64-O0.exe"),
+        ("corpus/pe", "win_tls-x86-O0.exe"),
+        ("corpus/pe", "win_dll-x64-O0.dll"),
+        ("corpus/pe", "win_tls-x64-O2-stripped.exe"),
+        ("corpus/elf32", "pie_list-i386-O0"),
+        ("corpus/elf32", "switch_vm-i386-O0"),
+    ] {
+        let Some(c) = config() else { return };
+        let r = compare_in(set, binary, c).await;
+        print(binary, &r);
+        assert_eq!(r.functions.recall(), 1.0, "{binary}: functions");
+        assert!(r.bodies.recall() >= 0.95, "{binary}: bodies {}", r.bodies);
+        assert!(
+            r.blocks.recall() >= 0.95,
+            "{binary}: cfg blocks {}",
+            r.blocks
+        );
+        assert!(r.edges.recall() >= 0.95, "{binary}: cfg edges {}", r.edges);
+        assert!(r.callers.recall() >= 0.9, "{binary}: callers {}", r.callers);
+        // Ghidra's constant propagation follows a few more register values (PE header reads)
+        assert!(
+            r.xrefs_image.recall() >= 0.75,
+            "{binary}: xrefs {}",
+            r.xrefs_image
+        );
+        assert!(
+            r.strings.recall() >= 0.95,
+            "{binary}: strings {}",
+            r.strings
+        );
+        assert!(
+            r.imports.recall() >= 0.95,
+            "{binary}: imports {}",
+            r.imports
+        );
+        assert!(
+            r.exports.recall() >= 0.75,
+            "{binary}: exports {}",
+            r.exports
+        );
+        assert!(r.names.recall() >= 0.85, "{binary}: names {}", r.names);
+    }
+}
+
 /// C++ names (from DWARF, else demangled) and DWARF signatures against Ghidra with DWARF.
 #[tokio::test(flavor = "multi_thread")]
 async fn cpp_names_and_dwarf_signatures_agree_with_ghidra() {
@@ -568,7 +624,10 @@ async fn cpp_names_and_dwarf_signatures_agree_with_ghidra() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "all 20 fixtures, including the slow static binaries"]
 async fn agreement_over_the_corpus() {
-    let mut names: Vec<String> = std::fs::read_dir(root().join("corpus/fixtures"))
+    // KRAKEN_AGREEMENT_SET=corpus/pe (or corpus/elf32) sweeps another set
+    let set = std::env::var("KRAKEN_AGREEMENT_SET").unwrap_or_else(|_| "corpus".into());
+    let set = set.as_str();
+    let mut names: Vec<String> = std::fs::read_dir(root().join(set).join("fixtures"))
         .expect("fixtures")
         .filter_map(|e| e.ok())
         .filter_map(|e| {
@@ -586,7 +645,7 @@ async fn agreement_over_the_corpus() {
     let mut total = Report::default();
     for binary in names {
         let Some(c) = config() else { return };
-        let r = compare(&binary, c).await;
+        let r = compare_in(set, &binary, c).await;
         print(&binary, &r);
         macro_rules! sum {
             ($($f:ident),*) => {$(

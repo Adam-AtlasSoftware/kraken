@@ -1,0 +1,46 @@
+{
+  "binary": "switch_vm-x86-O2.exe",
+  "ground_truth_from": "switch_vm-x86-O2.exe",
+  "sha256": "c80c40ec51a88ebe64e6545ad9065c5b0056969d554737311a69ce38e008700f",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "arch": "x86",
+  "functions": [
+    {
+      "name": "_printf",
+      "demangled": "printf",
+      "entry": "0x4014f0",
+      "size": 46
+    },
+    {
+      "name": "_fprintf.constprop.0",
+      "demangled": "fprintf.constprop.0",
+      "entry": "0x401520",
+      "size": 35
+    },
+    {
+      "name": "_vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x401550",
+      "size": 58
+    },
+    {
+      "name": "_vm_run",
+      "demangled": "vm_run",
+      "entry": "0x401590",
+      "size": 1028
+    },
+    {
+      "name": "_op_name",
+      "demangled": "op_name",
+      "entry": "0x4019a0",
+      "size": 22
+    },
+    {
+      "name": "_main",
+      "demangled": "main",
+      "entry": "0x4084f0",
+      "size": 101
+    }
+  ]
+}

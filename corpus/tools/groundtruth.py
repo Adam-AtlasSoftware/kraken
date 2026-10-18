@@ -6,6 +6,8 @@ For every unstripped binary in corpus/bin this reads DWARF via `readelf --debug-
 mangled and demangled). Stripped binaries (`*-stripped`) get the truth of their unstripped
 twin: strip does not move code, so addresses are identical (verified via section headers).
 
+`--set elf32` does the same for the 32-bit set (corpus/elf32/bin -> corpus/elf32/truth).
+
 Output: corpus/truth/<binary>.json
   {binary, ground_truth_from, sha256, source_file, opt, functions:[{name, demangled, entry, size}]}
 """
@@ -136,6 +138,11 @@ def text_layout(path):
 
 
 def main():
+    global BIN, TRUTH
+    if sys.argv[1:] == ["--set", "elf32"]:
+        BIN, TRUTH = CORPUS / "elf32" / "bin", CORPUS / "elf32" / "truth"
+    elif sys.argv[1:] not in ([], ["--set", "elf"]):
+        sys.exit("usage: groundtruth.py [--set elf|elf32]")
     TRUTH.mkdir(exist_ok=True)
     for old in TRUTH.glob("*.json"):
         old.unlink()

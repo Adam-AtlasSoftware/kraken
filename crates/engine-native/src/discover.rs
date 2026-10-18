@@ -1,5 +1,6 @@
-//! Function discovery: symbols, the entry point, PLT stubs, init/fini pointers and `.eh_frame`
-//! FDE starts seed a recursive descent over Sleigh flow information; call targets become
+//! Function discovery: symbols, the entry point, PLT stubs and PE import thunks, init/fini
+//! pointers and TLS callbacks, `.eh_frame` FDE starts and PE `.pdata` entries seed a recursive
+//! descent over Sleigh flow information; call targets become
 //! functions, exception landing pads join the body of the function whose FDE lists them, and
 //! address-sized constants that point at code no function covers yet (function pointers, the
 //! `main` handed to `__libc_start_main`) are tried last.
@@ -51,6 +52,36 @@ pub const NORETURN: &[&str] = &[
     "_ZSt24__throw_out_of_range_fmtPKcz",
     "_ZSt28__throw_bad_array_new_lengthv",
 ];
+
+/// Whether a function of this name never returns (the list above, the C library's, and for PE
+/// images the Win32 and C runtime ones).
+pub fn is_noreturn_name(loaded: &Loaded, name: &str) -> bool {
+    NORETURN.contains(&name)
+        || (loaded.is_pe() && crate::win32::noreturn_names().any(|n| n == name))
+}
+
+/// Ghidra's name for a 32-bit x86 `get_pc_thunk` (`mov <reg>,[esp]; ret`) at `addr`, which
+/// position-independent code calls to find itself. Named, it gets the compiler spec's call fixup
+/// in the decompiler, which stripped PIC code needs for its switch tables and constants.
+pub fn pc_thunk_name(loaded: &Loaded, addr: u64) -> Option<&'static str> {
+    if loaded.pointer_size() != 4 {
+        return None;
+    }
+    let mut b = [0u8; 4];
+    if !loaded.image.read(addr, &mut b) || b[0] != 0x8b || b[2] != 0x24 || b[3] != 0xc3 {
+        return None;
+    }
+    Some(match b[1] {
+        0x04 => "__i686.get_pc_thunk.ax",
+        0x0c => "__i686.get_pc_thunk.cx",
+        0x14 => "__i686.get_pc_thunk.dx",
+        0x1c => "__i686.get_pc_thunk.bx",
+        0x2c => "__i686.get_pc_thunk.bp",
+        0x34 => "__i686.get_pc_thunk.si",
+        0x3c => "__i686.get_pc_thunk.di",
+        _ => return None,
+    })
+}
 
 /// Upper bound on instructions in one function body.
 const MAX_BODY: usize = 50_000;
@@ -253,13 +284,33 @@ impl Walker<'_> {
                     }
                     Flow::ConditionalJump => work.extend(insn.targets.iter().copied()),
                     Flow::Call => {
+                        for t in &insn.targets {
+                            // unnamed, or holding an FDE start's placeholder name
+                            let unnamed = self.names.get(t).is_none_or(|n| *n == default_name(*t));
+                            if unnamed && let Some(n) = pc_thunk_name(self.loaded, *t) {
+                                self.names.insert(*t, n.to_string());
+                                self.session.add_function(*t, n)?;
+                            }
+                        }
                         calls.extend(insn.targets.iter().copied());
                         if insn.targets.iter().any(|t| self.noreturn.contains(t)) {
                             break;
                         }
                         self.sites.extend(insn.targets.iter().map(|t| (*t, next)));
                     }
-                    Flow::IndirectCall | Flow::Fallthrough => {}
+                    Flow::IndirectCall => {
+                        // `call [IAT slot]` of an import that never returns
+                        let ends = insn.refs.iter().any(|r| {
+                            self.loaded
+                                .import_slots
+                                .get(&r.addr)
+                                .is_some_and(|n| is_noreturn_name(self.loaded, n))
+                        });
+                        if ends {
+                            break;
+                        }
+                    }
+                    Flow::Fallthrough => {}
                 }
                 if !insn.fallthrough {
                     break;
@@ -437,7 +488,7 @@ pub fn discover(
     }
     let mut noreturn: BTreeSet<u64> = names
         .iter()
-        .filter(|(_, n)| NORETURN.contains(&n.as_str()))
+        .filter(|(_, n)| is_noreturn_name(loaded, n))
         .map(|(a, _)| *a)
         .collect();
 
@@ -464,8 +515,14 @@ pub fn discover(
     for (a, n) in &names {
         session.add_function(*a, n)?;
     }
-    // every FDE starts a function (or a separated part of one, such as `main.cold`)
-    for a in loaded.fde_starts.iter().filter(|a| loaded.is_code(**a)) {
+    // every FDE starts a function (or a separated part of one, such as `main.cold`), and so
+    // does every unchained `.pdata` entry of a PE image
+    for a in loaded
+        .fde_starts
+        .iter()
+        .chain(&loaded.pdata_starts)
+        .filter(|a| loaded.is_code(**a))
+    {
         names.entry(*a).or_insert_with(|| default_name(*a));
         seeds.push(*a);
     }
