@@ -2,6 +2,9 @@
   // Lint with clippy on save, like CI does.
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.check.extraArgs": ["--all-targets"],
+  // Its own build folder (target/rust-analyzer), so a check on save never makes a build in
+  // the terminal or a task wait for the target/ lock.
+  "rust-analyzer.cargo.targetDir": true,
   // Tests run from the editor never touch your real krakend.
   "rust-analyzer.runnables.extraEnv": {
     "KRAKEN_NO_DAEMON": "1"
