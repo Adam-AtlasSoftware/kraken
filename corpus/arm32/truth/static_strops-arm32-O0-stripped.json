@@ -1,0 +1,57 @@
+{
+  "binary": "static_strops-arm32-O0-stripped",
+  "ground_truth_from": "static_strops-arm32-O0",
+  "sha256": "ab885030c071a502d2175fda24639ba0ecc2d8862d60cd46505ec6972cbd0687",
+  "source_file": "src/static_strops.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "hash_str",
+      "demangled": "hash_str",
+      "entry": "0x10318",
+      "size": 104
+    },
+    {
+      "name": "str_reverse",
+      "demangled": "str_reverse",
+      "entry": "0x10380",
+      "size": 184
+    },
+    {
+      "name": "str_count_char",
+      "demangled": "str_count_char",
+      "entry": "0x10438",
+      "size": 116
+    },
+    {
+      "name": "str_upper",
+      "demangled": "str_upper",
+      "entry": "0x104ac",
+      "size": 124
+    },
+    {
+      "name": "is_palindrome",
+      "demangled": "is_palindrome",
+      "entry": "0x10528",
+      "size": 148
+    },
+    {
+      "name": "caesar",
+      "demangled": "caesar",
+      "entry": "0x105bc",
+      "size": 200
+    },
+    {
+      "name": "join_words",
+      "demangled": "join_words",
+      "entry": "0x10684",
+      "size": 288
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x107a4",
+      "size": 592
+    }
+  ]
+}

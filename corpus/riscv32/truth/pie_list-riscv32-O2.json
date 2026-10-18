@@ -1,0 +1,57 @@
+{
+  "binary": "pie_list-riscv32-O2",
+  "ground_truth_from": "pie_list-riscv32-O2",
+  "sha256": "dcf477d96ac0027180263a84dcb1f67c566c1f1f67299da0e9dafdf21bec65aa",
+  "source_file": "src/pie_list.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x100e4",
+      "size": 312
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0x1021c",
+      "size": 8
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0x10224",
+      "size": 34
+    },
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0x10246",
+      "size": 106
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0x102b0",
+      "size": 6
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0x102b6",
+      "size": 14
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0x102c4",
+      "size": 100
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0x10328",
+      "size": 40
+    }
+  ]
+}

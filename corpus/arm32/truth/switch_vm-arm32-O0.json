@@ -1,0 +1,45 @@
+{
+  "binary": "switch_vm-arm32-O0",
+  "ground_truth_from": "switch_vm-arm32-O0",
+  "sha256": "08d996c929783afde5632036ab92dd8b44e87dbb2f89f82e2ab6b044496f781c",
+  "source_file": "src/switch_vm.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x560",
+      "size": 80
+    },
+    {
+      "name": "push",
+      "demangled": "push",
+      "entry": "0x5b0",
+      "size": 112
+    },
+    {
+      "name": "pop",
+      "demangled": "pop",
+      "entry": "0x620",
+      "size": 112
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x690",
+      "size": 932
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xa34",
+      "size": 320
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0xb74",
+      "size": 136
+    }
+  ]
+}

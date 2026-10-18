@@ -1,0 +1,33 @@
+{
+  "binary": "switch_vm-riscv64-O2",
+  "ground_truth_from": "switch_vm-riscv64-O2",
+  "sha256": "b2bfe0a21987ec98609721801d3641d45a6ea4717df74ec8ed182304b18b708f",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x680",
+      "size": 62
+    },
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x776",
+      "size": 38
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x79c",
+      "size": 862
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xafa",
+      "size": 184
+    }
+  ]
+}

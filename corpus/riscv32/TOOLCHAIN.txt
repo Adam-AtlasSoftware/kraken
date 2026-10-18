@@ -1,0 +1,8 @@
+base-image: debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+riscv64-unknown-elf-gcc: riscv64-unknown-elf-gcc (14.2.0+19) 14.2.0
+ld: GNU ld (2.44-3+7+b1) 2.44
+flags: -march=rv32imac -mabi=ilp32 --specs=picolibc.specs -nostartfiles -static
+dpkg: binutils-riscv64-unknown-elf 2.44-3+7+b1
+dpkg: gcc-riscv64-unknown-elf 14.2.0+19
+dpkg: picolibc-riscv64-unknown-elf 1.8.10-2
+dpkg: qemu-user 1:10.0.13+ds-0+deb13u1

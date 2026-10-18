@@ -1,0 +1,155 @@
+{
+  "program": "stripped_calc",
+  "source_file": "src/stripped_calc.c",
+  "reference": "bin/stripped_calc-O0",
+  "reference_sha256": "5f4bf47fb5dc1ed6d58c00bac9cc0599efd6593d57d45e069f8479ccdd31e261",
+  "cases": [
+    {
+      "name": "baseline",
+      "origin": "baseline",
+      "argv": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-0",
+      "origin": "corpus",
+      "argv": [
+        "1 + 2 * 3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-1",
+      "origin": "corpus",
+      "argv": [
+        "(1 + 2) * 3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-2",
+      "origin": "corpus",
+      "argv": [
+        "100 / (5 - 5)"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-3",
+      "origin": "corpus",
+      "argv": [
+        "2 * (3 + 4) * 5"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-4",
+      "origin": "corpus",
+      "argv": [
+        "12 +"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-literal-ignored-5",
+      "origin": "corpus",
+      "argv": [
+        "((7))"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-all-literals-ignored",
+      "origin": "corpus",
+      "argv": [
+        "1 + 2 * 3",
+        "(1 + 2) * 3",
+        "100 / (5 - 5)",
+        "2 * (3 + 4) * 5",
+        "12 +",
+        "((7))"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "argv-flag-ignored",
+      "origin": "corpus",
+      "argv": [
+        "--help"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-literals-ignored",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "1 + 2 * 3\n(1 + 2) * 3\n100 / (5 - 5)\n2 * (3 + 4) * 5\n12 +\n((7))\n",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-0",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "1 + 2 * 3",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-1",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "(1 + 2) * 3",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-2",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "100 / (5 - 5)",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-line-ignored-3",
+      "origin": "corpus",
+      "argv": [],
+      "stdin": "2 * (3 + 4) * 5",
+      "exit": 0,
+      "stdout": "1 + 2 * 3          = 7\n(1 + 2) * 3        = 9\n100 / (5 - 5)      : error\n-(4 + 6) % 7       = -3\n2 * (3 + 4) * 5    = 70\n12 +               : error\n((7))              = 7\nerrors: 2\n",
+      "stderr": ""
+    }
+  ]
+}
