@@ -116,6 +116,9 @@ impl ViewModel {
         if self.rewrite_bulk_translate_blocker().is_some() {
             return;
         }
+        if !self.ai_gate(crate::ai::AiAction::TranslatePlanned(mode)) {
+            return;
+        }
         let queue: VecDeque<(u64, RewriteMode)> = self
             .rewrite
             .rows
@@ -129,6 +132,9 @@ impl ViewModel {
     /// Runs every failed function again, each in the mode of its newest version.
     pub fn rewrite_bulk_retry_failed(&mut self) {
         if self.rewrite_bulk_retry_blocker().is_some() {
+            return;
+        }
+        if !self.ai_gate(crate::ai::AiAction::RetryFailed) {
             return;
         }
         let queue: VecDeque<(u64, RewriteMode)> = self
@@ -174,7 +180,10 @@ impl ViewModel {
             return;
         }
         if let Some((address, mode)) = self.rewrite.bulk.queue.pop_front() {
+            // The person agreed to the whole batch when it started.
+            let was = std::mem::replace(&mut self.ai.bypass, true);
             self.rewrite_run(address, mode);
+            self.ai.bypass = was;
             if self.rewrite.running_for(address).is_none() {
                 // Nothing started (it was already running, or code cannot run); try the next.
                 self.rewrite_bulk_advance();

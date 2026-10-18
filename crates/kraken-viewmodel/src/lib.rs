@@ -10,6 +10,7 @@
 
 pub mod activity;
 pub mod agents;
+pub mod ai;
 mod approval;
 pub mod assist;
 mod backend;

@@ -271,6 +271,8 @@ async fn run(
     let registry = env.registry.clone();
     let record_to = sm.get_one::<String>("record").map(PathBuf::from);
     let mut recorder: Option<Arc<RecordingSource>> = None;
+    // Live runs on a real model are metered like every other model call.
+    let mut meter: Option<kraken_assist::Meter> = None;
 
     let environment: Box<dyn EvalEnvironment>;
     let source: Box<dyn AssistantSource>;
@@ -310,10 +312,21 @@ async fn run(
             );
         }
         _ => {
+            let injected = provider.is_some();
             let selection = match provider {
                 Some(p) => Selection::Api(p),
                 None => selection_from_config(env)?,
             };
+            let policy = crate::cost::policy(env);
+            let m = crate::cost::task_meter(
+                env,
+                &policy,
+                kraken_proto::AiFeature::Eval,
+                None,
+                None,
+                !injected,
+            );
+            meter = Some(m.clone());
             let no_daemon = env.no_daemon(sm);
             environment = Box::new(LiveEnvironment {
                 env,
@@ -323,6 +336,7 @@ async fn run(
             });
             match selection {
                 Selection::Api(p) => {
+                    let p = m.wrap_provider(p);
                     if let Some(path) = &record_to {
                         let note = format!(
                             "{} / {} (recorded by kraken eval)",
@@ -355,6 +369,7 @@ async fn run(
                         sm,
                         choice,
                         open: Mutex::new(Vec::new()),
+                        meter: m,
                     });
                 }
             }
@@ -395,6 +410,9 @@ async fn run(
         .map_err(proto);
     env.factory.shutdown().await;
     let report = report?;
+    if let Some(m) = meter.filter(|m| m.totals().calls > 0) {
+        emit(err, &format!("AI usage: {}\n", m.totals().line()));
+    }
 
     if let (Some(rec), Some(path)) = (recorder, &record_to) {
         rec.cassette().save(path).map_err(proto)?;
@@ -548,6 +566,7 @@ struct AgentSource<'a> {
     sm: &'a ArgMatches,
     choice: AgentChoice,
     open: Mutex<Vec<Arc<dyn AssistBackend>>>,
+    meter: kraken_assist::Meter,
 }
 
 impl AssistantSource for AgentSource<'_> {
@@ -568,7 +587,7 @@ impl AssistantSource for AgentSource<'_> {
         Ok(Assistant::with_engine(
             registry.clone(),
             Arc::new(UnusedBackend),
-            engine,
+            self.meter.wrap(engine),
         ))
     }
 

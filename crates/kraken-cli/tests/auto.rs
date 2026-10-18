@@ -274,6 +274,7 @@ mod terminal_agent {
         let run = kraken(
             &r.env,
             &[
+                "--yes",
                 "auto",
                 &path_str(&work.binary),
                 "--project-dir",
@@ -353,6 +354,7 @@ mod terminal_agent {
         let run = kraken(
             &env,
             &[
+                "--yes",
                 "auto",
                 &path_str(&work.binary),
                 "--project-dir",

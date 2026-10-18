@@ -18,17 +18,25 @@
 //! `explain_selection`; the system prompt never contains it.
 
 pub mod acp;
+pub mod ai_config;
 pub mod assistant;
 pub mod backend;
 pub mod error;
 pub mod glossary;
 pub mod host;
+pub mod meter;
 pub mod output;
+pub mod pricing;
 pub mod provider;
 pub mod tasks;
 
 pub use acp::{
     AcpBackend, AcpSettings, AgentChoice, PlanError, classify_tool, find_kraken_exe, plan_agent,
+};
+pub use ai_config::{
+    AiLimits, AiPolicy, ModelChoice, ModelSource, REPAIR_ATTEMPTS, REPAIR_SUSPECTS,
+    REWRITE_ATTEMPTS, RewriteModel, is_local_url, model_of, provider_kind_of, rewrite_choice,
+    rewrite_max_calls, save_rewrite_config, with_model,
 };
 pub use assistant::{Assistant, ResultTagFilter, TaskResult, ToolCallSummary};
 pub use backend::{
@@ -38,10 +46,12 @@ pub use backend::{
 pub use error::AssistError;
 pub use glossary::{Arch, Glossary, GlossaryEntry, GlossaryKind, GlossaryMatch, MatchKind};
 pub use host::{CallRecord, DEFAULT_EXCLUDED, HostOptions, HostStats, RegistryToolHost};
+pub use meter::{Meter, MeterBuilder, MeterObserver, MeterSpec, daily_budget_message};
 pub use output::{
     AutoNameReport, Component, Confidence, Evidence, EvidenceKind, Explanation,
     InterestingFunction, NameSuggestion, Outcome, Overview, SuggestedName, TaskOutput,
 };
+pub use pricing::{DEFAULT_PRICES, Price, Pricing};
 pub use provider::{
     SAMPLES, load_provider_config, load_rewrite_config, no_provider_message, provider_config_path,
     sample_config, text_backend, text_backend_from_config,

@@ -632,6 +632,9 @@ impl ViewModel {
         if !self.rewrite.can_run() || self.rewrite.running_for(address).is_some() {
             return;
         }
+        if !self.ai_gate(crate::ai::AiAction::RewriteFunction { address, mode }) {
+            return;
+        }
         let name = self.rewrite_name(address);
         let label = match mode {
             RewriteMode::Incremental => format!("Rewriting {name}"),
@@ -640,16 +643,21 @@ impl ViewModel {
         if let Some(d) = self.rewrite.details.get_mut(&address) {
             d.error = None;
         }
+        let mut args = json!({ "address": hex(address), "mode": mode.as_str() });
+        self.ai_rewrite_args(&mut args);
         self.rewrite_start_job(
             JobKind::Function { address, mode },
             label,
             "rewrite_function",
-            json!({ "address": hex(address), "mode": mode.as_str() }),
+            args,
         );
     }
 
     /// Runs the function again in the mode of its newest version.
     pub fn rewrite_retry(&mut self, address: u64) {
+        if !self.ai_gate(crate::ai::AiAction::RetryFunction(address)) {
+            return;
+        }
         let mode = self
             .rewrite
             .details
@@ -668,7 +676,9 @@ impl ViewModel {
                     })
             })
             .unwrap_or_default();
+        let was = std::mem::replace(&mut self.ai.bypass, true);
         self.rewrite_run(address, mode);
+        self.ai.bypass = was;
     }
 
     /// "Rewrite this function" for the function in the decompiler. Returns its address.
@@ -731,6 +741,11 @@ impl ViewModel {
         if running {
             return;
         }
+        if !self.ai_gate(crate::ai::AiAction::WriteSpec(address)) {
+            return;
+        }
+        let mut args = args;
+        self.ai_rewrite_args(&mut args);
         self.rewrite_start_job(JobKind::Spec { address }, label, "rewrite_spec", args);
     }
 

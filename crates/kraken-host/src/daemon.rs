@@ -145,6 +145,13 @@ pub mod event_kind {
     /// fraction, counts, elapsed time and the job that `job_cancel` stops it with). At most a
     /// few per second; every change of stage is sent.
     pub const OPEN_PROGRESS: &str = "open_progress";
+    /// AI work started (a rewrite job asked its model for the first time); the fields are a
+    /// `kraken_proto::AiJobView` under `ai`.
+    pub const AI_STARTED: &str = "ai_started";
+    /// AI work made model calls: usage so far (calls, tokens, estimated cost) under `ai`.
+    pub const AI_PROGRESS: &str = "ai_progress";
+    /// AI work ended (`succeeded`, `failed`, `cancelled` or `limited`), with its totals.
+    pub const AI_DONE: &str = "ai_done";
 }
 
 /// `path` with the symlinks of its existing part resolved and the rest kept: the form the daemon

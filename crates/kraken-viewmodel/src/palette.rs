@@ -84,11 +84,13 @@ pub enum AppAction {
     CreateFunctionHere,
     /// Remove the function being viewed.
     DeleteFunction,
+    /// Show the AI Activity tab: running and recent AI work, its cost, and Stop.
+    ShowAiActivity,
 }
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 39] = [
+    pub const ALL: [AppAction; 40] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -128,6 +130,7 @@ impl AppAction {
         AppAction::ExplainProgram,
         AppAction::RewriteWizard,
         AppAction::Automate,
+        AppAction::ShowAiActivity,
     ];
 
     /// Palette title.
@@ -172,6 +175,7 @@ impl AppAction {
             AppAction::ShowBookmarks => "Show bookmarks",
             AppAction::CreateFunctionHere => "Create function here",
             AppAction::DeleteFunction => "Delete this function...",
+            AppAction::ShowAiActivity => "Show AI activity",
         }
     }
 
@@ -223,6 +227,9 @@ impl AppAction {
             AppAction::ShowBookmarks => "See every address you or an agent bookmarked",
             AppAction::CreateFunctionHere => "Tell KRAKEN the code at the cursor is a function",
             AppAction::DeleteFunction => "Remove a function the analysis got wrong",
+            AppAction::ShowAiActivity => {
+                "See which AI work runs, on which model, what it has cost so far, and stop it"
+            }
         }
     }
 
@@ -393,6 +400,8 @@ pub enum UiRequest {
     TakeTour,
     /// Show the Automate dialog.
     OpenAutomate,
+    /// Bring the AI Activity tab forward.
+    ShowAiActivity,
 }
 
 /// What a palette row does when chosen.

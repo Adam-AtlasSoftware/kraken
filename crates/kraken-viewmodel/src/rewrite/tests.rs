@@ -1551,3 +1551,158 @@ fn review_and_accept_are_blocked_until_there_is_something_to_review_and_accept()
             .is_some_and(|w| w.contains("Build the project first"))
     );
 }
+
+// ---- asking before spending ----------------------------------------------------------------
+
+/// A setup with a paid cloud model for both the assistant and the rewrite.
+fn paid_policy() -> kraken_assist::AiPolicy {
+    let cfg = kraken_agent::ProviderConfig::Anthropic {
+        model: Some("claude-sonnet-5-5".into()),
+        api_key: kraken_agent::SecretRef::Env("K".into()),
+        base_url: None,
+        max_tokens: None,
+        context_window: None,
+    };
+    let choice = kraken_assist::ModelChoice::new(cfg, kraken_assist::ModelSource::Assistant);
+    kraken_assist::AiPolicy {
+        assistant: Some(choice.clone()),
+        rewrite: Some(choice),
+        ..kraken_assist::AiPolicy::default()
+    }
+}
+
+#[test]
+fn the_question_comes_before_a_rewrite_run_and_cancel_starts_nothing() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    r.vm.ai.policy = paid_policy();
+
+    r.vm.rewrite_run(0x401240, RewriteMode::Incremental);
+    let c = r.vm.ai.confirm.clone().expect("the question");
+    assert_eq!(c.estimate.max_calls, 3);
+    assert_eq!(c.estimate.model, "claude-sonnet-5-5");
+    assert!(c.estimate.cost_text().contains("(estimate)"), "{c:?}");
+    r.idle();
+    assert!(r.backend.calls_to("rewrite_function").is_empty());
+    r.vm.ai_confirm_no();
+    assert!(r.vm.ai.confirm.is_none());
+    r.idle();
+    assert!(
+        r.backend.calls_to("rewrite_function").is_empty(),
+        "Cancel starts nothing"
+    );
+    assert!(r.vm.rewrite.jobs.is_empty());
+
+    // Translate all planned asks once, for every planned function, then runs them one by one.
+    r.vm.rewrite_bulk_translate_planned(RewriteMode::Incremental);
+    let c = r.vm.ai.confirm.clone().expect("the question");
+    assert_eq!(
+        c.estimate.max_calls, 6,
+        "two planned functions, three tries each"
+    );
+    r.vm.ai_confirm_yes();
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 1);
+    r.backend.emit(done(
+        "job-1",
+        "rewrite_function",
+        version_result("ru-9", 1, "verified", "pass"),
+    ));
+    r.until("the second function to start", |vm| {
+        vm.rewrite.running_for(0x4012a0).is_some()
+    });
+    assert!(
+        r.vm.ai.confirm.is_none(),
+        "the next function of an agreed batch does not ask again"
+    );
+}
+
+#[test]
+fn cheap_runs_and_local_models_start_without_asking() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    let mut p = paid_policy();
+    p.limits.skip_confirm_under = Some(100.0);
+    r.vm.ai.policy = p;
+    r.vm.rewrite_run(0x401240, RewriteMode::Incremental);
+    assert!(r.vm.ai.confirm.is_none());
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 1);
+
+    let local = kraken_agent::ProviderConfig::OpenaiCompatible {
+        base_url: "http://localhost:11434/v1".into(),
+        model: "qwen3".into(),
+        api_key: None,
+        supports_tools: true,
+        context_window: None,
+    };
+    r.vm.ai.policy = kraken_assist::AiPolicy {
+        rewrite: Some(kraken_assist::ModelChoice::new(
+            local,
+            kraken_assist::ModelSource::Rewrite,
+        )),
+        ..kraken_assist::AiPolicy::default()
+    };
+    r.vm.rewrite_run(0x4012a0, RewriteMode::Incremental);
+    assert!(r.vm.ai.confirm.is_none(), "free work never asks");
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 2);
+}
+
+#[test]
+fn a_model_for_this_run_goes_with_the_job_and_the_budget_refuses_new_work() {
+    let mut r = opened(bulk_backend());
+    r.vm.rewrite_refresh();
+    r.idle();
+    let mut p = paid_policy();
+    p.limits.skip_confirm_under = Some(100.0);
+    r.vm.ai.policy = p;
+    r.vm.ai.run_override = Some(crate::ai::RunOverride {
+        which: kraken_assist::RewriteModel::Assistant,
+        model: "claude-haiku-4-5".into(),
+    });
+    r.vm.rewrite_run(0x401240, RewriteMode::Incremental);
+    r.idle();
+    let call = &r.backend.calls_to("rewrite_function")[0];
+    assert_eq!(call["provider"], "assistant");
+    assert_eq!(call["model"], "claude-haiku-4-5");
+
+    // Today's budget is used up: nothing starts, and the person is told why.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let daily = kraken_model::DailyLedger::at(dir.path().join("daily.json"));
+    daily
+        .add(&kraken_proto::AiCallRecord {
+            ts_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_millis() as i64,
+            feature: kraken_proto::AiFeature::Rewrite,
+            provider_kind: kraken_proto::AiProviderKind::Api,
+            provider: "anthropic".into(),
+            model: "claude".into(),
+            job_id: None,
+            run_id: None,
+            origin: kraken_proto::AiOrigin::Gui,
+            input_tokens: None,
+            output_tokens: None,
+            wall_ms: 1,
+            cost_usd: Some(9.0),
+            billing: kraken_proto::AiBilling::Metered,
+        })
+        .expect("daily");
+    r.vm.ai.daily = Some(daily);
+    r.vm.ai.policy.limits.daily_budget = Some(5.0);
+    r.vm.rewrite_run(0x4012a0, RewriteMode::Incremental);
+    assert!(r.vm.ai.confirm.is_none());
+    r.idle();
+    assert_eq!(r.backend.calls_to("rewrite_function").len(), 1);
+    assert!(
+        r.vm.toasts
+            .iter()
+            .any(|t| t.text.contains("Today's AI budget of $5.00")),
+        "{:?}",
+        r.vm.toasts
+    );
+}

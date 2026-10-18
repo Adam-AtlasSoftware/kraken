@@ -123,6 +123,12 @@ pub trait AssistBackend: Send + Sync {
     /// Ends anything kept between runs (a terminal agent's session).
     fn close(&self) {}
 
+    /// The chat model API behind the backend, when it is one; the meter wraps it to count every
+    /// request with its tokens.
+    fn chat_provider(&self) -> Option<Arc<dyn ChatProvider>> {
+        None
+    }
+
     /// One text-only request: `req.system` and `req.messages` in, the reply text out. No KRAKEN
     /// tools are offered (`req.tools` is ignored) and nothing is run on the backend's side: the
     /// rewrite pipeline sends everything the model needs in the prompt and builds and tests the
@@ -157,6 +163,10 @@ impl AssistBackend for ApiBackend {
 
     fn provider_info(&self) -> ProviderInfo {
         self.provider.info()
+    }
+
+    fn chat_provider(&self) -> Option<Arc<dyn ChatProvider>> {
+        Some(self.provider.clone())
     }
 
     fn start(&self, spec: RunSpec) -> AgentRun {

@@ -11,6 +11,7 @@
 //! Binary-derived strings in outputs are sanitised and wrapped as
 //! [`Untrusted<String>`](kraken_proto::Untrusted).
 
+pub mod ai;
 pub mod command;
 pub mod commands;
 pub mod context;
@@ -24,6 +25,7 @@ pub mod validate;
 pub mod views;
 pub mod views_data;
 
+pub use ai::{AiBoard, AiWork};
 pub use command::{Command, CommandKind, CommandSpec, Entry, Permission, Registry};
 pub use context::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, DenyApprover,

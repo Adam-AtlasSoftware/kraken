@@ -12,6 +12,8 @@ logged; **dangerous** commands always ask for approval first.
 
 | Command | Kind | Permission | Summary |
 |---|---|---|---|
+| [`ai_jobs`](#ai_jobs) | query | safe | List running and recent AI work with its model, who started it and its usage so far |
+| [`ai_usage`](#ai_usage) | query | safe | Show the model calls made and their estimated cost (project, today or one run) |
 | [`analyze`](#analyze) | job | mutating | Analyse the binary (job): functions, types and references |
 | [`apply_edits`](#apply_edits) | mutation | mutating | Rename, comment and retype many items in one call |
 | [`binary_probe`](#binary_probe) | query | safe | Describe a file and say which engine should open it, without making a project |
@@ -68,6 +70,699 @@ logged; **dangerous** commands always ask for approval first.
 | [`undo_preview`](#undo_preview) | query | safe | Show what undoing a log entry would also undo |
 | [`undo_run`](#undo_run) | mutation | mutating | Undo every edit of an agent run, newest first |
 | [`xrefs`](#xrefs) | query | safe | List cross-references to or from an address |
+
+## ai_jobs
+
+List running and recent AI work with its model, who started it and its usage so far
+
+```sh
+kraken ai-jobs
+```
+
+- Kind: query
+- Permission: safe
+
+Lists the AI work of this session (rewrite jobs started from the window, the command line or by agents): feature, model, who started it, status and usage so far (calls, tokens, estimated cost). Stop one with `job_cancel` and its `job_id`.
+
+Example: `ai_jobs {}`
+
+The daemon keeps the board per project session: running work first, then the latest 40 finished pieces. The same changes are published as `ai_started`, `ai_progress` and `ai_done` events. Assistant runs inside the window or a CLI process are metered there and show in `ai_usage`, not here.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "AiFeature": {
+      "description": "What the model call was for.",
+      "oneOf": [
+        {
+          "const": "assistant",
+          "description": "The assistant: chat, explain, overview.",
+          "type": "string"
+        },
+        {
+          "const": "auto_name",
+          "description": "Suggest names (the auto-name pass).",
+          "type": "string"
+        },
+        {
+          "const": "automate",
+          "description": "Automate: the agent that works through the whole flow.",
+          "type": "string"
+        },
+        {
+          "const": "rewrite",
+          "description": "The Rust rewrite: translations, specs and repairs.",
+          "type": "string"
+        },
+        {
+          "const": "eval",
+          "description": "`kraken eval`.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiJobStatus": {
+      "description": "Where a piece of AI work stands.",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "Still working.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "Finished.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Ended with an error.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Stopped by a person.",
+          "type": "string"
+        },
+        {
+          "const": "limited",
+          "description": "Stopped because it reached a limit (calls, cost or the daily budget).",
+          "type": "string"
+        }
+      ]
+    },
+    "AiJobView": {
+      "description": "A piece of AI work: a rewrite job, an assistant task, an Automate run.",
+      "properties": {
+        "ended_ms": {
+          "description": "When it ended.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "feature": {
+          "$ref": "#/$defs/AiFeature",
+          "description": "What it is for."
+        },
+        "id": {
+          "description": "Id of the AI work (`ai-3`).",
+          "type": "string"
+        },
+        "job_id": {
+          "description": "The daemon job behind it, when there is one: what `job_cancel` stops.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "One line saying what it does (\"Rewriting checksum\").",
+          "type": "string"
+        },
+        "message": {
+          "description": "Why it ended, for a failure or a limit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model, when known.",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/AiOrigin",
+          "description": "Who started it."
+        },
+        "provider": {
+          "description": "Provider id or agent id.",
+          "type": "string"
+        },
+        "provider_kind": {
+          "$ref": "#/$defs/AiProviderKind",
+          "description": "Where the model runs."
+        },
+        "started_by": {
+          "default": "",
+          "description": "The agent or user id that started it.",
+          "type": "string"
+        },
+        "started_ms": {
+          "description": "When it started, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/AiJobStatus",
+          "description": "Where it stands."
+        },
+        "usage": {
+          "$ref": "#/$defs/AiUsageTotals",
+          "description": "Usage so far."
+        }
+      },
+      "required": [
+        "id",
+        "feature",
+        "label",
+        "provider_kind",
+        "provider",
+        "model",
+        "origin",
+        "status",
+        "started_ms",
+        "usage"
+      ],
+      "type": "object"
+    },
+    "AiOrigin": {
+      "description": "Who started a piece of AI work.",
+      "oneOf": [
+        {
+          "const": "gui",
+          "description": "The person, in the window.",
+          "type": "string"
+        },
+        {
+          "const": "cli",
+          "description": "The person, on the command line.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "An agent (an assistant run, a terminal agent, an MCP client).",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Tests and embedding code.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiProviderKind": {
+      "description": "Where the model runs.",
+      "oneOf": [
+        {
+          "const": "api",
+          "description": "A model API in the cloud, billed per token.",
+          "type": "string"
+        },
+        {
+          "const": "local",
+          "description": "A model on this computer (Ollama, LM Studio, llama-server): free.",
+          "type": "string"
+        },
+        {
+          "const": "terminal_agent",
+          "description": "A terminal agent (Claude Code, Codex, Gemini CLI), billed by its own subscription.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiUsageTotals": {
+      "description": "Sums over model calls.",
+      "properties": {
+        "calls": {
+          "description": "Model calls.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cost_usd": {
+          "description": "Estimated cost of the metered calls, US dollars (an estimate).",
+          "format": "double",
+          "type": "number"
+        },
+        "free_calls": {
+          "default": 0,
+          "description": "Calls to local models (free).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "description": "Input tokens reported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "description": "Output tokens reported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subscription_calls": {
+          "default": 0,
+          "description": "Calls billed by a terminal agent's subscription.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unpriced_calls": {
+          "default": 0,
+          "description": "Metered calls whose model has no price in the table.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wall_ms": {
+          "description": "Time spent waiting for models, milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "calls",
+        "input_tokens",
+        "output_tokens",
+        "wall_ms",
+        "cost_usd"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `ai_jobs`.",
+  "properties": {
+    "jobs": {
+      "description": "Running work first, then the latest finished work.",
+      "items": {
+        "$ref": "#/$defs/AiJobView"
+      },
+      "type": "array"
+    },
+    "running": {
+      "description": "Pieces of work still running.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "jobs",
+    "running"
+  ],
+  "title": "AiJobsOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## ai_usage
+
+Show the model calls made and their estimated cost (project, today or one run)
+
+```sh
+kraken ai-usage [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Adds up the model calls KRAKEN made: calls, tokens, time and an estimated cost, by feature (assistant, auto_name, automate, rewrite) and model. `scope` is `project` (default), `today` (all projects, UTC day) or `run` with a `run_id` (an AI run id or a job id). Costs are estimates.
+
+Example: `ai_usage {"scope": "today"}`
+
+Every model call (assistant chat, explain and overview, Suggest names, Automate, each rewrite translation, spec and repair attempt, evaluation runs) is recorded in the project database with the provider, the model, the feature, the job or run it belongs to, the tokens the provider reported, the time it took and a cost estimated from the price table (`[pricing]` in config.toml over built-in list prices). Terminal agents report no tokens: their calls are counted and marked as billed by the agent's subscription. Local models cost nothing. A small file in the KRAKEN data directory keeps the daily totals of all projects, which the daily budget (`[ai_limits]`) is checked against; `scope: today` reads it.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `run_id` | `--run-id` | string | no | For `scope: run`: the AI run id (`ai-3`) or job id (`job-3`). |
+| `scope` | `--scope` | one of `project`, `today`, `run` | no | `project` (default), `today` or `run`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "AiBilling": {
+      "description": "How a call is paid for.",
+      "oneOf": [
+        {
+          "const": "metered",
+          "description": "Per token; the cost is an estimate from the price table.",
+          "type": "string"
+        },
+        {
+          "const": "subscription",
+          "description": "By the terminal agent's own subscription; KRAKEN sees no tokens.",
+          "type": "string"
+        },
+        {
+          "const": "free",
+          "description": "A local model: free.",
+          "type": "string"
+        },
+        {
+          "const": "unpriced",
+          "description": "Per token, but the price table has no entry for the model.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiCallRecord": {
+      "description": "One model call, as the usage ledger stores it.",
+      "properties": {
+        "billing": {
+          "$ref": "#/$defs/AiBilling",
+          "description": "How the call is paid for."
+        },
+        "cost_usd": {
+          "description": "Estimated cost in US dollars; `None` when it cannot be estimated (see `billing`).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "feature": {
+          "$ref": "#/$defs/AiFeature",
+          "description": "What it was for."
+        },
+        "input_tokens": {
+          "description": "Input tokens, when the provider reported them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "job_id": {
+          "description": "The daemon job the call belongs to (`job-3`), if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model, when known.",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/AiOrigin",
+          "description": "Who started the work."
+        },
+        "output_tokens": {
+          "description": "Output tokens, when the provider reported them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider": {
+          "description": "Provider id (`anthropic`, `openai_compatible`) or agent id (`claude`).",
+          "type": "string"
+        },
+        "provider_kind": {
+          "$ref": "#/$defs/AiProviderKind",
+          "description": "Where the model runs."
+        },
+        "run_id": {
+          "description": "The AI run the call belongs to (an assistant run id, `ai-3`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ts_ms": {
+          "description": "When the call ended, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "wall_ms": {
+          "description": "How long the call took, milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ts_ms",
+        "feature",
+        "provider_kind",
+        "provider",
+        "model",
+        "origin",
+        "wall_ms",
+        "billing"
+      ],
+      "type": "object"
+    },
+    "AiFeature": {
+      "description": "What the model call was for.",
+      "oneOf": [
+        {
+          "const": "assistant",
+          "description": "The assistant: chat, explain, overview.",
+          "type": "string"
+        },
+        {
+          "const": "auto_name",
+          "description": "Suggest names (the auto-name pass).",
+          "type": "string"
+        },
+        {
+          "const": "automate",
+          "description": "Automate: the agent that works through the whole flow.",
+          "type": "string"
+        },
+        {
+          "const": "rewrite",
+          "description": "The Rust rewrite: translations, specs and repairs.",
+          "type": "string"
+        },
+        {
+          "const": "eval",
+          "description": "`kraken eval`.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiOrigin": {
+      "description": "Who started a piece of AI work.",
+      "oneOf": [
+        {
+          "const": "gui",
+          "description": "The person, in the window.",
+          "type": "string"
+        },
+        {
+          "const": "cli",
+          "description": "The person, on the command line.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "An agent (an assistant run, a terminal agent, an MCP client).",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Tests and embedding code.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiProviderKind": {
+      "description": "Where the model runs.",
+      "oneOf": [
+        {
+          "const": "api",
+          "description": "A model API in the cloud, billed per token.",
+          "type": "string"
+        },
+        {
+          "const": "local",
+          "description": "A model on this computer (Ollama, LM Studio, llama-server): free.",
+          "type": "string"
+        },
+        {
+          "const": "terminal_agent",
+          "description": "A terminal agent (Claude Code, Codex, Gemini CLI), billed by its own subscription.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiUsageGroupView": {
+      "description": "Totals of one feature and model.",
+      "properties": {
+        "feature": {
+          "$ref": "#/$defs/AiFeature",
+          "description": "What the calls were for."
+        },
+        "model": {
+          "description": "The model (or the provider when no model is known).",
+          "type": "string"
+        },
+        "totals": {
+          "$ref": "#/$defs/AiUsageTotals",
+          "description": "Their totals."
+        }
+      },
+      "required": [
+        "feature",
+        "model",
+        "totals"
+      ],
+      "type": "object"
+    },
+    "AiUsageScope": {
+      "description": "What `ai_usage` adds up.",
+      "oneOf": [
+        {
+          "const": "project",
+          "description": "Every model call made for the open project.",
+          "type": "string"
+        },
+        {
+          "const": "today",
+          "description": "Today (UTC): all projects together, with this project's calls listed.",
+          "type": "string"
+        },
+        {
+          "const": "run",
+          "description": "One piece of AI work: `run_id` is its AI run id or its job id.",
+          "type": "string"
+        }
+      ]
+    },
+    "AiUsageTotals": {
+      "description": "Sums over model calls.",
+      "properties": {
+        "calls": {
+          "description": "Model calls.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cost_usd": {
+          "description": "Estimated cost of the metered calls, US dollars (an estimate).",
+          "format": "double",
+          "type": "number"
+        },
+        "free_calls": {
+          "default": 0,
+          "description": "Calls to local models (free).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "description": "Input tokens reported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "description": "Output tokens reported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subscription_calls": {
+          "default": 0,
+          "description": "Calls billed by a terminal agent's subscription.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unpriced_calls": {
+          "default": 0,
+          "description": "Metered calls whose model has no price in the table.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wall_ms": {
+          "description": "Time spent waiting for models, milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "calls",
+        "input_tokens",
+        "output_tokens",
+        "wall_ms",
+        "cost_usd"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `ai_usage`.",
+  "properties": {
+    "groups": {
+      "description": "This project's calls by feature and model.",
+      "items": {
+        "$ref": "#/$defs/AiUsageGroupView"
+      },
+      "type": "array"
+    },
+    "note": {
+      "description": "Money is an estimate; what it is based on.",
+      "type": "string"
+    },
+    "recent": {
+      "description": "This project's latest calls, newest first (at most 20).",
+      "items": {
+        "$ref": "#/$defs/AiCallRecord"
+      },
+      "type": "array"
+    },
+    "scope": {
+      "$ref": "#/$defs/AiUsageScope",
+      "description": "The scope added up."
+    },
+    "summary": {
+      "description": "One line: calls, tokens and the estimated cost.",
+      "type": "string"
+    },
+    "totals": {
+      "$ref": "#/$defs/AiUsageTotals",
+      "description": "The totals. For `today` they count every project."
+    }
+  },
+  "required": [
+    "scope",
+    "totals",
+    "groups",
+    "recent",
+    "summary",
+    "note"
+  ],
+  "title": "AiUsageOut",
+  "type": "object"
+}
+```
+
+</details>
 
 ## analyze
 
@@ -6577,6 +7272,8 @@ Decompiles the function, asks the configured provider (`[provider]` in config.to
 | `cases` | `--cases` | integer | no | Random test cases to run (default 200, at most 2000). |
 | `max_attempts` | `--max-attempts` | integer | no | Most translation attempts (default 3, at most 8). A failed attempt's compiler output or counterexample goes back to the model; 1 turns the repair loop off. |
 | `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates the decompile; `spec` reimplements from the function's spec, writing it first if none is stored. |
+| `model` | `--model` | string | no | Use this model name instead of the configured one, for this run only (not saved). |
+| `provider` | `--provider` | string | no | Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else `[provider]`) or `assistant` (`[provider]`, the assistant's model). |
 | `seed` | `--seed` | integer | no | Seed of the random test cases (default fixed, so runs are reproducible). |
 
 <details>
@@ -6907,6 +7604,8 @@ Plans the program bottom-up (callees first, recursive groups together), translat
 | `inputs` | `--inputs` | json | no | Extra program-level cases (at most 64). |
 | `max_attempts` | `--max-attempts` | integer | no | Most translation attempts per function (default 3, 1 to 8). |
 | `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates decompiles. `spec` is not available for programs yet. |
+| `model` | `--model` | string | no | Use this model name instead of the configured one, for this run only (not saved). |
+| `provider` | `--provider` | string | no | Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else `[provider]`) or `assistant` (`[provider]`, the assistant's model). |
 | `repair_rounds` | `--repair-rounds` | integer | no | Rounds of program-level repair after a failed verdict (default 2, at most 4; 0 turns it off). Each round re-translates the functions likeliest to cause the first differing case. |
 | `scope` | `--scope` | one of `function`, `all` | no | `all` (the only scope today): every non-library function the entry point reaches. |
 | `seed` | `--seed` | integer | no | Seed of the random function-level and program-level cases (default fixed). |
@@ -7572,6 +8271,8 @@ First half of spec-then-reimplement. The provider writes Markdown with the fixed
 |---|---|---|---|---|
 | `address` | `--address` | json | no | The function (any address inside it) for `scope: function`. |
 | `max_functions` | `--max-functions` | integer | no | For `scope: all`, the most functions the spec is written from, in plan order (default 30, at most 100). |
+| `model` | `--model` | string | no | Use this model name instead of the configured one, for this run only (not saved). |
+| `provider` | `--provider` | string | no | Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else `[provider]`) or `assistant` (`[provider]`, the assistant's model). |
 | `scope` | `--scope` | one of `function`, `all` | no | `function` for one function (with `address`), `all` for the whole program. |
 
 <details>

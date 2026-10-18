@@ -350,7 +350,99 @@ fn mode_step(ui: &mut egui::Ui, vm: &mut ViewModel) {
 
 // ---------------------------------------------------------------- check
 
-fn check_step(ui: &mut egui::Ui, vm: &ViewModel) {
+fn check_step(ui: &mut egui::Ui, vm: &mut ViewModel) {
+    check_list(ui, vm);
+    model_for_run(ui, vm);
+}
+
+/// The Check step's choice of model for this run only (not saved unless the person saves it).
+fn model_for_run(ui: &mut egui::Ui, vm: &mut ViewModel) {
+    let p = pal(ui);
+    ui.separator();
+    ui.label(medium("Model for this run", 13.0).color(p.text_strong));
+    let mut other = vm.ai.run_override.is_some();
+    if ui
+        .checkbox(&mut other, "Use a different model for this run")
+        .on_hover_text(
+            "Pick the model for this rewrite only. Your settings stay as they are unless you save it.",
+        )
+        .changed()
+    {
+        vm.ai.run_override = other.then(kraken_viewmodel::ai::RunOverride::default);
+    }
+    let configured = vm
+        .ai
+        .policy
+        .rewrite
+        .as_ref()
+        .map_or_else(|| "none set up".to_string(), |c| c.label());
+    let Some(mut o) = vm.ai.run_override.clone() else {
+        ui.label(
+            RichText::new(format!(
+                "The configured rewrite model is used: {configured}."
+            ))
+            .size(12.0)
+            .color(p.text_dim),
+        );
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut o.which,
+            kraken_assist::RewriteModel::Configured,
+            "The rewrite model",
+        )
+        .on_hover_text(
+            "The [rewrite] table of your config, or the assistant's model when there is none",
+        );
+        ui.radio_value(
+            &mut o.which,
+            kraken_assist::RewriteModel::Assistant,
+            "The assistant's model",
+        )
+        .on_hover_text("The model the assistant uses ([provider] in your config)");
+    });
+    ui.horizontal(|ui| {
+        ui.label("Model name");
+        ui.add(
+            egui::TextEdit::singleline(&mut o.model)
+                .hint_text("leave empty for the configured name")
+                .desired_width(240.0),
+        )
+        .on_hover_text("Ask the same provider for another model, for example a cheaper one");
+    });
+    if vm.ai.run_override.as_ref() != Some(&o) {
+        vm.ai.run_override = Some(o);
+    }
+    let chosen = vm.ai_rewrite_choice();
+    let can_save = vm.ai.config_path.is_some() && chosen.is_some();
+    let save = ui
+        .add_enabled(can_save, egui::Button::new("Save as the rewrite model"))
+        .on_hover_text(
+            "Also use this model for future rewrites (writes the [rewrite] table of config.toml)",
+        )
+        .on_disabled_hover_text("There is no config file to save to, or no model is set up");
+    if save.clicked()
+        && let (Some(path), Some(c)) = (vm.ai.config_path.clone(), chosen)
+    {
+        match kraken_assist::save_rewrite_config(&path, Some(&c.config)) {
+            Ok(()) => {
+                vm.ai.run_override = None;
+                vm.ai_reload();
+                vm.toast(
+                    kraken_viewmodel::ToastLevel::Success,
+                    format!("Saved: rewrites now use {}.", c.label()),
+                );
+            }
+            Err(e) => vm.toast(
+                kraken_viewmodel::ToastLevel::Warning,
+                format!("Could not save the rewrite model: {e}"),
+            ),
+        }
+    }
+}
+
+fn check_list(ui: &mut egui::Ui, vm: &ViewModel) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
     for c in vm.rewrite_wizard_checks() {

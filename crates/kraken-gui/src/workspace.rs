@@ -31,6 +31,7 @@ pub enum Tab {
     Rewrite,
     Search,
     Bookmarks,
+    AiActivity,
 }
 
 impl Tab {
@@ -50,6 +51,7 @@ impl Tab {
             Tab::Rewrite => "Rewrite",
             Tab::Search => "Search",
             Tab::Bookmarks => "Bookmarks",
+            Tab::AiActivity => "AI Activity",
         }
     }
 
@@ -124,6 +126,8 @@ pub struct UiState {
     pub rewrite: crate::rewrite::RewriteUi,
     /// A tab menu asked for the help of this panel.
     pub help_request: Option<Tab>,
+    /// The question asked before AI work starts.
+    pub ai_confirm: crate::ai_activity::ConfirmUi,
 }
 
 impl UiState {
@@ -161,7 +165,9 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
     }
     if let Some(tab) = state.bring_to_front.take() {
         // A layout without the tab (a screenshot scene) gets it in the focused pane.
-        if dock.find_tab(&tab).is_none() && matches!(tab, Tab::Search | Tab::Bookmarks) {
+        if dock.find_tab(&tab).is_none()
+            && matches!(tab, Tab::Search | Tab::Bookmarks | Tab::AiActivity)
+        {
             dock.push_to_focused_leaf(tab);
         }
         if let Some(path) = dock.find_tab(&tab) {
@@ -250,6 +256,7 @@ impl TabViewer for Viewer<'_> {
             ),
             Tab::Search => panels::search::show(ui, self.vm, &mut self.ui.panels),
             Tab::Bookmarks => panels::bookmarks::show(ui, self.vm, &mut self.ui.panels),
+            Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
         }
     }
 }

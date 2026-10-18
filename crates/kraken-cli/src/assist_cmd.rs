@@ -163,6 +163,7 @@ pub(crate) async fn run_assist(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    let provider_injected = provider.is_some();
     let selection = match provider {
         Some(p) => Selection::Api(p),
         None => match selection_from_config(env) {
@@ -194,6 +195,7 @@ pub(crate) async fn run_assist(
         selection,
         task,
         json_out,
+        provider_injected,
         out,
         err,
     )
@@ -220,10 +222,23 @@ pub(crate) async fn execute_task(
     selection: Selection,
     task: Task,
     json_out: bool,
+    provider_injected: bool,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> (i32, Option<TaskResult>) {
     let owns_backend = shared.is_none();
+    // Ask before spending. A provider handed in by embedding code (tests) is not the person's
+    // configured one, so there is nothing to estimate.
+    let policy = crate::cost::policy(env);
+    let feature = task.kind.feature();
+    if !provider_injected {
+        let estimate = policy.estimate(feature, 1, task.max_model_calls());
+        if let Err(e) =
+            crate::cost::confirm(env, &policy, estimate.as_ref(), sm.get_flag("yes"), err)
+        {
+            return (fail(&e, json_out, err), None);
+        }
+    }
     // A terminal agent reaches the project through its own `kraken mcp` server, so this process
     // does not open it; a model API runs its tools through this process's backend.
     let (engine, backend, local_session): (
@@ -252,6 +267,23 @@ pub(crate) async fn execute_task(
         }
     };
 
+    let project_dir = project
+        .map(|p| std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p)))
+        .or_else(|| {
+            env.session
+                .as_ref()
+                .and_then(|s| s.project().ok())
+                .map(|p| p.dir().to_path_buf())
+        });
+    let meter = crate::cost::task_meter(
+        env,
+        &policy,
+        feature,
+        None,
+        project_dir.as_deref(),
+        !provider_injected,
+    );
+    let engine = crate::cost::metered(&meter, engine);
     let info = engine.info();
     match info.kind {
         kraken_assist::BackendKind::Api => emit(
@@ -356,6 +388,12 @@ pub(crate) async fn execute_task(
     }
 
     let code = finish(&result, json_out, streamed_text, out, err);
+    if !json_out && meter.totals().calls > 0 {
+        emit(err, &format!("AI usage: {}\n", meter.totals().line()));
+    }
+    if let Some(m) = meter.limit_message() {
+        emit(err, &format!("{m}\n"));
+    }
     if writes
         && owns_backend
         && let Some(session) = &local_session

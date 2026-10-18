@@ -155,6 +155,8 @@ pub enum BackendEvent {
     JobStarted(ChangeInfo),
     /// The project being created or opened made progress.
     OpenProgress(Box<kraken_proto::OpenProgress>),
+    /// AI work in the daemon started, made model calls or ended.
+    Ai(Box<kraken_proto::AiJobView>),
     /// An agent asked the GUI to show an address (`gui_navigate`).
     Navigate {
         /// Address to show.

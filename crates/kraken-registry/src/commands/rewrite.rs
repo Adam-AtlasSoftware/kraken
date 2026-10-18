@@ -550,6 +550,13 @@ pub struct RewriteFunctionArgs {
     /// counterexample goes back to the model; 1 turns the repair loop off.
     #[serde(default)]
     pub max_attempts: Option<u32>,
+    /// Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else
+    /// `[provider]`) or `assistant` (`[provider]`, the assistant's model).
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Use this model name instead of the configured one, for this run only (not saved).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// A case on which the translation and the original disagreed.
@@ -672,6 +679,8 @@ impl Command for RewriteFunction {
         if args.max_attempts.is_some_and(|a| !(1..=8).contains(&a)) {
             return Err(invalid("`max_attempts` is between 1 and 8"));
         }
+        check_provider(args.provider.as_deref())?;
+        backend.check_budget()?;
         let (s2, ctx2) = (s.clone(), ctx.clone());
         let id = s
             .jobs()
@@ -768,6 +777,13 @@ pub struct RewriteSpecArgs {
     /// (default 30, at most 100).
     #[serde(default)]
     pub max_functions: Option<u32>,
+    /// Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else
+    /// `[provider]`) or `assistant` (`[provider]`, the assistant's model).
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Use this model name instead of the configured one, for this run only (not saved).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Result of a finished `rewrite_spec` job (the `result` of `job_status`).
@@ -840,6 +856,8 @@ impl Command for RewriteSpec {
         if args.max_functions.is_some_and(|m| m == 0 || m > 100) {
             return Err(invalid("`max_functions` must be 1 to 100"));
         }
+        check_provider(args.provider.as_deref())?;
+        backend.check_budget()?;
         let (s2, ctx2) = (s.clone(), ctx.clone());
         let id = s.jobs().spawn("rewrite_spec", move |reporter| async move {
             let out = backend.spec(&s2, &ctx2, args, &reporter).await?;
@@ -1069,6 +1087,23 @@ pub trait RewriteBackend: Send + Sync {
         job: &JobReporter,
     ) -> Result<RewriteExportResult, ProtoError>;
 
+    /// Refuses new AI work when today's budget (`[ai_limits]` of config.toml) is used up.
+    fn check_budget(&self) -> Result<(), ProtoError> {
+        Ok(())
+    }
+
+    /// What `command` with `args` can cost at most, on the model it would use; `None` when
+    /// that cannot be told (no plan yet, no model configured).
+    async fn estimate(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _command: &str,
+        _args: &Value,
+    ) -> Option<kraken_proto::AiEstimate> {
+        None
+    }
+
     /// The body of a `rewrite_program` job (the output directory is resolved by the backend from
     /// the arguments; the caller is a user when `accept_verified` is set).
     async fn program(
@@ -1169,6 +1204,17 @@ pub fn is_inside(base: &Path, target: &Path) -> bool {
     match (canon(base), canon(target)) {
         (Some(b), Some(t)) => t.starts_with(&b),
         _ => false,
+    }
+}
+
+/// Checks the `provider` argument of the rewrite jobs.
+pub(crate) fn check_provider(p: Option<&str>) -> Result<(), ProtoError> {
+    match p.map(str::trim) {
+        None | Some("" | "rewrite" | "assistant") => Ok(()),
+        Some(other) => Err(invalid(&format!(
+            "`provider` is `rewrite` (the [rewrite] table, else [provider]) or `assistant` \
+             ([provider]), not `{other}`"
+        ))),
     }
 }
 

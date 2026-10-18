@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_agent::{ChatProvider, EnvSecrets};
-use kraken_assist::{ApiBackend, AssistBackend};
+use kraken_assist::{AiLimits, ApiBackend, AssistBackend, ModelChoice, Pricing, RewriteModel};
+use kraken_model::DailyLedger;
+use kraken_proto::{AiEstimate, AiProviderKind};
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
     CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanScope, RewriteAcceptArgs,
@@ -66,6 +68,37 @@ pub trait BackendSource: Send + Sync {
     /// The backend to use for the next model call: a model API or a terminal agent, the same
     /// [`AssistBackend`]s the assistant runs on.
     fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError>;
+
+    /// The backend for one run: the configured model, or the assistant's (`which`), with
+    /// `model` in place of the configured model name; and where it runs, when known (a local
+    /// server is free). The default ignores the overrides.
+    fn backend_for(
+        &self,
+        _which: RewriteModel,
+        _model: Option<&str>,
+    ) -> Result<(Arc<dyn AssistBackend>, Option<AiProviderKind>), ProtoError> {
+        Ok((self.backend()?, None))
+    }
+
+    /// The model a run would use, for estimates; `None` when unknown.
+    fn choice(&self, _which: RewriteModel, _model: Option<&str>) -> Option<ModelChoice> {
+        None
+    }
+
+    /// Per-run caps and the daily budget (default: none).
+    fn limits(&self) -> AiLimits {
+        AiLimits::default()
+    }
+
+    /// Prices for cost estimates (default: the built-in table).
+    fn pricing(&self) -> Pricing {
+        Pricing::default()
+    }
+
+    /// The daily totals the budget is checked against and calls are added to (default: none).
+    fn daily(&self) -> Option<DailyLedger> {
+        None
+    }
 }
 
 /// Always the same backend (tests, embedding).
@@ -110,10 +143,48 @@ impl ConfigBackend {
     }
 }
 
+impl ConfigBackend {
+    fn path(&self) -> Option<PathBuf> {
+        kraken_assist::provider_config_path(&|k| (self.env)(k))
+    }
+}
+
+fn config_error(e: impl std::fmt::Display) -> ProtoError {
+    ProtoError::new(ErrorCode::InvalidArgument, e.to_string())
+}
+
 impl BackendSource for ConfigBackend {
     fn backend(&self) -> Result<Arc<dyn AssistBackend>, ProtoError> {
         kraken_assist::text_backend_from_config(&|k| (self.env)(k), &EnvSecrets)
-            .map_err(|e| ProtoError::new(ErrorCode::InvalidArgument, e.to_string()))
+            .map_err(config_error)
+    }
+
+    fn backend_for(
+        &self,
+        which: RewriteModel,
+        model: Option<&str>,
+    ) -> Result<(Arc<dyn AssistBackend>, Option<AiProviderKind>), ProtoError> {
+        let choice = kraken_assist::rewrite_choice(self.path().as_deref(), which, model)
+            .map_err(config_error)?;
+        let backend = kraken_assist::text_backend(&choice.config, &|k| (self.env)(k), &EnvSecrets)
+            .map_err(config_error)?;
+        Ok((backend, Some(choice.kind)))
+    }
+
+    fn choice(&self, which: RewriteModel, model: Option<&str>) -> Option<ModelChoice> {
+        kraken_assist::rewrite_choice(self.path().as_deref(), which, model).ok()
+    }
+
+    fn limits(&self) -> AiLimits {
+        AiLimits::load(self.path().as_deref())
+    }
+
+    fn pricing(&self) -> Pricing {
+        Pricing::load(self.path().as_deref())
+    }
+
+    fn daily(&self) -> Option<DailyLedger> {
+        DailyLedger::from_env(&|k| (self.env)(k))
     }
 }
 
@@ -173,6 +244,9 @@ impl RewriteService {
 
 fn proto(e: RewriteError) -> ProtoError {
     match e {
+        RewriteError::Provider(kraken_agent::AgentError::Limit(m)) => {
+            crate::metering::limit_error(m)
+        }
         RewriteError::Command(p) => p,
         RewriteError::Cancelled => ProtoError::new(ErrorCode::Cancelled, "job cancelled"),
         RewriteError::NoProcessors | RewriteError::Image(_) | RewriteError::Unsupported(_) => {
@@ -468,6 +542,7 @@ impl RewriteService {
         f: &FunctionContext,
         callees: &[FunctionContext],
         job: &JobReporter,
+        ai: &crate::metering::JobAi,
     ) -> Result<StoredSpec, ProtoError> {
         let source_hash = sha256_hex(
             &std::iter::once(f.decompile_hash.as_str())
@@ -489,7 +564,7 @@ impl RewriteService {
             }
         }
         progress(job, "spec", 0, 1, "writing the behavioural spec");
-        let backend = self.backends.backend()?;
+        let backend = ai.backend()?;
         let task = function_spec_task(f, callees, &self.cfg.budget);
         let (spec, reply) = task
             .run(backend.as_ref(), job.cancel_token())
@@ -1013,6 +1088,29 @@ impl RewriteBackend for RewriteService {
         })
     }
 
+    fn check_budget(&self) -> Result<(), ProtoError> {
+        let limits = self.backends.limits();
+        if let (Some(b), Some(d)) = (limits.daily_budget, self.backends.daily()) {
+            let today = d.today().cost_usd;
+            if today >= b {
+                return Err(crate::metering::limit_error(
+                    kraken_assist::daily_budget_message(b, today),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn estimate(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        command: &str,
+        args: &serde_json::Value,
+    ) -> Option<AiEstimate> {
+        self.estimate_calls(s, ctx, command, args).await
+    }
+
     async fn function(
         &self,
         s: &Session,
@@ -1020,91 +1118,19 @@ impl RewriteBackend for RewriteService {
         args: RewriteFunctionArgs,
         job: &JobReporter,
     ) -> Result<RewriteFunctionResult, ProtoError> {
-        self.require_sandbox()?;
-        let project = s.project()?;
-        let dir = project.dir().to_path_buf();
-        let binary_path = project.meta().binary_path;
-        let lift = Lift::new(s, ctx);
-
-        progress(job, "lift", 0, 4, "reading the function");
-        let (f, callees) = self.function_with_callees(&lift, args.address.0).await?;
-        let prepared = self.prepared(f, callees)?;
-        let backend = self.backends.backend()?;
-
-        let mut task = prepared.task.clone();
-        let mut spec_id = None;
-        let mut reuse = Resolved::default();
-        let mut seen: Vec<(String, String)> = vec![(
-            format!("{:#x}", prepared.function.address),
-            prepared.function.decompile_hash.clone(),
-        )];
-        seen.extend(
-            prepared
-                .callees
-                .iter()
-                .map(|c| (format!("{:#x}", c.address), c.decompile_hash.clone())),
-        );
-        let sha = prepared.function.program_sha256.clone();
-        if args.mode == RewriteMode::Spec {
-            let spec = self
-                .spec_for_function(&dir, &prepared.function, &prepared.callees, job)
-                .await?;
-            spec_id = Some(spec.id);
-            task = prepared.reimplement_task(&spec.markdown);
-            with_store(dir.clone(), move |st| st.observe(&sha, &seen)).await?;
-        } else {
-            let (entry, callees) = (prepared.function.address, prepared.callees.clone());
-            reuse = with_store(dir.clone(), move |st| {
-                st.observe(&sha, &seen)?;
-                reuse::resolve(st, &sha, entry, &callees)
-            })
-            .await?;
-            task.callees = reuse.remaining.clone();
-            task.reused = reuse.direct.clone();
-        }
-        let Prepared {
-            function: f,
-            signature: sig,
-            ..
-        } = prepared;
-
-        let defaults = DiffOptions::default();
-        let opts = DiffOptions {
-            seed: args.seed.unwrap_or(defaults.seed),
-            random_cases: args.cases.map_or(defaults.random_cases, |c| c as usize),
-            confinement: self.cfg.confinement.clone(),
-            ..defaults
-        };
-        let work = Work {
-            inputs: generic_inputs(&sig),
-            function: f,
-            signature: sig,
-            task,
-            reuse,
-            mode: args.mode,
-            spec_id,
-            check: Check::Differential,
-            shim: false,
-            opts,
-            max_attempts: args.max_attempts.unwrap_or(self.cfg.max_attempts),
-        };
-        let oracle = OracleThread::spawn(PathBuf::from(&binary_path), self.cfg.oracle.clone());
-        progress(job, "translate", 1, 4, "asking the model for a translation");
-        let run = self
-            .translate(
-                work,
-                &dir,
-                &binary_path,
-                backend.as_ref(),
-                &oracle,
-                Some(job),
-            )
-            .await
-            .map_err(proto)?;
-
-        let (unit, out) = run.last();
-        progress(job, "done", 4, 4, "finished");
-        Ok(function_result(unit, out, run.attempts.len()))
+        let label = format!("Rewriting the function at {}", args.address);
+        let ai = crate::metering::JobAi::new(
+            self.backends.clone(),
+            s,
+            ctx,
+            job,
+            label,
+            args.provider.as_deref(),
+            args.model.as_deref(),
+        )?;
+        let out = self.function_job(s, ctx, args, job, &ai).await;
+        ai.finish(&out);
+        out
     }
 
     async fn accept(
@@ -1113,37 +1139,7 @@ impl RewriteBackend for RewriteService {
         ctx: &CallContext,
         args: RewriteAcceptArgs,
     ) -> Result<RewriteAcceptOut, ProtoError> {
-        let project = s.project()?;
-        let (sha, _) = Lift::new(s, ctx).program().map_err(proto)?;
-        let (id, actor) = (args.unit, ctx.author.id.clone());
-        let (unit, replaced) = with_store(project.dir().to_path_buf(), move |st| {
-            let Some(u) = st.get(&id)? else {
-                return Err(RewriteError::Command(ProtoError::new(
-                    ErrorCode::NotFound,
-                    format!("no rewrite unit `{id}`"),
-                )));
-            };
-            if u.anchor.program_sha256 != sha {
-                return Err(RewriteError::Command(invalid(
-                    "that unit was made for a different binary",
-                )));
-            }
-            if u.status != UnitStatus::Verified {
-                return Err(RewriteError::Command(invalid(format!(
-                    "unit `{id}` is {}; only a verified unit can be accepted",
-                    u.status.as_str()
-                ))));
-            }
-            st.accept(&id, &actor)
-        })
-        .await?;
-        Ok(RewriteAcceptOut {
-            status: "accepted".into(),
-            unit: unit.id,
-            address: Hex64(hex(&unit.anchor.address)),
-            version: unit.version,
-            replaced_version: replaced,
-        })
+        self.accept_unit(s, ctx, args).await
     }
 
     async fn spec(
@@ -1153,98 +1149,24 @@ impl RewriteBackend for RewriteService {
         args: RewriteSpecArgs,
         job: &JobReporter,
     ) -> Result<RewriteSpecResult, ProtoError> {
-        let project = s.project()?;
-        let dir = project.dir().to_path_buf();
-        let lift = Lift::new(s, ctx);
-        match args.scope {
-            PlanScope::Function => {
-                let address = args
-                    .address
-                    .ok_or_else(|| invalid("`scope: function` needs `address`"))?;
-                progress(job, "lift", 0, 2, "reading the function");
-                let (f, callees) = self.function_with_callees(&lift, address.0).await?;
-                // A repeated call with unchanged code returns the stored spec.
-                let spec = self.spec_for_function(&dir, &f, &callees, job).await?;
-                Ok(spec_result(&spec, PlanScope::Function, Some(f.address)))
+        let label = match args.address {
+            Some(a) if args.scope == PlanScope::Function => {
+                format!("Writing the spec of the function at {a}")
             }
-            PlanScope::All => {
-                let (sha, _) = lift.program().map_err(proto)?;
-                progress(job, "plan", 0, 3, "ordering the functions");
-                let max = args
-                    .max_functions
-                    .unwrap_or(DEFAULT_SPEC_FUNCTIONS)
-                    .clamp(1, 100) as usize;
-                let sha2 = sha.clone();
-                let stored = with_store(dir.clone(), move |st| st.plan(&sha2)).await?;
-                let plan = match stored {
-                    Some(p) => p,
-                    None => {
-                        let collected = collect(s, ctx, MAX_PLAN_FUNCTIONS as usize)
-                            .await
-                            .map_err(proto)?;
-                        let plan = to_plan(&collected);
-                        let (sha3, p) = (sha.clone(), plan.clone());
-                        with_store(dir.clone(), move |st| st.save_plan(&sha3, &p)).await?;
-                        plan
-                    }
-                };
-                let mut functions = Vec::new();
-                for (i, p) in plan.entries.iter().take(max).enumerate() {
-                    progress(job, "lift", i as u64, max as u64, &p.name);
-                    let mut f = lift.function(p.address).await.map_err(proto)?;
-                    if f.decompile.len() > SPEC_DECOMPILE_BYTES {
-                        let mut cut = SPEC_DECOMPILE_BYTES;
-                        while !f.decompile.is_char_boundary(cut) {
-                            cut -= 1;
-                        }
-                        f.decompile.truncate(cut);
-                        f.decompile.push_str("\n/* ... cut ... */\n");
-                    }
-                    functions.push(f);
-                }
-                if functions.is_empty() {
-                    return Err(invalid("the program has no functions to describe"));
-                }
-                let source_hash = sha256_hex(
-                    &functions
-                        .iter()
-                        .map(|f| f.decompile_hash.as_str())
-                        .collect::<Vec<_>>()
-                        .join("|"),
-                );
-                progress(job, "spec", 1, 3, "writing the behavioural spec");
-                let backend = self.backends.backend()?;
-                let task = SpecTask {
-                    scope: SpecScope::Program,
-                    functions,
-                    budget: self.cfg.budget.clone(),
-                };
-                let (spec, reply) = task
-                    .run(backend.as_ref(), job.cancel_token())
-                    .await
-                    .map_err(proto)?;
-                let mut stored = StoredSpec {
-                    id: 0,
-                    scope: "program".into(),
-                    address: None,
-                    markdown: spec.markdown,
-                    citations: spec.citations,
-                    facts: u32::try_from(spec.facts).unwrap_or(u32::MAX),
-                    functions: u32::try_from(task.functions.len()).unwrap_or(u32::MAX),
-                    source_hash,
-                    provider: reply.provider.id,
-                    model: reply.provider.model,
-                    prompt_hash: reply.prompt_hash,
-                };
-                let new = NewSpec {
-                    program_sha256: sha,
-                    spec: stored.clone(),
-                };
-                stored.id = with_store(dir, move |st| st.put_spec(new)).await?;
-                progress(job, "done", 3, 3, "finished");
-                Ok(spec_result(&stored, PlanScope::All, None))
-            }
-        }
+            _ => "Writing the spec of the program".to_string(),
+        };
+        let ai = crate::metering::JobAi::new(
+            self.backends.clone(),
+            s,
+            ctx,
+            job,
+            label,
+            args.provider.as_deref(),
+            args.model.as_deref(),
+        )?;
+        let out = self.spec_job(s, ctx, args, job, &ai).await;
+        ai.finish(&out);
+        out
     }
 
     async fn export(
@@ -1355,7 +1277,18 @@ impl RewriteBackend for RewriteService {
         args: RewriteProgramArgs,
         job: &JobReporter,
     ) -> Result<RewriteProgramResult, ProtoError> {
-        self.run_program(s, ctx, args, job).await
+        let ai = crate::metering::JobAi::new(
+            self.backends.clone(),
+            s,
+            ctx,
+            job,
+            "Rewriting the whole program".to_string(),
+            args.provider.as_deref(),
+            args.model.as_deref(),
+        )?;
+        let out = self.run_program(s, ctx, args, job, &ai).await;
+        ai.finish(&out);
+        out
     }
 
     async fn build(
@@ -1472,5 +1405,296 @@ fn spec_result(spec: &StoredSpec, scope: PlanScope, address: Option<u64>) -> Rew
         markdown: Untrusted::sanitized(&spec.markdown),
         provider: spec.provider.clone(),
         model: spec.model.clone(),
+    }
+}
+
+impl RewriteService {
+    async fn function_job(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteFunctionArgs,
+        job: &JobReporter,
+        ai: &crate::metering::JobAi,
+    ) -> Result<RewriteFunctionResult, ProtoError> {
+        self.require_sandbox()?;
+        let project = s.project()?;
+        let dir = project.dir().to_path_buf();
+        let binary_path = project.meta().binary_path;
+        let lift = Lift::new(s, ctx);
+
+        progress(job, "lift", 0, 4, "reading the function");
+        let (f, callees) = self.function_with_callees(&lift, args.address.0).await?;
+        let prepared = self.prepared(f, callees)?;
+
+        let mut task = prepared.task.clone();
+        let mut spec_id = None;
+        let mut reuse = Resolved::default();
+        let mut seen: Vec<(String, String)> = vec![(
+            format!("{:#x}", prepared.function.address),
+            prepared.function.decompile_hash.clone(),
+        )];
+        seen.extend(
+            prepared
+                .callees
+                .iter()
+                .map(|c| (format!("{:#x}", c.address), c.decompile_hash.clone())),
+        );
+        let sha = prepared.function.program_sha256.clone();
+        if args.mode == RewriteMode::Spec {
+            let spec = self
+                .spec_for_function(&dir, &prepared.function, &prepared.callees, job, ai)
+                .await?;
+            spec_id = Some(spec.id);
+            task = prepared.reimplement_task(&spec.markdown);
+            with_store(dir.clone(), move |st| st.observe(&sha, &seen)).await?;
+        } else {
+            let (entry, callees) = (prepared.function.address, prepared.callees.clone());
+            reuse = with_store(dir.clone(), move |st| {
+                st.observe(&sha, &seen)?;
+                reuse::resolve(st, &sha, entry, &callees)
+            })
+            .await?;
+            task.callees = reuse.remaining.clone();
+            task.reused = reuse.direct.clone();
+        }
+        let Prepared {
+            function: f,
+            signature: sig,
+            ..
+        } = prepared;
+
+        let defaults = DiffOptions::default();
+        let opts = DiffOptions {
+            seed: args.seed.unwrap_or(defaults.seed),
+            random_cases: args.cases.map_or(defaults.random_cases, |c| c as usize),
+            confinement: self.cfg.confinement.clone(),
+            ..defaults
+        };
+        let work = Work {
+            inputs: generic_inputs(&sig),
+            function: f,
+            signature: sig,
+            task,
+            reuse,
+            mode: args.mode,
+            spec_id,
+            check: Check::Differential,
+            shim: false,
+            opts,
+            max_attempts: args.max_attempts.unwrap_or(self.cfg.max_attempts),
+        };
+        let oracle = OracleThread::spawn(PathBuf::from(&binary_path), self.cfg.oracle.clone());
+        progress(job, "translate", 1, 4, "asking the model for a translation");
+        let backend = ai.backend()?;
+        let run = self
+            .translate(
+                work,
+                &dir,
+                &binary_path,
+                backend.as_ref(),
+                &oracle,
+                Some(job),
+            )
+            .await
+            .map_err(proto)?;
+
+        let (unit, out) = run.last();
+        progress(job, "done", 4, 4, "finished");
+        Ok(function_result(unit, out, run.attempts.len()))
+    }
+
+    async fn accept_unit(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteAcceptArgs,
+    ) -> Result<RewriteAcceptOut, ProtoError> {
+        let project = s.project()?;
+        let (sha, _) = Lift::new(s, ctx).program().map_err(proto)?;
+        let (id, actor) = (args.unit, ctx.author.id.clone());
+        let (unit, replaced) = with_store(project.dir().to_path_buf(), move |st| {
+            let Some(u) = st.get(&id)? else {
+                return Err(RewriteError::Command(ProtoError::new(
+                    ErrorCode::NotFound,
+                    format!("no rewrite unit `{id}`"),
+                )));
+            };
+            if u.anchor.program_sha256 != sha {
+                return Err(RewriteError::Command(invalid(
+                    "that unit was made for a different binary",
+                )));
+            }
+            if u.status != UnitStatus::Verified {
+                return Err(RewriteError::Command(invalid(format!(
+                    "unit `{id}` is {}; only a verified unit can be accepted",
+                    u.status.as_str()
+                ))));
+            }
+            st.accept(&id, &actor)
+        })
+        .await?;
+        Ok(RewriteAcceptOut {
+            status: "accepted".into(),
+            unit: unit.id,
+            address: Hex64(hex(&unit.anchor.address)),
+            version: unit.version,
+            replaced_version: replaced,
+        })
+    }
+
+    async fn spec_job(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteSpecArgs,
+        job: &JobReporter,
+        ai: &crate::metering::JobAi,
+    ) -> Result<RewriteSpecResult, ProtoError> {
+        let project = s.project()?;
+        let dir = project.dir().to_path_buf();
+        let lift = Lift::new(s, ctx);
+        match args.scope {
+            PlanScope::Function => {
+                let address = args
+                    .address
+                    .ok_or_else(|| invalid("`scope: function` needs `address`"))?;
+                progress(job, "lift", 0, 2, "reading the function");
+                let (f, callees) = self.function_with_callees(&lift, address.0).await?;
+                // A repeated call with unchanged code returns the stored spec.
+                let spec = self.spec_for_function(&dir, &f, &callees, job, ai).await?;
+                Ok(spec_result(&spec, PlanScope::Function, Some(f.address)))
+            }
+            PlanScope::All => {
+                let (sha, _) = lift.program().map_err(proto)?;
+                progress(job, "plan", 0, 3, "ordering the functions");
+                let max = args
+                    .max_functions
+                    .unwrap_or(DEFAULT_SPEC_FUNCTIONS)
+                    .clamp(1, 100) as usize;
+                let sha2 = sha.clone();
+                let stored = with_store(dir.clone(), move |st| st.plan(&sha2)).await?;
+                let plan = match stored {
+                    Some(p) => p,
+                    None => {
+                        let collected = collect(s, ctx, MAX_PLAN_FUNCTIONS as usize)
+                            .await
+                            .map_err(proto)?;
+                        let plan = to_plan(&collected);
+                        let (sha3, p) = (sha.clone(), plan.clone());
+                        with_store(dir.clone(), move |st| st.save_plan(&sha3, &p)).await?;
+                        plan
+                    }
+                };
+                let mut functions = Vec::new();
+                for (i, p) in plan.entries.iter().take(max).enumerate() {
+                    progress(job, "lift", i as u64, max as u64, &p.name);
+                    let mut f = lift.function(p.address).await.map_err(proto)?;
+                    if f.decompile.len() > SPEC_DECOMPILE_BYTES {
+                        let mut cut = SPEC_DECOMPILE_BYTES;
+                        while !f.decompile.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
+                        f.decompile.truncate(cut);
+                        f.decompile.push_str("\n/* ... cut ... */\n");
+                    }
+                    functions.push(f);
+                }
+                if functions.is_empty() {
+                    return Err(invalid("the program has no functions to describe"));
+                }
+                let source_hash = sha256_hex(
+                    &functions
+                        .iter()
+                        .map(|f| f.decompile_hash.as_str())
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                );
+                progress(job, "spec", 1, 3, "writing the behavioural spec");
+                let backend = ai.backend()?;
+                let task = SpecTask {
+                    scope: SpecScope::Program,
+                    functions,
+                    budget: self.cfg.budget.clone(),
+                };
+                let (spec, reply) = task
+                    .run(backend.as_ref(), job.cancel_token())
+                    .await
+                    .map_err(proto)?;
+                let mut stored = StoredSpec {
+                    id: 0,
+                    scope: "program".into(),
+                    address: None,
+                    markdown: spec.markdown,
+                    citations: spec.citations,
+                    facts: u32::try_from(spec.facts).unwrap_or(u32::MAX),
+                    functions: u32::try_from(task.functions.len()).unwrap_or(u32::MAX),
+                    source_hash,
+                    provider: reply.provider.id,
+                    model: reply.provider.model,
+                    prompt_hash: reply.prompt_hash,
+                };
+                let new = NewSpec {
+                    program_sha256: sha,
+                    spec: stored.clone(),
+                };
+                stored.id = with_store(dir, move |st| st.put_spec(new)).await?;
+                progress(job, "done", 3, 3, "finished");
+                Ok(spec_result(&stored, PlanScope::All, None))
+            }
+        }
+    }
+}
+
+impl RewriteService {
+    /// The most model calls `command` can make with `args`, on the model it would use.
+    async fn estimate_calls(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        command: &str,
+        args: &serde_json::Value,
+    ) -> Option<AiEstimate> {
+        let text = |k: &str| args.get(k).and_then(serde_json::Value::as_str);
+        let num = |k: &str| args.get(k).and_then(serde_json::Value::as_u64);
+        let which = RewriteModel::parse(text("provider").unwrap_or("")).ok()?;
+        let choice = self.backends.choice(which, text("model"))?;
+        let attempts =
+            u32::try_from(num("max_attempts").unwrap_or(u64::from(self.cfg.max_attempts)))
+                .unwrap_or(self.cfg.max_attempts);
+        let (min, max) = match command {
+            "rewrite_function" => {
+                let spec = text("mode") == Some("spec");
+                (1, kraken_assist::rewrite_max_calls(1, attempts, spec, 0))
+            }
+            "rewrite_spec" => (1, 1),
+            "rewrite_program" => {
+                let rounds = u32::try_from(
+                    num("repair_rounds")
+                        .unwrap_or(u64::from(kraken_registry::commands::DEFAULT_REPAIR_ROUNDS)),
+                )
+                .unwrap_or(0);
+                let project = s.project().ok()?;
+                let (sha, _) = Lift::new(s, ctx).program().ok()?;
+                let plan = with_store(project.dir().to_path_buf(), move |st| st.plan(&sha))
+                    .await
+                    .ok()
+                    .flatten();
+                let n = match plan {
+                    Some(p) => p.entries.len() as u64,
+                    None => return None,
+                };
+                (
+                    n,
+                    kraken_assist::rewrite_max_calls(n, attempts, false, rounds),
+                )
+            }
+            _ => return None,
+        };
+        let policy = kraken_assist::AiPolicy {
+            pricing: self.backends.pricing(),
+            ..kraken_assist::AiPolicy::default()
+        };
+        Some(policy.estimate_with(kraken_proto::AiFeature::Rewrite, &choice, min, max))
     }
 }

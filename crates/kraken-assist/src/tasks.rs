@@ -35,6 +35,16 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
+    /// What the usage ledger files the task's model calls under.
+    pub fn feature(self) -> kraken_proto::AiFeature {
+        match self {
+            TaskKind::AutoName => kraken_proto::AiFeature::AutoName,
+            TaskKind::Automate => kraken_proto::AiFeature::Automate,
+            TaskKind::Custom => kraken_proto::AiFeature::Eval,
+            _ => kraken_proto::AiFeature::Assistant,
+        }
+    }
+
     /// Stable snake_case name.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -688,6 +698,11 @@ person has accepted, so tell the person how many it wrote.";
             job_timeout: Some(AUTOMATE_JOB_TIMEOUT),
             autoname: None,
         }
+    }
+
+    /// The most model calls the task makes (its step budget).
+    pub fn max_model_calls(&self) -> u64 {
+        self.budget.max_steps as u64
     }
 
     /// The agent loop configuration for this task.

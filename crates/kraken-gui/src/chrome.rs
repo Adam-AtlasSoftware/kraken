@@ -51,6 +51,8 @@ pub fn top_bar(ui: &mut Ui, vm: &mut ViewModel, reqs: &mut Vec<UiRequest>) {
         });
         ui.add_space(8.0);
         analysis(ui, vm);
+        ui.add_space(6.0);
+        crate::ai_activity::top_chip(ui, vm);
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             crate::assist::top_bar_buttons(ui, vm);
@@ -241,6 +243,7 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
                 }
             }
             crate::activity::status_chip(ui, vm);
+            crate::ai_activity::status_chip(ui, vm);
         });
     });
 }

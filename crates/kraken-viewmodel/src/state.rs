@@ -453,6 +453,8 @@ pub enum ToastAction {
     },
     /// Bring the History tab forward.
     OpenHistory,
+    /// Bring the AI Activity tab forward.
+    OpenAiActivity,
 }
 
 impl ToastAction {
@@ -461,6 +463,7 @@ impl ToastAction {
         match self {
             ToastAction::UndoRun { .. } => "Undo",
             ToastAction::OpenHistory => "Open History",
+            ToastAction::OpenAiActivity => "AI activity",
         }
     }
 }

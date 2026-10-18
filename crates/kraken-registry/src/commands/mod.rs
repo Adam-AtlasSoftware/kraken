@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::command::Registry;
 
+mod ai;
 mod bookmarks;
 mod bulk;
 mod data;
@@ -23,6 +24,10 @@ mod rewrite_program;
 mod search;
 mod undo_entry;
 
+pub use ai::{
+    AiJobs, AiJobsOut, AiUsage, AiUsageArgs, AiUsageGroupView, AiUsageOut, AiUsageScope,
+    ESTIMATE_NOTE,
+};
 pub use bookmarks::{
     BOOKMARK_PAGE_CAP, BookmarkAdd, BookmarkAddArgs, BookmarkList, BookmarkListArgs,
     BookmarkRemove, BookmarkRemoveArgs, BookmarkRemoveOut, BookmarkView, MAX_BOOKMARK_NOTE,
@@ -200,4 +205,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(BookmarkAdd);
     r.register(BookmarkRemove);
     r.register(BookmarkList);
+    // Card COST: what AI work costs and what runs.
+    r.register(AiUsage);
+    r.register(AiJobs);
 }

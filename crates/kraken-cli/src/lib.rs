@@ -23,6 +23,7 @@ mod agents_cmd;
 mod app;
 mod assist_cmd;
 mod auto_cmd;
+mod cost;
 mod daemon_cmd;
 mod eval_cmd;
 mod exit;

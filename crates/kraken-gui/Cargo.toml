@@ -25,8 +25,10 @@ egui_dock = "=0.21.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
 kraken-gui-widgets = { path = "../kraken-gui-widgets", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-model = { path = "../kraken-model", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
 kraken-rewrite = { path = "../kraken-rewrite", version = "0.0.0" }

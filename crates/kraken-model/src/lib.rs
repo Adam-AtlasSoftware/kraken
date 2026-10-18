@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use kraken_proto::{LogStatus, Provenance, SyncState, VersionedLogOp};
 use serde::{Deserialize, Serialize};
 
+mod ai_usage;
 mod bookmarks;
 pub mod keys;
 mod lineage;
@@ -17,6 +18,7 @@ pub mod proposals;
 pub mod state;
 mod store;
 
+pub use ai_usage::{DailyLedger, ProjectLedger, UsageFilter, UsageGroup, UsageSink, utc_day};
 pub use bookmarks::Bookmark;
 pub use keys::{anchor_key, entity_key, op_anchor, op_aspect, op_key, op_kind_name};
 pub use lineage::{Dependent, TaintedKey, UndoPlan, UndoPolicy, key_address};

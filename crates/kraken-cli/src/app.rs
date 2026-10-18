@@ -143,7 +143,7 @@ pub struct CliEnv {
 }
 
 /// Commands that need no open project.
-const PROJECTLESS: [&str; 1] = ["binary_probe"];
+const PROJECTLESS: [&str; 3] = ["binary_probe", "ai_usage", "ai_jobs"];
 
 impl CliEnv {
     /// The environment of the real binary.
@@ -398,7 +398,7 @@ pub fn build_cli(registry: &Registry) -> Command {
                 .short('y')
                 .global(true)
                 .action(ArgAction::SetTrue)
-                .help("Approve dangerous commands without asking"),
+                .help("Approve dangerous commands and AI work that may cost money without asking"),
         )
         .arg(
             Arg::new("no-daemon")
@@ -1007,11 +1007,30 @@ async fn run_registry_command(
             return fail(&e, json_out, err);
         }
     };
+    if crate::cost::AI_COMMANDS.contains(&name) {
+        let policy = crate::cost::policy(env);
+        let functions = if name == "rewrite_program" {
+            plan_size(backend.as_ref(), &ctx).await
+        } else {
+            None
+        };
+        let estimate = crate::cost::command_estimate(env, &policy, name, &args, functions);
+        if let Err(e) = crate::cost::confirm(env, &policy, estimate.as_ref(), yes, err) {
+            env.factory.shutdown().await;
+            return fail(&e, json_out, err);
+        }
+    }
     let first = if creating {
         run_open(env, backend.as_ref(), ctx.clone(), name, args, err).await
     } else {
         backend.call(name, &ctx, args).await
     };
+    let job_of = first
+        .as_ref()
+        .ok()
+        .and_then(|v| v.get("job_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let result = match first {
         Ok(v) if entry.spec().kind == CommandKind::Job && !no_wait => {
             wait_for_job(env, backend.as_ref(), &ctx, &v, err).await
@@ -1020,6 +1039,24 @@ async fn run_registry_command(
     };
     for w in backend.take_warnings() {
         emit(err, &format!("warning: {w}\n"));
+    }
+    if crate::cost::AI_COMMANDS.contains(&name)
+        && !json_out
+        && let Some(job) = job_of
+        && let Ok(u) = backend
+            .call(
+                "ai_usage",
+                &ctx,
+                serde_json::json!({ "scope": "run", "run_id": job }),
+            )
+            .await
+        && let Some(line) = u.get("summary").and_then(Value::as_str)
+        && u.pointer("/totals/calls")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+    {
+        emit(err, &format!("AI usage: {line}\n"));
     }
 
     let code = match result {
@@ -1246,4 +1283,24 @@ pub async fn run_with_provider(
             }
         }
     }
+}
+
+/// Functions in the stored rewrite plan, when there is one.
+async fn plan_size(
+    backend: &dyn kraken_host::backend::CommandBackend,
+    ctx: &CallContext,
+) -> Option<u64> {
+    let v = backend
+        .call("rewrite_status", ctx, serde_json::json!({ "limit": 1 }))
+        .await
+        .ok()?;
+    if v.get("plan_present").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let c = v.get("counts")?;
+    let n: u64 = ["planned", "translated", "verified", "failed", "accepted"]
+        .iter()
+        .filter_map(|k| c.get(*k).and_then(Value::as_u64))
+        .sum();
+    Some(n)
 }
