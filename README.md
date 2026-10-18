@@ -9,7 +9,7 @@
 ## What it does
 
 **Analyze**
-- Finds functions and decompiles them to C-like code with Ghidra's decompiler: through the native engine (no Java, 64-bit ELF) or the optional Ghidra engine (ELF, PE and Mach-O).
+- Finds functions and decompiles them to C-like code with Ghidra's decompiler: through the native engine (no Java; ELF and Windows PE, x86 and x86-64) or the optional Ghidra engine (ELF, PE and Mach-O, many processors).
 - Listing, hex, control-flow graph, cross-references, strings, imports and exports, memory map.
 - Rename functions, set types and comments. Search, filter and jump between views.
 
@@ -34,7 +34,7 @@ KRAKEN is **pre-alpha** (0.1a). Expect rough edges and breaking changes.
 | | Linux x86_64 | macOS (Apple silicon) | Windows x86_64 |
 |---|---|---|---|
 | CLI, MCP server, GUI | Works | Builds, experimental | Builds, experimental |
-| Native engine, no Java (`kraken setup --native`) | Works (64-bit ELF) | Not yet | Not yet |
+| Native engine, no Java (`kraken setup --native`) | Works (ELF and PE) | Not yet | Not yet |
 | Analysis with Ghidra (`kraken setup`) | Works | Not yet | Not yet |
 | Sandbox around Ghidra | Landlock | Not yet | Not yet |
 | Local models | Works | Builds | Builds |
@@ -57,7 +57,7 @@ kraken list-functions --project ~/kraken-projects/calc --limit 20
 kraken-gui                             # or open the project in the app (Engine: Native)
 ```
 
-You need Rust and a C++ compiler. Set `engine = "native"` in `~/.config/kraken/config.toml` to make it the default for new projects. The practice programs are in `corpus/bin/`. Native handles 64-bit ELF (x86-64 and AArch64). For PE, Mach-O, 32-bit programs or debug-info types use the optional Ghidra engine: `kraken setup` downloads Ghidra and a JDK, and the release archives and the one-line installer cover that path (see [Install](docs/install.md)). The [native engine page](docs/native-engine.md) compares the two.
+You need Rust and a C++ compiler. Set `engine = "native"` in `~/.config/kraken/config.toml` to make it the default for new projects. The practice programs are in `corpus/bin/`. Native handles ELF (x86-64, AArch64 and 32-bit x86) and Windows PE (x86 and x86-64). For Mach-O, other processors or Windows debug information (PDB) use the optional Ghidra engine: `kraken setup` downloads Ghidra and a JDK, and the release archives and the one-line installer cover that path (see [Install](docs/install.md)). The [native engine page](docs/native-engine.md) compares the two.
 
 Connect an agent: `claude mcp add kraken -- kraken mcp --project ~/kraken-projects/calc`.
 

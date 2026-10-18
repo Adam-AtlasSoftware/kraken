@@ -1,0 +1,45 @@
+{
+  "binary": "switch_vm-i386-O0-stripped",
+  "ground_truth_from": "switch_vm-i386-O0",
+  "sha256": "40e39321374d7e3263ea7069eee216ac5bb4fdd7f9a8052c1123d3507c748c13",
+  "source_file": "src/switch_vm.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x11ad",
+      "size": 58
+    },
+    {
+      "name": "push",
+      "demangled": "push",
+      "entry": "0x11e7",
+      "size": 88
+    },
+    {
+      "name": "pop",
+      "demangled": "pop",
+      "entry": "0x123f",
+      "size": 92
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x129b",
+      "size": 976
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0x166b",
+      "size": 168
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x1713",
+      "size": 144
+    }
+  ]
+}

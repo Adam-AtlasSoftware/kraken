@@ -18,7 +18,7 @@ use engine_native_sys::Session;
 use kraken_engine::type_def_name;
 use kraken_proto::{ErrorCode, FunctionPrototype, ProtoError, TypeDef, TypeRef};
 
-use crate::ctypes::{declaration, prototype, valid_name};
+use crate::ctypes::{DataModel, declaration, prototype, valid_name};
 
 /// Core type names of the decompiler (see the shim's `buildCoreTypes`).
 const CORE: &[&str] = &[
@@ -44,6 +44,8 @@ const CORE: &[&str] = &[
     "char",
     "wchar16",
     "wchar32",
+    "longlong",
+    "ulonglong",
 ];
 
 /// Whether `name` is one of the decompiler's core type names.
@@ -54,6 +56,8 @@ pub fn is_core(name: &str) -> bool {
 /// Named definitions plus what the decompiler has accepted.
 #[derive(Debug, Default)]
 pub struct TypeModel {
+    /// The sizes of `long` and pointers, which decide the spelling of 8-byte integers.
+    model: DataModel,
     defs: BTreeMap<String, TypeDef>,
     declared: BTreeSet<String>,
     pending: BTreeSet<String>,
@@ -109,6 +113,19 @@ fn renamed_def(def: &TypeDef, rename: &dyn Fn(&str) -> String) -> TypeDef {
 pub type Applied = (u64, String);
 
 impl TypeModel {
+    /// An empty store for programs of `model`.
+    pub fn new(model: DataModel) -> TypeModel {
+        TypeModel {
+            model,
+            ..TypeModel::default()
+        }
+    }
+
+    /// The data model of the program.
+    pub fn model(&self) -> DataModel {
+        self.model
+    }
+
     /// The definition named `name`.
     pub fn get(&self, name: &str) -> Option<&TypeDef> {
         self.defs.get(name)
@@ -141,7 +158,7 @@ impl TypeModel {
     /// `set_prototype`).
     pub fn prototype_text(&self, p: &FunctionPrototype, name: &str) -> String {
         let p = renamed_proto(p, &|n| self.decompiler_name(n));
-        prototype(&p, name, &|n| self.knows(n))
+        self.model.spell(&prototype(&p, name, &|n| self.knows(n)))
     }
 
     /// Names that are stored but not in the decompiler yet.
@@ -219,10 +236,14 @@ impl TypeModel {
         let known = |n: &str| CORE.contains(&n) || declared.contains(n);
         match &def {
             TypeDef::Function(p) => {
-                let text = prototype(p, name, &known);
+                let text = self.model.spell(&prototype(p, name, &known));
                 let mut out = Vec::new();
                 for at in named(name) {
                     session.set_prototype(at, &text).ok()?;
+                    // a convention the compiler spec does not have leaves the default
+                    if !p.calling_convention.is_empty() {
+                        let _ = session.set_convention(at, &p.calling_convention);
+                    }
                     if p.noreturn {
                         session.set_noreturn(at, true).ok()?;
                     }
@@ -234,7 +255,7 @@ impl TypeModel {
                 if self.declared.contains(name) {
                     return Some(Vec::new());
                 }
-                let text = declaration(other, &known)?;
+                let text = self.model.spell(&declaration(other, &known)?);
                 session.declare_type(&text).ok()?;
                 self.declared.insert(name.to_string());
                 Some(Vec::new())

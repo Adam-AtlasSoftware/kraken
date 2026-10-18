@@ -39,6 +39,69 @@ pub fn primitive_name(p: &Primitive) -> Option<&'static str> {
 /// Which named types the decompiler already knows.
 pub type Known<'a> = &'a dyn Fn(&str) -> bool;
 
+/// The sizes of `long` and pointers, which decide how C type names map to sizes: LP64 (Linux
+/// x86-64), LLP64 (64-bit Windows) or ILP32 (32-bit x86).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataModel {
+    /// Pointer size in bytes.
+    pub pointer: u32,
+    /// Size of `long` in bytes.
+    pub long: u32,
+}
+
+impl Default for DataModel {
+    fn default() -> DataModel {
+        DataModel::LP64
+    }
+}
+
+impl DataModel {
+    /// Linux and other Unix-likes on 64-bit targets.
+    pub const LP64: DataModel = DataModel {
+        pointer: 8,
+        long: 8,
+    };
+    /// 64-bit Windows.
+    pub const LLP64: DataModel = DataModel {
+        pointer: 8,
+        long: 4,
+    };
+    /// 32-bit targets.
+    pub const ILP32: DataModel = DataModel {
+        pointer: 4,
+        long: 4,
+    };
+
+    /// C text in the decompiler's names for this model. The declarations are written with LP64
+    /// spellings (`long` and `ulong` for 8-byte integers); where `long` is 4 bytes the
+    /// decompiler knows the 8-byte ones as `longlong` and `ulonglong`.
+    pub fn spell(&self, text: &str) -> String {
+        if self.long == 8 {
+            return text.to_string();
+        }
+        let mut out = String::with_capacity(text.len() + 8);
+        let mut word = String::new();
+        let flush = |word: &mut String, out: &mut String| {
+            match word.as_str() {
+                "long" => out.push_str("longlong"),
+                "ulong" => out.push_str("ulonglong"),
+                w => out.push_str(w),
+            }
+            word.clear();
+        };
+        for c in text.chars() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                word.push(c);
+            } else {
+                flush(&mut word, &mut out);
+                out.push(c);
+            }
+        }
+        flush(&mut word, &mut out);
+        out
+    }
+}
+
 /// A declaration of `name` (possibly empty) with type `ty`, such as `char *name` or
 /// `int name[4]`. Function pointers become `code *` (the decompiler's opaque code type), and a
 /// pointer to a named type the decompiler does not know yet becomes `void *`, so recursive and
@@ -218,7 +281,7 @@ fn prim(class: PrimitiveClass, size: u32, signed: bool) -> TypeRef {
 }
 
 /// A type name of the table syntax: C spellings, the decompiler's names, or a named typedef.
-fn base_type(word: &str) -> TypeRef {
+fn base_type(word: &str, model: DataModel) -> TypeRef {
     use PrimitiveClass::*;
     match word {
         "void" => prim(Void, 0, false),
@@ -229,8 +292,10 @@ fn base_type(word: &str) -> TypeRef {
         "ushort" => prim(Int, 2, false),
         "int" => prim(Int, 4, true),
         "uint" => prim(Int, 4, false),
-        "long" => prim(Int, 8, true),
-        "ulong" => prim(Int, 8, false),
+        "long" => prim(Int, model.long, true),
+        "ulong" => prim(Int, model.long, false),
+        "longlong" => prim(Int, 8, true),
+        "ulonglong" => prim(Int, 8, false),
         "float" => prim(Float, 4, true),
         "double" => prim(Float, 8, true),
         other => TypeRef::Named {
@@ -240,8 +305,17 @@ fn base_type(word: &str) -> TypeRef {
 }
 
 /// Parses `[noreturn] T name(T a, U *b, ...)` (one level of syntax: base type, `const` ignored,
-/// stars, optional parameter names, `...`). Errors name the offending text.
+/// stars, optional parameter names, `...`) for LP64. Errors name the offending text.
 pub fn parse_prototype(src: &str) -> Result<(String, FunctionPrototype), String> {
+    parse_prototype_in(src, DataModel::LP64)
+}
+
+/// [`parse_prototype`] with the sizes of `long` and pointers of `model`; a leading
+/// `__stdcall` (after `noreturn`) sets the calling convention.
+pub fn parse_prototype_in(
+    src: &str,
+    model: DataModel,
+) -> Result<(String, FunctionPrototype), String> {
     let mut s = src.trim();
     let noreturn = match s.strip_prefix("noreturn ") {
         Some(rest) => {
@@ -250,9 +324,17 @@ pub fn parse_prototype(src: &str) -> Result<(String, FunctionPrototype), String>
         }
         None => false,
     };
+    let calling_convention = match s.strip_prefix("__stdcall ") {
+        Some(rest) => {
+            s = rest.trim_start();
+            "__stdcall".to_string()
+        }
+        None => String::new(),
+    };
     let open = s.find('(').ok_or_else(|| format!("no `(` in {src:?}"))?;
     let close = s.rfind(')').ok_or_else(|| format!("no `)` in {src:?}"))?;
-    let (ret, name) = split_decl(&s[..open]).ok_or_else(|| format!("bad head in {src:?}"))?;
+    let (ret, name) =
+        split_decl(&s[..open], model).ok_or_else(|| format!("bad head in {src:?}"))?;
     let name = name.ok_or_else(|| format!("no function name in {src:?}"))?;
     let mut params = Vec::new();
     let mut varargs = false;
@@ -264,7 +346,7 @@ pub fn parse_prototype(src: &str) -> Result<(String, FunctionPrototype), String>
                 varargs = true;
                 continue;
             }
-            let (ty, pname) = split_decl(p).ok_or_else(|| format!("bad parameter {p:?}"))?;
+            let (ty, pname) = split_decl(p, model).ok_or_else(|| format!("bad parameter {p:?}"))?;
             params.push(Param {
                 name: pname,
                 ty,
@@ -278,7 +360,7 @@ pub fn parse_prototype(src: &str) -> Result<(String, FunctionPrototype), String>
             name: Some(name),
             return_type: Box::new(ret),
             params,
-            calling_convention: String::new(),
+            calling_convention,
             varargs,
             noreturn,
         },
@@ -286,7 +368,7 @@ pub fn parse_prototype(src: &str) -> Result<(String, FunctionPrototype), String>
 }
 
 /// Splits `const char *name` into its type and optional name.
-fn split_decl(s: &str) -> Option<(TypeRef, Option<String>)> {
+fn split_decl(s: &str, model: DataModel) -> Option<(TypeRef, Option<String>)> {
     let spaced = s.replace('*', " * ");
     let words: Vec<&str> = spaced
         .split_whitespace()
@@ -314,15 +396,17 @@ fn split_decl(s: &str) -> Option<(TypeRef, Option<String>)> {
     }
     let rest = words;
     let ty = match base.join(" ").as_str() {
-        "unsigned" | "unsigned int" => base_type("uint"),
-        "signed" | "signed int" => base_type("int"),
-        "unsigned char" => base_type("uchar"),
+        "unsigned" | "unsigned int" => base_type("uint", model),
+        "signed" | "signed int" => base_type("int", model),
+        "unsigned char" => base_type("uchar", model),
         "signed char" => prim(PrimitiveClass::Int, 1, true),
-        "unsigned short" | "unsigned short int" => base_type("ushort"),
-        "short int" => base_type("short"),
-        "long int" | "long long" | "long long int" => base_type("long"),
-        "unsigned long" | "unsigned long int" | "unsigned long long" => base_type("ulong"),
-        other => base_type(other),
+        "unsigned short" | "unsigned short int" => base_type("ushort", model),
+        "short int" => base_type("short", model),
+        "long int" => base_type("long", model),
+        "unsigned long" | "unsigned long int" => base_type("ulong", model),
+        "long long" | "long long int" => base_type("longlong", model),
+        "unsigned long long" | "unsigned long long int" => base_type("ulonglong", model),
+        other => base_type(other, model),
     };
     let mut ty = ty;
     let mut name = None;
@@ -331,7 +415,7 @@ fn split_decl(s: &str) -> Option<(TypeRef, Option<String>)> {
             "*" => {
                 ty = TypeRef::Pointer {
                     target: Box::new(ty),
-                    size: 8,
+                    size: model.pointer,
                 }
             }
             n if is_ident(n) && name.is_none() => name = Some(n.to_string()),
@@ -343,6 +427,13 @@ fn split_decl(s: &str) -> Option<(TypeRef, Option<String>)> {
 
 /// Typedefs and opaque structs the prototype table refers to (LP64 Linux).
 pub fn base_definitions() -> Vec<TypeDef> {
+    base_definitions_in(DataModel::LP64)
+}
+
+/// [`base_definitions`] for `model`: the pointer-sized typedefs follow its pointer size.
+pub fn base_definitions_in(model: DataModel) -> Vec<TypeDef> {
+    let ptr = model.pointer;
+    let long = model.long;
     let td = |name: &str, target: TypeRef| {
         TypeDef::Typedef(TypedefDef {
             name: name.into(),
@@ -359,9 +450,9 @@ pub fn base_definitions() -> Vec<TypeDef> {
     };
     use PrimitiveClass::*;
     vec![
-        td("size_t", prim(Int, 8, false)),
-        td("ssize_t", prim(Int, 8, true)),
-        td("off_t", prim(Int, 8, true)),
+        td("size_t", prim(Int, ptr, false)),
+        td("ssize_t", prim(Int, ptr, true)),
+        td("off_t", prim(Int, long, true)),
         td("time_t", prim(Int, 8, true)),
         td("pid_t", prim(Int, 4, true)),
         td("uid_t", prim(Int, 4, false)),
@@ -369,13 +460,13 @@ pub fn base_definitions() -> Vec<TypeDef> {
         td("mode_t", prim(Int, 4, false)),
         td("socklen_t", prim(Int, 4, false)),
         td("wchar_t", prim(Int, 4, true)),
-        td("intptr_t", prim(Int, 8, true)),
-        td("uintptr_t", prim(Int, 8, false)),
+        td("intptr_t", prim(Int, ptr, true)),
+        td("uintptr_t", prim(Int, ptr, false)),
         td(
             "va_list",
             TypeRef::Pointer {
                 target: Box::new(prim(Void, 0, false)),
-                size: 8,
+                size: ptr,
             },
         ),
         opaque("FILE", 216),

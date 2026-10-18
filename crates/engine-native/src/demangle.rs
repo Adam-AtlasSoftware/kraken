@@ -1,4 +1,6 @@
-//! C++ (Itanium ABI) demangling with `cpp_demangle`, and the names Ghidra derives from it.
+//! C++ demangling, and the names Ghidra derives from it: the Itanium ABI (GCC, Clang, mingw-w64)
+//! with `cpp_demangle`, and Microsoft's decoration (`?area@Rect@@QEBANXZ`, MSVC) with
+//! `msvc-demangler` (MIT, a port of LLVM's demangler).
 //!
 //! Ghidra names a function after the last component of its demangled name (`capacity` for
 //! `std::__cxx11::basic_string<...>::capacity() const`), with spaces turned into underscores
@@ -17,18 +19,41 @@ pub struct Demangled {
     pub name: String,
 }
 
-/// `name` without an ELF symbol version (`_Znwm@GLIBCXX_3.4` -> `_Znwm`).
+/// `name` without an ELF symbol version (`_Znwm@GLIBCXX_3.4` -> `_Znwm`). A Microsoft name
+/// (`?f@@YAXXZ`) has `@` in it and no version.
 pub fn unversioned(name: &str) -> &str {
+    if is_msvc(name) {
+        return name;
+    }
     name.split('@').next().unwrap_or(name)
 }
 
-/// Whether `name` looks like an Itanium-mangled C++ name.
-pub fn is_mangled(name: &str) -> bool {
-    unversioned(name).starts_with("_Z")
+/// Whether `name` looks like a Microsoft-decorated C++ name.
+pub fn is_msvc(name: &str) -> bool {
+    name.starts_with('?')
 }
 
-/// Demangles an Itanium C++ name; `None` for anything else or what does not parse.
+/// Whether `name` looks like a mangled C++ name (Itanium or Microsoft).
+pub fn is_mangled(name: &str) -> bool {
+    is_msvc(name) || unversioned(name).starts_with("_Z")
+}
+
+/// Demangles a Microsoft-decorated name: the whole name, and Ghidra's name for it.
+fn demangle_msvc(raw: &str) -> Option<Demangled> {
+    use msvc_demangler::DemangleFlags;
+    let full = msvc_demangler::demangle(raw, DemangleFlags::llvm()).ok()?;
+    let short = msvc_demangler::demangle(raw, DemangleFlags::NAME_ONLY).ok()?;
+    // `Rect::`scalar deleting destructor'` and the like keep their quotes out
+    let short = short.replace(['`', '\''], "");
+    let name = ghidra_name(&short)?;
+    Some(Demangled { full, name })
+}
+
+/// Demangles a C++ name; `None` for anything else or what does not parse.
 pub fn demangle(raw: &str) -> Option<Demangled> {
+    if is_msvc(raw) {
+        return demangle_msvc(raw);
+    }
     let raw = unversioned(raw);
     if !is_mangled(raw) {
         return None;
@@ -237,6 +262,27 @@ mod tests {
         assert_eq!(name("_ZNK4Rect4areaEv"), "area");
         assert_eq!(name("_ZNK5Shape8describeB5cxx11Ev"), "describe");
         assert_eq!(name("_ZNSt7__cxx119to_stringEi"), "to_string");
+    }
+
+    #[test]
+    fn microsoft_names_are_demangled_too() {
+        let d = demangle("?area@Rect@@QEBANXZ").expect("msvc name");
+        assert_eq!(d.name, "area");
+        assert!(d.full.contains("Rect::area"), "{}", d.full);
+        assert_eq!(name("??0Rect@@QEAA@NN@Z"), "Rect");
+        assert_eq!(name("??1Shape@@UEAA@XZ"), "~Shape");
+        assert_eq!(
+            name(
+                "?describe@Shape@@UEBA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ"
+            ),
+            "describe"
+        );
+        assert!(is_mangled("?f@@YAXXZ"));
+        assert_eq!(unversioned("?f@@YAXXZ"), "?f@@YAXXZ");
+        assert_eq!(mangled("?f@@YAXXZ").as_deref(), Some("?f@@YAXXZ"));
+        // C names and stdcall decorations are not C++
+        assert_eq!(display_name("_on_tls@12"), "_on_tls@12");
+        assert!(demangle("?not a name").is_none());
     }
 
     #[test]

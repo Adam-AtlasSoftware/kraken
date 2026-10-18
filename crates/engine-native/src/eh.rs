@@ -26,13 +26,17 @@ pub struct Sections<'a> {
     pub got: Option<u64>,
     /// Reads bytes at a link-time address (for LSDAs); `None` when unmapped.
     pub read: &'a dyn Fn(u64, usize) -> Option<Vec<u8>>,
+    /// Pointer size of the image in bytes (4 or 8).
+    pub address_size: u8,
 }
 
 /// Parses `.eh_frame`. Malformed entries end the scan; what was read so far is kept.
 pub fn parse(s: &Sections<'_>) -> Frames {
     let mut out = Frames::default();
     let (addr, bytes) = s.eh_frame;
-    let eh = EhFrame::new(bytes, LittleEndian);
+    let mut eh = EhFrame::new(bytes, LittleEndian);
+    eh.set_address_size(s.address_size);
+    let ptr = usize::from(s.address_size);
     let mut bases = BaseAddresses::default().set_eh_frame(addr);
     if let Some(t) = s.text {
         bases = bases.set_text(t);
@@ -55,13 +59,17 @@ pub fn parse(s: &Sections<'_>) -> Frames {
         out.fde_starts.push(start);
         let lsda = match fde.lsda() {
             Some(Pointer::Direct(a)) => a,
-            Some(Pointer::Indirect(slot)) => match (s.read)(slot, 8) {
-                Some(b) if b.len() == 8 => u64::from_le_bytes(b.try_into().unwrap_or([0; 8])),
+            Some(Pointer::Indirect(slot)) => match (s.read)(slot, ptr) {
+                Some(b) if b.len() == ptr => {
+                    let mut w = [0u8; 8];
+                    w[..ptr].copy_from_slice(&b);
+                    u64::from_le_bytes(w)
+                }
                 _ => continue,
             },
             None => continue,
         };
-        let pads = landing_pads(lsda, start, s.read);
+        let pads = landing_pads(lsda, start, s.read, s.address_size);
         if !pads.is_empty() {
             out.landing_pads.entry(start).or_default().extend(pads);
         }
@@ -82,6 +90,7 @@ struct Cursor {
     base: u64,
     bytes: Vec<u8>,
     pos: usize,
+    address_size: u8,
 }
 
 impl Cursor {
@@ -135,6 +144,7 @@ impl Cursor {
     fn encoded(&mut self, enc: u8) -> Option<u64> {
         let here = self.base + self.pos as u64;
         let raw: u64 = match enc & 0x0f {
+            0x00 if self.address_size == 4 => u64::from(u32::from_le_bytes(self.fixed::<4>()?)),
             0x00 => u64::from_le_bytes(self.fixed::<8>()?),
             0x01 => self.uleb()?,
             0x02 => u64::from(u16::from_le_bytes(self.fixed::<2>()?)),
@@ -146,11 +156,16 @@ impl Cursor {
             0x0c => i64::from_le_bytes(self.fixed::<8>()?) as u64,
             _ => return None,
         };
-        match enc & 0x70 {
-            0x00 => Some(raw),
-            0x10 => Some(here.wrapping_add(raw)),
-            _ => None,
-        }
+        let v = match enc & 0x70 {
+            0x00 => raw,
+            0x10 => here.wrapping_add(raw),
+            _ => return None,
+        };
+        Some(if self.address_size == 4 {
+            v & 0xffff_ffff
+        } else {
+            v
+        })
     }
 }
 
@@ -159,6 +174,7 @@ fn landing_pads(
     lsda: u64,
     fde_start: u64,
     read: &dyn Fn(u64, usize) -> Option<Vec<u8>>,
+    address_size: u8,
 ) -> Vec<u64> {
     let Some(bytes) = read(lsda, 4096) else {
         return Vec::new();
@@ -167,6 +183,7 @@ fn landing_pads(
         base: lsda,
         bytes,
         pos: 0,
+        address_size,
     };
     let mut pads = Vec::new();
     let mut run = || -> Option<()> {
@@ -189,7 +206,12 @@ fn landing_pads(
             let lp = c.encoded(cs_enc)?;
             let _action = c.uleb()?;
             if lp != 0 {
-                pads.push(lp_start.wrapping_add(lp));
+                let pad = lp_start.wrapping_add(lp);
+                pads.push(if address_size == 4 {
+                    pad & 0xffff_ffff
+                } else {
+                    pad
+                });
             }
         }
         Some(())
@@ -211,8 +233,8 @@ mod tests {
             0x10, 0x04, 0x30, 0x01, // [0x10, 0x14) pad at +0x30
         ];
         let read = |a: u64, _n: usize| (a == 0x2000).then(|| lsda.to_vec());
-        assert_eq!(landing_pads(0x2000, 0x1000, &read), vec![0x1030]);
-        assert!(landing_pads(0x3000, 0x1000, &read).is_empty());
+        assert_eq!(landing_pads(0x2000, 0x1000, &read, 8), vec![0x1030]);
+        assert!(landing_pads(0x3000, 0x1000, &read, 8).is_empty());
     }
 
     #[test]
@@ -221,6 +243,7 @@ mod tests {
             base: 0,
             bytes: vec![0x7f, 0x80, 0x7f],
             pos: 0,
+            address_size: 8,
         };
         assert_eq!(c.sleb(), Some(-1));
         assert_eq!(c.sleb(), Some(-128));

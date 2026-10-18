@@ -1,0 +1,40 @@
+{
+  "binary": "win_tls-x64-O2.exe",
+  "ground_truth_from": "win_tls-x64-O2.exe",
+  "sha256": "1a3a0d8bc607ded62c4d47466ffc2b0def2d27a8b6653ff4b36affae5ffbec3c",
+  "source_file": "pe/src/win_tls.c",
+  "opt": "O2",
+  "arch": "x64",
+  "functions": [
+    {
+      "name": "by_key",
+      "demangled": "by_key",
+      "entry": "0x140001450",
+      "size": 5
+    },
+    {
+      "name": "by_name",
+      "demangled": "by_name",
+      "entry": "0x140001460",
+      "size": 13
+    },
+    {
+      "name": "printf",
+      "demangled": "printf",
+      "entry": "0x140001470",
+      "size": 66
+    },
+    {
+      "name": "on_tls",
+      "demangled": "on_tls",
+      "entry": "0x1400014c0",
+      "size": 25
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x140007cc0",
+      "size": 778
+    }
+  ]
+}

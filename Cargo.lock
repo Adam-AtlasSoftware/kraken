@@ -1444,6 +1444,7 @@ dependencies = [
  "kraken-proto",
  "kraken-sidecar",
  "libc",
+ "msvc-demangler",
  "object 0.39.1",
  "serde",
  "serde_json",
@@ -3324,6 +3325,16 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "msvc-demangler"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbeff6bd154a309b2ada5639b2661ca6ae4599b34e8487dc276d2cd637da2d76"
+dependencies = [
+ "bitflags 2.13.2",
+ "itoa",
 ]
 
 [[package]]

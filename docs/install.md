@@ -2,7 +2,7 @@
 
 KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It has two analysis engines:
 
-- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN, and the processor specifications are compiled once by `kraken setup --native`. It opens 64-bit ELF programs. This is the shortest path for a new Linux user; today it is installed from a source checkout (see [Install from source](#install-from-source)), because the release archives do not carry the native worker or the compiled specifications yet.
+- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN, and the processor specifications are compiled once by `kraken setup --native`. It opens ELF programs (x86-64, AArch64, 32-bit x86) and Windows PE images (x86, x86-64). This is the shortest path for a new Linux user; today it is installed from a source checkout (see [Install from source](#install-from-source)), because the release archives do not carry the native worker or the compiled specifications yet.
 - **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 21 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
 
 The [native engine page](native-engine.md#native-or-ghidra) compares them.

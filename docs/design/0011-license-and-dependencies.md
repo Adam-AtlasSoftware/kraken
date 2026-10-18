@@ -13,6 +13,8 @@ KRAKEN is licensed **GPL-3.0-or-later**. Every crate says so in its `Cargo.toml`
 
 **Allowed dependency licenses:** MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Zlib, Unicode-3.0, and OFL for fonts. All are compatible with GPL-3.0. Ghidra, `rmcp` and the ACP SDK are Apache-2.0.
 
+A crate offered under a choice of licenses is allowed when one of the choices is on the list: `msvc-demangler` (the native engine's MSVC demangler, a port of LLVM's) is `MIT/NCSA` and is used under MIT.
+
 **Enforcement.** `cargo-deny` checks licenses in CI. A Gradle license check covers the Java extension.
 
 **Separate components.** Ghidra and the JRE are distributed as separate components. KRAKEN does not link them. The Ghidra NOTICE is shipped. A `THIRD-PARTY-NOTICES` file is generated.

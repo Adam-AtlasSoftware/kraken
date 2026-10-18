@@ -412,10 +412,15 @@ fn refresh(p: &Program, e: &Edits, f: &Func) -> Result<(), EngineRejected> {
         }
         None => p.locked().get(&at).cloned(),
     };
-    let convention = e.conventions.get(&at).cloned().or_else(|| {
-        user.map(|u| u.calling_convention.clone())
-            .filter(|c| !c.is_empty())
-    });
+    let convention = e
+        .conventions
+        .get(&at)
+        .cloned()
+        .or_else(|| {
+            user.map(|u| u.calling_convention.clone())
+                .filter(|c| !c.is_empty())
+        })
+        .or_else(|| p.loaded.conventions.get(&at).cloned());
     let noreturn = p.noreturn().contains(&at) || user.is_some_and(|u| u.noreturn);
     let mut s = p.session();
     s.remove_function(at).map_err(native_rejected)?;

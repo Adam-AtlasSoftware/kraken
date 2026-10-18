@@ -101,7 +101,7 @@ pub fn engine_help(e: EngineChoice) -> &'static str {
     match e {
         EngineChoice::Ghidra => "Ghidra with Java: every format, and renames and comments.",
         EngineChoice::Native => {
-            "No Java, fast start. 64-bit ELF programs only for now. Needs `kraken setup --native` once."
+            "No Java, fast start. ELF and Windows PE programs (x86, x86-64, AArch64 ELF). Needs `kraken setup --native` once."
         }
         EngineChoice::Auto => "Native when it is installed and can open the program, else Ghidra.",
     }

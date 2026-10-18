@@ -30,7 +30,7 @@ new projects.
 |---|---|---|
 | Needs Java and a Ghidra download | No | Yes (`kraken setup`, about 3 GB) |
 | Start of a new project | Seconds (a small program is ready in well under a second) | About a minute of analysis for a small program |
-| File formats | 64-bit ELF, x86-64 and AArch64 | ELF, PE, Mach-O, 32-bit, many processors |
+| File formats | ELF (x86-64, AArch64, 32-bit x86) and PE (x86, x86-64) | ELF, PE, Mach-O, many processors |
 | Function list, disassembly, hex, memory map | Yes | Yes |
 | Decompiler | Yes (the same Ghidra decompiler) | Yes |
 | Cross-references, callers and callees, control-flow graph | Yes | Yes |
@@ -42,8 +42,9 @@ new projects.
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
 | Runs where | Linux | Linux; macOS and Windows experimental |
 
-Use native to get going quickly, for ELF programs. Switch a project to Ghidra (create it again with
-`--engine ghidra`) when you need PE or Mach-O files, demangled C++ names or debug-info types.
+Use native to get going quickly, for ELF programs and Windows PE images. Switch a project to
+Ghidra (create it again with `--engine ghidra`) when you need Mach-O files, other processors or a
+program's PDB.
 
 ## Choosing an engine
 
@@ -53,7 +54,7 @@ Every project has one engine, picked when it is created and remembered in the pr
 | Choice | What you get |
 |---|---|
 | `ghidra` | The Ghidra engine: every format, renames, comments, types. The default. |
-| `native` | No Java. 64-bit ELF files for x86-64 and AArch64 only. Listing, reading, decompiling, searching, renames, comments, prototypes and function edits. |
+| `native` | No Java. ELF files for x86-64, AArch64 and 32-bit x86, and PE images for x86 and x86-64. Listing, reading, decompiling, searching, renames, comments, prototypes and function edits. |
 | `auto` | Native when its library and compiled Sleigh files are installed and the file is one it opens; otherwise Ghidra. |
 
 .NET assemblies always use the .NET engine, whatever you choose.
@@ -126,8 +127,40 @@ Creating, deleting or resizing functions, renaming them and defining code or dat
 cross-references, the exports and the list of functions that never return, so callers and
 references stay right.
 
+## Windows programs and 32-bit code
+
+The native engine opens PE images (`.exe`, `.dll`) for x86 and x86-64, and 32-bit x86 ELF
+programs, with the same commands:
+
+```sh
+kraken project-create --binary corpus/pe/bin/win_tls-x64-O0.exe --engine native --project ~/kraken-projects/win
+kraken analyze --project ~/kraken-projects/win
+kraken imports --project ~/kraken-projects/win      # with their DLLs
+kraken decompile --project ~/kraken-projects/win --address 0x14000167f   # probe_kernel
+```
+
+- **Imports** are listed with their DLL (`KERNEL32.DLL`), by name or as `Ordinal_<n>` for an
+  import by ordinal. Calls through the import table decompile as calls by name with Win32 and C
+  runtime prototypes: `GetModuleHandleA("kernel32.dll")`, `VirtualAlloc((LPVOID)0x0,n,0x3000,4)`.
+  The prototypes and the Windows types they use (`DWORD`, `HMODULE`, `LPCSTR`, ...) are in the
+  project's types; about 130 Win32 and C runtime functions are covered, the rest decompile
+  untyped.
+- **Exports**, the entry point and **TLS callbacks** (`tls_callback_0`, ...) are functions and
+  entry points. Functions come from the COFF symbol table when the image has one (mingw-w64
+  keeps it unless stripped), from the export table, and on x86-64 from the exception directory
+  (`.pdata`), which finds every function of a stripped 64-bit image.
+- **Calling conventions**: x86-64 Windows has one; on 32-bit Windows the Win32 functions are
+  `__stdcall` (the callee pops its arguments), the C runtime's `__cdecl`, and a decorated name
+  (`_f@12`) says `__stdcall`.
+- **C++ names** from MSVC (`?area@Rect@@QEBANXZ`) are demangled like GCC's (`area`), with the
+  mangled name kept.
+- **32-bit ELF**: position-independent code works through `__x86.get_pc_thunk.bx` (named even in
+  stripped programs), so strings and switch tables resolve.
+
 ## What does not work yet
 
-- PE and Mach-O files, 32-bit programs and big-endian ELF. With `auto` these go to Ghidra.
+- Mach-O files, big-endian ELF, processors other than x86 and AArch64, and PDB files for PE images. With `auto` these go to Ghidra.
+- PE: delay-load imports, resources, .NET metadata (managed assemblies go to the .NET engine),
+  and data symbols in the decompiler output (`uRam0040d03c` where Ghidra shows `tls_hits`).
 - DWARF variables (globals and locals); DWARF types and function prototypes are imported.
 - Linux only.

@@ -1,0 +1,7 @@
+LIBRARY win_dll.dll
+EXPORTS
+    kr_add @1
+    kr_mul @2
+    kr_secret @3 NONAME
+    kr_version @4
+    kr_counter @5 DATA

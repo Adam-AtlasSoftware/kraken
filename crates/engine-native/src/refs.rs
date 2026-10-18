@@ -10,6 +10,67 @@ use kraken_proto::XrefKind;
 use crate::discover::Func;
 use crate::elf::Loaded;
 
+/// The displacement of a memory operand based on `reg` alone in x86 operand text, as Sleigh
+/// prints it: `[EBX]`, `[EBX + 0x14]`, `[EBX + 0xffffe07c]` (32-bit wrap) or `[EBX + -0x8]`.
+fn base_disp(body: &str, reg: &str) -> Option<i64> {
+    let inner = &body[body.find('[')? + 1..body.find(']')?];
+    let mut parts = inner.split(" + ");
+    if parts.next()?.trim() != reg {
+        return None;
+    }
+    let disp = match parts.next() {
+        None => 0,
+        Some(d) => {
+            let d = d.trim();
+            let (neg, hex) = match d.strip_prefix('-') {
+                Some(h) => (true, h),
+                None => (false, d),
+            };
+            let v = i64::from_str_radix(hex.strip_prefix("0x")?, 16).ok()?;
+            if neg { -v } else { v }
+        }
+    };
+    parts.next().is_none().then_some(disp)
+}
+
+/// What an instruction does with its memory operand: the address for `LEA`, a write when it is
+/// the destination, else a read.
+fn memory_kind(mnemonic: &str, body: &str) -> XrefKind {
+    let m = mnemonic.to_ascii_uppercase();
+    if m == "LEA" {
+        return XrefKind::Data;
+    }
+    let bracket = body.find('[').unwrap_or(0);
+    let comma = body.find(',');
+    let first = comma.is_none_or(|c| bracket < c);
+    let two = comma.is_some();
+    let writes_single = ["FST", "SET", "POP", "INC", "DEC", "NOT", "NEG", "FIST"]
+        .iter()
+        .any(|p| m.starts_with(p));
+    if (two && first && !matches!(m.as_str(), "CMP" | "TEST")) || (!two && writes_single) {
+        XrefKind::Write
+    } else {
+        XrefKind::Read
+    }
+}
+
+/// The register a 32-bit `get_pc_thunk` sets, by its Ghidra name (`__x86.get_pc_thunk.bx`).
+fn pc_thunk_register(name: &str) -> Option<&'static str> {
+    let reg = name
+        .strip_prefix("__x86.get_pc_thunk.")
+        .or_else(|| name.strip_prefix("__i686.get_pc_thunk."))?;
+    Some(match reg {
+        "ax" => "EAX",
+        "bx" => "EBX",
+        "cx" => "ECX",
+        "dx" => "EDX",
+        "si" => "ESI",
+        "di" => "EDI",
+        "bp" => "EBP",
+        _ => return None,
+    })
+}
+
 /// Whether two register ranges (offset, size) overlap.
 fn overlaps(a: (u64, u32), b: (u64, u32)) -> bool {
     a.0 < b.0 + u64::from(b.1) && b.0 < a.0 + u64::from(a.1)
@@ -71,8 +132,9 @@ impl Builder<'_> {
             if !self.mapped(r.addr) || i.targets.contains(&r.addr) {
                 continue;
             }
-            // the return address a call pushes is not a reference
-            if is_call && r.addr == next {
+            // the return address a call pushes is not a reference, and neither is the x87
+            // instruction pointer an FPU instruction records (its own address)
+            if (is_call && r.addr == next) || r.addr == a {
                 continue;
             }
             let kind = match r.kind {
@@ -117,6 +179,22 @@ impl RefIndex {
             set: BTreeSet::new(),
         };
         let mut done: BTreeSet<u64> = BTreeSet::new();
+        let pic32 = loaded.pointer_size() == 4 && loaded.pic_base.is_some();
+        let mask = if loaded.pointer_size() == 4 {
+            0xffff_ffff
+        } else {
+            u64::MAX
+        };
+        // the pointer a relocated slot in a read-only block holds
+        let readonly_pointer = |slot: u64| -> Option<u64> {
+            let k = loaded.pointer_slots.partition_point(|(s, _)| *s < slot);
+            let (s, t) = *loaded.pointer_slots.get(k)?;
+            let ro = loaded
+                .blocks
+                .iter()
+                .any(|bl| bl.start.0 <= s && s < bl.end.0 && !bl.perms.contains('w'));
+            (s == slot && ro).then_some(t)
+        };
         for f in functions.values() {
             for (op, targets) in &f.switches {
                 for t in targets {
@@ -135,10 +213,89 @@ impl RefIndex {
             // registers holding a taken address within the current block: (offset, size, address)
             let mut held: Vec<(u64, u32, u64)> = Vec::new();
             let mut prev_end = None;
+            // registers known to hold an address, for the memory accesses made through them:
+            // the 32-bit PIC base (`call get_pc_thunk.bx; add ebx, n`, kept across blocks until
+            // overwritten, and in PLT entries as their callers set it), an address taken with
+            // `lea`, or a pointer
+            // loaded from a read-only relocated slot (mingw-w64's `.refptr` indirections), the
+            // last two within a block. (register, address, kept across blocks)
+            let mut bases: Vec<(String, u64, bool)> = Vec::new();
+            if pic32 && loaded.in_plt(f.entry) {
+                bases.extend(loaded.pic_base.map(|g| ("EBX".to_string(), g, true)));
+            }
+            let mut thunk_reg: Option<&'static str> = None;
             for a in &f.insns {
                 let Some(i) = insns.get(a) else { continue };
                 if prev_end != Some(*a) || leaders.contains(a) {
                     held.clear();
+                    bases.retain(|(_, _, keep)| *keep);
+                }
+                let dest = i.body.split(',').next().unwrap_or("").trim().to_string();
+                let pic_setup = thunk_reg.take().and_then(|reg| {
+                    let imm = i
+                        .body
+                        .strip_prefix(&format!("{reg},"))
+                        .and_then(|v| u64::from_str_radix(v.trim().strip_prefix("0x")?, 16).ok())?;
+                    i.mnemonic
+                        .eq_ignore_ascii_case("ADD")
+                        .then(|| (reg, (a + imm) & 0xffff_ffff))
+                });
+                if let Some((reg, base)) = pic_setup {
+                    bases.retain(|(r, _, _)| r != reg);
+                    bases.push((reg.to_string(), base, true));
+                } else {
+                    for (reg, base, _) in bases.clone() {
+                        let Some(d) = base_disp(&i.body, &reg) else {
+                            continue;
+                        };
+                        let to = base.wrapping_add_signed(d) & mask;
+                        if b.mapped(to) && !done.contains(a) {
+                            let kind = memory_kind(&i.mnemonic, &i.body);
+                            b.add(*a, to, kind);
+                            if kind == XrefKind::Data {
+                                held.extend(i.reg_writes.iter().map(|(o, s)| (*o, *s, to)));
+                            }
+                        }
+                    }
+                    // a write to a base register ends it (`ebx` excepted: restoring it before a
+                    // return does not change what other blocks see)
+                    bases.retain(|(r, _, _)| r == "EBX" || dest != *r);
+                    let mnemonic = i.mnemonic.to_ascii_uppercase();
+                    let taken = i
+                        .refs
+                        .iter()
+                        .find(|r| r.kind == RefKind::Data && r.addr != *a && b.mapped(r.addr));
+                    if mnemonic == "LEA"
+                        && let Some(r) = taken
+                    {
+                        bases.push((dest.clone(), r.addr, false));
+                    }
+                    if mnemonic == "MOV"
+                        && let Some(r) = i.refs.iter().find(|r| r.kind == RefKind::Read)
+                        && let Some(target) = readonly_pointer(r.addr)
+                    {
+                        bases.push((dest.clone(), target, false));
+                    }
+                }
+                if matches!(i.flow, Flow::Call | Flow::IndirectCall) {
+                    // calls clobber the scratch registers; a PIC base in a callee-saved one stays
+                    bases.retain(|(r, _, keep)| {
+                        *keep && !matches!(r.as_str(), "EAX" | "ECX" | "EDX")
+                    });
+                } else if !matches!(i.flow, Flow::Fallthrough | Flow::ConditionalJump) {
+                    // the fall-through of a conditional jump still sees the registers
+                    bases.retain(|(_, _, keep)| *keep);
+                }
+                if pic32 && i.flow == Flow::Call {
+                    thunk_reg = i.targets.iter().find_map(|t| {
+                        functions
+                            .get(t)
+                            .and_then(|g| pc_thunk_register(&g.name))
+                            .or_else(|| {
+                                crate::discover::pc_thunk_name(loaded, *t)
+                                    .and_then(pc_thunk_register)
+                            })
+                    });
                 }
                 prev_end = Some(a + u64::from(i.length));
                 let first = done.insert(*a);
@@ -161,7 +318,7 @@ impl RefIndex {
                     && let Some(d) = i
                         .refs
                         .iter()
-                        .find(|r| r.kind == RefKind::Data && b.mapped(r.addr))
+                        .find(|r| r.kind == RefKind::Data && r.addr != *a && b.mapped(r.addr))
                 {
                     held.extend(i.reg_writes.iter().map(|(o, s)| (*o, *s, d.addr)));
                 }

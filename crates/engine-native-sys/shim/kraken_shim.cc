@@ -5,6 +5,7 @@
 #include "engine-native-sys/src/lib.rs.h"
 
 #include <chrono>
+#include <map>
 #include <cstdio>
 #include <mutex>
 #include <sstream>
@@ -325,20 +326,31 @@ class KrakenArchitecture : public ghidra::SleighArchitecture {
     archid = getTarget();
     ghidra::SleighArchitecture::resolveArchitecture();
   }
-  // Core type names as Ghidra's Java side registers them (LP64), so output reads `int`,
-  // `uint`, `undefined8` rather than the console defaults `int4`, `uint4`, `xunknown8`.
+  // Whether `long` is 8 bytes (LP64: 64-bit targets other than Windows). On 32-bit targets
+  // and 64-bit Windows Ghidra calls the 8-byte integers `longlong` and `ulonglong`.
+  bool longIs64() const {
+    const std::string &t = getTarget();
+    bool windows = t.size() >= 8 && (t.compare(t.size() - 8, 8, ":windows") == 0 ||
+                                     t.find(":clangwindows") != std::string::npos);
+    return t.find(":64:") != std::string::npos && !windows;
+  }
+  // Core type names as Ghidra's Java side registers them, so output reads `int`, `uint`,
+  // `undefined8` rather than the console defaults `int4`, `uint4`, `xunknown8`.
   void buildCoreTypes(ghidra::DocumentStorage &) override {
     using namespace ghidra;
+    bool lp64 = longIs64();
+    const char *int8 = lp64 ? "long" : "longlong";
+    const char *uint8 = lp64 ? "ulong" : "ulonglong";
     types->setCoreType("void", 1, TYPE_VOID, false);
     types->setCoreType("bool", 1, TYPE_BOOL, false);
     types->setCoreType("byte", 1, TYPE_UINT, false);
     types->setCoreType("ushort", 2, TYPE_UINT, false);
     types->setCoreType("uint", 4, TYPE_UINT, false);
-    types->setCoreType("ulong", 8, TYPE_UINT, false);
+    types->setCoreType(uint8, 8, TYPE_UINT, false);
     types->setCoreType("sbyte", 1, TYPE_INT, false);
     types->setCoreType("short", 2, TYPE_INT, false);
     types->setCoreType("int", 4, TYPE_INT, false);
-    types->setCoreType("long", 8, TYPE_INT, false);
+    types->setCoreType(int8, 8, TYPE_INT, false);
     types->setCoreType("float", 4, TYPE_FLOAT, false);
     types->setCoreType("double", 8, TYPE_FLOAT, false);
     types->setCoreType("float10", 10, TYPE_FLOAT, false);
@@ -352,6 +364,15 @@ class KrakenArchitecture : public ghidra::SleighArchitecture {
     types->setCoreType("wchar16", 2, TYPE_INT, true);
     types->setCoreType("wchar32", 4, TYPE_INT, true);
     types->cacheCoreTypes();
+    // The other spellings stay known to the C grammar (after the cache, so the decompiler
+    // still prints the preferred ones): `long` is 4 bytes where it is not 8.
+    if (lp64) {
+      types->setCoreType("longlong", 8, TYPE_INT, false);
+      types->setCoreType("ulonglong", 8, TYPE_UINT, false);
+    } else {
+      types->setCoreType("long", 4, TYPE_INT, false);
+      types->setCoreType("ulong", 4, TYPE_UINT, false);
+    }
   }
   void postSpecFile(void) override {
     ghidra::Architecture::postSpecFile();
@@ -423,6 +444,9 @@ struct Session::Impl {
   KrakenPrintC *printer = nullptr;
   // the root action of the decompile carries break points, see `breakEverywhere`
   ghidra::Action *broken = nullptr;
+  // call fixups of the compiler spec by the names of the functions they replace
+  // (`__x86.get_pc_thunk.bx`): the C++ library keeps the payloads but drops the targets
+  std::map<std::string, ghidra::int4> callFixups;
 };
 
 Session::Session(std::unique_ptr<Impl> i) : impl(std::move(i)) {}
@@ -471,6 +495,23 @@ std::unique_ptr<Session> new_session(rust::Str language_id, rust::Str compiler_i
     ghidra::DocumentStorage store;
     impl->arch->init(store);
     impl->arch->readonlypropagate = true;
+    if (const ghidra::Element *spec = store.getTag("compiler_spec")) {
+      for (const ghidra::Element *el : spec->getChildren()) {
+        if (el->getName() != "callfixup")
+          continue;
+        try {
+          ghidra::int4 id = impl->arch->pcodeinjectlib->getPayloadId(
+              ghidra::InjectPayload::CALLFIXUP_TYPE, el->getAttributeValue("name"));
+          if (id < 0)
+            continue;
+          for (const ghidra::Element *t : el->getChildren())
+            if (t->getName() == "target")
+              impl->callFixups[t->getAttributeValue("name")] = id;
+        } catch (ghidra::LowlevelError &) {
+          // a fixup without a name or payload is left out
+        }
+      }
+    }
     auto *printer = new KrakenPrintC(impl->arch.get(), new TokenEmit());
     printer->initializeFromArchitecture();
     impl->arch->printlist.push_back(printer);
@@ -499,7 +540,10 @@ void Session::add_function(uint64_t addr, rust::Str name) {
       // renameSymbol leaves the Funcdata's own name behind, so replace the symbol instead
       global->removeSymbol(fd->getSymbol());
     }
-    global->addFunction(at, nm);
+    ghidra::FunctionSymbol *sym = global->addFunction(at, nm);
+    auto fix = impl->callFixups.find(nm);
+    if (fix != impl->callFixups.end() && sym != nullptr)
+      sym->getFunction()->getFuncProto().setInjectId(fix->second);
   });
 }
 
