@@ -578,8 +578,9 @@ impl AcpBackend {
         if denied > 0 || own_calls > 0 {
             lock(&self.shared.notes).push(format!(
                 "{} was given a text-only request but tried to use its own tools ({own_calls} \
-                 calls, {denied} permission requests); every request was denied and nothing it \
-                 did was kept",
+                 calls, {denied} permission requests); every permission request was denied and only its \
+                 text reply was used, but tools its own settings allow without asking may have \
+                 run",
                 self.settings.profile.display_name
             ));
         }
