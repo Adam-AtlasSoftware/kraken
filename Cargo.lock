@@ -2821,6 +2821,7 @@ dependencies = [
  "kraken-model",
  "kraken-proto",
  "kraken-registry",
+ "kraken-rewrite",
  "kraken-viewmodel",
  "krakend",
  "rfd",

@@ -66,6 +66,11 @@ pub(super) fn kit(demo: bool) -> Kit {
 
 /// `gpu` renders with wgpu so `render()` gives a picture (documentation screenshots).
 pub(super) fn kit_with(demo: bool, gpu: bool) -> Kit {
+    kit_from(Services::offline(), &options(demo), gpu)
+}
+
+/// A harness over the app built from `services` and `opts`.
+pub(super) fn kit_from(services: Services, opts: &crate::args::Options, gpu: bool) -> Kit {
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -74,7 +79,7 @@ pub(super) fn kit_with(demo: bool, gpu: bool) -> Kit {
             .expect("runtime"),
     );
     let ctx = egui::Context::default();
-    let app = KrakenApp::new(&ctx, rt.clone(), Services::offline(), &options(demo));
+    let app = KrakenApp::new(&ctx, rt.clone(), services, opts);
     let mut fonts_done = false;
     let builder = egui_kittest::Harness::builder().with_size([1280.0, 800.0]);
     let builder = if gpu { builder.wgpu() } else { builder };
