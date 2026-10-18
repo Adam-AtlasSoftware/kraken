@@ -411,10 +411,20 @@ impl Settings {
         let p = pal(ui);
         ui.label(medium("Appearance", 14.0).color(p.text_strong));
         ui.horizontal(|ui| {
-            if ui.radio(dark, "Dark").clicked() && !dark {
+            if ui
+                .radio(dark, "Dark")
+                .on_hover_text("Use the dark look")
+                .clicked()
+                && !dark
+            {
                 actions.push(SettingsAction::SetDark(true));
             }
-            if ui.radio(!dark, "Light").clicked() && dark {
+            if ui
+                .radio(!dark, "Light")
+                .on_hover_text("Use the light look")
+                .clicked()
+                && dark
+            {
                 actions.push(SettingsAction::SetDark(false));
             }
         });
@@ -459,6 +469,9 @@ impl Settings {
                     egui::TextEdit::singleline(&mut self.draft.ghidra_home)
                         .hint_text("automatic")
                         .desired_width(380.0),
+                )
+                .on_hover_text(
+                    "The folder where Ghidra is installed. Leave it empty to find it by itself",
                 );
                 ui.end_row();
                 ui.label("Java (JDK) folder");
@@ -466,6 +479,9 @@ impl Settings {
                     egui::TextEdit::singleline(&mut self.draft.java_home)
                         .hint_text("automatic")
                         .desired_width(380.0),
+                )
+                .on_hover_text(
+                    "The folder where Java is installed. Leave it empty to find it by itself",
                 );
                 ui.end_row();
                 ui.label("Memory limit (MiB)");
@@ -473,6 +489,9 @@ impl Settings {
                     egui::TextEdit::singleline(&mut self.draft.max_heap_mb)
                         .hint_text("default")
                         .desired_width(120.0),
+                )
+                .on_hover_text(
+                    "The most memory the engine may use, in MiB. Leave it empty for the default",
                 );
                 ui.end_row();
             });
@@ -491,7 +510,9 @@ impl Settings {
         }
         ui.horizontal(|ui| {
             ui.add_enabled_ui(env.config_path.is_some(), |ui| {
-                if style::primary_button(ui, "Save").clicked()
+                if style::primary_button(ui, "Save")
+                    .on_hover_text("Save the settings")
+                    .clicked()
                     && let Some(path) = env.config_path
                 {
                     self.note = Some(self.save(path));
@@ -535,7 +556,11 @@ impl Settings {
         let running = matches!(self.setup, SetupState::Running(..));
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!running, |ui| {
-                if ui.button("Run setup (download Ghidra + JDK)").clicked() {
+                if ui
+                    .button("Run setup (download Ghidra + JDK)")
+                    .on_hover_text("Download Ghidra and a Java JDK for the engine")
+                    .clicked()
+                {
                     self.start_setup(env.rt, ctx);
                 }
             });
@@ -581,7 +606,11 @@ impl Settings {
             return;
         };
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button("Refresh")
+                .on_hover_text("Read the daemon status again")
+                .clicked()
+            {
                 self.refresh_status(env, ctx, true);
             }
             ui.add_enabled_ui(!self.restarting, |ui| {

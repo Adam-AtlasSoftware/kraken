@@ -622,7 +622,14 @@ fn auto_name_skips_a_function_someone_renamed_meanwhile() {
 fn learn_mode_has_help_for_every_panel_and_finds_mnemonics() {
     let r = project_rig();
     for h in PANEL_HELP {
-        assert!(!h.text.is_empty());
+        assert!(!h.text.is_empty() && !h.short.is_empty() && !h.how.is_empty());
+        for k in h.keys {
+            assert!(
+                crate::SHORTCUTS.iter().any(|s| s.keys == *k),
+                "{} mentions unknown shortcut {k}",
+                h.panel
+            );
+        }
         for t in h.terms {
             assert!(
                 r.vm.assist.term(t).is_some(),
@@ -632,6 +639,24 @@ fn learn_mode_has_help_for_every_panel_and_finds_mnemonics() {
         }
     }
     assert!(panel_help("Functions").is_some());
+    for title in [
+        "Functions",
+        "Decompiler",
+        "Hex",
+        "Listing",
+        "Graph",
+        "Xrefs",
+        "Strings",
+        "Imports / Exports",
+        "Search",
+        "Bookmarks",
+        "History",
+        "Proposals",
+        "Assistant",
+        "Rewrite",
+    ] {
+        assert!(panel_help(title).is_some(), "no help for {title}");
+    }
     assert!(panel_help("Nope").is_none());
     let jne =
         r.vm.assist

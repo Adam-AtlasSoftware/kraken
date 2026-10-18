@@ -16,6 +16,7 @@ pub mod logop;
 pub mod meta;
 pub mod page;
 pub mod program;
+pub mod progress;
 pub mod types;
 pub mod untrusted;
 
@@ -37,6 +38,7 @@ pub use program::{
     MemoryBlock, MemoryKind, OperandKind, OperandToken, StringEncoding, StringEntry, SymbolEntry,
     SymbolKind, Xref, XrefDirection, XrefKind, hex_bytes,
 };
+pub use progress::{OpenPlan, OpenProgress, OpenStage, OpenUpdate};
 pub use types::{
     Bitfield, Composite, EnumDef, EnumVariant, Field, FunctionPrototype, Param, Primitive,
     PrimitiveClass, TypeDef, TypeRef, TypedefDef,

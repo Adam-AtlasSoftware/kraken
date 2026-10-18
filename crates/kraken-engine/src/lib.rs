@@ -27,7 +27,8 @@ pub use job::{AnalysisJob, ProgressSender};
 pub use tokio_util::sync::CancellationToken;
 pub use traits::{
     Analyzer, Decompiler, Disassembler, EngineResult, FlowGraph, FunctionLister, Loader,
-    MemoryReader, Mutator, StringLister, SymbolLister, TypeStore, XrefProvider, unsupported,
+    MemoryReader, Mutator, OpenReporter, StringLister, SymbolLister, TypeStore, XrefProvider,
+    unsupported,
 };
 pub use types::{
     AnalysisSummary, AnalyzeRequest, DisasmRequest, EngineRejected, LoaderSpec, ProgramInfo,

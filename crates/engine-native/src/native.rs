@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use kraken_engine::{
     AnalysisJob, AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, Engine,
     EngineCaps, EngineRejected, EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec,
-    MemoryReader, Mutator, ProgramInfo, StringLister, StringsRequest, SymbolLister, TypeStore,
-    XrefProvider, XrefRequest,
+    MemoryReader, Mutator, OpenReporter, ProgramInfo, StringLister, StringsRequest, SymbolLister,
+    TypeStore, XrefProvider, XrefRequest,
 };
 use kraken_proto::{
     BytesRead, Cfg, DecompileResult, DisasmRow, FunctionSummary, Locator, MemoryBlock, Page,
@@ -234,12 +234,37 @@ impl Loader for NativeEngine {
         spec: &LoaderSpec,
         cancel: &CancellationToken,
     ) -> EngineResult<ProgramInfo> {
+        self.open(path, spec, cancel, None).await
+    }
+
+    async fn open_binary_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: OpenReporter,
+    ) -> EngineResult<ProgramInfo> {
+        self.open(path, spec, cancel, Some(report)).await
+    }
+}
+
+impl NativeEngine {
+    async fn open(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: Option<OpenReporter>,
+    ) -> EngineResult<ProgramInfo> {
         route!(self,
-            l => l.open_binary(path, spec, cancel).await,
+            l => match report {
+                Some(r) => l.open_binary_reporting(path, spec, cancel, r).await,
+                None => l.open_binary(path, spec, cancel).await,
+            },
             w => {
                 check(cancel)?;
                 if let Some(f) = spec.format.as_deref()
-                    && f != "elf"
+                    && !matches!(f, "elf" | "pe" | "coff" | "ar")
                 {
                     return Err(kraken_proto::ProtoError::new(
                         kraken_proto::ErrorCode::Unsupported,
@@ -253,7 +278,7 @@ impl Loader for NativeEngine {
                         format!("cannot read {}: {e}", path.display()),
                     )
                 })?;
-                w.open(path, spec.clone(), cancel).await
+                w.open(path, spec.clone(), cancel, report.as_ref()).await
             }
         )
     }

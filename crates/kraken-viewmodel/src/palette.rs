@@ -52,6 +52,10 @@ pub enum AppAction {
     ShowShortcuts,
     /// Open the user guide.
     OpenDocs,
+    /// Open the help window (F1 opens the topic of the panel you are in).
+    ShowHelp,
+    /// Start the short guided tour again.
+    TakeTour,
     /// Open `main`, or the entry point when there is no `main`.
     GoToMain,
     /// Ask the assistant for an overview of the program.
@@ -84,7 +88,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 37] = [
+    pub const ALL: [AppAction; 39] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -118,6 +122,8 @@ impl AppAction {
         AppAction::ToggleLearnMode,
         AppAction::ShowShortcuts,
         AppAction::OpenDocs,
+        AppAction::ShowHelp,
+        AppAction::TakeTour,
         AppAction::GoToMain,
         AppAction::ExplainProgram,
         AppAction::RewriteWizard,
@@ -150,6 +156,8 @@ impl AppAction {
             AppAction::ToggleLearnMode => "Toggle learn mode",
             AppAction::ShowShortcuts => "Keyboard shortcuts",
             AppAction::OpenDocs => "User guide",
+            AppAction::ShowHelp => "Help",
+            AppAction::TakeTour => "Take the tour",
             AppAction::GoToMain => "Go to main",
             AppAction::ExplainProgram => "Explain this program",
             AppAction::RewriteWizard => "Rewrite in Rust...",
@@ -193,6 +201,10 @@ impl AppAction {
             AppAction::ToggleLearnMode => "Show a short explanation on every panel",
             AppAction::ShowShortcuts => "List every keyboard shortcut",
             AppAction::OpenDocs => "Open the KRAKEN documentation in your browser",
+            AppAction::ShowHelp => {
+                "Read how KRAKEN works: the first steps, every panel, shortcuts and the glossary"
+            }
+            AppAction::TakeTour => "Walk through the main areas of the window, one step at a time",
             AppAction::GoToMain => "Open the program's main function, or where it starts",
             AppAction::ExplainProgram => "Ask the assistant what this program does",
             AppAction::RewriteWizard => {
@@ -228,7 +240,7 @@ impl AppAction {
             AppAction::Quit => Some("Ctrl+Q"),
             AppAction::OpenPalette => Some("Ctrl+K"),
             AppAction::ShowShortcuts => Some("Ctrl+/"),
-            AppAction::OpenDocs => Some("F1"),
+            AppAction::ShowHelp => Some("F1"),
             AppAction::UndoLast => Some("Ctrl+Z"),
             AppAction::GoTo => Some("G"),
             AppAction::Search => Some("Ctrl+Shift+F"),
@@ -293,7 +305,11 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Project",
     ),
     sc("Ctrl+/", "This list of shortcuts", "Anywhere"),
-    sc("F1", "Open the user guide", "Anywhere"),
+    sc(
+        "F1",
+        "Open help (the topic of the panel you are in)",
+        "Anywhere",
+    ),
     sc("G", "Go to an address, a function or a symbol", "Project"),
     sc(
         "Ctrl+Shift+F",
@@ -371,6 +387,10 @@ pub enum UiRequest {
     ShowShortcuts,
     /// Open the documentation.
     OpenDocs,
+    /// Show the help window.
+    ShowHelp,
+    /// Start the guided tour.
+    TakeTour,
     /// Show the Automate dialog.
     OpenAutomate,
 }

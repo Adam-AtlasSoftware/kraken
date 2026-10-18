@@ -30,7 +30,7 @@ new projects.
 |---|---|---|
 | Needs Java and a Ghidra download | No | Yes (`kraken setup`, about 3 GB) |
 | Start of a new project | Seconds (a small program is ready in well under a second) | About a minute of analysis for a small program |
-| File formats | ELF (x86-64, AArch64, 32-bit x86) and PE (x86, x86-64) | ELF, PE, Mach-O, many processors |
+| File formats | ELF (x86-64, AArch64, 32-bit x86) and PE (x86, x86-64); object files, static libraries and import libraries for x86 and x86-64 | ELF, PE, Mach-O, object files, many processors; no archives |
 | Function list, disassembly, hex, memory map | Yes | Yes |
 | Decompiler | Yes (the same Ghidra decompiler) | Yes |
 | Cross-references, callers and callees, control-flow graph | Yes | Yes |
@@ -176,9 +176,47 @@ kraken decompile --project ~/kraken-projects/win --address 0x14000167f   # probe
 - **32-bit ELF**: position-independent code works through `__x86.get_pc_thunk.bx` (named even in
   stripped programs), so strings and switch tables resolve.
 
+## Libraries and object files
+
+The native engine also opens files that are not linked into a program yet, for Linux and for
+Windows:
+
+```sh
+kraken binary-probe --path corpus/lib/bin/libkr.a     # "Linux static library with 2 objects"
+kraken project-create --binary corpus/lib/bin/libkr.a --engine native --project ~/kraken-projects/kr
+kraken decompile --project ~/kraken-projects/kr --address 0x100070   # kr_report
+```
+
+- **Shared libraries** (`.so`, `.dll`) open like programs. A library without an entry point is
+  fine; its exports (by name, and for a DLL by ordinal, named by the symbol) are the entry points.
+- **Object files** (`.o`, `.obj`) have no addresses yet, so KRAKEN lays them out like Ghidra: the
+  sections one after another from 0x100000 (0x10000 for 32-bit code), each at its alignment, and
+  applies the relocations (the common x86-64 and x86 ones of ELF and COFF). Functions are named
+  from the symbol table, and with debug information they get their prototypes too. A symbol the
+  object only uses (`puts`) gets a stand-in address past the image, like a Windows import, so
+  `puts(s)` reads as a call by name. Sections with one function each (`.text.f`, `.text$f`) are
+  shown together as one `.text` block.
+- **Static libraries** (`.a`, `.lib`) load every member into one project, one after another. The
+  blocks are named after their member (`kr_core.o:.text`), a call from one member to a function
+  of another is linked up, and `project_info` lists the members.
+- **Import libraries** (`kernel32.lib`, mingw's `libkr.dll.a`) hold no code. They open as the list
+  of symbols they import, with the DLL each comes from.
+
+Ghidra opens object files too, so `auto` uses it for them when the native engine is not set up.
+Ghidra does not load archives: a static or import library needs the native engine.
+
+On real files (release build, this machine): glibc's `libc.a` (7 MB, 2227 members) opens in
+about 32 s with 3759 functions; a 31 MB clang `bigobj` COFF object of SQLite with 118,000
+sections opens in about 15 s with 3738 functions. Big C++ libraries are slow: Qt's 20 MB
+`libQt6QmlDom.a` (28 members, 3.6 MB of code) did not finish in 15 minutes, and neither did the
+same code linked into a shared library, so the time goes to the analysis, not to the loading
+(which takes 0.1 s).
+
 ## What does not work yet
 
 - Mach-O files, big-endian ELF, processors other than x86 and AArch64, and PDB files for PE images. With `auto` these go to Ghidra.
+- Object files and libraries for processors other than x86 and x86-64 (AArch64 objects are refused
+  with a message), thin archives, and LLVM bitcode members.
 - PE: delay-load imports, resources, .NET metadata (managed assemblies go to the .NET engine),
   and data symbols in the decompiler output (`uRam0040d03c` where Ghidra shows `tls_hits`).
 - DWARF variables (globals and locals); DWARF types and function prototypes are imported.

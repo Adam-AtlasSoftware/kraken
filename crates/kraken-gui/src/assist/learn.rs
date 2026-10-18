@@ -49,6 +49,11 @@ pub fn tab_tooltip(ui: &mut Ui, vm: &ViewModel, title: &str, purpose: &str) {
     let p = pal(ui);
     ui.set_max_width(360.0);
     ui.label(RichText::new(purpose).color(p.text));
+    ui.label(
+        RichText::new("Press F1 for help with this panel.")
+            .size(11.5)
+            .color(p.text_dim),
+    );
     if !vm.assist.learn_mode {
         return;
     }

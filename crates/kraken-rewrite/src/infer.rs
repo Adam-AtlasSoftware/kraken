@@ -9,6 +9,8 @@
 //! sizes are unknown here, so the generic inputs mix raw random bytes with small pointer graphs; a
 //! curated input generator (see `targets`) tests structs far better.
 
+use std::collections::BTreeMap;
+
 use crate::abi::{Param, Ret, Signature};
 use crate::difftest::{Generator, InputSpec, IntGen, ParamGen, TextGen};
 
@@ -48,6 +50,86 @@ pub fn rust_name(name: &str, address: u64) -> String {
     } else {
         format!("fn_{address:x}")
     }
+}
+
+/// The class of a C++ method from its signature: `Button` for `undefined begin(Button * this)`.
+fn this_class(signature: Option<&str>) -> Option<String> {
+    let sig = signature?;
+    let at = sig.find(" * this")?;
+    let head = &sig[..at];
+    let start = head
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    let class = &head[start..];
+    (!class.is_empty() && class.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .then(|| class.to_string())
+}
+
+/// `Class::name` for a C++ method (from the `this` parameter of its signature), else `name`.
+pub fn qualified_name(name: &str, signature: Option<&str>) -> String {
+    match this_class(signature) {
+        Some(class) if !name.contains("::") => format!("{class}::{name}"),
+        _ => name.to_string(),
+    }
+}
+
+/// `name` as a Rust identifier: template arguments dropped, `~X` as `drop_X`, every other
+/// character that is not a letter, digit or `_` as `_`.
+fn identifier(name: &str) -> String {
+    let base = name.split('<').next().unwrap_or(name);
+    let base = match base.strip_prefix('~') {
+        Some(rest) => format!("drop_{rest}"),
+        None => base.to_string(),
+    };
+    let mut out = String::new();
+    for c in base.chars() {
+        let c = if c.is_ascii_alphanumeric() || c == '_' {
+            c
+        } else {
+            '_'
+        };
+        if !(c == '_' && out.ends_with("__")) {
+            out.push(c);
+        }
+    }
+    let out = out.trim_end_matches('_').to_string();
+    out.chars().take(48).collect()
+}
+
+/// Rust names for the functions of a whole program: `(address, name, signature)` in, a unique
+/// identifier per address out. A C++ method is prefixed with its class (`Button_begin`); a name
+/// that is not an identifier is made one (`operator()` gives `operator`, a template its base
+/// name); a name that is still not unique, not usable or a keyword gets its address
+/// (`begin_107d90`).
+pub fn program_names(functions: &[(u64, String, Option<String>)]) -> BTreeMap<u64, String> {
+    let base: Vec<(u64, String)> = functions
+        .iter()
+        .map(|(a, name, sig)| {
+            let id = identifier(name);
+            let id = match this_class(sig.as_deref()) {
+                Some(class) if !id.is_empty() => format!("{class}_{id}"),
+                _ => id,
+            };
+            (*a, id)
+        })
+        .collect();
+    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, id) in &base {
+        *count.entry(id.as_str()).or_default() += 1;
+    }
+    base.iter()
+        .map(|(a, id)| {
+            let unique = count.get(id.as_str()) == Some(&1);
+            let name = if unique {
+                rust_name(id, *a)
+            } else if id.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                format!("{id}_{a:x}")
+            } else {
+                format!("fn_{a:x}")
+            };
+            (*a, name)
+        })
+        .collect()
 }
 
 /// `(bits, signed)` for a C integer type spelled `ty`, or `None` for an unknown type.
@@ -102,7 +184,7 @@ fn split_params(list: &str) -> Vec<String> {
 /// trailing parameter name.
 fn param_type(decl: &str) -> String {
     let d = decl.trim();
-    if d.contains('(') {
+    if d.contains("(*") {
         return d.to_string(); // function pointer syntax
     }
     let name_start = d
@@ -119,13 +201,13 @@ fn param_type(decl: &str) -> String {
 }
 
 fn is_pointer(ty: &str) -> bool {
-    ty.contains('*') || ty.contains('[')
+    ty.contains('*') || ty.contains('[') || ty.trim_end().ends_with('&')
 }
 
 /// True for a type that is a function pointer: C syntax (`int (*)(int)`), Ghidra's `code *` and
 /// `_func_...` types, and typedef names that say so (`cmp_fn`, `visit_func`, `done_cb`).
 fn is_function_pointer(ty: &str) -> bool {
-    if ty.contains('(') {
+    if ty.contains("(*") {
         return true;
     }
     let word = ty
@@ -149,7 +231,23 @@ fn is_function_pointer(ty: &str) -> bool {
         .any(|s| word.ends_with(s))
 }
 
-fn classify_param(decl: &str) -> Result<Param, Unsupported> {
+/// The last word of a type without qualifiers (`const float` gives `float`).
+fn base_word(ty: &str) -> &str {
+    ty.split_whitespace()
+        .rfind(|w| !matches!(*w, "const" | "volatile" | "register"))
+        .unwrap_or("")
+}
+
+/// How strictly unknown types are read: a single function refuses them, a program rewrite reads
+/// them as a 64-bit register value (a small struct, a C++ class Ghidra could not size) and lets
+/// the program-level test judge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Function,
+    Program,
+}
+
+fn classify_param(decl: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Param, Unsupported> {
     let ty = param_type(decl);
     if is_function_pointer(&ty) {
         return Ok(Param::FnPtr);
@@ -157,19 +255,26 @@ fn classify_param(decl: &str) -> Result<Param, Unsupported> {
     if is_pointer(&ty) {
         return Ok(Param::Buf);
     }
-    if ty.contains("float") {
-        return Err(un(format!(
-            "single-precision floating-point parameter `{decl}`"
-        )));
+    match base_word(&ty) {
+        "float" if !ty.contains("long") => return Ok(Param::Float),
+        "double" if !ty.contains("long") => return Ok(Param::Double),
+        _ => {}
     }
-    if ty.split_whitespace().last() == Some("double") {
-        return Ok(Param::Double);
-    }
-    if ty.contains("double") {
+    if ty.contains("float") || ty.contains("double") {
         return Err(un(format!("floating-point parameter `{decl}`")));
     }
     match int_type(&ty) {
         Some((bits, signed)) => Ok(Param::Int { bits, signed }),
+        None if mode == Mode::Program => {
+            notes.push(format!(
+                "parameter `{decl}` has a type the signature does not size; it is passed as a \
+                 64-bit integer register"
+            ));
+            Ok(Param::Int {
+                bits: 64,
+                signed: false,
+            })
+        }
         None => Err(un(format!(
             "parameter `{decl}` has a type that is not a plain integer or pointer \
              (structure by value, function-pointer typedef, ...)"
@@ -177,18 +282,19 @@ fn classify_param(decl: &str) -> Result<Param, Unsupported> {
     }
 }
 
-fn classify_ret(ty: &str, allow_ptr: bool) -> Result<Ret, Unsupported> {
+fn classify_ret(ty: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Ret, Unsupported> {
     let ty = ty.trim();
     if ty == "void" {
         return Ok(Ret::Void);
     }
+    let program = mode == Mode::Program;
     // A stripped binary's decompiler leaves a function whose result it cannot type as
     // `undefined`; a program rewrite reads that as no result, and the program-level test finds
     // out if the callers disagree.
-    if ty == "undefined" && allow_ptr {
+    if ty == "undefined" && program {
         return Ok(Ret::Void);
     }
-    if is_pointer(ty) && allow_ptr {
+    if is_pointer(ty) && program {
         return Ok(Ret::Ptr);
     }
     if is_pointer(ty) {
@@ -196,61 +302,132 @@ fn classify_ret(ty: &str, allow_ptr: bool) -> Result<Ret, Unsupported> {
             "pointer result (addresses are not comparable between the original and the Rust build)",
         ));
     }
-    if ty == "double" {
-        return Ok(Ret::Double);
+    match base_word(ty) {
+        "double" if !ty.contains("long") => return Ok(Ret::Double),
+        "float" if !ty.contains("long") => return Ok(Ret::Float),
+        _ => {}
     }
     if ty.contains("float") || ty.contains("double") {
         return Err(un("floating-point result"));
     }
     match int_type(ty) {
         Some((bits, signed)) => Ok(Ret::Int { bits, signed }),
+        None if program => {
+            notes.push(format!(
+                "the result type `{ty}` is not sized by the signature; it is returned as a 64-bit \
+                 integer register (RAX)"
+            ));
+            Ok(Ret::Int {
+                bits: 64,
+                signed: false,
+            })
+        }
         None => Err(un(format!("result type `{ty}` is not a plain integer"))),
     }
 }
 
 /// Reads `signature` (as `list_functions` renders it) into a [`Signature`] named `name`.
 pub fn infer_signature(signature: &str, name: &str) -> Result<Signature, Unsupported> {
-    infer_with(signature, name, false)
+    infer_with(signature, name, None, Mode::Function, &mut Vec::new())
 }
 
-/// [`infer_signature`] for a program rewrite: a pointer result becomes [`Ret::Ptr`] and the
-/// second value says why the function cannot be compared against the original at function level
-/// (it can still be translated and compiled, and the program-level test covers it).
+/// What [`infer_signature_for_program`] read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramSignature {
+    /// The ABI.
+    pub signature: Signature,
+    /// Why the function cannot be compared against the original at function level (it can still
+    /// be translated and compiled, and the program-level test covers it).
+    pub compile_only: Option<String>,
+    /// What was guessed about types the signature does not size.
+    pub guesses: Vec<String>,
+}
+
+/// [`infer_signature`] for a program rewrite: a pointer result becomes [`Ret::Ptr`], types the
+/// signature does not size are read as 64-bit registers, and `display` (the function's name as
+/// the engine shows it, which can be a C++ name such as `~_Vector_base`, `operator()` or a
+/// template instantiation) is how the name is found in the signature.
 pub fn infer_signature_for_program(
     signature: &str,
     name: &str,
-) -> Result<(Signature, Option<String>), Unsupported> {
-    let sig = infer_with(signature, name, true)?;
-    let note = (sig.ret == Ret::Ptr).then(|| {
+    display: &str,
+) -> Result<ProgramSignature, Unsupported> {
+    let mut guesses = Vec::new();
+    let sig = infer_with(signature, name, Some(display), Mode::Program, &mut guesses)?;
+    let compile_only = (sig.ret == Ret::Ptr).then(|| {
         "pointer result: addresses are not comparable between the original and the Rust build"
             .to_string()
     });
-    Ok((sig, note))
+    Ok(ProgramSignature {
+        signature: sig,
+        compile_only,
+        guesses,
+    })
 }
 
-fn infer_with(signature: &str, name: &str, allow_ptr: bool) -> Result<Signature, Unsupported> {
-    let sig = signature.trim();
-    let open = sig
-        .find('(')
-        .ok_or_else(|| un("the signature has no parameter list"))?;
-    let close = sig
-        .rfind(')')
-        .filter(|c| *c > open)
-        .ok_or_else(|| un("the signature has no closing parenthesis"))?;
-    let head = sig[..open].trim_end();
-    let ret_ty = head
-        .strip_suffix(|c: char| c.is_ascii_alphanumeric() || c == '_')
+/// Where the parameter list of `sig` opens: the first `(` after the function's name when the name
+/// is known (C++ names hold parentheses: `operator()`, `{lambda(int)#1}`), else the first `(`.
+fn open_paren(sig: &str, display: Option<&str>) -> Option<usize> {
+    if let Some(d) = display.filter(|d| !d.is_empty())
+        && let Some(i) = sig.find(&format!("{d}("))
+    {
+        return Some(i + d.len());
+    }
+    sig.find('(')
+}
+
+/// The `)` that closes the parameter list opened at `open`.
+fn close_paren(sig: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in sig[open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The result type in `head` (everything before the parameter list): `head` without the name.
+fn result_type<'a>(head: &'a str, display: Option<&str>) -> &'a str {
+    if let Some(d) = display.filter(|d| !d.is_empty())
+        && let Some(rest) = head.strip_suffix(d)
+    {
+        return rest.trim();
+    }
+    head.strip_suffix(|c: char| c.is_ascii_alphanumeric() || c == '_')
         .map(|_| {
             let start = head
                 .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                 .map_or(0, |i| i + 1);
             head[..start].trim()
         })
-        .unwrap_or("");
+        .unwrap_or("")
+}
+
+fn infer_with(
+    signature: &str,
+    name: &str,
+    display: Option<&str>,
+    mode: Mode,
+    notes: &mut Vec<String>,
+) -> Result<Signature, Unsupported> {
+    let sig = signature.trim();
+    let open = open_paren(sig, display).ok_or_else(|| un("the signature has no parameter list"))?;
+    let close = close_paren(sig, open)
+        .or_else(|| sig.rfind(')').filter(|c| *c > open))
+        .ok_or_else(|| un("the signature has no closing parenthesis"))?;
+    let ret_ty = result_type(sig[..open].trim_end(), display);
     if ret_ty.is_empty() {
         return Err(un("the signature has no result type"));
     }
-    let ret = classify_ret(ret_ty, allow_ptr)?;
+    let ret = classify_ret(ret_ty, mode, notes)?;
     let inner = sig[open + 1..close].trim();
     let decls = if inner.is_empty() || inner == "void" {
         Vec::new()
@@ -262,7 +439,7 @@ fn infer_with(signature: &str, name: &str, allow_ptr: bool) -> Result<Signature,
     }
     let params = decls
         .iter()
-        .map(|d| classify_param(d))
+        .map(|d| classify_param(d, mode, notes))
         .collect::<Result<Vec<_>, _>>()?;
     let sig = Signature {
         name: name.to_string(),
@@ -300,6 +477,7 @@ pub fn generic_inputs(sig: &Signature) -> InputSpec {
                 ParamGen::Mixed(TextGen::generic()),
             ]),
             Param::Double => ParamGen::Double,
+            Param::Float => ParamGen::Float,
             Param::FnPtr => ParamGen::FnPtr,
         })
         .collect();
@@ -396,8 +574,8 @@ mod tests {
                 "node * node_new(int id, char * name, int x, int y, double w)",
                 "pointer result",
             ),
-            ("int f(float w)", "single-precision"),
-            ("float f(int w)", "floating-point"),
+            ("long double f(int w)", "floating-point"),
+            ("int f(long double w)", "floating-point"),
             (
                 "int f(int a, double b, double c, double d, double e, double g, double h, double i, double j, double k)",
                 "eight",
@@ -455,22 +633,127 @@ mod tests {
 
     #[test]
     fn a_program_rewrite_accepts_pointer_and_untyped_results_but_only_compiles_the_first() {
-        let (s, note) =
-            infer_signature_for_program("char * op_name(uint op)", "op_name").expect("sig");
-        assert_eq!(s.ret, Ret::Ptr);
-        assert!(note.expect("note").contains("pointer result"));
-        assert!(s.rust_prototype().ends_with("-> *const u8"));
-        let (s, note) = infer_signature_for_program("undefined FUN_00101149(long * param_1)", "f")
+        let r = infer_signature_for_program("char * op_name(uint op)", "op_name", "op_name")
             .expect("sig");
-        assert_eq!((s.ret, note), (Ret::Void, None));
-        // Everything else stays as strict as for a single function.
-        for text in [
-            "int f(float w)",
-            "int f(vec3 v)",
-            "int printf(char * f, ...)",
-        ] {
-            assert!(infer_signature_for_program(text, "f").is_err(), "{text}");
-        }
+        assert_eq!(r.signature.ret, Ret::Ptr);
+        assert!(r.compile_only.expect("note").contains("pointer result"));
+        assert!(r.signature.rust_prototype().ends_with("-> *const u8"));
+        let r = infer_signature_for_program(
+            "undefined FUN_00101149(long * param_1)",
+            "f",
+            "FUN_00101149",
+        )
+        .expect("sig");
+        assert_eq!((r.signature.ret, r.compile_only), (Ret::Void, None));
+        // A structure by value or a class Ghidra could not size is a 64-bit register, and the
+        // guess is said.
+        let r = infer_signature_for_program("int f(vec3 v)", "f", "f").expect("sig");
+        assert_eq!(
+            r.signature.params,
+            vec![Param::Int {
+                bits: 64,
+                signed: false
+            }]
+        );
+        assert!(r.guesses[0].contains("vec3 v"), "{:?}", r.guesses);
+        let r = infer_signature_for_program("Button tap(Button * this)", "Button_tap", "tap")
+            .expect("sig");
+        assert_eq!(
+            r.signature.ret,
+            Ret::Int {
+                bits: 64,
+                signed: false
+            }
+        );
+        assert!(infer_signature_for_program("int printf(char * f, ...)", "f", "printf").is_err());
+    }
+
+    #[test]
+    fn floats_map_to_sse_registers_in_single_precision() {
+        let s = sig("float midiToHz(int param_1)").expect("sig");
+        assert_eq!(s.ret, Ret::Float);
+        assert!(s.rust_prototype().ends_with("-> f32"));
+        let s = sig("int parsePart(float param_1, byte * param_2, char param_4)").expect("sig");
+        assert_eq!(s.params[0], Param::Float);
+        assert!(s.rust_prototype().contains("a0: f32"));
+        let s = sig("void f(const float x, double y)").expect("sig");
+        assert_eq!(s.params, vec![Param::Float, Param::Double]);
+    }
+
+    #[test]
+    fn cpp_names_are_found_in_their_signatures() {
+        let r = infer_signature_for_program(
+            "void __insertion_sort<__gnu_cxx::__normal_iterator<unsigned_short*,std::vector<unsigned_short,std::allocator<unsigned_short>>>,std::less<void>>(ushort * param_1, ushort * param_2)",
+            "insertion_sort",
+            "__insertion_sort<__gnu_cxx::__normal_iterator<unsigned_short*,std::vector<unsigned_short,std::allocator<unsigned_short>>>,std::less<void>>",
+        )
+        .expect("template");
+        assert_eq!(r.signature.ret, Ret::Void);
+        assert_eq!(r.signature.params, vec![Param::Buf, Param::Buf]);
+        let r = infer_signature_for_program(
+            "undefined ~_Vector_base(_Vector_base<short,std::allocator<short>> * this)",
+            "drop__Vector_base",
+            "~_Vector_base",
+        )
+        .expect("destructor");
+        assert_eq!(r.signature.ret, Ret::Void);
+        assert_eq!(r.signature.params, vec![Param::Buf]);
+        let r = infer_signature_for_program(
+            "undefined operator()({lambda(unsigned_short)#1} * this, undefined2 param_1)",
+            "operator_103770",
+            "operator()",
+        )
+        .expect("lambda");
+        assert_eq!(
+            r.signature.params,
+            vec![
+                Param::Buf,
+                Param::Int {
+                    bits: 16,
+                    signed: false
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn program_names_are_unique_identifiers() {
+        let names = program_names(&[
+            (
+                0x10,
+                "begin".into(),
+                Some("undefined begin(Button * this, int x)".into()),
+            ),
+            (
+                0x20,
+                "begin".into(),
+                Some("undefined begin(Button * this)".into()),
+            ),
+            (
+                0x30,
+                "begin".into(),
+                Some("undefined8 begin(FlashStore * this)".into()),
+            ),
+            (0x40, "operator()".into(), None),
+            (0x50, "operator()".into(), None),
+            (0x60, "~_Vector_base".into(), None),
+            (0x70, "main".into(), None),
+            (0x80, "cmp_id".into(), None),
+            (0x90, "__insertion_sort<a,b>".into(), None),
+        ]);
+        assert_eq!(names[&0x10], "Button_begin_10");
+        assert_eq!(names[&0x20], "Button_begin_20");
+        assert_eq!(names[&0x30], "FlashStore_begin");
+        assert_eq!(names[&0x40], "operator_40");
+        assert_eq!(names[&0x60], "drop__Vector_base");
+        assert_eq!(names[&0x70], "fn_70", "main keeps the address form");
+        assert_eq!(names[&0x80], "cmp_id");
+        assert_eq!(names[&0x90], "__insertion_sort");
+        assert_eq!(
+            qualified_name("begin", Some("undefined begin(Button * this)")),
+            "Button::begin"
+        );
+        assert_eq!(qualified_name("main", Some("int main(void)")), "main");
     }
 
     #[test]

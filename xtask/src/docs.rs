@@ -35,7 +35,7 @@ pub fn write_docs() -> Result<()> {
     fs::write(&path, render(&Registry::standard()))
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     println!("docs: {}", path.display());
-    Ok(())
+    crate::gui_docs::write_page()
 }
 
 fn kind_name(k: CommandKind) -> &'static str {

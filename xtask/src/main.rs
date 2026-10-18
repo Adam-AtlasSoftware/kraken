@@ -1,5 +1,6 @@
 mod bench;
 mod docs;
+mod gui_docs;
 mod native_licenses;
 mod native_sla;
 mod native_src;
@@ -40,7 +41,7 @@ Commands:
                state, so a second run starts from the saved analysis), KRAKEN_NATIVE_THREADS.
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
-  docs         Write docs/reference/commands.md from the command registry.
+  docs         Write docs/reference/commands.md and docs/gui.md (registry, menus, panels, shortcuts).
   notices      Write THIRD-PARTY-NOTICES.md from cargo metadata and the crates' license files,
                plus the Ghidra decompiler and zlib texts the native engine compiles in
                (crates/engine-native-sys/licenses, refreshed from the pinned source archive
@@ -203,7 +204,8 @@ fn write_samples() -> Result<()> {
         }
     }
     for (name, value) in &samples {
-        let mut text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+        let mut text = serde_json::to_string_pretty(&kraken_proto::canonical_json(value.clone()))
+            .map_err(|e| e.to_string())?;
         text.push('\n');
         fs::write(dir.join(name), text).map_err(|e| format!("cannot write {name}: {e}"))?;
     }

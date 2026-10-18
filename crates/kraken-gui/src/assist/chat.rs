@@ -139,6 +139,9 @@ fn header(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi) {
         if ui
             .add_enabled(can_clear, egui::Button::new("New chat").small())
             .on_hover_text("Clear the conversation")
+            .on_disabled_hover_text(
+                "There is nothing to clear, or the assistant is still answering",
+            )
             .clicked()
         {
             vm.assist_clear();
@@ -217,7 +220,8 @@ fn setup_state(ui: &mut Ui, vm: &ViewModel, a: &mut AssistUi) {
             );
             preset_row(ui, a, &p, ProviderKind::TerminalAgent, false);
             ui.add_space(10.0);
-            if ui.button("More options in Settings").clicked() {
+            if ui.button("More options in Settings")
+.on_hover_text("Open Settings > AI to choose a model, test it and set keys").clicked() {
                 a.requests.push(AssistRequest::OpenSettings(None));
             }
         });
@@ -236,10 +240,17 @@ fn preset_row(ui: &mut Ui, a: &mut AssistUi, p: &Palette, kind: ProviderKind, on
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if one_click {
-                    if style::primary_button(ui, "Use this").clicked() {
+                    if style::primary_button(ui, "Use this")
+                        .on_hover_text("Use this as the assistant")
+                        .clicked()
+                    {
                         a.requests.push(AssistRequest::UsePreset(kind));
                     }
-                } else if ui.button("Set up...").clicked() {
+                } else if ui
+                    .button("Set up...")
+                    .on_hover_text("Open Settings to set up this kind of assistant")
+                    .clicked()
+                {
                     a.requests.push(AssistRequest::OpenSettings(Some(kind)));
                 }
             });
@@ -260,7 +271,11 @@ fn welcome(ui: &mut Ui, vm: &mut ViewModel, p: &Palette) {
     );
     ui.add_space(6.0);
     for q in STARTERS {
-        if ui.button(q).clicked() {
+        if ui
+            .button(q)
+            .on_hover_text("Ask the assistant this question")
+            .clicked()
+        {
             vm.assist_send(q);
         }
     }
@@ -287,7 +302,10 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
                 "Set up an AI model or agent first (Settings > AI)"
             })
             .desired_width(w);
-        let r = ui.add_enabled(has_backend, edit);
+        let r = ui
+            .add_enabled(has_backend, edit)
+            .on_hover_text("Type a question about this program and press Enter")
+            .on_disabled_hover_text("Choose an AI model or a terminal agent first (Settings > AI)");
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         if a.focus_input {
             a.focus_input = false;
@@ -302,10 +320,17 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
                 vm.assist_stop();
             }
         } else {
-            let send = ui.add_enabled(
-                has_backend && !a.input.trim().is_empty(),
-                egui::Button::new("Send"),
-            );
+            let send = ui
+                .add_enabled(
+                    has_backend && !a.input.trim().is_empty(),
+                    egui::Button::new("Send"),
+                )
+                .on_hover_text("Send the question (Enter)")
+                .on_disabled_hover_text(if has_backend {
+                    "Type a question first"
+                } else {
+                    "Choose an AI model or a terminal agent first (Settings > AI)"
+                });
             if send.clicked() || (enter && !a.input.trim().is_empty()) {
                 let text = std::mem::take(&mut a.input);
                 vm.assist_send(&text);
@@ -603,10 +628,17 @@ fn permission_card(
             );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if style::primary_button(ui, "Allow once").clicked() {
+                if style::primary_button(ui, "Allow once")
+                    .on_hover_text("Let the agent do this once. Ask again next time")
+                    .clicked()
+                {
                     acts.answer.push((c.id.clone(), true));
                 }
-                if ui.button("Deny").clicked() {
+                if ui
+                    .button("Deny")
+                    .on_hover_text("Refuse. The agent cannot do this")
+                    .clicked()
+                {
                     acts.answer.push((c.id.clone(), false));
                 }
             });
@@ -638,10 +670,17 @@ fn proposal_card(ui: &mut Ui, p: &Palette, s: &style::Status, c: &ProposalCard, 
             match &c.state {
                 ProposalState::Waiting | ProposalState::Failed(_) => {
                     ui.horizontal(|ui| {
-                        if style::primary_button(ui, "Accept").clicked() {
+                        if style::primary_button(ui, "Accept")
+                            .on_hover_text("Apply this change. You can undo it from History")
+                            .clicked()
+                        {
                             acts.decide.push((c.call_id.clone(), true));
                         }
-                        if ui.button("Reject").clicked() {
+                        if ui
+                            .button("Reject")
+                            .on_hover_text("Throw this change away. Nothing is changed")
+                            .clicked()
+                        {
                             acts.decide.push((c.call_id.clone(), false));
                         }
                     });
@@ -821,7 +860,8 @@ pub fn suggest_names_button(ui: &mut Ui, vm: &mut ViewModel) {
         .add_enabled(!busy, egui::Button::new("Suggest names...").small())
         .on_hover_text(
             "Ask the assistant to propose names for functions that still have placeholder names like FUN_00401340. You review them before anything changes.",
-        );
+        )
+        .on_disabled_hover_text("Wait for the assistant to finish what it is doing");
     if r.clicked() {
         vm.assist_auto_name(10);
     }

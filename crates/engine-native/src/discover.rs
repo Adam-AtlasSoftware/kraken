@@ -145,6 +145,24 @@ pub struct Discovery {
     pub recovered: usize,
 }
 
+/// How a discovery is getting on, for the progress report of an open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoverProgress {
+    /// The round, from 1; later rounds walk again with the functions found not to return.
+    pub round: usize,
+    /// Functions walked so far in this round.
+    pub found: usize,
+    /// Functions waiting to be walked.
+    pub queued: usize,
+    /// Bytes inside the bodies walked so far in this round (bodies can overlap a little).
+    pub covered: u64,
+    /// Bytes of executable code in the program.
+    pub code: u64,
+}
+
+/// Receives the [`DiscoverProgress`] reports of a discovery.
+pub type ProgressFn<'a> = &'a (dyn Fn(&DiscoverProgress) + Sync);
+
 /// The default name of a function without a symbol (`FUN_` and the entry), as Ghidra names it.
 pub fn default_name(entry: u64) -> String {
     format!("FUN_{entry:08x}")
@@ -493,7 +511,9 @@ struct Walker<'a> {
     /// Direct calls of the current round to callees not known to never return:
     /// (callee, address after the call).
     sites: Vec<(u64, u64)>,
-    progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
+    progress: Option<ProgressFn<'a>>,
+    round: usize,
+    code: u64,
 }
 
 impl Walker<'_> {
@@ -519,10 +539,12 @@ impl Walker<'_> {
     fn walk_wave(
         &mut self,
         wave: &[u64],
-        found: usize,
+        (found, covered): (usize, u64),
         cancel: &CancellationToken,
     ) -> NativeResult<Option<Vec<Done>>> {
         let progress = self.progress;
+        let (round, code) = (self.round, self.code);
+        let wave_covered = std::sync::atomic::AtomicU64::new(0);
         let env = Env {
             loaded: self.loaded,
             names: &self.names,
@@ -572,6 +594,9 @@ impl Walker<'_> {
                 let r = walk(&env, lane, *entry, hit.as_ref().map(|(t, _)| t.clone()))
                     .map(|w| (w, source));
                 active.fetch_sub(1, Ordering::SeqCst);
+                if let Ok((w, _)) = &r {
+                    wave_covered.fetch_add(w.walk.func.size(), Ordering::Relaxed);
+                }
                 let failed = r.is_err();
                 out.lock().unwrap_or_else(|p| p.into_inner())[i] = Some(r);
                 // a wave can be the whole binary: say now and then that the walks go on
@@ -580,7 +605,13 @@ impl Walker<'_> {
                     let mut last = last_report.lock().unwrap_or_else(|p| p.into_inner());
                     if last.elapsed() >= std::time::Duration::from_millis(250) {
                         *last = std::time::Instant::now();
-                        report(found + done, tasks.len() - done);
+                        report(&DiscoverProgress {
+                            round,
+                            found: found + done,
+                            queued: tasks.len() - done,
+                            covered: covered + wave_covered.load(Ordering::Relaxed),
+                            code,
+                        });
                     }
                 }
                 if failed {
@@ -629,6 +660,7 @@ impl Walker<'_> {
         let loaded = self.loaded;
         let mut functions: BTreeMap<u64, Func> = BTreeMap::new();
         let mut flow: BTreeMap<u64, (bool, Vec<u64>)> = BTreeMap::new();
+        let mut covered: u64 = 0;
         self.sites.clear();
         let mut queue: Vec<u64> = seeds.to_vec();
         let mut pending: BTreeSet<u64> = loaded
@@ -650,7 +682,7 @@ impl Walker<'_> {
                     .collect();
                 wave.sort_unstable();
                 wave.dedup();
-                let Some(done) = self.walk_wave(&wave, functions.len(), cancel)? else {
+                let Some(done) = self.walk_wave(&wave, (functions.len(), covered), cancel)? else {
                     return Ok(None);
                 };
                 let mut thunks = Vec::new();
@@ -676,6 +708,7 @@ impl Walker<'_> {
                     queue.extend(w.calls.iter().copied().filter(|c| loaded.is_code(*c)));
                     pending.extend(w.consts);
                     flow.insert(f, (w.returns, w.calls));
+                    covered += w.func.size();
                     functions.insert(f, w.func);
                 }
                 // thunks found by the wave are named for every later walk, on every session
@@ -693,7 +726,13 @@ impl Walker<'_> {
                     }
                 }
                 if let Some(report) = self.progress {
-                    report(functions.len(), queue.len());
+                    report(&DiscoverProgress {
+                        round: self.round,
+                        found: functions.len(),
+                        queued: queue.len(),
+                        covered,
+                        code: self.code,
+                    });
                 }
             }
             // constants pointing at code outside every known body are function-pointer candidates
@@ -804,8 +843,8 @@ pub struct Options<'a> {
     pub threads: usize,
     /// The code size (bytes) from which more than one session is used.
     pub parallel_min_code: u64,
-    /// Called after each batch of functions with the number found and the number still queued.
-    pub progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
+    /// Called a few times a second, and after each batch of functions, with how far it got.
+    pub progress: Option<ProgressFn<'a>>,
 }
 
 impl Options<'_> {
@@ -846,8 +885,10 @@ pub fn discover(
     for (a, n) in &loaded.plt {
         names.entry(*a).or_insert_with(|| n.clone());
     }
+    // an object file calls its externals directly, so `call exit` ends the flow there
     let mut noreturn: BTreeSet<u64> = names
         .iter()
+        .chain(&loaded.externals)
         .filter(|(_, n)| is_noreturn_name(loaded, n))
         .map(|(a, _)| *a)
         .collect();
@@ -951,10 +992,13 @@ pub fn discover(
         recovered: 0,
         sites: Vec::new(),
         progress,
+        round: 0,
+        code,
     };
     let mut rounds = 0;
     loop {
         rounds += 1;
+        w.round = rounds;
         let Some((functions, flow)) = w.round(&seeds, cancel)? else {
             return Ok(None);
         };

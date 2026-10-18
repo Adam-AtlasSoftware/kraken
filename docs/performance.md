@@ -289,6 +289,30 @@ listing, cross-reference and edit queries 3 to 20 times faster than the JVM engi
 faster. Its analysis job is slower on `libzstd`: it decompiles every function, including the few that take
 20 seconds, one after another (the decompiler allows one decompile at a time per process).
 
+## Progress while a project opens
+
+Opening reports its stages (checking the file, starting the engine, reading the file, symbols and
+debug info, finding functions, types and signatures, restoring your changes, ready). While functions
+are found, the fraction is the share of the code bytes inside the functions found so far; the bar never
+goes back. The open is the job `open-N` (`job_status`, `job_cancel`), krakend sends `open_progress`
+events (at most two a second per stage, every stage change at once), the CLI prints a bar on a
+terminal and plain lines otherwise, and the GUI shows a loading screen with a Cancel button.
+
+Measured through the GUI view-model and a release `krakend` (native engine, 16 cores, one program at
+a time):
+
+| Program | First open | Updates | Longest quiet | Reopen | Cancel after 8 s |
+|---|---:|---:|---:|---:|---:|
+| `libsqlite3` 1.7 MB | 47 s (16 s on an idle machine) | 0.6/s | 38 s | 1.9 s | 2.0 s |
+| `libpython3.14` 6.7 MB | 344 s | 1.4/s | 4.8 s | 6.8 s | 1.0 s |
+| `cargo` 26.7 MB | 282 s | 1.2/s | 12.3 s | 26.9 s | 2.0 s |
+| `libQt6Widgets` 8.0 MB | 1056 s | 0.5/s | 110 s | 7.5 s | 2.0 s |
+
+The first update arrives at once, the fraction only grows and the last event is `ready` at 100 %.
+The quiet spells are single functions whose switch analysis takes that long; the elapsed time keeps
+counting on screen. A cancelled open leaves no session and no worker. Run it again with
+`crates/kraken-viewmodel/tests/open_progress_big.rs` (ignored; see its header).
+
 ## What is still slow
 
 - **The first open of a big program.** Minutes for a few thousand functions, tens of minutes for the

@@ -109,9 +109,14 @@ pub fn fit_of_header(head: &[u8]) -> BinaryFit {
     if head.get(..2) == Some(b"MZ") {
         return pe_fit(head);
     }
+    // archives (static and import libraries) and COFF objects: the loader checks the members
+    if native_only_header(head).is_some() || coff_object(head) {
+        return Ok(());
+    }
     if head.get(..4) != Some(b"\x7fELF") {
         return Err(
-            "it is neither an ELF nor a PE file (the native engine opens ELF and PE only for now)"
+            "it is not an ELF or PE file, object file or library archive (the native engine \
+             opens those only)"
                 .into(),
         );
     }
@@ -141,6 +146,34 @@ pub fn fit_of_header(head: &[u8]) -> BinaryFit {
     Ok(())
 }
 
+/// A COFF object for x86 or x86-64: the machine, a sane section count and no optional header.
+fn coff_object(head: &[u8]) -> bool {
+    let word = |o: usize| head.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    matches!(word(0), Some(PE_I386 | PE_AMD64))
+        && word(2).is_some_and(|n| n > 0 && n < 0x1000)
+        && word(16) == Some(0)
+}
+
+/// What a file is when only the native engine opens it: an `ar` archive (a static or import
+/// library), a big-object COFF file or a single import member (both start `00 00 ff ff`).
+pub fn native_only(path: &Path) -> Option<&'static str> {
+    let mut head = [0u8; 8];
+    let n = std::fs::File::open(path)
+        .and_then(|mut f| f.read(&mut head))
+        .ok()?;
+    native_only_header(&head[..n])
+}
+
+fn native_only_header(head: &[u8]) -> Option<&'static str> {
+    if head.starts_with(b"!<arch>\n") {
+        return Some("a static or import library");
+    }
+    if head.get(..4) == Some(&[0, 0, 0xff, 0xff]) {
+        return Some("a big COFF object or an import member");
+    }
+    None
+}
+
 /// A PE image: the `PE\0\0` header the DOS stub points at, for x86 or x86-64.
 fn pe_fit(head: &[u8]) -> BinaryFit {
     let at = head
@@ -156,6 +189,35 @@ fn pe_fit(head: &[u8]) -> BinaryFit {
             "its PE machine type is {m:#06x} (the native engine opens x86 and x86-64 PE only)"
         )),
         None => Err("it is an MS-DOS program or a damaged PE file (no PE header)".into()),
+    }
+}
+
+/// [`choose`] for a file only the native engine opens (`what` says what it is, see
+/// [`native_only`]): native whatever the choice, or an error that says what is missing.
+pub fn choose_native_only(
+    choice: EngineChoice,
+    probe: &NativeProbe,
+    fit: &BinaryFit,
+    what: &str,
+) -> Result<EngineSelection, ProtoError> {
+    let problem = probe.problem().or_else(|| {
+        fit.as_ref()
+            .err()
+            .map(|e| format!("the file cannot use it: {e}"))
+    });
+    match problem {
+        None => Ok(EngineSelection {
+            kind: EngineKind::Native,
+            choice,
+            reason: format!(
+                "the file is {what}, which only the native engine opens (Ghidra does not load \
+                 archives)"
+            ),
+        }),
+        Some(why) => Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!("the file is {what}, which only the native engine opens, but {why}"),
+        )),
     }
 }
 
@@ -193,8 +255,8 @@ pub fn choose(
                 kind: EngineKind::Native,
                 choice,
                 reason: "auto picked native: the native library and the compiled .sla files are \
-                         available and the binary is an ELF file (x86-64, AArch64 or 32-bit x86) or \
-                         a PE image (x86 or x86-64)"
+                         available and the binary is an ELF file (x86-64, AArch64 or 32-bit x86), \
+                         a PE image or an object file (x86 or x86-64)"
                     .into(),
             },
             Some(why) => EngineSelection {
@@ -365,7 +427,7 @@ mod tests {
     fn auto_falls_back_for_binaries_the_loader_cannot_open() {
         for (head, needle) in [
             (b"MZ\x90\0".to_vec(), "no PE header"),
-            (b"\xca\xfe\xba\xbe".to_vec(), "neither an ELF nor a PE"),
+            (b"\xca\xfe\xba\xbe".to_vec(), "not an ELF or PE file"),
             (pe_head(0x1c0), "PE machine type is 0x01c0"),
             (elf_head(1, 1, 40), "32-bit ELF file for machine type 40"),
             (elf_head(2, 2, EM_X86_64), "big-endian"),
@@ -554,8 +616,48 @@ mod probe_tests {
         );
         let dotnet = &out.engines[2];
         assert!(!dotnet.usable && dotnet.problem.is_some());
-        // Nothing is installed in this configuration, so the problem names the engine.
-        assert!(out.problem.is_some());
+        // Ghidra is missing in this configuration; the native engine may still be found (the
+        // spec tree of `cargo xtask native-sla` and a built worker), and then auto picks it.
+        if out.engines[1].usable {
+            assert_eq!(out.recommended_engine, Some(EngineKind::Native));
+        } else {
+            assert!(out.problem.is_some());
+        }
+    }
+
+    #[test]
+    fn libraries_name_the_native_engine_whether_or_not_it_is_ready() {
+        let a = super::probe_binary(&bare(), &corpus("lib/bin/kr-x86.lib")).unwrap();
+        assert_eq!(a.format, BinaryFormat::Archive);
+        assert_eq!(a.description, "Windows static library with 2 objects");
+        assert_eq!(a.recommended_engine, Some(EngineKind::Native));
+        assert!(
+            a.recommended_reason
+                .contains("only the native engine opens"),
+            "{}",
+            a.recommended_reason
+        );
+        if !a.engines[1].usable {
+            assert!(
+                a.problem
+                    .as_deref()
+                    .is_some_and(|p| p.contains("native engine is not ready"))
+            );
+        }
+        let o = super::probe_binary(&bare(), &corpus("lib/bin/kr-x64.obj")).unwrap();
+        assert_eq!(o.format, BinaryFormat::Coff);
+        assert_eq!(o.bits, Some(64));
+        let want = if o.engines[1].usable {
+            EngineKind::Native
+        } else {
+            EngineKind::Ghidra
+        };
+        assert_eq!(o.recommended_engine, Some(want));
+        let obj = std::fs::read(corpus("lib/bin/kr-x64.obj")).unwrap();
+        assert!(super::fit_of_header(&obj).is_ok());
+        assert!(super::fit_of_header(b"!<arch>\nrest").is_ok());
+        assert_eq!(super::native_only(&corpus("lib/bin/kr.o")), None);
+        assert!(super::native_only(&corpus("lib/bin/libkr.a")).is_some());
     }
 
     #[test]
@@ -564,8 +666,12 @@ mod probe_tests {
             super::probe_binary(&bare(), &corpus("pe/bin/win_tls-x64-O2-stripped.exe")).unwrap();
         assert_eq!(pe.format, BinaryFormat::Pe);
         assert_eq!(pe.arch.as_deref(), Some("x86-64"));
-        assert_eq!(pe.recommended_engine, Some(EngineKind::Ghidra));
-        assert!(pe.recommended_reason.contains("auto picked Ghidra"));
+        if pe.engines[1].usable {
+            assert_eq!(pe.recommended_engine, Some(EngineKind::Native));
+        } else {
+            assert_eq!(pe.recommended_engine, Some(EngineKind::Ghidra));
+            assert!(pe.recommended_reason.contains("auto picked Ghidra"));
+        }
 
         let net = super::probe_binary(&bare(), &corpus("dotnet/bin/kraken-corpus.dll")).unwrap();
         assert_eq!(net.format, BinaryFormat::Dotnet);

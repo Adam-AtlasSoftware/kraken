@@ -10,9 +10,11 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::abi::{
-    Arg, Observation, Param, Ret, Signature, Termination, check_graph, from_hex, mask, to_hex,
+    Arg, GlobalWrite, Observation, Param, Ret, Signature, Termination, check_graph, from_hex, mask,
+    to_hex,
 };
 use crate::error::RewriteError;
+use crate::image::ProgramImage;
 use crate::sandbox::{
     Confinement, ConfinementReport, ReadScope, confine, run_captured, scratch_dir, toolchain,
 };
@@ -35,6 +37,8 @@ pub struct NativeRunner {
     confinement: Confinement,
     /// How the build step was confined.
     pub build_confinement: ConfinementReport,
+    /// The runner installs the program image and reports writes to globals.
+    image: bool,
 }
 
 /// Result of building a translation.
@@ -52,13 +56,14 @@ pub enum Build {
 /// `f <n>` (callback number), `b <hex>` (buffer) or `g <objects> <links>` followed by that many
 /// `o <hex>` lines and `l <from> <offset> <to> <to_offset>` lines (a graph). Objects are laid out
 /// in that order, which is also the order of the `buf` lines of the result.
-fn runner_source(sig: &Signature) -> String {
+fn runner_source(sig: &Signature, image: Option<&RunnerImage>) -> String {
     let call_args: Vec<String> = sig
         .params
         .iter()
         .enumerate()
         .map(|(i, p)| match p {
             Param::Double => format!("f64::from_bits(vals[{i}])"),
+            Param::Float => format!("f32::from_bits(vals[{i}] as u32)"),
             Param::FnPtr => {
                 format!("unsafe {{ std::mem::transmute::<usize, _>(vals[{i}] as usize) }}")
             }
@@ -80,11 +85,60 @@ fn runner_source(sig: &Signature) -> String {
         Ret::Double => {
             format!("let r: f64 = {call};\n    let ret: Option<u64> = Some(r.to_bits());")
         }
+        Ret::Float => format!(
+            "let r: f32 = {call};\n    let ret: Option<u64> = Some(u64::from(r.to_bits()));"
+        ),
+    };
+    // With the program image: installed where the emulator has the same bytes, then every
+    // changed range of the compared parts is reported as the oracle reports writes to globals.
+    let (image_mod, install, report) = match image {
+        None => (String::new(), String::new(), String::new()),
+        Some(img) => (
+            "mod image;\nuse translation::rt;\n".to_string(),
+            format!(
+                r#"    let want = {at:#x}u64;
+    let len = image::IMAGE.bytes.len();
+    let map = (len + 0xfff) & !0xfff;
+    let got = unsafe {{ mmap(want as *mut u8, map.max(0x1000), 3, 0x2 | 0x20 | 0x100000, -1, 0) }};
+    let at = if got as u64 == want {{ got }} else {{ std::ptr::null_mut() }};
+    image::install(at);
+    let (img_at, _, img_len) = rt::image_region();
+    let initial: Vec<u8> = unsafe {{ std::slice::from_raw_parts(img_at, img_len) }}.to_vec();
+"#,
+                at = img.at,
+            ),
+            format!(
+                r#"    let mut shown = 0usize;
+    let now = unsafe {{ std::slice::from_raw_parts(img_at, img_len) }};
+    'ranges: for &(off, n) in image::IMAGE.writable {{
+        let (lo, hi) = (off as usize, (off as usize + n as usize).min(img_len));
+        let mut i = lo;
+        while i < hi {{
+            if now[i] == initial[i] {{
+                i += 1;
+                continue;
+            }}
+            let s = i;
+            while i < hi && now[i] != initial[i] {{
+                i += 1;
+            }}
+            let hex = |b: &[u8]| b.iter().map(|x| format!("{{:02x}}", x)).collect::<String>();
+            writeln!(out, "gw {{:x}} {{}} {{}}", {low_vaddr:#x}u64 + s as u64, hex(&initial[s..i]), hex(&now[s..i])).unwrap();
+            shown += 1;
+            if shown >= 64 {{
+                break 'ranges;
+            }}
+        }}
+    }}
+"#,
+                low_vaddr = img.image.low_vaddr,
+            ),
+        ),
     };
     format!(
         r#"#![allow(warnings)]
 mod translation;
-
+{image_mod}
 use std::cell::RefCell;
 use std::fmt::Write as _;
 
@@ -171,7 +225,7 @@ unsafe extern "C" fn cb1(a: u64, b: u64) -> i64 {{ callback(1, a, b) }}
 
 fn main() {{
     let argv: Vec<String> = std::env::args().collect();
-    let case = std::fs::read_to_string(&argv[1]).unwrap();
+{install}    let case = std::fs::read_to_string(&argv[1]).unwrap();
     let mut bufs: Vec<Buf> = Vec::new();
     // Per argument: (is a pointer to bufs[idx], plain value or index).
     let mut slots: Vec<(bool, u64)> = Vec::new();
@@ -238,12 +292,22 @@ fn main() {{
             writeln!(out, "cb {{}}", ev).unwrap();
         }}
     }});
-    std::fs::write(&argv[2], out).unwrap();
+{report}    std::fs::write(&argv[2], out).unwrap();
 }}
 "#,
         object_base = crate::abi::OBJECT_BASE,
         object_stride = crate::abi::OBJECT_STRIDE,
     )
+}
+
+/// The program image a runner installs before the call (see [`crate::image`]).
+#[derive(Debug, Clone)]
+pub struct RunnerImage {
+    /// The image.
+    pub image: std::sync::Arc<ProgramImage>,
+    /// Where the emulator has its first byte: the runner maps it there when the address is free,
+    /// so pointers stored in the data have the same values on both sides.
+    pub at: u64,
 }
 
 /// Builds the runner for `rust_code`, a translation defining `extern "C" fn <sig.name>`.
@@ -262,6 +326,35 @@ pub fn build_with_timeout(
     confinement: &Confinement,
     compile_timeout: Duration,
 ) -> Result<Build, RewriteError> {
+    build_parts(sig, "", rust_code, None, confinement, compile_timeout)
+}
+
+/// [`build`] with the trusted prelude and the program image of `opts`: the prelude (the runtime
+/// shim) is compiled in front of the code without going through the lint, and the runner
+/// installs the image before each call and reports the writes to globals.
+pub fn build_full(
+    sig: &Signature,
+    rust_code: &str,
+    opts: &crate::difftest::DiffOptions,
+) -> Result<Build, RewriteError> {
+    build_parts(
+        sig,
+        &opts.trusted_prelude,
+        rust_code,
+        opts.image.as_ref(),
+        &opts.confinement,
+        COMPILE_TIMEOUT,
+    )
+}
+
+fn build_parts(
+    sig: &Signature,
+    trusted: &str,
+    rust_code: &str,
+    image: Option<&RunnerImage>,
+    confinement: &Confinement,
+    compile_timeout: Duration,
+) -> Result<Build, RewriteError> {
     if let Some(why) = lint_translation(rust_code) {
         return Ok(Build::Rejected(why));
     }
@@ -276,8 +369,13 @@ pub fn build_with_timeout(
         std::fs::write(dir.path().join(name), text)
             .map_err(|e| RewriteError::Compile(format!("{name}: {e}")))
     };
-    wr("translation.rs", rust_code)?;
-    wr("main.rs", &runner_source(sig))?;
+    wr("translation.rs", &format!("{trusted}{rust_code}"))?;
+    wr("main.rs", &runner_source(sig, image))?;
+    if let Some(img) = image {
+        std::fs::write(dir.path().join("image.bin"), &img.image.bytes)
+            .map_err(|e| RewriteError::Compile(format!("image.bin: {e}")))?;
+        wr("image.rs", &img.image.module_source(&[]))?;
+    }
     let exe = dir.path().join("runner");
     let mut cmd = Command::new(&tc.rustc);
     cmd.args([
@@ -329,6 +427,7 @@ pub fn build_with_timeout(
         sig: sig.clone(),
         confinement: confinement.clone(),
         build_confinement: report,
+        image: image.is_some(),
     }))
 }
 
@@ -353,6 +452,9 @@ impl NativeRunner {
                     case.push_str(&format!("b {}\n", to_hex(data)));
                 }
                 (Param::Double, Arg::Double { bits }) => {
+                    case.push_str(&format!("d {bits:x}\n"));
+                }
+                (Param::Float, Arg::Float { bits }) => {
                     case.push_str(&format!("d {bits:x}\n"));
                 }
                 (Param::FnPtr, Arg::FnPtr { callback }) => {
@@ -414,6 +516,7 @@ impl NativeRunner {
         let mut obs = Observation::failed(termination.clone());
         obs.stdout = stdout;
         obs.stderr = stderr;
+        obs.global_writes_observed = self.image;
         if termination == Termination::Returned {
             let text = std::fs::read_to_string(&result_path)
                 .map_err(|e| RewriteError::Native(format!("result file: {e}")))?;
@@ -434,6 +537,15 @@ impl NativeRunner {
                     }
                     (Some("buf"), Some(_), None) => obs.buffers.push(Vec::new()),
                     (Some("cb"), Some(ev), _) => obs.callbacks.push(ev.to_string()),
+                    (Some("gw"), Some(v), Some(before)) => {
+                        let after = it.next().unwrap_or("");
+                        let bad = || RewriteError::Native("bad global write".into());
+                        obs.global_writes.push(GlobalWrite {
+                            vaddr: u64::from_str_radix(v, 16).map_err(|_| bad())?,
+                            before: from_hex(before).ok_or_else(bad)?,
+                            after: from_hex(after).ok_or_else(bad)?,
+                        });
+                    }
                     _ => {}
                 }
             }

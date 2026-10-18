@@ -248,7 +248,11 @@ async fn rewrite_accept_and_export_from_the_command_line() {
     assert_eq!(exp.code, 0, "{}", exp.stderr);
     let v = exp.json();
     assert_eq!(v["result"]["built"], true, "{v}");
-    assert_eq!(v["result"]["symbols"], serde_json::json!(["cmp_id"]));
+    // The function, and the entry point that tells exported code where the program's data is.
+    assert_eq!(
+        v["result"]["symbols"],
+        serde_json::json!(["cmp_id", "kraken_attach_image"])
+    );
     assert!(dir.join("export/README.md").is_file());
 
     // A function the oracle cannot check is explained, not attempted.

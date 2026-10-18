@@ -428,27 +428,22 @@ async fn accept_verified_accepts_what_passed_and_reports_the_export() {
         v["rewrite"]["accepted"].as_u64().is_some_and(|n| n > 0),
         "{v:#}"
     );
-    // The export either exists or says why not (the generated workspace does not carry the
-    // runtime shim of the libc calls yet); the summary is printed either way.
-    match v["rewrite"]["export_dir"].as_str() {
-        Some(export) => {
-            assert_eq!(run.code, 0, "{}", run.stderr);
-            assert!(Path::new(export).join("Cargo.toml").exists(), "{export}");
-        }
-        None => {
-            assert_eq!(run.code, 4, "{}", run.stderr);
-            assert!(v["rewrite"]["export_error"].is_string(), "{v:#}");
-        }
-    }
+    // The export carries the runtime shim, so it builds.
+    let export = v["rewrite"]["export_dir"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{v:#}"));
+    assert_eq!(run.code, 0, "{}", run.stderr);
+    assert!(Path::new(export).join("Cargo.toml").exists(), "{export}");
 }
 
 #[tokio::test]
-async fn an_export_that_cannot_be_made_is_reported_without_losing_the_summary() {
+async fn an_export_calls_an_unaccepted_callee_in_the_original() {
     if !kraken_rewrite::sandbox::enforced() || ghidra_home().is_none() {
         eprintln!("skipped: needs Landlock and a Ghidra install for the SLEIGH specs");
         return;
     }
-    // `op_name` returns a pointer, so it is never accepted, and `main` calls it.
+    // `op_name` returns a pointer, so it is never accepted, and `main` calls it: the export
+    // declares the original `op_name` and calls it, and the README says so.
     let env = rewrite_env("switch_vm-O0", "program-switch-vm.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = path_str(&tmp.path().join("p"));
@@ -466,13 +461,14 @@ async fn an_export_that_cannot_be_made_is_reported_without_losing_the_summary() 
         ],
     )
     .await;
-    assert_eq!(run.code, 4, "{}", run.stderr);
+    assert_eq!(run.code, 0, "{}", run.stderr);
     let v: Value = serde_json::from_str(run.stdout.trim()).expect("summary on stdout");
     assert_eq!(v["rewrite"]["verdict"], "pass", "{v:#}");
+    let export = v["rewrite"]["export_dir"].as_str().expect("export dir");
+    let readme = std::fs::read_to_string(Path::new(export).join("README.md")).expect("readme");
     assert!(
-        v["rewrite"]["export_error"]
-            .as_str()
-            .is_some_and(|e| e.contains("op_name")),
-        "{v:#}"
+        readme.contains("Calls into the original program"),
+        "{readme}"
     );
+    assert!(readme.contains("op_name"), "{readme}");
 }

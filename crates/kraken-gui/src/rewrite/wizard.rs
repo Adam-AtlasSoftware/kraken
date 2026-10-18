@@ -91,7 +91,8 @@ fn stepper(ui: &mut egui::Ui, vm: &mut ViewModel) {
                 let r = ui.add_enabled(
                     !busy,
                     egui::Button::new(RichText::new(text).size(12.5).color(s.success)).frame(false),
-                );
+                )
+                .on_disabled_hover_text("Wait for the job to finish");
                 if r.on_hover_text(format!("Done. {} Click to go back to this step.", step.sentence()))
                     .clicked()
                 {
@@ -832,13 +833,15 @@ fn build_step(ui: &mut egui::Ui, vm: &mut ViewModel) {
         !building,
         egui::Checkbox::new(&mut vm.rewrite.build.test, "Run the tests"),
     )
-    .on_hover_text("Run cargo test after the build. A project without tests passes this step.");
+    .on_hover_text("Run cargo test after the build. A project without tests passes this step.")
+    .on_disabled_hover_text("Wait for the build to finish");
     if program {
         ui.add_enabled(
             !building,
             egui::Checkbox::new(&mut vm.rewrite.build.run, "Run the program afterwards"),
         )
-        .on_hover_text("Start the built program once with the arguments below and show what it prints. It runs in the sandbox, with no network.");
+        .on_hover_text("Start the built program once with the arguments below and show what it prints. It runs in the sandbox, with no network.")
+        .on_disabled_hover_text("Wait for the build to finish");
         let run = vm.rewrite.build.run;
         ui.add_enabled(
             run && !building,
@@ -846,7 +849,8 @@ fn build_step(ui: &mut egui::Ui, vm: &mut ViewModel) {
                 .hint_text("arguments, for example -v input.txt")
                 .desired_width(320.0),
         )
-        .on_hover_text("What follows the program's name. Quotes group words.");
+        .on_hover_text("What follows the program's name. Quotes group words.")
+        .on_disabled_hover_text("Tick \"Run the program afterwards\" first");
     }
     ui.add_space(4.0);
     let blocker = vm

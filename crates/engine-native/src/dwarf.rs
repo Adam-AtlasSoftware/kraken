@@ -13,6 +13,7 @@
 //!
 //! Addresses are the file's (not rebased); [`Debug::functions`] is keyed by them.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use gimli::{
@@ -94,33 +95,61 @@ fn uleb(bytes: &[u8]) -> Option<u64> {
 
 /// Parses the DWARF of `file`; empty when it has none or it does not parse.
 pub fn parse(file: &object::File<'_>) -> Debug {
-    let load = |id: gimli::SectionId| -> Result<std::borrow::Cow<'_, [u8]>, gimli::Error> {
-        Ok(file
-            .section_by_name(id.name())
-            .and_then(|s| s.data().ok())
-            .map(std::borrow::Cow::Borrowed)
-            .unwrap_or(std::borrow::Cow::Borrowed(&[])))
-    };
     if file.section_by_name(".debug_info").is_none() {
         return Debug::default();
     }
+    let mut importer = Importer::default();
+    let mut total = 0;
+    import(&mut importer, &mut total, |name| {
+        file.section_by_name(name)
+            .and_then(|s| s.data().ok())
+            .map(Cow::Borrowed)
+            .unwrap_or(Cow::Borrowed(&[]))
+    });
+    importer.finish()
+}
+
+/// Parses the DWARF of several objects into one [`Debug`]: one map of section bytes (relocated,
+/// by section name) per object, as the object loader prepares them.
+pub fn parse_sets(sets: &[BTreeMap<String, Vec<u8>>]) -> Debug {
+    let mut importer = Importer::default();
+    let mut total = 0;
+    for set in sets {
+        let more = import(&mut importer, &mut total, |name| {
+            set.get(name)
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .unwrap_or(Cow::Borrowed(&[]))
+        });
+        if !more {
+            break;
+        }
+    }
+    importer.finish()
+}
+
+/// Feeds the units of one set of sections to `importer`; false once [`MAX_DIES`] is reached.
+fn import<'a>(
+    importer: &mut Importer,
+    total: &mut usize,
+    section: impl Fn(&str) -> Cow<'a, [u8]>,
+) -> bool {
+    let load =
+        |id: gimli::SectionId| -> Result<Cow<'a, [u8]>, gimli::Error> { Ok(section(id.name())) };
     let Ok(sections) = gimli::DwarfSections::load(load) else {
-        return Debug::default();
+        return true;
     };
     let dwarf = sections.borrow(|s| EndianSlice::new(s, LittleEndian));
-    let mut importer = Importer::default();
     let mut units = dwarf.units();
-    let mut total = 0;
     while let Ok(Some(header)) = units.next() {
         let Ok(unit) = dwarf.unit(header) else {
             continue;
         };
-        let Some(dies) = read_unit(&dwarf, &unit, &mut total) else {
-            break;
+        let Some(dies) = read_unit(&dwarf, &unit, total) else {
+            return false;
         };
         importer.unit(&dies);
     }
-    importer.finish()
+    true
 }
 
 /// The DIEs of one unit, or `None` past [`MAX_DIES`].

@@ -270,6 +270,14 @@ pub fn describe(vm: &ViewModel, addr: u64) -> String {
 }
 
 /// Label of an xref list tab.
+pub fn xref_tab_help(which: XrefWhich) -> &'static str {
+    match which {
+        XrefWhich::Callers => "The functions that call this one",
+        XrefWhich::Callees => "The functions this one calls",
+        XrefWhich::References => "Everything that refers to the address you chose",
+    }
+}
+
 pub fn xref_tab_label(which: XrefWhich) -> &'static str {
     match which {
         XrefWhich::Callers => "Callers",

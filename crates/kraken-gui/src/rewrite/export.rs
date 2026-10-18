@@ -74,7 +74,8 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                         egui::TextEdit::singleline(&mut name)
                             .hint_text("same as the program")
                             .desired_width(180.0),
-                    );
+                    )
+                    .on_hover_text("The name of the Rust project. Leave it to use the program's name");
                 });
                 ui.add_enabled(
                     blocked.is_none(),
@@ -82,7 +83,8 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 )
                 .on_hover_text(
                     "Compiles the exported project and checks that it exports exactly the accepted functions.",
-                );
+                )
+                .on_disabled_hover_text(blocked.clone().unwrap_or_default());
             });
             if let Some(note) = &blocked {
                 ui.label(
@@ -108,7 +110,8 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                             ))
                             .size(12.0),
                         );
-                        if ui.button("Yes, write there").clicked() {
+                        if ui.button("Yes, write there")
+.on_hover_text("Write the project into this folder").clicked() {
                             agree = true;
                         }
                     });
@@ -163,11 +166,16 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             ui.horizontal(|ui| {
                 let can = !running && vm.rewrite.counts.accepted > 0;
                 ui.add_enabled_ui(can, |ui| {
-                    if primary_button(ui, "Export").clicked() {
+                    if primary_button(ui, "Export")
+.on_hover_text("Write the accepted functions as a Rust project").clicked() {
                         start = true;
                     }
                 });
-                if ui.button(if state.result.is_some() { "Close" } else { "Cancel" }).clicked() {
+                if ui
+                    .button(if state.result.is_some() { "Close" } else { "Cancel" })
+                    .on_hover_text("Close this window. Files already written stay")
+                    .clicked()
+                {
                     close = true;
                 }
             });

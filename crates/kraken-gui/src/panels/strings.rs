@@ -51,7 +51,11 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
     let edit = egui::TextEdit::singleline(&mut st.strings.filter)
         .hint_text("Filter strings")
         .desired_width(f32::INFINITY);
-    if ui.add(edit).changed() {
+    if ui
+        .add(edit)
+        .on_hover_text("Type part of a string to narrow the list")
+        .changed()
+    {
         vm.set_strings_filter(st.strings.filter.clone());
     }
     let list = &vm.views.strings;
@@ -77,7 +81,11 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
 
     if let Some(err) = list.error.clone() {
         ui.label(RichText::new(err).color(s.danger));
-        if ui.button("Try again").clicked() {
+        if ui
+            .button("Try again")
+            .on_hover_text("Ask for it again")
+            .clicked()
+        {
             vm.retry_strings();
         }
         return;

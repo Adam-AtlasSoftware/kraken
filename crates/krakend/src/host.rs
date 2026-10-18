@@ -16,10 +16,11 @@ use kraken_engine::CancellationToken;
 use kraken_host::daemon::event_kind;
 use kraken_host::{EngineEvent, FactoryEvent, ManagedFactory};
 use kraken_ipc::Clock;
-use kraken_proto::{ErrorCode, ProtoError};
+use kraken_proto::{ErrorCode, OpenProgress, OpenStage, ProtoError};
 use kraken_registry::commands::RewriteBackend;
 use kraken_registry::{
-    CallContext, JobProgress, JobStatus, Registry, Session, SessionConfig, Surface,
+    CallContext, JobProgress, JobStatus, OpenOptions, OpenProgressSink, Registry, Session,
+    SessionConfig, Surface,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
@@ -28,11 +29,37 @@ use crate::events::EventHub;
 
 /// Largest job result copied into a `job_done` event.
 const MAX_EVENT_RESULT_BYTES: usize = 4096;
+/// Least time between two `open_progress` events of one open in the same stage.
+const OPEN_EVENT_INTERVAL: Duration = Duration::from_millis(500);
 /// How long closing a session may spend saving its engine.
 const CLOSE_SAVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Keeps the `open_progress` events of one open to a few per second.
+struct OpenThrottle {
+    hub: EventHub,
+    key: PathBuf,
+    state: Mutex<ThrottleState>,
+}
+
+#[derive(Default)]
+struct ThrottleState {
+    last: Option<(OpenStage, std::time::Instant)>,
+    pending: Option<OpenProgress>,
+}
+
+impl OpenThrottle {
+    fn publish(&self, p: &OpenProgress) {
+        let mut fields = serde_json::to_value(p).unwrap_or(Value::Null);
+        if let Some(m) = fields.get_mut("message") {
+            *m = json!(kraken_proto::sanitize(m.as_str().unwrap_or_default()));
+        }
+        self.hub
+            .publish(&self.key, event_kind::OPEN_PROGRESS, fields);
+    }
 }
 
 /// Tunables of the session host.
@@ -296,6 +323,62 @@ impl SessionHost {
         })
     }
 
+    /// Publishes the progress of an open of the project `key` as `open_progress` events: every
+    /// change of stage, else at most one per [`OPEN_EVENT_INTERVAL`].
+    pub fn open_sink(&self, key: &Path) -> OpenProgressSink {
+        let throttle = Arc::new(OpenThrottle {
+            hub: self.inner.hub.clone(),
+            key: key.to_path_buf(),
+            state: Mutex::default(),
+        });
+        let handle = tokio::runtime::Handle::try_current().ok();
+        Arc::new(move |p: &OpenProgress| {
+            let flush_in = {
+                let mut st = lock(&throttle.state);
+                let due = match st.last {
+                    Some((stage, at)) => stage != p.stage || at.elapsed() >= OPEN_EVENT_INTERVAL,
+                    None => true,
+                };
+                if due {
+                    st.last = Some((p.stage, std::time::Instant::now()));
+                    st.pending = None;
+                    None
+                } else {
+                    // held back, and sent when the interval is over unless a newer one comes:
+                    // the last report before a long quiet step is never lost
+                    let first = st.pending.is_none();
+                    st.pending = Some(p.clone());
+                    let wait = st.last.map_or(Duration::ZERO, |(_, at)| {
+                        OPEN_EVENT_INTERVAL.saturating_sub(at.elapsed())
+                    });
+                    first.then_some(wait)
+                }
+            };
+            match flush_in {
+                None => throttle.publish(p),
+                Some(wait) => {
+                    if let Some(h) = &handle {
+                        let t = throttle.clone();
+                        h.spawn(async move {
+                            tokio::time::sleep(wait).await;
+                            let held = {
+                                let mut st = lock(&t.state);
+                                let held = st.pending.take();
+                                if let Some(p) = &held {
+                                    st.last = Some((p.stage, std::time::Instant::now()));
+                                }
+                                held
+                            };
+                            if let Some(p) = held {
+                                t.publish(&p);
+                            }
+                        });
+                    }
+                }
+            }
+        })
+    }
+
     /// Announces that the session of `lease` now has a project.
     pub fn note_opened(&self, lease: &Lease) {
         self.inner
@@ -314,7 +397,11 @@ impl SessionHost {
         if e.session.project().is_ok() {
             return Ok(Vec::new());
         }
-        let project = e.session.open_project(&e.dir).await?;
+        let opts = OpenOptions {
+            sink: Some(self.open_sink(&e.key)),
+            ..OpenOptions::default()
+        };
+        let project = e.session.open_project_opts(&e.dir, opts).await?;
         self.note_opened(lease);
         let mut warnings = Vec::new();
         if !project.epoch_mismatch().is_empty() {
@@ -327,7 +414,7 @@ impl SessionHost {
     }
 
     /// Drops a session that never got a project (a failed `project_create`).
-    pub fn discard_if_unopened(&self, lease: &Lease) {
+    pub fn discard_if_unopened(&self, lease: &Lease) -> bool {
         let e = &lease.entry;
         let mut map = lock(&self.inner.sessions);
         if e.session.project().is_err()
@@ -335,6 +422,20 @@ impl SessionHost {
             && map.get(&e.key).is_some_and(|m| Arc::ptr_eq(m, e))
         {
             map.remove(&e.key);
+            return true;
+        }
+        false
+    }
+
+    /// [`discard_if_unopened`](Self::discard_if_unopened), and stops the sidecars a failed or
+    /// cancelled open started, so nothing of it keeps running.
+    pub async fn discard_unopened(&self, lease: &Lease) {
+        if self.discard_if_unopened(lease) {
+            let e = &lease.entry;
+            self.inner.factory.shutdown_under(&e.dir).await;
+            if e.key != e.dir {
+                self.inner.factory.shutdown_under(&e.key).await;
+            }
         }
     }
 
@@ -404,7 +505,8 @@ impl SessionHost {
                 progress: None,
                 done: false,
             });
-            if s.progress != st.progress {
+            // an open reports through `open_progress` events as it goes
+            if s.progress != st.progress && s.open.is_none() {
                 if let Some(p) = &s.progress {
                     self.inner.hub.publish(
                         &entry.key,

@@ -55,12 +55,17 @@ impl Harness {
 }
 
 /// The whole app in an egui_kittest harness, so widgets can be found by their labels.
-struct Kit {
-    h: egui_kittest::Harness<'static, KrakenApp>,
+pub(super) struct Kit {
+    pub(super) h: egui_kittest::Harness<'static, KrakenApp>,
     _rt: Arc<tokio::runtime::Runtime>,
 }
 
-fn kit(demo: bool) -> Kit {
+pub(super) fn kit(demo: bool) -> Kit {
+    kit_with(demo, false)
+}
+
+/// `gpu` renders with wgpu so `render()` gives a picture (documentation screenshots).
+pub(super) fn kit_with(demo: bool, gpu: bool) -> Kit {
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -71,21 +76,21 @@ fn kit(demo: bool) -> Kit {
     let ctx = egui::Context::default();
     let app = KrakenApp::new(&ctx, rt.clone(), Services::offline(), &options(demo));
     let mut fonts_done = false;
-    let h = egui_kittest::Harness::builder()
-        .with_size([1280.0, 800.0])
-        .build_ui_state(
-            move |ui, app: &mut KrakenApp| {
-                // The first frame runs inside the builder, before the fonts can be installed: it
-                // draws nothing.
-                if !fonts_done {
-                    crate::fonts::install(ui.ctx());
-                    fonts_done = true;
-                    return;
-                }
-                app.frame(ui);
-            },
-            app,
-        );
+    let builder = egui_kittest::Harness::builder().with_size([1280.0, 800.0]);
+    let builder = if gpu { builder.wgpu() } else { builder };
+    let h = builder.build_ui_state(
+        move |ui, app: &mut KrakenApp| {
+            // The first frame runs inside the builder, before the fonts can be installed: it
+            // draws nothing.
+            if !fonts_done {
+                crate::fonts::install(ui.ctx());
+                fonts_done = true;
+                return;
+            }
+            app.frame(ui);
+        },
+        app,
+    );
     Kit { h, _rt: rt }
 }
 
@@ -158,7 +163,7 @@ fn the_import_dialog_probes_and_enables_import_for_a_program() {
     }
     k.h.run_steps(2);
     assert!(
-        k.h.query_by_label_contains("ELF program for x86-64")
+        k.h.query_by_label_contains("Linux program (x86-64")
             .is_some()
     );
     assert!(
@@ -173,6 +178,40 @@ fn the_import_dialog_probes_and_enables_import_for_a_program() {
     k.h.get_by_label("Cancel").click();
     k.h.run_steps(2);
     assert!(k.h.state().import_dialog().is_none());
+}
+
+#[test]
+fn the_import_dialog_lists_the_members_of_a_static_library() {
+    let mut k = kit(false);
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().open_path(&corpus("lib/bin/libkr.a"), &ctx);
+    for _ in 0..2000 {
+        k.h.run_steps(1);
+        if k.h
+            .state()
+            .import_dialog()
+            .is_some_and(|d| d.probed().is_some())
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    k.h.run_steps(2);
+    assert!(
+        k.h.query_by_label_contains("Linux static library with 2 objects")
+            .is_some()
+    );
+    assert!(
+        k.h.query_by_label_contains("All 2 members are loaded together")
+            .is_some()
+    );
+    // the member list opens on a click and is read-only text
+    k.h.get_by_label_contains("Members (2)").click();
+    k.h.run_steps(2);
+    assert!(k.h.query_by_label("kr_text.o").is_some());
+    // Ghidra does not read archives, so its choice is off
+    let ghidra = k.h.get_by_label("Ghidra");
+    assert!(ghidra.accesskit_node().is_disabled());
 }
 
 #[test]

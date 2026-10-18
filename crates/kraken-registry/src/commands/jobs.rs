@@ -181,6 +181,10 @@ pub struct JobView {
     /// True when `job_await` returned because its timeout passed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub timed_out: bool,
+    /// For a `project_create` or `project_open` job: the stage list, the current stage, the
+    /// overall fraction and the function counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_progress: Option<kraken_proto::OpenProgress>,
 }
 
 impl JobView {
@@ -199,6 +203,7 @@ impl JobView {
                 e
             }),
             timed_out,
+            open_progress: s.open,
         }
     }
 }
@@ -207,7 +212,7 @@ impl JobView {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JobIdArgs {
-    /// Job id such as `job-1`.
+    /// Job id such as `job-1`, or `open-1` for a project that is opening.
     pub job_id: String,
 }
 
@@ -229,7 +234,8 @@ impl Command for JobStatus {
         .doc(
             "Looks at a job without waiting: `status` is `running`, `succeeded`, `failed` \
              or `cancelled`, with `progress` while it runs and the `result` once it succeeded. \
-             To block until it ends use `job_await`.\n\
+             A project that is opening is the job `open-N` (named in its progress events), with \
+             its stages in `open_progress`. To block until it ends use `job_await`.\n\
              Example: job_status {\"job_id\": \"job-1\"}",
         )
     }
@@ -312,7 +318,8 @@ impl Command for JobCancel {
         )
         .doc(
             "Asks a running job to stop. It stops cooperatively: `job_await` shows when it ends \
-             as `cancelled`.\n\
+             as `cancelled`. Cancelling an `open-N` job stops opening that project; nothing of \
+             it stays open.\n\
              Example: job_cancel {\"job_id\": \"job-1\"}",
         )
     }

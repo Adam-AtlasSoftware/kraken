@@ -24,7 +24,9 @@ use crate::blame::{
 };
 use crate::collect::collect_program;
 use crate::export::cargo_build_with;
-use crate::infer::infer_signature_for_program;
+use crate::image::ProgramImage;
+use crate::infer::{infer_signature_for_program, program_names, qualified_name};
+use crate::native::RunnerImage;
 use crate::pipeline::COMPILE_ONLY_KIND;
 use crate::process::{CaseSeed, ProgramCase, corpus_source, derive_cases, run_case_with_env};
 use crate::program::{
@@ -35,14 +37,18 @@ use crate::repair::{Feedback, MAX_FEEDBACK, RepairRound, cut_text, previous_code
 use crate::reuse::ReusedCallee;
 use crate::targets::curated;
 
-/// Most callees without a usable translation that one translation is asked to include.
-const MAX_INLINE: usize = 12;
+/// Most callees without a usable translation that one translation is asked to include. Callees
+/// are translated first, and a translation that only fails its function-level check is usable,
+/// so this is reached only by recursion through functions that cannot be translated at all.
+const MAX_INLINE: usize = 24;
+/// Output budget of one translation in a program run: a whole `main` is long.
+const PROGRAM_MAX_TOKENS: u32 = 16_384;
 /// Default number of generated program-level cases.
 const DEFAULT_GENERATED_CASES: u32 = 8;
 /// Runs listed by `rewrite_program_status`.
 const LISTED_RUNS: u32 = 20;
 /// Functions translated again in one program-level repair round.
-const SUSPECTS_PER_ROUND: usize = 2;
+const SUSPECTS_PER_ROUND: usize = 3;
 /// Translation attempts per function in a program-level repair round.
 const REPAIR_ATTEMPTS: u32 = 2;
 
@@ -85,6 +91,45 @@ struct ProgramRun<'a> {
     accept: bool,
     actor: String,
     cache: BTreeMap<u64, FunctionContext>,
+    /// The Rust name of every function of the plan (unique; C++ methods carry their class).
+    names: BTreeMap<u64, String>,
+    /// The original program's data, which the translations reach their globals through.
+    image: Option<Arc<ProgramImage>>,
+    /// Data addresses each function refers to, read once.
+    data_refs: BTreeMap<u64, Vec<u64>>,
+}
+
+/// Whether a stored unit can go into a program crate: it compiled. A translation that failed
+/// only its function-level comparison is used (the program-level test judges it); one that was
+/// refused or did not build is not.
+pub(crate) fn usable(u: &RewriteUnit) -> bool {
+    u.status != UnitStatus::Failed || u.verdict == Verdict::Fail
+}
+
+/// The attempt of a run to use: the newest one that passed or could not be compared, else the
+/// newest that at least compiled, else the last.
+fn best_attempt(run: &repair::RepairRun) -> RewriteUnit {
+    let units: Vec<&RewriteUnit> = run.attempts.iter().map(|(u, _)| u).collect();
+    units
+        .iter()
+        .rev()
+        .find(|u| u.status != UnitStatus::Failed)
+        .or_else(|| units.iter().rev().find(|u| usable(u)))
+        .or_else(|| units.last())
+        .map(|u| (*u).clone())
+        .unwrap_or_else(|| run.last().0.clone())
+}
+
+/// How a function's own check is shown on its row: `unchecked` when the translation is used
+/// although the function-level test failed or could not run it.
+fn check_kind(u: &RewriteUnit) -> &'static str {
+    if u.oracle.kind == COMPILE_ONLY_KIND {
+        "compile_only"
+    } else if matches!(u.verdict, Verdict::Fail | Verdict::Inconclusive { .. }) {
+        "unchecked"
+    } else {
+        "differential"
+    }
 }
 
 /// What translating one function came to.
@@ -144,7 +189,7 @@ fn chosen_unit(
     let Some(id) = chosen.get(&parse_addr(address)) else {
         return Ok(None);
     };
-    Ok(st.get(id)?.filter(|u| u.status != UnitStatus::Failed))
+    Ok(st.get(id)?.filter(usable))
 }
 
 /// The row of a function with no usable translation.
@@ -207,9 +252,32 @@ impl RewriteService {
         if let Some(f) = cache.get(&address) {
             return Ok(f.clone());
         }
-        let f = lift.function(address).await.map_err(proto)?;
+        let mut f = lift.function(address).await.map_err(proto)?;
+        // A C++ method goes by `Class::name` in prompts and records, as the decompile calls it.
+        f.name = qualified_name(&f.name, f.signature.as_deref());
         cache.insert(address, f.clone());
         Ok(f)
+    }
+
+    /// Data addresses the function at `address` refers to (reads, writes, addresses taken).
+    async fn data_refs_of(
+        &self,
+        pc: &mut ProgramRun<'_>,
+        address: u64,
+    ) -> Result<Vec<u64>, ProtoError> {
+        if let Some(r) = pc.data_refs.get(&address) {
+            return Ok(r.clone());
+        }
+        let refs: Vec<u64> = pc
+            .lift
+            .data_refs(address)
+            .await
+            .map_err(proto)?
+            .into_iter()
+            .map(|r| r.to)
+            .collect();
+        pc.data_refs.insert(address, refs.clone());
+        Ok(refs)
     }
 
     /// The entry point: the given address, else `main`, else the function that
@@ -349,18 +417,102 @@ impl RewriteService {
             .map(|p| p.name.clone())
             .unwrap_or_default();
 
-        // What the entry point reaches (by calls, and by function pointers it hands on); the
-        // rest (glue in a binary without names, dead code) is left alone.
+        // The original's data, for the translations' globals (an ELF the image can hold).
+        let image: Option<Arc<ProgramImage>> = {
+            let (path, base) = (binary_path.clone(), lift.program().map_err(proto)?.1);
+            tokio::task::spawn_blocking(move || ProgramImage::load(&path, base).ok())
+                .await
+                .map_err(|e| internal(format!("image task failed: {e}")))?
+                .map(Arc::new)
+        };
+        let names = {
+            let (listed, _) = lift
+                .functions(MAX_PLAN_FUNCTIONS as usize)
+                .await
+                .map_err(proto)?;
+            let sigs: BTreeMap<u64, Option<String>> = listed
+                .into_iter()
+                .map(|f| (f.address, f.signature))
+                .collect();
+            program_names(
+                &plan
+                    .entries
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.address,
+                            p.name.clone(),
+                            sigs.get(&p.address).cloned().flatten(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        // What the entry point reaches (by calls, by function pointers it hands on, through
+        // tables of function pointers in the data, and the static constructors that run before
+        // it); the rest (glue in a binary without names, dead code) is left alone.
+        let planned: BTreeSet<u64> = plan.entries.iter().map(|p| p.address).collect();
+        let mut roots = vec![entry_addr];
+        if let Some(img) = &image {
+            // Static constructors by their compiler-given names (a stripped binary's are not
+            // told apart from the C runtime's own entries).
+            roots.extend(img.init.iter().copied().filter(|a| {
+                plan.entries.iter().any(|p| {
+                    p.address == *a
+                        && (p.name.starts_with("_GLOBAL__sub_I")
+                            || p.name.starts_with("__static_initialization"))
+                })
+            }));
+        }
+        let mut data_refs: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
         let reachable: BTreeSet<u64> = {
             let by_addr: BTreeMap<u64, &PlannedFunction> =
                 plan.entries.iter().map(|p| (p.address, p)).collect();
-            let mut seen = BTreeSet::from([entry_addr]);
-            let mut queue = VecDeque::from([entry_addr]);
-            while let Some(a) = queue.pop_front() {
-                for c in by_addr.get(&a).map_or(&[][..], |p| p.callees.as_slice()) {
-                    if seen.insert(*c) {
-                        queue.push_back(*c);
+            let mut seen: BTreeSet<u64> = roots.iter().copied().collect();
+            let mut queue: VecDeque<u64> = roots.iter().copied().collect();
+            let pointers: Vec<(u64, u64)> = image
+                .as_ref()
+                .map(|img| img.function_pointers(&planned))
+                .unwrap_or_default();
+            loop {
+                while let Some(a) = queue.pop_front() {
+                    for c in by_addr.get(&a).map_or(&[][..], |p| p.callees.as_slice()) {
+                        if seen.insert(*c) {
+                            queue.push_back(*c);
+                        }
                     }
+                }
+                // A table of function pointers in the data (a vtable, a dispatch table) counts
+                // when a function that runs refers to it.
+                let Some(img) = &image else { break };
+                for a in &seen {
+                    if !data_refs.contains_key(a) {
+                        let refs: Vec<u64> = lift
+                            .data_refs(*a)
+                            .await
+                            .map_err(proto)?
+                            .into_iter()
+                            .map(|r| r.to)
+                            .collect();
+                        data_refs.insert(*a, refs);
+                    }
+                }
+                for (slot, target) in &pointers {
+                    if seen.contains(target) {
+                        continue;
+                    }
+                    let used = seen.iter().any(|f| {
+                        data_refs
+                            .get(f)
+                            .is_some_and(|refs| refs.iter().any(|r| img.same_table(*r, *slot)))
+                    });
+                    if used && seen.insert(*target) {
+                        queue.push_back(*target);
+                    }
+                }
+                if queue.is_empty() {
+                    break;
                 }
             }
             seen
@@ -374,6 +526,16 @@ impl RewriteService {
             seed: args.seed.unwrap_or(defaults.seed),
             random_cases: args.cases.map_or(defaults.random_cases, |c| c as usize),
             confinement: self.cfg.confinement.clone(),
+            // The runner installs the image where the emulator loads the same bytes.
+            image: image.as_ref().map(|img| RunnerImage {
+                image: img.clone(),
+                at: img.low_vaddr
+                    + if img.is_pie {
+                        self.cfg.oracle.load_base
+                    } else {
+                        0
+                    },
+            }),
             ..defaults
         };
         let mut pc = ProgramRun {
@@ -393,6 +555,9 @@ impl RewriteService {
             accept,
             actor: ctx.author.id.clone(),
             cache: BTreeMap::new(),
+            names,
+            image,
+            data_refs,
         };
         let total = plan.entries.len() as u64;
         let mut chosen: BTreeMap<u64, String> = BTreeMap::new();
@@ -410,8 +575,8 @@ impl RewriteService {
                     p,
                     UnitStatus::Planned,
                     "skipped",
-                    "the entry point does not reach this function by direct calls or by a \
-                     function pointer",
+                    "the entry point does not reach this function: no direct call, no function \
+                     pointer handed on, no table of function pointers in the program's data",
                     0,
                 ));
                 continue;
@@ -448,6 +613,42 @@ impl RewriteService {
                     continue;
                 }
             }
+            // A translation an earlier run made from this decompile, with the same Rust name and
+            // its callees as they are now, that passed its own test or could not be compared: a
+            // run that is started again picks up where the last one stopped. One that failed its
+            // test is translated again.
+            {
+                let (sha2, addr, hash, cm, name) = (
+                    sha.clone(),
+                    format!("{:#x}", p.address),
+                    f.decompile_hash.clone(),
+                    chosen.clone(),
+                    pc.names.get(&p.address).cloned().unwrap_or_default(),
+                );
+                let earlier = with_store(dir.clone(), move |st| {
+                    let found = st.versions(&sha2, &addr)?.into_iter().rev().find(|u| {
+                        matches!(u.status, UnitStatus::Translated | UnitStatus::Verified)
+                            && u.source_decompile_hash == hash
+                            && u.signature.name == name
+                            && u.callees
+                                .iter()
+                                .filter_map(|c| c.reused.as_ref().map(|r| (c, r)))
+                                .all(|(c, r)| {
+                                    cm.get(&parse_addr(&c.address))
+                                        .is_some_and(|id| *id == r.unit)
+                                })
+                    });
+                    Ok(found)
+                })
+                .await?;
+                if let Some(u) = earlier {
+                    let u = self.maybe_accept(&pc, u).await?;
+                    chosen.insert(p.address, u.id.clone());
+                    rows.push(row_for_unit(order, p, &u, check_kind(&u), 0));
+                    from_store += 1;
+                    continue;
+                }
+            }
 
             let max_attempts = pc.max_attempts;
             match self
@@ -467,7 +668,7 @@ impl RewriteService {
                 } => {
                     translated += 1;
                     let unit = self.maybe_accept(&pc, *unit).await?;
-                    if unit.status != UnitStatus::Failed {
+                    if usable(&unit) {
                         chosen.insert(p.address, unit.id.clone());
                     }
                     rows.push(row_for_unit(order, p, &unit, kind, attempts));
@@ -508,11 +709,18 @@ impl RewriteService {
         let failed = u32::try_from(
             rows.iter()
                 .filter(|r| {
-                    r.check != "skipped" && (r.unit.is_empty() || r.status == UnitStatus::Failed)
+                    r.check != "skipped"
+                        && (r.unit.is_empty()
+                            || (r.status == UnitStatus::Failed && r.check != "unchecked"))
                 })
                 .count(),
         )
         .unwrap_or(0);
+        let count_of = |f: &dyn Fn(&ProgramFunctionRow) -> bool| {
+            u32::try_from(rows.iter().filter(|r| f(r)).count()).unwrap_or(0)
+        };
+        let verified = count_of(&|r| r.verdict == "pass" && r.check != "compile_only");
+        let unchecked = count_of(&|r| r.check == "unchecked");
         let result = RewriteProgramResult {
             run: 0,
             program_sha256: sha.clone(),
@@ -523,6 +731,8 @@ impl RewriteService {
             translated,
             reused_from_store: from_store,
             failed,
+            verified,
+            unchecked,
             included,
             functions: rows,
             crate_dir: stage.crate_dir.clone(),
@@ -576,7 +786,11 @@ impl RewriteService {
             })
         };
         let f = self.context_of(&pc.lift, &mut pc.cache, p.address).await?;
-        let rname = rust_name(&f.name, f.address);
+        let rname = pc
+            .names
+            .get(&p.address)
+            .cloned()
+            .unwrap_or_else(|| rust_name(&f.name, f.address));
         let Some(sig_text) = f.signature.clone() else {
             return none(
                 UnitStatus::Failed,
@@ -585,7 +799,7 @@ impl RewriteService {
                 0,
             );
         };
-        let (signature, ptr_note) = match infer_signature_for_program(&sig_text, &rname) {
+        let read = match infer_signature_for_program(&sig_text, &rname, &p.name) {
             Ok(x) => x,
             Err(e) => {
                 return none(
@@ -596,10 +810,11 @@ impl RewriteService {
                 );
             }
         };
+        let signature = read.signature;
         let curated = curated(&pc.binary_file, &f.name);
         let check = if !pc.verify_functions {
             Check::CompileOnly("the function-level differential test was not requested".into())
-        } else if let Some(n) = ptr_note {
+        } else if let Some(n) = read.compile_only {
             Check::CompileOnly(n)
         } else {
             Check::Differential
@@ -608,6 +823,13 @@ impl RewriteService {
             Some(c) => (c.inputs, c.notes),
             None => (generic_inputs(&signature), generic_notes(&signature)),
         };
+        if !read.guesses.is_empty() {
+            notes.push_str(&format!(
+                "\n\nThe prototype was read from a signature the decompiler could not fully type: \
+                 {}.",
+                read.guesses.join("; ")
+            ));
+        }
         if p.address == pc.entry_addr {
             notes.push_str(&format!("\n\n{ENTRY_NOTE}"));
         }
@@ -694,6 +916,18 @@ impl RewriteService {
             let sha2 = pc.sha.clone();
             with_store(pc.dir.clone(), move |st| st.observe(&sha2, &seen)).await?;
         }
+        // The globals the code refers to, by name and address, and how to reach them.
+        if let Some(img) = pc.image.clone() {
+            let mut addresses = Vec::new();
+            for a in std::iter::once(p.address).chain(inline.iter().map(|c| c.address)) {
+                addresses.extend(self.data_refs_of(pc, a).await?);
+            }
+            if addresses.iter().any(|a| img.contains(*a)) {
+                notes.push_str(&format!("\n\n{}", img.prompt_notes(&addresses)));
+            }
+        }
+        let mut budget = self.cfg.budget.clone();
+        budget.max_tokens = Some(budget.max_tokens.unwrap_or(0).max(PROGRAM_MAX_TOKENS));
         let task = RewriteTask {
             function: f.clone(),
             callees: inline.clone(),
@@ -702,7 +936,7 @@ impl RewriteService {
             spec: None,
             reused: direct.clone(),
             repairs: seeded,
-            budget: self.cfg.budget.clone(),
+            budget,
         };
         let work = Work {
             function: f.clone(),
@@ -746,13 +980,8 @@ impl RewriteService {
             Err(e) => return Err(proto(e)),
         };
         let attempts = u32::try_from(run.attempts.len()).unwrap_or(u32::MAX);
-        let (last, _) = run.last();
-        let unit = last.clone();
-        let kind = if unit.oracle.kind == COMPILE_ONLY_KIND {
-            "compile_only"
-        } else {
-            "differential"
-        };
+        let unit = best_attempt(&run);
+        let kind = check_kind(&unit);
         Ok(FunctionOutcome::Unit {
             unit: Box::new(unit),
             attempts,
@@ -782,25 +1011,53 @@ impl RewriteService {
             units: BTreeMap::new(),
         };
         let entry_addr = pc.entry_addr;
+        // Besides what the entry point calls: the static constructors and the functions whose
+        // address sits in a table of the data, when they and what they call have translations.
+        let optional: Vec<u64> = pc
+            .image
+            .as_ref()
+            .map(|img| {
+                let planned: BTreeSet<u64> = pc.plan.entries.iter().map(|p| p.address).collect();
+                img.init
+                    .iter()
+                    .copied()
+                    .chain(img.function_pointers(&planned).into_iter().map(|(_, t)| t))
+                    .collect()
+            })
+            .unwrap_or_default();
         let needed = {
             let (cm, entry) = (chosen.clone(), entry_addr);
             with_store(pc.dir.clone(), move |st| {
-                let mut done: BTreeMap<u64, RewriteUnit> = BTreeMap::new();
-                let mut need = vec![entry];
-                while let Some(a) = need.pop() {
-                    if done.contains_key(&a) {
-                        continue;
+                let closure = |root: u64,
+                               done: &BTreeMap<u64, RewriteUnit>|
+                 -> Result<Result<BTreeMap<u64, RewriteUnit>, u64>, RewriteError> {
+                    let mut found: BTreeMap<u64, RewriteUnit> = BTreeMap::new();
+                    let mut need = vec![root];
+                    while let Some(a) = need.pop() {
+                        if done.contains_key(&a) || found.contains_key(&a) {
+                            continue;
+                        }
+                        let Some(u) = chosen_unit(st, &cm, &format!("{a:#x}"))? else {
+                            return Ok(Err(a));
+                        };
+                        need.extend(
+                            u.callees
+                                .iter()
+                                .filter(|c| c.reused.is_some())
+                                .map(|c| parse_addr(&c.address)),
+                        );
+                        found.insert(a, u);
                     }
-                    let Some(u) = chosen_unit(st, &cm, &format!("{a:#x}"))? else {
-                        return Ok(Err(a));
-                    };
-                    need.extend(
-                        u.callees
-                            .iter()
-                            .filter(|c| c.reused.is_some())
-                            .map(|c| parse_addr(&c.address)),
-                    );
-                    done.insert(a, u);
+                    Ok(Ok(found))
+                };
+                let mut done = match closure(entry, &BTreeMap::new())? {
+                    Ok(d) => d,
+                    Err(missing) => return Ok(Err(missing)),
+                };
+                for root in optional {
+                    if let Ok(more) = closure(root, &done)? {
+                        done.extend(more);
+                    }
                 }
                 Ok(Ok(done))
             })
@@ -826,10 +1083,11 @@ impl RewriteService {
         let list: Vec<RewriteUnit> = units.into_values().collect();
         // Write the crate.
         progress(job, "assemble", 0, 1, "writing the Rust crate");
-        let (binary_name, sha2, out2) = (
+        let (binary_name, sha2, out2, image) = (
             pc.binary_file.clone(),
             pc.sha.clone(),
             out_dir.to_path_buf(),
+            pc.image.clone(),
         );
         let assembled = tokio::task::spawn_blocking(move || {
             assemble(
@@ -837,6 +1095,7 @@ impl RewriteService {
                 &AssembleInfo {
                     binary_name: &binary_name,
                     program_sha256: &sha2,
+                    image: image.as_deref(),
                 },
                 &entry_unit,
                 &list,
@@ -1013,7 +1272,7 @@ impl RewriteService {
                 .values()
                 .map(|u| (format!("u_{}", u.signature.name), u.signature.name.clone()))
                 .collect();
-            let stack = match spec {
+            let stack = match spec.clone() {
                 Some(spec) => self
                     .trace_program(out_dir, &stage.bin_name, report.case.clone(), spec, modules)
                     .await
@@ -1053,6 +1312,8 @@ impl RewriteService {
                                     .collect()
                             })
                             .unwrap_or_default(),
+                        tried: u32::try_from(views.iter().filter(|v| v.address.0 == *addr).count())
+                            .unwrap_or(u32::MAX),
                     }
                 })
                 .collect();
@@ -1097,7 +1358,7 @@ impl RewriteService {
                     original: &report.original,
                     rewritten: &report.rewritten,
                     differences: &report.differences,
-                    trace: spec,
+                    trace: spec.as_ref(),
                     stack: &stack,
                     suspect: sus,
                     own_check: &own,
@@ -1117,7 +1378,7 @@ impl RewriteService {
                     address: Hex64(sus.address),
                     name: Untrusted::sanitized(&sus.name),
                     case: report.case.name.clone(),
-                    at: spec.map(|s| s.describe()).unwrap_or_default(),
+                    at: spec.as_ref().map(|s| s.describe()).unwrap_or_default(),
                     stack: stack.clone(),
                     why: Untrusted::sanitized(&sus.why),
                     outcome: "no_reply".into(),
@@ -1132,7 +1393,10 @@ impl RewriteService {
                 } = outcome
                 {
                     let unit = self.maybe_accept(pc, *unit).await?;
-                    if unit.status == UnitStatus::Failed {
+                    // A new translation that does not build is not used, nor one that fails its
+                    // own test where the one in the crate passed it.
+                    let worse = unit.verdict == Verdict::Fail && old.verdict == Verdict::Pass;
+                    if !usable(&unit) || worse {
                         view.outcome = "kept".into();
                     } else {
                         view.outcome = "replaced".into();

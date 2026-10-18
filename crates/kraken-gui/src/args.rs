@@ -40,6 +40,12 @@ pub enum Scene {
     Import,
     /// The File menu opened over the demo.
     Menu,
+    /// The help window on Getting started, over the demo.
+    Help,
+    /// A step of the first-run tour, over the demo.
+    Tour,
+    /// The loading screen halfway through a scripted slow open (no demo needed).
+    Loading,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +79,8 @@ pub const USAGE: &str =
   --screenshot FILE  with --demo or a hidden --open-project: select a function, render, save
                      FILE as a PNG and exit
   --scene S          what --screenshot shows: main (default), graph, palette, rename, rewrite,
-                     rewrite-program, rewrite-wizard, menu, welcome or import (import probes PATH, else a demo program)
+                     rewrite-program, rewrite-wizard, menu, help, tour, welcome, loading (a scripted
+                     slow open) or import (import probes PATH, else a demo program)
   -h, --help         show this text";
 
 #[derive(Debug)]
@@ -137,9 +144,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     Some("rewrite-wizard") => Scene::RewriteWizard,
                     Some("import") => Scene::Import,
                     Some("menu") => Scene::Menu,
+                    Some("help") => Scene::Help,
+                    Some("tour") => Scene::Tour,
+                    Some("loading") => Scene::Loading,
                     other => {
                         return Err(format!(
-                            "--scene needs main, graph, palette, rename, welcome, import, menu, rewrite, rewrite-program or rewrite-wizard, got {}",
+                            "--scene needs main, graph, palette, rename, welcome, import, loading, menu, help, tour, rewrite, rewrite-program or rewrite-wizard, got {}",
                             other.unwrap_or("nothing")
                         ));
                     }
@@ -164,7 +174,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
     if o.screenshot.is_some()
         && !o.demo
         && o.open_project.is_none()
-        && !matches!(o.scene, Scene::Welcome | Scene::Import)
+        && !matches!(o.scene, Scene::Welcome | Scene::Import | Scene::Loading)
     {
         return Err("--screenshot needs --demo".into());
     }

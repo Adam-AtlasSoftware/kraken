@@ -501,6 +501,23 @@ impl AssistState {
         self.glossary.get(term)
     }
 
+    /// Every concept entry of the glossary (not the instruction mnemonics), sorted by term, or
+    /// those matching `query` best first when it is not empty.
+    pub fn glossary_terms(&self, query: &str) -> Vec<&'static kraken_assist::GlossaryEntry> {
+        let all = self.glossary.entries();
+        if query.trim().is_empty() {
+            let mut v: Vec<_> = all.iter().filter(|e| e.arch.is_none()).collect();
+            v.sort_by_key(|e| e.term.to_lowercase());
+            return v;
+        }
+        self.glossary
+            .lookup(query, 60)
+            .into_iter()
+            .filter(|m| m.entry.arch.is_none())
+            .filter_map(|m| self.glossary.get(&m.entry.term))
+            .collect()
+    }
+
     /// The glossary entry for an assembly mnemonic of `arch` (a language id such as
     /// `x86:LE:64:default`).
     pub fn mnemonic(

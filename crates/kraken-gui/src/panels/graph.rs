@@ -90,7 +90,11 @@ pub fn show(
     if let Some(err) = vm.views.graph.error.clone() {
         ui.label(RichText::new("The graph could not be drawn.").color(s.danger));
         ui.label(RichText::new(err).color(p.text_dim));
-        if ui.button("Try again").clicked() {
+        if ui
+            .button("Try again")
+            .on_hover_text("Ask for it again")
+            .clicked()
+        {
             vm.retry_graph();
         }
         return;

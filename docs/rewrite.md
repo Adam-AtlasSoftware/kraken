@@ -52,7 +52,7 @@ Accepting marks one version of a function as the one to export. Accept a functio
 
 ### 5. Export
 
-The export writes a Rust workspace with two crates: a library with the accepted functions, and a shim that exposes each one under its original name. You can link the shim in place of the original functions one at a time, and the functions you have not rewritten keep running from the original program. The folder must be empty or an earlier export. A folder inside the project needs no question; a folder outside it asks first.
+The export writes a Rust workspace with two crates: a library with the accepted functions, and a shim that exposes each one under its original name. You can link the shim in place of the original functions one at a time, and the functions you have not rewritten keep running from the original program. When an accepted function calls one you have not accepted, the export calls the original function by its name; the README lists these calls. Functions that use globals need to know where the original program's data is: call `kraken_attach_image` once first (the README says how). The folder must be empty or an earlier export. A folder inside the project needs no question; a folder outside it asks first.
 
 ### 6. Build and test
 
@@ -64,9 +64,25 @@ The export writes a Rust workspace with two crates: a library with the accepted 
 - **The plan.** Every function in turn. **Translate all planned** runs them one after the other in plan order, so the assistant is never asked for twenty things at once. **Retry all failed** runs the failed ones again, each in the mode it was last run in. Both show how far they are and can be stopped.
 - **The whole program.** In the Rewrite tab choose **Whole program**. KRAKEN translates every function the program's entry point reaches, writes one standalone Rust program, builds it, and then runs the original program and the Rust program on the same inputs. It compares the exit status, what each prints and what each writes to standard error. If they differ, KRAKEN finds the function most likely responsible from the first difference, translates it again with that case as evidence, and compares again (the **Repair rounds**, 0 to 4).
 
-For the whole program you can add **test cases** under **Options**: a name, the arguments to start the program with (quotes group words) and text for its standard input. KRAKEN also runs a baseline case and generated ones. **Check every function too** also tests each function on its own, so a failure points at one function; turn it off to only compile the functions and rely on the program comparison. **Folder for the Rust crate** is where the crate is written; leave it empty for `rewrite-program` inside the project.
+For the whole program you can add **test cases** under **Options**: a name, the arguments to start the program with (quotes group words) and text for its standard input. KRAKEN also runs a baseline case and generated ones. **Check every function too** also tests each function on its own, so a failure points at one function; turn it off to only compile the functions and rely on the program comparison. Each case compares the exit status, the standard output, the standard error and every file the program leaves in its working folder. **Folder for the Rust crate** is where the crate is written; leave it empty for `rewrite-program` inside the project.
 
 Running the whole program starts the original program on your computer (inside the sandbox, with no network). KRAKEN asks before it does.
+
+### What a whole-program rewrite can handle
+
+Ordinary C and C++ programs for Linux on x86-64 work, not just small examples:
+
+- **Globals.** The program's data (globals, static variables, constant tables, strings) is copied into the Rust program as one shared block at the addresses the decompiler shows. Every translated function reads and writes the same block, so state that one function sets is seen by the next, as in the original.
+- **Floating point.** `float` and `double` parameters and results, and the math library (`sinf`, `powf`, `sqrt`, `lroundf`, ...), with the same results as the original.
+- **Files and the C library.** Programs that write or read files (`fopen`, `fwrite`, `fprintf`, `perror`, ...), parse numbers (`strtod`, `strtol`, `atoi`), sort (`qsort`) or use `rand`. The files each program writes are compared too, not just what it prints.
+- **C++.** Methods (they are named after their class, for example `Button_begin`), destructors, lambdas, library templates compiled into the program (`std::vector` growth, `std::sort` helpers), `new` and `delete`, and errors that end the program (`std::length_error`) with the same message. Exceptions that are caught are not modelled.
+- **Functions reached through pointers.** Callbacks, dispatch tables and vtables in the program's data are found when a function that runs uses the table, and the table points at the Rust functions.
+
+The test of each function on its own is a help, not a gate. A function whose own test fails, or cannot run (for example because it needs a pointer to an object the test cannot build), is still put in the program and marked **not checked on its own** (`unchecked`). The comparison of the whole program decides, and when it finds a difference, the repair rounds translate the likeliest function again with that difference as evidence.
+
+For example, two C++ audio simulators of about 30 and 47 functions (floats, globals, `std::vector`, `.wav` files) were rewritten this way and matched the original on all 11 cases, including the files they write. One needed a second run and two repair rounds. If a run stops part way, start it again: translations from earlier runs that are still valid are reused, so only the rest is translated.
+
+Limits: Linux x86-64 programs only; at most six integer and eight floating-point parameters per function; no varargs functions of the program itself; no threads, no `fork`, no network, no clock; exceptions that are caught are not modelled. A model run is slow: with a terminal agent each function takes one to two minutes.
 
 ## Translate or spec
 
@@ -101,5 +117,7 @@ Jobs return a `job_id`; read progress and the result with `job_status` or `job_a
 - **The buttons are off with a note about the sandbox.** Your computer cannot confine generated code. Use Linux 6.7 or newer, or a kernel with Landlock ABI 4.
 - **No assistant is set up.** Choose one in **Settings**, or name a provider in your KRAKEN config file. See [the assistant](assistant.md).
 - **Everything comes out translated, not verified.** The functions call library functions the test cannot imitate yet. Open one: its flags say which. The whole-program comparison still tells you whether the program behaves like the original.
+- **Many functions say "not checked on its own".** Their own test failed or could not run, often because they take a pointer to an object (a C++ `this`) that random test inputs cannot build. They are still in the program; the program comparison is what counts.
+- **The program differs in a file it writes.** The differences name the file, both sizes and where the first difference is (a byte, or a 4 KiB block). The repair rounds use the first difference of the output; a file difference alone is shown to you.
 - **A function failed.** Open it in the Rewrite tab. The counterexample shows the input where the Rust and the original differed, and the history lists earlier attempts. **Retry** runs it again.
 - **The build failed.** The log of the failing step is in the Build step. The Rust is the assistant's; fix it by hand in the exported folder, or run the function again.

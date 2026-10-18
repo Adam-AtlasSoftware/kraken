@@ -68,7 +68,11 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
         let edit = egui::TextEdit::singleline(&mut st.symbols.filter)
             .hint_text("Filter by name or library")
             .desired_width(f32::INFINITY);
-        if ui.add(edit).changed() {
+        if ui
+            .add(edit)
+            .on_hover_text("Type part of a name or a library to narrow the list")
+            .changed()
+        {
             vm.set_symbols_filter(table, st.symbols.filter.clone());
         }
     });
@@ -81,7 +85,11 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
     };
     if let Some(err) = list.error.clone() {
         ui.label(RichText::new(err).color(s.danger));
-        if ui.button("Try again").clicked() {
+        if ui
+            .button("Try again")
+            .on_hover_text("Ask for it again")
+            .clicked()
+        {
             vm.retry_symbols(table);
         }
         return;

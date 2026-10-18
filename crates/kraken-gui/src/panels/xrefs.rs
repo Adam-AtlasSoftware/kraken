@@ -110,7 +110,11 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
                 xref_tab_label(which),
                 if more { "+" } else { "" }
             );
-            if ui.selectable_label(st.xrefs.tab == which, label).clicked() {
+            if ui
+                .selectable_label(st.xrefs.tab == which, label)
+                .on_hover_text(super::xref_tab_help(which))
+                .clicked()
+            {
                 st.xrefs.tab = which;
                 st.xrefs.selected = None;
                 st.xrefs.settled = true;
@@ -205,7 +209,8 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
             let (place, addr, kind) = &items[i];
             chip(ui, kind, p.text_dim);
             let color = if sel { p.text_strong } else { p.text };
-            ui.label(RichText::new(place).monospace().size(12.5).color(color));
+            ui.label(RichText::new(place).monospace().size(12.5).color(color))
+                .on_hover_text("Click to go there");
             ui.label(RichText::new(addr).monospace().size(11.5).color(p.address));
         });
     st.xrefs.selected = selected;

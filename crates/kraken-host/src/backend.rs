@@ -15,7 +15,14 @@ use kraken_registry::{
 };
 use serde_json::Value;
 
-use crate::daemon::{CallParams, DaemonClient, GuiSelectionReply, absolute};
+use kraken_ipc::Notification;
+use kraken_proto::OpenProgress;
+use tokio::sync::mpsc;
+
+use crate::daemon::{
+    CallParams, DaemonClient, GuiSelectionReply, METHOD_EVENT, absolute, canonical_prefix,
+    event_kind,
+};
 
 /// A place commands run.
 #[async_trait]
@@ -135,6 +142,8 @@ pub struct DaemonBackend {
     registry: Arc<Registry>,
     current: Mutex<Option<PathBuf>>,
     warnings: Warnings,
+    /// The daemon's events, taken on the first open that has a progress sink.
+    events: tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<Notification>>>,
 }
 
 impl DaemonBackend {
@@ -154,6 +163,7 @@ impl DaemonBackend {
             registry,
             current: Mutex::new(default_project.map(|p| absolute(&p))),
             warnings,
+            events: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -169,6 +179,77 @@ impl DaemonBackend {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+}
+
+impl DaemonBackend {
+    /// Runs `project_create` / `project_open` while passing the daemon's `open_progress` events
+    /// for that project to the context's sink. Cancelling the context cancels the open through
+    /// its job (`job_cancel`), so the daemon stops it and keeps nothing of it.
+    async fn open_watched(
+        &self,
+        params: &CallParams,
+        ctx: &CallContext,
+    ) -> Result<crate::daemon::CallResult, ProtoError> {
+        let mut events = self.events.lock().await;
+        if events.is_none() {
+            *events = self.client.take_events();
+        }
+        let key = canonical_prefix(Path::new(&params.project_dir));
+        let sink = ctx.open_progress.clone();
+        let call = self.client.call(params);
+        tokio::pin!(call);
+        let mut job: Option<String> = None;
+        let mut cancelling = false;
+        loop {
+            let next = async {
+                match events.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                r = &mut call => return r,
+                Some(n) = next => {
+                    let Some(p) = open_progress_for(&n, &key) else {
+                        continue;
+                    };
+                    if p.job_id.is_some() {
+                        job.clone_from(&p.job_id);
+                    }
+                    if let Some(sink) = &sink {
+                        sink(&p);
+                    }
+                }
+                () = ctx.cancel.cancelled(), if !cancelling => {
+                    cancelling = true;
+                    let Some(id) = job.clone() else {
+                        return Err(ProtoError::new(ErrorCode::Cancelled, "call cancelled"));
+                    };
+                    let cancel = CallParams {
+                        command: "job_cancel".into(),
+                        args: serde_json::json!({ "job_id": id }),
+                        ..params.clone()
+                    };
+                    // the open itself then ends with `cancelled`
+                    self.client.call(&cancel).await?;
+                }
+            }
+        }
+    }
+}
+
+/// The open progress in an `event` notification about the project `key`.
+fn open_progress_for(n: &Notification, key: &Path) -> Option<OpenProgress> {
+    if n.method != METHOD_EVENT {
+        return None;
+    }
+    let v = &n.params;
+    if v.get("kind").and_then(Value::as_str) != Some(event_kind::OPEN_PROGRESS)
+        || v.get("project_dir").and_then(Value::as_str).map(Path::new) != Some(key)
+    {
+        return None;
+    }
+    serde_json::from_value(v.clone()).ok()
 }
 
 /// Paths in these arguments are resolved against the client's working directory, which the
@@ -257,12 +338,16 @@ impl CommandBackend for DaemonBackend {
             surface: Some(ctx.surface),
             approved,
         };
-        let reply = tokio::select! {
-            biased;
-            () = ctx.cancel.cancelled() => {
-                return Err(ProtoError::new(ErrorCode::Cancelled, "call cancelled"));
+        let reply = if creating && ctx.open_progress.is_some() {
+            self.open_watched(&params, ctx).await?
+        } else {
+            tokio::select! {
+                biased;
+                () = ctx.cancel.cancelled() => {
+                    return Err(ProtoError::new(ErrorCode::Cancelled, "call cancelled"));
+                }
+                r = self.client.call(&params) => r?,
             }
-            r = self.client.call(&params) => r?,
         };
         for w in reply.warnings {
             self.warnings.push(w);

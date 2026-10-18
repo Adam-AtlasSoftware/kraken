@@ -1,0 +1,55 @@
+{
+  "binary": "kr-x64.obj",
+  "sha256": "9632c0cd5bb8d0302fa87e794318318d377cd5076e52576be8e79cb4b6de2423",
+  "kind": "COFF object",
+  "arch": "x86-64",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 8
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 105
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 212
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

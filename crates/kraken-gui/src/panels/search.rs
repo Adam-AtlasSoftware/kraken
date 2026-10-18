@@ -48,12 +48,14 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
     }
     ui.horizontal(|ui| {
         let mut query = vm.tools.search.query.clone();
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut query)
-                .id(input_id())
-                .hint_text(vm.tools.search.kind.hint())
-                .desired_width((ui.available_width() - 150.0).max(80.0)),
-        );
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut query)
+                    .id(input_id())
+                    .hint_text(vm.tools.search.kind.hint())
+                    .desired_width((ui.available_width() - 150.0).max(80.0)),
+            )
+            .on_hover_text("What to look for. Press Enter to search");
         if std::mem::take(&mut vm.tools.search.focus_requested) {
             r.request_focus();
         }

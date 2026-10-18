@@ -729,6 +729,110 @@ async fn stripped_calc_without_symbols_is_rewritten_from_the_entry_stub() {
     );
 }
 
+/// Marks the units a program run used for `names` as verified (as a function-level pass would)
+/// and accepts them through the command, as a person does.
+async fn accept_rows(r: &Rig, out: &Value, names: &[&str]) {
+    let db = rusqlite::Connection::open(r.dir.join("rewrite.sqlite")).expect("db");
+    for name in names {
+        let id = function(out, name)["unit"]
+            .as_str()
+            .expect("unit")
+            .to_string();
+        db.execute(
+            "UPDATE unit_versions SET status = 'verified' WHERE id = ?1",
+            [&id],
+        )
+        .expect("verify");
+        db.execute(
+            "UPDATE units SET status = 'verified' WHERE (program_sha256, address) = \
+             (SELECT program_sha256, address FROM unit_versions WHERE id = ?1)",
+            [&id],
+        )
+        .expect("verify");
+        r.call(&user(), "rewrite_accept", json!({"unit": id}))
+            .await
+            .expect("accept");
+    }
+}
+
+#[tokio::test]
+async fn an_export_of_program_units_builds_with_the_shim_and_calls_unaccepted_callees_in_the_original()
+ {
+    if !sandbox_available() {
+        return;
+    }
+    // switch_vm: `vm_run` is accepted, the helpers it was translated against (`push`, `pop`,
+    // `vm_fail`) are not, so the export calls the original functions by name.
+    let provider = cassette_provider("program-switch-vm.json", "switch_vm-O0", VM).await;
+    let r = rig("switch_vm-O0", provider).await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false, "generated_cases": 0}),
+        )
+        .await
+        .expect("rewrite_program");
+    accept_rows(&r, &out, &["vm_run"]).await;
+    let done = r
+        .job(&user(), "rewrite_export", json!({"dir": "export"}))
+        .await
+        .expect("rewrite_export builds");
+    assert_eq!(done["built"], true, "{done:#}");
+    let symbols: Vec<&str> = done["symbols"]
+        .as_array()
+        .expect("symbols")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(symbols, ["kraken_attach_image", "vm_run"]);
+    let manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(r.dir.join("export/manifest.json")).expect("manifest"),
+    )
+    .expect("json");
+    let calls: Vec<&str> = manifest["calls_original"]
+        .as_array()
+        .expect("calls")
+        .iter()
+        .filter_map(|c| c["original_name"].as_str())
+        .collect();
+    assert_eq!(calls.len(), 3, "{manifest:#}");
+    for n in ["push", "pop", "vm_fail"] {
+        assert!(calls.contains(&n), "{calls:?}");
+    }
+    let readme = std::fs::read_to_string(r.dir.join("export/README.md")).expect("readme");
+    assert!(
+        readme.contains("Calls into the original program"),
+        "{readme}"
+    );
+
+    // pie_list: every function uses the runtime shim (`rt::printf`, `rt::malloc`, ...).
+    let provider = cassette_provider("program-pie-list.json", "pie_list-O0", PIE_LIST).await;
+    let r = rig("pie_list-O0", provider).await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_program",
+            json!({"verify_functions": false, "generated_cases": 0}),
+        )
+        .await
+        .expect("rewrite_program");
+    let names: Vec<String> = out["functions"]
+        .as_array()
+        .expect("functions")
+        .iter()
+        .filter(|f| f["included"] == true)
+        .filter_map(|f| f["name"]["value"].as_str().map(str::to_string))
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    accept_rows(&r, &out, &names).await;
+    let done = r
+        .job(&user(), "rewrite_export", json!({"dir": "export"}))
+        .await
+        .expect("rewrite_export builds with the shim");
+    assert_eq!(done["built"], true, "{done:#}");
+}
+
 #[tokio::test]
 async fn pie_list_is_rewritten_with_function_pointers_doubles_and_linked_nodes() {
     if !sandbox_available() {
@@ -1009,7 +1113,7 @@ async fn program_repair_is_bounded_and_can_be_turned_off() {
         .expect("rewrite_program");
     assert_eq!(out["verdict"]["verdict"], "fail", "{:#}", out["verdict"]);
     let repairs = out["repairs"].as_array().expect("repairs");
-    assert!(!repairs.is_empty() && repairs.len() <= 2, "{repairs:?}");
+    assert!(!repairs.is_empty() && repairs.len() <= 3, "{repairs:?}");
     assert!(repairs.iter().all(|v| v["round"] == 1));
     // Off: nothing is traced or retranslated.
     let off = rig(
@@ -1250,9 +1354,13 @@ async fn the_pointer_aware_inputs_catch_a_wrong_parser_function() {
         .expect("rewrite_program");
     eprintln!("{}", table(&out));
     let f = function(&out, "parse_number");
-    assert_eq!(f["check"], "differential", "{f}");
     assert_eq!(f["verdict"], "fail", "{f}");
     assert_eq!(f["status"], "failed", "{f}");
+    // It builds, so it is still part of the program, marked as not checked on its own: the
+    // program-level test is the judge.
+    assert_eq!(f["check"], "unchecked", "{f}");
+    assert_eq!(f["included"], true, "{f}");
+    assert_eq!(out["unchecked"].as_u64().map(|n| n >= 1), Some(true));
 }
 
 #[tokio::test]

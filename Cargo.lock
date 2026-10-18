@@ -1354,11 +1354,16 @@ version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5eb3f3effb2726fee23449293e67acbf6cc6ce35525b1722bd5743bb348114d5"
 dependencies = [
+ "eframe",
  "egui",
+ "egui-wgpu",
+ "image",
  "kittest",
  "log",
+ "pollster 1.0.1",
  "serde",
  "toml 1.1.8+spec-1.1.0",
+ "wgpu",
 ]
 
 [[package]]
@@ -3018,6 +3023,7 @@ name = "kraken-rewrite"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "cpp_demangle",
  "engine-fake",
  "futures-util",
  "icicle-cpu",
@@ -6741,6 +6747,7 @@ version = "0.0.0"
 dependencies = [
  "kraken-proto",
  "kraken-registry",
+ "kraken-viewmodel",
  "serde",
  "serde_json",
  "sha2",

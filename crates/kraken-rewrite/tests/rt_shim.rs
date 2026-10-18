@@ -102,6 +102,11 @@ fn printf_formats_floating_point_like_c() {
         "2.50|   2.500|2.5     |"
     );
     assert_eq!(fmt("%f", &[Arg::Double(-0.5)]), "-0.500000");
+    // glibc keeps the sign of a NaN (0.0 / 0.0 is a negative NaN on x86-64).
+    assert_eq!(
+        fmt("%8.0f|%f", &[Arg::Double(-f64::NAN), Arg::Double(f64::NAN)]),
+        "    -nan|nan"
+    );
     assert_eq!(fmt("%e", &[Arg::Double(12345.678)]), "1.234568e+04");
     assert_eq!(fmt("%.1E", &[Arg::Double(0.00012)]), "1.2E-04");
     assert_eq!(
@@ -290,12 +295,162 @@ fn numbers_parse_like_strtol() {
 }
 
 #[test]
-fn the_embedded_shim_passes_the_translation_lint_and_is_the_compiled_one() {
-    assert_eq!(lint_translation(&rt_module_source()), None);
+fn the_embedded_shim_is_trusted_code_and_the_compiled_one() {
+    // The shim opens files (the program's own), which a translation may not: it is compiled in
+    // front of a translation without the lint, and the lint still refuses the same calls in
+    // model code.
+    assert!(lint_translation(&rt_module_source()).is_some());
+    assert!(
+        lint_translation("fn f() { let _ = std::fs::File::open(\"x\"); }")
+            .is_some_and(|w| w.contains("std::fs"))
+    );
     assert!(RT_SOURCE.contains("pub unsafe fn format_c("));
     let module = rt_module_source();
-    assert!(module.starts_with("#[allow(dead_code, unused)]\nmod rt {"));
+    assert!(module.starts_with("#[allow(dead_code, unused)]\npub(crate) mod rt {"));
     assert!(!module.contains("//!"), "inner documentation is dropped");
+}
+
+#[test]
+fn files_are_written_and_read_like_stdio() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = cstr(&dir.path().join("out.bin").display().to_string());
+    unsafe {
+        let f = rt::fopen(path.as_ptr().cast(), c"wb".as_ptr().cast());
+        assert!(!f.is_null());
+        assert_eq!(rt::fwrite(b"RIFF".as_ptr(), 1, 4, f), 4);
+        assert_eq!(rt::fputc(i32::from(b'!'), f), i32::from(b'!'));
+        assert_eq!(rt::fputs(c"ok\n".as_ptr().cast(), f), 1);
+        assert_eq!(
+            rt::fprintf(
+                f,
+                c"%d-%s".as_ptr().cast(),
+                &[Arg::Int(7), Arg::Ptr(c"x".as_ptr().cast())]
+            ),
+            3
+        );
+        assert_eq!(rt::ftell(f), 11);
+        assert_eq!(rt::fclose(f), 0);
+        assert_eq!(
+            std::fs::read(dir.path().join("out.bin")).expect("file"),
+            b"RIFF!ok\n7-x"
+        );
+        let f = rt::fopen(path.as_ptr().cast(), c"rb".as_ptr().cast());
+        let mut buf = [0u8; 16];
+        assert_eq!(rt::fread(buf.as_mut_ptr(), 1, 4, f), 4);
+        assert_eq!(&buf[..4], b"RIFF");
+        let line = rt::fgets(buf.as_mut_ptr(), 16, f);
+        assert!(!line.is_null());
+        assert_eq!(&buf[..4], b"!ok\n");
+        assert_eq!(rt::fgetc(f), i32::from(b'7'));
+        assert_eq!(rt::fseek(f, 0, 2), 0);
+        assert_eq!(rt::fgetc(f), -1);
+        assert_eq!(rt::feof(f), 1);
+        rt::fclose(f);
+        // A file that cannot be opened sets errno, and perror's text is glibc's.
+        let missing = cstr(&dir.path().join("no/such").display().to_string());
+        assert!(rt::fopen(missing.as_ptr().cast(), c"r".as_ptr().cast()).is_null());
+        assert_eq!(rt::errno(), 2);
+        let text = std::ffi::CStr::from_ptr(rt::strerror(rt::errno()).cast());
+        assert_eq!(text.to_str().expect("utf8"), "No such file or directory");
+    }
+}
+
+#[test]
+fn numbers_are_read_like_the_c_library() {
+    let parse = |s: &str| {
+        let c = cstr(s);
+        let mut end: *const u8 = std::ptr::null();
+        let v = unsafe { rt::strtod(c.as_ptr().cast(), &mut end) };
+        (v, end as usize - c.as_ptr() as usize)
+    };
+    assert_eq!(parse("  2.5x"), (2.5, 5));
+    assert_eq!(parse("-1e3"), (-1000.0, 4));
+    assert_eq!(parse("1e"), (1.0, 1));
+    assert_eq!(parse(".5"), (0.5, 2));
+    assert_eq!(parse("0x1p4"), (16.0, 5));
+    assert_eq!(parse("0x"), (0.0, 1));
+    assert!(parse("inf").0.is_infinite());
+    assert!(parse("nan(abc)").0.is_nan());
+    assert_eq!(parse("nan(abc)").1, 8);
+    assert_eq!(parse("abc"), (0.0, 0));
+    assert_eq!(parse("0.1").0, 0.1);
+    assert_eq!(unsafe { rt::atof(c"20".as_ptr().cast()) }, 20.0);
+    assert_eq!(
+        unsafe { rt::strtoul(c"-1".as_ptr().cast(), std::ptr::null_mut(), 10) },
+        u64::MAX
+    );
+    assert_eq!(
+        unsafe {
+            rt::strtoul(
+                c"18446744073709551615".as_ptr().cast(),
+                std::ptr::null_mut(),
+                10,
+            )
+        },
+        u64::MAX
+    );
+    assert_eq!(
+        unsafe { rt::strspn(c"aabxa".as_ptr().cast(), c"ab".as_ptr().cast()) },
+        3
+    );
+    assert_eq!(
+        unsafe { rt::strcspn(c"aabxa".as_ptr().cast(), c"x".as_ptr().cast()) },
+        3
+    );
+    // Rounding as C does it.
+    assert_eq!(rt::lroundf(2.5), 3);
+    assert_eq!(rt::lroundf(-2.5), -3);
+    assert_eq!(rt::rint(2.5), 2.0);
+    assert_eq!(rt::lround(f64::NAN), i64::MIN);
+    assert_eq!(rt::powf(2.0, 10.0), 1024.0);
+}
+
+#[test]
+fn rand_follows_glibc() {
+    // glibc's first values for the default seed and for seed 42.
+    rt::srand(1);
+    let first: Vec<i32> = (0..3).map(|_| rt::rand()).collect();
+    assert_eq!(first, vec![1_804_289_383, 846_930_886, 1_681_692_777]);
+    rt::srand(42);
+    assert_eq!(rt::rand(), 71_876_166);
+}
+
+#[test]
+fn qsort_is_stable_and_sorts() {
+    unsafe extern "C" fn by_first(a: *const u8, b: *const u8) -> i32 {
+        i32::from(unsafe { *a }) - i32::from(unsafe { *b })
+    }
+    let mut v: Vec<[u8; 2]> = vec![[3, 0], [1, 0], [3, 1], [2, 0], [1, 1]];
+    unsafe { rt::qsort(v.as_mut_ptr().cast(), v.len(), 2, by_first) };
+    assert_eq!(v, vec![[1, 0], [1, 1], [2, 0], [3, 0], [3, 1]]);
+    let key = [2u8, 9];
+    let found = unsafe { rt::bsearch(key.as_ptr(), v.as_ptr().cast(), v.len(), 2, by_first) };
+    assert_eq!(found as usize, v.as_ptr() as usize + 4);
+}
+
+#[test]
+fn the_program_image_is_installed_and_relocated() {
+    static BYTES: [u8; 32] = [0u8; 32];
+    static IMG: rt::Image = rt::Image {
+        bytes: &BYTES,
+        low: 0x10_0000,
+        relative: &[(8, 24)],
+        copies: &[(16, 1)],
+        refs: &[],
+        writable: &[(0, 32)],
+    };
+    unsafe { rt::image_install(&IMG, std::ptr::null_mut()) };
+    let base = rt::g(0x10_0000);
+    assert_eq!(
+        unsafe { *(rt::g(0x10_0008) as *const usize) },
+        base as usize + 24
+    );
+    assert_eq!(
+        unsafe { *(rt::g(0x10_0010) as *const usize) },
+        rt::stdout() as usize
+    );
+    unsafe { *(rt::g(0x10_0004) as *mut u32) = 7 };
+    assert_eq!(unsafe { *(base.add(4) as *const u32) }, 7);
 }
 
 #[test]

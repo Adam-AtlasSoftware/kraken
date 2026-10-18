@@ -1,11 +1,13 @@
 //! The capability traits.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_proto::{
     BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, MemoryBlock,
-    Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
+    OpenUpdate, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef, VersionedLogOp,
+    Xref,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +25,9 @@ pub fn unsupported(what: &str) -> ProtoError {
     ProtoError::new(ErrorCode::Unsupported, format!("{what} is not supported"))
 }
 
+/// Receives the [`OpenUpdate`]s of an open in progress. Called from any thread; keep it cheap.
+pub type OpenReporter = Arc<dyn Fn(OpenUpdate) + Send + Sync>;
+
 /// Opens binaries.
 #[async_trait]
 pub trait Loader: Send + Sync {
@@ -33,6 +38,19 @@ pub trait Loader: Send + Sync {
         spec: &LoaderSpec,
         cancel: &CancellationToken,
     ) -> EngineResult<ProgramInfo>;
+
+    /// [`open_binary`](Self::open_binary) that tells `report` which stage it is in and how far
+    /// it got. An engine that cannot tell keeps the default, which reports nothing.
+    async fn open_binary_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: OpenReporter,
+    ) -> EngineResult<ProgramInfo> {
+        let _ = report;
+        self.open_binary(path, spec, cancel).await
+    }
 }
 
 /// Runs analysis as a job.

@@ -10,11 +10,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use kraken_engine::{
     CancellationToken, Cap, Decompiler, Engine, EngineCaps, EngineRejected, EngineResult,
-    FunctionLister, Loader, LoaderSpec, Mutator, ProgramInfo, TypeStore, Watermark, unsupported,
+    FunctionLister, Loader, LoaderSpec, Mutator, OpenReporter, ProgramInfo, TypeStore, Watermark,
+    unsupported,
 };
 use kraken_proto::{
-    DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, LogOp, PROTOCOL_VERSION, Page,
-    PageRequest, ProtoError, TypeDef, VersionedLogOp,
+    DecompileResult, ErrorCode, FunctionSummary, Hex64, Locator, LogOp, OpenStage, OpenUpdate,
+    PROTOCOL_VERSION, Page, PageRequest, ProtoError, TypeDef, VersionedLogOp,
 };
 use kraken_sidecar::LogSink;
 use kraken_sidecar::rpc::RpcClient;
@@ -373,6 +374,34 @@ impl Loader for DotnetEngine {
         spec: &LoaderSpec,
         cancel: &CancellationToken,
     ) -> EngineResult<ProgramInfo> {
+        self.open(path, spec, cancel, None).await
+    }
+
+    async fn open_binary_reporting(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: OpenReporter,
+    ) -> EngineResult<ProgramInfo> {
+        self.open(path, spec, cancel, Some(&report)).await
+    }
+}
+
+impl DotnetEngine {
+    /// Opens `path`, telling `report` the coarse stages (the sidecar reports nothing itself).
+    async fn open(
+        &self,
+        path: &Path,
+        spec: &LoaderSpec,
+        cancel: &CancellationToken,
+        report: Option<&OpenReporter>,
+    ) -> EngineResult<ProgramInfo> {
+        let say = |stage: OpenStage, message: &str| {
+            if let Some(r) = report {
+                r(OpenUpdate::stage(stage, message));
+            }
+        };
         if let Some(f) = &spec.format
             && f != "dotnet"
         {
@@ -398,6 +427,7 @@ impl Loader for DotnetEngine {
             .annotations
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Annotations::new();
+        say(OpenStage::StartEngine, "Starting the .NET engine");
         let launched = launch(LaunchPlan {
             install: self.config.install.clone(),
             assembly: assembly.clone(),
@@ -419,6 +449,7 @@ impl Loader for DotnetEngine {
         check_handshake(&handshake)?;
 
         let params = json!({"path": assembly});
+        say(OpenStage::ReadFile, "Loading the assemblies");
         let raw: Value = client
             .call(
                 "open_assembly",
@@ -458,6 +489,7 @@ impl Loader for DotnetEngine {
             base: wire.base,
             sha256: wire.sha256,
             size: wire.size,
+            ..ProgramInfo::default()
         })
     }
 }

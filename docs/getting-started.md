@@ -114,6 +114,22 @@ kraken history
 
 `kraken project-info` shows which engine the project uses. Your edits live in a log inside the project folder. Close the terminal, come back tomorrow, set `KRAKEN_PROJECT` again, and your work is there.
 
+## Prefer the window?
+
+Everything above also works in the window. Start it with `kraken-gui`.
+
+![The welcome screen with the menu bar, the demo, the import box and the project box](images/tutorial/welcome.png)
+
+1. **Open a program.** Choose **File > Open program** (`Ctrl+O`), type or browse to a program, or drop an executable or library on the window. KRAKEN looks at the file first. The import dialog shows what it found (the format, the processor and a recommended engine) and says why when something is not possible. Press **Import**. No program at hand? Press **Open demo project**.
+2. **Wait for the analysis.** The status bar shows how far it is, and you can read while it runs. **Analysis > Cancel analysis** stops it.
+3. **Find your way.** **Navigate > Go to main** opens the program's `main`. Press `G` to go to any address or name, and `Ctrl+Shift+F` to search names, strings, bytes and instructions.
+4. **Read and rename.** The Decompiler shows the function as C-like code. Click a name, press `N` and type a better one. Right-click for the rest: change type, comment, show references, bookmark, ask the assistant. `Ctrl+Z` undoes.
+5. **Ask for help.** Press **F1** for the help window. It has the whole flow in order, with a button for each step, one page for every panel, the keyboard shortcuts and a glossary. **Help > Take the tour** shows the main areas of the window in a minute. Every button and menu item also says what it does when you hover it.
+
+![The help window on the Getting started page](images/help.png)
+
+The [GUI reference](gui.md) lists every menu, panel and shortcut. The same steps with the real program are in the [tutorial](tutorial.md).
+
 ## Optional: the Ghidra engine
 
 The Ghidra engine opens every format KRAKEN knows (ELF, PE, Mach-O, 32-bit, other processors), reads debug-info types and demangles C++ names. It needs Java and a Ghidra download. Install it either way:
@@ -145,6 +161,7 @@ The [full comparison](native-engine.md#native-or-ghidra) has the details.
 
 ## Next steps
 
+- [The GUI reference](gui.md) lists every menu, panel and shortcut.
 - [Concepts](concepts.md) explains the words used above.
 - [Connect an AI agent](mcp.md) to do the naming for you.
 - [Rewrite a program in Rust](rewrite.md), step by step, and check it against the original.

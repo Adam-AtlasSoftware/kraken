@@ -16,6 +16,8 @@ pub enum Param {
     /// A `double` in an SSE register (`xmm0` to `xmm7`, numbered separately from the integer
     /// registers).
     Double,
+    /// A `float` in an SSE register (the low 32 bits; numbered with the `double`s).
+    Float,
     /// A pointer to a function. The test passes one of the host's callbacks (see [`Callback`]),
     /// which both sides implement identically and which records every call it receives.
     FnPtr,
@@ -31,6 +33,8 @@ pub enum Ret {
     Int { bits: u8, signed: bool },
     /// A `double` in XMM0, compared by its bit pattern.
     Double,
+    /// A `float` in the low 32 bits of XMM0, compared by its bit pattern.
+    Float,
     /// A pointer in RAX. Addresses are not comparable between the original (emulated or native)
     /// and the Rust build, so a function with this result cannot be compared by the function-level
     /// differential test; it is only compiled (see `Check::CompileOnly` in the service).
@@ -50,13 +54,9 @@ pub struct Signature {
 
 impl Signature {
     /// Whether every parameter fits a register: at most six in integer registers (integers,
-    /// pointers, function pointers) and eight `double`s.
+    /// pointers, function pointers) and eight `double`s and `float`s.
     pub fn fits_registers(&self) -> bool {
-        let doubles = self
-            .params
-            .iter()
-            .filter(|p| matches!(p, Param::Double))
-            .count();
+        let doubles = self.params.iter().filter(|p| p.is_sse()).count();
         self.params.len() - doubles <= 6 && doubles <= 8
     }
 
@@ -70,6 +70,7 @@ impl Signature {
                 Param::Int { bits, signed } => format!("a{i}: {}", int_ty(*bits, *signed)),
                 Param::Buf => format!("a{i}: *mut u8"),
                 Param::Double => format!("a{i}: f64"),
+                Param::Float => format!("a{i}: f32"),
                 Param::FnPtr => format!("a{i}: usize"),
             })
             .collect();
@@ -78,12 +79,20 @@ impl Signature {
             Ret::Int { bits, signed } => format!(" -> {}", int_ty(bits, signed)),
             Ret::Ptr => " -> *const u8".to_string(),
             Ret::Double => " -> f64".to_string(),
+            Ret::Float => " -> f32".to_string(),
         };
         format!(
             "pub unsafe extern \"C\" fn {}({}){ret}",
             self.name,
             params.join(", ")
         )
+    }
+}
+
+impl Param {
+    /// Passed in an SSE register (`double` or `float`).
+    pub fn is_sse(&self) -> bool {
+        matches!(self, Param::Double | Param::Float)
     }
 }
 
@@ -101,6 +110,8 @@ pub enum Arg {
     Buf { data: Vec<u8> },
     /// A `double`, given as its IEEE-754 bit pattern.
     Double { bits: u64 },
+    /// A `float`, given as its IEEE-754 bit pattern.
+    Float { bits: u32 },
     /// A callback (see [`Callback`]).
     FnPtr { callback: Callback },
     /// A pointer to the first of several objects that point to each other. Each object is a
@@ -270,8 +281,13 @@ pub struct Observation {
     pub stdout: Vec<u8>,
     /// What the function wrote to stderr.
     pub stderr: Vec<u8>,
-    /// Writes to globals (oracle only: the native side has no such memory).
+    /// Writes to globals: the oracle's, and the native side's when it ran with the program image
+    /// (see `global_writes_observed`).
     pub global_writes: Vec<GlobalWrite>,
+    /// The native side ran with the program image and reports its writes to globals, so the two
+    /// lists can be compared. Without it a write of the original cannot be reproduced.
+    #[serde(default)]
+    pub global_writes_observed: bool,
     /// Every call the function made to a callback it was given, as [`callback_tag`] texts.
     #[serde(default)]
     pub callbacks: Vec<String>,
@@ -290,6 +306,7 @@ impl Observation {
             stdout: Vec::new(),
             stderr: Vec::new(),
             global_writes: Vec::new(),
+            global_writes_observed: false,
             callbacks: Vec::new(),
             instructions: 0,
         }

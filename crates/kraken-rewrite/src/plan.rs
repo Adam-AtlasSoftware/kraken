@@ -32,7 +32,11 @@ pub(crate) const RUNTIME_GLUE: &[&str] = &[
 
 /// Names of import-section memory blocks whose functions are thunks, not code.
 pub(crate) fn is_thunk_block(name: &str) -> bool {
-    name.starts_with(".plt") || name == ".init" || name == ".fini" || name.starts_with(".stubs")
+    name.starts_with(".plt")
+        || name == ".init"
+        || name == ".fini"
+        || name.starts_with(".stubs")
+        || name == "EXTERNAL"
 }
 
 /// Data blocks that hold dynamic-linking bookkeeping rather than program globals.
@@ -313,7 +317,7 @@ mod tests {
     #[test]
     fn functions_that_need_stubs_are_flagged_through_their_callers() {
         let nodes = vec![
-            node(1, "leaf_alloc", &[], &["calloc", "printf"]),
+            node(1, "leaf_alloc", &[], &["realloc", "printf"]),
             node(2, "uses_leaf", &[1], &[]),
             node(3, "pure", &[], &["strlen"]),
             FnNode {
@@ -325,9 +329,9 @@ mod tests {
         ];
         let o = order_functions(&nodes);
         let by = |n: &str| o.entries.iter().find(|e| e.name == n).expect("entry");
-        assert_eq!(by("leaf_alloc").needs_stubs, vec!["calloc"]);
+        assert_eq!(by("leaf_alloc").needs_stubs, vec!["realloc"]);
         assert!(by("leaf_alloc").flags.contains(&PlanFlag::NeedsStubs));
-        assert_eq!(by("uses_leaf").needs_stubs, vec!["calloc"]);
+        assert_eq!(by("uses_leaf").needs_stubs, vec!["realloc"]);
         assert!(by("pure").flags.is_empty());
         assert!(by("counter").flags.contains(&PlanFlag::UsesGlobals));
         assert!(by("sys").flags.contains(&PlanFlag::UsesSyscalls));

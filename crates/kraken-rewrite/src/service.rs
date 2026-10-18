@@ -274,6 +274,7 @@ fn render_arg(a: &Arg) -> String {
             format!("buf[{}]={head}{more}", data.len())
         }
         Arg::Double { bits } => format!("{}", f64::from_bits(*bits)),
+        Arg::Float { bits } => format!("{}f", f32::from_bits(*bits)),
         Arg::FnPtr { callback } => format!("callback {callback:?}"),
         Arg::Graph { objects, links } => {
             let sizes: Vec<String> = objects.iter().map(|o| o.len().to_string()).collect();
@@ -680,15 +681,11 @@ impl RewriteService {
             opts,
             max_attempts,
         } = w;
-        let rt = if shim {
-            crate::rt_module_source()
-        } else {
-            String::new()
-        };
-        let prelude = format!(
-            "{rt}{}",
-            reuse::prelude_with(&reuse.all, &reuse.direct, shim)
-        );
+        let mut opts = opts;
+        if shim {
+            opts.trusted_prelude = crate::rt_module_source();
+        }
+        let prelude = reuse::prelude_with(&reuse.all, &reuse.direct, shim);
         let (translated_with, reused_direct) = (task.callees.clone(), reuse.direct.clone());
         let cancel = job.map(JobReporter::cancel_token).unwrap_or_default();
         let (dir, binary_path) = (dir.to_path_buf(), binary_path.to_string());
@@ -1260,12 +1257,29 @@ impl RewriteBackend for RewriteService {
         let project = s.project()?;
         let dir = project.dir().to_path_buf();
         let lift = Lift::new(s, ctx);
-        let (sha, _) = lift.program().map_err(proto)?;
+        let (sha, image_base) = lift.program().map_err(proto)?;
         let binary_name = file_name(&project.meta().binary_path);
         progress(job, "collect", 0, 3, "reading the accepted units");
         let sha2 = sha.clone();
-        let (units, plan) = with_store(dir, move |st| {
-            Ok((st.accepted_units(&sha2)?, st.plan(&sha2)?))
+        let (units, plan, originals) = with_store(dir, move |st| {
+            let units = st.accepted_units(&sha2)?;
+            // Callees the accepted units were tested with that are not accepted themselves: the
+            // export calls the original function for them.
+            let accepted: std::collections::BTreeSet<String> =
+                units.iter().map(|u| u.anchor.address.clone()).collect();
+            let mut originals: Vec<RewriteUnit> = Vec::new();
+            for c in units.iter().flat_map(|u| &u.callees) {
+                let Some(r) = &c.reused else { continue };
+                if accepted.contains(&c.address)
+                    || originals.iter().any(|o| o.anchor.address == c.address)
+                {
+                    continue;
+                }
+                if let Some(o) = st.get(&r.unit)? {
+                    originals.push(o);
+                }
+            }
+            Ok((units, st.plan(&sha2)?, originals))
         })
         .await?;
         let functions_total = match &plan {
@@ -1289,6 +1303,11 @@ impl RewriteBackend for RewriteService {
             binary_name,
             program_sha256: sha,
             coverage: coverage.clone(),
+            originals,
+            symbols: crate::image::function_symbols(
+                std::path::Path::new(&project.meta().binary_path),
+                image_base,
+            ),
         };
         let build = request.build;
         let confinement = self.cfg.confinement.clone();

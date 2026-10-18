@@ -18,6 +18,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::backend::{Backend, BackendEvent, ChangeInfo, CommandInfo, JobInfo, JobState};
 use crate::errors::plain_error;
+use crate::loading::LoadingState;
 use crate::nav::NavHistory;
 use crate::palette::{AppAction, PaletteState, PaletteTarget, UiRequest};
 use crate::state::*;
@@ -86,6 +87,8 @@ pub struct ViewModel {
 
     /// Whether a project is open.
     pub connection: Connection,
+    /// The project being created or opened, for the loading screen.
+    pub loading: Option<LoadingState>,
     /// The open project.
     pub project: Option<ProjectInfo>,
     /// The Functions panel.
@@ -298,6 +301,7 @@ impl ViewModel {
             history: HistoryPanel::default(),
             proposals: ProposalsPanel::default(),
             analysis: AnalysisState::default(),
+            loading: None,
             palette: PaletteState::default(),
             toasts: Vec::new(),
             link: LinkState::Connected,
@@ -572,6 +576,7 @@ impl ViewModel {
     pub fn open_project(&mut self, dir: impl Into<String>) {
         let dir = dir.into();
         self.connection = Connection::Opening(format!("Opening {dir}..."));
+        self.loading = Some(LoadingState::new(file_name(&dir), false));
         self.call("project_open", json!({ "project_dir": dir }), |vm, res| {
             vm.project_opened(res)
         });
@@ -593,6 +598,7 @@ impl ViewModel {
     ) {
         let binary = binary.into();
         self.connection = Connection::Opening(format!("Loading {}...", file_name(&binary)));
+        self.loading = Some(LoadingState::new(file_name(&binary), true));
         let mut args = json!({ "binary": binary, "project_dir": project_dir.into() });
         if let Some(e) = engine {
             args["engine"] = json!(e.as_str());
@@ -601,7 +607,15 @@ impl ViewModel {
     }
 
     fn project_opened(&mut self, res: Result<Value, ProtoError>) {
+        self.loading = None;
         match res {
+            Err(e) if e.code == ErrorCode::Cancelled => {
+                self.connection = Connection::NoProject;
+                self.toast(
+                    ToastLevel::Info,
+                    "Opening was cancelled. Nothing was changed.",
+                );
+            }
             Ok(v) => {
                 self.reset_for_new_project();
                 self.connection = Connection::Open;
@@ -837,6 +851,7 @@ impl ViewModel {
             BackendEvent::JobStarted(change) => {
                 self.agent_activity.job_started(&change, Instant::now());
             }
+            BackendEvent::OpenProgress(p) => self.on_open_progress(*p),
             BackendEvent::Navigate {
                 address,
                 tab,
@@ -1769,6 +1784,8 @@ impl ViewModel {
             AppAction::ToggleLearnMode => self.assist.learn_mode = !self.assist.learn_mode,
             AppAction::ShowShortcuts => return Some(UiRequest::ShowShortcuts),
             AppAction::OpenDocs => return Some(UiRequest::OpenDocs),
+            AppAction::ShowHelp => return Some(UiRequest::ShowHelp),
+            AppAction::TakeTour => return Some(UiRequest::TakeTour),
             AppAction::GoToMain => self.go_to_main(),
             AppAction::ExplainProgram => self.assist_overview(),
             AppAction::RewriteWizard => self.rewrite_wizard_open(),

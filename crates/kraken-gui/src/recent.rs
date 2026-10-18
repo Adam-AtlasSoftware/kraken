@@ -26,6 +26,9 @@ struct Stored {
     dark: Option<bool>,
     #[serde(default)]
     recent: Vec<RecentProject>,
+    /// The first-run tour was finished or skipped.
+    #[serde(default)]
+    tour_done: bool,
 }
 
 /// The preferences and the file they live in.
@@ -34,6 +37,7 @@ pub struct Prefs {
     file: Option<PathBuf>,
     dark: Option<bool>,
     items: Vec<RecentProject>,
+    tour_done: bool,
 }
 
 /// `gui.json` in the directory of `config.toml`.
@@ -63,6 +67,7 @@ impl Prefs {
             file,
             dark: stored.dark,
             items,
+            tour_done: stored.tour_done,
         }
     }
 
@@ -75,6 +80,24 @@ impl Prefs {
     pub fn set_dark(&mut self, dark: bool) {
         if self.dark != Some(dark) {
             self.dark = Some(dark);
+            self.save();
+        }
+    }
+
+    /// The preferences are kept in a file (false in tests that use none).
+    pub fn persistent(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// The first-run tour was finished or skipped before.
+    pub fn tour_done(&self) -> bool {
+        self.tour_done
+    }
+
+    /// Remembers that the tour is over and saves.
+    pub fn set_tour_done(&mut self) {
+        if !self.tour_done {
+            self.tour_done = true;
             self.save();
         }
     }
@@ -118,6 +141,7 @@ impl Prefs {
         let stored = Stored {
             dark: self.dark,
             recent: self.items.clone(),
+            tour_done: self.tour_done,
         };
         let Ok(text) = serde_json::to_string_pretty(&stored) else {
             return;

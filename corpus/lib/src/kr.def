@@ -1,0 +1,8 @@
+LIBRARY kr.dll
+EXPORTS
+    kr_classify @1
+    kr_report @2
+    kr_kind_name @3
+    kr_checksum @4 NONAME
+    kr_dup_upper @5
+    kr_calls @6 DATA

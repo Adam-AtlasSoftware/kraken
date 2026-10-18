@@ -68,7 +68,11 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
             .show_ui(ui, |ui| {
                 for (i, b) in m.blocks.iter().enumerate() {
                     let on = vm.views.hex.block == Some(i);
-                    if ui.selectable_label(on, b.label()).clicked() {
+                    if ui
+                        .selectable_label(on, b.label())
+                        .on_hover_text("Show this section of memory")
+                        .clicked()
+                    {
                         pick = Some(i);
                     }
                 }

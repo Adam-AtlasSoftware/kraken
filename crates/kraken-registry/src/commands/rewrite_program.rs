@@ -125,10 +125,11 @@ pub struct ProgramFunctionRow {
     pub status: UnitStatus,
     /// Function-level verdict: `pass`, `fail`, `rejected`, `inconclusive`, or `none`.
     pub verdict: String,
-    /// `differential` (checked against the original under emulation), `compile_only` (built, not
-    /// compared), `stored` (an accepted unit from an earlier run, not translated again),
-    /// `skipped` (not reachable from the entry point by direct calls, so not translated) or
-    /// `none` (nothing could be translated; the note says why).
+    /// `differential` (checked against the original under emulation), `unchecked` (in the crate
+    /// although the function-level test failed or could not run it; the program-level test
+    /// judges it), `compile_only` (built, not compared), `stored` (an accepted unit from an
+    /// earlier run, not translated again), `skipped` (not reachable from the entry point, so not
+    /// translated) or `none` (nothing could be translated; the note says why).
     pub check: String,
     /// Why the function-level test could not compare (binary-derived), if it could not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,16 +250,24 @@ pub struct RewriteProgramResult {
     pub entry_name: Untrusted<String>,
     /// Functions in the plan (translated or not).
     pub functions_planned: u32,
-    /// Functions left out because the entry point cannot reach them by direct calls (loader and
+    /// Functions left out because the entry point cannot reach them (loader and
     /// compiler glue in a binary without names, dead code).
     #[serde(default)]
     pub skipped: u32,
     /// Functions translated in this run.
     pub translated: u32,
-    /// Functions taken from accepted units of earlier runs.
+    /// Functions taken from earlier runs: accepted units, and translations made from the same
+    /// decompile that passed their own test or could not be compared.
     pub reused_from_store: u32,
     /// Functions without a usable translation.
     pub failed: u32,
+    /// Functions whose translation passed the function-level test against the original.
+    #[serde(default)]
+    pub verified: u32,
+    /// Functions whose translation is in the crate although the function-level test failed or
+    /// could not run it (check `unchecked`): only the program-level test judges them.
+    #[serde(default)]
+    pub unchecked: u32,
     /// Functions in the generated crate.
     pub included: u32,
     /// One row per planned function, in plan order.
@@ -304,23 +313,30 @@ impl Command for RewriteProgram {
         .doc(
             "Translates every function the entry point reaches, writes a standalone Rust crate, \
              builds it in a sandbox and runs the original and the rewrite on the same inputs, \
-             comparing exit status, stdout and stderr. Returns a `job_id`; read the result with \
+             comparing exit status, stdout, stderr and the files written. Returns a `job_id`; \
+             read the result with \
              `rewrite_program_status`. Runs the original binary natively (confined), so a person \
              is asked to approve a call from an agent. Sends decompiled code to the provider.\n\
              Example: rewrite_program {\"repair_rounds\": 2}",
         )
         .details(
             "Plans the program bottom-up (callees first, recursive groups together), translates \
-             every non-library function the entry point reaches by direct calls with the \
-             configured provider (reusing callees that are already translated, repairing \
-             failures as `rewrite_function` does), then writes a \
-             standalone Rust binary crate: one module per function, a small runtime shim \
-             (`rt`) that maps the libc calls the corpus programs use (printf, puts, strlen, \
-             malloc, free, exit, ...) to Rust `std`, and a `main` that calls the translated entry \
-             point. The crate is built in the sandbox and the original and the rewritten program \
-             are run on the same inputs (a baseline run, cases derived from the program's source \
-             when it is a corpus program, generated and given cases), both inside the sandbox \
-             with no network. Exit status, stdout and stderr are compared; the result is a \
+             every non-library function the entry point reaches (by direct calls, by function \
+             pointers it hands on, through tables of function pointers in the data that a \
+             reached function uses, and static constructors) with the configured provider \
+             (reusing callees that are already translated, repairing failures as \
+             `rewrite_function` does). A translation that builds but fails its function-level \
+             test, or that the test cannot run, is still used (check `unchecked`): the \
+             program-level test judges it. Then it writes a standalone Rust binary crate: one \
+             module per function, the original program's data as a shared image that the \
+             translations reach their globals through, a runtime shim (`rt`) that maps the C \
+             library and the C++ runtime basics (stdio with files, string, math, conversions, \
+             malloc, operator new, uncaught exceptions) to Rust `std`, and a `main` that calls \
+             the translated entry point. The crate is built in the sandbox and the original and \
+             the rewritten program are run on the same inputs (a baseline run, cases derived \
+             from the program's source when it is a corpus program, generated and given cases), \
+             both inside the sandbox with no network. Exit status, stdout, stderr and the files \
+             each program writes in its working directory are compared; the result is a \
              `ProgramVerdict` with the per-case differences, stored in `rewrite.sqlite` and \
              readable with `rewrite_program_status`. A function-level verdict is evidence about \
              one function; only the program verdict says the whole program behaves the same on \

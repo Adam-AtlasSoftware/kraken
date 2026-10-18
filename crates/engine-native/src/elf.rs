@@ -66,8 +66,15 @@ pub struct ExportSymbol {
 /// Everything the engine needs from the file.
 #[derive(Debug, Clone)]
 pub struct Loaded {
-    /// File format: `elf` or `pe`.
+    /// The family the code follows: `elf`, or `pe` for Windows code (PE images and COFF
+    /// objects).
     pub format: &'static str,
+    /// The file's own format: `elf`, `pe`, `coff` (an object file) or `ar` (an archive).
+    pub container: &'static str,
+    /// What the file is, in plain words (`Linux shared library`).
+    pub description: String,
+    /// The members of an archive, in file order; empty for other files.
+    pub members: Vec<String>,
     /// Language for Sleigh and the decompiler.
     pub language: Language,
     /// Image base (0 or [`PIE_BASE`]).
@@ -194,8 +201,13 @@ fn language(arch: Architecture) -> Result<Language, ProtoError> {
     }
 }
 
-/// Parses an ELF or PE file. Other formats are `unsupported`.
+/// Parses an ELF or PE file, a relocatable object (ELF or COFF) or an archive of them. Other
+/// formats are `unsupported`. Objects and archives are laid out at Ghidra's base and take no
+/// `base_override`.
 pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError> {
+    if crate::objfile::handles(data) {
+        return crate::objfile::load(data);
+    }
     let file = object::File::parse(data).map_err(|e| bad(format!("cannot parse binary: {e}")))?;
     if file.format() == BinaryFormat::Pe {
         return crate::pe::load(data, base_override);
@@ -556,8 +568,18 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         .map(|(f, pads)| (at(*f), pads.iter().map(|p| at(*p)).collect()))
         .collect();
 
+    let interp = file.section_by_name(".interp").is_some();
+    let description = match file.kind() {
+        ObjectKind::Dynamic if !interp => "Linux shared library",
+        ObjectKind::Core => "Linux core dump",
+        _ if !interp => "Linux program (statically linked)",
+        _ => "Linux program",
+    };
     Ok(Loaded {
         format: "elf",
+        container: "elf",
+        description: description.into(),
+        members: Vec::new(),
         language,
         base,
         image,

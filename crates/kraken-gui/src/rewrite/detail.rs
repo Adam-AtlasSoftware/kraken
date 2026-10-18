@@ -53,7 +53,14 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut A
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         for (view, label) in [(DetailView::Code, "Code"), (DetailView::Spec, "Spec")] {
-            if ui.selectable_label(st.view == view, label).clicked() {
+            if ui
+                .selectable_label(st.view == view, label)
+                .on_hover_text(match view {
+                    DetailView::Code => "Show the C and the Rust side by side",
+                    DetailView::Spec => "Show the plain description the Rust is written from",
+                })
+                .clicked()
+            {
                 st.view = view;
             }
         }
@@ -160,6 +167,7 @@ fn actions(
         if ui
             .add_enabled(unit.is_some(), egui::Button::new("Accept"))
             .on_hover_text(tip)
+            .on_disabled_hover_text(tip)
             .clicked()
         {
             acts.accept = Some(addr);

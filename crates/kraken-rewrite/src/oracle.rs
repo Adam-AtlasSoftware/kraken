@@ -65,7 +65,65 @@ pub const STUBBED_IMPORTS: &[&str] = &[
     "memmove",
     "memset",
     "__ctype_b_loc",
+    "fputc",
+    "putc",
+    "fputs",
+    "fwrite",
+    "strspn",
+    "strcspn",
+    "malloc",
+    "calloc",
+    "free",
+    "_Znwm",
+    "_Znam",
+    "_ZdlPv",
+    "_ZdlPvm",
+    "_ZdaPv",
+    "_ZdaPvm",
+    "operator.new",
+    "operator.delete",
+    "operator.new[]",
+    "operator.delete[]",
+    "_ZSt20__throw_length_errorPKc",
+    "__throw_length_error",
+    "sqrt",
+    "sqrtf",
+    "sin",
+    "sinf",
+    "cos",
+    "cosf",
+    "pow",
+    "powf",
+    "exp",
+    "expf",
+    "log",
+    "logf",
+    "log2",
+    "log2f",
+    "log10",
+    "log10f",
+    "floor",
+    "floorf",
+    "ceil",
+    "ceilf",
+    "round",
+    "roundf",
+    "fabs",
+    "fabsf",
+    "lround",
+    "lroundf",
+    "fmod",
+    "fmodf",
+    "atan2",
+    "atan2f",
 ];
+
+/// Where the emulator's `malloc` hands out memory (a bump allocator; `free` does nothing).
+const HEAP_BASE: u64 = 0x7ffc_0000_0000;
+const HEAP_SIZE: u64 = 0x100_0000;
+/// The thread block `fs:` points at; `fs:0x28` holds the stack protector's canary.
+const TLS_BASE: u64 = STUB_BASE + 0x4_0000;
+const STACK_CANARY: u64 = 0x2f8b_1c3a_5d6e_7f00;
 
 /// Oracle settings.
 #[derive(Debug, Clone)]
@@ -133,6 +191,8 @@ struct Regs {
     xmm: [pcode::VarNode; 8],
     rax: pcode::VarNode,
     rsp: pcode::VarNode,
+    /// The base of `fs:`, where the thread block and its stack canary live.
+    fs: pcode::VarNode,
     args: [pcode::VarNode; 6],
 }
 
@@ -153,6 +213,8 @@ pub struct FunctionOracle {
     /// Callback calls of the call in progress.
     callbacks: Vec<String>,
     stderr: Vec<u8>,
+    /// Next free byte of the emulated heap.
+    heap_next: u64,
 }
 
 impl std::fmt::Debug for FunctionOracle {
@@ -394,6 +456,7 @@ impl FunctionOracle {
             ],
             rax: var(&vm, "RAX")?,
             rsp: var(&vm, "RSP")?,
+            fs: var(&vm, "FS_OFFSET")?,
             args: [
                 var(&vm, "RDI")?,
                 var(&vm, "RSI")?,
@@ -426,6 +489,8 @@ impl FunctionOracle {
         map(STACK_BASE, STACK_SIZE)?;
         map(STUB_BASE, PAGE)?;
         map(STUB_DATA, 0x2000)?;
+        map(HEAP_BASE, HEAP_SIZE)?;
+        map(TLS_BASE, PAGE)?;
 
         // Stub code page: `ret`, so a stray fall-through returns; the data page.
         let ret_page = vec![0xc3u8; PAGE as usize];
@@ -448,6 +513,7 @@ impl FunctionOracle {
         )?;
         w(&mut vm, STDOUT_CELL, &STDOUT_FILE.to_le_bytes())?;
         w(&mut vm, STDERR_CELL, &STDERR_FILE.to_le_bytes())?;
+        w(&mut vm, TLS_BASE + 0x28, &STACK_CANARY.to_le_bytes())?;
         vm.add_breakpoint(RETURN_ADDR);
         for cb in Callback::ALL {
             vm.add_breakpoint(CALLBACK_BASE + 0x10 * cb.index());
@@ -469,6 +535,7 @@ impl FunctionOracle {
             callbacks: Vec::new(),
             stdout: Vec::new(),
             stderr: Vec::new(),
+            heap_next: HEAP_BASE,
         })
     }
 
@@ -502,11 +569,7 @@ impl FunctionOracle {
         sig: &Signature,
         args: &[Arg],
     ) -> Result<Observation, RewriteError> {
-        let doubles = sig
-            .params
-            .iter()
-            .filter(|p| matches!(p, Param::Double))
-            .count();
+        let doubles = sig.params.iter().filter(|p| p.is_sse()).count();
         if sig.params.len() - doubles > 6 || doubles > 8 {
             return Err(RewriteError::Unsupported(
                 "more than six integer or eight floating-point parameters (stack arguments are \
@@ -525,12 +588,22 @@ impl FunctionOracle {
         self.stdout.clear();
         self.stderr.clear();
         self.callbacks.clear();
+        self.heap_next = HEAP_BASE;
         self.objects.clear();
 
         let mut mapped: Vec<(u64, u64)> = Vec::new();
-        let result = self
-            .lay_out(args, sig, &mut mapped)
-            .and_then(|laid| self.run_call(entry, sig, &laid.ints, &laid.doubles, &laid.buffers));
+        // A bug in the emulator (an arithmetic overflow on a wild address) must not take the
+        // whole run down: the case is one the oracle could not evaluate.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.lay_out(args, sig, &mut mapped).and_then(|laid| {
+                self.run_call(entry, sig, &laid.ints, &laid.doubles, &laid.buffers)
+            })
+        }))
+        .unwrap_or_else(|_| {
+            Ok(Observation::failed(Termination::Unsupported {
+                detail: "the emulator failed on this case".into(),
+            }))
+        });
         self.objects.clear();
         for (addr, len) in mapped {
             self.vm.cpu.mem.unmap_memory_len(addr, len);
@@ -581,6 +654,7 @@ impl FunctionOracle {
                     laid.ints.push(value & mask(*bits));
                 }
                 (Param::Double, Arg::Double { bits }) => laid.doubles.push(*bits),
+                (Param::Float, Arg::Float { bits }) => laid.doubles.push(u64::from(*bits)),
                 (Param::FnPtr, Arg::FnPtr { callback }) => {
                     laid.ints.push(CALLBACK_BASE + 0x10 * callback.index());
                 }
@@ -661,6 +735,7 @@ impl FunctionOracle {
             .write_bytes(sp, &RETURN_ADDR.to_le_bytes(), perm::NONE)
             .map_err(|e| emu(format!("{e:?}")))?;
         cpu.write_reg(self.regs.rsp, sp);
+        cpu.write_reg(self.regs.fs, TLS_BASE);
         cpu.write_pc(self.bias + entry);
 
         let start = self.vm.cpu.icount;
@@ -726,6 +801,9 @@ impl FunctionOracle {
                     obs.ret = Some(self.vm.cpu.read_reg(self.regs.rax) & mask(bits));
                 }
                 Ret::Double => obs.ret = Some(self.vm.cpu.read_reg(self.regs.xmm[0])),
+                Ret::Float => {
+                    obs.ret = Some(self.vm.cpu.read_reg(self.regs.xmm[0]) & 0xffff_ffff);
+                }
                 Ret::Void | Ret::Ptr => {}
             }
             for &(addr, len) in buffers {
@@ -975,9 +1053,218 @@ impl FunctionOracle {
                 dst
             }
             "__ctype_b_loc" => CTYPE_PTR_CELL,
-            other => return unsupported(format!("call to import `{other}`")),
+            "fputc" | "putc" => {
+                let (c, stream) = (self.stub_arg(0), self.stub_arg(1));
+                if let Some(end) = self.write_stream(stream, &[c as u8], name) {
+                    return end;
+                }
+                c & 0xff
+            }
+            "fputs" => {
+                let (s, stream) = (self.stub_arg(0), self.stub_arg(1));
+                let Some(text) = self.read_cstr(s) else {
+                    return unsupported("fputs of an unreadable pointer".into());
+                };
+                if let Some(end) = self.write_stream(stream, &text, name) {
+                    return end;
+                }
+                1
+            }
+            "fwrite" => {
+                let (p, size, n, stream) = (
+                    self.stub_arg(0),
+                    self.stub_arg(1),
+                    self.stub_arg(2),
+                    self.stub_arg(3),
+                );
+                let total = size.saturating_mul(n);
+                if total > MAX_BUFFER as u64 {
+                    return unsupported(format!("fwrite of {total} bytes"));
+                }
+                let mut bytes = vec![0u8; total as usize];
+                if self
+                    .vm
+                    .cpu
+                    .mem
+                    .read_bytes(p, &mut bytes, perm::NONE)
+                    .is_err()
+                {
+                    return Some(Termination::Fault {
+                        detail: format!("fwrite source {p:#x} unreadable"),
+                    });
+                }
+                if let Some(end) = self.write_stream(stream, &bytes, name) {
+                    return end;
+                }
+                if size == 0 { 0 } else { n }
+            }
+            "strspn" | "strcspn" => {
+                let (a, b) = (self.stub_arg(0), self.stub_arg(1));
+                match (self.read_cstr(a), self.read_cstr(b)) {
+                    (Some(s), Some(set)) => s
+                        .iter()
+                        .take_while(|c| set.contains(c) == (name == "strspn"))
+                        .count() as u64,
+                    _ => return unsupported(format!("{name} of an unreadable pointer")),
+                }
+            }
+            "malloc" | "_Znwm" | "_Znam" | "operator.new" | "operator.new[]" => {
+                let n = self.stub_arg(0);
+                let p = self.allocate(n);
+                if p == 0 && name != "malloc" {
+                    // `operator new` never returns null: libstdc++ throws, nobody catches.
+                    self.stderr.extend_from_slice(
+                        b"terminate called after throwing an instance of 'std::bad_alloc'\n  \
+                          what():  std::bad_alloc\n",
+                    );
+                    return Some(Termination::Fault {
+                        detail: "abort() called (uncaught std::bad_alloc)".into(),
+                    });
+                }
+                p
+            }
+            "calloc" => {
+                let n = self.stub_arg(0).saturating_mul(self.stub_arg(1));
+                self.allocate(n)
+            }
+            "free" | "_ZdlPv" | "_ZdlPvm" | "_ZdaPv" | "_ZdaPvm" | "operator.delete"
+            | "operator.delete[]" => {
+                // Memory the function allocated itself is let go; freeing an object the test
+                // passed in cannot be reproduced by the native side (its allocator never saw it).
+                let p = self.stub_arg(0);
+                if p != 0 && !(HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&p) {
+                    return unsupported(format!("{name} of memory the function did not allocate"));
+                }
+                0
+            }
+            "_ZSt20__throw_length_errorPKc" | "__throw_length_error" => {
+                let what = self.stub_arg(0);
+                let text = self.read_cstr(what).unwrap_or_default();
+                self.stderr.extend_from_slice(
+                    b"terminate called after throwing an instance of 'std::length_error'\n  what():  ",
+                );
+                self.stderr.extend_from_slice(&text);
+                self.stderr.push(b'\n');
+                return Some(Termination::Fault {
+                    detail: "abort() called (uncaught std::length_error)".into(),
+                });
+            }
+            other => match self.math(other) {
+                Some(Ok(())) => return None,
+                Some(Err(end)) => return Some(end),
+                None => return unsupported(format!("call to import `{other}`")),
+            },
         };
         self.return_from_stub(ret)
+    }
+
+    /// Bump allocation from the emulated heap; null when it is used up.
+    fn allocate(&mut self, n: u64) -> u64 {
+        let size = n.max(1).div_ceil(16) * 16;
+        if self.heap_next + size > HEAP_BASE + HEAP_SIZE {
+            return 0;
+        }
+        let p = self.heap_next;
+        self.heap_next += size;
+        p
+    }
+
+    /// Output to the oracle's `stdout` or `stderr`; any other stream ends the case as unsupported.
+    fn write_stream(
+        &mut self,
+        stream: u64,
+        bytes: &[u8],
+        name: &str,
+    ) -> Option<Option<Termination>> {
+        match stream {
+            STDOUT_FILE => self.stdout.extend_from_slice(bytes),
+            STDERR_FILE => self.stderr.extend_from_slice(bytes),
+            other => {
+                return Some(Some(Termination::Unsupported {
+                    detail: format!("{name} to FILE* {other:#x}"),
+                }));
+            }
+        }
+        None
+    }
+
+    fn xmm(&mut self, n: usize) -> u64 {
+        self.vm.cpu.read_reg(self.regs.xmm[n])
+    }
+
+    /// The C library's math functions, computed by the host's (the same library the original
+    /// links). `None` when `name` is not one of them; `Some(Ok(()))` when the call returned.
+    fn math(&mut self, name: &str) -> Option<Result<(), Termination>> {
+        let d = |v: u64| f64::from_bits(v);
+        let f = |v: u64| f32::from_bits(v as u32);
+        let (a, b) = (self.xmm(0), self.xmm(1));
+        enum R {
+            D(f64),
+            F(f32),
+            I(i64),
+        }
+        let r = match name {
+            "sqrt" => R::D(d(a).sqrt()),
+            "sqrtf" => R::F(f(a).sqrt()),
+            "sin" => R::D(d(a).sin()),
+            "sinf" => R::F(f(a).sin()),
+            "cos" => R::D(d(a).cos()),
+            "cosf" => R::F(f(a).cos()),
+            "pow" => R::D(d(a).powf(d(b))),
+            "powf" => R::F(f(a).powf(f(b))),
+            "exp" => R::D(d(a).exp()),
+            "expf" => R::F(f(a).exp()),
+            "log" => R::D(d(a).ln()),
+            "logf" => R::F(f(a).ln()),
+            "log2" => R::D(d(a).log2()),
+            "log2f" => R::F(f(a).log2()),
+            "log10" => R::D(d(a).log10()),
+            "log10f" => R::F(f(a).log10()),
+            "floor" => R::D(d(a).floor()),
+            "floorf" => R::F(f(a).floor()),
+            "ceil" => R::D(d(a).ceil()),
+            "ceilf" => R::F(f(a).ceil()),
+            "round" => R::D(d(a).round()),
+            "roundf" => R::F(f(a).round()),
+            "fabs" => R::D(d(a).abs()),
+            "fabsf" => R::F(f(a).abs()),
+            "fmod" => R::D(d(a) % d(b)),
+            "fmodf" => R::F(f(a) % f(b)),
+            "atan2" => R::D(d(a).atan2(d(b))),
+            "atan2f" => R::F(f(a).atan2(f(b))),
+            "lround" | "lroundf" => {
+                let r = if name == "lround" {
+                    d(a).round()
+                } else {
+                    f64::from(f(a).round())
+                };
+                R::I(
+                    if r.is_nan() || r >= i64::MAX as f64 || r < i64::MIN as f64 {
+                        i64::MIN
+                    } else {
+                        r as i64
+                    },
+                )
+            }
+            _ => return None,
+        };
+        let ret = match r {
+            R::D(v) => {
+                self.vm.cpu.write_reg(self.regs.xmm[0], v.to_bits());
+                0
+            }
+            R::F(v) => {
+                self.vm
+                    .cpu
+                    .write_reg(self.regs.xmm[0], u64::from(v.to_bits()));
+                0
+            }
+            R::I(v) => v as u64,
+        };
+        Some(match self.return_from_stub(ret) {
+            None => Ok(()),
+            Some(end) => Err(end),
+        })
     }
 
     /// Returns to the caller of a stub with `ret` in RAX: pops the return address.

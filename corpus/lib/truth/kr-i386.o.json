@@ -1,0 +1,67 @@
+{
+  "binary": "kr-i386.o",
+  "sha256": "0f61e6bd353e974a147b6b069712cebce85e7cb31d4e4ea861aeed321e839407",
+  "kind": "Linux object file",
+  "arch": "x86",
+  "members": [],
+  "functions": [
+    {
+      "member": null,
+      "name": "bump.constprop.0.isra.0",
+      "demangled": "bump.constprop.0.isra.0",
+      "size": 20
+    },
+    {
+      "member": null,
+      "name": "__x86.get_pc_thunk.ax",
+      "demangled": "__x86.get_pc_thunk.ax",
+      "size": 0
+    },
+    {
+      "member": null,
+      "name": "kr_classify",
+      "demangled": "kr_classify",
+      "size": 41
+    },
+    {
+      "member": null,
+      "name": "__x86.get_pc_thunk.bx",
+      "demangled": "__x86.get_pc_thunk.bx",
+      "size": 0
+    },
+    {
+      "member": null,
+      "name": "kr_report",
+      "demangled": "kr_report",
+      "size": 228
+    }
+  ],
+  "exports": [
+    {
+      "name": "kr_calls"
+    },
+    {
+      "name": "kr_classify"
+    },
+    {
+      "name": "kr_report"
+    }
+  ],
+  "imports": [
+    {
+      "name": "kr_checksum"
+    },
+    {
+      "name": "kr_dup_upper"
+    },
+    {
+      "name": "kr_kind_name"
+    },
+    {
+      "name": "puts"
+    },
+    {
+      "name": "strlen"
+    }
+  ]
+}

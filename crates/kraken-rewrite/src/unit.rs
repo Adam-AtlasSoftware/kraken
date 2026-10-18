@@ -18,8 +18,13 @@ pub const MAX_STORED_CASES: usize = 256;
 
 /// SHA-256 as lowercase hex.
 pub fn sha256_hex(text: &str) -> String {
+    sha256_bytes_hex(text.as_bytes())
+}
+
+/// Lowercase hex SHA-256 of `data`.
+pub fn sha256_bytes_hex(data: &[u8]) -> String {
     let mut h = Sha256::new();
-    h.update(text.as_bytes());
+    h.update(data);
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 

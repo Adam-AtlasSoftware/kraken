@@ -11,13 +11,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use async_trait::async_trait;
 use kraken_engine::{CancellationToken, LoaderSpec, ProgramInfo, SharedEngine, unsupported};
 use kraken_model::{EntryId, StateValue, Store};
-use kraken_proto::{Anchor, CommentKind, ErrorCode, LogOp, ProtoError, VersionedLogOp};
+use kraken_proto::{Anchor, CommentKind, ErrorCode, LogOp, OpenStage, ProtoError, VersionedLogOp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::commands::RewriteBackend;
 use crate::jobs::{JobId, JobTable};
+use crate::opening::{OpenOptions, OpenTracker};
 
 /// File name of the model database inside a project directory.
 pub const DB_FILE: &str = "project.kraken.sqlite";
@@ -789,6 +790,37 @@ impl Session {
         binary: &Path,
         choice: Option<EngineChoice>,
     ) -> Result<Arc<Project>, ProtoError> {
+        self.create_project_opts(dir, binary, choice, OpenOptions::default())
+            .await
+    }
+
+    /// [`create_project_with`](Self::create_project_with) that reports its progress to
+    /// `opts.sink` and stops when `opts.cancel` fires. The open is also a job of the session
+    /// (`job_status`, `job_cancel`). A cancelled create leaves no project behind.
+    pub async fn create_project_opts(
+        &self,
+        dir: &Path,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+        opts: OpenOptions,
+    ) -> Result<Arc<Project>, ProtoError> {
+        let t = OpenTracker::new(&self.jobs, "project_create", binary, opts);
+        let r = self.create_tracked(dir, binary, choice, &t).await;
+        t.finish(&r);
+        r
+    }
+
+    async fn create_tracked(
+        &self,
+        dir: &Path,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+        t: &Arc<OpenTracker>,
+    ) -> Result<Arc<Project>, ProtoError> {
+        t.stage(
+            OpenStage::Prepare,
+            "Checking the file and the project folder",
+        );
         let dir = dir.to_path_buf();
         let binary_path = {
             let binary = binary.to_path_buf();
@@ -820,16 +852,20 @@ impl Session {
             let p = binary_path.clone();
             blocking(move || hash_file(&p)).await?
         };
+        t.check()?;
         let selection = {
             let (factory, p) = (self.factory.clone(), binary_path.clone());
             blocking(move || factory.select_kind(&p, choice)).await?
         };
         let kind = selection.kind;
+        t.set_engine(kind.as_str());
+        t.stage(OpenStage::StartEngine, "Starting the engine");
         let engine = self
             .factory
             .create_kind(kind, &dir.join(ENGINE_DIR))
             .await?;
-        let program = open_binary(&engine, &binary_path).await?;
+        t.check()?;
+        let program = open_binary_tracked(&engine, &binary_path, t).await?;
         let db_path = dir.join(DB_FILE);
         let store = blocking(move || Store::open(db_path)).await?;
         let meta = ProjectMeta {
@@ -860,11 +896,41 @@ impl Session {
     /// engine build, options or binary) is reported through [`Project::epoch_mismatch`]; it is
     /// rebuilt only by the `rebuild` command.
     pub async fn open_project(&self, dir: &Path) -> Result<Arc<Project>, ProtoError> {
+        self.open_project_opts(dir, OpenOptions::default()).await
+    }
+
+    /// [`open_project`](Self::open_project) that reports its progress to `opts.sink` and stops
+    /// when `opts.cancel` fires. The open is also a job of the session (`job_status`,
+    /// `job_cancel`). A cancelled open leaves no project attached.
+    pub async fn open_project_opts(
+        &self,
+        dir: &Path,
+        opts: OpenOptions,
+    ) -> Result<Arc<Project>, ProtoError> {
         let dir = dir.to_path_buf();
         let meta = {
             let dir = dir.clone();
             blocking(move || read_meta(&dir)).await?
         };
+        let t = OpenTracker::new(
+            &self.jobs,
+            "project_open",
+            Path::new(&meta.binary_path),
+            opts,
+        );
+        let r = self.open_tracked(dir, meta, &t).await;
+        t.finish(&r);
+        r
+    }
+
+    async fn open_tracked(
+        &self,
+        dir: PathBuf,
+        meta: ProjectMeta,
+        t: &Arc<OpenTracker>,
+    ) -> Result<Arc<Project>, ProtoError> {
+        t.set_engine(meta.engine_kind.as_str());
+        t.stage(OpenStage::Prepare, "Checking the file");
         let binary_path = PathBuf::from(&meta.binary_path);
         check_engine_dir(&meta.engine_dir)?;
         let current_hash = {
@@ -884,13 +950,18 @@ impl Session {
             })
             .await?;
         }
+        t.check()?;
+        t.stage(OpenStage::StartEngine, "Starting the engine");
         let engine = self
             .factory
             .create_kind(meta.engine_kind, &engine_dir)
             .await?;
-        let program = open_binary(&engine, &binary_path).await?;
+        t.check()?;
+        let program = open_binary_tracked(&engine, &binary_path, t).await?;
         let db_path = dir.join(DB_FILE);
         let store = blocking(move || Store::open(db_path)).await?;
+        // the last moment to stop: past here the project is attached
+        t.check()?;
         let now = Epoch {
             engine_build: engine.capabilities().handshake.build,
             options_hash: options_hash(),
@@ -908,6 +979,7 @@ impl Session {
         }
         let project = Arc::new(self.build_project(dir, meta, engine, program, store, mismatch));
         self.attach(project.clone());
+        t.stage(OpenStage::Replay, "Restoring your changes");
         if project.meta().engine_kind == EngineKind::Dotnet {
             // The .NET engine keeps no database: it gets its annotations back from the log.
             let _guard = project.write_lock.lock().await;
@@ -964,6 +1036,33 @@ pub(crate) async fn open_binary(
     loader
         .open_binary(binary, &LoaderSpec::default(), &CancellationToken::new())
         .await
+}
+
+/// Opens the binary in `engine`, reporting to `t` and stopping when it is cancelled.
+async fn open_binary_tracked(
+    engine: &SharedEngine,
+    binary: &Path,
+    t: &Arc<OpenTracker>,
+) -> Result<ProgramInfo, ProtoError> {
+    let loader = engine.loader().ok_or_else(|| unsupported("loader"))?;
+    t.stage(OpenStage::ReadFile, "Reading the file");
+    let r = loader
+        .open_binary_reporting(
+            binary,
+            &LoaderSpec::default(),
+            t.cancel_token(),
+            t.reporter(),
+        )
+        .await;
+    // an engine that finished its open just as it was cancelled is not used
+    match r {
+        Ok(_) => t.check().and(r),
+        Err(e) if t.cancel_token().is_cancelled() => Err(ProtoError {
+            code: ErrorCode::Cancelled,
+            ..e
+        }),
+        Err(e) => Err(e),
+    }
 }
 
 /// The epoch of a freshly created engine for the project's binary.

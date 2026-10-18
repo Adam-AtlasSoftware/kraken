@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use kraken_engine::Watermark;
-use kraken_engine::{AnalysisSummary, Progress, ProgressSender, Stage};
-use kraken_proto::{ErrorCode, ProtoError, TypeDef, VersionedLogOp};
+use kraken_engine::{AnalysisSummary, OpenReporter, Progress, ProgressSender, Stage};
+use kraken_proto::{ErrorCode, OpenStage, OpenUpdate, ProtoError, TypeDef, VersionedLogOp};
 use kraken_sidecar::rpc::{JobSubscription, SIDECAR_EXITED, WireProgress};
 use kraken_sidecar::sandbox::Sandbox;
 use kraken_sidecar::{ConfinementReport, LogSink, RpcClient, SpawnSpec};
@@ -75,12 +75,22 @@ pub(crate) struct WorkerEngine {
     pid: AtomicU64,
 }
 
+/// Where the progress events of a request go.
+#[derive(Clone, Copy)]
+pub(crate) enum Forward<'a> {
+    /// Nowhere: they only keep the request alive.
+    Drop,
+    /// To an analysis job.
+    Job(&'a ProgressSender),
+    /// To the report of an open.
+    Open(&'a OpenReporter),
+}
+
 /// What a request is allowed while it runs.
 pub(crate) struct Limits<'a> {
     deadline: Duration,
-    /// Progress events of the request: each one restarts the deadline, and is passed on to the
-    /// sender when there is one.
-    progress: Option<(&'a mut JobSubscription, Option<&'a ProgressSender>)>,
+    /// Progress events of the request: each one restarts the deadline, and is passed on.
+    progress: Option<(&'a mut JobSubscription, Forward<'a>)>,
 }
 
 impl WorkerEngine {
@@ -140,12 +150,14 @@ impl WorkerEngine {
         }
     }
 
-    /// Opens `path` in a fresh worker (an open worker is replaced).
+    /// Opens `path` in a fresh worker (an open worker is replaced), telling `report` how it is
+    /// getting on.
     pub(crate) async fn open(
         &self,
         path: PathBuf,
         spec: kraken_engine::LoaderSpec,
         cancel: &CancellationToken,
+        report: Option<&OpenReporter>,
     ) -> Result<kraken_engine::ProgramInfo, ProtoError> {
         let open = OpenParams {
             path,
@@ -165,7 +177,7 @@ impl WorkerEngine {
         drop(slot.take());
         lock(&self.journal).clear();
         *lock(&self.program) = None;
-        let (live, info) = self.start(&open, true, cancel).await?;
+        let (live, info) = self.start(&open, true, cancel, report).await?;
         *lock(&self.program) = Some(open);
         *slot = Some(live);
         Ok(info)
@@ -185,7 +197,7 @@ impl WorkerEngine {
             ));
         };
         let had = slot.take().is_some();
-        let (live, _) = self.start(&open, false, cancel).await?;
+        let (live, _) = self.start(&open, false, cancel, None).await?;
         if had {
             self.restarts.fetch_add(1, Ordering::SeqCst);
         }
@@ -218,7 +230,14 @@ impl WorkerEngine {
         open: &OpenParams,
         first: bool,
         cancel: &CancellationToken,
+        report: Option<&OpenReporter>,
     ) -> Result<(Arc<Live>, kraken_engine::ProgramInfo), ProtoError> {
+        if let Some(r) = report {
+            r(OpenUpdate::stage(
+                OpenStage::StartEngine,
+                "Starting the engine worker",
+            ));
+        }
         let live = Arc::new(self.spawn(open).await?);
         // the deadline is for the gap between two reports of the discovery, not for the whole
         // open: the first open of a big binary takes a long time
@@ -234,7 +253,7 @@ impl WorkerEngine {
                 json!({ "open": open, "job_id": job_id }),
                 Limits {
                     deadline: self.opts.open_timeout,
-                    progress: Some((&mut sub, None)),
+                    progress: Some((&mut sub, report.map_or(Forward::Drop, Forward::Open))),
                 },
                 cancel,
             )
@@ -379,7 +398,7 @@ impl WorkerEngine {
                 .decompile_limits()
                 .deadline
                 .max(self.opts.request_timeout),
-            progress: Some((&mut sub, Some(&tx))),
+            progress: Some((&mut sub, Forward::Job(&tx))),
         };
         let v = self
             .exec(
@@ -456,9 +475,9 @@ impl WorkerEngine {
             obj.insert("op".into(), json!(op));
         }
         let Limits { deadline, progress } = limits;
-        let (mut sub, tx) = match progress {
-            Some((sub, tx)) => (Some(sub), tx),
-            None => (None, None),
+        let (mut sub, to) = match progress {
+            Some((sub, to)) => (Some(sub), to),
+            None => (None, Forward::Drop),
         };
         let call = live.client.call(method, params, None, None);
         tokio::pin!(call);
@@ -474,8 +493,14 @@ impl WorkerEngine {
             tokio::select! {
                 r = &mut call => break r,
                 Some(p) = next_event => {
-                    if let Some(tx) = tx {
-                        forward(tx, p);
+                    match to {
+                        Forward::Drop => {}
+                        Forward::Job(tx) => forward(tx, p),
+                        Forward::Open(r) => {
+                            if let Some(u) = p.detail.and_then(|d| serde_json::from_value(d).ok()) {
+                                r(u);
+                            }
+                        }
                     }
                     sleep.as_mut().reset(tokio::time::Instant::now() + deadline);
                 }

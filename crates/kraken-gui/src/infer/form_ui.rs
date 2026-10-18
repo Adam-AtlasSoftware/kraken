@@ -31,7 +31,11 @@ pub fn show(ui: &mut Ui, form: &mut SettingsForm) -> Option<String> {
                     match &f.kind {
                         FieldKind::Bool => {
                             let before = f.flag;
-                            ui.checkbox(&mut f.flag, "");
+                            ui.checkbox(&mut f.flag, "").on_hover_text(
+                                f.description
+                                    .clone()
+                                    .unwrap_or_else(|| "Switch this option on or off".into()),
+                            );
                             if f.flag != before {
                                 f.touched = true;
                             }
@@ -42,9 +46,12 @@ pub fn show(ui: &mut Ui, form: &mut SettingsForm) -> Option<String> {
                                 .width(FIELD_WIDTH)
                                 .show_ui(ui, |ui| {
                                     for o in options {
-                                        ui.selectable_value(&mut f.text, o.clone(), o);
+                                        ui.selectable_value(&mut f.text, o.clone(), o)
+                                            .on_hover_text(format!("Use {o}"));
                                     }
-                                });
+                                })
+                                .response
+                                .on_hover_text("Choose one of the allowed values");
                         }
                         FieldKind::Path => {
                             ui.horizontal(|ui| {
@@ -56,8 +63,13 @@ pub fn show(ui: &mut Ui, form: &mut SettingsForm) -> Option<String> {
                                             "automatic"
                                         })
                                         .desired_width(FIELD_WIDTH - 90.0),
-                                );
-                                if ui.button("Browse...").clicked() {
+                                )
+                                .on_hover_text("The path of a file. Type it or use Browse");
+                                if ui
+                                    .button("Browse...")
+                                    .on_hover_text("Choose the file in a dialog")
+                                    .clicked()
+                                {
                                     browse = Some(f.key.clone());
                                 }
                             });
@@ -70,12 +82,14 @@ pub fn show(ui: &mut Ui, form: &mut SettingsForm) -> Option<String> {
                                         None => "automatic".to_string(),
                                     })
                                     .desired_width(120.0),
-                            );
+                            )
+                            .on_hover_text("A number. Leave it empty to use the default");
                         }
                         FieldKind::Text | FieldKind::Json => {
                             ui.add(
                                 egui::TextEdit::singleline(&mut f.text).desired_width(FIELD_WIDTH),
-                            );
+                            )
+                            .on_hover_text("Type the value");
                         }
                     }
                     if let Some(e) = &error

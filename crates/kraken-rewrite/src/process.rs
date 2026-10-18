@@ -100,6 +100,75 @@ pub struct Outcome {
     pub stdout: Vec<u8>,
     /// Standard error (capped).
     pub stderr: Vec<u8>,
+    /// The files the program left in its working directory, by name.
+    pub files: Vec<WrittenFile>,
+}
+
+/// Most files of a run that are compared.
+pub const MAX_FILES: usize = 64;
+/// Block size of [`WrittenFile::blocks`].
+const FILE_BLOCK: usize = 4096;
+
+/// A file a run wrote, summarised so that two runs can be compared without keeping the contents:
+/// the size, a hash of the whole and of every 4 KiB block, and the first bytes for context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenFile {
+    /// Path relative to the working directory.
+    pub name: String,
+    /// Length in bytes.
+    pub size: u64,
+    /// SHA-256 of the contents.
+    pub sha256: String,
+    /// The first 8 bytes of the SHA-256 of each block.
+    pub blocks: Vec<u64>,
+    /// The first bytes.
+    pub head: Vec<u8>,
+}
+
+impl WrittenFile {
+    pub(crate) fn of(name: String, data: &[u8]) -> Self {
+        use sha2::{Digest, Sha256};
+        let blocks = data
+            .chunks(FILE_BLOCK)
+            .map(|c| {
+                let d = Sha256::digest(c);
+                u64::from_le_bytes([d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]])
+            })
+            .collect();
+        WrittenFile {
+            name,
+            size: data.len() as u64,
+            sha256: crate::unit::sha256_bytes_hex(data),
+            blocks,
+            head: data[..data.len().min(64)].to_vec(),
+        }
+    }
+}
+
+/// The regular files under `dir` (without `skip`), sorted by name, at most [`MAX_FILES`].
+fn written_files(dir: &Path, skip: &str) -> Vec<WrittenFile> {
+    let mut out = Vec::new();
+    let mut todo = vec![(dir.to_path_buf(), String::new())];
+    while let Some((d, prefix)) = todo.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let name = format!("{prefix}{}", e.file_name().to_string_lossy());
+            let Ok(ty) = e.file_type() else { continue };
+            if ty.is_dir() && prefix.matches('/').count() < 4 {
+                todo.push((e.path(), format!("{name}/")));
+            } else if ty.is_file()
+                && name != skip
+                && out.len() < MAX_FILES
+                && let Ok(data) = std::fs::read(e.path())
+            {
+                out.push(WrittenFile::of(name, &data));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 /// Runs `exe` on `case` inside the sandbox. The executable is copied into a fresh private
@@ -173,6 +242,7 @@ pub fn run_case_with_env(
             exit,
             stdout: out.stdout,
             stderr: out.stderr,
+            files: written_files(dir.path(), "prog"),
         },
         report,
     ))
@@ -241,6 +311,56 @@ pub fn compare(original: &Outcome, rewritten: &Outcome) -> Vec<String> {
         &original.stderr,
         &rewritten.stderr,
     ));
+    d.extend(file_differences(&original.files, &rewritten.files));
+    d
+}
+
+/// What differs between the files two runs wrote.
+fn file_differences(a: &[WrittenFile], b: &[WrittenFile]) -> Vec<String> {
+    let mut d = Vec::new();
+    for f in a {
+        match b.iter().find(|g| g.name == f.name) {
+            None => d.push(format!(
+                "file {}: the original wrote it ({} bytes), the rewrite did not",
+                f.name, f.size
+            )),
+            Some(g) if g.sha256 != f.sha256 => {
+                let block = f
+                    .blocks
+                    .iter()
+                    .zip(&g.blocks)
+                    .position(|(x, y)| x != y)
+                    .unwrap_or(f.blocks.len().min(g.blocks.len()));
+                let at = f
+                    .head
+                    .iter()
+                    .zip(&g.head)
+                    .position(|(x, y)| x != y)
+                    .filter(|_| block == 0)
+                    .map(|i| format!("byte {i}"))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "bytes {} to {}",
+                            block * FILE_BLOCK,
+                            (block + 1) * FILE_BLOCK - 1
+                        )
+                    });
+                d.push(format!(
+                    "file {}: {} bytes vs {} bytes, first difference in {at}",
+                    f.name, f.size, g.size
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    for g in b {
+        if !a.iter().any(|f| f.name == g.name) {
+            d.push(format!(
+                "file {}: the rewrite wrote it ({} bytes), the original did not",
+                g.name, g.size
+            ));
+        }
+    }
     d
 }
 
@@ -565,17 +685,52 @@ const char *g(void) { return "tab\there"; }
     }
 
     #[test]
+    fn the_files_a_run_leaves_are_compared_by_content() {
+        let dir = tempfile::tempdir().expect("dir");
+        std::fs::write(dir.path().join("prog"), b"exe").expect("prog");
+        std::fs::write(dir.path().join("mix.wav"), vec![1u8; 9000]).expect("wav");
+        std::fs::create_dir(dir.path().join("out")).expect("sub");
+        std::fs::write(dir.path().join("out/log.txt"), b"ok").expect("log");
+        let files = written_files(dir.path(), "prog");
+        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["mix.wav", "out/log.txt"]);
+        let mut changed = vec![1u8; 9000];
+        changed[5000] = 2;
+        let other = vec![
+            WrittenFile::of("mix.wav".into(), &changed),
+            WrittenFile::of("extra.bin".into(), b"x"),
+        ];
+        let d = file_differences(&files, &other);
+        assert_eq!(d.len(), 3, "{d:?}");
+        assert!(
+            d[0].contains("mix.wav") && d[0].contains("bytes 4096 to 8191"),
+            "{d:?}"
+        );
+        assert!(
+            d[1].contains("out/log.txt") && d[1].contains("did not"),
+            "{d:?}"
+        );
+        assert!(
+            d[2].contains("extra.bin") && d[2].contains("the rewrite wrote it"),
+            "{d:?}"
+        );
+        assert!(file_differences(&files, &files).is_empty());
+    }
+
+    #[test]
     fn differences_name_the_stream_and_the_first_byte() {
         let ok = Outcome {
             exit: Exit::Code(0),
             stdout: b"abc\n".to_vec(),
             stderr: Vec::new(),
+            files: Vec::new(),
         };
         assert!(compare(&ok, &ok.clone()).is_empty());
         let bad = Outcome {
             exit: Exit::Signal(11),
             stdout: b"abd\n".to_vec(),
             stderr: b"oops".to_vec(),
+            files: Vec::new(),
         };
         let d = compare(&ok, &bad);
         assert_eq!(d.len(), 3, "{d:?}");

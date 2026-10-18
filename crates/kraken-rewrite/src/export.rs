@@ -49,6 +49,31 @@ pub struct ExportInfo {
     pub prefix: String,
     /// Coverage figures.
     pub coverage: ExportCoverage,
+    /// Functions that accepted units call but that are not accepted themselves (the unit each
+    /// caller was tested with): the export calls the original function for them.
+    pub originals: Vec<RewriteUnit>,
+    /// The program's own symbol at an address (`0x...` as KRAKEN shows it), mangled as the
+    /// linker knows it, for calls into the original.
+    pub symbols: std::collections::BTreeMap<String, String>,
+}
+
+/// The FFI shim's entry point that tells the runtime shim where the original program's data is
+/// (see `rt::image_attach`).
+pub const ATTACH_SYMBOL: &str = "kraken_attach_image";
+
+/// A function the exported code calls in the original program.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OriginalCall {
+    /// The Rust name the callers use.
+    pub symbol: String,
+    /// The original function's entry as KRAKEN reported it.
+    pub address: String,
+    /// The original function's name.
+    pub original_name: String,
+    /// True when the call is linked to the original by that name; false when the name is not a
+    /// C symbol (a C++ method, a function without a name), and the call stops the program with a
+    /// message instead.
+    pub linked: bool,
 }
 
 /// One exported function in the manifest.
@@ -101,6 +126,64 @@ pub struct Manifest {
     pub planned: u32,
     /// Functions the engine listed.
     pub functions_total: u64,
+    /// Functions the exported code calls in the original program (not rewritten yet).
+    #[serde(default)]
+    pub calls_original: Vec<OriginalCall>,
+}
+
+/// The module that stands in for a function that is not exported: a declaration of the
+/// original function, linked by its name, or a stop with a message when it has no C name.
+fn original_module(u: &RewriteUnit, symbol: Option<&str>) -> (String, OriginalCall) {
+    let sig = &u.signature;
+    // The name the linker knows: the program's symbol at that address (mangled for C++), else
+    // the name as shown when it is a plain C identifier.
+    let plain = |n: &str| {
+        !n.is_empty()
+            && n.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let shown = &u.anchor.name;
+    let link: Option<&str> = match symbol {
+        Some(s) => plain(s).then_some(s),
+        None => plain(shown).then_some(shown.as_str()),
+    };
+    let linkable = link.is_some();
+    let name = link.unwrap_or(shown);
+    let decl = sig
+        .rust_prototype()
+        .replacen("pub unsafe extern \"C\" fn ", "pub fn ", 1);
+    let text = if linkable {
+        format!(
+            "// `{name}` at {addr} is not rewritten: calls go to the original function, which the\n\
+             // program must export (link against it, or load this library into it).\n\
+             unsafe extern \"C\" {{\n    #[link_name = \"{name}\"]\n    {decl};\n}}\n",
+            addr = u.anchor.address,
+        )
+    } else {
+        let mut head = sig.rust_prototype();
+        for i in 0..sig.params.len() {
+            head = head.replacen(&format!("a{i}:"), &format!("_a{i}:"), 1);
+        }
+        format!(
+            "// `{shown}` at {addr} is not rewritten, and it has no C name to link the original by.\n\
+             #[allow(unreachable_code)]\n{head} {{\n    panic!(\"the function at {addr} is not \
+             rewritten and cannot be called from the export; accept a translation of it and \
+             export again\")\n}}\n",
+            shown = shown.replace(['\n', '`'], " "),
+            addr = u.anchor.address,
+        )
+    };
+    (
+        text,
+        OriginalCall {
+            symbol: sig.name.clone(),
+            address: u.anchor.address.clone(),
+            original_name: shown.clone(),
+            linked: linkable,
+        },
+    )
 }
 
 /// What was written.
@@ -167,6 +250,7 @@ pub fn c_prototype(sig: &Signature) -> String {
         Ret::Int { bits, signed } => c_type(bits, signed),
         Ret::Ptr => "const void *".to_string(),
         Ret::Double => "double".to_string(),
+        Ret::Float => "float".to_string(),
     };
     let params = if sig.params.is_empty() {
         "void".to_string()
@@ -178,6 +262,7 @@ pub fn c_prototype(sig: &Signature) -> String {
                 Param::Int { bits, signed } => format!("{} a{i}", c_type(*bits, *signed)),
                 Param::Buf | Param::FnPtr => format!("void *a{i}"),
                 Param::Double => format!("double a{i}"),
+                Param::Float => format!("float a{i}"),
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -204,7 +289,7 @@ fn shim_fn(sig: &Signature, path: &str) -> String {
             crate::abi::int_ty(bits, signed)
         ),
         Ret::Ptr => format!("(unsafe {{ {call} }}) as *const u8"),
-        Ret::Double => format!("unsafe {{ {call} }}"),
+        Ret::Double | Ret::Float => format!("unsafe {{ {call} }}"),
     };
     format!(
         "#[unsafe(no_mangle)]\n{} {{\n    {body}\n}}\n",
@@ -231,7 +316,7 @@ fn module_code(unit: &RewriteUnit, uses: &str) -> Result<String, RewriteError> {
         }
     }
     Ok(format!(
-        "{uses}{}",
+        "use super::rt;\n{uses}{}",
         code.replace("#[unsafe(no_mangle)]", "")
             .replace("#[no_mangle]", "")
     ))
@@ -302,11 +387,14 @@ pub fn write_workspace(
     let lib_ident = lib_crate.replace('-', "_");
     let ffi_ident = ffi_crate.replace('-', "_");
 
+    let entry_of =
+        |u: &RewriteUnit| u64::from_str_radix(u.anchor.address.trim_start_matches("0x"), 16);
     let by_address: std::collections::BTreeMap<u64, reuse::ExportedUnit> = units
         .iter()
+        .chain(&info.originals)
         .map(|u| {
             (
-                u64::from_str_radix(u.anchor.address.trim_start_matches("0x"), 16).unwrap_or(0),
+                entry_of(u).unwrap_or(0),
                 (
                     format!("u_{}", u.signature.name),
                     u.version,
@@ -318,6 +406,25 @@ pub fn write_workspace(
     let mut symbols = BTreeSet::new();
     let mut exports = Vec::new();
     let mut modules = Vec::new();
+    let mut calls_original = Vec::new();
+    let mut original_modules = Vec::new();
+    for o in &info.originals {
+        if units.iter().any(|u| entry_of(u) == entry_of(o)) {
+            continue;
+        }
+        let (text, call) =
+            original_module(o, info.symbols.get(&o.anchor.address).map(String::as_str));
+        let module = format!("u_{}", o.signature.name);
+        write(
+            &dir.join(&lib_crate)
+                .join("src")
+                .join(format!("{module}.rs")),
+            &text,
+        )?;
+        original_modules.push(module);
+        calls_original.push(call);
+    }
+    write(&dir.join(&lib_crate).join("src/rt.rs"), crate::RT_SOURCE)?;
     for u in units {
         let sym = u.signature.name.clone();
         if !symbols.insert(sym.clone()) {
@@ -378,8 +485,16 @@ pub fn write_workspace(
          //! README and manifest.json next to the workspace manifest.\n\
          #![allow(warnings)]\n\n",
     );
+    lib_rs.push_str(
+        "/// The runtime shim: the C library calls of the translations on Rust std.\npub mod rt;\n",
+    );
     for (m, _) in &modules {
         lib_rs.push_str(&format!("pub mod {m};\n"));
+    }
+    for m in &original_modules {
+        lib_rs.push_str(&format!(
+            "/// Not rewritten: calls the original function.\npub mod {m};\n"
+        ));
     }
     write(&dir.join(&lib_crate).join("src/lib.rs"), &lib_rs)?;
 
@@ -399,7 +514,7 @@ pub fn write_workspace(
     );
     let mut header = String::from(
         "/* Generated by KRAKEN: prototypes of the rewritten functions. */\n\
-         #pragma once\n#include <stdint.h>\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n",
+         #pragma once\n#include <stddef.h>\n#include <stdint.h>\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n",
     );
     for (m, u) in &modules {
         ffi_rs.push_str(&shim_fn(
@@ -410,6 +525,17 @@ pub fn write_workspace(
         header.push_str(&c_prototype(&u.signature));
         header.push('\n');
     }
+    ffi_rs.push_str(&format!(
+        "/// Tells the rewritten functions where the original program's data is: `at` is the \
+         address\n/// where the program's data that KRAKEN shows at `low` is loaded, `len` how far \
+         it goes.\n/// Call it once before calling a rewritten function that uses globals.\n\
+         #[unsafe(no_mangle)]\npub unsafe extern \"C\" fn {ATTACH_SYMBOL}(at: *mut u8, low: u64, \
+         len: usize) {{\n    {lib_ident}::rt::image_attach(at, low, len);\n}}\n"
+    ));
+    header.push_str(&format!(
+        "void {ATTACH_SYMBOL}(void *at, uint64_t low, size_t len);\n"
+    ));
+    symbols.insert(ATTACH_SYMBOL.to_string());
     header.push_str("\n#ifdef __cplusplus\n}\n#endif\n");
     write(&dir.join(&ffi_crate).join("src/lib.rs"), &ffi_rs)?;
     write(
@@ -430,6 +556,7 @@ pub fn write_workspace(
         accepted: info.coverage.accepted,
         planned: info.coverage.planned,
         functions_total: info.coverage.functions_total,
+        calls_original,
     };
     write(
         &dir.join(MANIFEST),
@@ -463,6 +590,28 @@ fn readme_text(info: &ExportInfo, m: &Manifest, ffi_ident: &str) -> String {
             e.cases_run,
             e.mode
         ));
+    }
+    let mut originals = String::new();
+    if !m.calls_original.is_empty() {
+        originals.push_str(
+            "## Calls into the original program\n\n\
+             These functions are called by rewritten code but are not rewritten (or not accepted) \
+             themselves. The library calls the original function by its name, so the original \
+             program must export it (it is found when the library is loaded into the program or \
+             linked with it). A function without a C name cannot be reached that way: calling it \
+             stops the program with a message.\n\n\
+             | Rust name | Original | Address | Linked |\n|---|---|---|---|\n",
+        );
+        for c in &m.calls_original {
+            originals.push_str(&format!(
+                "| `{}` | `{}` | `{}` | {} |\n",
+                c.symbol,
+                c.original_name.replace(['|', '`'], " "),
+                c.address,
+                if c.linked { "yes" } else { "no" }
+            ));
+        }
+        originals.push('\n');
     }
     format!(
         "# Rust rewrite of `{bin}`\n\n\
@@ -504,6 +653,14 @@ fn readme_text(info: &ExportInfo, m: &Manifest, ffi_ident: &str) -> String {
          Functions that call a rewritten function from rewritten code (for example a helper that \
          was translated together with its caller) have their own copy of that helper inside their \
          module; the exported symbols are only the accepted functions.\n\n\
+         {originals}\
+         ## Globals and the C library\n\n\
+         The rewritten functions call the C library through `{lib}/src/rt.rs`, a small runtime \
+         shim on Rust std. Functions that use the original program's globals reach them through \
+         `rt::g(address)`, with the addresses KRAKEN shows. Inside the original program, call \
+         `{attach}(at, low, len)` once first: `at` is where the program's data that KRAKEN shows \
+         at address `low` is loaded (the load address of the program plus `low` minus KRAKEN's \
+         image base), `len` how many bytes follow.\n\n\
          Regenerate this directory with `kraken rewrite-export` after accepting more functions; \
          do not edit the generated files.\n",
         bin = info.binary_name,
@@ -512,6 +669,7 @@ fn readme_text(info: &ExportInfo, m: &Manifest, ffi_ident: &str) -> String {
         lib = m.lib_crate,
         ffi = m.ffi_crate,
         prefix = info.prefix,
+        attach = ATTACH_SYMBOL,
     )
 }
 

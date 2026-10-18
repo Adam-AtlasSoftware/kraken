@@ -1,0 +1,44 @@
+{
+  "binary": "libkr-x86.dll.a",
+  "sha256": "23f9f87d07996a50a83ec8a76607082d47789ea1b6c9104e3ff87d4e44a1e60b",
+  "kind": "import library",
+  "arch": "x86",
+  "members": [
+    "kr_dll_d000007.o",
+    "kr_dll_d000000.o",
+    "kr_dll_d000006.o",
+    "kr_dll_d000005.o",
+    "kr_dll_d000004.o",
+    "kr_dll_d000003.o",
+    "kr_dll_d000002.o",
+    "kr_dll_d000001.o"
+  ],
+  "functions": [],
+  "exports": [],
+  "imports": [
+    {
+      "library": "kr.dll",
+      "name": "kr_calls"
+    },
+    {
+      "library": "kr.dll",
+      "name": "kr_checksum"
+    },
+    {
+      "library": "kr.dll",
+      "name": "kr_classify"
+    },
+    {
+      "library": "kr.dll",
+      "name": "kr_dup_upper"
+    },
+    {
+      "library": "kr.dll",
+      "name": "kr_kind_name"
+    },
+    {
+      "library": "kr.dll",
+      "name": "kr_report"
+    }
+  ]
+}

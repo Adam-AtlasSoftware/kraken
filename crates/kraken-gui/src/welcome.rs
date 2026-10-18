@@ -39,6 +39,10 @@ pub enum WelcomeAction {
     Forget(String),
     /// Show the settings window.
     Settings,
+    /// Show the help window.
+    Help,
+    /// Start the guided tour.
+    Tour,
 }
 
 pub struct Welcome {
@@ -160,6 +164,8 @@ impl Welcome {
     }
 }
 
+const DEMO_HINT: &str = "Open a small built-in program to try KRAKEN";
+
 /// The "Try the demo" card; the main button when the person is new.
 fn demo_card(ui: &mut Ui, busy: bool, primary: bool, actions: &mut Vec<WelcomeAction>) {
     let p = pal(ui);
@@ -175,9 +181,14 @@ fn demo_card(ui: &mut Ui, busy: bool, primary: bool, actions: &mut Vec<WelcomeAc
         ui.add_space(6.0);
         ui.add_enabled_ui(!busy, |ui| {
             let clicked = if primary {
-                style::primary_button(ui, "Open demo project").clicked()
+                style::primary_button(ui, "Open demo project")
+                    .on_hover_text(DEMO_HINT)
+                    .clicked()
             } else {
-                ui.button("Open demo project").clicked()
+                ui.button("Open demo project")
+                    .on_hover_text(DEMO_HINT)
+                    .on_disabled_hover_text("Wait for the current job to finish")
+                    .clicked()
             };
             if clicked {
                 actions.push(WelcomeAction::Choose(Choice::Demo));
@@ -298,7 +309,8 @@ pub fn show(
                                 egui::TextEdit::singleline(&mut w.open_path)
                                     .hint_text("Path to the project folder")
                                     .desired_width(ui.available_width() - 178.0),
-                            );
+                            )
+                            .on_hover_text("The folder of a KRAKEN project. Type it or use Browse");
                             if ui
                                 .button("Browse...")
                                 .on_hover_text("Choose a KRAKEN project folder  (Ctrl+Shift+O)")
@@ -331,7 +343,8 @@ pub fn show(
                                             egui::Button::new(medium(&r.name, 14.0).color(p.accent))
                                                 .frame(false),
                                         )
-                                        .on_hover_text(&r.path);
+                                        .on_hover_text(&r.path)
+                                        .on_disabled_hover_text("Wait for the current job to finish");
                                     if open.clicked() {
                                         actions.push(WelcomeAction::Choose(Choice::OpenProject(
                                             r.path.clone(),
@@ -380,6 +393,20 @@ pub fn show(
                             .clicked()
                         {
                             actions.push(WelcomeAction::Settings);
+                        }
+                        if ui
+                            .small_button("Help (F1)")
+                            .on_hover_text("Read how KRAKEN works: the first steps, every panel, shortcuts and the glossary")
+                            .clicked()
+                        {
+                            actions.push(WelcomeAction::Help);
+                        }
+                        if ui
+                            .small_button("Take the tour")
+                            .on_hover_text("Walk through the main areas of the window, one step at a time")
+                            .clicked()
+                        {
+                            actions.push(WelcomeAction::Tour);
                         }
                     });
                     });

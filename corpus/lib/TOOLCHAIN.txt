@@ -1,0 +1,12 @@
+base-image: debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+gcc: gcc (Debian 14.2.0-19) 14.2.0
+ar: GNU ar (GNU Binutils for Debian) 2.44
+x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 14-win32
+i686-w64-mingw32-gcc: i686-w64-mingw32-gcc (GCC) 14-win32
+dpkg: binutils 2.44-3
+dpkg: binutils-mingw-w64-i686 2.44-3+12+b1
+dpkg: binutils-mingw-w64-x86-64 2.44-3+12+b1
+dpkg: gcc 4:14.2.0-1
+dpkg: gcc-mingw-w64-i686-win32 14.2.0-19+27+b1
+dpkg: gcc-mingw-w64-x86-64-win32 14.2.0-19+27+b1
+dpkg: gcc-multilib 4:14.2.0-1
