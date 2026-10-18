@@ -3,8 +3,9 @@
 //! strings, imports and exports. Needs the native build and a spec tree (see `tests/native.rs`);
 //! skips otherwise.
 //!
-//! `cargo test -p engine-native --test agreement -- --nocapture` prints the numbers for the two
-//! guarded binaries; `-- --ignored --nocapture` prints them for all 20.
+//! `cargo test -p engine-native --test agreement -- --nocapture` prints the numbers for the
+//! guarded binaries; `-- --ignored --nocapture` prints them for all 20. Names are compared by
+//! entry, signatures without spacing (exactly, and by types alone).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -106,6 +107,9 @@ struct Report {
     strings: Score,
     imports: Score,
     exports: Score,
+    names: Score,
+    signatures: Score,
+    signature_types: Score,
 }
 
 async fn compare(binary: &str, c: NativeConfig) -> Report {
@@ -157,6 +161,39 @@ async fn compare(binary: &str, c: NativeConfig) -> Report {
         let Some(mine) = ours.get(&entry) else {
             continue;
         };
+        let their_name = s["name"].as_str().unwrap_or("").to_string();
+        if their_name != mine.name && std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+            eprintln!(
+                "  {binary} name differs at {entry:#x}: native {:?}, Ghidra {their_name:?}",
+                mine.name
+            );
+        }
+        r.names
+            .add(&[their_name].into(), &[mine.name.clone()].into());
+        // signatures without spacing (Ghidra writes `record * a`, the decompiler `record *a`)
+        let squash = |t: &str| t.split_whitespace().collect::<String>();
+        let their_sig = s["signature"].as_str().map(squash);
+        let my_sig = mine.signature.as_deref().map(squash);
+        if let Some(t) = s["signature"].as_str() {
+            let theirs = signature_types(t);
+            let mine = mine.signature.as_deref().map(signature_types);
+            r.signature_types.theirs += 1;
+            r.signature_types.ours += usize::from(mine.is_some());
+            r.signature_types.common += usize::from(mine.as_ref() == Some(&theirs));
+        }
+        if their_sig.is_some() {
+            r.signatures.theirs += 1;
+            r.signatures.ours += usize::from(my_sig.is_some());
+            if their_sig == my_sig {
+                r.signatures.common += 1;
+            } else if my_sig.is_some() && std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+                eprintln!(
+                    "  {binary} signature differs at {entry:#x}: native {:?}, Ghidra {:?}",
+                    mine.signature,
+                    s["signature"].as_str().unwrap_or("")
+                );
+            }
+        }
         let same = mine.fn_hash.as_deref() == s["fn_hash"].as_str();
         if !same && std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
             eprintln!(
@@ -421,6 +458,43 @@ async fn compare(binary: &str, c: NativeConfig) -> Report {
     r
 }
 
+/// A signature without parameter names or spacing: `int cmp_id(record*,record*)`.
+fn signature_types(sig: &str) -> String {
+    let Some(open) = sig.find('(') else {
+        return sig.split_whitespace().collect();
+    };
+    let close = sig.rfind(')').unwrap_or(sig.len());
+    let head: String = sig[..open].split_whitespace().collect();
+    let mut params = Vec::new();
+    let (mut depth, mut start) = (0i32, open + 1);
+    let inner_end = close.max(open + 1);
+    for (i, c) in sig[..inner_end].char_indices().skip(open + 1) {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                params.push(&sig[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    params.push(&sig[start..inner_end]);
+    let typed: Vec<String> = params
+        .iter()
+        .map(|p| {
+            let spaced = p.replace('*', " * ");
+            let mut words: Vec<&str> = spaced.split_whitespace().collect();
+            let ident = |w: &str| w.chars().all(|c| c.is_alphanumeric() || c == '_');
+            if words.len() >= 2 && words.last().is_some_and(|w| ident(w)) {
+                words.pop();
+            }
+            words.concat()
+        })
+        .collect();
+    format!("{head}({})", typed.join(","))
+}
+
 fn print(binary: &str, r: &Report) {
     eprintln!("== {binary}");
     eprintln!("  functions found      {}", r.functions);
@@ -435,6 +509,9 @@ fn print(binary: &str, r: &Report) {
     eprintln!("  strings              {}", r.strings);
     eprintln!("  imports (names)      {}", r.imports);
     eprintln!("  exports (addr,name)  {}", r.exports);
+    eprintln!("  names (entry)        {}", r.names);
+    eprintln!("  signatures           {}", r.signatures);
+    eprintln!("  signature types      {}", r.signature_types);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -471,7 +548,21 @@ async fn agrees_with_ghidra_on_the_guarded_binaries() {
         assert!(r.strings.recall() >= 0.9, "{binary}: strings {}", r.strings);
         assert_eq!(r.imports.recall(), 1.0, "{binary}: imports {}", r.imports);
         assert!(r.exports.recall() >= 0.8, "{binary}: exports {}", r.exports);
+        assert_eq!(r.names.recall(), 1.0, "{binary}: names {}", r.names);
     }
+}
+
+/// C++ names (from DWARF, else demangled) and DWARF signatures against Ghidra with DWARF.
+#[tokio::test(flavor = "multi_thread")]
+async fn cpp_names_and_dwarf_signatures_agree_with_ghidra() {
+    let binary = "cpp_shapes-O0";
+    let Some(c) = config() else { return };
+    let r = compare(binary, c).await;
+    print(binary, &r);
+    assert!(r.names.recall() >= 0.99, "names {}", r.names);
+    assert_eq!(r.imports.recall(), 1.0, "imports {}", r.imports);
+    assert!(r.exports.recall() >= 0.99, "exports {}", r.exports);
+    assert!(r.signatures.recall() >= 0.65, "signatures {}", r.signatures);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -516,7 +607,10 @@ async fn agreement_over_the_corpus() {
             edges,
             strings,
             imports,
-            exports
+            exports,
+            names,
+            signatures,
+            signature_types
         );
     }
     print("all fixtures", &total);

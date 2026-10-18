@@ -31,8 +31,7 @@ use kraken_proto::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::ctypes::prototype;
-use crate::discover::{Func, default_name, walk_function};
+use crate::discover::{Func, walk_function};
 use crate::engine::{Funcs, Program};
 
 /// File in the state directory that holds the journal and the analysed signatures.
@@ -44,7 +43,7 @@ pub(crate) const STATE_FORMAT: u32 = 1;
 const UNDEFINED: &str = "undefined";
 /// Name the prototype carries when it is handed to the decompiler's C grammar; the printed
 /// name comes from the function symbol, so renames with characters C does not allow still work.
-const PROTO_NAME: &str = "kraken_fn";
+pub(crate) const PROTO_NAME: &str = "kraken_fn";
 /// Longest accepted name.
 const MAX_NAME: usize = 2000;
 /// Largest data item in the listing.
@@ -148,9 +147,45 @@ impl Edits {
     }
 }
 
+/// Where the parameter list of `sig` (`ret name(params)`) opens: the parenthesis matching the
+/// last one, so names with parentheses (`operator()`) stay in the head.
+fn parameters_open(sig: &str) -> Option<usize> {
+    let close = sig.rfind(')')?;
+    let mut depth = 0i32;
+    for (i, c) in sig[..=close].char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `sig` with its function name, one of `old` (the names it may have been made with), replaced
+/// by `name`; other signatures go through [`with_name`].
+pub(crate) fn renamed_signature(sig: &str, old: &[&str], name: &str) -> String {
+    if let Some(open) = parameters_open(sig) {
+        let head = &sig[..open];
+        for o in old.iter().filter(|o| !o.is_empty()) {
+            if let Some(prefix) = head.strip_suffix(o)
+                && (prefix.is_empty() || prefix.ends_with([' ', '*', '&']))
+            {
+                return format!("{prefix}{name}{}", &sig[open..]);
+            }
+        }
+    }
+    with_name(sig, name)
+}
+
 /// `sig` (a C declaration `ret name(params)`) with the function name replaced by `name`.
 pub(crate) fn with_name(sig: &str, name: &str) -> String {
-    let Some(open) = sig.find('(') else {
+    let Some(open) = parameters_open(sig) else {
         return sig.to_string();
     };
     let head = &sig[..open];
@@ -225,8 +260,36 @@ impl<'a> Table<'a> {
     }
 }
 
-/// Applies one op (blocking: it may call into the decompiler).
+/// Applies one op (blocking: it may call into the decompiler). Structural edits (function
+/// create, delete and bounds, code and data, renames) rebuild the references, exports and
+/// noreturn set afterwards.
 pub(crate) fn apply(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
+    apply_op(p, op)?;
+    if is_structural(&op.op) {
+        p.reindex();
+    }
+    Ok(())
+}
+
+/// [`apply`] without the rebuild, for replaying many ops; the caller rebuilds once at the end.
+pub(crate) fn apply_deferred(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
+    apply_op(p, op)
+}
+
+/// Whether `op` changes what the reference index, the exports or the noreturn set derive from.
+fn is_structural(op: &LogOp) -> bool {
+    matches!(
+        op,
+        LogOp::Rename { .. }
+            | LogOp::CreateFunction { .. }
+            | LogOp::DeleteFunction { .. }
+            | LogOp::SetFunctionBounds { .. }
+            | LogOp::SetCodeData { .. }
+            | LogOp::SetType { .. }
+    )
+}
+
+fn apply_op(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
     op.check_version()?;
     let (space, offset, _, hash) = anchor_of(&op.op).native()?;
     if space != "ram" {
@@ -338,14 +401,6 @@ fn check_hash(p: &Program, e: &Edits, f: &Func, hash: &str) -> Result<(), Engine
     ))
 }
 
-/// The name a function gets when the log names none: its symbol, else `FUN_<entry>`.
-fn base_name(p: &Program, at: u64) -> String {
-    p.discovered
-        .get(at)
-        .map(|f| f.name.clone())
-        .unwrap_or_else(|| default_name(at))
-}
-
 /// Rebuilds the decompiler's function at `f.entry` (name, prototype, convention, noreturn).
 fn refresh(p: &Program, e: &Edits, f: &Func) -> Result<(), EngineRejected> {
     let at = f.entry;
@@ -353,7 +408,7 @@ fn refresh(p: &Program, e: &Edits, f: &Func) -> Result<(), EngineRejected> {
     let decl = match user {
         Some(proto) => {
             let types = p.types();
-            Some(prototype(proto, PROTO_NAME, &|n| types.knows(n)))
+            Some(types.prototype_text(proto, PROTO_NAME))
         }
         None => p.locked().get(&at).cloned(),
     };
@@ -361,7 +416,7 @@ fn refresh(p: &Program, e: &Edits, f: &Func) -> Result<(), EngineRejected> {
         user.map(|u| u.calling_convention.clone())
             .filter(|c| !c.is_empty())
     });
-    let noreturn = p.noreturn.contains(&at) || user.is_some_and(|u| u.noreturn);
+    let noreturn = p.noreturn().contains(&at) || user.is_some_and(|u| u.noreturn);
     let mut s = p.session();
     s.remove_function(at).map_err(native_rejected)?;
     s.add_function(at, &f.name).map_err(native_rejected)?;
@@ -389,7 +444,7 @@ fn rename(
     let mut t = Table::new(p);
     if let Some(f) = t.funcs.map.get_mut(&at) {
         let target = if new.is_empty() {
-            base_name(p, at)
+            p.base_name(at)
         } else {
             new.to_string()
         };
@@ -536,6 +591,7 @@ fn linear_func(
         return Err(invalid("the body is larger than 1 MiB"));
     }
     let mut insns = Vec::new();
+    let mut returns = false;
     let mut pc = start;
     {
         let mut cache = p.insns.lock().unwrap_or_else(|e| e.into_inner());
@@ -551,6 +607,10 @@ fn linear_func(
                 }
                 pc = i.addr + u64::from(i.length);
                 insns.push(i.addr);
+                returns |= matches!(
+                    i.flow,
+                    engine_native_sys::Flow::Return | engine_native_sys::Flow::IndirectJump
+                );
                 cache.entry(i.addr).or_insert(i);
             }
         }
@@ -562,7 +622,8 @@ fn linear_func(
         ranges: vec![(start, end)],
         switches: BTreeMap::new(),
         tail_calls: Vec::new(),
-        noreturn: p.noreturn.contains(&entry),
+        noreturn: p.noreturn().contains(&entry),
+        returns,
     })
 }
 
@@ -583,7 +644,7 @@ fn walked_func(
         .values()
         .map(|f| (f.entry, f.name.clone()))
         .collect();
-    let noreturn: BTreeSet<u64> = p.noreturn.iter().copied().collect();
+    let noreturn: BTreeSet<u64> = p.noreturn().iter().copied().collect();
     let mut cache = p.insns.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = p.session();
     let mut f = walk_function(&p.loaded, &mut s, names, noreturn, &mut cache, entry)
@@ -623,7 +684,7 @@ fn create(
     }
     let name = name
         .filter(|n| !n.is_empty())
-        .map_or_else(|| base_name(p, at), str::to_string);
+        .map_or_else(|| p.base_name(at), str::to_string);
     // the body discovery found, when the log asks for it back (undoing a delete)
     let found = p.discovered.get(at).filter(|d| {
         body.is_none_or(|b| b.start.0 == at && b.end.0.saturating_sub(b.start.0) == d.size())
@@ -741,6 +802,18 @@ mod tests {
         assert_eq!(with_name("char *f(void)", "g"), "char *g(void)");
         assert_eq!(with_name("void ns::f(void)", "h"), "void h(void)");
         assert_eq!(with_name("no parens", "x"), "no parens");
+        assert_eq!(
+            renamed_signature("ulong operator()(void *this)", &["operator()"], "call"),
+            "ulong call(void *this)"
+        );
+        assert_eq!(
+            renamed_signature("void *operator.new(ulong size)", &["operator.new"], "alloc"),
+            "void *alloc(ulong size)"
+        );
+        assert_eq!(
+            renamed_signature("int f(code *cb)", &["g"], "h"),
+            "int h(code *cb)"
+        );
     }
 
     #[test]

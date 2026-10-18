@@ -69,10 +69,10 @@ impl XrefProvider for InProcessEngine {
         let p = self.program()?;
         let at = req.address.0;
         let funcs = p.funcs();
+        let refs = p.refs();
         let keep = |r: &&Ref| req.kind.is_none_or(|k| r.kind == k);
         let list: Vec<Xref> = match req.direction {
-            XrefDirection::To => p
-                .refs
+            XrefDirection::To => refs
                 .to(at)
                 .iter()
                 .filter(keep)
@@ -84,13 +84,12 @@ impl XrefProvider for InProcessEngine {
                 })?;
                 f.insns
                     .iter()
-                    .flat_map(|a| p.refs.from(*a))
+                    .flat_map(|a| refs.from(*a))
                     .filter(keep)
                     .map(|r| xref(&funcs, r, Some(f.entry)))
                     .collect()
             }
-            XrefDirection::From => p
-                .refs
+            XrefDirection::From => refs
                 .from(at)
                 .iter()
                 .filter(keep)
@@ -117,9 +116,10 @@ impl FlowGraph for InProcessEngine {
             .get(&f.entry)
             .cloned()
             .unwrap_or_default();
+        let noreturn = p.noreturn();
         let insns = p.insns.lock().unwrap_or_else(|e| e.into_inner());
         Ok(crate::cfg::build(f, &insns, &pads, &|t| {
-            p.noreturn.contains(&t)
+            noreturn.contains(&t)
         }))
     }
 }
@@ -170,7 +170,7 @@ impl SymbolLister for InProcessEngine {
         cancel: &CancellationToken,
     ) -> EngineResult<Page<SymbolEntry>> {
         check(cancel)?;
-        page_of(&self.program()?.exports, page)
+        page_of(&self.program()?.exports(), page)
     }
 }
 

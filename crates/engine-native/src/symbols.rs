@@ -1,13 +1,25 @@
 //! Imports and exports in the shape of Ghidra's external symbols and external entry points:
 //! an import's address is its PLT stub, and the exports are the global and weak definitions plus
-//! the entry point and the init/fini array functions, one per address.
+//! the entry point and the init/fini array functions, one per address. C++ names are shown
+//! demangled as Ghidra shows them (an export with DWARF takes the function's DWARF name), with the
+//! mangled name kept in `mangled`.
 
 use std::collections::BTreeMap;
 
 use kraken_proto::{Hex64, SymbolEntry, SymbolKind};
 
+use crate::demangle::{display_name, mangled};
 use crate::discover::Func;
 use crate::elf::Loaded;
+
+/// The name a function or export at `addr` with symbol `raw` gets: its DWARF name, else the
+/// demangled name, else `raw`.
+pub fn default_name(loaded: &Loaded, addr: u64, raw: &str) -> String {
+    match loaded.debug.functions.get(&addr) {
+        Some(f) => f.name.clone(),
+        None => display_name(raw),
+    }
+}
 
 /// Imported symbols ordered by (address, name), addressless ones last.
 pub fn imports(loaded: &Loaded) -> Vec<SymbolEntry> {
@@ -16,10 +28,11 @@ pub fn imports(loaded: &Loaded) -> Vec<SymbolEntry> {
         .imports
         .iter()
         .map(|i| SymbolEntry {
-            name: i.name.clone(),
+            name: display_name(&i.name),
             address: stubs.get(i.name.as_str()).map(|a| Hex64(*a)),
             library: None,
             kind: i.kind,
+            mangled: mangled(&i.name),
         })
         .collect();
     out.sort_by(|a, b| {
@@ -28,9 +41,14 @@ pub fn imports(loaded: &Loaded) -> Vec<SymbolEntry> {
     out
 }
 
-/// Exported symbols ordered by (address, name). Names come from the symbol table, else from
-/// the function at the address.
-pub fn exports(loaded: &Loaded, functions: &BTreeMap<u64, Func>) -> Vec<SymbolEntry> {
+/// Exported symbols ordered by (address, name). Names come from the symbol table (see
+/// [`default_name`]), else from the function at the address; `renamed` gives the name of a
+/// function the user renamed, which the export follows (it is the same symbol).
+pub fn exports(
+    loaded: &Loaded,
+    functions: &BTreeMap<u64, Func>,
+    renamed: &dyn Fn(u64) -> Option<String>,
+) -> Vec<SymbolEntry> {
     let mut at: BTreeMap<u64, SymbolEntry> = BTreeMap::new();
     for (a, e) in &loaded.exports {
         let kind = if functions.contains_key(a) {
@@ -38,13 +56,15 @@ pub fn exports(loaded: &Loaded, functions: &BTreeMap<u64, Func>) -> Vec<SymbolEn
         } else {
             e.kind
         };
+        let name = renamed(*a).unwrap_or_else(|| default_name(loaded, *a, &e.name));
         at.insert(
             *a,
             SymbolEntry {
-                name: e.name.clone(),
+                name,
                 address: Some(Hex64(*a)),
                 library: None,
                 kind,
+                mangled: mangled(&e.name),
             },
         );
     }
@@ -66,6 +86,7 @@ pub fn exports(loaded: &Loaded, functions: &BTreeMap<u64, Func>) -> Vec<SymbolEn
             } else {
                 SymbolKind::Other
             },
+            mangled: None,
         });
     }
     at.into_values().collect()

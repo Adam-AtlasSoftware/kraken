@@ -801,6 +801,13 @@
           "$ref": "#/$defs/Locator",
           "description": "Entry point."
         },
+        "mangled": {
+          "description": "The symbol's mangled (linkage) name when `name` is a demangled one, such as\n`_ZNK4Rect4areaEv` for `area`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "description": "Current function name; binary-derived, so sanitise it at ingestion.",
           "type": "string"
@@ -1658,6 +1665,13 @@
         },
         "library": {
           "description": "Library an import comes from, when known (binary-derived).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mangled": {
+          "description": "The mangled name as in the binary when `name` is a demangled one (`_Znwm` for\n`operator.new`).",
           "type": [
             "string",
             "null"

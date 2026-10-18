@@ -606,6 +606,7 @@ impl DataView<'_> {
                                 address: Some(Hex64(target)),
                                 library: None,
                                 kind: SymbolKind::Function,
+                                mangled: None,
                             });
                         }
                     }
@@ -631,6 +632,7 @@ impl DataView<'_> {
                     address: Some(Hex64(off)),
                     library: None,
                     kind: SymbolKind::Function,
+                    mangled: None,
                 })
                 .into_iter()
                 .collect(),

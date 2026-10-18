@@ -311,6 +311,9 @@ pub struct SymbolView {
     pub library: Option<Untrusted<String>>,
     /// What the symbol names.
     pub kind: SymbolKind,
+    /// The mangled name when `name` is demangled (binary-derived).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mangled: Option<Untrusted<String>>,
 }
 
 impl From<&SymbolEntry> for SymbolView {
@@ -320,6 +323,7 @@ impl From<&SymbolEntry> for SymbolView {
             address: s.address,
             library: s.library.as_deref().map(untrusted),
             kind: s.kind,
+            mangled: s.mangled.as_deref().map(untrusted),
         }
     }
 }

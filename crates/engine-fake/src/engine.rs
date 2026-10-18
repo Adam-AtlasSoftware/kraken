@@ -671,6 +671,7 @@ impl State {
                     signature: Some(format!("void {name}(void)")),
                     fn_hash: (!hash.is_empty()).then(|| hash.to_string()),
                     completeness: kraken_proto::Completeness::Complete,
+                    mangled: None,
                 };
                 self.functions
                     .insert(key, FixtureFunction::new(summary, decompile));

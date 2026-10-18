@@ -117,6 +117,7 @@ fn recorded() -> FixtureFile {
         address: Some(Hex64(0x401f00)),
         library: Some("libc.so.6".into()),
         kind: SymbolKind::Function,
+        mangled: None,
     }]);
     fx.exports = Some(vec![]);
     fx

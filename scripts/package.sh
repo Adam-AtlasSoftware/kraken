@@ -9,6 +9,13 @@
 #                      `cargo xtask dotnet-ext`, holding kraken-dotnet.dll) (required)
 #   KRAKEN_DOCS_DIR    path of the built mdBook (required)
 #   CARGO_TARGET_DIR   cargo target directory (default: target)
+#   KRAKEN_REQUIRE_NATIVE
+#                      1: fail unless kraken-native-worker was built (the native engine's
+#                      confined decompiler process; Linux release builds link the decompiler)
+#
+# The archive always carries THIRD-PARTY-NOTICES.md and licenses/ (the Ghidra decompiler and
+# zlib license and notice files from crates/engine-native-sys/licenses), because the binaries
+# link the native engine's C++ library whenever it was built with its sources.
 #
 # Writes <out-dir>/kraken-<version>-<target>.tar.gz (.zip for Windows targets) and a sibling
 # .sha256 file. Binaries are expected in $CARGO_TARGET_DIR/release.
@@ -47,6 +54,23 @@ esac
 for b in kraken krakend kraken-gui; do
   [ -f "$bins_dir/$b$exe" ] || { echo "missing $bins_dir/$b$exe" >&2; exit 1; }
 done
+native_licenses="$root/crates/engine-native-sys/licenses"
+for f in PROVENANCE.txt ghidra/LICENSE ghidra/NOTICE zlib/LICENSE zlib/README.txt; do
+  [ -s "$native_licenses/$f" ] || { echo "missing $native_licenses/$f" >&2; exit 1; }
+done
+for needle in "Compiled-in C and C++ components" "decompiler and Sleigh (Apache License 2.0)" "(zlib License)"; do
+  grep -qF "$needle" "$root/THIRD-PARTY-NOTICES.md" || {
+    echo "THIRD-PARTY-NOTICES.md lacks \"$needle\"; run cargo xtask notices" >&2
+    exit 1
+  }
+done
+worker=""
+if [ -f "$bins_dir/kraken-native-worker$exe" ]; then
+  worker="kraken-native-worker"
+elif [ "${KRAKEN_REQUIRE_NATIVE:-0}" = 1 ]; then
+  echo "missing $bins_dir/kraken-native-worker$exe (KRAKEN_REQUIRE_NATIVE=1)" >&2
+  exit 1
+fi
 
 name="kraken-$version-$target"
 mkdir -p "$out_dir"
@@ -56,10 +80,11 @@ trap 'rm -rf "$stage"' EXIT
 pkg="$stage/$name"
 mkdir -p "$pkg/bin" "$pkg/share/kraken" "$pkg/docs"
 
-for b in kraken krakend kraken-gui; do
+for b in kraken krakend kraken-gui $worker; do
   cp "$bins_dir/$b$exe" "$pkg/bin/$b$exe"
   chmod 755 "$pkg/bin/$b$exe"
 done
+cp -R "$native_licenses" "$pkg/licenses"
 cp "$jar" "$pkg/share/kraken/kraken-ghidra.jar"
 # The managed sidecar is platform independent; `kraken setup --dotnet` installs it. Debug symbols
 # are left out.
@@ -74,7 +99,7 @@ cp "$root/scripts/INSTALL.txt" "$pkg/INSTALL.txt"
 # Mach-O binaries must carry at least an ad-hoc signature to launch on Apple silicon (decision 72).
 case "$target" in
   *apple-darwin*)
-    for b in kraken krakend kraken-gui; do
+    for b in kraken krakend kraken-gui $worker; do
       codesign --force --sign - "$pkg/bin/$b"
     done
     ;;

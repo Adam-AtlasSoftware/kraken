@@ -76,6 +76,9 @@ pub struct Func {
     pub tail_calls: Vec<(u64, u64)>,
     /// Whether the function never returns (by name or by propagation).
     pub noreturn: bool,
+    /// Whether a path of the body returns (or leaves through a stub or an unresolved computed
+    /// jump), as the walk found it.
+    pub returns: bool,
 }
 
 impl Func {
@@ -295,6 +298,7 @@ impl Walker<'_> {
                 switches,
                 tail_calls,
                 noreturn: self.noreturn.contains(&entry),
+                returns,
             },
             calls,
             consts,
@@ -534,6 +538,7 @@ mod tests {
             switches: BTreeMap::new(),
             tail_calls,
             noreturn: false,
+            returns: true,
         }
     }
 

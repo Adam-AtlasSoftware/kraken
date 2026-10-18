@@ -543,6 +543,7 @@ mod tests {
             signature: Some("void Main(string[] args)".into()),
             fn_hash: None,
             completeness: Completeness::Complete,
+            mangled: None,
         };
         let f = a.apply_summary(f, MVID);
         assert_eq!(f.name, "App.Program.Run");

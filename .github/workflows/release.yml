@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo xtask notices
-          git diff --exit-code THIRD-PARTY-NOTICES.md
+          git diff --exit-code THIRD-PARTY-NOTICES.md crates/engine-native-sys/licenses
 
       - name: Build the documentation
         run: |
@@ -173,11 +173,33 @@ jobs:
           name: assets
           path: dist-assets
 
+      # Linux links the native engine's decompiler (Ghidra's C++ sources, pinned and SHA-256
+      # checked by `cargo xtask native-src`) and ships its worker; their license and notice texts
+      # are in THIRD-PARTY-NOTICES.md and licenses/ (package.sh checks both).
+      - name: Cache the pinned Ghidra sources
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kraken-dev/ghidra-src
+          key: kraken-dev-ghidra-src-${{ hashFiles('xtask/src/native_src.rs') }}
+
+      - name: Fetch the native engine sources
+        if: runner.os == 'Linux'
+        run: cargo xtask native-src
+
       - name: Build release binaries
-        run: cargo build --release --locked -p kraken-cli -p krakend -p kraken-gui
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo build --release --locked -p kraken-cli -p krakend -p kraken-gui -p engine-native \
+              --features engine-native-sys/require-native
+          else
+            cargo build --release --locked -p kraken-cli -p krakend -p kraken-gui
+          fi
 
       - name: Package
         env:
+          KRAKEN_REQUIRE_NATIVE: ${{ runner.os == 'Linux' && '1' || '0' }}
           VERSION: ${{ needs.version.outputs.version }}
           TARGET: ${{ matrix.target }}
           KRAKEN_GHIDRA_JAR: dist-assets/kraken-ghidra.jar

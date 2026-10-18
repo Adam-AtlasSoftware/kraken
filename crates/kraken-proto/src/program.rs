@@ -360,6 +360,10 @@ pub struct SymbolEntry {
     pub library: Option<String>,
     /// What the symbol names.
     pub kind: SymbolKind,
+    /// The mangled name as in the binary when `name` is a demangled one (`_Znwm` for
+    /// `operator.new`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mangled: Option<String>,
 }
 
 #[cfg(test)]

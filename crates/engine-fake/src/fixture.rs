@@ -240,6 +240,7 @@ fn split(fx: &mut FixtureFile, entry: u64) {
             signature: Some(format!("void {name}(void)")),
             fn_hash: hash,
             completeness: Completeness::Complete,
+            mangled: None,
         },
         stub_decompile(&locator, &name),
     );

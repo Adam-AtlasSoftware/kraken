@@ -320,6 +320,7 @@ async fn hostile_listing_text_is_sanitised_and_untrusted() {
         address: None,
         library: Some("li\u{202e}b".into()),
         kind: SymbolKind::Function,
+        mangled: None,
     }]);
     let env = Setup::new(fx).start().await;
     let u = user();
@@ -689,6 +690,7 @@ async fn imports_and_exports() {
         address: address.map(Hex64),
         library: lib.map(str::to_string),
         kind: SymbolKind::Function,
+        mangled: None,
     };
     fx.imports = Some(vec![
         sym("zeta", None, Some("libz.so")),
