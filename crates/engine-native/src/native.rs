@@ -224,6 +224,16 @@ impl Mutator for NativeEngine {
             w => w.save(cancel).await
         )
     }
+
+    async fn current_checkpoint(
+        &self,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Option<kraken_engine::Watermark>> {
+        route!(self,
+            l => l.current_checkpoint(cancel).await,
+            w => w.checkpoint(cancel).await
+        )
+    }
 }
 
 #[async_trait]

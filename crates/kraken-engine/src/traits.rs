@@ -122,6 +122,16 @@ pub trait Mutator: Send + Sync {
     ) -> Result<(), EngineRejected>;
     /// Persists applied ops and returns the checkpoint that covers them.
     async fn save(&self, cancel: &CancellationToken) -> EngineResult<Watermark>;
+    /// The checkpoint of the state the engine holds now, as [`save`](Self::save) would return
+    /// it, without saving. Right after an open it names the saved state the engine loaded, which
+    /// the host compares with the push watermark of the edit log to find a stale engine state.
+    /// `None` (the default) when the engine cannot tell.
+    async fn current_checkpoint(
+        &self,
+        _cancel: &CancellationToken,
+    ) -> EngineResult<Option<Watermark>> {
+        Ok(None)
+    }
 }
 
 /// Reads the memory layout and raw bytes.

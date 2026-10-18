@@ -4,13 +4,14 @@
 //! truth for annotations), `ghidra/` (the engine's private project directory, a rebuildable cache)
 //! and `meta.json` (binary path and hash plus the cache epoch).
 
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use async_trait::async_trait;
 use kraken_engine::{CancellationToken, LoaderSpec, ProgramInfo, SharedEngine, unsupported};
-use kraken_model::{EntryId, StateValue, Store};
+use kraken_model::{EntryId, LogEntryView, StateValue, Store};
 use kraken_proto::{Anchor, CommentKind, ErrorCode, LogOp, OpenStage, ProtoError, VersionedLogOp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use sha2::{Digest, Sha256};
 use crate::commands::RewriteBackend;
 use crate::jobs::{JobId, JobTable};
 use crate::opening::{OpenOptions, OpenTracker};
+use crate::project_lock::{self, ProjectLock};
 
 /// File name of the model database inside a project directory.
 pub const DB_FILE: &str = "project.kraken.sqlite";
@@ -333,6 +335,41 @@ pub struct ReplayReport {
     pub stopped: bool,
 }
 
+/// What [`Session::open_project`] did about an engine whose saved state was behind the log
+/// (another process saved over it, or it was restored from an older copy).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResyncReport {
+    /// The checkpoint the log's push watermark recorded; `None` when none was stored.
+    pub expected: Option<String>,
+    /// The checkpoint of the state the engine loaded.
+    pub found: String,
+    /// Pushed log entries applied to the engine again.
+    pub reapplied: u64,
+    /// Entries the engine refused this time (they stay in the log, marked as they were).
+    pub failed: Vec<EntryId>,
+}
+
+impl ResyncReport {
+    /// One line for people: what was found and what was done.
+    pub fn message(&self) -> String {
+        let mut m = format!(
+            "the engine's saved state did not match the edit log (another process may have saved \
+             over it); {} change(s) from the log were applied again",
+            self.reapplied
+        );
+        if !self.failed.is_empty() {
+            let ids: Vec<String> = self.failed.iter().map(|i| i.0.to_string()).collect();
+            m.push_str(&format!(
+                ", {} could not be (entries {}); `kraken rebuild` replays the log on a fresh \
+                 engine",
+                self.failed.len(),
+                ids.join(", ")
+            ));
+        }
+        m
+    }
+}
+
 /// An open project: engine, model database and analysis state.
 pub struct Project {
     dir: PathBuf,
@@ -346,6 +383,13 @@ pub struct Project {
     epoch_mismatch: Vec<String>,
     /// Auto-applied agent edits counted per quota key (see `CallContext::quota_key`).
     quota: Mutex<std::collections::HashMap<String, u64>>,
+    /// Applied log entries this engine holds (or refused): entries another session pushed to
+    /// its own engine are applied here too before the next save, so no save drops them.
+    known: Mutex<BTreeSet<u64>>,
+    /// What the open did about a stale engine state, if anything.
+    resync: Mutex<Option<ResyncReport>>,
+    /// This process's lock on the project directory, held while the project is open.
+    _lock: ProjectLock,
 }
 
 impl std::fmt::Debug for Project {
@@ -403,6 +447,12 @@ impl Project {
     /// and a `rebuild` is advised); empty when the cache is current.
     pub fn epoch_mismatch(&self) -> &[String] {
         &self.epoch_mismatch
+    }
+
+    /// What the open did about an engine whose saved state was behind the log; `None` when
+    /// the state matched (or the engine cannot tell).
+    pub fn resync_report(&self) -> Option<ResyncReport> {
+        lock(&self.resync).clone()
     }
 
     pub(crate) fn analysis(&self) -> AnalysisState {
@@ -487,6 +537,7 @@ impl Project {
             match mutator.apply(&entry.op, cancel).await {
                 Ok(()) => {
                     self.with_store(move |s| s.mark_pushed(id)).await?;
+                    lock(&self.known).insert(id.0);
                     report.pushed.push(id);
                 }
                 Err(rej) if rej.code == ErrorCode::Cancelled => {
@@ -497,14 +548,13 @@ impl Project {
                     let reason = rej.reason.clone();
                     self.with_store(move |s| s.mark_engine_rejected(id, &reason))
                         .await?;
+                    lock(&self.known).insert(id.0);
                     report.rejected.push((id, rej.into()));
                 }
             }
         }
-        if self.config.save_after_push
-            && let Some(last) = report.pushed.last().copied()
-        {
-            self.checkpoint(last, cancel).await?;
+        if self.config.save_after_push && !report.pushed.is_empty() {
+            self.checkpoint(cancel).await?;
         }
         Ok(report)
     }
@@ -551,18 +601,133 @@ impl Project {
         }
     }
 
-    /// Saves the engine and records `last` as the push watermark saved with it.
-    pub(crate) async fn checkpoint(
-        &self,
-        last: EntryId,
-        cancel: &CancellationToken,
-    ) -> Result<(), ProtoError> {
+    /// Saves the engine and records the push watermark saved with it: the newest log entry the
+    /// engine holds and the engine's checkpoint. Entries another session pushed to its own
+    /// engine are applied first, so the saved state never drops them. Callers hold the write
+    /// lock.
+    pub(crate) async fn checkpoint(&self, cancel: &CancellationToken) -> Result<(), ProtoError> {
         let engine = self.engine();
         let mutator = engine.mutator().ok_or_else(|| unsupported("mutator"))?;
+        self.catch_up(cancel).await?;
         let mark = mutator.save(cancel).await?;
+        let last = EntryId(lock(&self.known).last().copied().unwrap_or(0));
         self.with_store(move |s| s.set_watermark(last, &mark.0))
             .await
     }
+
+    /// Saves the engine and the push watermark (see [`checkpoint`](Self::checkpoint)) under the
+    /// write lock. Hosts call this when a project closes or a command finishes. An engine that
+    /// takes no edits has nothing to save.
+    pub async fn save(&self, cancel: &CancellationToken) -> Result<(), ProtoError> {
+        if self.engine().mutator().is_none() {
+            return Ok(());
+        }
+        let _guard = self.write_lock.lock().await;
+        self.checkpoint(cancel).await
+    }
+
+    /// Records that the engine now holds every settled log entry (after a rebuild replayed
+    /// them all on a fresh engine).
+    pub(crate) async fn mark_all_known(&self) -> Result<(), ProtoError> {
+        let settled = self.with_store(|s| s.settled_entry_ids()).await?;
+        let mut known = lock(&self.known);
+        known.clear();
+        known.extend(settled.iter().map(|id| id.0));
+        Ok(())
+    }
+
+    /// Applies the pushed log entries this engine does not hold: those another session (in this
+    /// process, or a process that ignored the project lock) pushed to its own engine.
+    async fn catch_up(&self, cancel: &CancellationToken) -> Result<(), ProtoError> {
+        let pushed = self.with_store(|s| s.pushed_entry_ids()).await?;
+        let missing: Vec<EntryId> = {
+            let known = lock(&self.known);
+            pushed
+                .into_iter()
+                .filter(|id| !known.contains(&id.0))
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let mutator = engine.mutator().ok_or_else(|| unsupported("mutator"))?;
+        for id in missing {
+            let entry = self.with_store(move |s| s.get_entry(id)).await?;
+            match mutator.apply(&authoritative(&entry), cancel).await {
+                Err(rej) if rej.code == ErrorCode::Cancelled => return Err(rej.into()),
+                // a refusal leaves the entry as the log has it; a rebuild replays it afresh
+                _ => {
+                    lock(&self.known).insert(id.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The watermark's checkpoint and the engine's when the engine reports a checkpoint for
+    /// the state it loaded that differs from the one the push watermark recorded (or no
+    /// watermark was stored although entries were pushed): its saved state is behind the log.
+    /// `None` when they agree or the engine cannot tell.
+    async fn stale_engine_state(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Option<(Option<String>, String)>, ProtoError> {
+        let engine = self.engine();
+        let Some(mutator) = engine.mutator() else {
+            return Ok(None);
+        };
+        let Some(found) = mutator.current_checkpoint(cancel).await? else {
+            return Ok(None);
+        };
+        let (watermark, pushed) = self
+            .with_store(|s| Ok((s.watermark()?, !s.pushed_entry_ids()?.is_empty())))
+            .await?;
+        let expected = watermark.map(|w| w.engine_checkpoint);
+        let stale = match &expected {
+            Some(e) => *e != found.0,
+            None => pushed,
+        };
+        Ok(stale.then_some((expected, found.0)))
+    }
+
+    /// Applies every pushed log entry to the engine again, in log order (pushes are
+    /// idempotent), and saves. The log is the source of truth: nothing in it changes, and an
+    /// entry the engine refuses is only reported. Callers hold the write lock.
+    async fn resync(
+        &self,
+        expected: Option<String>,
+        found: String,
+        cancel: &CancellationToken,
+    ) -> Result<ResyncReport, ProtoError> {
+        let engine = self.engine();
+        let mutator = engine.mutator().ok_or_else(|| unsupported("mutator"))?;
+        let entries = self.with_store(|s| s.pushed_entries()).await?;
+        let mut report = ResyncReport {
+            expected,
+            found,
+            ..ResyncReport::default()
+        };
+        for entry in &entries {
+            match mutator.apply(&authoritative(entry), cancel).await {
+                Ok(()) => report.reapplied += 1,
+                Err(rej) if rej.code == ErrorCode::Cancelled => return Err(rej.into()),
+                Err(_) => report.failed.push(entry.id),
+            }
+        }
+        self.checkpoint(cancel).await?;
+        Ok(report)
+    }
+}
+
+/// The op of a log entry as the log has it: a rename does not depend on the name the engine
+/// shows now, since the log, not the engine's state, decides which name is current.
+fn authoritative(entry: &LogEntryView) -> VersionedLogOp {
+    let mut op = entry.op.clone();
+    if let LogOp::Rename { old_name, .. } = &mut op.op {
+        *old_name = None;
+    }
+    op
 }
 
 /// The op that sets a managed entity's state entry again: `managed:<mvid>:0x<token>:name` or
@@ -760,10 +925,7 @@ impl Session {
             .unwrap_or_else(PoisonError::into_inner)
             .take()?;
         self.jobs.cancel_all();
-        let _guard = project.write_lock.lock().await;
-        if let Some(m) = project.engine().mutator() {
-            let _ = m.save(&CancellationToken::new()).await;
-        }
+        let _ = project.save(&CancellationToken::new()).await;
         Some(project.dir().to_path_buf())
     }
 
@@ -848,6 +1010,10 @@ impl Session {
             })
             .await?;
         }
+        let project_lock = {
+            let dir = dir.clone();
+            blocking(move || project_lock::acquire(&dir)).await?
+        };
         let binary_hash = {
             let p = binary_path.clone();
             blocking(move || hash_file(&p)).await?
@@ -887,7 +1053,14 @@ impl Session {
             let (dir, meta) = (dir.clone(), meta.clone());
             blocking(move || write_meta(&dir, &meta)).await?;
         }
-        let project = Arc::new(self.build_project(dir, meta, engine, program, store, Vec::new()));
+        let project = Arc::new(self.build_project(
+            (dir, project_lock),
+            meta,
+            engine,
+            program,
+            store,
+            Vec::new(),
+        ));
         self.attach(project.clone());
         Ok(project)
     }
@@ -933,6 +1106,12 @@ impl Session {
         t.stage(OpenStage::Prepare, "Checking the file");
         let binary_path = PathBuf::from(&meta.binary_path);
         check_engine_dir(&meta.engine_dir)?;
+        // Before the engine starts: a second process must not load (and later save) a state
+        // the first one is changing.
+        let project_lock = {
+            let dir = dir.clone();
+            blocking(move || project_lock::acquire(&dir)).await?
+        };
         let current_hash = {
             let p = binary_path.clone();
             blocking(move || {
@@ -977,7 +1156,15 @@ impl Session {
         if now.binary_hash != meta.epoch.binary_hash {
             mismatch.push("binary_hash".to_string());
         }
-        let project = Arc::new(self.build_project(dir, meta, engine, program, store, mismatch));
+        let project = Arc::new(self.build_project(
+            (dir, project_lock),
+            meta,
+            engine,
+            program,
+            store,
+            mismatch,
+        ));
+        project.mark_all_known().await?;
         self.attach(project.clone());
         t.stage(OpenStage::Replay, "Restoring your changes");
         if project.meta().engine_kind == EngineKind::Dotnet {
@@ -987,15 +1174,24 @@ impl Session {
         }
         if project.epoch_mismatch().is_empty() {
             let _guard = project.write_lock.lock().await;
+            let cancel = CancellationToken::new();
+            // An engine state saved over by another process, or restored from an older copy,
+            // lacks entries the log marks pushed: apply them again. A failure here leaves the
+            // project usable; `rebuild` is the full repair.
+            if let Ok(Some((expected, found))) = project.stale_engine_state(&cancel).await
+                && let Ok(report) = project.resync(expected, found, &cancel).await
+            {
+                *lock(&project.resync) = Some(report);
+            }
             // Entries left pending by an earlier session are retried; failures stay pending.
-            let _ = project.flush_pending(&CancellationToken::new()).await;
+            let _ = project.flush_pending(&cancel).await;
         }
         Ok(project)
     }
 
     fn build_project(
         &self,
-        dir: PathBuf,
+        (dir, project_lock): (PathBuf, ProjectLock),
         meta: ProjectMeta,
         engine: SharedEngine,
         program: ProgramInfo,
@@ -1023,6 +1219,9 @@ impl Session {
             }),
             epoch_mismatch,
             quota: Mutex::default(),
+            known: Mutex::default(),
+            resync: Mutex::default(),
+            _lock: project_lock,
         }
     }
 }

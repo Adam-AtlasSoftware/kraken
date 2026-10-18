@@ -4911,6 +4911,13 @@ Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.
       "description": "Engine build identifier (includes the Ghidra version).",
       "type": "string"
     },
+    "engine_resync": {
+      "description": "Set when the open found the engine's saved state behind the edit log (another process\nsaved over it) and applied the log's changes again: what was found and done.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "epoch": {
       "$ref": "#/$defs/Epoch",
       "description": "Epoch recorded for the engine cache."
@@ -5272,6 +5279,13 @@ Arguments: none.
     "engine_build": {
       "description": "Engine build identifier (includes the Ghidra version).",
       "type": "string"
+    },
+    "engine_resync": {
+      "description": "Set when the open found the engine's saved state behind the edit log (another process\nsaved over it) and applied the log's changes again: what was found and done.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "epoch": {
       "$ref": "#/$defs/Epoch",
@@ -5638,6 +5652,13 @@ Opens the project database and the engine cache. `epoch_stale` means the engine 
     "engine_build": {
       "description": "Engine build identifier (includes the Ghidra version).",
       "type": "string"
+    },
+    "engine_resync": {
+      "description": "Set when the open found the engine's saved state behind the edit log (another process\nsaved over it) and applied the log's changes again: what was found and done.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "epoch": {
       "$ref": "#/$defs/Epoch",

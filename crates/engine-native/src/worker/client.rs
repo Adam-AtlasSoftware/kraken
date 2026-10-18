@@ -458,6 +458,16 @@ impl WorkerEngine {
             .await
     }
 
+    /// The checkpoint of the worker's journal, as `save` would return it, without saving.
+    pub(crate) async fn checkpoint(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Watermark>, ProtoError> {
+        let _gate = self.edit_gate.lock().await;
+        self.call("checkpoint", json!({}), self.request_limits(), cancel)
+            .await
+    }
+
     /// Sends one request to `live` under the watchdog.
     async fn exec(
         &self,

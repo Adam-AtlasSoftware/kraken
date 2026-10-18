@@ -514,6 +514,44 @@ impl Store {
         )
     }
 
+    /// Applied entries the engine accepted, oldest first: what an engine must hold to agree with
+    /// the log.
+    pub fn pushed_entries(&self) -> Result<Vec<LogEntryView>> {
+        query_entries(
+            &self.conn,
+            "WHERE e.status = 'applied' AND e.sync = 'pushed' ORDER BY e.id",
+            &[],
+        )
+    }
+
+    /// Ids of the applied entries that are no longer pending (pushed or refused by the engine).
+    pub fn settled_entry_ids(&self) -> Result<Vec<EntryId>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT id FROM entries WHERE status = 'applied' AND sync != 'pending' ORDER BY id",
+            )
+            .map_err(db)?;
+        stmt.query_map([], |r| r.get::<_, i64>(0))
+            .map_err(db)?
+            .map(|r| r.map(|id| EntryId(id as u64)).map_err(db))
+            .collect()
+    }
+
+    /// Ids of the applied entries the engine accepted, oldest first.
+    pub fn pushed_entry_ids(&self) -> Result<Vec<EntryId>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT id FROM entries WHERE status = 'applied' AND sync = 'pushed' ORDER BY id",
+            )
+            .map_err(db)?;
+        stmt.query_map([], |r| r.get::<_, i64>(0))
+            .map_err(db)?
+            .map(|r| r.map(|id| EntryId(id as u64)).map_err(db))
+            .collect()
+    }
+
     /// Marks an applied entry as pushed to the engine; idempotent.
     pub fn mark_pushed(&mut self, id: EntryId) -> Result<()> {
         self.set_sync(id, "pushed", None)

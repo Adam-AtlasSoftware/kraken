@@ -29,6 +29,7 @@ kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
 kraken-rewrite = { path = "../kraken-rewrite", version = "0.0.0" }
+krakend = { path = "../krakend", version = "0.0.0", default-features = false }
 serde_json.workspace = true
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "signal"] }
 tracing = "0.1"

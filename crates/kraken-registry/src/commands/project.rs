@@ -73,6 +73,10 @@ pub struct ProjectInfoOut {
     pub epoch_stale: bool,
     /// Which epoch fields differ.
     pub stale_fields: Vec<String>,
+    /// Set when the open found the engine's saved state behind the edit log (another process
+    /// saved over it) and applied the log's changes again: what was found and done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_resync: Option<String>,
     /// Analysis state.
     pub analysis: AnalysisView,
     /// Log entries waiting to be pushed to the engine.
@@ -118,6 +122,7 @@ pub(crate) async fn info_of(project: &Project) -> Result<ProjectInfoOut, ProtoEr
         epoch: meta.epoch.clone(),
         epoch_stale: !project.epoch_mismatch().is_empty(),
         stale_fields: project.epoch_mismatch().to_vec(),
+        engine_resync: project.resync_report().map(|r| r.message()),
         analysis: AnalysisView {
             phase: a.phase,
             function_count: a.function_count,

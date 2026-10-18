@@ -17,6 +17,7 @@ pub mod context;
 pub mod jobs;
 mod mutate;
 mod opening;
+pub mod project_lock;
 pub mod session;
 pub mod trust;
 pub mod validate;
@@ -32,5 +33,5 @@ pub use jobs::{JobId, JobProgress, JobReporter, JobSnapshot, JobStatus, JobTable
 pub use opening::OpenOptions;
 pub use session::{
     AnalysisPhase, EngineChoice, EngineFactory, EngineKind, EngineSelection, EngineStatus, Epoch,
-    Project, ProjectMeta, ReplayReport, Session, SessionConfig,
+    Project, ProjectMeta, ReplayReport, ResyncReport, Session, SessionConfig,
 };

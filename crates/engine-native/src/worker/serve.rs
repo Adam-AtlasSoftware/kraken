@@ -273,6 +273,7 @@ async fn dispatch(
             Ok(Value::Null)
         }
         "save" => out(e.save(c).await?),
+        "checkpoint" => out(e.current_checkpoint(c).await?),
         "stats" => out(e.stats()?),
         "lift" => {
             let ops = e.lift(arg(params, "start")?, arg(params, "end")?)?;

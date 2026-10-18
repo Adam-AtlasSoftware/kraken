@@ -67,6 +67,26 @@ impl ManagedFactory for FakeFactory {
     async fn shutdown(&self) {}
 }
 
+/// Fake engines that keep the ops they hold in the project's engine directory, like the native
+/// engine: a reopen shows what the last save had.
+pub struct StatefulFactory;
+
+#[async_trait]
+impl EngineFactory for StatefulFactory {
+    async fn create(&self, engine_dir: &Path) -> Result<SharedEngine, ProtoError> {
+        Ok(Arc::new(
+            FakeEngine::new(default_named())
+                .with_stage_delay(std::time::Duration::ZERO)
+                .with_state_dir(engine_dir),
+        ))
+    }
+}
+
+#[async_trait]
+impl ManagedFactory for StatefulFactory {
+    async fn shutdown(&self) {}
+}
+
 pub struct Rig {
     pub factory: Arc<FakeFactory>,
     pub session: Arc<Session>,

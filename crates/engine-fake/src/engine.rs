@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -51,7 +51,11 @@ pub struct FakeEngine {
     stage_delay: Duration,
     open_delay: Duration,
     open_functions: Option<u64>,
+    state_dir: Option<PathBuf>,
 }
+
+/// File in the state directory that holds the saved ops of an engine with one.
+pub const FAKE_STATE_FILE: &str = "fake-state.json";
 
 fn cancelled() -> ProtoError {
     ProtoError::new(ErrorCode::Cancelled, "operation cancelled")
@@ -109,6 +113,7 @@ impl FakeEngine {
             stage_delay: DEFAULT_STAGE_DELAY,
             open_delay: Duration::ZERO,
             open_functions: None,
+            state_dir: None,
         }
     }
 
@@ -145,6 +150,14 @@ impl FakeEngine {
     /// of the fixture's (screenshots of a big program opening).
     pub fn with_open_functions(mut self, n: u64) -> Self {
         self.open_functions = Some(n);
+        self
+    }
+
+    /// Keeps the applied ops in `dir` like a real engine keeps its state: `save` writes them to
+    /// [`FAKE_STATE_FILE`] and opening a binary applies the saved ones again. The checkpoint then
+    /// names the ops (their count and a hash), and [`Mutator::current_checkpoint`] reports it.
+    pub fn with_state_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.state_dir = Some(dir.into());
         self
     }
 
@@ -232,6 +245,18 @@ impl Loader for FakeEngine {
         }
         if let Some(b) = spec.base {
             info.base = b;
+        }
+        if let Some(dir) = &self.state_dir {
+            let saved = read_saved(dir)?;
+            let mut st = self.lock();
+            st.applied.clear();
+            for op in saved {
+                // like a real engine, an op that no longer applies is dropped from the state
+                if st.apply_op(&op.op).is_ok() {
+                    st.applied.push(op);
+                }
+            }
+            st.saved = st.applied.len();
         }
         Ok(info)
     }
@@ -808,6 +833,60 @@ impl Mutator for FakeEngine {
         check(cancel)?;
         let mut st = self.lock();
         st.saved = st.applied.len();
-        Ok(Watermark(format!("fake-{}", st.saved)))
+        let Some(dir) = &self.state_dir else {
+            return Ok(Watermark(format!("fake-{}", st.saved)));
+        };
+        let json = serde_json::to_string(&st.applied)
+            .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))?;
+        let path = dir.join(FAKE_STATE_FILE);
+        std::fs::write(&path, json).map_err(|e| {
+            ProtoError::new(
+                ErrorCode::Internal,
+                format!("cannot write {}: {e}", path.display()),
+            )
+        })?;
+        Ok(ops_checkpoint(&st.applied))
+    }
+
+    async fn current_checkpoint(
+        &self,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Option<Watermark>> {
+        check(cancel)?;
+        Ok(self
+            .state_dir
+            .as_ref()
+            .map(|_| ops_checkpoint(&self.lock().applied)))
+    }
+}
+
+/// Names a list of ops: their count and an FNV-1a hash of their JSON.
+fn ops_checkpoint(ops: &[VersionedLogOp]) -> Watermark {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for op in ops {
+        for b in serde_json::to_vec(op).unwrap_or_default() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        h ^= u64::from(b'\n');
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    Watermark(format!("fake-{}-{h:016x}", ops.len()))
+}
+
+fn read_saved(dir: &Path) -> EngineResult<Vec<VersionedLogOp>> {
+    let path = dir.join(FAKE_STATE_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| {
+            ProtoError::new(
+                ErrorCode::Internal,
+                format!("{} is damaged: {e}", path.display()),
+            )
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(ProtoError::new(
+            ErrorCode::Internal,
+            format!("cannot read {}: {e}", path.display()),
+        )),
     }
 }

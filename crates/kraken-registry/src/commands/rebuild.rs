@@ -280,6 +280,7 @@ async fn rebuild(
     let functions_before = before.len() as u64;
     let new_epoch = epoch_for(&engine, &meta.binary_sha256);
     project.set_engine(engine, program);
+    project.mark_all_known().await?;
     project.update_meta(|m| {
         m.engine_dir = rel.clone();
         m.epoch = new_epoch;

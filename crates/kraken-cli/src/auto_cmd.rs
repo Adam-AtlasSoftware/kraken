@@ -4,16 +4,25 @@
 //! Steps print as progress lines on stderr; a short summary goes to stdout (`--json`: one object).
 //! The person running the command is the one deciding, so `--accept-verified` may accept the
 //! functions that passed their own test; without it, accepting stays a separate step.
+//!
+//! A terminal agent edits through its own `kraken mcp` process. That process and this one must
+//! share one session, or each holds its own engine and the one that saves last drops the other's
+//! edits. Through the daemon they do; without one (`--no-daemon`, or no `krakend` to connect to)
+//! this command runs a private daemon of its own for the run, in this process, with a private
+//! runtime directory, and points the agent's MCP server at it.
 
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::builder::PossibleValuesParser;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use kraken_agent::ChatProvider;
 use kraken_assist::{AutomateGoal, Task, TaskResult};
-use kraken_host::backend::CommandBackend;
+use kraken_host::backend::{CommandBackend, DaemonBackend};
+use kraken_host::daemon::DaemonClient;
+use kraken_ipc::{ClientKind, RuntimeDir, SystemClock};
 use kraken_proto::{ErrorCode, ProtoError};
 use serde_json::{Value, json};
 
@@ -151,6 +160,74 @@ fn step(err: &mut dyn Write, n: usize, total: usize, what: &str) {
     emit(err, &format!("[{n}/{total}] {what}\n"));
 }
 
+/// A daemon this run starts in its own process so that a terminal agent's MCP server shares the
+/// run's session; stopped (which saves the project) when the run ends.
+pub(crate) struct PrivateDaemon {
+    daemon: krakend::Daemon,
+    dir: RuntimeDir,
+}
+
+impl PrivateDaemon {
+    async fn start(env: &CliEnv) -> Result<(PrivateDaemon, DaemonClient), ProtoError> {
+        let refuse = |why: String| {
+            ProtoError::new(
+                ErrorCode::Unsupported,
+                format!(
+                    "--names with a terminal agent needs one session that the agent's own `kraken \
+                     mcp` shares with this run, and starting a private daemon for it failed: \
+                     {why}. Start krakend (`kraken daemon start`) and run without --no-daemon, or \
+                     configure an AI model provider instead"
+                ),
+            )
+        };
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let path: PathBuf =
+            std::env::temp_dir().join(format!("kraken-auto-{}-{nanos:08x}", std::process::id()));
+        let dir = RuntimeDir::from_dir(path).map_err(|e| refuse(e.to_string()))?;
+        let daemon = krakend::start_with(
+            krakend::DaemonOptions {
+                runtime_dir: dir.clone(),
+                factory: env.factory.clone(),
+                registry: env.registry.clone(),
+                settings: env.config.daemon.clone(),
+                session_config: env.config.session_config(),
+                clock: Arc::new(SystemClock::new()),
+                poll: Duration::from_millis(100),
+                build: crate::app::BUILD.into(),
+            },
+            env.rewrite.clone(),
+        )
+        .map_err(|e| refuse(e.to_string()))?;
+        let me = PrivateDaemon { daemon, dir };
+        match DaemonClient::connect_running(&me.dir, ClientKind::Cli, crate::app::BUILD).await {
+            Ok(Some(c)) => Ok((me, c)),
+            Ok(None) => {
+                me.stop().await;
+                Err(refuse("it did not accept connections".into()))
+            }
+            Err(e) => {
+                me.stop().await;
+                Err(refuse(e.to_string()))
+            }
+        }
+    }
+
+    /// The runtime directory the agent's MCP server connects through.
+    fn runtime_dir(&self) -> &Path {
+        self.dir.path()
+    }
+
+    /// Stops the daemon: it saves and closes the project, then removes its runtime files.
+    pub(crate) async fn stop(self) {
+        self.daemon.shutdown();
+        self.daemon.wait().await;
+        let _ = std::fs::remove_dir_all(self.dir.path());
+    }
+}
+
 pub(crate) async fn run_auto(
     env: &CliEnv,
     sm: &ArgMatches,
@@ -159,7 +236,11 @@ pub(crate) async fn run_auto(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    let result = auto(env, sm, json_out, provider, out, err).await;
+    let mut private = None;
+    let result = auto(env, sm, json_out, provider, &mut private, out, err).await;
+    if let Some(p) = private {
+        p.stop().await;
+    }
     env.factory.shutdown().await;
     match result {
         Ok(code) => code,
@@ -185,6 +266,7 @@ async fn auto(
     sm: &ArgMatches,
     json_out: bool,
     provider: Option<Arc<dyn ChatProvider>>,
+    private: &mut Option<PrivateDaemon>,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<i32, ProtoError> {
@@ -233,7 +315,23 @@ async fn auto(
         .to_string();
 
     let ctx = env.context(sm.get_flag("yes"));
-    let (backend, session) = env.backend(Some(&dir), env.no_daemon(sm), err).await?;
+    let (mut backend, mut session) = env.backend(Some(&dir), env.no_daemon(sm), err).await?;
+    if session.is_some() && matches!(selection, Some(Selection::Agent(_))) {
+        // Running in this process, a terminal agent's own MCP server would open the project in
+        // a second session: give both one session through a daemon of this run.
+        let (daemon, client) = PrivateDaemon::start(env).await?;
+        emit(
+            err,
+            "    no daemon to share the project with the agent: running a private one for this run\n",
+        );
+        backend = Arc::new(DaemonBackend::new(
+            Arc::new(client),
+            env.registry.clone(),
+            Some(PathBuf::from(&dir)),
+        ));
+        session = None;
+        *private = Some(daemon);
+    }
 
     n += 1;
     step(err, n, total, "creating the project and analysing it");
@@ -275,6 +373,7 @@ async fn auto(
             sm,
             Some(&dir),
             Some((backend.clone(), session.clone())),
+            private.as_ref().map(PrivateDaemon::runtime_dir),
             selection,
             task,
             false,

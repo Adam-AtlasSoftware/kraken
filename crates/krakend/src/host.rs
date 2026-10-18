@@ -410,6 +410,10 @@ impl SessionHost {
                 project.epoch_mismatch().join(", ")
             ));
         }
+        if let Some(r) = project.resync_report() {
+            tracing::warn!(project = %e.dir.display(), "{}", r.message());
+            warnings.push(r.message());
+        }
         Ok(warnings)
     }
 
@@ -442,11 +446,10 @@ impl SessionHost {
     /// Cancels the session's jobs, saves its engine, stops its sidecars and announces the close.
     async fn close_entry(&self, entry: &Arc<SessionEntry>, reason: &str) {
         entry.session.jobs().cancel_all();
-        if let Ok(engine) = entry.session.engine()
-            && let Some(m) = engine.mutator()
-        {
+        if let Ok(project) = entry.session.project() {
             let _ =
-                tokio::time::timeout(CLOSE_SAVE_TIMEOUT, m.save(&CancellationToken::new())).await;
+                tokio::time::timeout(CLOSE_SAVE_TIMEOUT, project.save(&CancellationToken::new()))
+                    .await;
         }
         self.inner.factory.shutdown_under(&entry.dir).await;
         if entry.key != entry.dir {
@@ -562,9 +565,8 @@ impl SessionHost {
         let entry = entry.clone();
         tokio::spawn(async move {
             let _q = entry.lock_queue().await;
-            if let Ok(engine) = entry.session.engine()
-                && let Some(m) = engine.mutator()
-                && let Err(e) = m.save(&CancellationToken::new()).await
+            if let Ok(project) = entry.session.project()
+                && let Err(e) = project.save(&CancellationToken::new()).await
             {
                 tracing::warn!(error = %e.message, "saving after a finished job failed");
             }

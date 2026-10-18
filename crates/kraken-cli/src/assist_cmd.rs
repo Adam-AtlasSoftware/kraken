@@ -45,11 +45,15 @@ pub(crate) fn selection_from_config(env: &CliEnv) -> Result<Selection, ProtoErro
 
 /// Builds the terminal-agent backend for `choice` on the project directory `project`, after the
 /// one-time notice.
+/// The terminal agent backend. Its MCP server runs `kraken mcp`: through the daemon when this
+/// command uses one, through the daemon in `private_daemon` (a runtime directory) when given,
+/// else with its own in-process session.
 pub(crate) fn agent_backend(
     env: &CliEnv,
     sm: &ArgMatches,
     choice: &AgentChoice,
     project: Option<&str>,
+    private_daemon: Option<&std::path::Path>,
     err: &mut dyn Write,
 ) -> Result<Arc<dyn AssistBackend>, ProtoError> {
     let dir = match project {
@@ -74,25 +78,31 @@ pub(crate) fn agent_backend(
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .ok_or_else(|| ProtoError::new(ErrorCode::Internal, "cannot find the kraken executable"))?;
-    let use_daemon = !env.no_daemon(sm)
-        && env.session.is_none()
-        && !matches!(env.daemon, crate::app::DaemonMode::Direct);
+    let use_daemon = private_daemon.is_some()
+        || (!env.no_daemon(sm)
+            && env.session.is_none()
+            && !matches!(env.daemon, crate::app::DaemonMode::Direct));
     let mut mcp = if use_daemon {
         McpServerConfig::daemon(exe, Some(&dir))
     } else {
         McpServerConfig::project(exe, &dir)
     };
-    for key in ["KRAKEN_RUNTIME_DIR", "KRAKEN_NO_DAEMON"] {
-        if let Some(v) = env.var(key) {
-            mcp = mcp.with_env(key, v);
+    if let Some(runtime) = private_daemon {
+        mcp = mcp.with_env("KRAKEN_RUNTIME_DIR", runtime.to_string_lossy());
+    } else {
+        for key in ["KRAKEN_RUNTIME_DIR", "KRAKEN_NO_DAEMON"] {
+            if let Some(v) = env.var(key) {
+                mcp = mcp.with_env(key, v);
+            }
         }
-    }
-    // The agent is not given `XDG_RUNTIME_DIR`, so its MCP server is told where the daemon is.
-    if use_daemon
-        && env.var("KRAKEN_RUNTIME_DIR").is_none()
-        && let Some((k, v)) = kraken_host::daemon::mcp_runtime_env()
-    {
-        mcp = mcp.with_env(k, v);
+        // The agent is not given `XDG_RUNTIME_DIR`, so its MCP server is told where the daemon
+        // is.
+        if use_daemon
+            && env.var("KRAKEN_RUNTIME_DIR").is_none()
+            && let Some((k, v)) = kraken_host::daemon::mcp_runtime_env()
+        {
+            mcp = mcp.with_env(k, v);
+        }
     }
     let settings = plan_agent(&resolver, &profiles, choice, &dir, mcp).map_err(|e| {
         let code = match e {
@@ -180,6 +190,7 @@ pub(crate) async fn run_assist(
         sm,
         project.as_deref(),
         None,
+        None,
         selection,
         task,
         json_out,
@@ -205,6 +216,7 @@ pub(crate) async fn execute_task(
     sm: &ArgMatches,
     project: Option<&str>,
     shared: Option<SharedBackend>,
+    private_daemon: Option<&std::path::Path>,
     selection: Selection,
     task: Task,
     json_out: bool,
@@ -232,10 +244,12 @@ pub(crate) async fn execute_task(
             };
             (Arc::new(ApiBackend::new(p)), backend, session)
         }
-        Selection::Agent(choice) => match agent_backend(env, sm, &choice, project, err) {
-            Ok(engine) => (engine, Arc::new(UnusedBackend), None),
-            Err(e) => return (fail(&e, json_out, err), None),
-        },
+        Selection::Agent(choice) => {
+            match agent_backend(env, sm, &choice, project, private_daemon, err) {
+                Ok(engine) => (engine, Arc::new(UnusedBackend), None),
+                Err(e) => return (fail(&e, json_out, err), None),
+            }
+        }
     };
 
     let info = engine.info();

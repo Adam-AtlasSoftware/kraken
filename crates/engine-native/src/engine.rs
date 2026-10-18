@@ -1599,6 +1599,15 @@ impl Mutator for InProcessEngine {
         })
         .await
     }
+
+    async fn current_checkpoint(
+        &self,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Option<Watermark>> {
+        check(cancel)?;
+        let p = self.program()?;
+        Ok(Some(Watermark(p.edits().watermark())))
+    }
 }
 
 #[async_trait]
