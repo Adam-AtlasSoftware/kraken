@@ -89,7 +89,7 @@ Local models keep everything on your machine. A cloud provider receives the deco
 
 In **Settings > AI** you can press **Test connection** (one tiny request; failures are explained in plain words). API keys are never written to `config.toml`. Name an environment variable (read when KRAKEN starts), or paste the key: it is stored in `secrets.toml` next to `config.toml`, created with mode 0600 so only you can read it, and `config.toml` only points at it. The CLI commands read keys from environment variables only, so a pasted key works in the GUI but `kraken explain` needs the variable.
 
-To run a model on your own computer with KRAKEN doing the work (`kraken infer start ... --use`, or **Run a model on this computer** in the same settings section), see [Running a model on this computer](local-models.md).
+To run a model on your own computer, choose **+ Set up a model on this computer...** in the same list, which runs a four-step guided setup. Then the model is in the **On this computer** group. See [Local models on this computer](local-models.md) for setup, starting and stopping, several graphics cards and the title bar.
 
 ## Terminal agents
 
@@ -318,65 +318,15 @@ KRAKEN's own dangerous commands keep asking whatever the table says; the table c
 them. The rewrite pipeline never reads this table: its terminal agent runs with every request
 denied.
 
-## Models on your computer: `local_model_recommend` and `local_model_setup`
+## Local models on your computer
 
-`local_model_recommend` (or Settings > AI > Run a model on this computer > Check this computer)
-reads your graphics card (`nvidia-smi`, `rocm-smi`, sysfs), video memory, RAM, free disk and CPU
-cores and recommends:
+Local models are set up in **Settings > AI**: open the model list and choose **+ Set up a model on this computer...**. The guided setup checks the graphics card and memory, suggests a model that fits, downloads it and tests it. Once it is set up, the model appears under **On this computer** in the list used by the Assistant and by Rewriting. Start and stop it there, and choose whether it starts when KRAKEN opens. The full guide is in [Local models on this computer](local-models.md).
 
-- the engine: llama-server on the CPU, with CUDA (NVIDIA, 4 GiB or more) or with Vulkan (AMD,
-  Intel). The Strata manifest engine is recommended only with 12 GiB of video memory, 32 GiB of
-  RAM and 80 GiB of free disk;
-- the largest catalog model and quantisation that fits in video memory after 2 GiB of headroom
-  (on the CPU: half the RAM, up to 8B parameters), with the reasons.
+The same steps are available to agents and scripts:
 
-`local_model_setup` (the **Set up...** button) downloads llama-server and the model and points
-`[provider]` (and with `use_for`, `[rewrite]`) at a local server. It asks first, like
-`rewrite_program` does before it runs the original program: the question lists the download size
-and the disk use, an agent cannot skip it, and the GUI shows it as a dialog. Only catalog models
-can be downloaded (the argument is a catalog id, never a URL), and each file's SHA-256 is checked
-against the value pinned in the catalog (`crates/kraken-infer/data/models.toml`); a file that
-differs is deleted. Start the model afterwards from Settings > Local model.
-
-### The Strata engine: big models on a small GPU
-
-[Strata](https://github.com/Niko1221/Strata) (MIT) serves large mixture-of-experts models by
-keeping the expert weights in system RAM and the hot path on the GPU, so video memory and RAM
-together bound the model. A machine with 8 GiB of video memory and 64 GiB of RAM can be offered
-an 84 GB model where llama-server would pick one of about 5 GB. Choose **Strata** under Settings >
-AI > Run a model on this computer, then **Evaluate this system**: it shows the GPU and video
-memory, RAM, free disk, what is missing (CUDA, compiler, Python), every Strata model with whether
-it fits, a warning when it is below Strata's stated minimum (12 GiB video memory, 32 GiB RAM, and
-the RAM Strata states per model; such models are offered, not hidden: "expect slow or failing
-runs") and a rough speed expectation (not measured). The best model that fits is preselected.
-**Set up...** lists every download with its size and the disk use, then **Download and set up**
-shows a progress bar. The same through the registry:
-
-```text
-local_model_recommend {"engine": "strata"}
-local_model_setup {"engine": "strata", "model": "strata-iq3-s", "use_for": ["assistant"]}
-```
-
-Models offered (Strata v0.1.45, commit `477ac13c`): IQ1_M coder (58 GB, 32 GiB RAM), Q2_0 (66 GB,
-48), IQ2_XS (68 GB, 48), IQ3_XXS (76 GB, 60) and IQ3_S (84 GB, 62).
-
-What setup does, and does not do:
-
-- Everything is pinned in `crates/kraken-infer/data/strata.toml`: the Strata source archive at a
-  commit, the llama.cpp archive Strata pins, the SHA-256 of Strata's `requirements.txt`, and every
-  model file's URL at a Hugging Face revision with its published LFS SHA-256. A download whose hash
-  differs is deleted and the setup stops. Strata publishes no hashes for its source, so those two
-  were computed when the manifest was written. No script is downloaded and run: KRAKEN downloads
-  the pinned archives itself and runs Strata's `setup.py` from them, in a private venv with the
-  pinned packages, with `--build --yes --no-start`, and a `sudo` that always fails first on `PATH`.
-- Everything lives in `~/.local/share/kraken/engines/strata` (plus a manifest copied to
-  `infer/manifests/strata.toml`). KRAKEN installs no system software. If the NVIDIA driver, `nvcc`
-  (CUDA toolkit), a C++ compiler or Python 3.10+ with `venv` is missing, setup stops before any
-  download and names each missing piece and how to install it.
-- Linux has no prebuilt Strata engine yet, so the engine is compiled from source (10 to 20
-  minutes). NVIDIA only for now.
-- The server is a supervised child (`kraken infer start strata`) bound to 127.0.0.1:8080, and
-  `[provider]` points at `http://127.0.0.1:8080/v1`. The build log is `engines/strata/setup.log`.
+- `local_model_recommend` reads the graphics card, video memory, RAM and free disk, and recommends an engine and a model that fits.
+- `local_model_setup` downloads and sets up a model from the catalog. It asks first, like `rewrite_program` does before it runs the original program, and only catalog models can be downloaded (the argument is a catalog id, never a URL).
+- `local_model_list`, `local_model_start`, `local_model_stop`, `local_model_status` and `local_model_hold` / `local_model_release` manage the models that are set up.
 
 ## Commands
 
@@ -525,7 +475,7 @@ ollama pull qwen3:14b
 kraken eval run --out results/qwen3-14b --timeout 600
 ```
 
-Local models are slow and the tasks are many small conversations, so start with `--limit 6` or `--kind find_function`. To compare models, change `model` and run again with another `--out`; the numbers in `report.json` line up task by task. Tokens are counted when the server reports usage (most OpenAI-compatible servers do; the report says "not reported" when one does not), and a local model has no price. To measure a model KRAKEN runs for you, start it first with `kraken infer start ... --use` ([Running a model on this computer](local-models.md)) and then run the same command.
+Local models are slow and the tasks are many small conversations, so start with `--limit 6` or `--kind find_function`. To compare models, change `model` and run again with another `--out`; the numbers in `report.json` line up task by task. Tokens are counted when the server reports usage (most OpenAI-compatible servers do; the report says "not reported" when one does not), and a local model has no price. To measure a model KRAKEN runs for you, start it first with `kraken infer start <model>` (see [Local models on this computer](local-models.md)) and then run the same command.
 
 ### Against Claude Code (or another terminal agent)
 

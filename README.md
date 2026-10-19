@@ -67,7 +67,7 @@ Start with the **[tutorial: your first reverse-engineering session](docs/tutoria
 
 - [Install](docs/install.md) and [Getting started (terminal)](docs/getting-started.md)
 - [Concepts for newcomers to reverse engineering](docs/concepts.md)
-- [The built-in assistant](docs/assistant.md) (an AI model or a terminal agent such as Claude Code) and [running a model on this computer](docs/local-models.md)
+- [The built-in assistant](docs/assistant.md) (an AI model or a terminal agent such as Claude Code) and [local models on this computer](docs/local-models.md)
 - [Connecting AI agents (MCP)](docs/mcp.md)
 - [Scripting with the CLI](docs/cli.md) and [Python](docs/python.md)
 - [Security](docs/security.md)

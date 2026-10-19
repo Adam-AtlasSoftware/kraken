@@ -145,7 +145,7 @@ Put the clues together. The inputs are arithmetic expressions, one of them divid
 
 ## 9. Ask the assistant to explain a function
 
-You need something to answer for this step: a language model, or a terminal agent such as Claude Code if you already use one. Open **Settings > AI** (Ctrl+,) and pick one from the list (a local model such as Ollama keeps everything on your computer; an agent that shows *Needs setup* has a **Set up...** button that asks before it downloads anything), press **Test connection** (or **Test agent**), then **Save and use**. Both kinds work the same way in the Assistant tab. [The built-in assistant](assistant.md) and [Running a model on this computer](local-models.md) cover the choices.
+You need something to answer for this step: a language model, or a terminal agent such as Claude Code if you already use one. Open **Settings > AI** (Ctrl+,) and pick one from the list (a local model such as Ollama keeps everything on your computer; an agent that shows *Needs setup* has a **Set up...** button that asks before it downloads anything), press **Test connection** (or **Test agent**), then **Save and use**. Both kinds work the same way in the Assistant tab. [The built-in assistant](assistant.md) and [Local models on this computer](local-models.md) cover the choices.
 
 **Do:** right-click a function in the list or code in the decompiler and choose **Explain this function**. The answer appears in the **Assistant** tab.
 
