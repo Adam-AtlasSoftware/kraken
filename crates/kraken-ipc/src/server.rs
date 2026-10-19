@@ -93,6 +93,11 @@ pub trait RpcHandler: Send + Sync + 'static {
     /// Handles one request. Called concurrently for concurrent requests.
     async fn call(&self, conn: &ConnInfo, method: &str, params: Value)
     -> Result<Value, ProtoError>;
+
+    /// Called once when an authenticated connection has ended (closed by the client, broken, or
+    /// dropped at shutdown), after its requests were aborted. Whatever the connection held is
+    /// released here.
+    fn disconnected(&self, _conn: &ConnInfo) {}
 }
 
 /// Identity and credentials the server presents and demands.
@@ -263,6 +268,7 @@ impl<H: RpcHandler> Server<H> {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .remove(&conn.id);
+            self.inner.handler.disconnected(&conn);
         }
         drop(tx);
         let _ = writer.await;

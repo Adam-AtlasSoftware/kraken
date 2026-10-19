@@ -12,7 +12,7 @@ use kraken_host::daemon::{
     METHOD_EVENTS, METHOD_GUI_SELECTION, METHOD_GUI_SELECTION_SET, METHOD_SHUTDOWN, METHOD_STATUS,
     event_kind,
 };
-use kraken_host::infer::{InferApi, InferManager, serve_rpc};
+use kraken_host::infer::{Holder, InferApi, InferManager, serve_rpc, serve_serving_rpc};
 use kraken_ipc::{ClientKind, ConnInfo, Counter, CredentialClass, RpcHandler, Shutdown};
 use kraken_model::{AuthorKind, RunId};
 use kraken_proto::{ErrorCode, ProtoError, sanitize_capped};
@@ -615,6 +615,7 @@ impl DaemonHandler {
                 "loaded_models": self.infer.loaded_models(),
             },
             "model": model,
+            "models": self.infer.model_statuses().models,
             "sessions": self.host.session_status().await,
             "engines": engines,
             "last_event_seq": self.host.hub().last_seq(),
@@ -678,13 +679,24 @@ impl RpcHandler for DaemonHandler {
                 });
                 Ok(json!({"stopping": true}))
             }
-            other => match serve_rpc(self.infer.as_ref(), other, params).await {
-                Some(r) => r,
-                None => Err(ProtoError::new(
-                    ErrorCode::NotFound,
-                    format!("unknown method `{other}`"),
-                )),
-            },
+            other => {
+                if let Some(r) = serve_rpc(self.infer.as_ref(), other, params.clone()).await {
+                    return r;
+                }
+                // Holds made here belong to this connection and end with it.
+                let held = self.infer.holder(Holder::Connection(conn.id));
+                match serve_serving_rpc(&held, other, params).await {
+                    Some(r) => r,
+                    None => Err(ProtoError::new(
+                        ErrorCode::NotFound,
+                        format!("unknown method `{other}`"),
+                    )),
+                }
+            }
         }
+    }
+
+    fn disconnected(&self, conn: &ConnInfo) {
+        self.infer.release_connection(conn.id);
     }
 }

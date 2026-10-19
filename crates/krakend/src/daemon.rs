@@ -201,6 +201,7 @@ pub fn start_full(
         started: Instant::now(),
     };
     let factory = opts.factory.clone();
+    infer.set_clock(opts.clock.clone());
     infer.set_reservations(move || ghidra_reservations(factory.as_ref()));
     let handler = DaemonHandler::new(
         host.clone(),
@@ -231,12 +232,14 @@ pub fn start_full(
     let (m, s, poll) = (monitor.clone(), shutdown.clone(), opts.poll);
     tasks.push(tokio::spawn(async move { m.run(poll, &s).await }));
 
-    // Job events, running-job count and loaded models for the idle monitor, idle session sweep.
+    // Job events, running-job count and loaded models for the idle monitor, idle session sweep,
+    // local models whose grace period is over.
     let (h, m, s, poll) = (host.clone(), monitor.clone(), shutdown.clone(), opts.poll);
     let i = infer.clone();
     tasks.push(tokio::spawn(async move {
         loop {
             let running = h.maintain().await;
+            i.tick().await;
             m.jobs().set(running);
             m.models().set(i.loaded_models());
             tokio::select! {
