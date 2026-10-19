@@ -11,8 +11,8 @@
 //! [`InferApi`] is the older interface of five operations on one model (`list`, `start`,
 //! `status`, `stop`, `logs`), kept for the CLI and GUI until they move to [`ServingApi`]: `start`
 //! runs an engine with settings as a manual start ([`MANUAL_MODEL_ID`]); `status`, `stop` and
-//! `logs` act on the model the assistant uses when it runs, else on the latest one started. The
-//! manager implements it directly and [`DaemonClient`] implements it over the daemon's `infer_*`
+//! `logs` act on that manual start unless it was stopped, else on the model the assistant uses
+//! when it runs, else on the latest one started. The manager implements it directly and [`DaemonClient`] implements it over the daemon's `infer_*`
 //! RPC methods, so the CLI and the GUI do not care where the model runs.
 //!
 //! Before a start the memory budget is checked: the machine's RAM minus the JVM heaps of the open
@@ -47,7 +47,7 @@ pub use serving::{
     ModelParams, ModelStatus, ModelsReply, ReleaseReply, ServingApi, ServingBridge, ServingConfig,
     SkippedModel, StartOptions, hold_role_models, serve_serving_rpc,
 };
-use serving::{ConfigFn, DevicesFn, Slot, State};
+use serving::{ConfigFn, DevicesFn, LlamaDevicesFn, Slot, State};
 
 /// Lists the backends this computer can run.
 pub const METHOD_INFER_LIST: &str = "infer_list";
@@ -466,6 +466,60 @@ pub fn ghidra_reservations(factory: &dyn ManagedFactory) -> Vec<Reservation> {
         .collect()
 }
 
+/// What tells one version of a file from another without reading it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+    #[cfg(unix)]
+    inode: (u64, u64),
+}
+
+impl FileStamp {
+    /// `None` when the file is missing or cannot be read.
+    fn of(path: &Path) -> Option<Self> {
+        let md = std::fs::metadata(path).ok()?;
+        Some(FileStamp {
+            modified: md.modified().ok(),
+            len: md.len(),
+            #[cfg(unix)]
+            inode: {
+                use std::os::unix::fs::MetadataExt;
+                (md.dev(), md.ino())
+            },
+        })
+    }
+}
+
+/// A value read from a file, read again only when the file's time, size or inode changed (a
+/// save that replaces the file changes the inode even within one timestamp tick).
+struct FileCache<T> {
+    slot: Mutex<Option<(Option<FileStamp>, T)>>,
+}
+
+impl<T> Default for FileCache<T> {
+    fn default() -> Self {
+        FileCache {
+            slot: Mutex::new(None),
+        }
+    }
+}
+
+impl<T: Clone> FileCache<T> {
+    fn get(&self, path: &Path, read: impl FnOnce(&Path) -> T) -> T {
+        let stamp = FileStamp::of(path);
+        let mut slot = lock(&self.slot);
+        if let Some((s, v)) = slot.as_ref()
+            && *s == stamp
+        {
+            return v.clone();
+        }
+        let v = read(path);
+        *slot = Some((stamp, v.clone()));
+        v
+    }
+}
+
 type ReservationFn = Arc<dyn Fn() -> Vec<Reservation> + Send + Sync>;
 type MemoryFn = Box<dyn Fn() -> Option<MemoryBudget> + Send + Sync>;
 
@@ -487,6 +541,8 @@ pub struct InferManager {
     state: Mutex<State>,
     config: ConfigFn,
     devices: DevicesFn,
+    /// `llama-server --list-devices` of a binary (Vulkan builds are told their cards by name).
+    llama_devices: LlamaDevicesFn,
     clock: RwLock<Arc<dyn kraken_ipc::Clock>>,
     stats: OnceLock<Arc<kraken_infer::stats::StatsSampler>>,
     llama_binary: Option<PathBuf>,
@@ -568,6 +624,12 @@ impl InferManager {
             state: Mutex::new(State::default()),
             config: Arc::new(ServingConfig::default),
             devices: Arc::new(Vec::new),
+            llama_devices: Arc::new(|bin: &Path| {
+                kraken_infer::hardware::list_llama_devices(
+                    &kraken_infer::SystemProbe,
+                    &bin.to_string_lossy(),
+                )
+            }),
             clock: RwLock::new(Arc::new(kraken_ipc::SystemClock::new())),
             stats: OnceLock::new(),
             llama_binary: None,
@@ -616,12 +678,17 @@ impl InferManager {
             .as_deref()
             .map(|d| crate::strata_setup::StrataLayout::in_data_dir(d).backend_manifest());
         if let Some(path) = crate::KrakenConfig::default_path_with(env) {
+            // Status polls and the maintenance tick ask often; the file is parsed again only
+            // when it changed.
+            let cache = FileCache::default();
             m.config = Arc::new(move || {
-                let cfg = crate::KrakenConfig::from_file(&path).unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "cannot read the configuration");
-                    crate::KrakenConfig::default()
-                });
-                ServingConfig::from_config(&cfg)
+                cache.get(&path, |p| {
+                    let cfg = crate::KrakenConfig::from_file(p).unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "cannot read the configuration");
+                        crate::KrakenConfig::default()
+                    });
+                    ServingConfig::from_config(&cfg)
+                })
             });
         }
         let llama = m.llama.clone();
@@ -661,6 +728,16 @@ impl InferManager {
         f: impl Fn() -> Vec<kraken_proto::infer::DeviceInfo> + Send + Sync + 'static,
     ) -> Self {
         self.devices = Arc::new(f);
+        self
+    }
+
+    /// Replaces `llama-server --list-devices` (tests).
+    #[must_use]
+    pub fn with_llama_devices(
+        mut self,
+        f: impl Fn(&Path) -> Vec<kraken_infer::hardware::LlamaDevice> + Send + Sync + 'static,
+    ) -> Self {
+        self.llama_devices = Arc::new(f);
         self
     }
 
@@ -774,9 +851,15 @@ impl InferManager {
         }
     }
 
-    /// The model the old single-model methods act on: the assistant's (or rewriting's) model when
-    /// it was started, else the latest one started.
+    /// The model the old single-model methods act on: the one started from an engine
+    /// (`infer_start`, [`MANUAL_MODEL_ID`]) unless it was stopped, else the assistant's (or
+    /// rewriting's) model when it was started, else the latest one started.
     fn default_slot(&self) -> Option<Arc<Slot>> {
+        if let Some(manual) = lock(&self.state).slots.get(MANUAL_MODEL_ID).cloned()
+            && manual.state() != kraken_proto::ModelState::Stopped
+        {
+            return Some(manual);
+        }
         let roles = self.serving_config().roles;
         let st = lock(&self.state);
         roles
@@ -1061,23 +1144,33 @@ pub fn local_provider_table(model_id: &str) -> Value {
     json!({ "kind": "local", "model": model_id })
 }
 
-/// Whether `table` is what [`provider_table`] (or `write_local_provider`) wrote for a server on
-/// this computer.
-fn is_local_server_table(table: &Value) -> bool {
+/// The model id of `table` when KRAKEN itself wrote it for a server on this computer, `None`
+/// for anything else (a server the person runs, a cloud provider).
+///
+/// Written by KRAKEN means a loopback `openai_compatible` table that either names
+/// [`LOCAL_KEY_ENV`] as its key (what [`provider_table`] writes) or has exactly the shape the
+/// old model setup wrote (no key, [`LOCAL_BASE_URL`](crate::local_models::LOCAL_BASE_URL)), and
+/// whose model KRAKEN knows (`known`: a downloaded catalog model or a model already set up). A
+/// person's own `llama-server` on the same address keeps its table, key and `supports_tools`.
+fn kraken_written_model(table: &Value, known: &dyn Fn(&str) -> bool) -> Option<String> {
     if table["kind"] != "openai_compatible" {
-        return false;
+        return None;
     }
-    let Some(url) = table["base_url"].as_str() else {
-        return false;
-    };
-    let host = url
-        .split_once("://")
-        .map_or(url, |(_, rest)| rest)
-        .split(['/', ':'])
-        .next()
-        .unwrap_or("");
-    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
-        && (table["api_key"]["env"] == LOCAL_KEY_ENV || url == crate::local_models::LOCAL_BASE_URL)
+    let url = table["base_url"].as_str()?;
+    let parsed = reqwest::Url::parse(url).ok()?;
+    // An IPv6 host comes back in brackets (`[::1]`).
+    let host = parsed
+        .host_str()?
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    let marker = table["api_key"]["env"] == LOCAL_KEY_ENV;
+    let setup_shape = table.get("api_key").is_none() && url == crate::local_models::LOCAL_BASE_URL;
+    let id = table["model"].as_str()?;
+    (loopback && (marker || setup_shape) && known(id)).then(|| id.to_string())
 }
 
 /// A model entry with the defaults: the processor or the best card, served automatically.
@@ -1127,7 +1220,10 @@ pub fn migrate_config_file(path: &Path, env: &dyn Fn(&str) -> Option<OsString>) 
     let Ok(mut cfg) = crate::KrakenConfig::from_file(path) else {
         return 0;
     };
-    let n = migrate_local_provider(&mut cfg, &|id| catalog_model_path(id, env));
+    // Only a catalog model that was downloaded counts as one KRAKEN set up.
+    let n = migrate_local_provider(&mut cfg, &|id| {
+        catalog_model_path(id, env).filter(|p| p.is_file())
+    });
     if n > 0
         && let Err(e) = cfg.save(path)
     {
@@ -1137,21 +1233,26 @@ pub fn migrate_config_file(path: &Path, env: &dyn Fn(&str) -> Option<OsString>) 
     n
 }
 
-/// Turns the `[provider]` and `[rewrite]` tables written for a local model into a
+/// Turns the `[provider]` and `[rewrite]` tables KRAKEN wrote for a local model into a
 /// [`LocalModel`] in `local_models` plus a `local { model = id }` provider. Tables for other
-/// servers are left alone, a model already listed is not added twice, and running it again
-/// changes nothing. `locate` finds the model file for an id (an empty path when it returns
-/// `None`). Returns how many tables were converted.
+/// servers (see [`kraken_written_model`]) are left alone, a model already listed is not added
+/// twice, and running it again changes nothing. `locate` finds the model file of an id; a model
+/// it does not find and that is not set up yet is not KRAKEN's, so its table stays. Returns how
+/// many tables were converted.
 pub fn migrate_local_provider(
     cfg: &mut crate::KrakenConfig,
     locate: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> usize {
     let mut converted = 0;
     for slot in [&mut cfg.provider, &mut cfg.rewrite] {
-        let Some(table) = slot.as_ref().filter(|t| is_local_server_table(t)) else {
+        let models = &cfg.local_models;
+        let known = |id: &str| models.iter().any(|m| m.id == id) || locate(id).is_some();
+        let Some(table) = slot.as_ref() else {
             continue;
         };
-        let id = table["model"].as_str().unwrap_or("local").to_string();
+        let Some(id) = kraken_written_model(table, &known) else {
+            continue;
+        };
         let engine = if table["engine"] == "strata" {
             LocalEngine::Strata
         } else {
@@ -1250,8 +1351,20 @@ mod migrate_tests {
             "per_run_cap = 3\n\n[provider]\nkind = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:8080/v1\"\nmodel = \"qwen3-8b-q4_k_m\"\nsupports_tools = true\n",
         )
         .expect("write");
+        // The model the old setup downloaded.
+        let data = dir.path().join("data");
+        let file = catalog_model_path("qwen3-8b-q4_k_m", &|k| {
+            (k == "XDG_DATA_HOME").then(|| data.clone().into_os_string())
+        })
+        .expect("catalog model");
+        std::fs::create_dir_all(file.parent().expect("models dir")).expect("mkdir");
+        std::fs::write(&file, b"gguf").expect("model file");
         let env_path = path.clone();
-        let env = move |k: &str| (k == "KRAKEN_CONFIG").then(|| env_path.clone().into_os_string());
+        let env = move |k: &str| match k {
+            "KRAKEN_CONFIG" => Some(env_path.clone().into_os_string()),
+            "XDG_DATA_HOME" => Some(data.clone().into_os_string()),
+            _ => None,
+        };
         let cfg = crate::KrakenConfig::load_with(&env).expect("loads");
         assert_eq!(cfg.provider, Some(local_provider_table("qwen3-8b-q4_k_m")));
         assert_eq!(cfg.local_models.len(), 1);
@@ -1261,6 +1374,80 @@ mod migrate_tests {
         // Nothing left to convert: the second load leaves the file as it is.
         assert_eq!(migrate_config_file(&path, &env), 0);
         assert_eq!(std::fs::read_to_string(&path).expect("read"), text);
+    }
+
+    #[test]
+    fn a_server_the_person_runs_on_the_default_address_is_left_alone() {
+        // Their own llama-server on 127.0.0.1:8080 with their own key and tool setting.
+        let own = json!({
+            "kind": "openai_compatible",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "model": "my-model",
+            "api_key": "sk-mine",
+            "supports_tools": false,
+        });
+        let mut cfg = KrakenConfig {
+            provider: Some(own.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            migrate_local_provider(&mut cfg, &|_| Some(PathBuf::from("/m/x.gguf"))),
+            0
+        );
+        assert_eq!(cfg.provider, Some(own));
+        // The old setup's shape, but a model KRAKEN never downloaded or set up.
+        let unknown = json!({
+            "kind": "openai_compatible",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "model": "my-model",
+            "supports_tools": true,
+        });
+        let mut cfg = KrakenConfig {
+            provider: Some(unknown.clone()),
+            ..Default::default()
+        };
+        assert_eq!(migrate_local_provider(&mut cfg, &|_| None), 0);
+        assert_eq!(cfg.provider, Some(unknown));
+        assert!(cfg.local_models.is_empty());
+        // KRAKEN's key marker on an IPv6 loopback address with a model already set up.
+        let mut cfg = KrakenConfig {
+            provider: Some(provider_table(
+                "http://[::1]:9000/v1",
+                Some("m"),
+                true,
+                true,
+            )),
+            local_models: vec![new_local_model("m", LocalEngine::Llama, "/m/m.gguf".into())],
+            ..Default::default()
+        };
+        assert_eq!(migrate_local_provider(&mut cfg, &|_| None), 1);
+        assert_eq!(cfg.provider, Some(local_provider_table("m")));
+        assert_eq!(cfg.local_models.len(), 1);
+    }
+
+    #[test]
+    fn the_configuration_is_parsed_again_only_when_the_file_changes() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("config.toml");
+        let cache: FileCache<String> = FileCache::default();
+        let reads = std::cell::Cell::new(0);
+        let read = |p: &Path| {
+            reads.set(reads.get() + 1);
+            std::fs::read_to_string(p).unwrap_or_default()
+        };
+        assert_eq!(cache.get(&path, read), "", "a missing file");
+        assert_eq!(cache.get(&path, read), "");
+        assert_eq!(reads.get(), 1);
+        std::fs::write(&path, "a = 1\n").expect("write");
+        assert_eq!(cache.get(&path, read), "a = 1\n");
+        assert_eq!(cache.get(&path, read), "a = 1\n");
+        assert_eq!(reads.get(), 2);
+        // A save that replaces the file (as `KrakenConfig::save` does) is seen at once.
+        let tmp = dir.path().join("config.toml.new");
+        std::fs::write(&tmp, "a = 2\n").expect("write");
+        std::fs::rename(&tmp, &path).expect("rename");
+        assert_eq!(cache.get(&path, read), "a = 2\n");
+        assert_eq!(reads.get(), 3);
     }
 
     #[test]

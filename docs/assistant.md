@@ -326,7 +326,7 @@ The same steps are available to agents and scripts:
 
 - `local_model_recommend` reads the graphics card, video memory, RAM and free disk, and recommends an engine and a model that fits.
 - `local_model_setup` downloads and sets up a model from the catalog. It asks first, like `rewrite_program` does before it runs the original program, and only catalog models can be downloaded (the argument is a catalog id, never a URL).
-- `local_model_list`, `local_model_start`, `local_model_stop`, `local_model_status` and `local_model_hold` / `local_model_release` manage the models that are set up.
+- `local_model_list`, `local_model_start`, `local_model_stop`, `local_model_status` and `local_model_hold` / `local_model_release` manage the models that are set up. Starting, holding, releasing and stopping run or end a program, so they are not read-only: the assistant is not offered them unless a task allows it, and MCP clients see them as tools that change things.
 
 ## Commands
 

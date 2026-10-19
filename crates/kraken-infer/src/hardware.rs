@@ -194,28 +194,27 @@ pub fn detect_devices(probe: &dyn Probe, llama_server: Option<&str>) -> Vec<Devi
 
 /// A vendor's cards: from its tool when that worked; otherwise the sysfs cards of that vendor
 /// (as failing cards when the tool is broken or missing, except AMD, which sysfs can size).
+/// AMD cards from sysfs are numbered as HIP numbers them, not by their DRM card number.
 fn vendor_devices(vendor: GpuVendor, tool: Tool, cards: &[SysCard]) -> Vec<DeviceInfo> {
-    let mine = cards.iter().filter(|c| c.vendor == vendor);
-    match tool {
-        Tool::Found(devs) => devs,
-        Tool::Failed(msg) => mine
-            .map(|c| {
-                c.device(DeviceState::Error {
-                    message: msg.clone(),
-                })
-            })
-            .collect(),
-        Tool::Missing if vendor == GpuVendor::Nvidia => mine
-            .map(|c| {
-                c.device(DeviceState::Error {
-                    message: "The NVIDIA driver tools (nvidia-smi) were not found. Install the \
-                              NVIDIA driver to use this card."
-                        .into(),
-                })
-            })
-            .collect(),
-        Tool::Missing => mine.map(|c| c.device(DeviceState::Ok)).collect(),
+    let mine: Vec<&SysCard> = cards.iter().filter(|c| c.vendor == vendor).collect();
+    let state = match tool {
+        Tool::Found(devs) => return devs,
+        Tool::Failed(message) => DeviceState::Error { message },
+        Tool::Missing if vendor == GpuVendor::Nvidia => DeviceState::Error {
+            message: "The NVIDIA driver tools (nvidia-smi) were not found. Install the NVIDIA \
+                      driver to use this card."
+                .into(),
+        },
+        Tool::Missing => DeviceState::Ok,
+    };
+    if vendor == GpuVendor::Amd {
+        return hip_order(
+            mine.iter()
+                .map(|c| (c.number, c.pci.clone(), c.device(state.clone())))
+                .collect(),
+        );
     }
+    mine.iter().map(|c| c.device(state.clone())).collect()
 }
 
 fn first_line(text: &str) -> String {
@@ -275,7 +274,7 @@ pub fn parse_nvidia(text: &str) -> Vec<DeviceInfo> {
         .collect()
 }
 
-/// `rocm-smi --showmeminfo vram --showproductname --showuniqueid --json`.
+/// `rocm-smi --showmeminfo vram --showproductname --showuniqueid --showbus --json`.
 fn rocm(probe: &dyn Probe) -> Tool {
     let Some(out) = probe.run_output(
         "rocm-smi",
@@ -284,6 +283,7 @@ fn rocm(probe: &dyn Probe) -> Tool {
             "vram",
             "--showproductname",
             "--showuniqueid",
+            "--showbus",
             "--json",
         ],
     ) else {
@@ -308,43 +308,71 @@ fn rocm(probe: &dyn Probe) -> Tool {
     }
 }
 
-/// Parses the `rocm-smi` JSON above; `None` when it is not JSON.
+/// Parses the `rocm-smi` JSON above; `None` when it is not JSON. The cards are numbered as HIP
+/// numbers them (see [`hip_order`]): by PCI bus, else in `rocm-smi`'s own order.
 pub fn parse_rocm(text: &str) -> Option<Vec<DeviceInfo>> {
     let serde_json::Value::Object(cards) = serde_json::from_str::<serde_json::Value>(text).ok()?
     else {
         return None;
     };
-    let mut devs: Vec<DeviceInfo> = cards
+    let devs: Vec<(u32, Option<String>, DeviceInfo)> = cards
         .iter()
         .filter_map(|(k, v)| {
-            let index: u32 = k.strip_prefix("card")?.parse().ok()?;
+            let number: u32 = k.strip_prefix("card")?.parse().ok()?;
             let get = |key: &str| v.get(key).and_then(|x| x.as_str());
             let num = |key: &str| get(key).and_then(|s| s.trim().parse::<u64>().ok());
-            Some(DeviceInfo {
-                index,
-                uuid: get("Unique ID").unwrap_or_default().to_string(),
-                vendor: GpuVendor::Amd,
-                name: get("Card series")
-                    .or_else(|| get("Card Series"))
-                    .unwrap_or("AMD GPU")
-                    .to_string(),
-                vram_total: num("VRAM Total Memory (B)").unwrap_or(0),
-                vram_used: num("VRAM Total Used Memory (B)").unwrap_or(0),
-                state: DeviceState::Ok,
-            })
+            let bus = get("PCI Bus").map(|b| b.trim().to_ascii_lowercase());
+            Some((
+                number,
+                bus,
+                DeviceInfo {
+                    index: number,
+                    uuid: get("Unique ID").unwrap_or_default().to_string(),
+                    vendor: GpuVendor::Amd,
+                    name: get("Card series")
+                        .or_else(|| get("Card Series"))
+                        .unwrap_or("AMD GPU")
+                        .to_string(),
+                    vram_total: num("VRAM Total Memory (B)").unwrap_or(0),
+                    vram_used: num("VRAM Total Used Memory (B)").unwrap_or(0),
+                    state: DeviceState::Ok,
+                },
+            ))
         })
         .collect();
-    devs.sort_by_key(|d| d.index);
-    Some(devs)
+    Some(hip_order(devs))
+}
+
+/// AMD cards numbered as HIP (`HIP_VISIBLE_DEVICES`) numbers them: 0, 1, ... in the order of
+/// their PCI bus addresses, the order ROCm enumerates them in. A card whose address is unknown
+/// keeps its place by `number` (the DRM card number, or `rocm-smi`'s number), after the others.
+fn hip_order(mut cards: Vec<(u32, Option<String>, DeviceInfo)>) -> Vec<DeviceInfo> {
+    cards.sort_by(|a, b| match (&a.1, &b.1) {
+        (Some(x), Some(y)) => x.cmp(y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.0.cmp(&b.0),
+    });
+    cards
+        .into_iter()
+        .enumerate()
+        .map(|(i, (_, _, mut d))| {
+            d.index = i as u32;
+            d
+        })
+        .collect()
 }
 
 /// A card as sysfs shows it.
 struct SysCard {
+    /// The DRM card number (`card<n>`), which counts every maker's cards.
     number: u32,
     vendor: GpuVendor,
     name: String,
     vram_total: u64,
     vram_used: u64,
+    /// PCI address (`PCI_SLOT_NAME` of the device's `uevent`, like `0000:03:00.0`).
+    pci: Option<String>,
 }
 
 impl SysCard {
@@ -388,12 +416,18 @@ fn sysfs_cards(probe: &dyn Probe) -> Vec<SysCard> {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("{maker} GPU ({n})"));
+            let pci = probe.read(&format!("{base}/uevent")).and_then(|u| {
+                u.lines()
+                    .find_map(|l| l.strip_prefix("PCI_SLOT_NAME="))
+                    .map(|v| v.trim().to_ascii_lowercase())
+            });
             Some(SysCard {
                 number,
                 vendor,
                 name,
                 vram_total: num("mem_info_vram_total"),
                 vram_used: num("mem_info_vram_used"),
+                pci,
             })
         })
         .collect()
@@ -498,25 +532,40 @@ pub fn usable(
         DeviceState::Error { message } => return Err(message.clone()),
         DeviceState::Unsupported { reason } => return Err(reason.clone()),
     }
-    let has = |api: GpuApi| llama_apis.is_empty() || llama_apis.contains(&api);
     match (engine, device.vendor) {
         (LocalEngine::Strata, GpuVendor::Nvidia) => Ok(()),
         (LocalEngine::Strata, _) => Err("The Strata engine runs on NVIDIA cards only.".into()),
-        (LocalEngine::Llama, GpuVendor::Nvidia) => {
-            if has(GpuApi::Cuda) || llama_apis.contains(&GpuApi::Vulkan) {
-                Ok(())
-            } else {
-                Err("This copy of llama.cpp was built without NVIDIA (CUDA) support.".into())
-            }
-        }
-        (LocalEngine::Llama, GpuVendor::Amd) => {
-            if has(GpuApi::Rocm) || llama_apis.contains(&GpuApi::Vulkan) {
-                Ok(())
-            } else {
-                Err("This copy of llama.cpp was built without AMD (ROCm or Vulkan) support.".into())
+        (LocalEngine::Llama, vendor @ (GpuVendor::Nvidia | GpuVendor::Amd)) => {
+            match llama_gpu_api(vendor, llama_apis) {
+                Some(_) => Ok(()),
+                None if vendor == GpuVendor::Nvidia => {
+                    Err("This copy of llama.cpp was built without NVIDIA (CUDA) support.".into())
+                }
+                None => Err(
+                    "This copy of llama.cpp was built without AMD (ROCm or Vulkan) support.".into(),
+                ),
             }
         }
         (LocalEngine::Llama, _) => Err("KRAKEN cannot use this kind of card yet.".into()),
+    }
+}
+
+/// How the installed `llama-server` drives a card of `vendor`: its own API (CUDA, ROCm) when
+/// it has it or when the build is unknown (`llama_apis` empty), else Vulkan when it has that;
+/// `None` when it cannot use the card. The API decides how a card is chosen: CUDA and ROCm
+/// read `CUDA_VISIBLE_DEVICES` / `HIP_VISIBLE_DEVICES`, Vulkan ignores both.
+pub fn llama_gpu_api(vendor: GpuVendor, llama_apis: &[GpuApi]) -> Option<GpuApi> {
+    let native = match vendor {
+        GpuVendor::Nvidia => GpuApi::Cuda,
+        GpuVendor::Amd => GpuApi::Rocm,
+        _ => return None,
+    };
+    if llama_apis.is_empty() || llama_apis.contains(&native) {
+        Some(native)
+    } else if llama_apis.contains(&GpuApi::Vulkan) {
+        Some(GpuApi::Vulkan)
+    } else {
+        None
     }
 }
 
@@ -673,6 +722,71 @@ mod tests {
         assert_eq!(devs[0].vendor, GpuVendor::Intel);
         assert!(matches!(devs[0].state, DeviceState::Unsupported { .. }));
         assert!(detect(&f, Path::new("/")).gpus.is_empty());
+    }
+
+    #[test]
+    fn amd_cards_from_sysfs_get_hip_numbers_not_drm_numbers() {
+        let mut f = Fake::default();
+        // card0 is an Intel GPU; the AMD cards are card1 (bus 0c) and card2 (bus 03).
+        f.dirs
+            .insert("/sys/class/drm", vec!["card0", "card1", "card2"]);
+        for (n, vendor, slot) in [
+            ("card0", "0x8086", "0000:00:02.0"),
+            ("card1", "0x1002", "0000:0c:00.0"),
+            ("card2", "0x1002", "0000:03:00.0"),
+        ] {
+            let base = format!("/sys/class/drm/{n}/device");
+            f.files
+                .insert(Box::leak(format!("{base}/vendor").into_boxed_str()), vendor);
+            f.files.insert(
+                Box::leak(format!("{base}/uevent").into_boxed_str()),
+                Box::leak(format!("DRIVER=x\nPCI_SLOT_NAME={slot}\n").into_boxed_str()),
+            );
+            f.files.insert(
+                Box::leak(format!("{base}/product_name").into_boxed_str()),
+                Box::leak(format!("Card {n}").into_boxed_str()),
+            );
+        }
+        let amd: Vec<(u32, String)> = detect_devices(&f, None)
+            .into_iter()
+            .filter(|d| d.vendor == GpuVendor::Amd)
+            .map(|d| (d.index, d.name))
+            .collect();
+        assert_eq!(
+            amd,
+            vec![(0, "Card card2".to_string()), (1, "Card card1".to_string())]
+        );
+    }
+
+    #[test]
+    fn rocm_cards_are_numbered_by_pci_bus() {
+        let d = parse_rocm(
+            r#"{"card0": {"Card series": "B", "PCI Bus": "0000:0C:00.0"},
+                "card1": {"Card series": "A", "PCI Bus": "0000:03:00.0"}}"#,
+        )
+        .expect("json");
+        let got: Vec<(u32, &str)> = d.iter().map(|d| (d.index, d.name.as_str())).collect();
+        assert_eq!(got, vec![(0, "A"), (1, "B")]);
+        // Without bus addresses: rocm-smi's own order, numbered from 0.
+        let d = parse_rocm(r#"{"card3": {"Card series": "Y"}, "card1": {"Card series": "X"}}"#)
+            .expect("json");
+        let got: Vec<(u32, &str)> = d.iter().map(|d| (d.index, d.name.as_str())).collect();
+        assert_eq!(got, vec![(0, "X"), (1, "Y")]);
+    }
+
+    #[test]
+    fn llama_drives_a_card_through_its_own_api_else_vulkan() {
+        use GpuApi::*;
+        assert_eq!(llama_gpu_api(GpuVendor::Nvidia, &[]), Some(Cuda));
+        assert_eq!(
+            llama_gpu_api(GpuVendor::Nvidia, &[Cpu, Cuda, Vulkan]),
+            Some(Cuda)
+        );
+        assert_eq!(llama_gpu_api(GpuVendor::Nvidia, &[Vulkan]), Some(Vulkan));
+        assert_eq!(llama_gpu_api(GpuVendor::Amd, &[Vulkan]), Some(Vulkan));
+        assert_eq!(llama_gpu_api(GpuVendor::Amd, &[Rocm]), Some(Rocm));
+        assert_eq!(llama_gpu_api(GpuVendor::Amd, &[Cpu]), None);
+        assert_eq!(llama_gpu_api(GpuVendor::Intel, &[]), None);
     }
 
     #[test]

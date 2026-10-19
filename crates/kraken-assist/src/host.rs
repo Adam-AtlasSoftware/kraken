@@ -23,10 +23,11 @@ use tokio::time::Instant;
 use crate::ASSISTANT_ID;
 
 /// Commands never offered to the model by default: they open, create or rebuild projects (the
-/// person's decision), are user-only decisions about the assistant's own work, or start the
+/// person's decision), are user-only decisions about the assistant's own work, start the
 /// rewrite pipeline's model calls, sandboxed builds and exports (`rewrite_plan`,
 /// `rewrite_status`, `rewrite_unit` and `rewrite_program_status` are read-only and stay
-/// available).
+/// available), or start and stop local model servers (`local_model_list`, `local_model_status`
+/// and `local_model_devices` stay available).
 pub const DEFAULT_EXCLUDED: &[&str] = &[
     "project_create",
     "project_open",
@@ -42,6 +43,10 @@ pub const DEFAULT_EXCLUDED: &[&str] = &[
     "rewrite_spec",
     "rewrite_export",
     "rewrite_accept",
+    "local_model_start",
+    "local_model_hold",
+    "local_model_release",
+    "local_model_stop",
 ];
 
 /// Commands no task can switch on: the person's decisions.

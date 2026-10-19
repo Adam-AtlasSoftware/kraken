@@ -273,8 +273,9 @@ pub fn rss_sum(proc_root: &Path, pids: &[u32]) -> u64 {
 /// What the sampler needs from the outside, replaceable in tests.
 #[async_trait]
 pub trait SamplerEnv: Send + Sync {
-    /// Body of `GET path` on the engine's port; `None` when it does not answer 200.
-    async fn http_get(&self, port: u16, path: &str) -> Option<String>;
+    /// Body of `GET path` on the engine's port, sent with `Authorization: Bearer <bearer>` when
+    /// the engine needs its per-run key; `None` when it does not answer 200.
+    async fn http_get(&self, port: u16, path: &str, bearer: Option<&str>) -> Option<String>;
     /// Card memory per process, all vendors.
     async fn gpu_apps(&self) -> Vec<GpuProcUse>;
     /// The process and its descendants, and their summed RAM.
@@ -287,11 +288,13 @@ pub struct SystemEnv;
 
 #[async_trait]
 impl SamplerEnv for SystemEnv {
-    async fn http_get(&self, port: u16, path: &str) -> Option<String> {
+    async fn http_get(&self, port: u16, path: &str, bearer: Option<&str>) -> Option<String> {
         let fut = async {
             let mut s = TcpStream::connect((LOOPBACK, port)).await.ok()?;
-            let req =
-                format!("GET {path} HTTP/1.1\r\nHost: {LOOPBACK}\r\nConnection: close\r\n\r\n");
+            let auth = bearer.map_or(String::new(), |k| format!("Authorization: Bearer {k}\r\n"));
+            let req = format!(
+                "GET {path} HTTP/1.1\r\nHost: {LOOPBACK}\r\n{auth}Connection: close\r\n\r\n"
+            );
             s.write_all(req.as_bytes()).await.ok()?;
             let mut raw = Vec::new();
             s.take(4 << 20).read_to_end(&mut raw).await.ok()?;
@@ -375,7 +378,7 @@ pub enum StatsKind {
 }
 
 /// A running (or starting) model to watch.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Target {
     pub model: String,
     pub kind: StatsKind,
@@ -383,6 +386,22 @@ pub struct Target {
     pub pid: Option<u32>,
     /// The cards it runs on; used to name the rows of card memory.
     pub devices: Vec<DeviceRef>,
+    /// The per-run key the engine requires (llama-server started with `LLAMA_API_KEY` answers
+    /// `/metrics` with 401 without it). Never logged: `Debug` hides it.
+    pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Target")
+            .field("model", &self.model)
+            .field("kind", &self.kind)
+            .field("port", &self.port)
+            .field("pid", &self.pid)
+            .field("devices", &self.devices)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<hidden>"))
+            .finish()
+    }
 }
 
 struct Entry {
@@ -391,6 +410,9 @@ struct Entry {
     approx: ApproxMeter,
     stats: ModelStats,
     engine_tok_s: Option<f32>,
+    /// The latest scrape of the engine's metrics answered: its figure (or its silence while
+    /// idle) wins over the one KRAKEN measured.
+    engine_reports: bool,
 }
 
 type SharedParser = Arc<Mutex<Box<dyn EngineStats>>>;
@@ -457,6 +479,7 @@ impl StatsSampler {
                 approx: ApproxMeter::default(),
                 stats,
                 engine_tok_s: None,
+                engine_reports: false,
             },
         );
     }
@@ -523,7 +546,11 @@ impl StatsSampler {
         for (target, parser, ready) in work {
             let reading = if ready {
                 let path = lock(&parser).path();
-                match self.env.http_get(target.port, path).await {
+                match self
+                    .env
+                    .http_get(target.port, path, target.api_key.as_deref())
+                    .await
+                {
                     Some(body) => lock(&parser).ingest(&body).ok(),
                     None => None,
                 }
@@ -542,11 +569,10 @@ impl StatsSampler {
             } else if let Some(r) = &reading {
                 e.stats.vram_per_device = engine_card_rows(&target, r);
             }
-            if let Some(r) = reading
-                && r.tok_s.is_some()
-            {
-                e.engine_tok_s = r.tok_s;
-            }
+            // An engine that answers without a figure is idle: nothing is shown until it
+            // generates again, rather than the last speed forever.
+            e.engine_reports = reading.is_some();
+            e.engine_tok_s = reading.and_then(|r| r.tok_s);
             refresh_tok_s(e);
         }
     }
@@ -561,13 +587,16 @@ impl Drop for StatsSampler {
 }
 
 fn refresh_tok_s(e: &mut Entry) {
-    if let Some(t) = e.engine_tok_s {
-        e.stats.tok_s = Some(t);
-        e.stats.tok_s_source = Some(TokSource::Engine);
-    } else if let Some(t) = e.approx.tok_s() {
-        e.stats.tok_s = Some(t);
-        e.stats.tok_s_source = Some(TokSource::Approx);
-    }
+    let (tok_s, source) = match (e.engine_tok_s, e.engine_reports) {
+        (Some(t), _) => (Some(t), Some(TokSource::Engine)),
+        (None, true) => (None, None),
+        (None, false) => match e.approx.tok_s() {
+            Some(t) => (Some(t), Some(TokSource::Approx)),
+            None => (None, None),
+        },
+    };
+    e.stats.tok_s = tok_s;
+    e.stats.tok_s_source = source;
 }
 
 fn device_for(target: &Target, uuid: Option<&str>, vendor: GpuVendor) -> Option<DeviceRef> {
@@ -757,14 +786,17 @@ mod tests {
         assert!(rss > 0);
     }
 
+    #[derive(Default)]
     struct FakeEnv {
         body: Mutex<Option<String>>,
         apps: Vec<GpuProcUse>,
+        bearer: Mutex<Option<String>>,
     }
 
     #[async_trait]
     impl SamplerEnv for FakeEnv {
-        async fn http_get(&self, _: u16, _: &str) -> Option<String> {
+        async fn http_get(&self, _: u16, _: &str, bearer: Option<&str>) -> Option<String> {
+            *lock(&self.bearer) = bearer.map(str::to_string);
             lock(&self.body).clone()
         }
         async fn gpu_apps(&self) -> Vec<GpuProcUse> {
@@ -782,6 +814,7 @@ mod tests {
             port: 1,
             pid: Some(12345),
             devices,
+            api_key: None,
         }
     }
 
@@ -800,6 +833,7 @@ mod tests {
         let env = Arc::new(FakeEnv {
             body: Mutex::new(Some(GENERATING.to_string())),
             apps: parse_nvidia_compute_apps(NVIDIA),
+            ..Default::default()
         });
         let s = StatsSampler::new(env.clone());
         s.register(target(StatsKind::Strata, vec![a.clone(), b.clone()]));
@@ -835,6 +869,7 @@ mod tests {
         let env = Arc::new(FakeEnv {
             body: Mutex::new(None),
             apps: Vec::new(),
+            ..Default::default()
         });
         let s = StatsSampler::new(env);
         s.register(target(StatsKind::Llama, Vec::new()));
@@ -861,6 +896,7 @@ mod tests {
                     p
                 })
                 .collect(),
+            ..Default::default()
         });
         let s = StatsSampler::new(env);
         s.register(target(StatsKind::Llama, vec![amd.clone()]));
@@ -869,5 +905,86 @@ mod tests {
         assert_eq!(st.vram_per_device.len(), 1);
         assert_eq!(st.vram_per_device[0].device, amd);
         assert_eq!(st.vram_per_device[0].bytes, (8u64 << 30) + (100 << 20));
+    }
+
+    #[tokio::test]
+    async fn the_speed_goes_away_when_the_engine_is_idle() {
+        let env = Arc::new(FakeEnv {
+            body: Mutex::new(Some(GENERATING.to_string())),
+            ..Default::default()
+        });
+        let s = StatsSampler::new(env.clone());
+        s.register(target(StatsKind::Strata, Vec::new()));
+        s.set_phase("m", ModelState::Ready, None);
+        s.tick().await;
+        assert_eq!(s.snapshot("m").expect("m").tok_s, Some(31.4));
+        *lock(&env.body) = Some(IDLE.to_string());
+        s.tick().await;
+        let st = s.snapshot("m").expect("m");
+        assert_eq!((st.tok_s, st.tok_s_source), (None, None), "idle: no figure");
+        // A reply KRAKEN measured does not bring an old speed back while the engine says idle.
+        s.record_reply("m", 90, Duration::from_secs(3));
+        assert_eq!(s.snapshot("m").expect("m").tok_s, None);
+
+        // llama-server: unchanged counters between two scrapes mean nothing was generated.
+        let s = StatsSampler::new(env.clone());
+        s.register(target(StatsKind::Llama, Vec::new()));
+        s.set_phase("m", ModelState::Ready, None);
+        *lock(&env.body) = Some(PROM1.to_string());
+        s.tick().await;
+        *lock(&env.body) = Some(PROM2.to_string());
+        s.tick().await;
+        assert_eq!(s.snapshot("m").expect("m").tok_s, Some(45.0));
+        s.tick().await;
+        assert_eq!(s.snapshot("m").expect("m").tok_s, None);
+    }
+
+    #[tokio::test]
+    async fn the_metrics_scrape_sends_the_per_run_key() {
+        let env = Arc::new(FakeEnv {
+            body: Mutex::new(Some(PROM1.to_string())),
+            ..Default::default()
+        });
+        let s = StatsSampler::new(env.clone());
+        let mut t = target(StatsKind::Llama, Vec::new());
+        t.api_key = Some("run-secret".into());
+        assert!(
+            !format!("{t:?}").contains("run-secret"),
+            "the key is never printed"
+        );
+        s.register(t);
+        s.set_phase("m", ModelState::Ready, None);
+        s.tick().await;
+        assert_eq!(lock(&env.bearer).as_deref(), Some("run-secret"));
+    }
+
+    #[tokio::test]
+    async fn the_real_http_get_authenticates_like_llama_server_wants() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind((LOOPBACK, 0)).await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut c, _) = listener.accept().await.expect("accept");
+                let mut buf = vec![0u8; 4096];
+                let n = c.read(&mut buf).await.expect("read");
+                let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let reply = if req.contains("\r\nAuthorization: Bearer k1\r\n") {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                } else {
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n"
+                };
+                c.write_all(reply.as_bytes()).await.expect("write");
+            }
+        });
+        assert_eq!(SystemEnv.http_get(port, "/metrics", None).await, None);
+        assert_eq!(
+            SystemEnv
+                .http_get(port, "/metrics", Some("k1"))
+                .await
+                .as_deref(),
+            Some("ok")
+        );
+        server.await.expect("server");
     }
 }

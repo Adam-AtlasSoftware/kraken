@@ -9,6 +9,9 @@ use kraken_ipc::ManualClock;
 use kraken_proto::infer::{DeviceInfo, DeviceRef, DeviceState, GpuVendor, ModelState};
 
 use super::*;
+use kraken_infer::port::pick_free_port;
+use kraken_infer::{ManagedProcess, ProcessSpec, RunningBackend};
+use serving::install_respawned;
 
 const MIB_: u64 = 1024 * 1024;
 
@@ -525,4 +528,119 @@ async fn strata_runs_from_its_manifest_on_the_picked_port_with_the_card_override
         .await
         .expect_err("cpu");
     assert_eq!(e.code, ErrorCode::Unsupported);
+}
+
+fn fake_process() -> RunningBackend {
+    let port = pick_free_port().expect("port");
+    let mut spec = ProcessSpec::new(fake_server_path(), port, "/health");
+    spec.args = vec!["--port".into(), port.to_string()];
+    spec.health.interval = Duration::from_millis(50);
+    spec.grace = Duration::from_millis(300);
+    RunningBackend::new(
+        LLAMA_ID,
+        None,
+        ManagedProcess::start(spec).expect("fake server"),
+    )
+}
+
+#[tokio::test]
+async fn a_stop_during_the_port_retry_stops_the_new_process_too() {
+    let old = fake_process();
+    let slot = Slot::new_manual(LLAMA_ID, old, Vec::new());
+    // The watcher stopped the old process for the retry; the stop arrives before the swap.
+    slot.run().stop().await;
+    slot.stopping
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let new = fake_process();
+    assert!(
+        !install_respawned(&slot, new),
+        "a stopping slot keeps nothing running"
+    );
+    for _ in 0..400 {
+        if slot.state() == ModelState::Stopped {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(slot.state(), ModelState::Stopped);
+    assert!(!slot.live());
+
+    // Not stopping: the new process is kept.
+    let slot = Slot::new_manual(LLAMA_ID, fake_process(), Vec::new());
+    slot.run().stop().await;
+    let new = fake_process();
+    let port = new.port();
+    assert!(install_respawned(&slot, new));
+    assert_eq!(slot.run().port(), port);
+    assert!(slot.live());
+    slot.stop().await;
+}
+
+#[tokio::test]
+async fn a_vulkan_build_is_told_its_card_by_name_not_by_cuda_variables() {
+    let t = tmp();
+    // The installed llama.cpp is the Vulkan build.
+    let data = t.path().join("data");
+    std::fs::create_dir_all(data.join("llama")).expect("llama dir");
+    std::fs::write(
+        data.join("llama/current.json"),
+        serde_json::to_string(&json!({
+            "tag": crate::llama_setup::LLAMA_TAG,
+            "variant": "vulkan",
+            "binary": fake_server_path(),
+        }))
+        .expect("json"),
+    )
+    .expect("current.json");
+    let cfg = ServingConfig {
+        models: vec![model("a", sparse(t.path(), "a.gguf", MIB_), false)],
+        roles: Vec::new(),
+        serving: crate::config::LocalServingSettings::default(),
+    };
+    let make = |listed: Vec<kraken_infer::hardware::LlamaDevice>| {
+        let cfg = cfg.clone();
+        Arc::new(
+            InferManager::with_registry(BackendRegistry::new())
+                .with_total_memory(8 * GIB, None)
+                .with_serving_config(cfg)
+                .with_llama_layout(crate::llama_setup::LlamaLayout::in_data_dir(&data))
+                .with_llama_binary(fake_server_path())
+                .with_devices(|| vec![card(8 * GIB)])
+                .with_llama_devices(move |_| listed.clone()),
+        )
+    };
+    let vk = |id: &str, name: &str| kraken_infer::hardware::LlamaDevice {
+        id: id.into(),
+        name: name.into(),
+        total: GIB,
+        free: GIB,
+    };
+    let m = make(vec![
+        vk("Vulkan0", "AMD Radeon Graphics"),
+        vk("Vulkan1", "Test card"),
+    ]);
+    m.hold_model(Holder::Owner, "a", StartOptions::default())
+        .await
+        .expect("starts");
+    let logs = m.model_logs(&ModelLogsParams {
+        model: "a".into(),
+        after_seq: None,
+        limit: None,
+    });
+    let spawn = logs
+        .lines
+        .iter()
+        .find(|l| l.text.starts_with("spawning"))
+        .expect("spawn line");
+    assert!(spawn.text.contains("--device Vulkan1"), "{}", spawn.text);
+    m.shutdown().await;
+
+    // A card llama.cpp does not list by that name is refused, not guessed.
+    let m = make(vec![vk("Vulkan0", "AMD Radeon Graphics")]);
+    let e = m
+        .hold_model(Holder::Owner, "a", StartOptions::default())
+        .await
+        .expect_err("cannot tell the card");
+    assert!(e.message.contains("Vulkan"), "{}", e.message);
+    assert_eq!(m.loaded_models(), 0);
 }

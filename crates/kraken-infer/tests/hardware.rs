@@ -84,7 +84,8 @@ fn mixed_vendors_are_all_listed() {
     assert_eq!(a.vram_used, 1203 << 20);
     assert_eq!(a.state, DeviceState::Ok);
     assert_eq!(find(&devs, GpuVendor::Nvidia, 1).vram_total, 12288 << 20);
-    let amd = find(&devs, GpuVendor::Amd, 2);
+    // rocm-smi's card2 is the only AMD card: HIP number 0.
+    let amd = find(&devs, GpuVendor::Amd, 0);
     assert_eq!(amd.name, "Radeon RX 7900 XTX");
     assert_eq!(amd.uuid, "0x8a1b2c3d4e5f6071");
     assert_eq!(amd.vram_total, 25_753_026_560);
@@ -101,7 +102,7 @@ fn mixed_matrix() {
     let f = fixture("mixed");
     let devs = detect_devices(&f, None);
     let nv = find(&devs, GpuVendor::Nvidia, 0);
-    let amd = find(&devs, GpuVendor::Amd, 2);
+    let amd = find(&devs, GpuVendor::Amd, 0);
     assert!(usable(LocalEngine::Strata, nv, &[]).is_ok());
     assert!(usable(LocalEngine::Strata, amd, &[]).is_err());
     assert!(usable(LocalEngine::Llama, amd, &[]).is_ok());
@@ -134,7 +135,8 @@ fn a_broken_driver_is_a_card_in_error() {
 #[test]
 fn without_vendor_tools_amd_comes_from_sysfs_and_nvidia_is_an_error() {
     let devs = detect_devices(&fixture("amd_sysfs_only"), None);
-    let amd = find(&devs, GpuVendor::Amd, 1);
+    // DRM card1 (card0 is the NVIDIA card) is the first AMD card HIP sees: number 0.
+    let amd = find(&devs, GpuVendor::Amd, 0);
     assert_eq!(amd.state, DeviceState::Ok);
     assert_eq!(amd.vram_total, 8_573_157_376);
     assert_eq!(amd.vram_used, 1 << 20);

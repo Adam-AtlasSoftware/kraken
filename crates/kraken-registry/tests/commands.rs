@@ -752,3 +752,24 @@ async fn local_model_commands_use_the_serving_service_and_hide_the_key() {
         .expect_err("not attached");
     assert_eq!(e.code, ErrorCode::Unsupported);
 }
+
+#[test]
+fn serving_commands_that_run_or_end_a_program_are_not_read_only() {
+    let r = Registry::standard();
+    let perm = |name: &str| r.get(name).expect(name).spec().permission;
+    for name in [
+        "local_model_start",
+        "local_model_hold",
+        "local_model_release",
+        "local_model_stop",
+    ] {
+        assert_eq!(perm(name), Permission::Mutating, "{name}");
+    }
+    for name in [
+        "local_model_list",
+        "local_model_devices",
+        "local_model_status",
+    ] {
+        assert_eq!(perm(name), Permission::Safe, "{name}");
+    }
+}

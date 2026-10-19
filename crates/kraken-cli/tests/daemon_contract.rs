@@ -50,16 +50,39 @@ async fn surfaces() -> Surfaces {
         .tempdir()
         .expect("runtime tempdir");
     let dir = RuntimeDir::from_dir(rt.path().join("rt")).expect("runtime dir");
-    let daemon = krakend::start(DaemonOptions {
-        runtime_dir: dir.clone(),
-        factory: Arc::new(DaemonFakeFactory::new(default_named(), Duration::ZERO)),
-        registry: Arc::new(Registry::standard()),
-        settings: Default::default(),
-        session_config: SessionConfig::default(),
-        clock: Arc::new(SystemClock::new()),
-        poll: Duration::from_millis(20),
-        build: "test".into(),
-    })
+    // The daemon's local models come from a private configuration with one model set up, never
+    // from the person's own `~/.config/kraken/config.toml` (nor their llama.cpp install).
+    let private = work.tmp.path().join("private");
+    let config = private.join("config/kraken/config.toml");
+    let mut cfg = kraken_host::KrakenConfig::default();
+    cfg.local_models.push(kraken_host::infer::new_local_model(
+        "contract-model",
+        kraken_proto::infer::LocalEngine::Llama,
+        private.join("contract-model.gguf"),
+    ));
+    cfg.save(&config).expect("private config");
+    let vars = [
+        ("KRAKEN_CONFIG", config.into_os_string()),
+        ("XDG_DATA_HOME", private.join("data").into_os_string()),
+        ("HOME", private.join("home").into_os_string()),
+        ("PATH", private.join("bin").into_os_string()),
+    ];
+    let infer = kraken_host::infer::InferManager::from_env_with(&|k| {
+        vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())
+    });
+    let daemon = krakend::start_with_infer(
+        DaemonOptions {
+            runtime_dir: dir.clone(),
+            factory: Arc::new(DaemonFakeFactory::new(default_named(), Duration::ZERO)),
+            registry: Arc::new(Registry::standard()),
+            settings: Default::default(),
+            session_config: SessionConfig::default(),
+            clock: Arc::new(SystemClock::new()),
+            poll: Duration::from_millis(20),
+            build: "test".into(),
+        },
+        Arc::new(infer),
+    )
     .expect("daemon starts");
     let connect = || async {
         let c = Client::connect(&dir, &ClientHello::new(ClientKind::Cli, "test"))
@@ -267,8 +290,14 @@ const SERVING: [&str; 7] = [
 /// no serving service attached and says so.
 async fn check_serving_commands(s: &Surfaces) {
     let listed = cli_call(&s.daemon_cli, &s.cli_dir, "local_model_list", &json!({})).await;
-    // The daemon reads the person's own configuration: whatever models it names, a list comes back.
-    assert!(listed.1["models"].is_array(), "{}", listed.1);
+    // The daemon reads the test's private configuration.
+    let ids: Vec<&str> = listed.1["models"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{}", listed.1))
+        .iter()
+        .filter_map(|m| m["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["contract-model"], "{}", listed.1);
     let unknown = cli_call(
         &s.daemon_cli,
         &s.cli_dir,

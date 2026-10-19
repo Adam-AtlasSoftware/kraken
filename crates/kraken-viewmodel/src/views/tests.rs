@@ -223,8 +223,11 @@ fn paged_listing(total: u64, per_page: u64) -> FakeBackend {
 
 #[test]
 fn the_listing_loads_lazily_and_pages_as_the_user_scrolls() {
-    let mut r = opened(paged_listing(25, 10));
-    r.vm.views.listing.page_size = 10;
+    // Pages of 50 rows: a page is longer than the 40 rows of look-ahead, so the top of the first
+    // page is "far from the end". Every count is read after `settle`, so a request that was
+    // made shows up however slowly the runtime runs it.
+    let mut r = opened(paged_listing(130, 50));
+    r.vm.views.listing.page_size = 50;
     r.select(0x401000);
     // Nothing is requested until a view asks.
     assert!(r.backend.calls_to("disassemble").is_empty());
@@ -237,10 +240,10 @@ fn the_listing_loads_lazily_and_pages_as_the_user_scrolls() {
     let l = &r.vm.views.listing;
     assert_eq!(r.backend.calls_to("disassemble").len(), 1);
     assert_eq!(r.backend.calls_to("disassemble")[0]["function"], "0x401000");
-    assert_eq!(r.backend.calls_to("disassemble")[0]["max_instructions"], 10);
+    assert_eq!(r.backend.calls_to("disassemble")[0]["max_instructions"], 50);
     assert_eq!(
         (l.function, l.rows.len(), l.has_more()),
-        (Some(0x401000), 10, true)
+        (Some(0x401000), 50, true)
     );
     assert_eq!(l.rows[4].mnemonic, "call");
     assert_eq!(l.rows[4].operands[0].text, "helper");
@@ -249,17 +252,22 @@ fn the_listing_loads_lazily_and_pages_as_the_user_scrolls() {
 
     // Far from the end: no request. Near the end: the next page, by cursor.
     r.vm.listing_scrolled(0);
+    r.settle();
     assert_eq!(r.backend.calls_to("disassemble").len(), 1);
     r.vm.listing_scrolled(10);
+    r.vm.listing_scrolled(11); // one page at a time
     r.settle();
     assert_eq!(r.backend.calls_to("disassemble").len(), 2);
-    assert_eq!(r.backend.calls_to("disassemble")[1]["cursor"], "10");
-    r.vm.listing_scrolled(20);
+    assert_eq!(r.backend.calls_to("disassemble")[1]["cursor"], "50");
+    assert_eq!(r.vm.views.listing.rows.len(), 100);
+    r.vm.listing_scrolled(60);
     r.settle();
     let l = &r.vm.views.listing;
-    assert_eq!((l.rows.len(), l.has_more()), (25, false));
-    assert_eq!(l.rows[24].address, 0x401000 + 24 * 4);
-    r.vm.listing_scrolled(25);
+    assert_eq!((l.rows.len(), l.has_more()), (130, false));
+    assert_eq!(l.rows[129].address, 0x401000 + 129 * 4);
+    assert_eq!(r.backend.calls_to("disassemble")[2]["cursor"], "100");
+    r.vm.listing_scrolled(130);
+    r.settle();
     assert_eq!(r.backend.calls_to("disassemble").len(), 3);
 }
 
@@ -875,12 +883,21 @@ fn strings_page_filter_and_reload_from_the_top() {
     assert_eq!(s.items[1].address, 0x402010);
     assert!(s.has_more());
 
+    // Two rows are within the look-ahead of the end: scrolling asks for the next page, once.
+    // The count is read after `settle`, when the request has surely reached the backend.
     r.vm.strings_scrolled(0);
-    assert_eq!(r.backend.calls_to("strings").len(), 1);
     r.vm.strings_scrolled(2);
     r.settle();
+    assert_eq!(r.backend.calls_to("strings").len(), 2);
     assert_eq!(r.vm.views.strings.items.len(), 3);
     assert!(!r.vm.views.strings.has_more());
+    r.vm.strings_scrolled(3);
+    r.settle();
+    assert_eq!(
+        r.backend.calls_to("strings").len(),
+        2,
+        "nothing more to load"
+    );
 
     r.vm.set_strings_filter("ERR");
     r.vm.set_strings_filter("ERR"); // unchanged: no second request
