@@ -2902,6 +2902,7 @@ dependencies = [
  "async-trait",
  "getrandom 0.3.4",
  "kraken-procguard",
+ "kraken-proto",
  "libc",
  "serde",
  "serde_json",

@@ -1,0 +1,2 @@
+DRIVER=amdxdna
+PCI_CLASS=120000
