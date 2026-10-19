@@ -365,3 +365,66 @@ async fn edits_survive_a_crash_and_land_in_the_state_dir() {
         "by_id"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn progress_does_not_extend_the_overall_cap() {
+    let Some(e) = open(options()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let first = e.worker_pid().expect("pid");
+    let started = std::time::Instant::now();
+    let err = e
+        .worker_test_progress(
+            "test_chatter",
+            Duration::from_secs(2),
+            Some(Duration::from_millis(1200)),
+            &c,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout, "{err}");
+    let d = err.details.clone().expect("details");
+    assert_eq!(d["reason"], "total_limit", "{err:?}");
+    assert_eq!(d["total_ms"], 1200, "{err:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "cap not enforced"
+    );
+    assert!(gone(first));
+    alive(&e).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn silent_worker_is_killed_at_the_idle_limit_not_the_cap() {
+    let Some(e) = open(options()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let started = std::time::Instant::now();
+    let err = e
+        .worker_test_progress(
+            "test_hang",
+            Duration::from_millis(800),
+            Some(Duration::from_secs(600)),
+            &c,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout, "{err}");
+    let d = err.details.clone().expect("details");
+    assert_eq!(d["reason"], "idle", "{err:?}");
+    assert_eq!(d["deadline_ms"], 800, "{err:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    alive(&e).await;
+}
+
+#[test]
+fn overall_cap_scales_with_the_binary() {
+    let o = WorkerOptions::default();
+    assert_eq!(o.total_cap(false, 0), o.open_timeout);
+    let big = o.total_cap(false, 100 << 20);
+    assert_eq!(big, o.open_timeout + o.timeout_per_mib * 100);
+    assert!(o.total_cap(true, 1) > o.analyze_timeout);
+    assert!(o.open_idle_timeout < o.open_timeout);
+}

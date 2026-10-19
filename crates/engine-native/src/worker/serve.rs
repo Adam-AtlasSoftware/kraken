@@ -225,6 +225,18 @@ async fn handle(
             *lock(&state.engine) = Some(engine);
             out(info)
         }
+        "test_chatter" if state.hooks => {
+            // reports progress forever and never finishes
+            let job_id = params["job_id"].as_str().unwrap_or_default().to_string();
+            loop {
+                let msg = json!({"jsonrpc": "2.0", "method": "progress", "params": {
+                    "job_id": job_id, "stage": "load", "done": 0, "total": 0, "message": "busy"}});
+                if let Ok(body) = serde_json::to_vec(&msg) {
+                    let _ = state.out.send(body);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
         "test_hang" | "test_crash" | "test_probe" if state.hooks => test_hook(method).await,
         _ => {
             let e = state.engine()?;
