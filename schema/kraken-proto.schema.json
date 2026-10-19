@@ -494,6 +494,154 @@
       ],
       "type": "object"
     },
+    "DeviceInfo": {
+      "description": "A card found on this computer.",
+      "properties": {
+        "index": {
+          "description": "The card's number as the vendor tool reports it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Product name.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/DeviceState",
+          "description": "Whether it can be used."
+        },
+        "uuid": {
+          "description": "The vendor's unique id; empty when the tool gives none.",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        },
+        "vram_total": {
+          "description": "Memory on the card in bytes (VRAM).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vram_used": {
+          "description": "Memory in use right now, in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index",
+        "uuid",
+        "vendor",
+        "name",
+        "vram_total",
+        "vram_used",
+        "state"
+      ],
+      "type": "object"
+    },
+    "DeviceRef": {
+      "description": "A card, named so it survives a renumbering: the UUID is the identity, the index only a hint.",
+      "properties": {
+        "index": {
+          "description": "The card's number when it was chosen.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uuid": {
+          "description": "The vendor's unique id of the card (`GPU-...` for NVIDIA).",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        }
+      },
+      "required": [
+        "uuid",
+        "index",
+        "vendor"
+      ],
+      "type": "object"
+    },
+    "DeviceState": {
+      "description": "Whether a card can be used.",
+      "oneOf": [
+        {
+          "description": "Working.",
+          "properties": {
+            "kind": {
+              "const": "ok",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Present but failing (driver missing or broken).",
+          "properties": {
+            "kind": {
+              "const": "error",
+              "type": "string"
+            },
+            "message": {
+              "description": "What is wrong, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Present but not usable by KRAKEN.",
+          "properties": {
+            "kind": {
+              "const": "unsupported",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DeviceVram": {
+      "description": "Memory a model uses on one card.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes in use by this model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/$defs/DeviceRef",
+          "description": "The card."
+        }
+      },
+      "required": [
+        "device",
+        "bytes"
+      ],
+      "type": "object"
+    },
     "DisasmRow": {
       "description": "One disassembled instruction.",
       "properties": {
@@ -836,6 +984,31 @@
       ],
       "type": "object"
     },
+    "GpuVendor": {
+      "description": "Who made a card.",
+      "oneOf": [
+        {
+          "const": "nvidia",
+          "description": "NVIDIA.",
+          "type": "string"
+        },
+        {
+          "const": "amd",
+          "description": "AMD.",
+          "type": "string"
+        },
+        {
+          "const": "intel",
+          "description": "Intel.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else, including processors for AI work (NPUs).",
+          "type": "string"
+        }
+      ]
+    },
     "Handshake": {
       "description": "Handshake payload: protocol version, build identity and capability list.",
       "properties": {
@@ -866,6 +1039,108 @@
       "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
       "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
       "type": "string"
+    },
+    "LocalEngine": {
+      "description": "The program that serves a model.",
+      "oneOf": [
+        {
+          "const": "llama",
+          "description": "llama.cpp's `llama-server`.",
+          "type": "string"
+        },
+        {
+          "const": "strata",
+          "description": "Strata (CUDA only).",
+          "type": "string"
+        }
+      ]
+    },
+    "LocalModel": {
+      "description": "A model set up on this computer.",
+      "properties": {
+        "autostart": {
+          "default": true,
+          "description": "Serve automatically when KRAKEN opens.",
+          "type": "boolean"
+        },
+        "context_size": {
+          "description": "Context size in tokens; unset means the engine's default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cpu_only": {
+          "default": false,
+          "description": "Run on the processor only, no card.",
+          "type": "boolean"
+        },
+        "devices": {
+          "default": [],
+          "description": "The cards to run on; empty means the default selection.",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "engine": {
+          "$ref": "#/$defs/LocalEngine",
+          "description": "The program that serves it."
+        },
+        "extra": {
+          "description": "Engine-specific settings, passed through untouched."
+        },
+        "id": {
+          "description": "Stable id (the catalog id for catalog models); what `local { model = \"<id>\" }` names.",
+          "type": "string"
+        },
+        "main_device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The main card among `devices`."
+        },
+        "model_path": {
+          "description": "The model file (or, for Strata, its model directory); empty when not yet located.",
+          "type": "string"
+        },
+        "multi_gpu": {
+          "$ref": "#/$defs/MultiGpuMode",
+          "default": "split",
+          "description": "What to do with several cards."
+        },
+        "name": {
+          "description": "Name shown to people.",
+          "type": "string"
+        },
+        "shares": {
+          "description": "Share of the model per selected card, in percent, in `devices` order.",
+          "items": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "engine",
+        "model_path"
+      ],
+      "type": "object"
     },
     "Locator": {
       "description": "Where something lives in a program; protocol-level and extensible with new variants.\n\nSerialized with `\"kind\"` as the tag.",
@@ -1322,6 +1597,169 @@
         }
       ]
     },
+    "ModelState": {
+      "description": "Where a served model is in its life.",
+      "oneOf": [
+        {
+          "description": "Not running.",
+          "properties": {
+            "kind": {
+              "const": "stopped",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Starting; the weights are being loaded.",
+          "properties": {
+            "kind": {
+              "const": "loading",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Serving requests.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shutting down.",
+          "properties": {
+            "kind": {
+              "const": "stopping",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Could not run, or stopped for good.",
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "description": "Why, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelStats": {
+      "description": "Live figures of one model.",
+      "properties": {
+        "devices": {
+          "default": [],
+          "description": "The cards in use.",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "load_fraction": {
+          "description": "How much of the loading is done, 0 to 1; `None` when the engine does not say.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model's id.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "ram_bytes": {
+          "default": 0,
+          "description": "Memory used on the computer (RAM) in bytes, summed over the engine's processes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tok_s": {
+          "description": "Words per second, roughly (tokens per second); `None` before the first reply.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tok_s_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `tok_s` comes from."
+        },
+        "vram_per_device": {
+          "default": [],
+          "description": "Card memory used by this model, per card.",
+          "items": {
+            "$ref": "#/$defs/DeviceVram"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "phase"
+      ],
+      "type": "object"
+    },
+    "MultiGpuMode": {
+      "description": "How a model uses several cards.",
+      "oneOf": [
+        {
+          "const": "split",
+          "description": "Split the model across the cards, a block of layers on each.",
+          "type": "string"
+        },
+        {
+          "const": "copy_per_card",
+          "description": "Each card runs its own full copy of the model (Strata replicas).",
+          "type": "string"
+        },
+        {
+          "const": "split_every_layer",
+          "description": "Split every layer between the cards (llama.cpp row split).",
+          "type": "string"
+        }
+      ]
+    },
     "OperandKind": {
       "description": "What an operand token is.",
       "oneOf": [
@@ -1754,6 +2192,21 @@
             "reason"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "TokSource": {
+      "description": "Where the words-per-second figure comes from.",
+      "oneOf": [
+        {
+          "const": "engine",
+          "description": "Reported by the engine.",
+          "type": "string"
+        },
+        {
+          "const": "approx",
+          "description": "Measured by KRAKEN from replies; shown as \"about N\".",
+          "type": "string"
         }
       ]
     },
@@ -2202,6 +2655,10 @@
       "$ref": "#/$defs/DecompileResult",
       "description": "See [`DecompileResult`]."
     },
+    "device_info": {
+      "$ref": "#/$defs/DeviceInfo",
+      "description": "See [`DeviceInfo`]."
+    },
     "disasm_row": {
       "$ref": "#/$defs/DisasmRow",
       "description": "See [`DisasmRow`]."
@@ -2222,6 +2679,10 @@
       "$ref": "#/$defs/Handshake",
       "description": "See [`Handshake`]."
     },
+    "local_model": {
+      "$ref": "#/$defs/LocalModel",
+      "description": "See [`LocalModel`]."
+    },
     "locator": {
       "$ref": "#/$defs/Locator",
       "description": "See [`Locator`]."
@@ -2237,6 +2698,14 @@
     "memory_block": {
       "$ref": "#/$defs/MemoryBlock",
       "description": "See [`MemoryBlock`]."
+    },
+    "model_state": {
+      "$ref": "#/$defs/ModelState",
+      "description": "See [`ModelState`]."
+    },
+    "model_stats": {
+      "$ref": "#/$defs/ModelStats",
+      "description": "See [`ModelStats`]."
     },
     "page_request": {
       "$ref": "#/$defs/PageRequest",
@@ -2299,7 +2768,11 @@
     "xref",
     "cfg",
     "string_entry",
-    "symbol_entry"
+    "symbol_entry",
+    "local_model",
+    "device_info",
+    "model_state",
+    "model_stats"
   ],
   "title": "ProtoSchema",
   "type": "object"

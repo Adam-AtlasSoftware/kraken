@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use kraken_proto::LocalModel;
 use kraken_registry::{EngineChoice, SessionConfig};
 use serde::{Deserialize, Serialize};
 
@@ -98,6 +99,48 @@ impl DaemonSettings {
     }
 }
 
+/// Which window frame to draw.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitlebarMode {
+    /// KRAKEN picks by desktop: its own bar on KDE, GNOME and Windows, the system's elsewhere.
+    #[default]
+    Auto,
+    /// Always KRAKEN's own title bar.
+    Custom,
+    /// Always the system title bar.
+    System,
+}
+
+/// The `[local_serving]` table: how local models are kept running and shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LocalServingSettings {
+    /// Seconds a model keeps running after the last user of it leaves (default 120).
+    pub grace_secs: u64,
+    /// Window frame.
+    pub titlebar: TitlebarMode,
+}
+
+impl LocalServingSettings {
+    /// Default grace period.
+    pub const DEFAULT_GRACE_SECS: u64 = 120;
+
+    /// The grace period as a duration.
+    pub fn grace(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.grace_secs)
+    }
+}
+
+impl Default for LocalServingSettings {
+    fn default() -> Self {
+        LocalServingSettings {
+            grace_secs: Self::DEFAULT_GRACE_SECS,
+            titlebar: TitlebarMode::Auto,
+        }
+    }
+}
+
 /// User configuration. Unset fields fall back to the environment (`KRAKEN_GHIDRA_HOME`, ...) and
 /// then to the engine's defaults.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +177,12 @@ pub struct KrakenConfig {
     pub projects_root: Option<PathBuf>,
     /// `krakend` tunables.
     pub daemon: DaemonSettings,
+    /// Models set up on this computer (`[[local_models]]`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub local_models: Vec<LocalModel>,
+    /// How local models are kept running and shown.
+    #[serde(skip_serializing_if = "is_default_serving")]
+    pub local_serving: LocalServingSettings,
     /// The `[provider]` table (chat model for the assistant). Kept opaque here and parsed by
     /// `kraken-assist` (`kraken_agent::ProviderConfig`); present so the file still loads.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,6 +207,10 @@ pub struct KrakenConfig {
     /// Kept opaque; parsed by `kraken-agent` (`ThinkingConfig`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<serde_json::Value>,
+}
+
+fn is_default_serving(s: &LocalServingSettings) -> bool {
+    *s == LocalServingSettings::default()
 }
 
 impl KrakenConfig {
@@ -504,5 +557,69 @@ mod tests {
             cfg.apply_env(&env_of(&[("KRAKEN_NATIVE_IN_PROCESS", "maybe")]))
                 .is_err()
         );
+    }
+
+    fn model(id: &str) -> LocalModel {
+        use kraken_proto::{DeviceRef, GpuVendor, LocalEngine, MultiGpuMode};
+        let d = DeviceRef {
+            uuid: "GPU-9".into(),
+            index: 1,
+            vendor: GpuVendor::Nvidia,
+        };
+        LocalModel {
+            id: id.into(),
+            name: "Qwen".into(),
+            engine: LocalEngine::Strata,
+            model_path: "/m/q".into(),
+            devices: vec![d.clone()],
+            cpu_only: false,
+            multi_gpu: MultiGpuMode::CopyPerCard,
+            shares: Some(vec![60, 40]),
+            main_device: Some(d),
+            context_size: Some(8192),
+            autostart: false,
+            extra: Some(serde_json::json!({"threads": 4})),
+        }
+    }
+
+    #[test]
+    fn local_models_and_serving_round_trip_and_other_tables_survive() {
+        let mut c = KrakenConfig::from_toml(
+            "per_run_cap = 7\n[provider]\nkind = \"anthropic\"\nmodel = \"x\"\n\
+             [pricing]\nfoo = 1\n",
+        )
+        .unwrap();
+        c.local_models = vec![model("a"), model("b")];
+        c.local_serving.grace_secs = 30;
+        c.local_serving.titlebar = TitlebarMode::Custom;
+        let text = c.to_toml().unwrap();
+        assert!(
+            text.contains("[[local_models]]") && text.contains("[local_serving]"),
+            "{text}"
+        );
+        let back = KrakenConfig::from_toml(&text).unwrap();
+        assert_eq!(back, c);
+        assert_eq!(back.provider.as_ref().unwrap()["kind"], "anthropic");
+        assert_eq!(back.pricing.as_ref().unwrap()["foo"], 1);
+        assert_eq!(back.local_serving.grace().as_secs(), 30);
+    }
+
+    #[test]
+    fn defaults_are_not_written() {
+        let c = KrakenConfig::default();
+        let text = c.to_toml().unwrap();
+        assert!(
+            !text.contains("local_models") && !text.contains("local_serving"),
+            "{text}"
+        );
+        let c = KrakenConfig::from_toml("").unwrap();
+        assert_eq!(c.local_serving.grace_secs, 120);
+        assert_eq!(c.local_serving.titlebar, TitlebarMode::Auto);
+        assert!(c.local_models.is_empty());
+        let m = KrakenConfig::from_toml(
+            "[[local_models]]\nid = \"a\"\nname = \"A\"\nengine = \"llama\"\nmodel_path = \"/x\"\n",
+        )
+        .unwrap();
+        assert!(m.local_models[0].autostart);
     }
 }

@@ -12,6 +12,7 @@ pub mod ai;
 pub mod decompile;
 pub mod error;
 pub mod hex;
+pub mod infer;
 pub mod locator;
 pub mod logop;
 pub mod meta;
@@ -31,6 +32,10 @@ pub use ai::{
 pub use decompile::{DecompileResult, LANGUAGE_C, LANGUAGE_CSHARP, Token, TokenKind};
 pub use error::{ErrorCode, ProtoError};
 pub use hex::{Hex64, ParseHexError};
+pub use infer::{
+    DeviceInfo, DeviceRef, DeviceState, DeviceVram, GpuVendor, LocalEngine, LocalModel, ModelState,
+    ModelStats, MultiGpuMode, TokSource,
+};
 pub use locator::{AddressRange, Anchor, DEFAULT_SPACE, Locator};
 pub use logop::{CodeData, CommentKind, LOG_SCHEMA_VERSION, LogOp, VersionedLogOp};
 pub use meta::{
@@ -107,6 +112,14 @@ pub struct ProtoSchema {
     pub string_entry: StringEntry,
     /// See [`SymbolEntry`].
     pub symbol_entry: SymbolEntry,
+    /// See [`LocalModel`].
+    pub local_model: LocalModel,
+    /// See [`DeviceInfo`].
+    pub device_info: DeviceInfo,
+    /// See [`ModelState`].
+    pub model_state: ModelState,
+    /// See [`ModelStats`].
+    pub model_stats: ModelStats,
 }
 
 /// Rebuilds every JSON object with its keys in sorted order, so generated files do not depend on

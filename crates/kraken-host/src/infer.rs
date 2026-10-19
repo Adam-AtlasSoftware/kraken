@@ -26,7 +26,7 @@ use kraken_infer::{
     BackendCapabilities, BackendRegistry, GpuApi, InferError, InferenceBackend, LogStream,
     MemoryBudget, Phase, Reservation, RunningBackend,
 };
-use kraken_proto::{ErrorCode, ProtoError};
+use kraken_proto::{ErrorCode, LocalEngine, LocalModel, MultiGpuMode, ProtoError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -960,6 +960,73 @@ pub fn provider_table(
     t
 }
 
+/// The `[provider]` table of a model served from this computer: `local { model = id }`, resolved
+/// to the running server when a request is made.
+pub fn local_provider_table(model_id: &str) -> Value {
+    json!({ "kind": "local", "model": model_id })
+}
+
+/// Whether `table` is what [`provider_table`] (or `write_local_provider`) wrote for a server on
+/// this computer.
+fn is_local_server_table(table: &Value) -> bool {
+    if table["kind"] != "openai_compatible" {
+        return false;
+    }
+    let Some(url) = table["base_url"].as_str() else {
+        return false;
+    };
+    let host = url
+        .split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("");
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+        && (table["api_key"]["env"] == LOCAL_KEY_ENV || url == crate::local_models::LOCAL_BASE_URL)
+}
+
+/// Turns the `[provider]` and `[rewrite]` tables written for a local model into a
+/// [`LocalModel`] in `local_models` plus a `local { model = id }` provider. Tables for other
+/// servers are left alone, a model already listed is not added twice, and running it again
+/// changes nothing. `locate` finds the model file for an id (an empty path when it returns
+/// `None`). Returns how many tables were converted.
+pub fn migrate_local_provider(
+    cfg: &mut crate::KrakenConfig,
+    locate: &dyn Fn(&str) -> Option<PathBuf>,
+) -> usize {
+    let mut converted = 0;
+    for slot in [&mut cfg.provider, &mut cfg.rewrite] {
+        let Some(table) = slot.as_ref().filter(|t| is_local_server_table(t)) else {
+            continue;
+        };
+        let id = table["model"].as_str().unwrap_or("local").to_string();
+        let engine = if table["engine"] == "strata" {
+            LocalEngine::Strata
+        } else {
+            LocalEngine::Llama
+        };
+        *slot = Some(local_provider_table(&id));
+        converted += 1;
+        if !cfg.local_models.iter().any(|m| m.id == id) {
+            cfg.local_models.push(LocalModel {
+                name: id.clone(),
+                model_path: locate(&id).unwrap_or_default(),
+                id,
+                engine,
+                devices: Vec::new(),
+                cpu_only: false,
+                multi_gpu: MultiGpuMode::default(),
+                shares: None,
+                main_device: None,
+                context_size: None,
+                autostart: true,
+                extra: None,
+            });
+        }
+    }
+    converted
+}
+
 /// Makes `table` the `[provider]` table of the configuration file at `path`, keeping the other
 /// settings (comments in the file are not kept). A missing file is created.
 pub fn write_provider(path: &Path, table: Value) -> Result<(), String> {
@@ -994,3 +1061,54 @@ pub fn gpu_names(apis: &[GpuApi]) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+    use crate::KrakenConfig;
+
+    #[test]
+    fn a_local_provider_becomes_a_model_and_a_local_provider() {
+        let mut cfg = KrakenConfig::from_toml("per_run_cap = 3\n").expect("config");
+        cfg.provider = Some(provider_table(
+            "http://127.0.0.1:8080/v1",
+            Some("qwen"),
+            true,
+            true,
+        ));
+        cfg.rewrite = Some(provider_table(
+            "http://127.0.0.1:8080/v1",
+            Some("qwen"),
+            true,
+            false,
+        ));
+        let n =
+            migrate_local_provider(&mut cfg, &|id| Some(PathBuf::from(format!("/m/{id}.gguf"))));
+        assert_eq!(n, 2);
+        assert_eq!(cfg.local_models.len(), 1);
+        assert_eq!(
+            cfg.local_models[0].model_path,
+            PathBuf::from("/m/qwen.gguf")
+        );
+        assert_eq!(cfg.provider, Some(local_provider_table("qwen")));
+        assert_eq!(cfg.rewrite, Some(local_provider_table("qwen")));
+        assert_eq!(migrate_local_provider(&mut cfg, &|_| None), 0);
+        assert_eq!(cfg.local_models.len(), 1);
+        let again = KrakenConfig::from_toml(&cfg.to_toml().expect("toml")).expect("reparse");
+        assert_eq!(again, cfg);
+    }
+
+    #[test]
+    fn a_cloud_or_lan_provider_is_left_alone() {
+        let mut cfg = KrakenConfig {
+            provider: Some(
+                json!({"kind":"openai_compatible","base_url":"http://192.168.1.5:8080/v1","model":"m"}),
+            ),
+            rewrite: Some(json!({"kind":"anthropic","model":"x"})),
+            ..Default::default()
+        };
+        let before = cfg.clone();
+        assert_eq!(migrate_local_provider(&mut cfg, &|_| None), 0);
+        assert_eq!(cfg, before);
+    }
+}
