@@ -337,12 +337,18 @@ fn walk(
                 break;
             };
             seen.insert(pc);
+            let next = pc + u64::from(insn.length);
+            // the return address a call pushes is not a function pointer: after a call that
+            // never returns it is the padding past the body, which would be taken for a start
+            let is_call = matches!(insn.flow, Flow::Call | Flow::IndirectCall);
             for r in &insn.refs {
+                if (is_call && r.addr == next) || r.addr == pc {
+                    continue;
+                }
                 if !propagate && r.kind != RefKind::Immediate && loaded.is_code(r.addr) {
                     consts.push(r.addr);
                 }
             }
-            let next = pc + u64::from(insn.length);
             // a trap (`ebreak`, `udf`, `brk`) ends the flow, as in Ghidra
             if propagate && is_trap(&insn.mnemonic) {
                 break;

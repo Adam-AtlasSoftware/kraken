@@ -5,7 +5,7 @@
 //! The engines run in the confined worker process (`kraken-native-worker`, the default);
 //! `KRAKEN_NATIVE_TEST_IN_PROCESS=1` runs them in-process instead. The contract suite runs both.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
@@ -186,6 +186,41 @@ async fn recall_against_truth() {
         let (r, differ) = recall(binary, true).await.expect("open");
         assert_eq!(r, 1.0, "{binary}");
         assert_eq!(differ, 0, "{binary}: sizes match the truth");
+    }
+}
+
+/// No function of a stripped build starts inside a truth function or in the alignment padding
+/// after one. The return address a call pushes is an address-sized constant of the call's
+/// p-code; after a call that never returns (`__stack_chk_fail`, `exit`) it is that padding, and
+/// was once taken for a function pointer, so every such function had a phantom twin there.
+#[tokio::test(flavor = "multi_thread")]
+async fn stripped_builds_have_no_phantom_starts() {
+    for binary in ["switch_vm-O2-stripped", "cpp_shapes-O2-stripped"] {
+        let Some((e, info)) = open(binary, true).await else {
+            return;
+        };
+        let want = truth(binary, info.base.0);
+        // the starts Ghidra lists (such as `_fini`, the next section, right after the last
+        // function) are not phantoms
+        let ghidra: BTreeSet<u64> = json(&format!("corpus/fixtures/{binary}.json"))["functions"]
+            .as_array()
+            .expect("functions")
+            .iter()
+            .map(|f| hex(&f["summary"]["locator"]["offset"]))
+            .collect();
+        let mut phantoms = Vec::new();
+        for f in listing(&e).await {
+            let at = offset(&f.locator);
+            if want.contains_key(&at) || ghidra.contains(&at) {
+                continue;
+            }
+            if let Some((entry, (name, size))) = want.range(..at).next_back()
+                && at < (entry + size).next_multiple_of(16)
+            {
+                phantoms.push(format!("{at:#x} in {name}"));
+            }
+        }
+        assert!(phantoms.is_empty(), "{binary}: {phantoms:?}");
     }
 }
 
