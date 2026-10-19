@@ -338,6 +338,46 @@ can be downloaded (the argument is a catalog id, never a URL), and each file's S
 against the value pinned in the catalog (`crates/kraken-infer/data/models.toml`); a file that
 differs is deleted. Start the model afterwards from Settings > Local model.
 
+### The Strata engine: big models on a small GPU
+
+[Strata](https://github.com/Niko1221/Strata) (MIT) serves large mixture-of-experts models by
+keeping the expert weights in system RAM and the hot path on the GPU, so video memory and RAM
+together bound the model. A machine with 8 GiB of video memory and 64 GiB of RAM can be offered
+an 84 GB model where llama-server would pick one of about 5 GB. Choose **Strata** under Settings >
+AI > Run a model on this computer, then **Evaluate this system**: it shows the GPU and video
+memory, RAM, free disk, what is missing (CUDA, compiler, Python), every Strata model with whether
+it fits, a warning when it is below Strata's stated minimum (12 GiB video memory, 32 GiB RAM, and
+the RAM Strata states per model; such models are offered, not hidden: "expect slow or failing
+runs") and a rough speed expectation (not measured). The best model that fits is preselected.
+**Set up...** lists every download with its size and the disk use, then **Download and set up**
+shows a progress bar. The same through the registry:
+
+```text
+local_model_recommend {"engine": "strata"}
+local_model_setup {"engine": "strata", "model": "strata-iq3-s", "use_for": ["assistant"]}
+```
+
+Models offered (Strata v0.1.45, commit `477ac13c`): IQ1_M coder (58 GB, 32 GiB RAM), Q2_0 (66 GB,
+48), IQ2_XS (68 GB, 48), IQ3_XXS (76 GB, 60) and IQ3_S (84 GB, 62).
+
+What setup does, and does not do:
+
+- Everything is pinned in `crates/kraken-infer/data/strata.toml`: the Strata source archive at a
+  commit, the llama.cpp archive Strata pins, the SHA-256 of Strata's `requirements.txt`, and every
+  model file's URL at a Hugging Face revision with its published LFS SHA-256. A download whose hash
+  differs is deleted and the setup stops. Strata publishes no hashes for its source, so those two
+  were computed when the manifest was written. No script is downloaded and run: KRAKEN downloads
+  the pinned archives itself and runs Strata's `setup.py` from them, in a private venv with the
+  pinned packages, with `--build --yes --no-start`, and a `sudo` that always fails first on `PATH`.
+- Everything lives in `~/.local/share/kraken/engines/strata` (plus a manifest copied to
+  `infer/manifests/strata.toml`). KRAKEN installs no system software. If the NVIDIA driver, `nvcc`
+  (CUDA toolkit), a C++ compiler or Python 3.10+ with `venv` is missing, setup stops before any
+  download and names each missing piece and how to install it.
+- Linux has no prebuilt Strata engine yet, so the engine is compiled from source (10 to 20
+  minutes). NVIDIA only for now.
+- The server is a supervised child (`kraken infer start strata`) bound to 127.0.0.1:8080, and
+  `[provider]` points at `http://127.0.0.1:8080/v1`. The build log is `engines/strata/setup.log`.
+
 ## Commands
 
 All of them take `--project <dir>` (or `KRAKEN_PROJECT`) like the other commands, and use whatever the `[provider]` table selects, a model or a terminal agent. Text streams to standard output and tool calls go to standard error, so you can see what the assistant looked at. With `--json`, standard output holds one structured result instead (it says which kind of backend answered).

@@ -6,7 +6,7 @@
 //! `settings_schema` and is filled from the user's settings or the property's `default`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -79,6 +79,9 @@ pub struct Manifest {
     /// Extra environment for the engine (the parent environment is otherwise filtered).
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Working directory of the engine process.
+    #[serde(default)]
+    pub cwd: Option<String>,
     pub capabilities: ManifestCapabilities,
     #[serde(default = "empty_schema")]
     pub settings_schema: Value,
@@ -354,6 +357,7 @@ impl InferenceBackend for GenericOpenAiServerBackend {
         spec.env = m.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         spec.health.ready_timeout = Duration::from_secs(m.ready_timeout_secs);
         spec.grace = Duration::from_secs(m.grace_secs);
+        spec.cwd = m.cwd.as_ref().map(PathBuf::from);
         let process = ManagedProcess::start(spec)?;
         for w in warnings {
             process

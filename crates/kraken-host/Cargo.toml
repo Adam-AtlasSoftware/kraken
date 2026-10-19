@@ -27,7 +27,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 tar = "0.4.46"
 thiserror.workspace = true
-tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "fs", "io-util"] }
+tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "fs", "io-util", "process"] }
 toml = "0.8"
 tracing = "0.1"
 zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2"] }

@@ -35,11 +35,11 @@ kraken-rewrite = { path = "../kraken-rewrite", version = "0.0.0" }
 kraken-viewmodel = { path = "../kraken-viewmodel", version = "0.0.0" }
 serde.workspace = true
 serde_json.workspace = true
+kraken-infer = { path = "../kraken-infer", version = "0.0.0" }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
-kraken-infer = { path = "../kraken-infer", version = "0.0.0" }
 egui_kittest = { version = "=0.36.2", features = ["wgpu"] }
 engine-fake = { path = "../engine-fake", version = "0.0.0" }
 kraken-ipc = { path = "../kraken-ipc", version = "0.0.0" }
