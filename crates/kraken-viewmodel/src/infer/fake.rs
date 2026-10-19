@@ -88,6 +88,11 @@ impl FakeServing {
         }
     }
 
+    /// Adds a model the service knows from now on (setup registers one).
+    pub fn add_model(&self, status: ModelStatus) {
+        self.inner().models.push(status);
+    }
+
     /// Everything asked of the service so far.
     pub fn calls(&self) -> Vec<FakeCall> {
         self.inner().calls.clone()
@@ -192,5 +197,224 @@ impl ServingApi for FakeServing {
             ErrorCode::Unsupported,
             "no logs in the fake",
         ))
+    }
+}
+
+pub use setup_fake::{FakeSetupProbe, sample_survey};
+
+mod setup_fake {
+    //! A scripted [`SetupProbe`]: a survey made of numbers, an install that writes the real
+    //! configuration entries into a scratch file and registers the model with a
+    //! [`FakeServing`], and a test question that answers.
+
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use kraken_proto::infer::{DeviceInfo, LocalEngine};
+    use kraken_proto::{ErrorCode, ProtoError};
+    use kraken_registry::commands::{
+        DownloadView, GpuView, LocalFeature, LocalModelRecommendOut, ModelView,
+        StrataCandidateView, StrataView,
+    };
+
+    use super::{FakeServing, stopped_status};
+    use crate::assist::TestReport;
+    use crate::infer::setup::{RawSurvey, SetupProbe};
+
+    const GIB: u64 = 1 << 30;
+
+    /// A computer with the given cards, RAM and free disk, and the first catalog model that
+    /// fits suggested; with an NVIDIA card Strata is offered too.
+    pub fn sample_survey(devices: Vec<DeviceInfo>, ram_gib: f64, disk_gib: f64) -> RawSurvey {
+        let catalog = kraken_infer::model_catalog();
+        let suggested = catalog.iter().find(|m| m.id == "qwen3-8b-q4_k_m");
+        let llama = LocalModelRecommendOut {
+            gpus: devices
+                .iter()
+                .map(|d| GpuView {
+                    vendor: format!("{:?}", d.vendor).to_lowercase(),
+                    name: d.name.clone(),
+                    vram_gib: Some(d.vram_total as f64 / GIB as f64),
+                })
+                .collect(),
+            ram_gib,
+            free_disk_gib: disk_gib,
+            cpu_cores: 16,
+            engine: "llama-server".into(),
+            engine_label: "llama-server (CUDA)".into(),
+            gpu_api: "cuda".into(),
+            model: suggested.map(ModelView::from),
+            download_bytes: suggested.map_or(0, |m| m.size),
+            disk_bytes: suggested.map_or(0, |m| m.size),
+            reasons: vec!["A card was found.".into()],
+            strata: None,
+        };
+        let strata = LocalModelRecommendOut {
+            engine: "strata".into(),
+            engine_label: "Strata".into(),
+            strata: Some(StrataView {
+                candidates: vec![StrataCandidateView {
+                    id: "strata-iq1-m".into(),
+                    name: "Big mixture-of-experts model".into(),
+                    quant: "IQ1_M".into(),
+                    min_ram_gib: 32,
+                    fit: if ram_gib >= 32.0 {
+                        "fits"
+                    } else {
+                        "below_minimum"
+                    }
+                    .into(),
+                    warnings: vec!["Needs 32 GB of RAM to run well.".into()],
+                    speed: "Roughly 3 to 8 words a second on a card with 12 GB.".into(),
+                    download_bytes: 60 * GIB,
+                    disk_bytes: 90 * GIB,
+                    downloads: vec![DownloadView {
+                        name: "model".into(),
+                        url: "https://example.invalid/m".into(),
+                        size_bytes: 60 * GIB,
+                        sha256: "00".into(),
+                    }],
+                }],
+                recommended: None,
+                missing: Vec::new(),
+                notes: Vec::new(),
+                revision: "v1".into(),
+            }),
+            ..llama.clone()
+        };
+        RawSurvey {
+            devices,
+            llama,
+            strata: Some(strata),
+        }
+    }
+
+    /// The scripted probe.
+    pub struct FakeSetupProbe {
+        survey: Mutex<Result<RawSurvey, ProtoError>>,
+        serving: Arc<FakeServing>,
+        config: PathBuf,
+        installs: Mutex<Vec<(String, LocalEngine)>>,
+        fail_install: Mutex<Option<ProtoError>>,
+        fail_test: Mutex<Option<String>>,
+        delay: Duration,
+        disk: AtomicU64,
+    }
+
+    impl FakeSetupProbe {
+        /// A probe whose installs write to `config` and register with `serving`.
+        pub fn new(survey: RawSurvey, serving: Arc<FakeServing>, config: &Path) -> Self {
+            FakeSetupProbe {
+                survey: Mutex::new(Ok(survey)),
+                serving,
+                config: config.to_path_buf(),
+                installs: Mutex::default(),
+                fail_install: Mutex::default(),
+                fail_test: Mutex::default(),
+                delay: Duration::ZERO,
+                disk: AtomicU64::new(0),
+            }
+        }
+
+        /// The download takes this long (and the disk grows meanwhile).
+        pub fn slow(mut self, delay: Duration) -> Self {
+            self.delay = delay;
+            self
+        }
+
+        /// The look at the computer fails.
+        pub fn fail_survey(&self, message: &str) {
+            *self.survey.lock().unwrap_or_else(PoisonError::into_inner) =
+                Err(ProtoError::new(ErrorCode::Internal, message));
+        }
+
+        /// The next install fails with `e`.
+        pub fn fail_install(&self, e: ProtoError) {
+            *self
+                .fail_install
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(e);
+        }
+
+        /// The next test question fails.
+        pub fn fail_test(&self, message: &str) {
+            *self
+                .fail_test
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(message.to_string());
+        }
+
+        /// Models installed so far.
+        pub fn installs(&self) -> Vec<(String, LocalEngine)> {
+            self.installs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl SetupProbe for FakeSetupProbe {
+        async fn survey(&self) -> Result<RawSurvey, ProtoError> {
+            self.survey
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
+        async fn install(&self, id: &str, engine: LocalEngine) -> Result<(), ProtoError> {
+            if !self.delay.is_zero() {
+                for _ in 0..4 {
+                    tokio::time::sleep(self.delay / 4).await;
+                    self.disk.fetch_add(GIB, Ordering::SeqCst);
+                }
+            }
+            if let Some(e) = self
+                .fail_install
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                return Err(e);
+            }
+            kraken_host::local_models::write_local_provider(
+                &self.config,
+                id,
+                engine,
+                Path::new(&format!("/models/{id}.gguf")),
+                &[LocalFeature::Assistant],
+            )?;
+            let mut status = stopped_status(id, id);
+            status.engine = Some(engine);
+            self.serving.add_model(status);
+            self.installs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((id.to_string(), engine));
+            Ok(())
+        }
+
+        fn bytes_on_disk(&self) -> u64 {
+            self.disk.load(Ordering::SeqCst)
+        }
+
+        async fn test(&self, model: &str) -> Result<TestReport, String> {
+            if let Some(e) = self
+                .fail_test
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                return Err(e);
+            }
+            Ok(TestReport {
+                model: model.to_string(),
+                reply: "ready".into(),
+                millis: 420,
+            })
+        }
     }
 }

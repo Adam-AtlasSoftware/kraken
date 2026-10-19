@@ -197,6 +197,11 @@ impl ServingHub {
         self.next_poll = Instant::now();
     }
 
+    /// The service this hub talks to, for work that starts models itself (the guided setup).
+    pub fn api(&self) -> Arc<dyn ServingApi> {
+        self.api.clone()
+    }
+
     /// True once the service answered.
     pub fn loaded(&self) -> bool {
         lock(&self.shared).loaded

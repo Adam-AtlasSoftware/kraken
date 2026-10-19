@@ -13,6 +13,8 @@ pub mod fake;
 mod form;
 mod hub;
 mod panel;
+pub mod setup;
+pub mod setup_probe;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -26,4 +28,9 @@ pub use kraken_host::infer::{
 };
 pub use kraken_host::infer::{ModelStatus, ServingApi, StartOptions};
 pub use panel::{HintLevel, InferPanel, LOCAL_INFER_ACCOUNT, MemoryHint};
+pub use setup::{
+    Choice, Computer, FitLevel, LocalSetup, Progress, RawSurvey, SetupProbe, SetupStep, Snapshot,
+    Stage, Survey, SurveyState, survey_from,
+};
+pub use setup_probe::BackendSetupProbe;
 pub use store::LocalModelStore;

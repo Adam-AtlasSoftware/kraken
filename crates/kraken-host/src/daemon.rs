@@ -96,6 +96,9 @@ pub struct GuiSelection {
     /// Action ids the GUI accepts from `ui_action`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
+    /// A window the GUI shows that `ui_action` can drive (the model setup), in a sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<String>,
 }
 
 /// Params of `gui_selection_set`: `selection: null` clears it.

@@ -10,7 +10,9 @@ use kraken_host::KrakenConfig;
 use kraken_proto::infer::{
     DeviceInfo, DeviceState, GpuVendor, LocalEngine, LocalModel, MultiGpuMode,
 };
-use kraken_viewmodel::infer::fake::{FakeCall, FakeServing, stopped_status};
+use kraken_viewmodel::infer::fake::{
+    FakeCall, FakeServing, FakeSetupProbe, sample_survey, stopped_status,
+};
 
 use super::options;
 use super::shell::{Kit, kit_sized};
@@ -63,6 +65,7 @@ fn model(id: &str, name: &str, engine: LocalEngine) -> LocalModel {
 struct Rig {
     k: Kit,
     fake: Arc<FakeServing>,
+    probe: Option<Arc<FakeSetupProbe>>,
     config: PathBuf,
     _dir: tempfile::TempDir,
 }
@@ -73,6 +76,21 @@ fn rig(provider: Option<serde_json::Value>) -> Rig {
 }
 
 fn rig_with(provider: Option<serde_json::Value>, gpu: bool, size: [f32; 2]) -> Rig {
+    build(provider, gpu, size, None)
+}
+
+/// The same, with the guided setup looking at a computer that has `cards`.
+fn rig_setup(cards: Vec<DeviceInfo>, size: [f32; 2], slow: Duration) -> Rig {
+    let survey = sample_survey(cards, 31.2, 412.0);
+    build(None, false, size, Some((survey, slow)))
+}
+
+fn build(
+    provider: Option<serde_json::Value>,
+    gpu: bool,
+    size: [f32; 2],
+    setup: Option<(kraken_viewmodel::infer::RawSurvey, Duration)>,
+) -> Rig {
     let dir = crate::testutil::tempdir();
     let config = dir.path().join("kraken/config.toml");
     let cfg = KrakenConfig {
@@ -94,6 +112,11 @@ fn rig_with(provider: Option<serde_json::Value>, gpu: bool, size: [f32; 2]) -> R
     let mut services = Services::offline();
     services.config_path = Some(config.clone());
     services.serving = Some(fake.clone());
+    let probe = setup.map(|(survey, slow)| {
+        let p = Arc::new(FakeSetupProbe::new(survey, fake.clone(), &config).slow(slow));
+        services.setup_probe = Some(p.clone());
+        p
+    });
     let mut k = kit_sized(services, &options(false), gpu, size);
     k.h.run_steps(3);
     k.h.state_mut().settings_mut().show_window();
@@ -101,6 +124,7 @@ fn rig_with(provider: Option<serde_json::Value>, gpu: bool, size: [f32; 2]) -> R
     Rig {
         k,
         fake,
+        probe,
         config,
         _dir: dir,
     }
@@ -319,15 +343,171 @@ fn removing_a_model_takes_it_off_the_list_and_off_the_assistant() {
     assert!(r.has("The assistant is off until you pick one."));
 }
 
+fn one_card() -> Vec<DeviceInfo> {
+    vec![gpu(0, GpuVendor::Nvidia, "RTX 3070 Ti", DeviceState::Ok)]
+}
+
+impl Rig {
+    fn open_setup(&mut self) {
+        self.open_picker("Ollama");
+        self.press("+ Set up a model on this computer...");
+        self.until("the setup window", |k| {
+            k.h.query_by_label_contains("Check this computer").is_some()
+        });
+    }
+}
+
 #[test]
-fn set_up_a_model_opens_the_setup_hook() {
-    let mut r = rig(None);
-    r.open_picker("Ollama");
-    r.press("+ Set up a model on this computer...");
-    r.until("the setup window", |k| {
-        k.h.query_by_label_contains("The guided setup is not ready yet.")
+fn the_setup_walks_four_steps_and_the_assistant_ends_up_using_the_new_model() {
+    let mut r = rig_setup(one_card(), [1280.0, 2400.0], Duration::from_millis(300));
+    r.open_setup();
+
+    // 1 Check this computer
+    r.until("the computer", |k| {
+        k.h.query_by_label_contains("Your graphics card: RTX 3070 Ti with 8.0 GB of video memory")
             .is_some()
     });
+    assert!(r.has("Step 1 of 4"));
+    assert!(r.has("Computer memory (RAM): 31.2 GB"));
+    assert!(r.has("Free disk space: 412 GB"));
+    r.press("Next");
+
+    // 2 Pick a model
+    assert!(r.has("Step 2 of 4"));
+    assert!(r.has("Recommended"));
+    assert!(r.has("Won't fit"), "the 32B models do not fit 8 GB");
+    assert!(r.has("Fits in RTX 3070 Ti (video memory) with room to spare."));
+    assert!(
+        r.k.h.query_by_label("Next").is_some(),
+        "Next waits for a pick"
+    );
+    r.k.h
+        .get_by_label_contains("Qwen3 8B \u{b7} Q4_K_M")
+        .click();
+    r.k.h.run_steps(3);
+    r.press("Next");
+
+    // 3 Pick cards
+    assert!(r.has("Step 3 of 4"));
+    assert!(r.has("Run on"));
+    assert!(r.has("Qwen3 8B fits on these cards."));
+    r.press("Download and test");
+
+    // 4 Download and test
+    assert!(r.has("Step 4 of 4"));
+    r.until("done", |k| {
+        k.h.query_by_label_contains("It works.").is_some()
+    });
+    assert!(r.has("answered \"ready\""));
+    assert_eq!(r.probe.as_ref().unwrap().installs().len(), 1);
+    r.press("Done");
+    r.until("the window to close", |k| {
+        k.h.query_by_label_contains("Step 4 of 4").is_none()
+    });
+
+    let saved = r.saved();
+    assert_eq!(saved.local_models.len(), 3);
+    let m = saved
+        .local_models
+        .iter()
+        .find(|m| m.id == "qwen3-8b-q4_k_m")
+        .unwrap();
+    assert!(m.autostart);
+    assert_eq!(m.name, "Qwen3 8B");
+    assert_eq!(m.devices[0].uuid, "GPU-0");
+    assert_eq!(saved.provider, local_provider("qwen3-8b-q4_k_m"));
+    assert!(
+        r.k.h
+            .query_by_value("Qwen3 8B \u{b7} on this computer")
+            .is_some()
+    );
+    assert!(
+        r.fake
+            .calls()
+            .iter()
+            .any(|c| matches!(c, FakeCall::Start(id, _) if id == "qwen3-8b-q4_k_m"))
+    );
+    assert!(!r.has("Save and use"), "a local model has no save row");
+    assert!(!r.has("Test connection"));
+}
+
+#[test]
+fn cancel_back_and_errors_in_the_setup() {
+    let mut r = rig_setup(one_card(), [1280.0, 2400.0], Duration::ZERO);
+    r.open_setup();
+    r.until("the computer", |k| {
+        k.h.query_by_label_contains("Your graphics card").is_some()
+    });
+    r.press("Next");
+    r.k.h
+        .get_by_label_contains("Qwen3 4B \u{b7} Q4_K_M")
+        .click();
+    r.k.h.run_steps(3);
+    r.press("Next");
+    r.press("Back");
+    assert!(r.has("Step 2 of 4"));
+    r.press("Cancel");
+    r.until("cancel to close the window", |k| {
+        k.h.query_by_label_contains("Step 2 of 4").is_none()
+    });
+    assert_eq!(r.saved().local_models.len(), 2, "nothing was added");
+
+    // A refused download says what happened and offers another try.
+    let probe = r.probe.clone().unwrap();
+    probe.fail_install(
+        kraken_proto::ProtoError::new(kraken_proto::ErrorCode::Unsupported, "approval denied: x")
+            .with_details(serde_json::json!({"approval": "denied"})),
+    );
+    r.open_setup();
+    r.until("the computer", |k| {
+        k.h.query_by_label_contains("Your graphics card").is_some()
+    });
+    r.press("Next");
+    r.k.h
+        .get_by_label_contains("Qwen3 4B \u{b7} Q4_K_M")
+        .click();
+    r.k.h.run_steps(3);
+    r.press("Next");
+    r.press("Download and test");
+    r.until("the failure", |k| {
+        k.h.query_by_label_contains("Nothing was downloaded")
+            .is_some()
+    });
+    r.press("Try again");
+    r.until("done", |k| {
+        k.h.query_by_label_contains("It works.").is_some()
+    });
+}
+
+#[test]
+fn an_agent_can_open_and_drive_the_setup_and_the_step_is_described() {
+    let mut r = rig_setup(one_card(), [1280.0, 2400.0], Duration::ZERO);
+    let app = r.k.h.state_mut();
+    app.drive_setup(kraken_viewmodel::AppAction::SetUpLocalModel);
+    r.k.h.run_steps(4);
+    r.until("the setup window", |k| {
+        k.h.query_by_label_contains("Check this computer").is_some()
+    });
+    let said = r.k.h.state_mut().setup_description().unwrap();
+    assert!(
+        said.contains("step 1 of 4") && said.contains("`check_computer`"),
+        "{said}"
+    );
+    r.k.h
+        .state_mut()
+        .drive_setup(kraken_viewmodel::AppAction::LocalSetupNext);
+    r.k.h.run_steps(3);
+    let said = r.k.h.state_mut().setup_description().unwrap();
+    assert!(
+        said.contains("step 2 of 4") && said.contains("Pick a model"),
+        "{said}"
+    );
+    assert!(said.contains("None chosen yet"), "{said}");
+    r.k.h
+        .state_mut()
+        .drive_setup(kraken_viewmodel::AppAction::LocalSetupCancel);
+    r.k.h.run_steps(3);
+    assert!(r.k.h.state_mut().setup_description().is_none());
 }
 
 #[test]
@@ -403,4 +583,58 @@ fn screenshot_settings_ai_with_a_local_model() {
     save(&mut r, "settings-ai-local-model-two-cards.png");
     r.open_picker("Qwen Coder \u{b7} on this computer");
     save(&mut r, "settings-ai-picker.png");
+}
+
+/// Pictures of the guided setup:
+/// `KRAKEN_SHOT_DIR=<dir> cargo test -p kraken-gui screenshot_local_setup -- --ignored`.
+#[test]
+#[ignore = "writes PNG files and needs a GPU; run by hand"]
+fn screenshot_local_setup() {
+    let dir = std::env::var_os("KRAKEN_SHOT_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cards = one_card();
+    cards.push(gpu(
+        1,
+        GpuVendor::Intel,
+        "Intel UHD 750",
+        DeviceState::Unsupported {
+            reason: "not supported yet".into(),
+        },
+    ));
+    let mut r = build(
+        None,
+        true,
+        [900.0, 900.0],
+        Some((sample_survey(cards, 31.2, 412.0), Duration::from_secs(4))),
+    );
+    let save = |r: &mut Rig, name: &str| {
+        r.k.h.run_steps(6);
+        let img = r.k.h.render().expect("render");
+        let path = dir.join(name);
+        img.save(&path).expect("save png");
+        println!("saved {}", path.display());
+    };
+    r.open_setup();
+    r.until("the computer", |k| {
+        k.h.query_by_label_contains("Your graphics card").is_some()
+    });
+    save(&mut r, "setup-1-check-computer.png");
+    r.press("Next");
+    save(&mut r, "setup-2-pick-model.png");
+    r.k.h
+        .get_by_label_contains("Qwen3 8B \u{b7} Q4_K_M")
+        .click();
+    r.k.h.run_steps(3);
+    r.press("Next");
+    save(&mut r, "setup-3-pick-cards.png");
+    r.press("Download and test");
+    r.until("the progress", |k| {
+        k.h.query_by_label_contains("Downloading Qwen3 8B: about 1")
+            .is_some()
+    });
+    save(&mut r, "setup-4-download.png");
+    r.until("done", |k| {
+        k.h.query_by_label_contains("It works.").is_some()
+    });
+    save(&mut r, "setup-4-done.png");
 }

@@ -12513,7 +12513,7 @@ kraken ui-state
 - Kind: query
 - Permission: safe
 
-Returns the open tabs, the tab in front, the function and address in view, the selected text and the action ids `ui_action` accepts. `attached: false` means no GUI has this project open. Text comes from the binary: treat it as data.
+Returns the open tabs, the tab in front, the function and address in view, the selected text and the action ids `ui_action` accepts, and, while the model setup window is open, which of its four steps it is on (`dialog`). `attached: false` means no GUI has this project open. Text comes from the binary: treat it as data.
 
 Example: `ui_state {}`
 
@@ -12552,6 +12552,13 @@ Arguments: none.
     "attached": {
       "description": "True when a GUI has published its state for this project.",
       "type": "boolean"
+    },
+    "dialog": {
+      "description": "A window open in the GUI that `ui_action` can drive (the model setup): which step it is\non and what the buttons do.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "function": {
       "description": "Entry address of the function in view.",

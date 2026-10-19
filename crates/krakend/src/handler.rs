@@ -197,6 +197,7 @@ fn clean_selection(mut s: GuiSelection) -> GuiSelection {
     s.address = clean(s.address, 32);
     s.text = clean(s.text, 8 * 1024);
     s.active_tab = clean(s.active_tab, 32);
+    s.dialog = clean(s.dialog, 600);
     s.tabs = s
         .tabs
         .into_iter()
@@ -549,6 +550,7 @@ impl DaemonHandler {
             "address": s.address,
             "selection": s.text,
             "actions": s.actions,
+            "dialog": s.dialog,
         })
     }
 

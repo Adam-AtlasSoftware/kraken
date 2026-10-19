@@ -247,6 +247,13 @@ impl AiSettings {
         }
     }
 
+    /// Makes the assistant use the local model `id`, as if it had been picked and saved.
+    pub fn use_local(&mut self, id: &str, config_path: Option<&PathBuf>) {
+        self.loaded = true;
+        self.draft = ProviderDraft::for_local(id);
+        self.save(config_path);
+    }
+
     /// The text on the picker for the current choice.
     fn picked_label(&self, infer: &mut InferSettings, config_path: Option<&PathBuf>) -> String {
         if self.draft.kind.is_agent() {
@@ -358,6 +365,10 @@ impl AiSettings {
                 infer.request_setup();
             } else {
                 self.status = None;
+                if self.draft.kind == ProviderKind::Local && !self.draft.model.is_empty() {
+                    // A model set up on this computer needs nothing more than the choice.
+                    self.save(config_path);
+                }
             }
         }
         ui.add_space(2.0);
@@ -382,64 +393,68 @@ impl AiSettings {
                     && h.row(&self.draft.agent)
                         .is_some_and(kraken_viewmodel::agents::AgentRow::is_ready)
             });
-        ui.horizontal(|ui| {
-            let can_save = (self.store.config_path.is_some() || config_path.is_some())
-                && (!agent || agent_ready);
-            ui.add_enabled_ui(can_save, |ui| {
-                if style::primary_button(ui, "Save and use")
-.on_hover_text("Save these settings and use this assistant from now on").clicked() {
-                    self.save(config_path);
-                }
-            });
-            let can_test = !self.testing()
-                && (!agent || agent_ready)
-                && self.draft.kind != ProviderKind::Local;
-            ui.add_enabled_ui(can_test, |ui| {
-                if ui
-                    .button(if agent { "Test agent" } else { "Test connection" })
-                    .on_hover_text(if agent {
-                        "Starts the agent without KRAKEN's tools and asks it for one word, to check the install and the sign-in."
-                    } else {
-                        "Sends one tiny request to check the address, model and key."
-                    })
-                    .clicked()
-                {
-                    self.store = ProviderStore::new(config_path.cloned());
-                    self.start_test(rt, ui.ctx());
-                }
-            });
-            ui.add_enabled_ui(self.configured, |ui| {
-                if ui
-                    .button("Remove")
-                    .on_hover_text("Stop using an AI model or agent")
-                    .clicked()
-                {
-                    match self.store.clear() {
-                        Ok(()) => {
-                            self.configured = false;
-                            self.change = Some(Change::Clear);
-                            self.status = Some(Ok(
-                                "Removed. The assistant is off until you pick one.".into(),
-                            ));
-                        }
-                        Err(e) => self.status = Some(Err(e)),
+        // A model on this computer is used as soon as it is picked and removed from its own
+        // card, so it has no Save, Test or Remove row.
+        if self.draft.kind != ProviderKind::Local {
+            ui.horizontal(|ui| {
+                let can_save = (self.store.config_path.is_some() || config_path.is_some())
+                    && (!agent || agent_ready);
+                ui.add_enabled_ui(can_save, |ui| {
+                    if style::primary_button(ui, "Save and use")
+    .on_hover_text("Save these settings and use this assistant from now on").clicked() {
+                        self.save(config_path);
                     }
+                });
+                let can_test = !self.testing()
+                    && (!agent || agent_ready)
+                    && self.draft.kind != ProviderKind::Local;
+                ui.add_enabled_ui(can_test, |ui| {
+                    if ui
+                        .button(if agent { "Test agent" } else { "Test connection" })
+                        .on_hover_text(if agent {
+                            "Starts the agent without KRAKEN's tools and asks it for one word, to check the install and the sign-in."
+                        } else {
+                            "Sends one tiny request to check the address, model and key."
+                        })
+                        .clicked()
+                    {
+                        self.store = ProviderStore::new(config_path.cloned());
+                        self.start_test(rt, ui.ctx());
+                    }
+                });
+                ui.add_enabled_ui(self.configured, |ui| {
+                    if ui
+                        .button("Remove")
+                        .on_hover_text("Stop using an AI model or agent")
+                        .clicked()
+                    {
+                        match self.store.clear() {
+                            Ok(()) => {
+                                self.configured = false;
+                                self.change = Some(Change::Clear);
+                                self.status = Some(Ok(
+                                    "Removed. The assistant is off until you pick one.".into(),
+                                ));
+                            }
+                            Err(e) => self.status = Some(Err(e)),
+                        }
+                    }
+                });
+                if self.testing() {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new(if agent {
+                            "Asking the agent..."
+                        } else {
+                            "Asking the model..."
+                        })
+                        .color(p.text_dim),
+                    );
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(150));
                 }
             });
-            if self.testing() {
-                ui.spinner();
-                ui.label(
-                    RichText::new(if agent {
-                        "Asking the agent..."
-                    } else {
-                        "Asking the model..."
-                    })
-                    .color(p.text_dim),
-                );
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(150));
-            }
-        });
+        }
         if agent && !agent_ready {
             ui.label(
                 RichText::new(
