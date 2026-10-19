@@ -87,6 +87,15 @@ pub struct GuiSelection {
     /// The selected text (a decompiler range, an instruction, a type).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Ids of the open tabs (published by the GUI for `ui_state`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<String>,
+    /// The tab in front.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tab: Option<String>,
+    /// Action ids the GUI accepts from `ui_action`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
 }
 
 /// Params of `gui_selection_set`: `selection: null` clears it.
@@ -139,6 +148,8 @@ pub mod event_kind {
     pub const APPROVAL_RESOLVED: &str = "approval_resolved";
     /// An agent asked the GUIs of a project to show an address (`gui_navigate`).
     pub const GUI_NAVIGATE: &str = "gui_navigate";
+    /// An agent drove the GUIs of a project (`ui_action`, `ui_highlight`).
+    pub const GUI_UI: &str = "gui_ui";
     /// A client started a job (`analyze`, `rewrite_program`, ...); says who.
     pub const JOB_STARTED: &str = "job_started";
     /// A project is opening: the fields are a `kraken_proto::OpenProgress` (stage list, stage,

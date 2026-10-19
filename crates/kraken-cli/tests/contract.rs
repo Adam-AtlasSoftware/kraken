@@ -324,6 +324,22 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         json!({"address": "0x401040", "tab": "listing"})
     );
     assert_eq!(nav["requested"], true, "{nav}");
+    let ui = step!("ui_action", json!({"tab": "listing"}));
+    assert_eq!(ui["requested"], true, "{ui}");
+    let refused = step!("ui_action", json!({"action": "quit"}));
+    assert_eq!(refused["code"], "unsupported", "{refused}");
+    step!(
+        "ui_highlight",
+        json!({"target": "history", "note": "look here"})
+    );
+    let state = step!("ui_state", json!({}));
+    assert_eq!(state["attached"], false, "{state}");
+    let help = step!("kraken_help", json!({"query": "local models", "limit": 2}));
+    assert!(
+        help["sections"].as_array().is_some_and(|a| !a.is_empty()),
+        "{help}"
+    );
+    step!("local_model_recommend", json!({}));
 
     // Search and bookmarks.
     step!("search", json!({"query": "main", "kind": "names"}));
@@ -405,6 +421,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ("rewrite_build", json!({"dir": "out"})),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
+        ("local_model_setup", json!({})),
     ] {
         let r = step!(name, args);
         assert_eq!(r["code"], "unsupported", "{name}: {r}");

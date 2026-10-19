@@ -151,6 +151,15 @@ impl ProviderConfig {
 
     /// Instantiates the provider, resolving secrets through `secrets`.
     pub fn build(&self, secrets: &dyn SecretResolver) -> Result<Arc<dyn ChatProvider>, AgentError> {
+        self.build_with_thinking(secrets, None)
+    }
+
+    /// [`build`](Self::build) with a thinking effort for the APIs that take one.
+    pub fn build_with_thinking(
+        &self,
+        secrets: &dyn SecretResolver,
+        thinking: Option<crate::thinking::Effort>,
+    ) -> Result<Arc<dyn ChatProvider>, AgentError> {
         fn required(r: &SecretRef, secrets: &dyn SecretResolver) -> Result<String, AgentError> {
             secrets.resolve(r)?.ok_or_else(|| {
                 AgentError::MissingKey(match r {
@@ -177,6 +186,7 @@ impl ProviderConfig {
                 Arc::new(
                     OpenAiCompatible::new(base_url, model, key)?
                         .with_tools(*supports_tools)
+                        .with_thinking(thinking)
                         .with_context_window(*context_window),
                 )
             }
@@ -189,7 +199,8 @@ impl ProviderConfig {
             } => {
                 let mut p =
                     Anthropic::new(required(api_key, secrets)?, model.clone(), base_url.clone())?
-                        .with_context_window(*context_window);
+                        .with_context_window(*context_window)
+                        .with_thinking(thinking);
                 if let Some(m) = max_tokens {
                     p = p.with_max_tokens(*m);
                 }
@@ -202,7 +213,8 @@ impl ProviderConfig {
                 context_window,
             } => Arc::new(
                 Gemini::new(required(api_key, secrets)?, model.clone(), base_url.clone())?
-                    .with_context_window(*context_window),
+                    .with_context_window(*context_window)
+                    .with_thinking(thinking),
             ),
             ProviderConfig::Replay { cassette } => Arc::new(ReplayProvider::from_path(cassette)?),
             ProviderConfig::TerminalAgent { agent, .. } => {

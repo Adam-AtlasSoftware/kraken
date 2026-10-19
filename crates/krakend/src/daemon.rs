@@ -185,6 +185,9 @@ pub fn start_full(
             session_idle: opts.settings.session_idle(),
             max_sessions: opts.settings.max_sessions(),
             rewrite,
+            local_models: kraken_host::local_models::LocalModels::system()
+                .ok()
+                .map(|m| Arc::new(m) as Arc<dyn kraken_registry::commands::LocalModelBackend>),
         },
         opts.clock.clone(),
         hub.clone(),

@@ -22,6 +22,7 @@ pub struct OpenAiCompatible {
     model: String,
     supports_tools: bool,
     context_window: Option<u32>,
+    thinking: Option<crate::thinking::Effort>,
 }
 
 impl OpenAiCompatible {
@@ -41,6 +42,7 @@ impl OpenAiCompatible {
             model: model.into(),
             supports_tools: true,
             context_window: None,
+            thinking: None,
         })
     }
 
@@ -51,6 +53,11 @@ impl OpenAiCompatible {
 
     pub fn with_tools(mut self, supports_tools: bool) -> Self {
         self.supports_tools = supports_tools;
+        self
+    }
+
+    pub fn with_thinking(mut self, e: Option<crate::thinking::Effort>) -> Self {
+        self.thinking = e;
         self
     }
 
@@ -227,7 +234,10 @@ impl ChatProvider for OpenAiCompatible {
         req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream, AgentError> {
-        let body = build_request(&self.model, &req, self.supports_tools);
+        let mut body = build_request(&self.model, &req, self.supports_tools);
+        if let Some(e) = self.thinking {
+            crate::thinking::apply_openai(&mut body, e);
+        }
         let mut rb = self
             .client
             .post(format!("{}/chat/completions", self.base_url))

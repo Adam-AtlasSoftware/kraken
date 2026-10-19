@@ -14,6 +14,7 @@ mod menu;
 mod overlays;
 mod settings_ai;
 mod settings_cost;
+mod settings_extras;
 mod setup;
 #[cfg(test)]
 mod tests;

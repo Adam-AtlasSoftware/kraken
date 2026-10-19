@@ -27,6 +27,7 @@ pub struct Anthropic {
     model: String,
     max_tokens: u32,
     context_window: Option<u32>,
+    thinking: Option<crate::thinking::Effort>,
 }
 
 impl Anthropic {
@@ -47,7 +48,13 @@ impl Anthropic {
             model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
             max_tokens: DEFAULT_MAX_TOKENS,
             context_window: None,
+            thinking: None,
         })
+    }
+
+    pub fn with_thinking(mut self, e: Option<crate::thinking::Effort>) -> Self {
+        self.thinking = e;
+        self
     }
 
     pub fn with_max_tokens(mut self, n: u32) -> Self {
@@ -262,7 +269,13 @@ impl ChatProvider for Anthropic {
         req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream, AgentError> {
-        let body = build_request(&self.model, self.max_tokens, &req);
+        let mut body = build_request(&self.model, self.max_tokens, &req);
+        if let Some(e) = self.thinking {
+            let continues = req.messages.iter().any(
+                |m| matches!(m, Message::Assistant { tool_calls, .. } if !tool_calls.is_empty()),
+            );
+            crate::thinking::apply_anthropic(&mut body, e, continues);
+        }
         let rb = self
             .client
             .post(format!("{}/v1/messages", self.base_url))

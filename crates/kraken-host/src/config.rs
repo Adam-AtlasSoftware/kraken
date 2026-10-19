@@ -150,6 +150,14 @@ pub struct KrakenConfig {
     /// Kept opaque; parsed by `kraken-assist` (`Pricing`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing: Option<serde_json::Value>,
+    /// The optional `[permissions]` table: what a terminal agent may do with its own tools
+    /// without asking. Kept opaque; parsed by `kraken-assist` (`PermissionRules`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<serde_json::Value>,
+    /// The optional `[thinking]` table: reasoning effort per provider (`anthropic = "high"`).
+    /// Kept opaque; parsed by `kraken-agent` (`ThinkingConfig`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<serde_json::Value>,
 }
 
 impl KrakenConfig {

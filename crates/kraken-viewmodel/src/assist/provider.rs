@@ -618,11 +618,13 @@ impl ProviderStore {
                 .then(|| (d.kind.account().to_string(), pasted.to_string())),
             file: self.secrets(),
         };
-        out.config
-            .build(&LayeredSecrets {
+        kraken_assist::build_provider(
+            &out.config,
+            &LayeredSecrets {
                 keyring: Some(Arc::new(overlay)),
-            })
-            .map_err(|e| plain_agent_error(&e))
+            },
+        )
+        .map_err(|e| plain_agent_error(&e))
     }
 
     fn configure_with(&self, d: &ProviderDraft, persist: bool) -> Result<SaveOutcome, String> {
@@ -807,12 +809,26 @@ impl ProviderStore {
         }
     }
 
+    /// The configuration the form describes, without saving anything (a pasted key is not
+    /// stored).
+    pub fn config_of(&self, d: &ProviderDraft) -> Result<ProviderConfig, String> {
+        self.configure_with(d, false).map(|o| o.config)
+    }
+
+    /// Which models to offer for `cfg`: the provider's own list when reachable, else the
+    /// built-in one (see `kraken_agent::model_choices`).
+    pub async fn model_choices(&self, cfg: &ProviderConfig) -> kraken_agent::ModelList {
+        let keyring: Option<Arc<dyn Keyring>> =
+            self.secrets().map(|s| Arc::new(s) as Arc<dyn Keyring>);
+        kraken_agent::model_choices(cfg, &LayeredSecrets { keyring }).await
+    }
+
     /// Builds the provider for `cfg`, resolving keys from the environment and the secrets
     /// file.
     pub fn build(&self, cfg: &ProviderConfig) -> Result<Arc<dyn ChatProvider>, String> {
         let keyring: Option<Arc<dyn Keyring>> =
             self.secrets().map(|s| Arc::new(s) as Arc<dyn Keyring>);
-        cfg.build(&LayeredSecrets { keyring })
+        kraken_assist::build_provider(cfg, &LayeredSecrets { keyring })
             .map_err(|e| plain_agent_error(&e))
     }
 }

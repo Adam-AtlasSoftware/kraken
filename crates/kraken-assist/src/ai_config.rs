@@ -257,6 +257,31 @@ pub fn save_rewrite_config(path: &Path, cfg: Option<&ProviderConfig>) -> Result<
     file.save(path).map_err(|e| e.to_string())
 }
 
+/// Sets (or with `None` removes) the thinking effort of the provider `key` (see
+/// `kraken_agent::ThinkingConfig::key_of`) in the `[thinking]` table of the config file.
+pub fn save_thinking(
+    path: &Path,
+    key: &str,
+    effort: Option<kraken_agent::Effort>,
+) -> Result<(), String> {
+    let mut file = KrakenConfig::from_file(path).map_err(|e| e.to_string())?;
+    let mut table = kraken_agent::ThinkingConfig::load(Some(path));
+    match effort {
+        Some(e) => {
+            table.0.insert(key.to_string(), e);
+        }
+        None => {
+            table.0.remove(key);
+        }
+    }
+    file.thinking = if table.0.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_value(&table).map_err(|e| e.to_string())?)
+    };
+    file.save(path).map_err(|e| e.to_string())
+}
+
 fn strip_nulls(v: &mut serde_json::Value) {
     match v {
         serde_json::Value::Object(m) => {
@@ -441,6 +466,33 @@ impl AiPolicy {
             None => "none set up".to_string(),
         };
         format!("Assistant, Suggest names and Automate: {a}. Rust rewrite: {r}.")
+    }
+}
+
+#[cfg(test)]
+mod thinking_tests {
+    use super::*;
+
+    #[test]
+    fn thinking_is_saved_per_provider_and_removed() {
+        let dir = std::env::temp_dir().join(format!("kraken-think-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "per_run_cap = 5\n").expect("write");
+        save_thinking(&path, "anthropic", Some(kraken_agent::Effort::High)).expect("saved");
+        save_thinking(&path, "agent:claude", Some(kraken_agent::Effort::Low)).expect("saved");
+        let t = kraken_agent::ThinkingConfig::load(Some(&path));
+        assert_eq!(t.0.get("anthropic"), Some(&kraken_agent::Effort::High));
+        save_thinking(&path, "anthropic", None).expect("removed");
+        let t = kraken_agent::ThinkingConfig::load(Some(&path));
+        assert!(!t.0.contains_key("anthropic"));
+        assert_eq!(t.0.len(), 1);
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("read")
+                .contains("per_run_cap = 5")
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 

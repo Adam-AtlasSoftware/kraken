@@ -821,6 +821,7 @@ pub struct Session {
     ai: crate::ai::AiBoard,
     project: Arc<RwLock<Option<Arc<Project>>>>,
     rewrite: Option<Arc<dyn RewriteBackend>>,
+    local_models: Option<Arc<dyn crate::commands::LocalModelBackend>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -839,7 +840,20 @@ impl Session {
             ai: crate::ai::AiBoard::new(),
             project: Arc::new(RwLock::new(None)),
             rewrite: None,
+            local_models: None,
         }
+    }
+
+    /// Attaches what `local_model_setup` downloads and configures with.
+    pub fn with_local_models(mut self, b: Arc<dyn crate::commands::LocalModelBackend>) -> Session {
+        self.local_models = Some(b);
+        self
+    }
+
+    pub(crate) fn local_models_backend(
+        &self,
+    ) -> Option<&Arc<dyn crate::commands::LocalModelBackend>> {
+        self.local_models.as_ref()
     }
 
     /// Attaches the rewrite pipeline that the `rewrite_*` commands run on (kraken-rewrite).

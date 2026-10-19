@@ -172,6 +172,9 @@ impl CliEnv {
             if let Some(r) = &self.rewrite {
                 s = s.with_rewrite(r.clone());
             }
+            if let Ok(lm) = kraken_host::local_models::LocalModels::system() {
+                s = s.with_local_models(Arc::new(lm));
+            }
             Arc::new(s)
         })
     }

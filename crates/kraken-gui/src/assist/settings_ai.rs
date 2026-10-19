@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
 use egui::{RichText, Ui};
+use kraken_agent::ThinkingConfig;
 use kraken_viewmodel::agents::{AgentTestState, AgentsHub, Availability};
 use kraken_viewmodel::assist::{
     BackendChoice, ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, test_connection,
@@ -45,6 +46,7 @@ pub struct AiSettings {
     rewrite: super::settings_cost::RewriteForm,
     limits: super::settings_cost::LimitsForm,
     policy_dirty: bool,
+    extras: super::settings_extras::AiExtras,
 }
 
 impl Default for AiSettings {
@@ -62,6 +64,7 @@ impl Default for AiSettings {
             rewrite: super::settings_cost::RewriteForm::default(),
             limits: super::settings_cost::LimitsForm::default(),
             policy_dirty: false,
+            extras: super::settings_extras::AiExtras::default(),
         }
     }
 }
@@ -352,7 +355,7 @@ impl AiSettings {
         if self.draft.kind.is_agent() {
             self.agent_form(ui, &p, &s);
         } else {
-            self.api_form(ui, &p, &s);
+            self.api_form(ui, rt, &p, &s);
         }
 
         ui.add_space(4.0);
@@ -438,6 +441,24 @@ impl AiSettings {
             None => {}
         }
         ui.separator();
+        if let Some(cfg) = self
+            .store
+            .config_of(&self.draft)
+            .ok()
+            .or_else(|| self.store.load().ok().flatten())
+        {
+            let key = ThinkingConfig::key_of(&cfg);
+            if let Some(e) = self.extras.thinking(ui, &key, config_path) {
+                self.status = Some(Err(e));
+            }
+        }
+        if agent {
+            self.extras.permissions(ui, config_path);
+        }
+        ui.separator();
+        let ctx = ui.ctx().clone();
+        self.extras.local_model(ui, rt, &ctx);
+        ui.separator();
         if self.rewrite.show(ui, config_path) {
             self.policy_dirty = true;
         }
@@ -463,7 +484,13 @@ impl AiSettings {
     }
 
     /// The fields of a model API.
-    fn api_form(&mut self, ui: &mut Ui, p: &kraken_gui_widgets::Palette, s: &style::Status) {
+    fn api_form(
+        &mut self,
+        ui: &mut Ui,
+        rt: &Handle,
+        p: &kraken_gui_widgets::Palette,
+        s: &style::Status,
+    ) {
         egui::Grid::new("kraken_settings_ai")
             .num_columns(2)
             .spacing([10.0, 6.0])
@@ -489,6 +516,16 @@ impl AiSettings {
                         .desired_width(380.0),
                 )
                 .on_hover_text("The name of the model to ask");
+                ui.end_row();
+                ui.label("");
+                let key = format!("{:?}|{}", self.draft.kind, self.draft.base_url);
+                let cfg = self.store.config_of(&self.draft).ok();
+                let keyring = self
+                    .store
+                    .secrets()
+                    .map(|k| std::sync::Arc::new(k) as std::sync::Arc<dyn kraken_agent::Keyring>);
+                self.extras
+                    .model_picker(ui, rt, &key, cfg, keyring, &mut self.draft.model);
                 ui.end_row();
 
                 let optional = !self.draft.kind.needs_key();

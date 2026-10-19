@@ -284,6 +284,7 @@ async fn the_gui_selection_is_reported_with_its_text_marked_untrusted() {
             function_name: Some(EVIL.into()),
             address: Some("0x401044".into()),
             text: None,
+            ..Default::default()
         }),
     };
     let gui = rig(true, true, Some(reply)).await;
@@ -349,6 +350,7 @@ async fn explain_function_takes_an_address_or_the_gui_selection() {
             function_name: Some("helper".into()),
             address: Some("0x401040".into()),
             text: None,
+            ..Default::default()
         }),
     };
     let gui = rig(true, false, Some(reply)).await;

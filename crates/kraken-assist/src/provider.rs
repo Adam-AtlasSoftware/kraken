@@ -89,6 +89,16 @@ pub fn no_provider_message(path: Option<&Path>) -> String {
     )
 }
 
+/// Builds the chat provider for `cfg`, passing the `[thinking]` effort set for its kind.
+pub fn build_provider(
+    cfg: &ProviderConfig,
+    secrets: &dyn SecretResolver,
+) -> Result<Arc<dyn kraken_agent::ChatProvider>, kraken_agent::AgentError> {
+    let path = provider_config_path(&|k| std::env::var_os(k));
+    let effort = kraken_agent::ThinkingConfig::load(path.as_deref()).for_config(cfg);
+    cfg.build_with_thinking(secrets, effort)
+}
+
 /// Reads the `[provider]` table from the file at `path`.
 ///
 /// A missing file or a file without a `[provider]` table is [`AssistError::NoProvider`]; a table
@@ -172,7 +182,7 @@ pub fn text_backend(
     secrets: &dyn SecretResolver,
 ) -> Result<Arc<dyn AssistBackend>, AssistError> {
     let Some(choice) = AgentChoice::from_config(cfg) else {
-        return Ok(Arc::new(ApiBackend::new(cfg.build(secrets)?)));
+        return Ok(Arc::new(ApiBackend::new(build_provider(cfg, secrets)?)));
     };
     let profiles = kraken_acp::load_catalogue(kraken_acp::config_dir_with(env).as_deref())
         .map_err(|e| AssistError::Config(e.to_string()))?;

@@ -253,6 +253,31 @@ impl AgentProfile {
         self
     }
 
+    /// Applies a thinking effort (`off`, `low`, `medium`, `high`) where the agent supports one:
+    /// Claude Code through `MAX_THINKING_TOKENS`, Codex through `model_reasoning_effort`.
+    /// Gemini CLI has no such setting and is left alone.
+    pub fn with_effort(mut self, effort: &str) -> Self {
+        match (self.id.as_str(), effort) {
+            ("claude", e @ ("off" | "low" | "medium" | "high")) => {
+                let tokens = match e {
+                    "off" => "0",
+                    "low" => "2048",
+                    "medium" => "8192",
+                    _ => "24000",
+                };
+                self.env.push(("MAX_THINKING_TOKENS".into(), tokens.into()));
+            }
+            ("codex", e @ ("off" | "low" | "medium" | "high")) => {
+                let level = if e == "off" { "minimal" } else { e };
+                self.args.push("-c".into());
+                self.args
+                    .push(format!("model_reasoning_effort=\"{level}\""));
+            }
+            _ => {}
+        }
+        self
+    }
+
     /// The environment the agent process gets, built from `parent`: only allowlisted variables
     /// (never `KRAKEN_*`), then the fixed variables of the profile.
     pub fn child_env(
@@ -285,6 +310,28 @@ mod tests {
             .iter()
             .map(|(k, v)| (OsString::from(k), OsString::from(v)))
             .collect()
+    }
+
+    #[test]
+    fn effort_reaches_the_agents_that_take_one() {
+        let claude = builtin_profile("claude")
+            .expect("claude")
+            .with_effort("low");
+        assert!(
+            claude
+                .env
+                .contains(&("MAX_THINKING_TOKENS".into(), "2048".into()))
+        );
+        let codex = builtin_profile("codex").expect("codex").with_effort("off");
+        assert!(
+            codex
+                .args
+                .iter()
+                .any(|a| a == "model_reasoning_effort=\"minimal\"")
+        );
+        let gemini = builtin_profile("gemini").expect("gemini");
+        let same = gemini.clone().with_effort("high");
+        assert_eq!((gemini.args, gemini.env), (same.args, same.env));
     }
 
     fn names(v: &[(OsString, OsString)]) -> Vec<String> {

@@ -375,6 +375,31 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
         "gui_navigate",
         json!({"address": "0x401040", "tab": "listing"})
     );
+    for (name, args) in [
+        ("ui_action", json!({"tab": "listing"})),
+        ("ui_action", json!({"action": "quit"})),
+        (
+            "ui_highlight",
+            json!({"target": "history", "note": "look here"}),
+        ),
+        ("ui_state", json!({})),
+        ("kraken_help", json!({"query": "local models", "limit": 2})),
+        ("local_model_recommend", json!({})),
+    ] {
+        step!(name, args);
+    }
+    // The daemon has the download backend and the direct session does not, so setup is checked
+    // on the daemon surfaces only: a model that is not in the catalog is refused before
+    // anything is downloaded.
+    covered.insert("local_model_setup".to_string());
+    let bad = cli_call(
+        &s.daemon_cli,
+        &s.cli_dir,
+        "local_model_setup",
+        &json!({"model": "no-such-model"}),
+    )
+    .await;
+    assert_eq!(bad.1["code"], "invalid_argument", "{}", bad.1);
     step!("search", json!({"query": "main", "kind": "names"}));
     step!(
         "bookmark_add",

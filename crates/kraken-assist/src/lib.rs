@@ -26,6 +26,7 @@ pub mod glossary;
 pub mod host;
 pub mod meter;
 pub mod output;
+pub mod permissions;
 pub mod pricing;
 pub mod provider;
 pub mod tasks;
@@ -36,7 +37,7 @@ pub use acp::{
 pub use ai_config::{
     AiLimits, AiPolicy, ModelChoice, ModelSource, REPAIR_ATTEMPTS, REPAIR_SUSPECTS,
     REWRITE_ATTEMPTS, RewriteModel, is_local_url, model_of, provider_kind_of, rewrite_choice,
-    rewrite_max_calls, save_rewrite_config, with_model,
+    rewrite_max_calls, save_rewrite_config, save_thinking, with_model,
 };
 pub use assistant::{Assistant, ResultTagFilter, TaskResult, ToolCallSummary};
 pub use backend::{
@@ -51,10 +52,11 @@ pub use output::{
     AutoNameReport, Component, Confidence, Evidence, EvidenceKind, Explanation,
     InterestingFunction, NameSuggestion, Outcome, Overview, SuggestedName, TaskOutput,
 };
+pub use permissions::{DefaultMode, PermissionRules, Verdict as PermissionVerdict, tool_key};
 pub use pricing::{DEFAULT_PRICES, Price, Pricing};
 pub use provider::{
-    SAMPLES, load_provider_config, load_rewrite_config, no_provider_message, provider_config_path,
-    sample_config, text_backend, text_backend_from_config,
+    SAMPLES, build_provider, load_provider_config, load_rewrite_config, no_provider_message,
+    provider_config_path, sample_config, text_backend, text_backend_from_config,
 };
 pub use tasks::{
     AUTOMATE_JOB_TIMEOUT, AUTOMATE_REWRITE_UNLOCK, AutoNameOptions, AutomateGoal, Budget,

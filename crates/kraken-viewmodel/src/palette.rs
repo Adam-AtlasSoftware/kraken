@@ -86,11 +86,13 @@ pub enum AppAction {
     DeleteFunction,
     /// Show the AI Activity tab: running and recent AI work, its cost, and Stop.
     ShowAiActivity,
+    /// Open the assistant with a question about KRAKEN itself.
+    AskAboutKraken,
 }
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 40] = [
+    pub const ALL: [AppAction; 41] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -131,7 +133,35 @@ impl AppAction {
         AppAction::RewriteWizard,
         AppAction::Automate,
         AppAction::ShowAiActivity,
+        AppAction::AskAboutKraken,
     ];
+
+    /// The snake_case id agents use with `ui_action` (`ShowHistory` is `show_history`).
+    pub fn id(self) -> String {
+        let name = format!("{self:?}");
+        let mut out = String::new();
+        for (i, c) in name.chars().enumerate() {
+            if c.is_ascii_uppercase() {
+                if i > 0 {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// The action with this id.
+    pub fn from_id(id: &str) -> Option<AppAction> {
+        AppAction::ALL.into_iter().find(|a| a.id() == id)
+    }
+
+    /// True when an agent may trigger it through `ui_action`.
+    pub fn agent_allowed(self) -> bool {
+        !kraken_registry::commands::DENIED_UI_ACTIONS.contains(&self.id().as_str())
+    }
 
     /// Palette title.
     pub fn label(self) -> &'static str {
@@ -176,6 +206,7 @@ impl AppAction {
             AppAction::CreateFunctionHere => "Create function here",
             AppAction::DeleteFunction => "Delete this function...",
             AppAction::ShowAiActivity => "Show AI activity",
+            AppAction::AskAboutKraken => "Ask the assistant about KRAKEN",
         }
     }
 
@@ -227,6 +258,9 @@ impl AppAction {
             AppAction::ShowBookmarks => "See every address you or an agent bookmarked",
             AppAction::CreateFunctionHere => "Tell KRAKEN the code at the cursor is a function",
             AppAction::DeleteFunction => "Remove a function the analysis got wrong",
+            AppAction::AskAboutKraken => {
+                "Ask how a KRAKEN feature works; the assistant reads KRAKEN's own documentation"
+            }
             AppAction::ShowAiActivity => {
                 "See which AI work runs, on which model, what it has cost so far, and stop it"
             }
@@ -402,6 +436,8 @@ pub enum UiRequest {
     OpenAutomate,
     /// Bring the AI Activity tab forward.
     ShowAiActivity,
+    /// Open the assistant with the cursor in a question about KRAKEN.
+    AskAboutKraken,
 }
 
 /// What a palette row does when chosen.
@@ -537,6 +573,23 @@ impl PaletteState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn action_ids_round_trip_and_dangerous_ones_are_refused_to_agents() {
+        for a in super::AppAction::ALL {
+            assert_eq!(super::AppAction::from_id(&a.id()), Some(a), "{a:?}");
+        }
+        assert_eq!(super::AppAction::ShowHistory.id(), "show_history");
+        assert!(super::AppAction::ShowHistory.agent_allowed());
+        for a in [
+            super::AppAction::Quit,
+            super::AppAction::CloseProject,
+            super::AppAction::DeleteFunction,
+            super::AppAction::ClearRecent,
+        ] {
+            assert!(!a.agent_allowed(), "{a:?}");
+        }
+    }
+
     use super::*;
     use crate::backend::CommandKind;
 

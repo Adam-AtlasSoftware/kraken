@@ -1,0 +1,90 @@
+# Curated local models for the assistant (tool-calling capable). sha256 is the LFS object id
+# of the file at the pinned URL; `local_model_setup` refuses a download whose hash differs.
+
+[[model]]
+id = "qwen3-4b-q4_k_m"
+name = "Qwen3 4B"
+params_b = 4
+quant = "Q4_K_M"
+file = "Qwen_Qwen3-4B-Q4_K_M.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-4B-GGUF/resolve/main/Qwen_Qwen3-4B-Q4_K_M.gguf"
+size = 2497280960
+sha256 = "fbe1d5edd4ce802ae3ae7c7e4ab7d09789d697fdac1fc7929f8df4ca3c41bae3"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-4b-q8_0"
+name = "Qwen3 4B"
+params_b = 4
+quant = "Q8_0"
+file = "Qwen_Qwen3-4B-Q8_0.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-4B-GGUF/resolve/main/Qwen_Qwen3-4B-Q8_0.gguf"
+size = 4280405440
+sha256 = "4050871d20fa939e88e83b1a86060061bdeff01e0d9e5d000d374766f0caf7d7"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-8b-q4_k_m"
+name = "Qwen3 8B"
+params_b = 8
+quant = "Q4_K_M"
+file = "Qwen_Qwen3-8B-Q4_K_M.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF/resolve/main/Qwen_Qwen3-8B-Q4_K_M.gguf"
+size = 5027784224
+sha256 = "54fffa050078e984116639c83dfb64b5aa6d4cd474e018b076777c632bbccccd"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-8b-q8_0"
+name = "Qwen3 8B"
+params_b = 8
+quant = "Q8_0"
+file = "Qwen_Qwen3-8B-Q8_0.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF/resolve/main/Qwen_Qwen3-8B-Q8_0.gguf"
+size = 8709518880
+sha256 = "edbd7ae01df991a2d4061e61451ad3d6829d8ca19f7cc846f7177499ac280c33"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-14b-q4_k_m"
+name = "Qwen3 14B"
+params_b = 14
+quant = "Q4_K_M"
+file = "Qwen_Qwen3-14B-Q4_K_M.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF/resolve/main/Qwen_Qwen3-14B-Q4_K_M.gguf"
+size = 9001753632
+sha256 = "915913e22399475dbe6c968ac014d9f1fbe08975e489279aede9d5c7b2c98eb6"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-14b-q6_k"
+name = "Qwen3 14B"
+params_b = 14
+quant = "Q6_K"
+file = "Qwen_Qwen3-14B-Q6_K.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF/resolve/main/Qwen_Qwen3-14B-Q6_K.gguf"
+size = 12121937952
+sha256 = "de571a7d7c72b99de6d67e7f2b780d774c74f998e088c77133069568cad54294"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-32b-q4_k_m"
+name = "Qwen3 32B"
+params_b = 32
+quant = "Q4_K_M"
+file = "Qwen_Qwen3-32B-Q4_K_M.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-32B-GGUF/resolve/main/Qwen_Qwen3-32B-Q4_K_M.gguf"
+size = 19762149696
+sha256 = "e41ec56ddd376963a116da97506fadfccb50fb402bb6f3cb4be0bc179a582bd6"
+license = "Apache-2.0"
+
+[[model]]
+id = "qwen3-32b-q6_k"
+name = "Qwen3 32B"
+params_b = 32
+quant = "Q6_K"
+file = "Qwen_Qwen3-32B-Q6_K.gguf"
+url = "https://huggingface.co/bartowski/Qwen_Qwen3-32B-GGUF/resolve/main/Qwen_Qwen3-32B-Q6_K.gguf"
+size = 26883306816
+sha256 = "a2769b0ded67d384cbfd42e740c61feec4207566b86f36f3d915da2248f291b6"
+license = "Apache-2.0"

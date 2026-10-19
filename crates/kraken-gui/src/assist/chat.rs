@@ -25,6 +25,7 @@ struct Acts {
     goto: Option<u64>,
     decide: Vec<(String, bool)>,
     answer: Vec<(String, bool)>,
+    always: Vec<String>,
     rename: Option<(u64, String)>,
 }
 
@@ -84,6 +85,9 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     }
     for (call_id, accept) in acts.decide {
         vm.assist_decide_proposal(&call_id, accept);
+    }
+    for id in acts.always {
+        vm.assist_always_allow(&id);
     }
     for (id, allow) in acts.answer {
         vm.assist_answer_permission(&id, allow);
@@ -633,6 +637,16 @@ fn permission_card(
                     .clicked()
                 {
                     acts.answer.push((c.id.clone(), true));
+                }
+                if ui
+                    .button("Always for this tool")
+                    .on_hover_text(
+                        "Allow this and every later request of the same kind of tool without \
+                         asking. Saved in [permissions] of the config file; Settings > AI shows it",
+                    )
+                    .clicked()
+                {
+                    acts.always.push(c.id.clone());
                 }
                 if ui
                     .button("Deny")

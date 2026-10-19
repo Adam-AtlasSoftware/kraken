@@ -12,8 +12,10 @@
 pub mod agent;
 pub mod config;
 pub mod error;
+pub mod models;
 pub mod provider;
 pub mod safety;
+pub mod thinking;
 pub mod tool;
 pub mod types;
 
@@ -22,10 +24,12 @@ pub use agent::{
 };
 pub use config::{EnvSecrets, Keyring, LayeredSecrets, ProviderConfig, SecretRef, SecretResolver};
 pub use error::AgentError;
+pub use models::{ModelList, ModelSource, builtin_models, model_choices};
 pub use provider::ChatProvider;
 pub use provider::replay::{
     Cassette, CassetteEntry, Fingerprint, RecordingProvider, ReplayProvider,
 };
+pub use thinking::{Effort, ThinkingConfig};
 pub use tool::{Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
 pub use types::{
     ChatRequest, ChatStream, Completion, FinishReason, Message, ProviderInfo, StreamAssembler,

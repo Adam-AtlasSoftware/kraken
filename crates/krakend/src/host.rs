@@ -73,6 +73,8 @@ pub struct HostConfig {
     pub max_sessions: usize,
     /// The rewrite pipeline attached to every new [`Session`], if any.
     pub rewrite: Option<Arc<dyn RewriteBackend>>,
+    /// What `local_model_setup` downloads and configures with, if any.
+    pub local_models: Option<Arc<dyn kraken_registry::commands::LocalModelBackend>>,
 }
 
 impl Default for HostConfig {
@@ -82,6 +84,7 @@ impl Default for HostConfig {
             session_idle: Duration::from_secs(1800),
             max_sessions: 4,
             rewrite: None,
+            local_models: None,
         }
     }
 }
@@ -262,6 +265,9 @@ impl SessionHost {
             .with_config(self.inner.cfg.session_config.clone());
         if let Some(rewrite) = &self.inner.cfg.rewrite {
             session = session.with_rewrite(rewrite.clone());
+        }
+        if let Some(lm) = &self.inner.cfg.local_models {
+            session = session.with_local_models(lm.clone());
         }
         Arc::new(SessionEntry {
             key: key.to_path_buf(),
