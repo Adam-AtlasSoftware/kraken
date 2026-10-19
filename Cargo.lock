@@ -2705,6 +2705,7 @@ dependencies = [
  "kraken-agent",
  "kraken-engine",
  "kraken-host",
+ "kraken-ipc",
  "kraken-model",
  "kraken-proto",
  "kraken-registry",
