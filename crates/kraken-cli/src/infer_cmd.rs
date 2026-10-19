@@ -359,6 +359,8 @@ async fn start(
     if sm.get_flag("use") && own_model {
         // `--use` makes the model one of yours: it is written to the configuration with these
         // settings and the assistant is pointed at it, then it is started like any other.
+        // The file may come from `--model` or from `--set <model setting>=<file>`.
+        let model_key = model_key.or_else(|| model_setting(&info.settings_schema));
         let id = register_model(env, &backend, &settings, model_key)?;
         let models = target.serving.models().await?;
         if !models.models.iter().any(|m| m.id == id) {
@@ -554,7 +556,12 @@ fn register_model(
     let file = model_key
         .and_then(|k| extra.as_object_mut().and_then(|o| o.remove(k)))
         .and_then(|v| v.as_str().map(std::path::PathBuf::from))
-        .ok_or_else(|| bad("--use needs --model <file>"))?;
+        .ok_or_else(|| {
+            bad(format!(
+                "--use needs the model file: --model <file> or --set {}=<file>",
+                model_key.unwrap_or("model_path")
+            ))
+        })?;
     let id = file
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())

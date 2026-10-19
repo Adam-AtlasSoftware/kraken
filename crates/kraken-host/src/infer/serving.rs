@@ -21,7 +21,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use kraken_infer::budget::{MemoryPool, footprint};
 use kraken_infer::generic::Manifest;
-use kraken_infer::launch::launch_spec;
+use kraken_infer::hardware::LlamaDevice;
+use kraken_infer::launch::{launch_spec_with, needs_llama_devices};
 use kraken_infer::port::{generate_api_key, pick_free_port, shows_bind_failure};
 use kraken_infer::stats::{StatsKind, StatsSampler, Target};
 use kraken_infer::{GpuApi, InferError, LoadProgress, ManagedProcess, Phase, ProcessSpec};
@@ -295,6 +296,7 @@ impl ServingConfig {
 
 pub(super) type ConfigFn = Arc<dyn Fn() -> ServingConfig + Send + Sync>;
 pub(super) type DevicesFn = Arc<dyn Fn() -> Vec<DeviceInfo> + Send + Sync>;
+pub(super) type LlamaDevicesFn = Arc<dyn Fn(&Path) -> Vec<LlamaDevice> + Send + Sync>;
 type Respawn = Arc<dyn Fn(u16) -> Result<RunningBackend, InferError> + Send + Sync>;
 
 // ---------------------------------------------------------------------------------------------
@@ -328,7 +330,7 @@ pub(super) struct Slot {
     pub(super) devices: Vec<DeviceRef>,
     pub(super) warnings: Vec<String>,
     failure: Mutex<Option<String>>,
-    stopping: std::sync::atomic::AtomicBool,
+    pub(super) stopping: std::sync::atomic::AtomicBool,
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -669,8 +671,18 @@ impl InferManager {
         }
         let devices = self.devices().await;
         let apis = self.llama_apis();
+        // A Vulkan build is told its cards by the names it lists for them.
+        let llama_devices = if needs_llama_devices(&model, &devices, &apis) {
+            let binary = self.llama_binary()?;
+            let f = self.llama_devices.clone();
+            tokio::task::spawn_blocking(move || f(&binary))
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         // Validates the card choice (a card that is gone, a mode the engine cannot do).
-        launch_spec(&model, &devices, &apis, 0).map_err(infer_error)?;
+        launch_spec_with(&model, &devices, &apis, &llama_devices, 0).map_err(infer_error)?;
         let cards = chosen_cards(&model, &devices, &apis);
 
         let need = footprint(
@@ -712,7 +724,7 @@ impl InferManager {
             }
         }
 
-        let (respawn, kind) = self.respawner(&model, devices, apis)?;
+        let (respawn, kind) = self.respawner(&model, devices, apis, llama_devices)?;
         Ok(Prepared {
             model,
             cards,
@@ -829,6 +841,7 @@ impl InferManager {
         model: &LocalModel,
         devices: Vec<DeviceInfo>,
         apis: Vec<GpuApi>,
+        llama_devices: Vec<LlamaDevice>,
     ) -> Result<(Respawn, StatsKind), ProtoError> {
         let model = model.clone();
         match model.engine {
@@ -840,7 +853,7 @@ impl InferManager {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned());
                 let f = move |port: u16| -> Result<RunningBackend, InferError> {
-                    let l = launch_spec(&model, &devices, &apis, port)?;
+                    let l = launch_spec_with(&model, &devices, &apis, &llama_devices, port)?;
                     let mut spec = ProcessSpec::new(binary.clone(), port, "/health");
                     spec.args = l.argv;
                     spec.env = l.env;
@@ -855,7 +868,7 @@ impl InferManager {
             LocalEngine::Strata => {
                 let m = self.strata_manifest()?;
                 let f = move |port: u16| -> Result<RunningBackend, InferError> {
-                    let l = launch_spec(&model, &devices, &apis, port)?;
+                    let l = launch_spec_with(&model, &devices, &apis, &[], port)?;
                     // `{port}` is always KRAKEN's pick; a `port` setting of an older manifest
                     // is never read.
                     let mut argv = m.expand(&Value::Null, port)?.into_iter();
@@ -941,6 +954,7 @@ impl InferManager {
             port,
             pid: slot.run().status().pid,
             devices,
+            api_key: slot.run().api_key().map(str::to_string),
         });
         let watcher = tokio::spawn(watch(
             slot.clone(),
@@ -1310,7 +1324,10 @@ async fn watch(
             Ok(new) => {
                 let port = new.port();
                 let pid = new.status().pid;
-                *lock(&slot.run) = Arc::new(new);
+                let api_key = new.api_key().map(str::to_string);
+                if !install_respawned(&slot, new) {
+                    return;
+                }
                 stats.unregister(&slot.id);
                 stats.register(Target {
                     model: slot.id.clone(),
@@ -1318,6 +1335,7 @@ async fn watch(
                     port,
                     pid,
                     devices: slot.devices.clone(),
+                    api_key,
                 });
             }
             Err(e) => {
@@ -1327,6 +1345,22 @@ async fn watch(
             }
         }
     }
+}
+
+/// Puts the process started on a new port in the slot. A stop that came while it was being
+/// started has already stopped the old process (or will stop this one, when it read the slot
+/// after the swap); either way this one is stopped too, so the slot ends `Stopped` and no
+/// process outlives the stop. False when the model is being stopped.
+pub(super) fn install_respawned(slot: &Slot, new: RunningBackend) -> bool {
+    let new = Arc::new(new);
+    *lock(&slot.run) = new.clone();
+    if !slot.is_stopping() {
+        return true;
+    }
+    // `stop` sends the stop signal before its first await, so even when this task is aborted by
+    // `Slot::stop` the supervisor still ends the process; a task of its own finishes the wait.
+    tokio::spawn(async move { new.stop().await });
+    false
 }
 
 // ---------------------------------------------------------------------------------------------

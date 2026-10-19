@@ -7,6 +7,7 @@
 //! model that is not running gives a plain message that says how to start it.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -22,16 +23,26 @@ const POLL: Duration = Duration::from_millis(500);
 /// How long a request waits for a model to finish loading.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-static SERVING: RwLock<Option<Arc<dyn ServingApi>>> = RwLock::new(None);
-static DAEMON: tokio::sync::Mutex<Option<Arc<DaemonClient>>> = tokio::sync::Mutex::const_new(None);
+/// A serving service and the number of the connection it is: holds belong to a connection, so
+/// a new number means the holds made before are gone.
+type Conn = (Arc<dyn ServingApi>, u64);
+
+static SERVING: RwLock<Option<Conn>> = RwLock::new(None);
+static DAEMON: tokio::sync::Mutex<Option<(Arc<DaemonClient>, u64)>> =
+    tokio::sync::Mutex::const_new(None);
+static CONNECTIONS: AtomicU64 = AtomicU64::new(1);
+
+fn next_connection() -> u64 {
+    CONNECTIONS.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Makes `api` the serving service of this process (the CLI without a daemon, the GUI, tests);
 /// `None` goes back to the daemon.
 pub fn set_serving(api: Option<Arc<dyn ServingApi>>) {
-    *SERVING.write().unwrap_or_else(PoisonError::into_inner) = api;
+    *SERVING.write().unwrap_or_else(PoisonError::into_inner) = api.map(|a| (a, next_connection()));
 }
 
-fn registered() -> Option<Arc<dyn ServingApi>> {
+fn registered() -> Option<Conn> {
     SERVING
         .read()
         .unwrap_or_else(PoisonError::into_inner)
@@ -40,13 +51,13 @@ fn registered() -> Option<Arc<dyn ServingApi>> {
 
 /// The shared connection of this process to `krakend`, started when none runs. A model held on
 /// it stays held while the process lives.
-async fn daemon_api(fresh: bool) -> Result<Arc<dyn ServingApi>, AgentError> {
+async fn daemon_api(fresh: bool) -> Result<Conn, AgentError> {
     let mut slot = DAEMON.lock().await;
     if fresh {
         *slot = None;
     }
-    if let Some(c) = slot.as_ref() {
-        return Ok(c.clone() as Arc<dyn ServingApi>);
+    if let Some((c, n)) = slot.as_ref() {
+        return Ok((c.clone() as Arc<dyn ServingApi>, *n));
     }
     let dir = RuntimeDir::resolve().map_err(|e| {
         AgentError::Config(format!("cannot find the krakend runtime directory: {e}"))
@@ -60,15 +71,23 @@ async fn daemon_api(fresh: bool) -> Result<Arc<dyn ServingApi>, AgentError> {
                 ))
             })?;
     let client = Arc::new(client);
-    *slot = Some(client.clone());
-    Ok(client as Arc<dyn ServingApi>)
+    let n = next_connection();
+    *slot = Some((client.clone(), n));
+    Ok((client as Arc<dyn ServingApi>, n))
+}
+
+/// The models this resolver holds, and the connection the holds were made on.
+#[derive(Default)]
+struct Held {
+    connection: u64,
+    models: HashSet<String>,
 }
 
 /// Resolves `local` models through the serving service.
 #[derive(Default)]
 pub struct ServingResolver {
-    api: Option<Arc<dyn ServingApi>>,
-    held: Mutex<HashSet<String>>,
+    api: RwLock<Option<Conn>>,
+    held: Mutex<Held>,
 }
 
 impl ServingResolver {
@@ -80,19 +99,34 @@ impl ServingResolver {
     /// A resolver that always asks `api`.
     pub fn with_api(api: Arc<dyn ServingApi>) -> Self {
         Self {
-            api: Some(api),
+            api: RwLock::new(Some((api, next_connection()))),
             held: Mutex::default(),
         }
     }
 
+    /// The service to ask. When it is another connection than the one the holds were made on
+    /// (the daemon connection was replaced after it died, or the program registered another
+    /// service), those holds ended with the old connection: they are forgotten, so the role
+    /// models are held again on this one.
     async fn api(&self, fresh: bool) -> Result<Arc<dyn ServingApi>, AgentError> {
-        if let Some(a) = &self.api {
-            return Ok(a.clone());
+        let fixed = self
+            .api
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let (api, connection) = match fixed {
+            Some(c) => c,
+            None => match registered() {
+                Some(c) => c,
+                None => daemon_api(fresh).await?,
+            },
+        };
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.connection != connection {
+            held.models.clear();
+            held.connection = connection;
         }
-        match registered() {
-            Some(a) => Ok(a),
-            None => daemon_api(fresh).await,
-        }
+        Ok(api)
     }
 
     async fn status(&self, model: &str) -> Result<ModelStatus, AgentError> {
@@ -125,6 +159,7 @@ impl ServingResolver {
         self.held
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .models
             .contains(model)
     }
 
@@ -132,6 +167,7 @@ impl ServingResolver {
         self.held
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .models
             .insert(model.to_string())
     }
 
@@ -139,6 +175,7 @@ impl ServingResolver {
         self.held
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .models
             .remove(model);
     }
 
@@ -340,6 +377,29 @@ mod tests {
         // A second request does not hold again.
         r.resolve("qwen").await.expect("still ready");
         assert_eq!(fake.holds.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn role_models_are_held_again_on_a_new_connection() {
+        let mut ready = status("qwen", ModelState::Ready, true);
+        ready.base_url = Some("http://127.0.0.1:5000/v1".into());
+        ready.served_model = Some("served.gguf".into());
+        let first = Fake::new(vec![ready.clone()], None);
+        let r = ServingResolver::with_api(first.clone());
+        r.resolve("qwen").await.expect("ready");
+        r.resolve("qwen").await.expect("ready");
+        assert_eq!(first.holds.lock().unwrap().len(), 1, "held once");
+        // The connection died and was replaced: its holds went with it.
+        let second = Fake::new(vec![ready], None);
+        *r.api.write().unwrap() = Some((second.clone(), next_connection()));
+        r.resolve("qwen").await.expect("ready");
+        assert_eq!(
+            *second.holds.lock().unwrap(),
+            vec!["qwen".to_string()],
+            "held again on the new connection"
+        );
+        r.resolve("qwen").await.expect("ready");
+        assert_eq!(second.holds.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

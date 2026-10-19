@@ -323,13 +323,14 @@ impl Command for LocalModelStart {
             "local_model_start",
             "Start a local model and keep it running until stopped",
             CommandKind::Query,
-            Permission::Safe,
+            Permission::Mutating,
         )
         .doc(
             "Starts the model and returns while it loads (follow it with `local_model_status`). \
              It keeps running until `local_model_stop`, even when nobody uses it. If it would \
              not fit in memory the answer says so and offers the choices: stop another model, \
-             `cpu: true` to run on the processor, or `force: true` to start anyway.\n\
+             `cpu: true` to run on the processor, or `force: true` to start anyway. It runs a \
+             program and takes memory, so the assistant only gets it when a task allows it.\n\
              Example: local_model_start {\"model\": \"qwen3-8b-q4_k_m\", \"cpu\": true}",
         )
     }
@@ -357,7 +358,7 @@ impl Command for LocalModelHold {
             "local_model_hold",
             "Keep a local model running for as long as this connection lasts",
             CommandKind::Query,
-            Permission::Safe,
+            Permission::Mutating,
         )
         .doc(
             "Starts the model if it is not running and keeps it for this connection: when the \
@@ -397,7 +398,7 @@ impl Command for LocalModelRelease {
             "local_model_release",
             "Give up this connection's hold of a local model",
             CommandKind::Query,
-            Permission::Safe,
+            Permission::Mutating,
         )
         .doc(
             "Removes the hold made by `local_model_hold`. The model stops after the grace period \
@@ -436,7 +437,7 @@ impl Command for LocalModelStop {
             "local_model_stop",
             "Stop a local model now, whoever is using it",
             CommandKind::Query,
-            Permission::Safe,
+            Permission::Mutating,
         )
         .doc(
             "Stops the model's server at once and frees its memory. Anything using it (the \

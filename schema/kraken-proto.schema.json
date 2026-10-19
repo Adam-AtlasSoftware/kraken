@@ -498,7 +498,7 @@
       "description": "A card found on this computer.",
       "properties": {
         "index": {
-          "description": "The card's number as the vendor tool reports it.",
+          "description": "The card's number as the engines count it. NVIDIA: `nvidia-smi`'s index (PCI bus order,\nwhat CUDA uses with `CUDA_DEVICE_ORDER=PCI_BUS_ID`). AMD: the HIP number, the card's place\namong the AMD cards in PCI bus order (what `HIP_VISIBLE_DEVICES` takes). Other cards and\naccelerators: their DRM card or accelerator number.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"

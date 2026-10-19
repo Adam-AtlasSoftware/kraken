@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::backend::GpuApi;
 use crate::error::{InferError, Result};
-use crate::hardware::{default_devices, usable};
+use crate::hardware::{LlamaDevice, default_devices, llama_gpu_api, usable};
 use crate::llama::{LlamaSettings, build_argv};
 
 /// What to run for one model.
@@ -71,7 +71,8 @@ fn selected<'a>(
 
 /// Builds the launch description of `model` on `devices` (what [`crate::hardware`] found).
 /// `llama_apis` are the GPU APIs of the installed `llama-server`; `port` is the one KRAKEN
-/// picked (llama.cpp only, see [`LaunchSpec::argv`]).
+/// picked (llama.cpp only, see [`LaunchSpec::argv`]). For a `llama-server` that drives the
+/// chosen cards through Vulkan use [`launch_spec_with`].
 ///
 /// Both engines get `CUDA_DEVICE_ORDER=PCI_BUS_ID`, so card numbers agree with `nvidia-smi`.
 pub fn launch_spec(
@@ -80,18 +81,110 @@ pub fn launch_spec(
     llama_apis: &[GpuApi],
     port: u16,
 ) -> Result<LaunchSpec> {
+    launch_spec_with(model, devices, llama_apis, &[], port)
+}
+
+/// [`launch_spec`] with what `llama-server --list-devices` reported
+/// ([`crate::hardware::list_llama_devices`]). A Vulkan build ignores `CUDA_VISIBLE_DEVICES` and
+/// `HIP_VISIBLE_DEVICES`, so the cards are named to it with `--device Vulkan<n>`, matched by
+/// name; when a card cannot be told apart from another the start is refused rather than run on
+/// the wrong card.
+pub fn launch_spec_with(
+    model: &LocalModel,
+    devices: &[DeviceInfo],
+    llama_apis: &[GpuApi],
+    llama_devices: &[LlamaDevice],
+    port: u16,
+) -> Result<LaunchSpec> {
     let cards = selected(model, devices, llama_apis)?;
     let mut env = vec![("CUDA_DEVICE_ORDER".to_string(), "PCI_BUS_ID".to_string())];
     let argv = match model.engine {
-        LocalEngine::Llama => llama(model, &cards, port, &mut env)?,
+        LocalEngine::Llama => llama(model, &cards, llama_apis, llama_devices, port, &mut env)?,
         LocalEngine::Strata => strata(model, &cards)?,
     };
     Ok(LaunchSpec { argv, env })
 }
 
+/// True when `llama-server` would drive any of the model's cards through Vulkan, so
+/// [`launch_spec_with`] needs `llama-server --list-devices`.
+pub fn needs_llama_devices(
+    model: &LocalModel,
+    devices: &[DeviceInfo],
+    llama_apis: &[GpuApi],
+) -> bool {
+    model.engine == LocalEngine::Llama
+        && selected(model, devices, llama_apis).is_ok_and(|cards| {
+            cards
+                .iter()
+                .any(|c| llama_gpu_api(c.vendor, llama_apis) == Some(GpuApi::Vulkan))
+        })
+}
+
+fn same_card_name(a: &str, b: &str) -> bool {
+    let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+    !a.is_empty() && !b.is_empty() && (a.contains(&b) || b.contains(&a))
+}
+
+/// The `Vulkan<n>` names of `cards`, in their order. A card matches the Vulkan devices whose
+/// name contains its name or the other way round; several identical cards are told apart only
+/// when all of them are chosen (then which is which does not matter).
+fn vulkan_names(cards: &[&DeviceInfo], llama_devices: &[LlamaDevice]) -> Result<Vec<String>> {
+    let vulkan: Vec<&LlamaDevice> = llama_devices
+        .iter()
+        .filter(|d| d.id.starts_with("Vulkan"))
+        .collect();
+    let listed = || {
+        if vulkan.is_empty() {
+            "it lists no Vulkan devices".to_string()
+        } else {
+            let names: Vec<String> = vulkan
+                .iter()
+                .map(|d| format!("{} ({})", d.id, d.name))
+                .collect();
+            format!("it lists {}", names.join(", "))
+        }
+    };
+    let mut out: Vec<String> = Vec::new();
+    for c in cards {
+        let candidates: Vec<&&LlamaDevice> = vulkan
+            .iter()
+            .filter(|d| same_card_name(&d.name, &c.name))
+            .collect();
+        let twins = cards
+            .iter()
+            .filter(|o| same_card_name(&o.name, &c.name))
+            .count();
+        let pick = match candidates.len() {
+            0 => None,
+            1 => Some(candidates[0]),
+            n if n == twins => candidates.iter().find(|d| !out.contains(&d.id)).copied(),
+            _ => None,
+        };
+        let Some(d) = pick else {
+            return Err(bad(format!(
+                "This copy of llama.cpp uses {} through Vulkan, and KRAKEN cannot tell which \
+                 Vulkan device it is ({}), so the model was not started on a card that may be \
+                 the wrong one. Run it on the processor, choose all cards of that model, or \
+                 install a llama.cpp build with {} support.",
+                c.name,
+                listed(),
+                if c.vendor == GpuVendor::Amd {
+                    "ROCm"
+                } else {
+                    "CUDA"
+                }
+            )));
+        };
+        out.push(d.id.clone());
+    }
+    Ok(out)
+}
+
 fn llama(
     model: &LocalModel,
     cards: &[&DeviceInfo],
+    llama_apis: &[GpuApi],
+    llama_devices: &[LlamaDevice],
     port: u16,
     env: &mut Vec<(String, String)>,
 ) -> Result<Vec<String>> {
@@ -127,6 +220,15 @@ fn llama(
         ));
     }
     let (var, ids): (&str, Vec<String>) = match vendor {
+        _ if llama_gpu_api(vendor, llama_apis) == Some(GpuApi::Vulkan) => {
+            // `--main-gpu` and `--tensor-split` below index this list, as they index the
+            // renumbered cards of CUDA and HIP.
+            argv.extend([
+                "--device".into(),
+                vulkan_names(cards, llama_devices)?.join(","),
+            ]);
+            ("", Vec::new())
+        }
         GpuVendor::Nvidia => (
             "CUDA_VISIBLE_DEVICES",
             cards
@@ -146,10 +248,12 @@ fn llama(
         ),
         _ => return Err(bad("KRAKEN cannot use this kind of card yet.")),
     };
-    env.push((var.into(), ids.join(",")));
+    if !var.is_empty() {
+        env.push((var.into(), ids.join(",")));
+    }
 
-    // The visible-devices variable renumbers the cards 0..n in the order given; the flags below
-    // index that filtered list.
+    // The visible-devices variable (or `--device`) renumbers the cards 0..n in the order given;
+    // the flags below index that filtered list.
     let n = cards.len();
     if n < 2 {
         argv.extend(["--split-mode".into(), "none".into()]);
@@ -375,6 +479,96 @@ mod tests {
         let s = launch_spec(&m, &d, &[], 9000).unwrap();
         assert_eq!(env_of(&s, "HIP_VISIBLE_DEVICES").as_deref(), Some("1"));
         assert_eq!(env_of(&s, "CUDA_VISIBLE_DEVICES"), None);
+    }
+
+    fn vk(id: &str, name: &str) -> LlamaDevice {
+        LlamaDevice {
+            id: id.into(),
+            name: name.into(),
+            total: 24 << 30,
+            free: 20 << 30,
+        }
+    }
+
+    #[test]
+    fn llama_through_vulkan_names_the_cards_with_device_not_cuda_variables() {
+        let mut d = nv();
+        d[0].name = "NVIDIA GeForce RTX 3060".into();
+        d[1].name = "NVIDIA GeForce RTX 4090".into();
+        // llama.cpp's Vulkan numbering skips the integrated GPU and follows its own order.
+        let listed = [
+            vk("Vulkan0", "NVIDIA GeForce RTX 4090"),
+            vk("Vulkan1", "NVIDIA GeForce RTX 3060"),
+        ];
+        let mut m = model(LocalEngine::Llama, &[&d[0], &d[1]], MultiGpuMode::Split);
+        m.main_device = Some(r(&d[1]));
+        let s = launch_spec_with(&m, &d, &[GpuApi::Vulkan], &listed, 9000).unwrap();
+        assert!(
+            s.argv
+                .windows(2)
+                .any(|w| w == ["--device", "Vulkan1,Vulkan0"]),
+            "{:?}",
+            s.argv
+        );
+        assert!(s.argv.windows(2).any(|w| w == ["--main-gpu", "1"]));
+        assert_eq!(env_of(&s, "CUDA_VISIBLE_DEVICES"), None);
+        assert_eq!(env_of(&s, "HIP_VISIBLE_DEVICES"), None);
+        assert!(needs_llama_devices(&m, &d, &[GpuApi::Vulkan]));
+        assert!(!needs_llama_devices(&m, &d, &[GpuApi::Cuda]));
+        assert!(!needs_llama_devices(&m, &d, &[]));
+
+        // AMD on a Vulkan-only build.
+        let amd = vec![DeviceInfo {
+            name: "Radeon RX 7900 XTX".into(),
+            ..card(0, GpuVendor::Amd, "")
+        }];
+        let m = model(LocalEngine::Llama, &[&amd[0]], MultiGpuMode::Split);
+        let s = launch_spec_with(
+            &m,
+            &amd,
+            &[GpuApi::Vulkan],
+            &[vk("Vulkan0", "AMD Radeon RX 7900 XTX (RADV NAVI31)")],
+            9000,
+        )
+        .unwrap();
+        assert!(s.argv.windows(2).any(|w| w == ["--device", "Vulkan0"]));
+        assert_eq!(env_of(&s, "HIP_VISIBLE_DEVICES"), None);
+    }
+
+    #[test]
+    fn llama_through_vulkan_refuses_when_it_cannot_tell_the_card() {
+        let mut d = nv();
+        for c in &mut d {
+            c.name = "NVIDIA GeForce RTX 4090".into();
+        }
+        let twins = [
+            vk("Vulkan0", "NVIDIA GeForce RTX 4090"),
+            vk("Vulkan1", "NVIDIA GeForce RTX 4090"),
+            vk("Vulkan2", "NVIDIA GeForce RTX 4090"),
+        ];
+        // One of three identical cards: which Vulkan device it is cannot be known.
+        let one = model(LocalEngine::Llama, &[&d[1]], MultiGpuMode::Split);
+        let e = launch_spec_with(&one, &d, &[GpuApi::Vulkan], &twins, 1)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("cannot tell which Vulkan device"), "{e}");
+        // All of them: the set is the same whatever the order.
+        let all = model(
+            LocalEngine::Llama,
+            &[&d[0], &d[1], &d[2]],
+            MultiGpuMode::Split,
+        );
+        let s = launch_spec_with(&all, &d, &[GpuApi::Vulkan], &twins, 1).unwrap();
+        assert!(
+            s.argv
+                .windows(2)
+                .any(|w| w == ["--device", "Vulkan0,Vulkan1,Vulkan2"])
+        );
+        // No list at all (llama-server --list-devices did not run).
+        let e = launch_spec_with(&one, &d, &[GpuApi::Vulkan], &[], 1)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("lists no Vulkan devices"), "{e}");
     }
 
     #[test]

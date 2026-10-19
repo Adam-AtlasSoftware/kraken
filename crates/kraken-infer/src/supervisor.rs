@@ -39,6 +39,9 @@ pub const DEFAULT_ENV_ALLOWLIST: &[&str] = &[
     "CUDA_VISIBLE_DEVICES",
     "HIP_VISIBLE_DEVICES",
     "ROCR_VISIBLE_DEVICES",
+    // Keeps the Vulkan devices the engine sees the same as `llama-server --list-devices` showed
+    // KRAKEN, whose `Vulkan<n>` names `--device` passes.
+    "GGML_VK_VISIBLE_DEVICES",
     "VK_ICD_FILENAMES",
     "VK_DRIVER_FILES",
     "SYSTEMROOT",

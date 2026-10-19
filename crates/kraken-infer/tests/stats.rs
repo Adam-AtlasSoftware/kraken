@@ -51,6 +51,7 @@ async fn sampler_reads_prometheus_counters_from_the_fake_server() {
         port,
         pid: p.status().pid,
         devices: Vec::new(),
+        api_key: None,
     });
     s.set_phase("m", ModelState::Ready, None);
     s.tick().await;
@@ -86,6 +87,7 @@ async fn sampler_reads_strata_json_from_the_fake_server() {
         port,
         pid: None,
         devices: Vec::new(),
+        api_key: None,
     });
     s.set_phase("m", ModelState::Ready, None);
     s.tick().await;

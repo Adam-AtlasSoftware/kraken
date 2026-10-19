@@ -935,6 +935,41 @@ async fn automate_on_a_model_api_exposes_the_same_tools() {
     }
 }
 
+#[tokio::test]
+async fn starting_or_stopping_local_models_is_not_offered_by_default() {
+    use kraken_agent::ToolHost;
+    let rig = rig().await;
+    let names = |read_only: bool| -> Vec<String> {
+        kraken_assist::RegistryToolHost::new(
+            rig.registry.clone(),
+            rig.backend.clone(),
+            kraken_assist::HostOptions {
+                read_only,
+                ..Default::default()
+            },
+        )
+        .tools()
+        .into_iter()
+        .map(|t| t.name)
+        .collect()
+    };
+    for read_only in [false, true] {
+        let tools = names(read_only);
+        for t in [
+            "local_model_start",
+            "local_model_hold",
+            "local_model_release",
+            "local_model_stop",
+        ] {
+            assert!(
+                !tools.contains(&t.to_string()),
+                "{t} (read_only {read_only})"
+            );
+        }
+        assert!(tools.contains(&"local_model_status".to_string()));
+    }
+}
+
 // ---- metering ----------------------------------------------------------------------------
 
 fn said_with_usage(text: &str, input: u64, output: u64) -> Vec<StreamEvent> {

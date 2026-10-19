@@ -119,7 +119,10 @@ pub enum DeviceState {
 /// A card found on this computer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeviceInfo {
-    /// The card's number as the vendor tool reports it.
+    /// The card's number as the engines count it. NVIDIA: `nvidia-smi`'s index (PCI bus order,
+    /// what CUDA uses with `CUDA_DEVICE_ORDER=PCI_BUS_ID`). AMD: the HIP number, the card's place
+    /// among the AMD cards in PCI bus order (what `HIP_VISIBLE_DEVICES` takes). Other cards and
+    /// accelerators: their DRM card or accelerator number.
     pub index: u32,
     /// The vendor's unique id; empty when the tool gives none.
     pub uuid: String,

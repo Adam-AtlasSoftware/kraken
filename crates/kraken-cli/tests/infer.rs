@@ -506,6 +506,45 @@ async fn infer_start_with_an_engine_and_use_adds_a_model_entry() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn infer_start_use_takes_the_model_file_from_set_too() {
+    let (work, env, config) = llama_rig(false);
+    let file = work.tmp.path().join("viaset.gguf");
+    std::fs::write(&file, [0u8; 64]).unwrap();
+    let r = kraken(
+        &env,
+        &[
+            "infer",
+            "start",
+            "llama-server",
+            "--set",
+            &format!("model_path={}", s(&file)),
+            "--use",
+        ],
+    )
+    .await;
+    assert_eq!(r.code, 0, "{} {}", r.stderr, r.stdout);
+    let cfg = KrakenConfig::from_file(&config).unwrap();
+    let m = cfg
+        .local_models
+        .iter()
+        .find(|m| m.id == "viaset")
+        .expect("model entry added");
+    assert_eq!(m.model_path, file);
+    assert!(
+        m.extra.is_none(),
+        "the file is not kept as an extra setting"
+    );
+    assert_eq!(
+        cfg.provider,
+        Some(kraken_host::infer::local_provider_table("viaset"))
+    );
+    // Neither --model nor the setting: the message says both ways.
+    let r = kraken(&env, &["infer", "start", "llama-server", "--use"]).await;
+    assert_ne!(r.code, 0);
+    assert!(r.stderr.contains("--set model_path=<file>"), "{}", r.stderr);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn serve_local_holds_the_role_model_while_the_command_runs() {
     let (_work, env, _config) = llama_rig(true);
     let r = kraken(

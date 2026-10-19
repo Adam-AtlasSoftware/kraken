@@ -474,3 +474,44 @@ fn status_reply_omits_an_absent_key() {
     let s = serde_json::to_value(StatusReply::none()).unwrap();
     assert!(s.get("api_key").is_none());
 }
+
+#[tokio::test]
+async fn the_old_methods_act_on_the_engine_start_even_when_a_role_model_runs() {
+    let t = tmp();
+    let role_file = t.path().join("role.gguf");
+    std::fs::write(&role_file, [0u8; 64]).expect("role model");
+    let mut role = new_local_model("role", LocalEngine::Llama, role_file);
+    role.cpu_only = true;
+    let m = manager()
+        .with_serving_config(ServingConfig {
+            models: vec![role],
+            roles: vec!["role".into()],
+            serving: crate::config::LocalServingSettings::default(),
+        })
+        .with_llama_binary(fake_server_path());
+    m.hold_model(Holder::Owner, "role", StartOptions::default())
+        .await
+        .expect("role model");
+
+    let model = model_file(t.path());
+    m.start(FAKE_ID, json!({"model": model}))
+        .await
+        .expect("manual start");
+    let s = m.status().await.expect("status");
+    assert_eq!(s.backend.as_deref(), Some(FAKE_ID), "{s:?}");
+    assert_eq!(s.model.as_deref(), Some("tiny.gguf"));
+
+    assert!(m.stop().await.expect("stop").stopped);
+    let manual = m.model_status(MANUAL_MODEL_ID);
+    assert_eq!(manual.state, kraken_proto::ModelState::Stopped);
+    assert!(
+        m.model_status("role").is_running(),
+        "the role model keeps running"
+    );
+    // Once the manual start is stopped the old methods fall back to the role model.
+    assert_eq!(
+        m.status().await.expect("status").backend.as_deref(),
+        Some(LLAMA_ID)
+    );
+    m.shutdown().await;
+}

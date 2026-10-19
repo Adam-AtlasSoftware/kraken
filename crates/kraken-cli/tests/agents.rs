@@ -283,7 +283,10 @@ async fn run_without_a_terminal_declines_permissions_and_json_streams_events() {
         .map(|l| serde_json::from_str(l).expect("json line"))
         // Where unprivileged namespaces are unavailable (e.g. GitHub's Ubuntu runners) the host
         // first reports that the agent runs unconfined; that notice is not part of the turn.
-        .filter(|e: &serde_json::Value| e["event"] != "info")
+        // Lines the agent process writes to stderr are forwarded by a task of their own, so
+        // they can land anywhere in the stream (before `started`, after `turn_ended`); they are
+        // not part of the turn either.
+        .filter(|e: &serde_json::Value| e["event"] != "info" && e["event"] != "agent_stderr")
         .collect();
     assert_eq!(events[0]["event"], "started");
     assert!(events.iter().any(|e| e["event"] == "tool_call"));

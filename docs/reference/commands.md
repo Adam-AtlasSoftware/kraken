@@ -38,14 +38,14 @@ logged; **dangerous** commands always ask for approval first.
 | [`kraken_help`](#kraken_help) | query | safe | Search KRAKEN's own documentation and glossary |
 | [`list_functions`](#list_functions) | query | safe | List functions ordered by address, one page at a time |
 | [`local_model_devices`](#local_model_devices) | query | safe | List the graphics cards a local model could run on |
-| [`local_model_hold`](#local_model_hold) | query | safe | Keep a local model running for as long as this connection lasts |
+| [`local_model_hold`](#local_model_hold) | query | mutating | Keep a local model running for as long as this connection lasts |
 | [`local_model_list`](#local_model_list) | query | safe | List the models served on this computer and their state |
 | [`local_model_recommend`](#local_model_recommend) | query | safe | Recommend a local engine and model that fit this computer |
-| [`local_model_release`](#local_model_release) | query | safe | Give up this connection's hold of a local model |
+| [`local_model_release`](#local_model_release) | query | mutating | Give up this connection's hold of a local model |
 | [`local_model_setup`](#local_model_setup) | query | safe | Download and configure a local model (asks for approval first) |
-| [`local_model_start`](#local_model_start) | query | safe | Start a local model and keep it running until stopped |
+| [`local_model_start`](#local_model_start) | query | mutating | Start a local model and keep it running until stopped |
 | [`local_model_status`](#local_model_status) | query | safe | Show one local model's state, memory, speed and recent log |
-| [`local_model_stop`](#local_model_stop) | query | safe | Stop a local model now, whoever is using it |
+| [`local_model_stop`](#local_model_stop) | query | mutating | Stop a local model now, whoever is using it |
 | [`memory_map`](#memory_map) | query | safe | List the memory blocks (segments and sections) with permissions |
 | [`project_close`](#project_close) | mutation | mutating | Close the current project and stop its engine |
 | [`project_create`](#project_create) | mutation | mutating | Create a project for a binary and make it the current project |
@@ -5229,7 +5229,7 @@ Arguments: none.
       "description": "A card found on this computer.",
       "properties": {
         "index": {
-          "description": "The card's number as the vendor tool reports it.",
+          "description": "The card's number as the engines count it. NVIDIA: `nvidia-smi`'s index (PCI bus order,\nwhat CUDA uses with `CUDA_DEVICE_ORDER=PCI_BUS_ID`). AMD: the HIP number, the card's place\namong the AMD cards in PCI bus order (what `HIP_VISIBLE_DEVICES` takes). Other cards and\naccelerators: their DRM card or accelerator number.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -5384,7 +5384,7 @@ kraken local-model-hold --model <string> [options]
 ```
 
 - Kind: query
-- Permission: safe
+- Permission: mutating
 
 Starts the model if it is not running and keeps it for this connection: when the connection ends (or after `local_model_release`) and nobody else holds it, it stops after a grace period. Same memory choices as `local_model_start`.
 
@@ -6586,7 +6586,7 @@ kraken local-model-release --model <string>
 ```
 
 - Kind: query
-- Permission: safe
+- Permission: mutating
 
 Removes the hold made by `local_model_hold`. The model stops after the grace period when nobody else holds it and it was not started by hand.
 
@@ -6717,9 +6717,9 @@ kraken local-model-start --model <string> [options]
 ```
 
 - Kind: query
-- Permission: safe
+- Permission: mutating
 
-Starts the model and returns while it loads (follow it with `local_model_status`). It keeps running until `local_model_stop`, even when nobody uses it. If it would not fit in memory the answer says so and offers the choices: stop another model, `cpu: true` to run on the processor, or `force: true` to start anyway.
+Starts the model and returns while it loads (follow it with `local_model_status`). It keeps running until `local_model_stop`, even when nobody uses it. If it would not fit in memory the answer says so and offers the choices: stop another model, `cpu: true` to run on the processor, or `force: true` to start anyway. It runs a program and takes memory, so the assistant only gets it when a task allows it.
 
 Example: `local_model_start {"model": "qwen3-8b-q4_k_m", "cpu": true}`
 
@@ -7584,7 +7584,7 @@ kraken local-model-stop --model <string>
 ```
 
 - Kind: query
-- Permission: safe
+- Permission: mutating
 
 Stops the model's server at once and frees its memory. Anything using it (the assistant, rewriting) starts it again on its next request if the model is assigned to it.
 
