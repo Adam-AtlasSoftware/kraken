@@ -17,7 +17,7 @@ pub enum IpcError {
         reason: String,
     },
     /// The socket path would not fit in `sockaddr_un.sun_path`.
-    #[error("socket path {path:?} is {len} bytes, limit is {limit}")]
+    #[error("socket path {} is {len} bytes; the limit is {limit}. {advice}", path.display())]
     SocketPathTooLong {
         /// Offending path.
         path: PathBuf,
@@ -25,6 +25,8 @@ pub enum IpcError {
         len: usize,
         /// The enforced limit.
         limit: usize,
+        /// Which setting produced the path and how to fix it.
+        advice: String,
     },
     /// A state file could not be parsed.
     #[error("malformed {what}: {source}")]

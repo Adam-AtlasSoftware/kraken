@@ -15,6 +15,7 @@ mod loading;
 mod menu;
 mod overlays;
 mod panels;
+mod private;
 mod recent;
 mod rewrite;
 mod services;

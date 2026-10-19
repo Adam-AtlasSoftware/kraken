@@ -136,6 +136,10 @@ fn main() -> ExitCode {
         }
     };
     init_logging(&dir, args.log_stderr);
+    if let Some(n) = dir.notice() {
+        tracing::warn!("{n}");
+        eprintln!("krakend: {n}");
+    }
     std::panic::set_hook(Box::new(|info| tracing::error!("panic: {info}")));
 
     let config = match KrakenConfig::load() {

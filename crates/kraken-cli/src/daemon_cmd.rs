@@ -30,7 +30,7 @@ fn auto_of(env: &CliEnv) -> DaemonAuto {
 fn runtime_dir(env: &CliEnv) -> Result<RuntimeDir, ProtoError> {
     match &auto_of(env).runtime_dir {
         Some(d) => Ok(d.clone()),
-        None => RuntimeDir::resolve().map_err(|e| internal(format!("runtime dir: {e}"))),
+        None => crate::app::resolve_runtime_dir(),
     }
 }
 

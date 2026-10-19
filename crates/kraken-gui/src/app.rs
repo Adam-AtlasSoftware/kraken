@@ -8,12 +8,11 @@ use std::time::{Duration, Instant};
 use egui::{Frame, Key, Margin, Modifiers, Ui, ViewportCommand};
 use egui_dock::DockState;
 use kraken_gui_widgets::KrakenTheme;
-use kraken_host::ManagedFactory;
 use kraken_viewmodel::agents::{AgentEnv, AgentsHub};
 use kraken_viewmodel::demo::demo_project;
 use kraken_viewmodel::{
     AnalysisPhase, AppAction, ApprovalBroker, Backend, BackendOptions, Connection,
-    DaemonClientBackend, InProcessBackend, Load, UiRequest, ViewModel,
+    DaemonClientBackend, Load, UiRequest, ViewModel,
 };
 use tokio::runtime::Runtime;
 
@@ -22,6 +21,7 @@ use crate::assist::{self, AssistRequest, AssistSetup, Change};
 use crate::help::{self, HelpDo, HelpEnv, HelpUi};
 use crate::import::{ImportAction, ImportDialog, Picked, Picker, is_project_dir};
 use crate::menu::{self, MenuCmd, MenuEnv};
+use crate::private::{self, PrivateDaemon};
 use crate::recent::{self, Prefs};
 use crate::services::{Mode, Services};
 use crate::settings::{Settings, SettingsAction, SettingsEnv};
@@ -119,6 +119,8 @@ pub struct KrakenApp {
     /// What to do once the daemon connection is up.
     pending: Option<Choice>,
     approvals: ApprovalBroker,
+    /// The daemon of a `--no-daemon` window, started with the first real project.
+    private: Option<PrivateDaemon>,
     /// The AI model in use, kept across projects.
     assist: AssistSetup,
     settings: Settings,
@@ -168,6 +170,17 @@ pub struct KrakenApp {
     file_menu_open: bool,
 }
 
+/// What the welcome screen says about the runtime directory: an error when none is usable, a
+/// notice when a fallback was chosen.
+fn runtime_dir_report(
+    resolved: Result<kraken_ipc::RuntimeDir, kraken_ipc::IpcError>,
+) -> (Option<String>, Option<String>) {
+    match resolved {
+        Ok(d) => (None, d.notice().map(str::to_string)),
+        Err(e) => (Some(format!("KRAKEN cannot start its daemon: {e}")), None),
+    }
+}
+
 impl KrakenApp {
     pub fn new(ctx: &egui::Context, rt: Arc<Runtime>, services: Services, opts: &Options) -> Self {
         // A screenshot neither reads nor writes the person's preferences and recent projects.
@@ -191,6 +204,7 @@ impl KrakenApp {
             slot: Slot::Idle,
             pending: None,
             approvals,
+            private: None,
             assist: AssistSetup::load(services.config_path.clone()),
             settings: Settings::default(),
             prefs,
@@ -238,6 +252,13 @@ impl KrakenApp {
                 tweaks: ShotTweaks::from_env(),
             }),
         };
+        if app.services.mode == Mode::Daemon && opts.screenshot.is_none() {
+            // Fail visibly now rather than at the first project: a runtime directory that
+            // makes the socket path too long, or a fallback to a shorter one.
+            let (error, notice) = runtime_dir_report(kraken_ipc::RuntimeDir::resolve());
+            app.welcome.error = error;
+            app.welcome.notice = notice;
+        }
         // The terminal agents the settings list; they need no open project.
         let mut hub = AgentsHub::new(app.rt.handle().clone(), None);
         {
@@ -398,6 +419,18 @@ impl KrakenApp {
     #[cfg(test)]
     pub fn view_model(&self) -> Option<&ViewModel> {
         self.vm.as_ref()
+    }
+
+    /// The runtime directory of the window's private daemon (`--no-daemon`).
+    #[cfg(test)]
+    pub fn private_runtime_dir(&self) -> Option<PathBuf> {
+        self.private.as_ref().map(|p| p.runtime_dir().to_path_buf())
+    }
+
+    /// The agent configuration a terminal agent started now would get.
+    #[cfg(test)]
+    pub fn agent_config(&mut self) -> Option<kraken_viewmodel::agents::AgentsConfig> {
+        self.agent_env().map(|e| e.config)
     }
 
     #[cfg(test)]
@@ -589,36 +622,39 @@ impl KrakenApp {
     /// Opens or creates a real project through the daemon (or in-process with `--no-daemon`).
     pub(crate) fn start_real(&mut self, choice: Choice, ctx: &egui::Context) {
         self.welcome.error = None;
-        match self.services.mode {
-            Mode::NoDaemon => {
-                let Some(factory) = self.services.ghidra.clone() else {
-                    self.welcome.error = Some("The in-process engine is not available.".into());
-                    return;
-                };
-                // The same rewrite pipeline krakend and the CLI attach.
-                let mut session = kraken_registry::Session::new(factory)
-                    .with_rewrite(kraken_rewrite::RewriteService::standard().into_backend());
-                if let Ok(lm) = kraken_host::local_models::LocalModels::system() {
-                    session = session.with_local_models(Arc::new(lm));
-                }
-                let backend = InProcessBackend::with_session(session);
-                backend.set_approver(Arc::new(self.approvals.clone()));
-                self.launch(choice, Arc::new(backend), ctx);
-            }
-            Mode::Daemon => {
-                if let Slot::Failed(_) = self.slot {
-                    self.slot = Slot::Idle;
-                }
-                if let Slot::Ready(b) = &self.slot {
-                    let backend = b.clone();
-                    self.launch(choice, backend, ctx);
-                } else {
-                    self.pending = Some(choice);
-                    self.connect_daemon(ctx);
-                    self.welcome.busy = Some("Starting the analysis engine...".into());
-                }
-            }
+        if self.services.mode == Mode::NoDaemon
+            && let Err(e) = self.ensure_private_daemon()
+        {
+            self.welcome.error = Some(e);
+            return;
         }
+        if let Slot::Failed(_) = self.slot {
+            self.slot = Slot::Idle;
+        }
+        if let Slot::Ready(b) = &self.slot {
+            let backend = b.clone();
+            self.launch(choice, backend, ctx);
+        } else {
+            self.pending = Some(choice);
+            self.connect_daemon(ctx);
+            self.welcome.busy = Some("Starting the analysis engine...".into());
+        }
+    }
+
+    /// With `--no-daemon`, the window's own daemon (see `private`): the in-process engine runs
+    /// behind it, and a terminal agent's MCP server joins it.
+    fn ensure_private_daemon(&mut self) -> Result<(), String> {
+        if self.private.is_some() {
+            return Ok(());
+        }
+        let Some(factory) = self.services.ghidra.clone() else {
+            return Err("The in-process engine is not available.".into());
+        };
+        let _guard = self.rt.enter();
+        let daemon = PrivateDaemon::start(factory, &self.services.cfg)?;
+        self.services.connector = Some(daemon.connector());
+        self.private = Some(daemon);
+        Ok(())
     }
 
     fn connect_daemon(&mut self, ctx: &egui::Context) {
@@ -1141,6 +1177,8 @@ impl KrakenApp {
         if demo {
             // The demo's engine lives in this process, so an agent cannot join it.
             env.config.use_daemon = false;
+        } else if let Some(p) = &self.private {
+            private::route_agents(&mut env.config, p.runtime_dir());
         }
         Some(env)
     }
@@ -1649,10 +1687,13 @@ impl eframe::App for KrakenApp {
 
 impl KrakenApp {
     /// Ends the sidecar of a `--no-daemon` run; a daemon outlives the window by design.
-    fn stop_in_process_engine(&mut self) {
+    pub(crate) fn stop_in_process_engine(&mut self) {
         self.settings.infer.shutdown(self.rt.handle());
+        self.vm = None;
+        if let Some(p) = self.private.take() {
+            self.rt.block_on(p.stop());
+        }
         if let Some(f) = self.services.ghidra.clone() {
-            self.vm = None;
             self.rt.block_on(f.shutdown());
         }
     }
@@ -1939,4 +1980,29 @@ fn next_steps(ctx: &egui::Context, functions: u64, has_main: bool) -> Option<Nex
                 });
         });
     out
+}
+
+#[cfg(test)]
+mod runtime_dir_tests {
+    use super::runtime_dir_report;
+    use kraken_ipc::IpcError;
+
+    #[test]
+    fn too_long_socket_path_is_an_error_with_the_fix() {
+        let e = IpcError::SocketPathTooLong {
+            path: "/t/daemon.sock".into(),
+            len: 131,
+            limit: 100,
+            advice: kraken_ipc::socket_path_advice(
+                "KRAKEN_RUNTIME_DIR",
+                std::path::Path::new("/t/x"),
+                Some(std::path::Path::new("/t")),
+            ),
+        };
+        let (err, notice) = runtime_dir_report(Err(e));
+        let err = err.unwrap();
+        assert!(notice.is_none());
+        assert!(err.contains("131 bytes; the limit is 100"), "{err}");
+        assert!(err.contains("Your TMPDIR (/t) is too long"), "{err}");
+    }
 }

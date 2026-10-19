@@ -355,7 +355,8 @@ pub struct SymbolEntry {
     /// Address: the definition for an export, the stub or thunk (if any) for an import.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<Hex64>,
-    /// Library an import comes from, when known (binary-derived).
+    /// Library an import comes from, when known; for an export of a static library, the archive
+    /// member that defines it (binary-derived).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<String>,
     /// What the symbol names.

@@ -263,6 +263,57 @@ async fn linux_objects_and_static_library() {
     assert!(text.contains("punctuation"), "{text}");
 }
 
+/// Every global definition of every member of a static library is an export with its address
+/// and the member that defines it; a lone object names no member.
+#[tokio::test(flavor = "multi_thread")]
+async fn static_libraries_export_their_global_definitions_by_member() {
+    let expect = [
+        ("kr_classify", "Function", "kr_core.o"),
+        ("kr_report", "Function", "kr_core.o"),
+        ("kr_calls", "Data", "kr_core.o"),
+        ("kr_kind_name", "Function", "kr_text.o"),
+        ("kr_checksum", "Function", "kr_text.o"),
+        ("kr_dup_upper", "Function", "kr_text.o"),
+    ];
+    for binary in ["libkr.a", "kr-x64.lib", "kr-x86.lib"] {
+        let Some(o) = open(binary).await else {
+            return;
+        };
+        assert_eq!(o.exports.len(), expect.len(), "{binary}: {:?}", o.exports);
+        for (name, kind, member) in expect {
+            let e = o
+                .exports
+                .iter()
+                .find(|e| e.name == name)
+                .unwrap_or_else(|| panic!("{binary}: export {name}"));
+            assert!(e.address.is_some(), "{binary}: {name} has an address");
+            assert_eq!(format!("{:?}", e.kind), kind, "{binary}: {name}");
+            let member = if binary.ends_with(".lib") {
+                member.replace(".o", ".obj")
+            } else {
+                member.to_string()
+            };
+            assert_eq!(
+                e.library.as_deref(),
+                Some(member.as_str()),
+                "{binary}: {name}"
+            );
+            // the export is at the function the listing shows
+            if kind == "Function" {
+                let at = e.address.expect("address").0;
+                assert_eq!(o.functions.get(&at).map(|f| f.name.as_str()), Some(name));
+            }
+        }
+    }
+    for binary in ["kr.o", "kr-x64.obj"] {
+        let Some(o) = open(binary).await else {
+            return;
+        };
+        assert_eq!(o.exports.len(), 3, "{binary}: {:?}", o.exports);
+        assert!(o.exports.iter().all(|e| e.library.is_none()));
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn linux_shared_library() {
     let Some(o) = open("libkr.so").await else {

@@ -53,6 +53,8 @@ pub struct Welcome {
     pub engine: EngineChoice,
     /// Why the last attempt failed.
     pub error: Option<String>,
+    /// A warning that is not a failure (the runtime directory fell back to a shorter one).
+    pub notice: Option<String>,
     /// Set while a project is being opened.
     pub busy: Option<String>,
     cfg: KrakenConfig,
@@ -143,6 +145,7 @@ impl Welcome {
             binary_path: String::new(),
             engine: cfg.engine.unwrap_or_default(),
             error: None,
+            notice: None,
             busy: None,
             cfg,
             picker: Picker::default(),
@@ -243,6 +246,13 @@ pub fn show(
                             ui.label(RichText::new(msg).color(p.text));
                         });
                         ui.add_space(8.0);
+                    }
+                    if let Some(n) = &w.notice {
+                        card().fill(s.warning.gamma_multiply(0.14)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new(n).color(s.warning));
+                        });
+                        ui.add_space(10.0);
                     }
                     if let Some(e) = &w.error {
                         card().fill(s.danger.gamma_multiply(0.14)).show(ui, |ui| {

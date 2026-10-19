@@ -1395,9 +1395,11 @@ fn link(
                     }
                     _ => name.to_string(),
                 };
-                exports
-                    .entry(addr)
-                    .or_insert(ExportSymbol { name: shown, kind });
+                exports.entry(addr).or_insert(ExportSymbol {
+                    name: shown,
+                    kind,
+                    member: objects[oi].0.clone(),
+                });
             }
         }
     }
