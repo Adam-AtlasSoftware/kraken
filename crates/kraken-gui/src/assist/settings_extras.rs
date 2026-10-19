@@ -3,12 +3,15 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex};
 
 use egui::{RichText, Ui};
 use kraken_agent::{Effort, ModelList, ModelSource, ProviderConfig, ThinkingConfig};
+use kraken_infer::{EngineChoice, GpuApi, ModelEntry};
 use kraken_registry::commands::{
     LocalFeature, LocalModelBackend, LocalModelRecommendOut, LocalModelSetupOut, LocalSetupPlan,
-    recommend_view, recommendation_now,
+    SetupProgress, StrataPlan, recommend_view, recommendation_now, strata_downloads, strata_now,
+    strata_view,
 };
 use tokio::runtime::Handle;
 
@@ -20,7 +23,10 @@ enum Local {
     Detecting(Receiver<LocalModelRecommendOut>),
     Ready(Box<LocalModelRecommendOut>),
     Confirming(Box<LocalModelRecommendOut>),
-    Installing(Receiver<Result<LocalModelSetupOut, String>>),
+    Installing(
+        Receiver<Result<LocalModelSetupOut, String>>,
+        Arc<Mutex<SetupProgress>>,
+    ),
     Done(Result<LocalModelSetupOut, String>),
 }
 
@@ -31,6 +37,10 @@ pub struct AiExtras {
     list: Option<ModelList>,
     list_rx: Option<Receiver<ModelList>>,
     local: Local,
+    /// The engine chosen in the local-model block: llama-server (the recommendation) or Strata.
+    strata: bool,
+    /// The Strata model picked in the list (the recommended one when empty).
+    strata_model: String,
 }
 
 impl Default for AiExtras {
@@ -40,6 +50,8 @@ impl Default for AiExtras {
             list: None,
             list_rx: None,
             local: Local::Idle,
+            strata: false,
+            strata_model: String::new(),
         }
     }
 }
@@ -220,7 +232,7 @@ impl AiExtras {
                     self.local = Local::Ready(Box::new(r));
                 }
             }
-            Local::Installing(rx) => {
+            Local::Installing(rx, _) => {
                 if let Ok(r) = rx.try_recv() {
                     self.local = Local::Done(r);
                 }
@@ -228,6 +240,21 @@ impl AiExtras {
             _ => {}
         }
         ui.label(medium("Run a model on this computer", 13.0).color(p.text_strong));
+        if matches!(self.local, Local::Idle | Local::Ready(_)) {
+            let before = self.strata;
+            ui.horizontal(|ui| {
+                ui.label("Engine");
+                ui.selectable_value(&mut self.strata, false, "llama-server (recommended)")
+                    .on_hover_text("Small models that fit in video memory");
+                ui.selectable_value(&mut self.strata, true, "Strata").on_hover_text(
+                    "Big mixture-of-experts models on a small GPU by keeping the experts in system RAM",
+                );
+            });
+            if before != self.strata {
+                self.local = Local::Idle;
+                self.strata_model.clear();
+            }
+        }
         match &self.local {
             Local::Idle => {
                 ui.label(
@@ -237,19 +264,31 @@ impl AiExtras {
                     .size(11.5)
                     .color(p.text_dim),
                 );
+                let label = if self.strata {
+                    "Evaluate this system"
+                } else {
+                    "Check this computer"
+                };
                 if ui
-                    .button("Check this computer")
+                    .button(label)
                     .on_hover_text(
-                        "Reads your hardware (nvidia-smi, rocm-smi, /sys). Downloads nothing",
+                        "Reads your hardware (GPU and video memory, RAM, disk, CUDA). Downloads nothing",
                     )
                     .clicked()
                 {
                     let (tx, rx) = channel();
                     self.local = Local::Detecting(rx);
                     let ctx = ctx.clone();
+                    let strata = self.strata;
                     rt.spawn_blocking(move || {
-                        let (hw, rec, _) = recommendation_now();
-                        let _ = tx.send(recommend_view(&hw, &rec));
+                        let view = if strata {
+                            let (hw, a, m, _) = strata_now();
+                            strata_view(&hw, &a, &m)
+                        } else {
+                            let (hw, rec, _) = recommendation_now();
+                            recommend_view(&hw, &rec)
+                        };
+                        let _ = tx.send(view);
                         ctx.request_repaint();
                     });
                 }
@@ -299,7 +338,59 @@ impl AiExtras {
                         egui::Label::new(RichText::new(line).size(11.5).color(p.text_dim)).wrap(),
                     );
                 }
-                if let Some(m) = &r.model {
+                if let Some(sv) = &r.strata {
+                    for m in &sv.missing {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("Missing: {} -- {}", m.what, m.how_to_fix))
+                                    .size(11.5)
+                                    .color(s.danger),
+                            )
+                            .wrap(),
+                        );
+                    }
+                    if self.strata_model.is_empty() {
+                        self.strata_model = sv.recommended.clone().unwrap_or_default();
+                    }
+                    for c in &sv.candidates {
+                        ui.horizontal(|ui| {
+                            ui.radio_value(
+                                &mut self.strata_model,
+                                c.id.clone(),
+                                format!("{} {} ({})", c.name, c.quant, gib(c.download_bytes)),
+                            )
+                            .on_hover_text("Download and set up this model");
+                            let (txt, col) = match c.fit.as_str() {
+                                "fits" => ("fits", s.success),
+                                "below_minimum" => ("below Strata's minimum", s.warning),
+                                _ => ("not enough disk", s.danger),
+                            };
+                            chip(ui, txt, col);
+                        });
+                        ui.add(
+                            egui::Label::new(RichText::new(&c.speed).size(11.0).color(p.text_dim))
+                                .wrap(),
+                        );
+                        for w in &c.warnings {
+                            ui.add(
+                                egui::Label::new(RichText::new(w).size(11.0).color(s.warning))
+                                    .wrap(),
+                            );
+                        }
+                    }
+                }
+                let blocked = r.strata.as_ref().is_some_and(|sv| !sv.missing.is_empty());
+                if blocked {
+                    if ui
+                        .button("Check again")
+                        .on_hover_text(
+                            "Look at the hardware again after installing what is missing",
+                        )
+                        .clicked()
+                    {
+                        self.local = Local::Idle;
+                    }
+                } else if let Some(m) = &r.model {
                     ui.horizontal(|ui| {
                         if style::primary_button(ui, "Set up...")
                             .on_hover_text("Shows the download size and disk use and asks first")
@@ -323,15 +414,46 @@ impl AiExtras {
                             .resizable(false)
                             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                             .show(ctx, |ui| {
-                                ui.label(format!(
-                                    "Download {} {} with {}.",
-                                    m.name, m.quant, r.engine_label
-                                ));
-                                ui.label(format!("Download size: {}", gib(r.download_bytes)));
-                                ui.label(format!("Disk use: {}", gib(r.disk_bytes)));
+                                let chosen = r
+                                    .strata
+                                    .as_ref()
+                                    .and_then(|sv| {
+                                        sv.candidates.iter().find(|c| c.id == self.strata_model)
+                                    })
+                                    .cloned();
+                                if let Some(c) = &chosen {
+                                    ui.label(format!(
+                                        "Download {} {} with Strata. Every download:",
+                                        c.name, c.quant
+                                    ));
+                                    let mut total = 0;
+                                    for d in &c.downloads {
+                                        total += d.size_bytes;
+                                        ui.label(format!("  {} - {}", d.name, gib(d.size_bytes)));
+                                    }
+                                    ui.label(format!("Download size: {}", gib(total)));
+                                    ui.label(format!(
+                                        "Disk use: {} (files, Python environment and build) under the KRAKEN data folder, engines/strata",
+                                    gib(c.disk_bytes)));
+                                    for w in &c.warnings {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(w).size(11.5).color(s.warning),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                } else {
+                                    ui.label(format!(
+                                        "Download {} {} with {}.",
+                                        m.name, m.quant, r.engine_label
+                                    ));
+                                    ui.label(format!("Download size: {}", gib(r.download_bytes)));
+                                    ui.label(format!("Disk use: {}", gib(r.disk_bytes)));
+                                }
                                 ui.label(
                                     RichText::new(
-                                        "The file is checked against a SHA-256 pinned in KRAKEN and deleted if it differs. The assistant is pointed at the model afterwards.",
+                                        "Every file is checked against a SHA-256 pinned in KRAKEN and deleted if it differs. Nothing is installed outside the KRAKEN data folder and nothing needs sudo. The assistant is pointed at the model afterwards.",
                                     )
                                     .size(11.5)
                                     .color(p.text_dim),
@@ -367,11 +489,24 @@ impl AiExtras {
                     self.local = Local::Idle;
                 }
             }
-            Local::Installing(_) => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Downloading and checking the model. This can take a while...");
-                });
+            Local::Installing(_, progress) => {
+                let pr = progress.lock().map(|p| p.clone()).unwrap_or_default();
+                ui.add(
+                    egui::ProgressBar::new(pr.fraction())
+                        .show_percentage()
+                        .text(if pr.label.is_empty() {
+                            "Starting...".to_string()
+                        } else {
+                            format!("Step {} of {}: {}", pr.step, pr.steps, pr.label)
+                        }),
+                );
+                if pr.total > 0 {
+                    ui.label(
+                        RichText::new(format!("{} of {}", gib(pr.done), gib(pr.total)))
+                            .size(11.5)
+                            .color(p.text_dim),
+                    );
+                }
                 ctx.request_repaint_after(std::time::Duration::from_millis(300));
             }
             Local::Done(Ok(o)) => {
@@ -409,25 +544,68 @@ impl AiExtras {
 
     fn start_setup(&mut self, rt: &Handle, ctx: &egui::Context) {
         let (tx, rx) = channel();
-        self.local = Local::Installing(rx);
+        let progress = Arc::new(Mutex::new(SetupProgress::default()));
+        self.local = Local::Installing(rx, progress.clone());
         let ctx = ctx.clone();
+        let (strata, pick) = (self.strata, self.strata_model.clone());
         rt.spawn(async move {
             let result = async {
-                let (_, rec, models_dir) = tokio::task::spawn_blocking(recommendation_now)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let model = rec.model.clone().ok_or("no model fits this computer")?;
                 let backend =
                     kraken_host::local_models::LocalModels::system().map_err(|e| e.message)?;
-                backend
-                    .setup(LocalSetupPlan {
+                let plan = if strata {
+                    let (_, a, m, models_dir) = tokio::task::spawn_blocking(strata_now)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if let Some(x) = a.missing.first() {
+                        return Err(format!("{} -- {}", x.what, x.how_to_fix));
+                    }
+                    let c = a
+                        .candidates
+                        .iter()
+                        .find(|c| c.model.id == pick)
+                        .ok_or("pick a Strata model first")?;
+                    let _ = strata_downloads(&m, &c.model);
+                    let first = c.model.files.first().cloned();
+                    LocalSetupPlan {
+                        engine: EngineChoice {
+                            id: "strata".into(),
+                            gpu_api: GpuApi::Cuda,
+                            label: "Strata".into(),
+                        },
+                        model: ModelEntry {
+                            id: c.model.id.clone(),
+                            name: c.model.name.clone(),
+                            params_b: 0,
+                            quant: c.model.quant.clone(),
+                            file: first.as_ref().map(|f| f.name.clone()).unwrap_or_default(),
+                            url: first.as_ref().map(|f| f.url.clone()).unwrap_or_default(),
+                            size: c.download_bytes,
+                            sha256: first.map(|f| f.sha256).unwrap_or_default(),
+                            license: c.model.license.clone(),
+                        },
+                        models_dir,
+                        assign: vec![LocalFeature::Assistant],
+                        strata: Some(StrataPlan {
+                            model: c.model.clone(),
+                            manifest: m,
+                        }),
+                        progress: Some(progress),
+                    }
+                } else {
+                    let (_, rec, models_dir) = tokio::task::spawn_blocking(recommendation_now)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let model = rec.model.clone().ok_or("no model fits this computer")?;
+                    LocalSetupPlan {
                         engine: rec.engine,
                         model,
                         models_dir,
                         assign: vec![LocalFeature::Assistant],
-                    })
-                    .await
-                    .map_err(|e| e.message)
+                        strata: None,
+                        progress: None,
+                    }
+                };
+                backend.setup(plan).await.map_err(|e| e.message)
             }
             .await;
             let _ = tx.send(result);

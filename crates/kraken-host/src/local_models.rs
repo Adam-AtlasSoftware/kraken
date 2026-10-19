@@ -16,6 +16,7 @@ use serde_json::json;
 use crate::config::KrakenConfig;
 use crate::llama_setup::{LlamaLayout, choose, current_releases, install_llama};
 use crate::provision::{ArchiveFormat, ArtifactSpec, Fetcher, HttpsFetcher, download};
+use crate::strata_setup::{Runner, StrataError, StrataLayout, SystemRunner, install_strata};
 
 /// The base URL the written provider points at: llama-server's default port.
 pub const LOCAL_BASE_URL: &str = "http://127.0.0.1:8080/v1";
@@ -24,6 +25,7 @@ pub const LOCAL_BASE_URL: &str = "http://127.0.0.1:8080/v1";
 pub struct LocalModels {
     fetcher: Arc<dyn Fetcher>,
     config_path: Option<std::path::PathBuf>,
+    runner: Option<Arc<dyn Runner>>,
 }
 
 impl std::fmt::Debug for LocalModels {
@@ -39,6 +41,7 @@ impl LocalModels {
         Ok(LocalModels {
             fetcher: Arc::new(fetcher),
             config_path: KrakenConfig::default_path(),
+            runner: None,
         })
     }
 
@@ -47,7 +50,102 @@ impl LocalModels {
         LocalModels {
             fetcher,
             config_path,
+            runner: None,
         }
+    }
+
+    /// Runs the Strata build commands through `runner` instead of the system (tests).
+    pub fn with_runner(mut self, runner: Arc<dyn Runner>) -> Self {
+        self.runner = Some(runner);
+        self
+    }
+
+    async fn setup_strata(
+        &self,
+        plan: LocalSetupPlan,
+        sp: kraken_registry::commands::StrataPlan,
+    ) -> Result<LocalModelSetupOut, ProtoError> {
+        let data_dir = plan
+            .models_dir
+            .parent()
+            .ok_or_else(|| internal("the models directory has no parent"))?
+            .to_path_buf();
+        let layout = StrataLayout::in_data_dir(&data_dir);
+        let python_min = sp.manifest.engine.python_min.clone();
+        let missing = tokio::task::spawn_blocking(move || {
+            let hw = kraken_infer::detect_hardware(&kraken_infer::SystemProbe, &data_dir);
+            kraken_infer::strata::missing_prerequisites(
+                &kraken_infer::SystemProbe,
+                &hw,
+                &python_min,
+            )
+        })
+        .await
+        .map_err(internal)?;
+        let runner: Arc<dyn Runner> = match &self.runner {
+            Some(r) => r.clone(),
+            None => Arc::new(SystemRunner::new(&layout)),
+        };
+        let sink = plan.progress.clone();
+        let mut on_event = |e: crate::strata_setup::StrataEvent| {
+            if let Some(p) = &sink
+                && let Ok(mut p) = p.lock()
+            {
+                *p = kraken_registry::commands::SetupProgress {
+                    step: e.index,
+                    steps: e.steps,
+                    label: e.label,
+                    done: e.done,
+                    total: e.total,
+                };
+            }
+        };
+        let out = install_strata(
+            &layout,
+            self.fetcher.as_ref(),
+            runner.as_ref(),
+            &sp.manifest,
+            &sp.model,
+            missing,
+            &mut on_event,
+        )
+        .await
+        .map_err(|e| match e {
+            StrataError::Missing(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
+            other => internal(other),
+        })?;
+
+        // Register the supervised server with kraken-infer's manifest directory.
+        let manifests = layout
+            .root()
+            .parent()
+            .and_then(Path::parent)
+            .map(|d| d.join("infer").join("manifests"))
+            .ok_or_else(|| internal("no manifest directory"))?;
+        std::fs::create_dir_all(&manifests).map_err(internal)?;
+        std::fs::copy(&out.backend_manifest, manifests.join("strata.toml")).map_err(internal)?;
+
+        let mut configured = Vec::new();
+        if let Some(cfg_path) = &self.config_path {
+            write_local_provider(cfg_path, &sp.model.id, &plan.assign)?;
+            configured = plan.assign.clone();
+        }
+        Ok(LocalModelSetupOut {
+            model_id: sp.model.id,
+            path: out.gguf_dir.display().to_string(),
+            engine: format!(
+                "Strata {} (built from commit {})",
+                sp.manifest.engine.version, sp.manifest.engine.source.commit
+            ),
+            sha256_verified: true,
+            configured,
+            note: format!(
+                "Start it with `kraken infer start strata` (or Settings > Local model); it is \
+                 supervised by KRAKEN, bound to 127.0.0.1:8080 and the configuration expects \
+                 {LOCAL_BASE_URL}. Setup log: {}",
+                layout.log().display()
+            ),
+        })
     }
 }
 
@@ -84,6 +182,9 @@ pub fn write_local_provider(
 #[async_trait]
 impl LocalModelBackend for LocalModels {
     async fn setup(&self, plan: LocalSetupPlan) -> Result<LocalModelSetupOut, ProtoError> {
+        if let Some(sp) = plan.strata.clone() {
+            return self.setup_strata(plan, sp).await;
+        }
         let mut progress = |_p: crate::provision::Progress| {};
         // The engine. Strata has no installer yet; llama-server serves every catalog model.
         let layout = LlamaLayout::from_env_with(&|k| std::env::var_os(k));

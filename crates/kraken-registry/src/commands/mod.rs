@@ -60,9 +60,11 @@ pub use jobs::{
     JobView,
 };
 pub use local_model::{
-    GpuView, LocalFeature, LocalModelBackend, LocalModelRecommend, LocalModelRecommendOut,
-    LocalModelSetup, LocalModelSetupArgs, LocalModelSetupOut, LocalSetupPlan, ModelView,
-    recommend_view, recommendation_now,
+    DownloadView, GpuView, LocalFeature, LocalModelBackend, LocalModelRecommend,
+    LocalModelRecommendArgs, LocalModelRecommendOut, LocalModelSetup, LocalModelSetupArgs,
+    LocalModelSetupOut, LocalSetupPlan, MissingView, ModelView, SetupProgress, StrataCandidateView,
+    StrataPlan, StrataView, recommend_view, recommendation_now, strata_downloads, strata_now,
+    strata_view,
 };
 pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
 pub use project::{

@@ -1,0 +1,134 @@
+# Strata (https://github.com/Niko1221/Strata, MIT) serves large MoE models on small VRAM by
+# keeping the experts in system RAM. Everything KRAKEN fetches for it is pinned here and setup
+# refuses any download whose SHA-256 differs. Strata publishes no hashes for its source, so the
+# two source archive hashes were computed from the pinned revisions when this file was written;
+# model hashes are Hugging Face's published LFS oids at the pinned repository revisions.
+# Minimums are Strata's own (README, setup.py): 12 GiB video memory, 32 GiB RAM, about 80 GiB
+# disk; per-model RAM needs are the table in setup.py. Linux has no prebuilt engine at this
+# release, so the engine is compiled from the pinned source (needs nvcc and a C++ compiler).
+
+[engine]
+version = "0.1.45"
+commit = "477ac13cbe8e582c20484871ce459d20d82df09d"
+url = "https://codeload.github.com/Niko1221/Strata/tar.gz/477ac13cbe8e582c20484871ce459d20d82df09d"
+sha256 = "77b65bd6ee29bda0f9195fa6dc18e91a2b24687246dd36b4fc2c77608890f3c9"
+size = 21072237
+license = "MIT"
+requirements_sha256 = "b9c75993366079fbbcf80deb544e12f932228cf3c98f34b2481d45e1afddd5a8"
+min_vram_gib = 12
+min_ram_gib = 32
+min_disk_gib = 80
+build_disk_gib = 8
+python_min = "3.10"
+
+[llama_cpp]
+commit = "3cf03257f219afbe7334045ff7c6a06ac68c627d"
+url = "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/3cf03257f219afbe7334045ff7c6a06ac68c627d"
+sha256 = "c076d7534afa0e5d0ec2a0d425b11e791c16f3de0d727221aea071cef156a280"
+size = 37513049
+license = "MIT"
+
+[[model]]
+id = "strata-iq1-m"
+name = "Qwen3.8 Flash Next Coder"
+family = "coder"
+quant = "IQ1_M"
+min_ram_gib = 32
+arena_gib = 23.4
+license = "see the model card at https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/5348543e0147355ac9cbcb031184a3546350988e/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf"
+size = 29608446496
+sha256 = "e11083ba855e7666b48ea3f2db6a9c3a20c18751a012cc24f948de91b7087fad"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/5348543e0147355ac9cbcb031184a3546350988e/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf"
+size = 28800138432
+sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+
+[[model]]
+id = "strata-q2-0"
+name = "Qwen3.8 Flash Next"
+family = "qwen"
+quant = "Q2_0"
+min_ram_gib = 48
+arena_gib = 34.0
+license = "see the model card at https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00001-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/Q2_0/Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00001-of-00002.gguf"
+size = 37623740192
+sha256 = "69820c02ec7d0b45ef2ebb19d6620299db749fe2aded7f39f93c6b88b199b720"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00002-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/Q2_0/Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00002-of-00002.gguf"
+size = 28800138432
+sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+
+[[model]]
+id = "strata-iq2-xs"
+name = "Qwen3.8 Flash Next"
+family = "qwen"
+quant = "IQ2_XS"
+min_ram_gib = 48
+arena_gib = 35.5
+license = "see the model card at https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ2_XS/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"
+size = 39225954592
+sha256 = "92cee27ae5bbadcd732416a0f7a7f0acc092399dbbe8f5a5efa707c2ec0a49d7"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ2_XS/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf"
+size = 28800138432
+sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+
+[[model]]
+id = "strata-iq3-xxs"
+name = "Qwen3.8 Flash Next"
+family = "qwen"
+quant = "IQ3_XXS"
+min_ram_gib = 60
+arena_gib = 42.9
+license = "see the model card at https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ3_XXS/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf"
+size = 47039860096
+sha256 = "219ea929900dfa9ef091f3aa473fdba6874b65fcb36526d7d851ac9e95856d15"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00002-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ3_XXS/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00002-of-00002.gguf"
+size = 28800138432
+sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+
+[[model]]
+id = "strata-iq3-s"
+name = "Qwen3.8 Flash Next"
+family = "qwen"
+quant = "IQ3_S"
+min_ram_gib = 62
+arena_gib = 50.3
+license = "see the model card at https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+size = 54817524224
+sha256 = "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+
+[[model.file]]
+name = "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf"
+url = "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf"
+size = 28800138432
+sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"

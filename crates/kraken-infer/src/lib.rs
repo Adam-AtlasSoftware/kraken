@@ -15,6 +15,7 @@ pub mod logring;
 pub mod port;
 pub mod recommend;
 pub mod registry;
+pub mod strata;
 pub mod supervisor;
 #[doc(hidden)]
 pub mod testing;

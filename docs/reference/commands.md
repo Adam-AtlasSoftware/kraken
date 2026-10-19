@@ -5200,17 +5200,19 @@ Example: `list_functions {"name_filter": "parse", "limit": 20}`
 Recommend a local engine and model that fit this computer
 
 ```sh
-kraken local-model-recommend
+kraken local-model-recommend [options]
 ```
 
 - Kind: query
 - Permission: safe
 
-Detects GPU, video memory, RAM, free disk and CPU cores and returns the engine (llama-server on CPU, CUDA or Vulkan; the Strata engine only with 12 GiB video memory, 32 GiB RAM and 80 GiB free disk), the largest model that fits, its download size and the reasons. Downloads nothing; `local_model_setup` does.
+Detects GPU, video memory, RAM, free disk and CPU cores and returns the engine (llama-server on CPU, CUDA or Vulkan; the Strata engine only with 12 GiB video memory, 32 GiB RAM and 80 GiB free disk), the largest model that fits, its download size and the reasons. With `engine: "strata"` it assesses Strata, which keeps MoE experts in RAM so a small GPU with much RAM runs big models: every model with fit, warnings and speed, plus missing system pieces. Downloads nothing; `local_model_setup` does.
 
-Example: `local_model_recommend {}`
+Example: `local_model_recommend {"engine": "strata"}`
 
-Arguments: none.
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `engine` | `--engine` | string | no | `strata` assesses the Strata engine and its models (all candidates, missing system pieces); `llama-server` the llama-server catalog; omitted: Strata only when the machine meets its minimums, else llama-server. |
 
 <details>
 <summary>Output schema</summary>
@@ -5218,6 +5220,33 @@ Arguments: none.
 ```json
 {
   "$defs": {
+    "DownloadView": {
+      "description": "One file to download, as shown in the confirmation.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lower-case hex SHA-256 the file must match.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "size_bytes",
+        "sha256"
+      ],
+      "type": "object"
+    },
     "GpuView": {
       "description": "A graphics card, as shown.",
       "properties": {
@@ -5239,6 +5268,22 @@ Arguments: none.
       "required": [
         "vendor",
         "name"
+      ],
+      "type": "object"
+    },
+    "MissingView": {
+      "description": "Something the computer lacks that KRAKEN will not install.",
+      "properties": {
+        "how_to_fix": {
+          "type": "string"
+        },
+        "what": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "what",
+        "how_to_fix"
       ],
       "type": "object"
     },
@@ -5280,6 +5325,112 @@ Arguments: none.
         "file",
         "size_bytes",
         "sha256"
+      ],
+      "type": "object"
+    },
+    "StrataCandidateView": {
+      "description": "One Strata model with its verdict.",
+      "properties": {
+        "disk_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "download_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "downloads": {
+          "description": "Every download this model needs, engine sources included.",
+          "items": {
+            "$ref": "#/$defs/DownloadView"
+          },
+          "type": "array"
+        },
+        "fit": {
+          "description": "`fits`, `below_minimum` (offered with the warnings) or `no_disk`.",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "min_ram_gib": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "quant": {
+          "type": "string"
+        },
+        "speed": {
+          "description": "Rough, unmeasured speed expectation.",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "quant",
+        "min_ram_gib",
+        "fit",
+        "warnings",
+        "speed",
+        "download_bytes",
+        "disk_bytes",
+        "downloads"
+      ],
+      "type": "object"
+    },
+    "StrataView": {
+      "description": "The Strata part of a recommendation.",
+      "properties": {
+        "candidates": {
+          "description": "Best first.",
+          "items": {
+            "$ref": "#/$defs/StrataCandidateView"
+          },
+          "type": "array"
+        },
+        "missing": {
+          "description": "System pieces to install by hand before `local_model_setup` can work.",
+          "items": {
+            "$ref": "#/$defs/MissingView"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recommended": {
+          "description": "Id of the recommended candidate.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "description": "The pinned Strata revision.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidates",
+        "missing",
+        "notes",
+        "revision"
       ],
       "type": "object"
     }
@@ -5347,6 +5498,17 @@ Arguments: none.
         "type": "string"
       },
       "type": "array"
+    },
+    "strata": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StrataView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The Strata engine's models and what is missing for it, when the engine is Strata."
     }
   },
   "required": [
@@ -5385,6 +5547,7 @@ Example: `local_model_setup {"model": "qwen3-8b-q4_k_m", "use_for": ["assistant"
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
+| `engine` | `--engine` | string | no | `strata` sets up the Strata engine (its model ids start with `strata-`); `llama-server` the catalog. A `strata-` model id implies Strata. |
 | `model` | `--model` | string | no | Catalog id from `local_model_recommend` (`qwen3-8b-q4_k_m`); the recommended model when left out. |
 | `use_for` | `--use-for` | json | no | Features that should use the model afterwards; the assistant when left out. |
 
