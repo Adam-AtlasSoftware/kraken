@@ -105,12 +105,7 @@ pub fn recommend(hw: &HardwareInfo, catalog: &[ModelEntry]) -> Recommendation {
             reasons.push(format!("{} found: using CUDA.", g.name));
             (GpuApi::Cuda, "CUDA")
         }
-        Some(g)
-            if matches!(
-                g.vendor,
-                GpuVendor::Amd | GpuVendor::Intel | GpuVendor::Nvidia
-            ) =>
-        {
+        Some(g) if matches!(g.vendor, GpuVendor::Amd | GpuVendor::Nvidia) => {
             reasons.push(format!(
                 "{} found: using Vulkan, which works on every maker's driver.",
                 g.name

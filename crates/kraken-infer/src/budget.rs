@@ -171,6 +171,70 @@ impl MemoryBudget {
     }
 }
 
+/// Memory left in one place (a card, or the computer's RAM for a processor-only run).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryPool {
+    /// Free right now, read again at each start.
+    pub free: u64,
+    /// Already promised to models that are still loading.
+    pub reserved: u64,
+}
+
+impl MemoryPool {
+    fn available(&self) -> u64 {
+        self.free.saturating_sub(self.reserved)
+    }
+}
+
+/// Whether a model fits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    /// Fits with room to spare.
+    Fits,
+    /// Fits, but with little room left.
+    Tight,
+    /// Does not fit.
+    NoFit,
+}
+
+/// Rough cost of one token of context (the KV cache) in bytes.
+const KV_BYTES_PER_TOKEN: u64 = 128 * 1024;
+/// Engine buffers on top of weights and context.
+const ENGINE_OVERHEAD: u64 = 512 * 1024 * 1024;
+const MIN_MARGIN: u64 = 512 * 1024 * 1024;
+
+/// Whether a model of `model_bytes` with `context_size` tokens of context fits the `pools` it
+/// would use (one per selected card, or the RAM pool alone for a processor-only run).
+///
+/// `CopyPerCard` needs the model in every pool; other modes spread it, so the pools add up.
+/// `Fits` leaves a margin of a tenth of the need (at least 512 MiB); less is `Tight`.
+pub fn fit(
+    model_bytes: u64,
+    context_size: u32,
+    pools: &[MemoryPool],
+    mode: kraken_proto::infer::MultiGpuMode,
+) -> Fit {
+    use kraken_proto::infer::MultiGpuMode;
+    if pools.is_empty() {
+        return Fit::NoFit;
+    }
+    let need = model_bytes
+        .saturating_add(u64::from(context_size) * KV_BYTES_PER_TOKEN)
+        .saturating_add(ENGINE_OVERHEAD);
+    let margin = (need / 10).max(MIN_MARGIN);
+    let have = match mode {
+        MultiGpuMode::CopyPerCard => pools.iter().map(MemoryPool::available).min().unwrap_or(0),
+        _ => pools.iter().map(MemoryPool::available).sum(),
+    };
+    if have >= need.saturating_add(margin) {
+        Fit::Fits
+    } else if have >= need {
+        Fit::Tight
+    } else {
+        Fit::NoFit
+    }
+}
+
 fn fmt_bytes(b: u64) -> String {
     format!("{:.1} GiB", b as f64 / GIB as f64)
 }
@@ -185,6 +249,49 @@ pub fn parse_meminfo_total(text: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pool(free_gib: u64, reserved_gib: u64) -> MemoryPool {
+        MemoryPool {
+            free: free_gib * GIB,
+            reserved: reserved_gib * GIB,
+        }
+    }
+
+    #[test]
+    fn fit_has_three_answers() {
+        use kraken_proto::infer::MultiGpuMode::Split;
+        // 8 GiB model, 4096 context: need 8 + 0.5 + 0.5 = 9 GiB, margin 0.9 GiB.
+        assert_eq!(fit(8 * GIB, 4096, &[pool(24, 0)], Split), Fit::Fits);
+        assert_eq!(fit(8 * GIB, 4096, &[pool(9, 0)], Split), Fit::Tight);
+        assert_eq!(fit(8 * GIB, 4096, &[pool(8, 0)], Split), Fit::NoFit);
+        assert_eq!(fit(8 * GIB, 4096, &[], Split), Fit::NoFit);
+    }
+
+    #[test]
+    fn loading_models_reserve_their_share() {
+        use kraken_proto::infer::MultiGpuMode::Split;
+        assert_eq!(fit(8 * GIB, 4096, &[pool(24, 20)], Split), Fit::NoFit);
+        assert_eq!(
+            fit(8 * GIB, 4096, &[pool(12, 0), pool(12, 12)], Split),
+            Fit::Fits
+        );
+    }
+
+    #[test]
+    fn split_adds_cards_but_copies_need_each() {
+        use kraken_proto::infer::MultiGpuMode::{CopyPerCard, Split};
+        let two = [pool(6, 0), pool(6, 0)];
+        assert_eq!(fit(8 * GIB, 2048, &two, Split), Fit::Fits);
+        assert_eq!(fit(8 * GIB, 2048, &two, CopyPerCard), Fit::NoFit);
+    }
+
+    #[test]
+    fn context_counts() {
+        use kraken_proto::infer::MultiGpuMode::Split;
+        // 32768 tokens of context cost 4 GiB.
+        assert_eq!(fit(8 * GIB, 32768, &[pool(12, 0)], Split), Fit::NoFit);
+        assert_eq!(fit(8 * GIB, 32768, &[pool(16, 0)], Split), Fit::Fits);
+    }
 
     #[test]
     fn meminfo_parse() {
