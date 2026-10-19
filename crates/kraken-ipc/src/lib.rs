@@ -25,6 +25,6 @@ pub use frame::{FrameError, MAX_FRAME_LEN, read_frame, write_frame};
 pub use idle::{Clock, Counter, IdleMonitor, ManualClock, Shutdown, SystemClock};
 pub use info::{DaemonInfo, pid_alive};
 pub use lifecycle::{DaemonGuard, EnsureError, ensure_daemon};
-pub use paths::{ENV_RUNTIME_DIR, RuntimeDir};
+pub use paths::{ENV_RUNTIME_DIR, RuntimeDir, socket_path_advice};
 pub use server::{ConnInfo, Limits, Notifier, RpcHandler, Server, ServerConfig};
 pub use wire::{ClientKind, CredentialClass, HelloParams, HelloResult, PROTOCOL_VERSION};

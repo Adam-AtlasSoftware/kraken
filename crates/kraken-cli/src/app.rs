@@ -64,6 +64,18 @@ pub type EnvLookup = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
 /// The build string `kraken` announces to the daemon (and expects `krakend` to report).
 pub const BUILD: &str = env!("CARGO_PKG_VERSION");
 
+/// Resolves the per-user runtime directory; a fallback chosen because the configured directory
+/// makes the socket path too long is announced once on stderr.
+pub(crate) fn resolve_runtime_dir() -> Result<RuntimeDir, ProtoError> {
+    static ANNOUNCED: std::sync::Once = std::sync::Once::new();
+    let dir = RuntimeDir::resolve()
+        .map_err(|e| ProtoError::new(ErrorCode::Internal, format!("runtime dir: {e}")))?;
+    if let Some(n) = dir.notice() {
+        ANNOUNCED.call_once(|| eprintln!("kraken: {n}"));
+    }
+    Ok(dir)
+}
+
 /// How to reach (or start) the daemon.
 #[derive(Debug, Clone, Default)]
 pub struct DaemonAuto {
@@ -77,8 +89,7 @@ impl DaemonAuto {
     fn dir(&self) -> Result<RuntimeDir, ProtoError> {
         match &self.runtime_dir {
             Some(d) => Ok(d.clone()),
-            None => RuntimeDir::resolve()
-                .map_err(|e| ProtoError::new(ErrorCode::Internal, format!("runtime dir: {e}"))),
+            None => resolve_runtime_dir(),
         }
     }
 

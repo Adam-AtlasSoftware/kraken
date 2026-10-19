@@ -660,6 +660,106 @@ mod live {
         });
     }
 
+    /// With `--no-daemon` the window keeps its project in a private daemon of its own, and the
+    /// terminal agent's MCP server is told to join that daemon instead of opening the project
+    /// again (which the project lock refuses while the window holds it).
+    #[test]
+    fn without_a_daemon_an_agent_joins_the_windows_private_daemon() {
+        let tmp = testutil::tempdir();
+        let mut services = Services::offline();
+        services.mode = crate::services::Mode::NoDaemon;
+        services.connector = None;
+        services.ghidra = Some(Arc::new(FakeFactory::new(fixture(), Duration::ZERO)));
+        services.prefs_file = Some(tmp.path().join("cfg/gui.json"));
+        services.config_path = Some(tmp.path().join("cfg/config.toml"));
+        services.cfg.projects_root = Some(tmp.path().join("projects"));
+        // what the environment would otherwise tell the agent's MCP server
+        if let Some(a) = services.agents.as_mut() {
+            a.use_daemon = false;
+            a.mcp_env.push(("KRAKEN_NO_DAEMON".into(), "1".into()));
+            a.mcp_env
+                .push(("KRAKEN_RUNTIME_DIR".into(), "/elsewhere".into()));
+        }
+        let mut h = Harness::with_services(false, services);
+        let ctx = h.ctx.clone();
+        let binary = tmp.path().join("prog.bin");
+        std::fs::write(&binary, b"\x7fELF fake binary").expect("binary");
+        let project = tmp.path().join("projects/prog");
+        assert!(h.app.private_runtime_dir().is_none());
+        h.app.start_real(
+            Choice::NewProject {
+                binary: binary.to_string_lossy().into_owned(),
+                project_dir: project.to_string_lossy().into_owned(),
+                engine: Default::default(),
+                analyze: true,
+            },
+            &ctx,
+        );
+        h.run_until("the project to be analyzed", |a| {
+            a.view_model().is_some_and(|vm| {
+                vm.connection == Connection::Open
+                    && vm.analysis.phase == AnalysisPhase::Complete
+                    && !vm.functions.items.is_empty()
+                    && !vm.busy()
+            })
+        });
+        let runtime = h.app.private_runtime_dir().expect("a private daemon");
+
+        // The agent's MCP server: `kraken mcp --daemon --project <dir>` on that daemon.
+        let cfg = h.app.agent_config().expect("agent configuration");
+        assert!(cfg.use_daemon);
+        let env: Vec<_> = cfg.mcp_env.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        assert_eq!(
+            env,
+            [(
+                "KRAKEN_RUNTIME_DIR",
+                &runtime.to_string_lossy().into_owned()
+            )]
+        );
+        let mcp = kraken_acp::McpServerConfig::daemon("kraken", Some(&project));
+        assert_eq!(&mcp.args[..2], ["mcp", "--daemon"]);
+
+        // What that server does: reach the window's own session, no second open of the project.
+        let dir = RuntimeDir::from_dir(runtime).expect("runtime dir");
+        let agent = h._rt.block_on(async {
+            let c = Client::connect(&dir, &ClientHello::new(ClientKind::Mcp, BUILD))
+                .await
+                .expect("connect");
+            DaemonClient::from_client(c, BUILD)
+        });
+        let (addr, old) = {
+            let f = &h.app.view_model().unwrap().functions.items[0];
+            (f.address, f.name.clone())
+        };
+        let out = h
+            ._rt
+            .block_on(agent.call(&CallParams {
+                project_dir: project.to_string_lossy().into_owned(),
+                command: "rename_symbol".into(),
+                args: json!({"address": format!("{addr:#x}"), "new_name": "from_agent"}),
+                author_kind: AuthorKind::Agent,
+                author_id: Some("claude".into()),
+                run_id: Some("run-1".into()),
+                surface: None,
+                approved: false,
+            }))
+            .expect("agent rename")
+            .result;
+        assert_eq!(out["status"], "applied", "{out}");
+        h.run_until("the window to show the agent's rename", |a| {
+            a.view_model().is_some_and(|vm| {
+                vm.functions.items.iter().any(|f| f.name == "from_agent")
+                    && vm
+                        .toasts
+                        .iter()
+                        .any(|t| t.text.contains(&format!("Agent renamed {old}")))
+            })
+        });
+        // Closing the window stops the daemon.
+        h.app.stop_in_process_engine();
+        assert!(h.app.private_runtime_dir().is_none());
+    }
+
     #[test]
     fn closing_the_project_releases_the_daemon_session() {
         let mut r = Rig::new();

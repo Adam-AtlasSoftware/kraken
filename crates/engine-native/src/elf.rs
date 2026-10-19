@@ -61,6 +61,8 @@ pub struct ExportSymbol {
     pub name: String,
     /// From the symbol type: function, data object or anything else.
     pub kind: ProtoSymbolKind,
+    /// The archive member that defines it (a static library); `None` elsewhere.
+    pub member: Option<String>,
 }
 
 /// Everything the engine needs from the file.
@@ -649,6 +651,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
                     ExportSymbol {
                         name: name.to_string(),
                         kind,
+                        member: None,
                     },
                 );
             }

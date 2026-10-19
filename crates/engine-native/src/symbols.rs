@@ -66,7 +66,7 @@ pub fn exports(
             SymbolEntry {
                 name,
                 address: Some(Hex64(*a)),
-                library: None,
+                library: e.member.clone(),
                 kind,
                 mangled: mangled(&e.name),
             },

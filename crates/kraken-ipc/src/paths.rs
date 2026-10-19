@@ -14,6 +14,37 @@ pub const MAX_SOCKET_PATH_LEN: usize = 100;
 #[derive(Debug, Clone)]
 pub struct RuntimeDir {
     dir: PathBuf,
+    notice: Option<String>,
+}
+
+/// A directory short enough for the socket, suggested in messages.
+pub const SUGGESTED_SHORT_DIR: &str = "/tmp/kr";
+
+/// Environment variable naming the temporary directory; named in the message when the runtime
+/// directory lives under it.
+pub const ENV_TMPDIR: &str = "TMPDIR";
+
+/// The advice for a socket path that is too long: names the setting the directory came from.
+/// `var` is that setting's name and `value` its value; when `value` lies under `tmpdir`, the
+/// temporary directory is named instead, because that is the setting the person would change.
+pub fn socket_path_advice(var: &str, value: &Path, tmpdir: Option<&Path>) -> String {
+    let short = SUGGESTED_SHORT_DIR;
+    match tmpdir.filter(|t| !t.as_os_str().is_empty() && value.starts_with(t)) {
+        Some(t) => format!(
+            "Your {ENV_TMPDIR} ({}) is too long: set {ENV_TMPDIR} or {ENV_RUNTIME_DIR} to a \
+             shorter directory such as {short}.",
+            t.display()
+        ),
+        None if var == ENV_RUNTIME_DIR => format!(
+            "Your {var} ({}) is too long: set {var} to a shorter directory such as {short}.",
+            value.display()
+        ),
+        None => format!(
+            "Your {var} ({}) is too long: set {ENV_RUNTIME_DIR} to a shorter directory such as \
+             {short}.",
+            value.display()
+        ),
+    }
 }
 
 impl RuntimeDir {
@@ -39,12 +70,22 @@ impl RuntimeDir {
                     dir.display()
                 )));
             }
-            return Self::from_dir(dir);
+            let tmpdir = env(ENV_TMPDIR).map(PathBuf::from);
+            return Self::from_dir(dir.clone())
+                .map_err(|e| with_advice(e, ENV_RUNTIME_DIR, &dir, tmpdir.as_deref()));
         }
         #[cfg(target_os = "linux")]
         {
             let xdg = env("XDG_RUNTIME_DIR").map(PathBuf::from);
-            Self::resolve_linux(xdg.as_deref())
+            let tmpdir = env(ENV_TMPDIR).map(PathBuf::from);
+            match Self::resolve_linux(xdg.as_deref()) {
+                Err(IpcError::SocketPathTooLong { .. }) => {
+                    let x = xdg.unwrap_or_default();
+                    Self::resolve_fallback(&x, tmpdir.as_deref())
+                        .map_err(|e| with_advice(e, "XDG_RUNTIME_DIR", &x, tmpdir.as_deref()))
+                }
+                other => other,
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -67,7 +108,9 @@ impl RuntimeDir {
     ///
     /// Fails closed when `XDG_RUNTIME_DIR` is missing or relative: there is deliberately no
     /// fallback into the world-writable `/tmp`, where another user could pre-create the
-    /// directory. Set `KRAKEN_RUNTIME_DIR` to an absolute private path instead.
+    /// directory. Set `KRAKEN_RUNTIME_DIR` to an absolute private path instead. (A set but
+    /// too long `XDG_RUNTIME_DIR` is different: `resolve_with` falls back to `/tmp/kraken-<uid>`,
+    /// which must pass the same ownership and mode checks.)
     #[cfg(unix)]
     pub fn resolve_linux(xdg_runtime_dir: Option<&Path>) -> Result<Self, IpcError> {
         match xdg_runtime_dir.filter(|p| p.is_absolute()) {
@@ -77,6 +120,33 @@ impl RuntimeDir {
                  to a private absolute directory"
             ))),
         }
+    }
+
+    /// `XDG_RUNTIME_DIR` is too long for a socket: use the private `/tmp/kraken-<uid>` instead.
+    /// The directory must be a real directory owned by this user with mode 0700 (checked like
+    /// any runtime directory), so another user pre-creating the name only makes this fail. An
+    /// explicit `KRAKEN_RUNTIME_DIR` is never replaced: that choice is honoured or reported.
+    #[cfg(target_os = "linux")]
+    fn resolve_fallback(xdg: &Path, tmpdir: Option<&Path>) -> Result<Self, IpcError> {
+        let uid = rustix::process::getuid().as_raw();
+        let mut me = Self::from_dir(PathBuf::from(format!("/tmp/kraken-{uid}")))?;
+        let culprit = match tmpdir.filter(|t| xdg.starts_with(t)) {
+            Some(t) => format!("your {ENV_TMPDIR} ({})", t.display()),
+            None => format!("your XDG_RUNTIME_DIR ({})", xdg.display()),
+        };
+        me.notice = Some(format!(
+            "warning: {culprit} is too long for the daemon socket (the limit is {MAX_SOCKET_PATH_LEN} \
+             bytes); using {} instead. Set {ENV_RUNTIME_DIR} to a short directory such as \
+             {SUGGESTED_SHORT_DIR} to choose it yourself.",
+            me.dir.display()
+        ));
+        Ok(me)
+    }
+
+    /// A warning about how the directory was chosen (a fallback was used), if any. Callers show
+    /// it to the person: `krakend` and the CLI on stderr, the GUI on its welcome screen.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 
     /// Uses `dir` as the runtime directory: creates it 0700 (parents default perms) and verifies
@@ -106,7 +176,7 @@ impl RuntimeDir {
         if md.mode() & 0o077 != 0 {
             return Err(insecure("accessible by group or others"));
         }
-        let me = RuntimeDir { dir };
+        let me = RuntimeDir { dir, notice: None };
         me.check_socket_len()?;
         Ok(me)
     }
@@ -115,7 +185,7 @@ impl RuntimeDir {
     #[cfg(windows)]
     pub fn from_dir(dir: PathBuf) -> Result<Self, IpcError> {
         std::fs::create_dir_all(&dir)?;
-        Ok(RuntimeDir { dir })
+        Ok(RuntimeDir { dir, notice: None })
     }
 
     #[cfg(unix)]
@@ -128,6 +198,7 @@ impl RuntimeDir {
                 path,
                 len,
                 limit: MAX_SOCKET_PATH_LEN,
+                advice: socket_path_advice(ENV_RUNTIME_DIR, &self.dir, None),
             });
         }
         Ok(())
@@ -173,6 +244,21 @@ impl RuntimeDir {
     /// Windows named pipe name, `\\.\pipe\kraken-<user>`.
     pub fn pipe_name(&self) -> String {
         pipe_name_for(&current_user_name())
+    }
+}
+
+/// Replaces the advice of a too-long-socket error with one naming where the directory came from.
+fn with_advice(e: IpcError, var: &str, value: &Path, tmpdir: Option<&Path>) -> IpcError {
+    match e {
+        IpcError::SocketPathTooLong {
+            path, len, limit, ..
+        } => IpcError::SocketPathTooLong {
+            path,
+            len,
+            limit,
+            advice: socket_path_advice(var, value, tmpdir),
+        },
+        other => other,
     }
 }
 
@@ -280,6 +366,90 @@ mod tests {
             RuntimeDir::from_dir(long),
             Err(IpcError::SocketPathTooLong { .. })
         ));
+    }
+
+    fn long_env(
+        var: &'static str,
+        extra: Option<(&'static str, String)>,
+        v: String,
+    ) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+        move |k| {
+            if k == var {
+                return Some(v.clone().into());
+            }
+            extra
+                .as_ref()
+                .filter(|(n, _)| *n == k)
+                .map(|(_, x)| x.clone().into())
+        }
+    }
+
+    #[test]
+    fn advice_names_tmpdir_when_dir_lives_under_it() {
+        let a = socket_path_advice(
+            ENV_RUNTIME_DIR,
+            Path::new("/tmp/very/long/rt"),
+            Some(Path::new("/tmp/very/long")),
+        );
+        assert_eq!(
+            a,
+            "Your TMPDIR (/tmp/very/long) is too long: set TMPDIR or KRAKEN_RUNTIME_DIR to a \
+             shorter directory such as /tmp/kr."
+        );
+        let b = socket_path_advice(ENV_RUNTIME_DIR, Path::new("/a/b"), Some(Path::new("/tmp")));
+        assert!(
+            b.starts_with("Your KRAKEN_RUNTIME_DIR (/a/b) is too long"),
+            "{b}"
+        );
+        let c = socket_path_advice("XDG_RUNTIME_DIR", Path::new("/a/b"), None);
+        assert!(c.contains("XDG_RUNTIME_DIR (/a/b)") && c.contains("set KRAKEN_RUNTIME_DIR"));
+    }
+
+    #[test]
+    fn explicit_runtime_dir_too_long_reports_and_does_not_fall_back() {
+        let t = tempfile::tempdir().unwrap();
+        let long = t.path().join("x".repeat(120));
+        let env = long_env(
+            ENV_RUNTIME_DIR,
+            Some((ENV_TMPDIR, t.path().to_string_lossy().into_owned())),
+            long.to_string_lossy().into_owned(),
+        );
+        let err = RuntimeDir::resolve_with(&env).unwrap_err();
+        let msg = err.to_string();
+        assert!(matches!(err, IpcError::SocketPathTooLong { .. }));
+        assert!(msg.contains("bytes; the limit is 100."), "{msg}");
+        assert!(msg.contains("Your TMPDIR ("), "{msg}");
+        assert!(msg.contains("such as /tmp/kr."), "{msg}");
+    }
+
+    #[test]
+    fn explicit_runtime_dir_without_tmpdir_names_itself() {
+        let t = tempfile::tempdir().unwrap();
+        let long = t.path().join("y".repeat(120));
+        let env = long_env(ENV_RUNTIME_DIR, None, long.to_string_lossy().into_owned());
+        let msg = RuntimeDir::resolve_with(&env).unwrap_err().to_string();
+        assert!(msg.contains("Your KRAKEN_RUNTIME_DIR ("), "{msg}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn long_xdg_falls_back_to_private_tmp_dir_with_notice() {
+        let t = tempfile::tempdir().unwrap();
+        let long = t.path().join("z".repeat(120));
+        let env = long_env("XDG_RUNTIME_DIR", None, long.to_string_lossy().into_owned());
+        match RuntimeDir::resolve_with(&env) {
+            Ok(d) => {
+                let uid = rustix::process::getuid().as_raw();
+                assert_eq!(d.path(), Path::new(&format!("/tmp/kraken-{uid}")));
+                let n = d.notice().unwrap();
+                assert!(n.contains("XDG_RUNTIME_DIR") && n.contains(&format!("/tmp/kraken-{uid}")));
+                let mode = std::fs::metadata(d.path()).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o700);
+            }
+            // Someone else owns the fixed name: failing closed is the contract.
+            Err(IpcError::InsecureDir { .. } | IpcError::SocketPathTooLong { .. }) => {}
+            Err(e) => panic!("{e}"),
+        }
     }
 
     #[test]

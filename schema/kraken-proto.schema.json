@@ -1664,7 +1664,7 @@
           "description": "What the symbol names."
         },
         "library": {
-          "description": "Library an import comes from, when known (binary-derived).",
+          "description": "Library an import comes from, when known; for an export of a static library, the archive\nmember that defines it (binary-derived).",
           "type": [
             "string",
             "null"

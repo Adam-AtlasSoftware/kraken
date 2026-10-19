@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kraken_host::daemon::StartOptions;
-use kraken_host::{HostEngineFactory, KrakenConfig};
+use kraken_host::{HostEngineFactory, KrakenConfig, ManagedFactory};
 use kraken_viewmodel::{Connector, default_connector};
 
 /// Where real projects run.
@@ -30,8 +30,9 @@ pub struct Services {
     pub prefs_file: Option<PathBuf>,
     /// How to reach the daemon (`None`: the per-user default, started on demand).
     pub connector: Option<Connector>,
-    /// The in-process engine factory of `--no-daemon`.
-    pub ghidra: Option<Arc<HostEngineFactory>>,
+    /// The in-process engine factory of `--no-daemon`. The window runs it behind a private
+    /// daemon of its own (see `private`), so a terminal agent shares the open project.
+    pub ghidra: Option<Arc<dyn ManagedFactory>>,
     /// Where terminal agents are found (`None`: the user's directories, on first use).
     pub agents: Option<kraken_viewmodel::agents::AgentsConfig>,
     /// Offer the guided tour on the first launch.
@@ -47,7 +48,8 @@ impl Services {
             eprintln!("kraken-gui: {e}; using defaults");
             KrakenConfig::default()
         });
-        let ghidra = no_daemon.then(|| Arc::new(HostEngineFactory::new(cfg.clone())));
+        let ghidra = no_daemon
+            .then(|| Arc::new(HostEngineFactory::new(cfg.clone())) as Arc<dyn ManagedFactory>);
         Services {
             mode: if no_daemon {
                 Mode::NoDaemon

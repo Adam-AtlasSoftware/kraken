@@ -622,7 +622,11 @@ fn load_pe<Pe: ImageNtHeaders>(
                     functions.get(&addr).cloned().unwrap_or(n)
                 }
             };
-            exports.entry(addr).or_insert(ExportSymbol { name, kind });
+            exports.entry(addr).or_insert(ExportSymbol {
+                name,
+                kind,
+                member: None,
+            });
         }
     }
 
