@@ -85,4 +85,4 @@ The model comes from the `[provider]` table of `config.toml`, as for the assista
 
 ## Local models
 
-`kraken infer list|start|status|stop|logs` and `kraken infer setup llama` run a model on this computer under the daemon and can make the assistant use it (`--use`). See [Running a model on this computer](local-models.md).
+`kraken infer list|start|status|stop|logs` and `kraken infer setup llama` run a model on this computer under the daemon and can make the assistant use it (`--use`). See [Local models on this computer](local-models.md).

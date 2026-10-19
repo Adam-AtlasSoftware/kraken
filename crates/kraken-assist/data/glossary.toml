@@ -652,6 +652,59 @@ kind = "concept"
 short = "Reverting an edit; in KRAKEN every edit, including the assistant's, is logged so it can be undone."
 
 # ---------------------------------------------------------------------------------------------
+# Concepts: running a model on this computer
+# ---------------------------------------------------------------------------------------------
+
+[[entry]]
+term = "local model"
+kind = "concept"
+aliases = ["on-device model", "local language model"]
+short = "A language model that runs on your own computer, so the code you analyse does not leave it."
+note = "KRAKEN starts it with an engine program (llama.cpp or Strata) and talks to it the way it talks to a cloud model."
+
+[[entry]]
+term = "serving"
+kind = "concept"
+aliases = ["serve", "served model"]
+short = "Keeping a model loaded and running in the background so that programs can send it questions."
+note = "A served model answers at once. It uses memory until it is stopped."
+
+[[entry]]
+term = "VRAM"
+kind = "concept"
+aliases = ["video memory", "GPU memory"]
+short = "Memory on the graphics card, where a model runs fastest."
+note = "A bigger model needs more of it. When a model does not fit on the card, part of it can run from ordinary RAM, which is slower."
+
+[[entry]]
+term = "tok/s"
+kind = "concept"
+aliases = ["tokens per second", "words per second"]
+short = "How fast a model writes, in tokens per second; a token is a piece of a word, so higher is faster."
+note = "Roughly words per second. KRAKEN writes 'about' before the figure when it measured the speed from the model's replies itself."
+
+[[entry]]
+term = "GGUF"
+kind = "concept"
+aliases = ["gguf file"]
+short = "The file format that llama.cpp reads language models from."
+note = "Model makers and community packagers publish GGUF files, often on Hugging Face."
+
+[[entry]]
+term = "hold"
+kind = "concept"
+aliases = ["holder"]
+short = "A reason for a local model to keep running, such as an open KRAKEN window or a script that uses it."
+note = "When the last hold ends, the model stops after the grace period."
+
+[[entry]]
+term = "grace period"
+kind = "concept"
+aliases = ["grace"]
+short = "The short wait before a local model stops after nothing uses it, in case something needs it again."
+note = "Two minutes by default. Change it with grace_secs in the [local_serving] table of config.toml."
+
+# ---------------------------------------------------------------------------------------------
 # x86-64 mnemonics (Intel order: destination first)
 # ---------------------------------------------------------------------------------------------
 

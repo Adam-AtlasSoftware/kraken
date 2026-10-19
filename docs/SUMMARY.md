@@ -12,7 +12,7 @@
 - [Rewrite a program in Rust](rewrite.md)
 - [Connecting AI agents (MCP)](mcp.md)
 - [The built-in assistant (AI models and terminal agents)](assistant.md)
-- [Running a model on this computer](local-models.md)
+- [Local models on this computer](local-models.md)
 - [.NET assemblies](dotnet.md)
 - [The native engine](native-engine.md)
 - [Performance](performance.md)
