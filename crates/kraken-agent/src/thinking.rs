@@ -142,6 +142,7 @@ impl ThinkingConfig {
             ProviderConfig::Anthropic { .. } => "anthropic".into(),
             ProviderConfig::Gemini { .. } => "gemini".into(),
             ProviderConfig::Replay { .. } => "replay".into(),
+            ProviderConfig::Local { .. } => "local".into(),
             ProviderConfig::TerminalAgent { agent, .. } => format!("agent:{agent}"),
         }
     }

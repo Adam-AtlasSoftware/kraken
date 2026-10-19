@@ -44,8 +44,8 @@ pub use serving::{
     AutostartReport, DevicesReply, HeldBy, Holder, MANUAL_MODEL_ID, METHOD_INFER_AUTOSTART,
     METHOD_INFER_DEVICES, METHOD_INFER_HOLD, METHOD_INFER_MODEL_LOGS, METHOD_INFER_MODEL_START,
     METHOD_INFER_MODEL_STOP, METHOD_INFER_MODELS, METHOD_INFER_RELEASE, ModelLogsParams,
-    ModelParams, ModelStatus, ModelsReply, ReleaseReply, ServingApi, ServingConfig, SkippedModel,
-    StartOptions, serve_serving_rpc,
+    ModelParams, ModelStatus, ModelsReply, ReleaseReply, ServingApi, ServingBridge, ServingConfig,
+    SkippedModel, StartOptions, hold_role_models, serve_serving_rpc,
 };
 use serving::{ConfigFn, DevicesFn, Slot, State};
 
@@ -1080,6 +1080,63 @@ fn is_local_server_table(table: &Value) -> bool {
         && (table["api_key"]["env"] == LOCAL_KEY_ENV || url == crate::local_models::LOCAL_BASE_URL)
 }
 
+/// A model entry with the defaults: the processor or the best card, served automatically.
+pub fn new_local_model(id: &str, engine: LocalEngine, model_path: PathBuf) -> LocalModel {
+    LocalModel {
+        id: id.to_string(),
+        name: id.to_string(),
+        engine,
+        model_path,
+        devices: Vec::new(),
+        cpu_only: false,
+        multi_gpu: MultiGpuMode::default(),
+        shares: None,
+        main_device: None,
+        context_size: None,
+        autostart: true,
+        extra: None,
+    }
+}
+
+/// Adds `model` to `[[local_models]]` of the file at `path` (replacing the entry with its id)
+/// and, with `assistant`, points `[provider]` at it. The rest of the file is kept.
+pub fn upsert_local_model(path: &Path, model: LocalModel, assistant: bool) -> Result<(), String> {
+    let mut cfg = crate::KrakenConfig::from_file(path).map_err(|e| e.to_string())?;
+    if assistant {
+        cfg.provider = Some(local_provider_table(&model.id));
+    }
+    match cfg.local_models.iter_mut().find(|m| m.id == model.id) {
+        Some(existing) => *existing = model,
+        None => cfg.local_models.push(model),
+    }
+    cfg.save(path).map_err(|e| e.to_string())
+}
+
+/// Where the catalog model `id` is on disk, when it is a catalog model.
+pub fn catalog_model_path(id: &str, env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let entry = kraken_infer::model_catalog()
+        .into_iter()
+        .find(|m| m.id == id)?;
+    Some(kraken_infer::models_dir_with(env)?.join(entry.file))
+}
+
+/// Migrates the configuration file at `path` (see [`migrate_local_provider`]) and writes it back
+/// when something changed. Returns the number of tables converted; a file that cannot be read
+/// or written is left alone.
+pub fn migrate_config_file(path: &Path, env: &dyn Fn(&str) -> Option<OsString>) -> usize {
+    let Ok(mut cfg) = crate::KrakenConfig::from_file(path) else {
+        return 0;
+    };
+    let n = migrate_local_provider(&mut cfg, &|id| catalog_model_path(id, env));
+    if n > 0
+        && let Err(e) = cfg.save(path)
+    {
+        tracing::warn!(error = %e, "cannot write the migrated local model configuration");
+        return 0;
+    }
+    n
+}
+
 /// Turns the `[provider]` and `[rewrite]` tables written for a local model into a
 /// [`LocalModel`] in `local_models` plus a `local { model = id }` provider. Tables for other
 /// servers are left alone, a model already listed is not added twice, and running it again
@@ -1103,20 +1160,8 @@ pub fn migrate_local_provider(
         *slot = Some(local_provider_table(&id));
         converted += 1;
         if !cfg.local_models.iter().any(|m| m.id == id) {
-            cfg.local_models.push(LocalModel {
-                name: id.clone(),
-                model_path: locate(&id).unwrap_or_default(),
-                id,
-                engine,
-                devices: Vec::new(),
-                cpu_only: false,
-                multi_gpu: MultiGpuMode::default(),
-                shares: None,
-                main_device: None,
-                context_size: None,
-                autostart: true,
-                extra: None,
-            });
+            let path = locate(&id).unwrap_or_default();
+            cfg.local_models.push(new_local_model(&id, engine, path));
         }
     }
     converted
@@ -1194,6 +1239,28 @@ mod migrate_tests {
         assert_eq!(cfg.local_models.len(), 1);
         let again = KrakenConfig::from_toml(&cfg.to_toml().expect("toml")).expect("reparse");
         assert_eq!(again, cfg);
+    }
+
+    #[test]
+    fn loading_the_configuration_migrates_the_file_once() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "per_run_cap = 3\n\n[provider]\nkind = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:8080/v1\"\nmodel = \"qwen3-8b-q4_k_m\"\nsupports_tools = true\n",
+        )
+        .expect("write");
+        let env_path = path.clone();
+        let env = move |k: &str| (k == "KRAKEN_CONFIG").then(|| env_path.clone().into_os_string());
+        let cfg = crate::KrakenConfig::load_with(&env).expect("loads");
+        assert_eq!(cfg.provider, Some(local_provider_table("qwen3-8b-q4_k_m")));
+        assert_eq!(cfg.local_models.len(), 1);
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("kind = \"local\""), "{text}");
+        assert!(text.contains("per_run_cap = 3"), "{text}");
+        // Nothing left to convert: the second load leaves the file as it is.
+        assert_eq!(migrate_config_file(&path, &env), 0);
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), text);
     }
 
     #[test]

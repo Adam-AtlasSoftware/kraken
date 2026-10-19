@@ -108,6 +108,7 @@ pub fn rig(author: CliAuthor, vars: Vec<(&'static str, String)>) -> Rig {
         session: Some(session.clone()),
         daemon: DaemonMode::Direct,
         rewrite: None,
+        owner: Default::default(),
     };
     Rig {
         factory,
@@ -185,5 +186,6 @@ pub fn fresh_env(config: KrakenConfig, vars: Vec<(&'static str, String)>) -> Cli
         session: None,
         daemon: DaemonMode::Direct,
         rewrite: None,
+        owner: Default::default(),
     }
 }

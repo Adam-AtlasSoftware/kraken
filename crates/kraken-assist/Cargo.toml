@@ -13,6 +13,7 @@ futures-util = "0.3"
 kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-ipc = { path = "../kraken-ipc", version = "0.0.0" }
 kraken-model = { path = "../kraken-model", version = "0.0.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.0.0" }

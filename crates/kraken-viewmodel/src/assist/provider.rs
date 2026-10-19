@@ -283,6 +283,12 @@ pub fn badge_of(cfg: &ProviderConfig) -> ProviderBadge {
             local: true,
             terminal_agent: false,
         },
+        ProviderConfig::Local { model } => ProviderBadge {
+            service: "On this computer".to_string(),
+            model: model.clone(),
+            local: true,
+            terminal_agent: false,
+        },
         ProviderConfig::TerminalAgent { agent, model, .. } => ProviderBadge {
             service: agent_name(agent),
             model: model.clone().unwrap_or_default(),
@@ -417,7 +423,10 @@ impl ProviderDraft {
                 key_paste: String::new(),
                 existing_key: Some(api_key.clone()),
             },
-            ProviderConfig::Replay { .. } => ProviderDraft::preset(ProviderKind::Ollama),
+            // The settings window learns to edit local models with the model list.
+            ProviderConfig::Replay { .. } | ProviderConfig::Local { .. } => {
+                ProviderDraft::preset(ProviderKind::Ollama)
+            }
             ProviderConfig::TerminalAgent { agent, model, args } => ProviderDraft {
                 model: model.clone().unwrap_or_default(),
                 agent_args: args.join(" "),

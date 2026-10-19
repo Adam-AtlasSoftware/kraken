@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_infer::GpuApi;
-use kraken_proto::{ErrorCode, ProtoError};
+use kraken_proto::{ErrorCode, LocalEngine, ProtoError};
 use kraken_registry::commands::{
     LocalFeature, LocalModelBackend, LocalModelSetupOut, LocalSetupPlan,
 };
-use serde_json::json;
 
 use crate::config::KrakenConfig;
+use crate::infer::{local_provider_table, new_local_model};
 use crate::llama_setup::{LlamaLayout, choose, current_releases, install_llama};
 use crate::provision::{ArchiveFormat, ArtifactSpec, Fetcher, HttpsFetcher, download};
 use crate::strata_setup::{Runner, StrataError, StrataLayout, SystemRunner, install_strata};
@@ -127,11 +127,17 @@ impl LocalModels {
 
         let mut configured = Vec::new();
         if let Some(cfg_path) = &self.config_path {
-            write_local_provider(cfg_path, &sp.model.id, &plan.assign)?;
+            write_local_provider(
+                cfg_path,
+                &sp.model.id,
+                LocalEngine::Strata,
+                &out.gguf_dir,
+                &plan.assign,
+            )?;
             configured = plan.assign.clone();
         }
         Ok(LocalModelSetupOut {
-            model_id: sp.model.id,
+            model_id: sp.model.id.clone(),
             path: out.gguf_dir.display().to_string(),
             engine: format!(
                 "Strata {} (built from commit {})",
@@ -140,9 +146,9 @@ impl LocalModels {
             sha256_verified: true,
             configured,
             note: format!(
-                "Start it with `kraken infer start strata` (or Settings > Local model); it is \
-                 supervised by KRAKEN, bound to 127.0.0.1:8080 and the configuration expects \
-                 {LOCAL_BASE_URL}. Setup log: {}",
+                "Start it with `kraken infer start {}` (or Settings); KRAKEN supervises it and \
+                 starts it by itself when the assistant needs it. Setup log: {}",
+                sp.model.id.clone(),
                 layout.log().display()
             ),
         })
@@ -153,20 +159,26 @@ fn internal(e: impl std::fmt::Display) -> ProtoError {
     ProtoError::new(ErrorCode::Internal, e.to_string())
 }
 
-/// Writes `[provider]` / `[rewrite]` for a local server serving `model_id`, keeping the rest of
-/// the file.
+/// Adds the model to `[[local_models]]` (or updates its file) and points `[provider]` /
+/// `[rewrite]` at it as `local { model = id }`, keeping the rest of the file.
 pub fn write_local_provider(
     path: &Path,
     model_id: &str,
+    engine: LocalEngine,
+    model_path: &Path,
     features: &[LocalFeature],
 ) -> Result<(), ProtoError> {
     let mut cfg = KrakenConfig::from_file(path).map_err(internal)?;
-    let table = json!({
-        "kind": "openai_compatible",
-        "base_url": LOCAL_BASE_URL,
-        "model": model_id,
-        "supports_tools": true,
-    });
+    match cfg.local_models.iter_mut().find(|m| m.id == model_id) {
+        Some(m) => {
+            m.engine = engine;
+            m.model_path = model_path.to_path_buf();
+        }
+        None => cfg
+            .local_models
+            .push(new_local_model(model_id, engine, model_path.to_path_buf())),
+    }
+    let table = local_provider_table(model_id);
     for f in features {
         match f {
             LocalFeature::Assistant => cfg.provider = Some(table.clone()),
@@ -229,18 +241,25 @@ impl LocalModelBackend for LocalModels {
 
         let mut configured = Vec::new();
         if let Some(cfg_path) = &self.config_path {
-            write_local_provider(cfg_path, &plan.model.id, &plan.assign)?;
+            write_local_provider(
+                cfg_path,
+                &plan.model.id,
+                LocalEngine::Llama,
+                &path,
+                &plan.assign,
+            )?;
             configured = plan.assign.clone();
         }
         Ok(LocalModelSetupOut {
-            model_id: plan.model.id,
+            model_id: plan.model.id.clone(),
             path: path.display().to_string(),
             engine,
             sha256_verified: true,
             configured,
             note: format!(
-                "Start the model in Settings > Local model (or `kraken infer start`) with this \
-                 file; the configuration expects it at {LOCAL_BASE_URL}."
+                "Start it with `kraken infer start {id}` (or Settings); KRAKEN supervises it and \
+                 starts it by itself when the assistant needs it.",
+                id = plan.model.id
             ),
         })
     }
@@ -259,6 +278,8 @@ mod tests {
         write_local_provider(
             &path,
             "qwen3-8b-q4_k_m",
+            LocalEngine::Llama,
+            Path::new("/m/qwen3.gguf"),
             &[LocalFeature::Assistant, LocalFeature::Rewrite],
         )
         .expect("written");
@@ -269,9 +290,26 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("qwen3-8b-q4_k_m") && text.contains("127.0.0.1"),
+            text.contains("kind = \"local\"") && text.contains("[[local_models]]"),
             "{text}"
         );
+        assert!(!text.contains("127.0.0.1"), "{text}");
+        let cfg = KrakenConfig::from_file(&path).expect("reads back");
+        assert_eq!(cfg.local_models.len(), 1);
+        assert_eq!(cfg.local_models[0].model_path, Path::new("/m/qwen3.gguf"));
+        assert_eq!(cfg.provider, Some(local_provider_table("qwen3-8b-q4_k_m")));
+        // Again: no second entry.
+        write_local_provider(
+            &path,
+            "qwen3-8b-q4_k_m",
+            LocalEngine::Llama,
+            Path::new("/m/other.gguf"),
+            &[LocalFeature::Assistant],
+        )
+        .expect("rewritten");
+        let cfg = KrakenConfig::from_file(&path).expect("reads back");
+        assert_eq!(cfg.local_models.len(), 1);
+        assert_eq!(cfg.local_models[0].model_path, Path::new("/m/other.gguf"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

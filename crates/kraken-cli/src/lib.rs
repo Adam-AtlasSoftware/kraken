@@ -31,9 +31,11 @@ mod infer_cmd;
 mod progress;
 pub mod render;
 pub mod schema;
+mod serve_local;
 mod setup;
 
 pub use app::{
-    BUILD, CliAuthor, CliEnv, DaemonAuto, DaemonMode, build_args, build_cli, run, run_with_provider,
+    BUILD, CliAuthor, CliEnv, DaemonAuto, DaemonMode, OwnerSlot, build_args, build_cli, run,
+    run_with_provider,
 };
 pub use exit::exit_code;

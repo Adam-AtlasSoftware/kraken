@@ -18,6 +18,7 @@ use crate::error::AgentError;
 use crate::provider::ChatProvider;
 use crate::provider::anthropic::Anthropic;
 use crate::provider::gemini::Gemini;
+use crate::provider::local::{LocalProvider, LocalResolver};
 use crate::provider::openai::OpenAiCompatible;
 use crate::provider::replay::ReplayProvider;
 
@@ -111,6 +112,12 @@ pub enum ProviderConfig {
         #[serde(default)]
         context_window: Option<u32>,
     },
+    /// A model KRAKEN serves on this computer (`[[local_models]]`). The address and the per-run
+    /// key are found when a request is made, never stored here.
+    Local {
+        /// The model's id in `[[local_models]]`.
+        model: String,
+    },
     /// Deterministic replay of a recorded cassette file.
     Replay { cassette: PathBuf },
     /// A terminal agent (Claude Code, Codex, Gemini CLI) driven over ACP instead of a chat API.
@@ -159,6 +166,17 @@ impl ProviderConfig {
         &self,
         secrets: &dyn SecretResolver,
         thinking: Option<crate::thinking::Effort>,
+    ) -> Result<Arc<dyn ChatProvider>, AgentError> {
+        self.build_with_local(secrets, thinking, None)
+    }
+
+    /// [`build_with_thinking`](Self::build_with_thinking) with the resolver that finds a running
+    /// `local` model; without one a `local` table cannot be built.
+    pub fn build_with_local(
+        &self,
+        secrets: &dyn SecretResolver,
+        thinking: Option<crate::thinking::Effort>,
+        local: Option<Arc<dyn LocalResolver>>,
     ) -> Result<Arc<dyn ChatProvider>, AgentError> {
         fn required(r: &SecretRef, secrets: &dyn SecretResolver) -> Result<String, AgentError> {
             secrets.resolve(r)?.ok_or_else(|| {
@@ -216,6 +234,15 @@ impl ProviderConfig {
                     .with_context_window(*context_window)
                     .with_thinking(thinking),
             ),
+            ProviderConfig::Local { model } => {
+                let resolver = local.ok_or_else(|| {
+                    AgentError::Unsupported(format!(
+                        "`{model}` is a model served by KRAKEN; it needs the local serving service \
+                         (krakend), which this program was not given"
+                    ))
+                })?;
+                Arc::new(LocalProvider::new(model, resolver).with_thinking(thinking))
+            }
             ProviderConfig::Replay { cassette } => Arc::new(ReplayProvider::from_path(cassette)?),
             ProviderConfig::TerminalAgent { agent, .. } => {
                 return Err(AgentError::Unsupported(format!(
@@ -303,6 +330,22 @@ api_key = { env = "MY_KEY" }
             Err(AgentError::Unsupported(_))
         ));
         assert!(ProviderConfig::from_toml("[provider]\nkind = \"terminal_agent\"").is_err());
+    }
+
+    #[test]
+    fn local_parses_and_needs_a_resolver() {
+        let c =
+            ProviderConfig::from_toml("[provider]\nkind = \"local\"\nmodel = \"qwen\"\n").unwrap();
+        assert_eq!(
+            c,
+            ProviderConfig::Local {
+                model: "qwen".into()
+            }
+        );
+        assert!(matches!(
+            c.build(&EnvSecrets),
+            Err(AgentError::Unsupported(_))
+        ));
     }
 
     #[test]

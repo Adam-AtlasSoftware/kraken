@@ -11,11 +11,13 @@ use std::time::{Duration, Instant};
 use clap::ArgMatches;
 use kraken_host::KrakenConfig;
 use kraken_host::infer::{
-    InferApi, InferListReply, InferManager, LogsParams, StatusReply, gib, gpu_names, model_setting,
-    provider_table, settings_from_pairs, write_provider,
+    InferApi, InferListReply, LogsParams, ModelLogsParams, ModelStatus, ServingApi, StartOptions,
+    StatusReply, gib, gpu_names, local_provider_table, model_setting, new_local_model,
+    provider_table, settings_from_pairs, upsert_local_model, write_provider,
 };
 use kraken_host::llama_setup::{LlamaLayout, choose, current_releases, install_llama};
 use kraken_host::provision::{HttpsFetcher, ProvisionError};
+use kraken_proto::infer::{LocalEngine, ModelState};
 use kraken_proto::{ErrorCode, ProtoError};
 use serde_json::{Value, json};
 
@@ -35,16 +37,28 @@ fn internal(msg: impl std::fmt::Display) -> ProtoError {
 }
 
 /// Where the model runs for this invocation.
+#[derive(Clone)]
 struct Target {
     api: Arc<dyn InferApi>,
+    serving: Arc<dyn ServingApi>,
     /// True when this process owns the model (no daemon).
     local: bool,
 }
 
 fn local_target(env: &CliEnv) -> Target {
+    let manager = env.owner_manager();
     Target {
-        api: Arc::new(InferManager::from_env_with(&os_env(env))),
+        serving: Arc::new(manager.holder(kraken_host::infer::Holder::Owner)),
+        api: manager,
         local: true,
+    }
+}
+
+fn daemon_target(c: Arc<kraken_host::daemon::DaemonClient>) -> Target {
+    Target {
+        api: c.clone(),
+        serving: c,
+        local: false,
     }
 }
 
@@ -59,15 +73,9 @@ async fn target_for_start(
     }
     match &env.daemon {
         DaemonMode::Direct => Ok(local_target(env)),
-        DaemonMode::Connected(c) => Ok(Target {
-            api: c.clone(),
-            local: false,
-        }),
+        DaemonMode::Connected(c) => Ok(daemon_target(c.clone())),
         DaemonMode::Auto(auto) => match auto.connect(kraken_ipc::ClientKind::Cli).await {
-            Ok(c) => Ok(Target {
-                api: Arc::new(c),
-                local: false,
-            }),
+            Ok(c) => Ok(daemon_target(Arc::new(c))),
             Err(e) if e.restart_required() => Err(ProtoError::new(
                 ErrorCode::Unsupported,
                 format!("{e}; run `kraken daemon stop` and retry"),
@@ -87,18 +95,15 @@ async fn target_for_start(
 }
 
 /// The running daemon for read-only operations; `None` when there is none (never starts one).
-async fn running_daemon(
-    env: &CliEnv,
-    sm: &ArgMatches,
-) -> Result<Option<Arc<dyn InferApi>>, ProtoError> {
+async fn running_daemon(env: &CliEnv, sm: &ArgMatches) -> Result<Option<Target>, ProtoError> {
     if env.session.is_some() || env.no_daemon(sm) {
         return Ok(None);
     }
     match &env.daemon {
         DaemonMode::Direct => Ok(None),
-        DaemonMode::Connected(c) => Ok(Some(c.clone() as Arc<dyn InferApi>)),
+        DaemonMode::Connected(c) => Ok(Some(daemon_target(c.clone()))),
         DaemonMode::Auto(auto) => match auto.connect_running(kraken_ipc::ClientKind::Cli).await {
-            Ok(c) => Ok(c.map(|c| Arc::new(c) as Arc<dyn InferApi>)),
+            Ok(c) => Ok(c.map(|c| daemon_target(Arc::new(c)))),
             Err(e) if e.restart_required() => Err(ProtoError::new(
                 ErrorCode::Unsupported,
                 format!("{e}; run `kraken daemon stop` and retry"),
@@ -255,7 +260,7 @@ async fn list(
     out: &mut dyn Write,
 ) -> Result<i32, ProtoError> {
     let api = match running_daemon(env, sm).await? {
-        Some(a) => a,
+        Some(t) => t.api,
         None => local_target(env).api,
     };
     let l = api.list().await?;
@@ -287,11 +292,26 @@ async fn start(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<i32, ProtoError> {
-    let backend = sm
-        .get_one::<String>("engine")
-        .cloned()
-        .ok_or_else(|| bad("name an engine, for example `kraken infer start llama-server`"))?;
+    let backend = sm.get_one::<String>("engine").cloned().ok_or_else(|| {
+        bad("name a model or an engine, for example `kraken infer start llama-server`")
+    })?;
     let target = target_for_start(env, sm, err).await?;
+
+    // A model set up in the configuration: a pinned start by id.
+    let models = target.serving.models().await?;
+    if models.models.iter().any(|m| m.id == backend) {
+        if sm.get_one::<String>("model").is_some() || sm.get_many::<String>("set").is_some() {
+            return Err(bad(format!(
+                "`{backend}` is a model you have set up; its file and settings come from the \
+                 configuration, so --model and --set do not apply"
+            )));
+        }
+        if sm.get_flag("use") {
+            set_assistant_model(env, &backend)?;
+        }
+        return start_model(env, sm, &target, &backend, json_out, out, err).await;
+    }
+
     let listing = target.api.list().await?;
     let info = listing
         .backends
@@ -299,10 +319,17 @@ async fn start(
         .find(|b| b.id == backend)
         .ok_or_else(|| {
             let ids: Vec<&str> = listing.backends.iter().map(|b| b.id.as_str()).collect();
+            let have: Vec<&str> = models.models.iter().map(|m| m.id.as_str()).collect();
             ProtoError::new(
                 ErrorCode::NotFound,
                 format!(
-                    "no engine called `{backend}`; this computer can run: {} (see `kraken infer list`)",
+                    "no model or engine called `{backend}`. Models you have set up: {}. Engines \
+                     this computer can run: {} (see `kraken infer list`)",
+                    if have.is_empty() {
+                        "none".into()
+                    } else {
+                        have.join(", ")
+                    },
                     ids.join(", ")
                 ),
             )
@@ -313,16 +340,36 @@ async fn start(
         .get_many::<String>("set")
         .map(|v| v.cloned().collect())
         .unwrap_or_default();
-    if let Some(model) = sm.get_one::<String>("model") {
-        let key = model_setting(&info.settings_schema).ok_or_else(|| {
-            bad(format!(
-                "`{backend}` has no model setting; use --set key=value (see `kraken infer list`)"
-            ))
-        })?;
-        pairs.insert(0, format!("{key}={model}"));
-    }
+    let model_key = sm
+        .get_one::<String>("model")
+        .map(|model| {
+            let key = model_setting(&info.settings_schema).ok_or_else(|| {
+                bad(format!(
+                    "`{backend}` has no model setting; use --set key=value (see `kraken infer list`)"
+                ))
+            })?;
+            pairs.insert(0, format!("{key}={model}"));
+            Ok::<_, ProtoError>(key)
+        })
+        .transpose()?;
     let settings =
         settings_from_pairs(&info.settings_schema, &pairs, cwd.as_deref()).map_err(bad)?;
+
+    let own_model = matches!(backend.as_str(), "llama-server" | "strata");
+    if sm.get_flag("use") && own_model {
+        // `--use` makes the model one of yours: it is written to the configuration with these
+        // settings and the assistant is pointed at it, then it is started like any other.
+        let id = register_model(env, &backend, &settings, model_key)?;
+        let models = target.serving.models().await?;
+        if !models.models.iter().any(|m| m.id == id) {
+            return Err(internal(
+                "the model was written to the configuration but the serving service does not \
+                 see it; restart krakend (`kraken daemon stop`) and retry",
+            ));
+        }
+        return start_model(env, sm, &target, &id, json_out, out, err).await;
+    }
+
     let started = target.api.start(&backend, settings).await?;
     for w in &started.warnings {
         emit(err, &format!("warning: {w}\n"));
@@ -338,15 +385,10 @@ async fn start(
         );
     }
 
-    let use_it = sm.get_flag("use");
     let wait = !sm.get_flag("no-wait");
-    let mut final_status: Option<StatusReply> = None;
+    let mut ready = false;
     if wait {
-        let secs = sm
-            .get_one::<String>("timeout")
-            .map(|t| t.parse::<u64>().map_err(|_| bad("--timeout needs seconds")))
-            .transpose()?
-            .unwrap_or(DEFAULT_WAIT_SECS);
+        let secs = wait_secs(sm)?;
         let deadline = Instant::now() + Duration::from_secs(secs);
         let mut last = String::new();
         loop {
@@ -357,7 +399,7 @@ async fn start(
                 last = line;
             }
             if s.is_ready() {
-                final_status = Some(s);
+                ready = true;
                 break;
             }
             if s.is_failed() || !s.running {
@@ -381,29 +423,26 @@ async fn start(
                 ));
             }
             if Instant::now() >= deadline {
-                return Err(ProtoError::new(
-                    ErrorCode::Timeout,
-                    format!(
-                        "the model is still loading after {secs} s; it keeps loading in the \
-                         background, follow it with `kraken infer status` and `kraken infer logs`"
-                    ),
+                return Err(timeout_error(
+                    secs,
+                    "kraken infer status` and `kraken infer logs",
                 ));
             }
             tokio::time::sleep(POLL).await;
         }
     }
 
+    // An engine described by a manifest cannot be a model of yours: the assistant is pointed at
+    // this run's address instead.
     let mut provider_path = None;
-    if use_it {
-        let path = KrakenConfig::default_path_with(&os_env(env))
-            .ok_or_else(|| internal("there is no config location (HOME is not set)"))?;
-        let tools = info.capabilities.supports_tool_calls;
+    if sm.get_flag("use") {
+        let path = config_path(env)?;
         write_provider(
             &path,
             provider_table(
                 &started.base_url,
                 started.model.as_deref(),
-                tools,
+                info.capabilities.supports_tool_calls,
                 started.api_key.is_some(),
             ),
         )
@@ -413,7 +452,7 @@ async fn start(
 
     if json_out {
         let mut v = serde_json::to_value(&started).map_err(internal)?;
-        v["ready"] = json!(final_status.is_some());
+        v["ready"] = json!(ready);
         if let Some(p) = &provider_path {
             v["provider_written_to"] = json!(p);
         }
@@ -423,11 +462,7 @@ async fn start(
             out,
             &format!(
                 "{} at {}{}\n",
-                if final_status.is_some() {
-                    "Ready"
-                } else {
-                    "Loading"
-                },
+                if ready { "Ready" } else { "Loading" },
                 started.base_url,
                 started
                     .model
@@ -448,8 +483,8 @@ async fn start(
                 emit(
                     out,
                     &format!(
-                        "The server requires this run's key; export it where the assistant runs:\n  \
-                         export {}={k}\n",
+                        "The server requires this run's key; export it where the assistant \
+                         runs:\n  export {}={k}\n",
                         kraken_host::infer::LOCAL_KEY_ENV
                     ),
                 );
@@ -458,14 +493,201 @@ async fn start(
     }
 
     if target.local {
-        hold_local(env, &target, json_out, err).await;
+        hold_local(env, &target, None, json_out, err).await;
     }
     Ok(0)
 }
 
-/// A model owned by this process lives while the command runs: wait for Ctrl-C in a terminal,
-/// otherwise stop it right away.
-async fn hold_local(env: &CliEnv, target: &Target, json_out: bool, err: &mut dyn Write) {
+fn wait_secs(sm: &ArgMatches) -> Result<u64, ProtoError> {
+    Ok(sm
+        .get_one::<String>("timeout")
+        .map(|t| t.parse::<u64>().map_err(|_| bad("--timeout needs seconds")))
+        .transpose()?
+        .unwrap_or(DEFAULT_WAIT_SECS))
+}
+
+fn timeout_error(secs: u64, follow: &str) -> ProtoError {
+    ProtoError::new(
+        ErrorCode::Timeout,
+        format!(
+            "the model is still loading after {secs} s; it keeps loading in the background, \
+             follow it with `{follow}`"
+        ),
+    )
+}
+
+fn config_path(env: &CliEnv) -> Result<std::path::PathBuf, ProtoError> {
+    KrakenConfig::default_path_with(&os_env(env))
+        .ok_or_else(|| internal("there is no config location (HOME is not set)"))
+}
+
+/// Points the assistant at the model `id`, which must be one of the configured models.
+fn set_assistant_model(env: &CliEnv, id: &str) -> Result<(), ProtoError> {
+    let path = config_path(env)?;
+    let mut cfg = KrakenConfig::from_file(&path).map_err(internal)?;
+    if !cfg.local_models.iter().any(|m| m.id == id) {
+        return Err(bad(format!("`{id}` is not set up in {}", path.display())));
+    }
+    cfg.provider = Some(local_provider_table(id));
+    cfg.save(&path)
+        .map_err(|e| internal(format!("cannot write {}: {e}", path.display())))
+}
+
+/// Writes the model started from an engine and a file to the configuration as one of the
+/// person's models, points the assistant at it and returns its id.
+fn register_model(
+    env: &CliEnv,
+    backend: &str,
+    settings: &Value,
+    model_key: Option<&str>,
+) -> Result<String, ProtoError> {
+    let engine = match backend {
+        "strata" => LocalEngine::Strata,
+        "llama-server" => LocalEngine::Llama,
+        other => {
+            return Err(bad(format!(
+                "--use works with llama-server and strata; `{other}` can be started without it"
+            )));
+        }
+    };
+    let mut extra = settings.clone();
+    let file = model_key
+        .and_then(|k| extra.as_object_mut().and_then(|o| o.remove(k)))
+        .and_then(|v| v.as_str().map(std::path::PathBuf::from))
+        .ok_or_else(|| bad("--use needs --model <file>"))?;
+    let id = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| bad("--use needs a model file with a name"))?;
+    let mut model = new_local_model(&id, engine, file);
+    let has_extra = extra.as_object().is_some_and(|o| !o.is_empty());
+    model.extra = has_extra.then_some(extra);
+    let path = config_path(env)?;
+    upsert_local_model(&path, model, true)
+        .map_err(|e| internal(format!("cannot write {}: {e}", path.display())))?;
+    Ok(id)
+}
+
+fn model_line(m: &ModelStatus) -> String {
+    match (&m.state, m.load_fraction) {
+        (ModelState::Loading, Some(f)) => format!("loading ({:.0}%)", f * 100.0),
+        (ModelState::Loading, None) => "loading".into(),
+        (ModelState::Ready, _) => "ready".into(),
+        (ModelState::Stopping, _) => "stopping".into(),
+        (ModelState::Stopped, _) => "stopped".into(),
+        (ModelState::Failed { message }, _) => format!("failed: {message}"),
+    }
+}
+
+/// A pinned start of the configured model `id`: it runs until `kraken infer stop <id>`.
+async fn start_model(
+    env: &CliEnv,
+    sm: &ArgMatches,
+    target: &Target,
+    id: &str,
+    json_out: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<i32, ProtoError> {
+    let opts = StartOptions {
+        force: sm.get_flag("force"),
+        cpu: sm.get_flag("cpu"),
+    };
+    let mut status = target.serving.start_model(id, opts).await?;
+    for w in &status.warnings {
+        emit(err, &format!("warning: {w}\n"));
+    }
+    if !json_out {
+        emit(err, &format!("started {id}\n"));
+    }
+    if !sm.get_flag("no-wait") {
+        let secs = wait_secs(sm)?;
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        let mut last = String::new();
+        loop {
+            let all = target.serving.models().await?;
+            if let Some(m) = all.models.into_iter().find(|m| m.id == id) {
+                let line = model_line(&m);
+                if line != last && !json_out {
+                    emit(err, &format!("  {line}\n"));
+                    last = line;
+                }
+                match m.state {
+                    ModelState::Ready => {
+                        status = m;
+                        break;
+                    }
+                    ModelState::Failed { .. } | ModelState::Stopped => {
+                        let logs = target
+                            .serving
+                            .model_logs(ModelLogsParams {
+                                model: id.to_string(),
+                                after_seq: None,
+                                limit: Some(15),
+                            })
+                            .await
+                            .map(|l| l.lines)
+                            .unwrap_or_default();
+                        let tail: Vec<String> = logs.into_iter().map(|l| l.text).collect();
+                        return Err(ProtoError::new(
+                            ErrorCode::Internal,
+                            format!(
+                                "the model did not start ({}). Last log lines:\n{}",
+                                model_line(&m),
+                                tail.join("\n")
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(timeout_error(secs, "kraken local-model-status"));
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+    // The per-run key stays between krakend and the programs it serves.
+    status.api_key = None;
+    if json_out {
+        emit(
+            out,
+            &format!("{}\n", serde_json::to_value(&status).map_err(internal)?),
+        );
+    } else {
+        emit(
+            out,
+            &format!(
+                "{} {id}{}\n",
+                if status.is_ready() {
+                    "Ready:"
+                } else {
+                    "Loading:"
+                },
+                status
+                    .base_url
+                    .as_deref()
+                    .map_or(String::new(), |u| format!(" at {u}"))
+            ),
+        );
+        if sm.get_flag("use") {
+            emit(out, "The assistant now uses it.\n");
+        }
+    }
+    if target.local {
+        hold_local(env, target, Some(id), json_out, err).await;
+    }
+    Ok(0)
+}
+
+async fn hold_local(
+    env: &CliEnv,
+    target: &Target,
+    model: Option<&str>,
+    json_out: bool,
+    err: &mut dyn Write,
+) {
     if env.interactive && std::io::stdin().is_terminal() {
         if !json_out {
             emit(
@@ -480,7 +702,14 @@ async fn hold_local(env: &CliEnv, target: &Target, json_out: bool, err: &mut dyn
             "note: without krakend the model stops when this command ends\n",
         );
     }
-    let _ = target.api.stop().await;
+    match model {
+        Some(id) => {
+            let _ = target.serving.stop_model(id).await;
+        }
+        None => {
+            let _ = target.api.stop().await;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -492,7 +721,7 @@ async fn status(
     json_out: bool,
     out: &mut dyn Write,
 ) -> Result<i32, ProtoError> {
-    let Some(api) = running_daemon(env, sm).await? else {
+    let Some(api) = running_daemon(env, sm).await?.map(|t| t.api) else {
         if json_out {
             emit(
                 out,
@@ -538,10 +767,24 @@ async fn stop(
     json_out: bool,
     out: &mut dyn Write,
 ) -> Result<i32, ProtoError> {
-    let api = running_daemon(env, sm)
+    let target = running_daemon(env, sm)
         .await?
         .ok_or_else(no_model_running)?;
-    let r = api.stop().await?;
+    if let Some(model) = sm.get_one::<String>("model") {
+        let r = target.serving.stop_model(model).await?;
+        if json_out {
+            emit(
+                out,
+                &format!("{}\n", serde_json::to_value(&r).map_err(internal)?),
+            );
+        } else if r.stopped {
+            emit(out, &format!("Stopped {model}.\n"));
+        } else {
+            emit(out, &format!("{model} was not running.\n"));
+        }
+        return Ok(0);
+    }
+    let r = target.api.stop().await?;
     if json_out {
         emit(
             out,
@@ -563,6 +806,7 @@ async fn logs(
 ) -> Result<i32, ProtoError> {
     let api = running_daemon(env, sm)
         .await?
+        .map(|t| t.api)
         .ok_or_else(no_model_running)?;
     let tail = sm
         .get_one::<String>("tail")

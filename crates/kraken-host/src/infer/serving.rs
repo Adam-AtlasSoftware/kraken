@@ -1460,6 +1460,57 @@ pub async fn serve_serving_rpc(
     })
 }
 
+/// Holds the models a role uses (the assistant, rewriting) for this holder, starting the ones
+/// that are not running. Models that do not fit or cannot start are reported, not fatal.
+pub async fn hold_role_models(api: &dyn ServingApi) -> Result<AutostartReport, ProtoError> {
+    let reply = api.models().await?;
+    let mut report = AutostartReport::default();
+    for m in reply.models.iter().filter(|m| m.role_assigned) {
+        match api.hold(&m.id, StartOptions::default()).await {
+            Ok(_) => report.started.push(m.id.clone()),
+            Err(e) => {
+                let no_fit = e.details.as_ref().is_some_and(|d| d["reason"] == "no_fit");
+                report.skipped.push(SkippedModel {
+                    model: m.id.clone(),
+                    reason: e.message,
+                    kind: if no_fit { "no_fit" } else { "error" }.into(),
+                });
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// A [`ServingApi`] as the registry's serving service (`local_model_*` commands).
+#[derive(Clone)]
+pub struct ServingBridge(Arc<dyn ServingApi>);
+
+impl ServingBridge {
+    /// Serves the commands with `api`.
+    pub fn new(api: Arc<dyn ServingApi>) -> Self {
+        Self(api)
+    }
+}
+
+impl std::fmt::Debug for ServingBridge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ServingBridge")
+    }
+}
+
+#[async_trait]
+impl kraken_registry::commands::ServingBackend for ServingBridge {
+    async fn call(&self, method: &str, params: Value) -> Result<Value, ProtoError> {
+        match serve_serving_rpc(self.0.as_ref(), method, params).await {
+            Some(r) => r,
+            None => Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!("unknown serving method `{method}`"),
+            )),
+        }
+    }
+}
+
 fn params(model: &str, opts: StartOptions) -> Value {
     json!({"model": model, "force": opts.force, "cpu": opts.cpu})
 }
