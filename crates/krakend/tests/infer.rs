@@ -290,3 +290,115 @@ fn process_alive(pid: u64) -> bool {
         Err(_) => false,
     }
 }
+
+/// A manager with one model set up (processor only), served by the fake server as llama-server.
+fn serving_manager(dir: &Path) -> Arc<InferManager> {
+    use kraken_host::infer::ServingConfig;
+    use kraken_proto::infer::{LocalEngine, LocalModel, MultiGpuMode};
+    let path = dir.join("served.gguf");
+    std::fs::write(&path, vec![0u8; 1024]).expect("model file");
+    let cfg = ServingConfig {
+        models: vec![LocalModel {
+            id: "m".into(),
+            name: "Model".into(),
+            engine: LocalEngine::Llama,
+            model_path: path,
+            devices: Vec::new(),
+            cpu_only: true,
+            multi_gpu: MultiGpuMode::Split,
+            shares: None,
+            main_device: None,
+            context_size: Some(2048),
+            autostart: true,
+            extra: None,
+        }],
+        roles: vec!["m".into()],
+        serving: kraken_host::LocalServingSettings::default(),
+    };
+    Arc::new(
+        InferManager::with_registry(BackendRegistry::new())
+            .with_total_memory(8 * GIB, None)
+            .with_serving_config(cfg)
+            .with_llama_binary(fake_server_path()),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn holds_end_with_their_connection_and_the_model_stops_after_the_grace() {
+    use kraken_host::infer::{ServingApi, StartOptions};
+    use kraken_proto::infer::ModelState;
+    let t = tempfile::tempdir().expect("tempdir");
+    let infer = serving_manager(t.path());
+    let r = rig(600, infer.clone());
+    let gui1 = r.client().await;
+    let gui2 = r.client().await;
+
+    let s = gui1.hold("m", StartOptions::default()).await.expect("hold");
+    assert_eq!(s.holders, 1);
+    assert!(s.api_key.is_some());
+    let auto = gui2.autostart().await.expect("autostart");
+    assert_eq!(auto.started, ["m"]);
+    assert_eq!(infer.model_status("m").holders, 2);
+    let models = gui2.models().await.expect("models");
+    assert_eq!(models.models[0].id, "m");
+
+    // The first GUI dies: its hold goes, the second keeps the model.
+    drop(gui1);
+    wait_until("the first hold to go", || {
+        infer.model_status("m").holders == 1
+    })
+    .await;
+    r.clock.advance(Duration::from_secs(500));
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert!(infer.model_status("m").is_running());
+
+    drop(gui2);
+    wait_until("the grace period to start", || {
+        let s = infer.model_status("m");
+        s.holders == 0 && s.stops_in_secs.is_some()
+    })
+    .await;
+    assert!(infer.model_status("m").is_running());
+    r.clock.advance(Duration::from_secs(121));
+    wait_until("the model to stop", || {
+        infer.model_status("m").state == ModelState::Stopped
+    })
+    .await;
+    assert_eq!(infer.loaded_models(), 0);
+    r.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_manual_start_outlives_its_connection_until_stopped() {
+    use kraken_host::infer::{ServingApi, StartOptions};
+    use kraken_proto::infer::ModelState;
+    let t = tempfile::tempdir().expect("tempdir");
+    let infer = serving_manager(t.path());
+    let r = rig(600, infer.clone());
+    let c = r.client().await;
+    let s = c
+        .start_model("m", StartOptions::default())
+        .await
+        .expect("start");
+    assert!(s.pinned);
+    drop(c);
+    wait_until("the client to be gone", || {
+        r.daemon.as_ref().unwrap().clients() == 0
+    })
+    .await;
+    r.clock.advance(Duration::from_secs(1000));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let s = infer.model_status("m");
+    assert!(
+        s.is_running() && s.pinned && s.stops_in_secs.is_none(),
+        "{s:?}"
+    );
+
+    let c = r.client().await;
+    let e = c.hold("nope", StartOptions::default()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound);
+    assert!(c.stop_model("m").await.expect("stop").stopped);
+    assert_eq!(infer.model_status("m").state, ModelState::Stopped);
+    drop(c);
+    r.finish().await;
+}

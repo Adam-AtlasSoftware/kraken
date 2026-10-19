@@ -203,6 +203,14 @@ const KV_BYTES_PER_TOKEN: u64 = 128 * 1024;
 const ENGINE_OVERHEAD: u64 = 512 * 1024 * 1024;
 const MIN_MARGIN: u64 = 512 * 1024 * 1024;
 
+/// Memory a model of `model_bytes` with `context_size` tokens of context is expected to take
+/// once loaded: weights, context (KV cache) and engine buffers, without the margin.
+pub fn footprint(model_bytes: u64, context_size: u32) -> u64 {
+    model_bytes
+        .saturating_add(u64::from(context_size) * KV_BYTES_PER_TOKEN)
+        .saturating_add(ENGINE_OVERHEAD)
+}
+
 /// Whether a model of `model_bytes` with `context_size` tokens of context fits the `pools` it
 /// would use (one per selected card, or the RAM pool alone for a processor-only run).
 ///
@@ -218,9 +226,7 @@ pub fn fit(
     if pools.is_empty() {
         return Fit::NoFit;
     }
-    let need = model_bytes
-        .saturating_add(u64::from(context_size) * KV_BYTES_PER_TOKEN)
-        .saturating_add(ENGINE_OVERHEAD);
+    let need = footprint(model_bytes, context_size);
     let margin = (need / 10).max(MIN_MARGIN);
     let have = match mode {
         MultiGpuMode::CopyPerCard => pools.iter().map(MemoryPool::available).min().unwrap_or(0),

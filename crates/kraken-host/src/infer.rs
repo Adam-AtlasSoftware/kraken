@@ -1,14 +1,19 @@
 //! Local inference hosting shared by `krakend`, the CLI and the GUI (decisions 21, 30, 69).
 //!
-//! An [`InferManager`] owns at most one model: a supervised `llama-server` (or an engine described
-//! by a manifest) running as a child process on 127.0.0.1. Its lifetime is the lifetime of the
-//! manager's owner, not of any client: in `krakend` the model outlives every connection and the
-//! daemon's idle monitor counts it as work ([`InferManager::loaded_models`]); with `--no-daemon`
-//! the CLI or GUI process owns it.
+//! An [`InferManager`] runs the local models: supervised `llama-server` or Strata processes (or an
+//! engine described by a manifest) on 127.0.0.1, several at once, each on its own port with its
+//! own per-run key. In `krakend` the daemon's idle monitor counts them as work
+//! ([`InferManager::loaded_models`]); with `--no-daemon` the CLI or GUI process owns them.
 //!
-//! [`InferApi`] is the one interface of the five operations (`list`, `start`, `status`, `stop`,
-//! `logs`). The manager implements it directly and [`DaemonClient`] implements it over the
-//! daemon's `infer_*` RPC methods, so the CLI and the GUI do not care where the model runs.
+//! The models set up in `[[local_models]]` run while someone holds them; see [`serving`] for the
+//! holds, the grace period, the fit check and autostart ([`ServingApi`]).
+//!
+//! [`InferApi`] is the older interface of five operations on one model (`list`, `start`,
+//! `status`, `stop`, `logs`), kept for the CLI and GUI until they move to [`ServingApi`]: `start`
+//! runs an engine with settings as a manual start ([`MANUAL_MODEL_ID`]); `status`, `stop` and
+//! `logs` act on the model the assistant uses when it runs, else on the latest one started. The
+//! manager implements it directly and [`DaemonClient`] implements it over the daemon's `infer_*`
+//! RPC methods, so the CLI and the GUI do not care where the model runs.
 //!
 //! Before a start the memory budget is checked: the machine's RAM minus the JVM heaps of the open
 //! Ghidra sessions ([`ghidra_reservations`]) minus the model. A tight fit becomes a warning in
@@ -16,15 +21,14 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use async_trait::async_trait;
 use kraken_infer::budget::GIB;
 use kraken_infer::llama::LlamaServerBackend;
 use kraken_infer::{
     BackendCapabilities, BackendRegistry, GpuApi, InferError, InferenceBackend, LogStream,
-    MemoryBudget, Phase, Reservation, RunningBackend,
+    MemoryBudget, Phase, Reservation,
 };
 use kraken_proto::{ErrorCode, LocalEngine, LocalModel, MultiGpuMode, ProtoError};
 use serde::{Deserialize, Serialize};
@@ -33,6 +37,17 @@ use serde_json::{Map, Value, json};
 use crate::daemon::DaemonClient;
 use crate::factory::ManagedFactory;
 use crate::llama_setup::{self, InstalledLlama, LlamaLayout};
+
+pub mod serving;
+
+pub use serving::{
+    AutostartReport, DevicesReply, HeldBy, Holder, MANUAL_MODEL_ID, METHOD_INFER_AUTOSTART,
+    METHOD_INFER_DEVICES, METHOD_INFER_HOLD, METHOD_INFER_MODEL_LOGS, METHOD_INFER_MODEL_START,
+    METHOD_INFER_MODEL_STOP, METHOD_INFER_MODELS, METHOD_INFER_RELEASE, ModelLogsParams,
+    ModelParams, ModelStatus, ModelsReply, ReleaseReply, ServingApi, ServingConfig, SkippedModel,
+    StartOptions, serve_serving_rpc,
+};
+use serving::{ConfigFn, DevicesFn, Slot, State};
 
 /// Lists the backends this computer can run.
 pub const METHOD_INFER_LIST: &str = "infer_list";
@@ -457,19 +472,7 @@ type MemoryFn = Box<dyn Fn() -> Option<MemoryBudget> + Send + Sync>;
 // ---------------------------------------------------------------------------------------------
 // The manager
 
-struct Active {
-    backend: String,
-    running: RunningBackend,
-    started: Instant,
-}
-
-impl Active {
-    fn live(&self) -> bool {
-        !matches!(self.running.status().phase, Phase::Failed | Phase::Stopped)
-    }
-}
-
-/// Owns the local model.
+/// Owns the local models.
 pub struct InferManager {
     registry: BackendRegistry,
     manifest_ids: Vec<String>,
@@ -479,8 +482,15 @@ pub struct InferManager {
     path_var: Option<OsString>,
     reservations: RwLock<Option<ReservationFn>>,
     memory: MemoryFn,
+    /// Serializes starts and stops.
     op: tokio::sync::Mutex<()>,
-    active: Mutex<Option<Arc<Active>>>,
+    state: Mutex<State>,
+    config: ConfigFn,
+    devices: DevicesFn,
+    clock: RwLock<Arc<dyn kraken_ipc::Clock>>,
+    stats: OnceLock<Arc<kraken_infer::stats::StatsSampler>>,
+    llama_binary: Option<PathBuf>,
+    strata_manifest: Option<PathBuf>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -555,7 +565,13 @@ impl InferManager {
             reservations: RwLock::new(None),
             memory: Box::new(|| MemoryBudget::from_system().ok()),
             op: tokio::sync::Mutex::new(()),
-            active: Mutex::new(None),
+            state: Mutex::new(State::default()),
+            config: Arc::new(ServingConfig::default),
+            devices: Arc::new(Vec::new),
+            clock: RwLock::new(Arc::new(kraken_ipc::SystemClock::new())),
+            stats: OnceLock::new(),
+            llama_binary: None,
+            strata_manifest: None,
         }
     }
 
@@ -596,7 +612,82 @@ impl InferManager {
         m.load_warnings = load_warnings;
         m.llama = data.as_deref().map(LlamaLayout::in_data_dir);
         m.path_var = env("PATH");
+        m.strata_manifest = data
+            .as_deref()
+            .map(|d| crate::strata_setup::StrataLayout::in_data_dir(d).backend_manifest());
+        if let Some(path) = crate::KrakenConfig::default_path_with(env) {
+            m.config = Arc::new(move || {
+                let cfg = crate::KrakenConfig::from_file(&path).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "cannot read the configuration");
+                    crate::KrakenConfig::default()
+                });
+                ServingConfig::from_config(&cfg)
+            });
+        }
+        let llama = m.llama.clone();
+        let path_var = m.path_var.clone();
+        m.devices = Arc::new(move || {
+            let bin = llama
+                .as_ref()
+                .and_then(LlamaLayout::installed)
+                .map(|i| i.binary)
+                .or_else(|| kraken_infer::llama::discover_binary(None, path_var.as_deref(), None));
+            let bin = bin.map(|b| b.to_string_lossy().into_owned());
+            kraken_infer::hardware::detect_devices(&kraken_infer::SystemProbe, bin.as_deref())
+        });
         m
+    }
+
+    /// Reads the models, roles and grace period from `f` instead of `config.toml`.
+    #[must_use]
+    pub fn with_config_source(
+        mut self,
+        f: impl Fn() -> ServingConfig + Send + Sync + 'static,
+    ) -> Self {
+        self.config = Arc::new(f);
+        self
+    }
+
+    /// A fixed serving configuration (tests).
+    #[must_use]
+    pub fn with_serving_config(self, cfg: ServingConfig) -> Self {
+        self.with_config_source(move || cfg.clone())
+    }
+
+    /// Replaces the card detection (tests, or a host that knows its cards).
+    #[must_use]
+    pub fn with_devices(
+        mut self,
+        f: impl Fn() -> Vec<kraken_proto::infer::DeviceInfo> + Send + Sync + 'static,
+    ) -> Self {
+        self.devices = Arc::new(f);
+        self
+    }
+
+    /// Runs this program as `llama-server` for the models set up (tests use the fake server).
+    #[must_use]
+    pub fn with_llama_binary(mut self, path: PathBuf) -> Self {
+        self.llama_binary = Some(path);
+        self
+    }
+
+    /// Where the Strata engine manifest (`backend.toml`) is.
+    #[must_use]
+    pub fn with_strata_manifest(mut self, path: PathBuf) -> Self {
+        self.strata_manifest = Some(path);
+        self
+    }
+
+    /// Uses `sampler` for the live figures instead of one reading the real machine.
+    #[must_use]
+    pub fn with_stats(self, sampler: Arc<kraken_infer::stats::StatsSampler>) -> Self {
+        let _ = self.stats.set(sampler);
+        self
+    }
+
+    /// Sets the time source of the grace period (the daemon passes its own clock).
+    pub fn set_clock(&self, clock: Arc<dyn kraken_ipc::Clock>) {
+        *self.clock.write().unwrap_or_else(PoisonError::into_inner) = clock;
     }
 
     /// Replaces the memory source (tests, or a machine whose VRAM is known).
@@ -665,15 +756,34 @@ impl InferManager {
         (b, extra, note)
     }
 
-    /// Number of loaded models, as the daemon's idle monitor counts them: 1 while the process is
+    /// Number of loaded models, as the daemon's idle monitor counts them: the processes that are
     /// loading, serving or restarting.
     pub fn loaded_models(&self) -> usize {
-        usize::from(lock(&self.active).as_ref().is_some_and(|a| a.live()))
+        lock(&self.state)
+            .slots
+            .values()
+            .filter(|s| s.live())
+            .count()
     }
 
-    /// Stops the model, if any (for owners shutting down).
+    /// Stops every model (for owners shutting down).
     pub async fn shutdown(&self) {
-        let _ = InferApi::stop(self).await;
+        let ids: Vec<String> = lock(&self.state).slots.keys().cloned().collect();
+        for id in ids {
+            self.stop_model(&id).await;
+        }
+    }
+
+    /// The model the old single-model methods act on: the assistant's (or rewriting's) model when
+    /// it was started, else the latest one started.
+    fn default_slot(&self) -> Option<Arc<Slot>> {
+        let roles = self.serving_config().roles;
+        let st = lock(&self.state);
+        roles
+            .iter()
+            .find_map(|r| st.slots.get(r))
+            .or_else(|| st.order.last().and_then(|id| st.slots.get(id)))
+            .cloned()
     }
 
     fn llama_installed(&self) -> Option<InstalledLlama> {
@@ -719,22 +829,27 @@ impl InferManager {
     }
 
     fn status_of(&self) -> StatusReply {
-        let Some(a) = lock(&self.active).clone() else {
+        let Some(a) = self.default_slot() else {
             return StatusReply::none();
         };
-        let p = a.running.status();
+        let run = a.run();
+        let p = run.status();
+        let (phase, message) = match a.state() {
+            kraken_proto::ModelState::Failed { message } => ("failed", message),
+            _ => (phase_name(p.phase), p.message),
+        };
         StatusReply {
             running: a.live(),
-            phase: phase_name(p.phase).into(),
+            phase: phase.into(),
             backend: Some(a.backend.clone()),
-            model: a.running.model().map(str::to_string),
-            base_url: Some(a.running.base_url()),
+            model: run.model().map(str::to_string),
+            base_url: Some(run.base_url()),
             fraction: p.fraction,
-            message: p.message,
+            message,
             restarts: p.restarts,
             pid: p.pid,
             uptime_secs: Some(a.started.elapsed().as_secs()),
-            api_key: a.running.api_key().map(str::to_string),
+            api_key: run.api_key().map(str::to_string),
         }
     }
 
@@ -852,18 +967,18 @@ impl InferApi for InferManager {
         }
 
         let _op = self.op.lock().await;
-        let current = lock(&self.active).clone();
+        let current = lock(&self.state).slots.get(MANUAL_MODEL_ID).cloned();
         if let Some(a) = current {
             if a.live() {
                 return Err(ProtoError::new(
                     ErrorCode::Unsupported,
                     format!(
                         "a model is already running ({}); stop it first",
-                        a.running.model().unwrap_or(&a.backend)
+                        a.run().model().unwrap_or(&a.backend)
                     ),
                 ));
             }
-            a.running.stop().await;
+            a.stop().await;
         }
 
         let (budget, _extra, note) = self.budget();
@@ -885,13 +1000,12 @@ impl InferApi for InferManager {
             port: running.port(),
             pid: running.status().pid,
             api_key: running.api_key().map(str::to_string),
-            warnings,
+            warnings: warnings.clone(),
         };
-        *lock(&self.active) = Some(Arc::new(Active {
-            backend: backend.to_string(),
-            running,
-            started: Instant::now(),
-        }));
+        let slot = Arc::new(Slot::new_manual(backend, running, warnings));
+        let mut st = lock(&self.state);
+        st.insert(slot);
+        st.add_hold(MANUAL_MODEL_ID, Holder::Pinned);
         Ok(reply)
     }
 
@@ -900,40 +1014,21 @@ impl InferApi for InferManager {
     }
 
     async fn stop(&self) -> Result<StopReply, ProtoError> {
-        let _op = self.op.lock().await;
-        let a = lock(&self.active).clone();
-        let Some(a) = a else {
+        let Some(a) = self.default_slot() else {
             return Ok(StopReply { stopped: false });
         };
-        let was_live = a.live();
-        a.running.stop().await;
-        Ok(StopReply { stopped: was_live })
+        Ok(StopReply {
+            stopped: self.stop_model(&a.id).await,
+        })
     }
 
     async fn logs(&self, params: LogsParams) -> Result<LogsReply, ProtoError> {
-        let Some(a) = lock(&self.active).clone() else {
-            return Ok(LogsReply {
-                lines: Vec::new(),
-                last_seq: params.after_seq.unwrap_or(0),
-            });
-        };
-        let ring = a.running.process().ring();
-        let all = ring.snapshot();
-        let last_seq = all.last().map_or(params.after_seq.unwrap_or(0), |l| l.seq);
-        let limit = params.limit.unwrap_or(DEFAULT_LOG_LIMIT).min(MAX_LOG_LIMIT);
-        let mut lines: Vec<LogEntry> = ring
-            .since(params.after_seq)
-            .into_iter()
-            .map(|l| LogEntry {
-                seq: l.seq,
-                stream: stream_name(l.stream).into(),
-                text: l.text,
-            })
-            .collect();
-        if lines.len() > limit {
-            lines.drain(..lines.len() - limit);
-        }
-        Ok(LogsReply { lines, last_seq })
+        let slot = self.default_slot();
+        Ok(serving::logs_of(
+            slot.as_deref(),
+            params.after_seq,
+            params.limit,
+        ))
     }
 }
 
@@ -1061,6 +1156,9 @@ pub fn gpu_names(apis: &[GpuApi]) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod serving_tests;
 
 #[cfg(test)]
 mod migrate_tests {
