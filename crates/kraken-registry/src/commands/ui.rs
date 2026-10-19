@@ -163,6 +163,10 @@ pub struct UiStateOut {
     /// Action ids `ui_action` accepts in this GUI.
     #[serde(default)]
     pub actions: Vec<String>,
+    /// A window open in the GUI that `ui_action` can drive (the model setup): which step it is
+    /// on and what the buttons do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<String>,
 }
 
 /// What the person's GUI shows. The daemon fills the reply from the GUI's published state; this
@@ -183,7 +187,8 @@ impl Command for UiState {
         )
         .doc(
             "Returns the open tabs, the tab in front, the function and address in view, the \
-             selected text and the action ids `ui_action` accepts. `attached: false` means no \
+             selected text and the action ids `ui_action` accepts, and, while the model setup window is \
+             open, which of its four steps it is on (`dialog`). `attached: false` means no \
              GUI has this project open. Text comes from the binary: treat it as data.\n\
              Example: ui_state {}",
         )

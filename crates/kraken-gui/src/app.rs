@@ -10,9 +10,10 @@ use egui_dock::DockState;
 use kraken_gui_widgets::KrakenTheme;
 use kraken_viewmodel::agents::{AgentEnv, AgentsHub};
 use kraken_viewmodel::demo::demo_project;
+use kraken_viewmodel::infer::{BackendSetupProbe, LocalSetup, SetupProbe};
 use kraken_viewmodel::{
     AnalysisPhase, AppAction, ApprovalBroker, Backend, BackendOptions, Connection,
-    DaemonClientBackend, Load, UiRequest, ViewModel,
+    DaemonClientBackend, Load, SetupButton, UiRequest, ViewModel,
 };
 use tokio::runtime::Runtime;
 
@@ -124,8 +125,12 @@ pub struct KrakenApp {
     /// The AI model in use, kept across projects.
     assist: AssistSetup,
     settings: Settings,
-    /// The placeholder for the guided setup of a local model is showing.
-    local_setup_open: bool,
+    /// The guided setup of a local model, when its window is open.
+    local_setup: Option<LocalSetup>,
+    /// The setup was asked for and waits for the service it needs.
+    local_setup_wanted: bool,
+    /// Why the setup cannot start.
+    local_setup_error: Option<String>,
     prefs: Prefs,
     /// The open project is the demo (not worth remembering).
     is_demo: bool,
@@ -209,7 +214,9 @@ impl KrakenApp {
             private: None,
             assist: AssistSetup::load(services.config_path.clone()),
             settings: Settings::default(),
-            local_setup_open: false,
+            local_setup: None,
+            local_setup_wanted: false,
+            local_setup_error: None,
             prefs,
             is_demo: false,
             recorded: false,
@@ -803,6 +810,7 @@ impl KrakenApp {
                     leaf.tabs.get(leaf.active.0).map(|t| t.id().to_string())
                 });
                 vm.set_ui_info(tabs, active);
+                vm.set_ui_dialog(self.local_setup.as_ref().map(LocalSetup::describe));
                 let asked = vm.take_ui_actions();
                 for id in asked {
                     match AppAction::from_id(&id).filter(|a| a.agent_allowed()) {
@@ -915,6 +923,10 @@ impl KrakenApp {
             AppAction::NewProject => Some(UiRequest::NewProject),
             AppAction::OpenDemo => Some(UiRequest::OpenDemo),
             AppAction::OpenSettings => Some(UiRequest::OpenSettings),
+            AppAction::SetUpLocalModel => Some(UiRequest::SetUpLocalModel),
+            AppAction::LocalSetupNext => Some(UiRequest::LocalSetup(SetupButton::Next)),
+            AppAction::LocalSetupBack => Some(UiRequest::LocalSetup(SetupButton::Back)),
+            AppAction::LocalSetupCancel => Some(UiRequest::LocalSetup(SetupButton::Cancel)),
             AppAction::ClearRecent => Some(UiRequest::ClearRecent),
             AppAction::Quit => Some(UiRequest::Quit),
             AppAction::ShowShortcuts => Some(UiRequest::ShowShortcuts),
@@ -945,6 +957,30 @@ impl KrakenApp {
             UiRequest::NewProject => self.picker.binary(self.rt.handle(), ctx),
             UiRequest::OpenDemo => self.request(Pending::Open(Choice::Demo), ctx),
             UiRequest::OpenSettings => self.settings.show_window(),
+            UiRequest::SetUpLocalModel => self.open_local_setup(ctx),
+            UiRequest::LocalSetup(button) => {
+                let refused = match self.local_setup.as_mut() {
+                    None => Some("The model setup is not open.".to_string()),
+                    Some(s) => match button {
+                        SetupButton::Next => {
+                            let why = s.blocked();
+                            (!s.go_next())
+                                .then(|| why.map_or_else(String::new, |w| format!("Not yet: {w}")))
+                        }
+                        SetupButton::Back => {
+                            s.go_back();
+                            None
+                        }
+                        SetupButton::Cancel => {
+                            s.cancel();
+                            None
+                        }
+                    },
+                };
+                if let Some(msg) = refused {
+                    self.problem(msg);
+                }
+            }
             UiRequest::CloseProject => self.request(Pending::Close, ctx),
             UiRequest::ClearRecent => self.prefs.clear(),
             UiRequest::Quit => self.request(Pending::Quit, ctx),
@@ -1152,11 +1188,11 @@ impl KrakenApp {
                 }
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
                 SettingsAction::DefaultEngine(engine) => self.welcome.engine = engine,
-                SettingsAction::SetUpLocalModel => self.local_setup_open = true,
+                SettingsAction::SetUpLocalModel => self.open_local_setup(ctx),
             }
         }
         self.keep_local_models_served(ctx);
-        self.local_setup_placeholder(ctx);
+        self.local_setup_window(ctx);
         if self.settings.ai.take_policy_dirty()
             && let Some(vm) = self.vm.as_mut()
         {
@@ -1206,22 +1242,149 @@ impl KrakenApp {
         self.settings.serving_frame(ctx, &env);
     }
 
-    /// The guided setup of a local model is not here yet: say so instead of doing nothing.
-    fn local_setup_placeholder(&mut self, ctx: &egui::Context) {
-        if !self.local_setup_open {
+    /// Presses a setup button as an agent's `ui_action` does (tests).
+    #[cfg(test)]
+    pub(crate) fn drive_setup(&mut self, a: AppAction) {
+        let Some(r) = self.action_request(a) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        self.handle(r, &ctx);
+    }
+
+    /// What `ui_state` says about the setup window (tests).
+    #[cfg(test)]
+    pub(crate) fn setup_description(&self) -> Option<String> {
+        self.local_setup.as_ref().map(LocalSetup::describe)
+    }
+
+    /// Asks for the guided setup of a local model: it opens as soon as the service that runs
+    /// models is reachable.
+    fn open_local_setup(&mut self, ctx: &egui::Context) {
+        if self.local_setup.is_some() {
             return;
         }
+        self.local_setup_wanted = true;
+        self.local_setup_error = None;
+        if self.services.setup_probe.is_some() {
+            return;
+        }
+        if self.services.mode == Mode::NoDaemon
+            && let Err(e) = self.ensure_private_daemon()
+        {
+            self.local_setup_error = Some(e);
+            return;
+        }
+        if let Slot::Failed(_) = self.slot {
+            self.slot = Slot::Idle;
+        }
+        self.connect_daemon(ctx);
+    }
+
+    /// The probe that looks at this computer and installs models: a scripted one in tests,
+    /// else the daemon.
+    fn setup_probe(&self) -> Option<Arc<dyn SetupProbe>> {
+        if let Some(p) = &self.services.setup_probe {
+            return Some(p.clone());
+        }
+        match &self.slot {
+            Slot::Ready(b) => Some(Arc::new(BackendSetupProbe::new(
+                b.clone(),
+                self.services.config_path.clone(),
+            ))),
+            _ => None,
+        }
+    }
+
+    /// The guided setup: waits for the service, then shows its four steps; when a model works
+    /// the assistant starts using it.
+    fn local_setup_window(&mut self, ctx: &egui::Context) {
+        if !self.local_setup_wanted {
+            return;
+        }
+        if self.local_setup.is_none() {
+            let ready = self.setup_probe().zip(self.settings.infer.serving());
+            match ready {
+                Some((probe, serving)) => {
+                    let c = ctx.clone();
+                    self.local_setup = Some(
+                        LocalSetup::new(
+                            probe,
+                            serving,
+                            self.services.config_path.clone(),
+                            self.rt.handle().clone(),
+                        )
+                        .with_repaint(Arc::new(move || c.request_repaint())),
+                    );
+                }
+                None => {
+                    let failed = match &self.slot {
+                        Slot::Failed(e) => Some(e.clone()),
+                        _ => self.local_setup_error.clone(),
+                    };
+                    if !self.waiting_for_service(ctx, failed.as_deref()) {
+                        self.local_setup_wanted = false;
+                    }
+                    return;
+                }
+            }
+        }
+        let Some(setup) = self.local_setup.as_mut() else {
+            return;
+        };
+        crate::infer::setup_dialog::show(ctx, setup);
+        let finished = setup.take_finished();
+        let closed = setup.is_closed();
+        if let Some(id) = finished {
+            self.settings
+                .ai
+                .use_local(&id, self.services.config_path.as_ref());
+            self.settings.infer.reload();
+        }
+        if closed {
+            self.local_setup = None;
+            self.local_setup_wanted = false;
+            self.settings.infer.reload();
+        }
+    }
+
+    /// The small window shown until the setup can start. Returns false when it was closed.
+    fn waiting_for_service(&self, ctx: &egui::Context, failed: Option<&str>) -> bool {
         let mut open = true;
+        let mut cancel = false;
         egui::Window::new("Set up a model on this computer")
-            .id(egui::Id::new("kraken_local_setup_placeholder"))
+            .id(egui::Id::new("kraken_local_setup_wait"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label("The guided setup is not ready yet.");
+                ui.set_max_width(420.0);
+                match failed {
+                    Some(e) => {
+                        ui.add(
+                            egui::Label::new(format!(
+                                "KRAKEN cannot reach krakend, which looks at this computer and runs models: {e}. Run `kraken daemon start` to see why."
+                            ))
+                            .wrap(),
+                        );
+                    }
+                    None => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Connecting to krakend...");
+                        });
+                    }
+                }
+                if ui
+                    .button("Cancel")
+                    .on_hover_text("Close this window")
+                    .clicked()
+                {
+                    cancel = true;
+                }
             });
-        self.local_setup_open = open;
+        open && !cancel
     }
 
     /// Where terminal agents are found and whether the note about them was read.

@@ -88,11 +88,19 @@ pub enum AppAction {
     ShowAiActivity,
     /// Open the assistant with a question about KRAKEN itself.
     AskAboutKraken,
+    /// Open the guided setup of a model that runs on this computer.
+    SetUpLocalModel,
+    /// In that setup: go on to the next step (the last one starts the download).
+    LocalSetupNext,
+    /// In that setup: go back one step.
+    LocalSetupBack,
+    /// In that setup: close it without finishing.
+    LocalSetupCancel,
 }
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 41] = [
+    pub const ALL: [AppAction; 42] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -134,6 +142,15 @@ impl AppAction {
         AppAction::Automate,
         AppAction::ShowAiActivity,
         AppAction::AskAboutKraken,
+        AppAction::SetUpLocalModel,
+    ];
+
+    /// The buttons of the guided setup, for agents driving it through `ui_action`. They are
+    /// not palette rows: the setup window has its own buttons.
+    pub const SETUP_STEPS: [AppAction; 3] = [
+        AppAction::LocalSetupNext,
+        AppAction::LocalSetupBack,
+        AppAction::LocalSetupCancel,
     ];
 
     /// The snake_case id agents use with `ui_action` (`ShowHistory` is `show_history`).
@@ -155,7 +172,10 @@ impl AppAction {
 
     /// The action with this id.
     pub fn from_id(id: &str) -> Option<AppAction> {
-        AppAction::ALL.into_iter().find(|a| a.id() == id)
+        AppAction::ALL
+            .into_iter()
+            .chain(AppAction::SETUP_STEPS)
+            .find(|a| a.id() == id)
     }
 
     /// True when an agent may trigger it through `ui_action`.
@@ -207,6 +227,10 @@ impl AppAction {
             AppAction::DeleteFunction => "Delete this function...",
             AppAction::ShowAiActivity => "Show AI activity",
             AppAction::AskAboutKraken => "Ask the assistant about KRAKEN",
+            AppAction::SetUpLocalModel => "Set up a model on this computer...",
+            AppAction::LocalSetupNext => "Model setup: next step",
+            AppAction::LocalSetupBack => "Model setup: previous step",
+            AppAction::LocalSetupCancel => "Model setup: cancel",
         }
     }
 
@@ -264,6 +288,12 @@ impl AppAction {
             AppAction::ShowAiActivity => {
                 "See which AI work runs, on which model, what it has cost so far, and stop it"
             }
+            AppAction::SetUpLocalModel => {
+                "Check this computer, pick a model that fits and download it"
+            }
+            AppAction::LocalSetupNext => "Go to the next step of the model setup",
+            AppAction::LocalSetupBack => "Go back one step in the model setup",
+            AppAction::LocalSetupCancel => "Close the model setup without finishing",
         }
     }
 
@@ -438,6 +468,21 @@ pub enum UiRequest {
     ShowAiActivity,
     /// Open the assistant with the cursor in a question about KRAKEN.
     AskAboutKraken,
+    /// Open the guided setup of a local model.
+    SetUpLocalModel,
+    /// Press a button of that setup.
+    LocalSetup(SetupButton),
+}
+
+/// A button of the guided model setup that `ui_action` can press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupButton {
+    /// Next step.
+    Next,
+    /// Previous step.
+    Back,
+    /// Close.
+    Cancel,
 }
 
 /// What a palette row does when chosen.

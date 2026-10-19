@@ -19,6 +19,8 @@ use kraken_viewmodel::infer::card::{self, Tone};
 use kraken_viewmodel::infer::{BackendServing, LocalModelStore, ServingHub};
 use tokio::runtime::Handle;
 
+pub mod setup_dialog;
+
 use crate::services::Mode;
 use crate::style::{self, medium, pal};
 
@@ -86,6 +88,11 @@ impl InferSettings {
         self.hub
             .as_mut()
             .is_some_and(ServingHub::take_setup_request)
+    }
+
+    /// The service that runs the models (the guided setup starts the new model through it).
+    pub fn serving(&self) -> Option<Arc<dyn ServingApi>> {
+        self.hub.as_ref().map(ServingHub::api)
     }
 
     /// Asks for the guided setup (the picker's last entry).
@@ -414,7 +421,7 @@ fn status_block(
     }
 }
 
-fn run_on(
+pub(crate) fn run_on(
     ui: &mut Ui,
     p: &kraken_gui_widgets::Palette,
     model: &mut LocalModel,
@@ -467,7 +474,7 @@ fn run_on(
     );
 }
 
-fn several(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut LocalModel) {
+pub(crate) fn several(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut LocalModel) {
     ui.add_space(4.0);
     ui.label(medium("How to use several cards", 13.0).color(p.text_strong));
     for o in card::mode_options(model.engine) {

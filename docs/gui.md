@@ -96,6 +96,7 @@ Ask the assistant about the program, or let it do the work.
 |---|---|---|
 | Explain this program | Ask the assistant what this program does |  |
 | Automate with the assistant... | Let the assistant understand, name and rewrite the program step by step |  |
+| Set up a model on this computer... | Check this computer, pick a model that fits and download it |  |
 | Show the Assistant tab | Show the Assistant tab and bring it to the front. |  |
 | Show AI activity | See which AI work runs, on which model, what it has cost so far, and stop it |  |
 | Toggle learn mode | Show a short explanation on every panel |  |

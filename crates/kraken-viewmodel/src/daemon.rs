@@ -360,7 +360,9 @@ impl Inner {
         // runs generated code, so it asks the same way.
         let runs_original = command == "rewrite_program"
             && args.get("build").and_then(Value::as_bool).unwrap_or(true);
-        let summary = if runs_original || command == "rewrite_build" {
+        let summary = if command == "local_model_setup" {
+            local_setup_summary(args)
+        } else if runs_original || command == "rewrite_build" {
             let mut s = if runs_original {
                 kraken_registry::commands::RUN_ORIGINAL_SUMMARY.to_string()
             } else {
@@ -398,6 +400,25 @@ impl Inner {
             .with_details(serde_json::json!({ "approval": "denied" })))
         }
     }
+}
+
+/// Commands about this computer, not a project: the daemon answers them without one.
+fn about_this_computer(command: &str) -> bool {
+    matches!(
+        command,
+        "local_model_recommend" | "local_model_setup" | "local_model_devices"
+    )
+}
+
+/// The question before a model is downloaded.
+fn local_setup_summary(args: &Value) -> String {
+    let model = args
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("a model");
+    format!(
+        "Download {model} and the program that runs it to this computer, and set it up. It is a large download and uses disk space."
+    )
 }
 
 /// Makes the path arguments of the project commands absolute: the daemon does not share the
@@ -506,12 +527,16 @@ impl DaemonClientBackend {
             // watching or cancelling the open in progress
             dir
         } else {
-            self.current_project().ok_or_else(|| {
-                ProtoError::new(
-                    ErrorCode::NotFound,
-                    "no project is open; run project_create or project_open first",
-                )
-            })?
+            match self.current_project() {
+                Some(dir) => dir,
+                None if about_this_computer(command) => PathBuf::new(),
+                None => {
+                    return Err(ProtoError::new(
+                        ErrorCode::NotFound,
+                        "no project is open; run project_create or project_open first",
+                    ));
+                }
+            }
         };
         let params = CallParams {
             project_dir: project_dir.to_string_lossy().into_owned(),

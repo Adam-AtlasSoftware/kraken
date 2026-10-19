@@ -118,3 +118,62 @@ fn the_panel_drives_a_model_hosted_by_the_daemon() {
     rt.block_on(async { tokio::time::timeout(Duration::from_secs(10), daemon.wait()).await })
         .expect("daemon stops");
 }
+
+#[test]
+fn the_setup_commands_reach_the_daemon_before_any_project_is_open() {
+    use crate::backend::Backend;
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("runtime"),
+    );
+    let tmp = tempfile::Builder::new()
+        .prefix("kraken-vm-setup")
+        .tempdir()
+        .expect("tempdir");
+    let dir = RuntimeDir::from_dir(tmp.path().join("rt")).expect("runtime dir");
+    let infer = Arc::new(InferManager::with_registry(BackendRegistry::new()));
+    let fixture = FixtureFile::from_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine-fake/fixtures/tiny.json"),
+    )
+    .expect("tiny fixture");
+    let daemon = {
+        let _guard = rt.enter();
+        krakend::start_with_infer(
+            DaemonOptions {
+                runtime_dir: dir.clone(),
+                factory: Arc::new(FakeFactory::new(fixture, Duration::ZERO)),
+                registry: Arc::new(Registry::standard()),
+                settings: DaemonSettings {
+                    idle_secs: Some(600),
+                    session_idle_secs: Some(1800),
+                    max_sessions: Some(4),
+                },
+                session_config: SessionConfig::default(),
+                clock: Arc::new(ManualClock::new()),
+                poll: Duration::from_millis(10),
+                build: crate::daemon::BUILD.into(),
+            },
+            infer,
+        )
+        .expect("daemon starts")
+    };
+    let backend = rt
+        .block_on(DaemonClientBackend::connect(
+            attach_connector(dir.clone()),
+            BackendOptions::default(),
+        ))
+        .expect("backend connects");
+    let out = rt
+        .block_on(backend.call("local_model_devices", serde_json::json!({})))
+        .expect("answered without a project");
+    assert!(out["devices"].is_array(), "{out}");
+    let refused = rt.block_on(backend.call("analyze", serde_json::json!({})));
+    assert!(refused.is_err(), "project commands still need a project");
+
+    daemon.shutdown();
+    rt.block_on(async { tokio::time::timeout(Duration::from_secs(10), daemon.wait()).await })
+        .expect("daemon stops");
+}

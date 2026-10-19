@@ -138,6 +138,8 @@ pub struct ViewModel {
     ui_highlights: Vec<(String, String)>,
     /// Tab ids open and the tab in front, as the window last reported them (`ui_state`).
     ui_info: Option<(Vec<String>, Option<String>)>,
+    /// A window the person has open that agents may drive (the model setup), in a sentence.
+    ui_dialog: Option<String>,
     /// Go to, Search, Bookmarks, the type and function dialogs and generated command forms.
     pub tools: crate::navtools::NavTools,
     /// AI work: what runs and what it costs, and the question asked before it starts.
@@ -328,6 +330,7 @@ impl ViewModel {
             ui_actions: Vec::new(),
             ui_highlights: Vec::new(),
             ui_info: None,
+            ui_dialog: None,
             tools: crate::navtools::NavTools::default(),
             ai: crate::ai::AiState::default(),
         };
@@ -967,6 +970,15 @@ impl ViewModel {
         }
     }
 
+    /// The window reports a dialog that agents can drive, described in a sentence (`None`: no
+    /// such dialog is open); a change is published like the open tabs.
+    pub fn set_ui_dialog(&mut self, dialog: Option<String>) {
+        if self.ui_dialog != dialog {
+            self.ui_dialog = dialog;
+            self.publish_selection();
+        }
+    }
+
     /// Looks the agent's new log entries up and tells the person what changed, with an Undo.
     fn announce_agent_edit(&mut self, change: ChangeInfo) {
         let wanted: Vec<u64> = change
@@ -1197,10 +1209,14 @@ impl ViewModel {
             selection["actions"] = json!(
                 crate::AppAction::ALL
                     .into_iter()
+                    .chain(crate::AppAction::SETUP_STEPS)
                     .filter(|a| a.agent_allowed())
                     .map(|a| a.id())
                     .collect::<Vec<_>>()
             );
+            if let Some(d) = &self.ui_dialog {
+                selection["dialog"] = json!(d);
+            }
         }
         let backend = self.backend.clone();
         self.rt.spawn(async move {
@@ -1871,6 +1887,16 @@ impl ViewModel {
             AppAction::RewriteWizard => self.rewrite_wizard_open(),
             AppAction::Automate => return Some(UiRequest::OpenAutomate),
             AppAction::AskAboutKraken => return Some(UiRequest::AskAboutKraken),
+            AppAction::SetUpLocalModel => return Some(UiRequest::SetUpLocalModel),
+            AppAction::LocalSetupNext => {
+                return Some(UiRequest::LocalSetup(crate::SetupButton::Next));
+            }
+            AppAction::LocalSetupBack => {
+                return Some(UiRequest::LocalSetup(crate::SetupButton::Back));
+            }
+            AppAction::LocalSetupCancel => {
+                return Some(UiRequest::LocalSetup(crate::SetupButton::Cancel));
+            }
             AppAction::ShowAiActivity => {
                 self.ai.wake = true;
                 return Some(UiRequest::ShowAiActivity);

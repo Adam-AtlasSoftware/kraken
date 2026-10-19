@@ -42,6 +42,8 @@ pub struct Services {
     /// A fixed service for the local models (tests, screenshots); `None` uses the daemon, or
     /// this process's own manager with `--no-daemon`.
     pub serving: Option<Arc<dyn kraken_host::infer::ServingApi>>,
+    /// A fixed probe for the guided model setup (tests, screenshots); `None` asks the daemon.
+    pub setup_probe: Option<Arc<dyn kraken_viewmodel::infer::SetupProbe>>,
 }
 
 impl Services {
@@ -68,6 +70,7 @@ impl Services {
             first_run_tour: true,
             ai_daily: kraken_model::DailyLedger::standard(),
             serving: None,
+            setup_probe: None,
         }
     }
 
@@ -87,6 +90,7 @@ impl Services {
             first_run_tour: false,
             ai_daily: None,
             serving: None,
+            setup_probe: None,
         }
     }
 

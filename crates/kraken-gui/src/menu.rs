@@ -297,6 +297,7 @@ pub fn bar(ui: &mut Ui, env: &MenuEnv<'_>) -> Vec<MenuCmd> {
             ui.menu_button("AI", |ui| {
                 item(ui, AppAction::ExplainProgram, env, &mut out);
                 item(ui, AppAction::Automate, env, &mut out);
+                item(ui, AppAction::SetUpLocalModel, env, &mut out);
                 tab_item(ui, Tab::Assistant, "Show the Assistant tab", env, &mut out);
                 ui.separator();
                 item(ui, AppAction::ShowAiActivity, env, &mut out);

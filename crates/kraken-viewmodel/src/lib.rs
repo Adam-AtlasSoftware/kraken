@@ -54,8 +54,8 @@ pub use inprocess::{ExtraQuery, GUI_USER, InProcessBackend};
 pub use loading::{LoadingState, clock, thousands};
 pub use nav::NavHistory;
 pub use palette::{
-    AppAction, PaletteItem, PaletteState, PaletteTarget, SHORTCUTS, Shortcut, UiRequest,
-    humanize_command,
+    AppAction, PaletteItem, PaletteState, PaletteTarget, SHORTCUTS, SetupButton, Shortcut,
+    UiRequest, humanize_command,
 };
 pub use state::*;
 pub use tokens::tokenize;
