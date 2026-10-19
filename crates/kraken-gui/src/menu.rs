@@ -207,7 +207,14 @@ fn help_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
 
 /// Draws the menu bar. On the welcome screen only File and Help are shown.
 pub fn bar(ui: &mut Ui, env: &MenuEnv<'_>) -> Vec<MenuCmd> {
+    bar_measured(ui, env).0
+}
+
+/// The same, with the x position where the last menu ends (the title bar puts the model chips
+/// after it).
+pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
     let mut out = Vec::new();
+    let mut end = 0.0;
     egui::MenuBar::new().ui(ui, |ui| {
         let file = ui
             .menu_button("File", |ui| file_menu(ui, env, &mut out))
@@ -315,8 +322,9 @@ pub fn bar(ui: &mut Ui, env: &MenuEnv<'_>) -> Vec<MenuCmd> {
         ui.menu_button("Help", |ui| help_menu(ui, env, &mut out))
             .response
             .on_hover_text("Help pages, the tour, shortcuts, learn mode and the user guide");
+        end = ui.cursor().left();
     });
-    out
+    (out, end)
 }
 
 /// The cheat sheet window, built from [`kraken_viewmodel::SHORTCUTS`].

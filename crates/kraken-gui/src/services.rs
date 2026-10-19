@@ -79,7 +79,12 @@ impl Services {
     pub fn offline() -> Self {
         Services {
             mode: Mode::Daemon,
-            cfg: KrakenConfig::default(),
+            cfg: {
+                let mut cfg = KrakenConfig::default();
+                // The same on every desktop the tests run on.
+                cfg.local_serving.titlebar = kraken_host::TitlebarMode::System;
+                cfg
+            },
             config_path: None,
             prefs_file: None,
             connector: Some(Arc::new(|| {

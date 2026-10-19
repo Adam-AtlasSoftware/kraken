@@ -73,7 +73,7 @@ fn device_ref(d: &DeviceInfo) -> DeviceRef {
     }
 }
 
-fn same(a: &DeviceRef, b: &DeviceInfo) -> bool {
+pub(super) fn same(a: &DeviceRef, b: &DeviceInfo) -> bool {
     if !a.uuid.is_empty() && !b.uuid.is_empty() {
         a.uuid == b.uuid
     } else {
@@ -247,7 +247,7 @@ pub fn set_main(model: &mut LocalModel, found: &[DeviceInfo], main: Option<&Devi
     model.devices = chosen;
 }
 
-fn names_of(cards: &[DeviceRef], found: &[DeviceInfo]) -> String {
+pub(super) fn names_of(cards: &[DeviceRef], found: &[DeviceInfo]) -> String {
     if cards.is_empty() {
         return "the processor".into();
     }

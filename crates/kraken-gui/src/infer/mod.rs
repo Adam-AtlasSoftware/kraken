@@ -16,6 +16,8 @@ use kraken_host::infer::{Holder, InferManager, ModelStatus, ServingApi, StartOpt
 use kraken_proto::infer::{DeviceInfo, LocalModel, MultiGpuMode};
 use kraken_viewmodel::DaemonClientBackend;
 use kraken_viewmodel::infer::card::{self, Tone};
+use kraken_viewmodel::infer::chips::{self, ChipAction, ChipBar};
+use kraken_viewmodel::infer::external::ExternalWatch;
 use kraken_viewmodel::infer::{BackendServing, LocalModelStore, ServingHub};
 use tokio::runtime::Handle;
 
@@ -44,6 +46,9 @@ pub struct InferSettings {
     confirm_remove: Option<String>,
     removed: Option<String>,
     save_error: Option<String>,
+    external: Option<ExternalWatch>,
+    /// Chips were drawn last frame: keep the hub polling for them.
+    chips_shown: bool,
 }
 
 impl InferSettings {
@@ -59,6 +64,41 @@ impl InferSettings {
     /// Looks at the configuration again the next time a card is drawn.
     pub fn reload(&mut self) {
         self.models_loaded = false;
+        self.reload_external();
+    }
+
+    /// The assistant's server may have changed: look at the configuration again.
+    pub fn reload_external(&mut self) {
+        if let Some(w) = self.external.as_mut() {
+            w.reload();
+        }
+    }
+
+    /// The window's view of the local models, for the title bar chips.
+    pub fn hub(&self) -> Option<&ServingHub> {
+        self.hub.as_ref()
+    }
+
+    /// The chips that fit in `budget` points, and keeps the hub polling while any is shown.
+    pub fn chip_bar(&mut self, budget: f32) -> ChipBar {
+        let (models, found) = self
+            .hub
+            .as_ref()
+            .map_or_else(Default::default, |h| (h.models(), h.devices()));
+        let external = self.external.as_ref().and_then(ExternalWatch::server);
+        let bar = chips::chip_bar(&models, &found, external.as_ref(), budget);
+        self.chips_shown = !bar.is_empty();
+        bar
+    }
+
+    /// Does what a chip's button asks.
+    pub fn chip_action(&mut self, key: &str, action: ChipAction) {
+        if let Some(h) = self.hub.as_mut() {
+            match action {
+                ChipAction::Start => h.start(key, StartOptions::default()),
+                ChipAction::Stop => h.stop(key),
+            }
+        }
     }
 
     fn ensure_models(&mut self, config_path: Option<&PathBuf>) {
@@ -130,10 +170,20 @@ impl InferSettings {
         watch: bool,
     ) {
         self.ensure_models(config_path);
+        let w = self.external.get_or_insert_with(|| {
+            let c = ctx.clone();
+            ExternalWatch::new(rt.clone(), config_path.cloned())
+                .with_repaint(Arc::new(move || c.request_repaint()))
+        });
+        let next = w.poll(Instant::now());
+        if w.server().is_some() {
+            ctx.request_repaint_after(next.max(std::time::Duration::from_millis(50)));
+        }
         if !self.bind(ctx, rt, mode, backend) {
             return;
         }
-        if !(watch || !self.models.is_empty()) {
+        let unknown = self.hub.as_ref().is_some_and(|h| !h.loaded());
+        if !(watch || self.chips_shown || unknown || !self.models.is_empty()) {
             return;
         }
         if let Some(h) = self.hub.as_mut() {

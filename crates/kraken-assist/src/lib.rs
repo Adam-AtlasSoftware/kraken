@@ -49,7 +49,9 @@ pub use error::AssistError;
 pub use glossary::{Arch, Glossary, GlossaryEntry, GlossaryKind, GlossaryMatch, MatchKind};
 pub use host::{CallRecord, DEFAULT_EXCLUDED, HostOptions, HostStats, RegistryToolHost};
 pub use local::{ServingResolver, set_serving};
-pub use meter::{Meter, MeterBuilder, MeterObserver, MeterSpec, daily_budget_message};
+pub use meter::{
+    Meter, MeterBuilder, MeterObserver, MeterSpec, daily_budget_message, measured_tok_s,
+};
 pub use output::{
     AutoNameReport, Component, Confidence, Evidence, EvidenceKind, Explanation,
     InterestingFunction, NameSuggestion, Outcome, Overview, SuggestedName, TaskOutput,

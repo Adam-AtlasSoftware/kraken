@@ -57,6 +57,7 @@ struct Draft {
     ghidra_home: String,
     java_home: String,
     max_heap_mb: String,
+    titlebar: kraken_host::TitlebarMode,
 }
 
 /// State of the settings window.
@@ -70,6 +71,7 @@ pub struct Settings {
     pub infer: crate::infer::InferSettings,
     loaded_from: Option<PathBuf>,
     note: Option<Result<String, String>>,
+    titlebar_note: Option<Result<String, String>>,
     status: Option<Result<Value, String>>,
     status_asked: Option<Instant>,
     status_in_flight: bool,
@@ -92,6 +94,7 @@ impl Default for Settings {
             infer: crate::infer::InferSettings::default(),
             loaded_from: None,
             note: None,
+            titlebar_note: None,
             status: None,
             status_asked: None,
             status_in_flight: false,
@@ -187,6 +190,7 @@ impl Settings {
         self.open = true;
         self.loaded_from = None;
         self.note = None;
+        self.titlebar_note = None;
         self.ai.reset();
         self.infer.reload();
     }
@@ -237,6 +241,7 @@ impl Settings {
             ghidra_home: show(&cfg.ghidra_home),
             java_home: show(&cfg.java_home),
             max_heap_mb: cfg.max_heap_mb.map(|m| m.to_string()).unwrap_or_default(),
+            titlebar: cfg.local_serving.titlebar,
         };
     }
 
@@ -400,7 +405,7 @@ impl Settings {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        self.appearance(ui, dark, &mut actions);
+                        self.appearance(ui, dark, env.config_path, &mut actions);
                         ui.separator();
                         self.ai.show(ui, env.rt, env.config_path, &mut self.infer);
                         ui.separator();
@@ -411,7 +416,6 @@ impl Settings {
                         self.daemon_section(ui, env, ctx);
                     });
             });
-        self.infer.dialogs(ctx);
         while let Some(id) = self.infer.take_removed() {
             self.ai.model_removed(&id);
         }
@@ -424,7 +428,13 @@ impl Settings {
         actions
     }
 
-    fn appearance(&mut self, ui: &mut Ui, dark: bool, actions: &mut Vec<SettingsAction>) {
+    fn appearance(
+        &mut self,
+        ui: &mut Ui,
+        dark: bool,
+        config_path: Option<&PathBuf>,
+        actions: &mut Vec<SettingsAction>,
+    ) {
         let p = pal(ui);
         ui.label(medium("Appearance", 14.0).color(p.text_strong));
         ui.horizontal(|ui| {
@@ -445,6 +455,68 @@ impl Settings {
                 actions.push(SettingsAction::SetDark(false));
             }
         });
+        self.titlebar_choice(ui, config_path);
+    }
+
+    /// "Title bar": saved at once, used the next time KRAKEN starts.
+    fn titlebar_choice(&mut self, ui: &mut Ui, config_path: Option<&PathBuf>) {
+        use kraken_host::TitlebarMode::{Auto, Custom, System};
+        let p = pal(ui);
+        let before = self.draft.titlebar;
+        ui.horizontal(|ui| {
+            ui.label("Title bar:");
+            for (mode, label, tip) in [
+                (Auto, "Automatic", "KRAKEN's own on KDE, GNOME and Windows; the system's elsewhere"),
+                (Custom, "KRAKEN's own", "Draws the window's title bar itself, with the model chips in it"),
+                (System, "The system's", "Uses the title bar your desktop draws; the model chips sit in the bar below the menus"),
+            ] {
+                if ui
+                    .radio(self.draft.titlebar == mode, label)
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    self.draft.titlebar = mode;
+                }
+            }
+        });
+        ui.label(
+            RichText::new(
+                "KRAKEN's own bar holds the menus and the local models' status. Takes effect the next time KRAKEN starts.",
+            )
+            .size(12.0)
+            .color(p.text_dim),
+        );
+        if self.draft.titlebar != before
+            && let Some(path) = config_path
+        {
+            let saved = KrakenConfig::from_file(path)
+                .map_err(|e| e.to_string())
+                .and_then(|mut cfg| {
+                    cfg.local_serving.titlebar = self.draft.titlebar;
+                    cfg.save(path).map_err(|e| e.to_string())
+                });
+            self.titlebar_note = Some(match saved {
+                Ok(()) => Ok("Title bar saved. It changes the next time KRAKEN starts.".into()),
+                Err(e) => Err(format!("The title bar setting could not be saved: {e}")),
+            });
+        }
+        match &self.titlebar_note {
+            Some(Ok(t)) => {
+                ui.label(
+                    RichText::new(t)
+                        .size(12.0)
+                        .color(style::status(style::dark(ui)).success),
+                );
+            }
+            Some(Err(e)) => {
+                ui.label(
+                    RichText::new(e)
+                        .size(12.0)
+                        .color(style::status(style::dark(ui)).danger),
+                );
+            }
+            None => {}
+        }
     }
 
     fn engine(&mut self, ui: &mut Ui, env: &SettingsEnv<'_>, actions: &mut Vec<SettingsAction>) {
@@ -785,6 +857,7 @@ mod tests {
                 java_home: String::new(),
                 max_heap_mb: "4096".into(),
                 engine: kraken_registry::EngineChoice::Auto,
+                titlebar: Default::default(),
             },
             ..Settings::default()
         };

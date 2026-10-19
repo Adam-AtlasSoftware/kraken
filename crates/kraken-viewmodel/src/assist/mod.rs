@@ -36,8 +36,8 @@ pub use learn::{PANEL_HELP, PanelHelp, panel_help};
 pub use picker::{CLOUD, PickEntry, PickGroup, SERVERS, groups as picker_groups};
 pub use provider::{
     ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, SECRETS_FILE, SECRETS_SERVICE,
-    SaveOutcome, SecretsFile, TestReport, badge_of, is_local_url, plain_agent_error,
-    test_connection,
+    SaveOutcome, SecretsFile, TestReport, badge_of, external_server, is_local_url,
+    plain_agent_error, test_connection,
 };
 pub use review::{ApplyWhich, confidence_label, evidence_text};
 pub use run::ASSISTANT_CHAT_PROMPT;

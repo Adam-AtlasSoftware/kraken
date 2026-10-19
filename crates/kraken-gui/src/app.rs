@@ -125,6 +125,8 @@ pub struct KrakenApp {
     /// The AI model in use, kept across projects.
     assist: AssistSetup,
     settings: Settings,
+    /// Draws its own title bar (decorations off).
+    custom_titlebar: bool,
     /// The guided setup of a local model, when its window is open.
     local_setup: Option<LocalSetup>,
     /// The setup was asked for and waits for the service it needs.
@@ -214,6 +216,8 @@ impl KrakenApp {
             private: None,
             assist: AssistSetup::load(services.config_path.clone()),
             settings: Settings::default(),
+            custom_titlebar: opts.screenshot.is_none()
+                && crate::titlebar::custom_here(services.cfg.local_serving.titlebar),
             local_setup: None,
             local_setup_wanted: false,
             local_setup_error: None,
@@ -1030,6 +1034,26 @@ impl KrakenApp {
         }
     }
 
+    /// The model chips, in a strip `width` points wide; returns the button pressed.
+    fn draw_chips(
+        infer: &mut crate::infer::InferSettings,
+        ui: &mut Ui,
+        width: f32,
+    ) -> Option<crate::model_chip::ChipClick> {
+        let bar = infer.chip_bar(width);
+        let busy: std::collections::HashSet<String> = infer
+            .hub()
+            .map(|h| {
+                bar.chips
+                    .iter()
+                    .filter(|c| h.busy(&c.key))
+                    .map(|c| c.key.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        crate::model_chip::show(ui, &bar, |k| busy.contains(k))
+    }
+
     fn menu_bar(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let recents = self.prefs.items().to_vec();
         let vm = self
@@ -1048,15 +1072,44 @@ impl KrakenApp {
             open_file: self.file_menu_open,
         };
         let pal = self.theme.palette();
-        let bar = egui::Panel::top("kraken_menu")
-            .frame(
-                Frame::new()
-                    .fill(pal.panel)
-                    .inner_margin(Margin::symmetric(8, 2)),
-            )
-            .show(ui, |ui| menu::bar(ui, &env));
-        tour::note_spot(ctx, Spot::Menu, bar.response.rect);
-        let cmds = bar.inner;
+        let (bar, cmds, chip_click) = if self.custom_titlebar {
+            let project = vm.and_then(|v| v.project.as_ref().map(|i| i.name.clone()));
+            let infer = &mut self.settings.infer;
+            let mut click = None;
+            let bar = egui::Panel::top("kraken_menu")
+                .frame(Frame::new().fill(pal.panel).inner_margin(Margin {
+                    left: 10,
+                    right: 8,
+                    top: 6,
+                    bottom: 3,
+                }))
+                .show(ui, |ui| {
+                    crate::titlebar::custom_bar(
+                        ui,
+                        crate::titlebar::BarParts {
+                            project,
+                            menus: |ui: &mut Ui| menu::bar_measured(ui, &env),
+                            chips: |ui: &mut Ui, width: f32| {
+                                click = Self::draw_chips(infer, ui, width);
+                            },
+                        },
+                    )
+                });
+            (bar.response, bar.inner, click)
+        } else {
+            let bar = egui::Panel::top("kraken_menu")
+                .frame(
+                    Frame::new()
+                        .fill(pal.panel)
+                        .inner_margin(Margin::symmetric(8, 2)),
+                )
+                .show(ui, |ui| menu::bar(ui, &env));
+            (bar.response, bar.inner, None)
+        };
+        if let Some((key, action)) = chip_click {
+            self.settings.infer.chip_action(&key, action);
+        }
+        tour::note_spot(ctx, Spot::Menu, bar.rect);
         for c in cmds {
             match c {
                 MenuCmd::Action(a) => self.dispatch(a, ctx),
@@ -1199,6 +1252,7 @@ impl KrakenApp {
             vm.ai_reload();
         }
         if let Some(change) = self.settings.ai.take_change() {
+            self.settings.infer.reload_external();
             match change {
                 Change::Use(choice, b) => self.assist.set_choice(choice, b),
                 Change::Clear => self.assist.clear(),
@@ -1240,6 +1294,9 @@ impl KrakenApp {
             connect_error: None,
         };
         self.settings.serving_frame(ctx, &env);
+        // Here, not in the settings window: a chip's Start can raise the question with
+        // Settings closed.
+        self.settings.infer.dialogs(ctx);
     }
 
     /// Presses a setup button as an agent's `ui_action` does (tests).
@@ -1516,11 +1573,17 @@ impl KrakenApp {
         self.menu_bar(ui, &ctx);
         // Before the panels, so the dialogs see Escape before any panel takes it.
         self.dialogs(&ctx);
+        if self.custom_titlebar {
+            crate::titlebar::resize_handles(&ctx);
+        }
         let open = self
             .vm
             .as_ref()
             .is_some_and(|v| v.connection == Connection::Open);
         if let Some(vm) = self.vm.as_mut().filter(|_| open) {
+            let infer = &mut self.settings.infer;
+            let custom = self.custom_titlebar;
+            let mut chip_click = None;
             egui::Panel::top("kraken_top")
                 .frame(
                     Frame::new()
@@ -1528,7 +1591,19 @@ impl KrakenApp {
                         .inner_margin(Margin::symmetric(14, 6)),
                 )
                 .exact_size(44.0)
-                .show(ui, |ui| chrome::top_bar(ui, vm, &mut reqs));
+                .show(ui, |ui| {
+                    // With the system's title bar the chips sit here; our own bar has them.
+                    let mut chips = |ui: &mut Ui| {
+                        if !custom {
+                            let width = (ui.available_width() - 8.0).max(0.0);
+                            chip_click = Self::draw_chips(infer, ui, width);
+                        }
+                    };
+                    chrome::top_bar(ui, vm, &mut reqs, !custom, &mut chips)
+                });
+            if let Some((key, action)) = chip_click {
+                self.settings.infer.chip_action(&key, action);
+            }
             egui::Panel::bottom("kraken_status")
                 .frame(
                     Frame::new()
