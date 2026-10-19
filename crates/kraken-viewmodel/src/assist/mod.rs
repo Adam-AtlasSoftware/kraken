@@ -7,6 +7,7 @@
 
 mod adapter;
 mod learn;
+mod picker;
 mod provider;
 mod review;
 mod run;
@@ -32,6 +33,7 @@ pub use kraken_assist::{
     AgentChoice, AutomateGoal, BackendInfo, BackendKind, Confidence, SelectionKind,
 };
 pub use learn::{PANEL_HELP, PanelHelp, panel_help};
+pub use picker::{CLOUD, PickEntry, PickGroup, SERVERS, groups as picker_groups};
 pub use provider::{
     ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, SECRETS_FILE, SECRETS_SERVICE,
     SaveOutcome, SecretsFile, TestReport, badge_of, is_local_url, plain_agent_error,

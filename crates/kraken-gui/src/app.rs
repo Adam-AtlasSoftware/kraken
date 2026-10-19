@@ -124,6 +124,8 @@ pub struct KrakenApp {
     /// The AI model in use, kept across projects.
     assist: AssistSetup,
     settings: Settings,
+    /// The placeholder for the guided setup of a local model is showing.
+    local_setup_open: bool,
     prefs: Prefs,
     /// The open project is the demo (not worth remembering).
     is_demo: bool,
@@ -207,6 +209,7 @@ impl KrakenApp {
             private: None,
             assist: AssistSetup::load(services.config_path.clone()),
             settings: Settings::default(),
+            local_setup_open: false,
             prefs,
             is_demo: false,
             recorded: false,
@@ -277,6 +280,10 @@ impl KrakenApp {
             hub.configure(cfg);
         }
         app.settings.ai.set_hub(hub);
+        if let Some(api) = app.services.serving.clone() {
+            app.settings.infer =
+                crate::infer::InferSettings::with_service(api, app.rt.handle().clone());
+        }
         if app.services.first_run_tour
             && app.prefs.persistent()
             && !app.prefs.tour_done()
@@ -1145,8 +1152,11 @@ impl KrakenApp {
                 }
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
                 SettingsAction::DefaultEngine(engine) => self.welcome.engine = engine,
+                SettingsAction::SetUpLocalModel => self.local_setup_open = true,
             }
         }
+        self.keep_local_models_served(ctx);
+        self.local_setup_placeholder(ctx);
         if self.settings.ai.take_policy_dirty()
             && let Some(vm) = self.vm.as_mut()
         {
@@ -1168,6 +1178,50 @@ impl KrakenApp {
                 AssistSetup::sync_agents(vm, agents);
             }
         }
+    }
+
+    /// Links the window to the service that runs local models, and connects to the daemon at
+    /// start when a model is marked "serve automatically" (the window's lifetime holds it).
+    fn keep_local_models_served(&mut self, ctx: &egui::Context) {
+        if self.services.mode == crate::services::Mode::Daemon
+            && self.services.serving.is_none()
+            && matches!(self.slot, Slot::Idle)
+            && self.services.cfg.local_models.iter().any(|m| m.autostart)
+        {
+            self.connect_daemon(ctx);
+        }
+        let backend = match &self.slot {
+            Slot::Ready(b) => Some(b),
+            _ => None,
+        };
+        let env = SettingsEnv {
+            rt: self.rt.handle(),
+            mode: self.services.mode,
+            dark: self.theme.dark,
+            config_path: self.services.config_path.as_ref(),
+            backend,
+            connecting: false,
+            connect_error: None,
+        };
+        self.settings.serving_frame(ctx, &env);
+    }
+
+    /// The guided setup of a local model is not here yet: say so instead of doing nothing.
+    fn local_setup_placeholder(&mut self, ctx: &egui::Context) {
+        if !self.local_setup_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Set up a model on this computer")
+            .id(egui::Id::new("kraken_local_setup_placeholder"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("The guided setup is not ready yet.");
+            });
+        self.local_setup_open = open;
     }
 
     /// Where terminal agents are found and whether the note about them was read.

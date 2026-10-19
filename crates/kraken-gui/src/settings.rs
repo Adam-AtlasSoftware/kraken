@@ -26,6 +26,8 @@ pub enum SettingsAction {
     SetDark(bool),
     /// Connect to the daemon now (it was not needed until now).
     ConnectDaemon,
+    /// "Set up a model on this computer..." was chosen in a picker.
+    SetUpLocalModel,
 }
 
 enum SetupMsg {
@@ -186,6 +188,20 @@ impl Settings {
         self.loaded_from = None;
         self.note = None;
         self.ai.reset();
+        self.infer.reload();
+    }
+
+    /// Keeps the link to the services that run local models: call every frame, also while the
+    /// window is closed, so the models marked "serve automatically" start with the app.
+    pub fn serving_frame(&mut self, ctx: &egui::Context, env: &SettingsEnv<'_>) {
+        self.infer.frame(
+            ctx,
+            env.rt,
+            env.mode,
+            env.backend,
+            env.config_path,
+            self.open,
+        );
     }
 
     /// Opens or closes the window.
@@ -376,23 +392,17 @@ impl Settings {
             .collapsible(false)
             .resizable(true)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, -20.0))
-            .default_size(vec2(560.0, 560.0))
+            .default_size(vec2(
+                560.0,
+                (ctx.content_rect().height() * 0.85).clamp(560.0, 1400.0),
+            ))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         self.appearance(ui, dark, &mut actions);
                         ui.separator();
-                        self.ai.show(ui, env.rt, env.config_path);
-                        ui.separator();
-                        self.infer.show(
-                            ui,
-                            env.rt,
-                            env.mode,
-                            env.backend,
-                            env.config_path,
-                            &mut self.ai,
-                        );
+                        self.ai.show(ui, env.rt, env.config_path, &mut self.infer);
                         ui.separator();
                         self.engine(ui, env, &mut actions);
                         ui.separator();
@@ -401,6 +411,13 @@ impl Settings {
                         self.daemon_section(ui, env, ctx);
                     });
             });
+        self.infer.dialogs(ctx);
+        while let Some(id) = self.infer.take_removed() {
+            self.ai.model_removed(&id);
+        }
+        if self.infer.take_setup_request() {
+            actions.push(SettingsAction::SetUpLocalModel);
+        }
         if !open || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.open = false;
         }

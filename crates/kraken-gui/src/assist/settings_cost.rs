@@ -8,6 +8,7 @@ use kraken_agent::{ProviderConfig, SecretRef};
 use kraken_assist::{AiLimits, AiPolicy, load_rewrite_config, save_rewrite_config};
 use kraken_proto::money;
 
+use crate::infer::InferSettings;
 use crate::style::{self, medium, pal};
 
 /// What the rewrite's own model is.
@@ -20,29 +21,23 @@ pub enum RewriteKind {
     OpenAi,
     /// Google's Gemini API.
     Gemini,
-    /// A model server on this computer (Ollama, LM Studio, llama-server).
+    /// A server you run (Ollama, LM Studio, llama-server, vLLM, anything OpenAI-compatible).
     Local,
+    /// A model KRAKEN serves on this computer.
+    OnThisComputer,
     /// A terminal agent (Claude Code, Codex, Gemini CLI).
     Agent,
 }
 
 impl RewriteKind {
-    /// Every kind, in the picker's order.
-    pub const ALL: [RewriteKind; 5] = [
-        RewriteKind::Anthropic,
-        RewriteKind::OpenAi,
-        RewriteKind::Gemini,
-        RewriteKind::Local,
-        RewriteKind::Agent,
-    ];
-
     /// The picker's text.
     pub fn label(self) -> &'static str {
         match self {
             RewriteKind::Anthropic => "Anthropic API (cloud)",
             RewriteKind::OpenAi => "OpenAI API (cloud)",
             RewriteKind::Gemini => "Gemini API (cloud)",
-            RewriteKind::Local => "Local model (free)",
+            RewriteKind::OnThisComputer => "On this computer (free)",
+            RewriteKind::Local => "Server you run (Ollama, vLLM, other)",
             RewriteKind::Agent => "Terminal agent (its subscription)",
         }
     }
@@ -53,7 +48,7 @@ impl RewriteKind {
             RewriteKind::OpenAi => "gpt-4.1",
             RewriteKind::Gemini => kraken_agent::provider::gemini::DEFAULT_MODEL,
             RewriteKind::Local => "qwen3:14b",
-            RewriteKind::Agent => "",
+            RewriteKind::OnThisComputer | RewriteKind::Agent => "",
         }
     }
 
@@ -82,6 +77,8 @@ pub struct RewriteForm {
     pub base_url: String,
     /// The agent id (terminal agent).
     pub agent: String,
+    /// The id of the model KRAKEN serves (on this computer).
+    pub local_model: String,
     loaded: bool,
     status: Option<Result<String, String>>,
 }
@@ -133,15 +130,32 @@ impl RewriteForm {
                 f.agent = agent.clone();
                 f.model = model.clone().unwrap_or_default();
             }
-            // The settings window learns to show local models with the model list.
-            ProviderConfig::Replay { .. } | ProviderConfig::Local { .. } => f.own = false,
+            ProviderConfig::Local { model } => {
+                f.kind = RewriteKind::OnThisComputer;
+                f.local_model = model.clone();
+            }
+            ProviderConfig::Replay { .. } => f.own = false,
         }
         f
+    }
+
+    /// A model was removed: if the rewrite used it, it uses the assistant's model again.
+    pub fn model_removed(&mut self, id: &str) {
+        if self.own && self.kind == RewriteKind::OnThisComputer && self.local_model == id {
+            self.own = false;
+            self.local_model.clear();
+            self.status = Some(Ok(
+                "Removed. Rewriting uses the assistant's model again.".into()
+            ));
+        }
     }
 
     /// Switches the kind and fills its usual values.
     pub fn switch(&mut self, kind: RewriteKind) {
         self.kind = kind;
+        if kind != RewriteKind::OnThisComputer {
+            self.local_model.clear();
+        }
         self.model = kind.default_model().to_string();
         self.key_env = kind.default_key().to_string();
         self.base_url = match kind {
@@ -171,6 +185,13 @@ impl RewriteForm {
             Ok(SecretRef::Env(key.clone()))
         };
         Ok(Some(match self.kind {
+            RewriteKind::OnThisComputer => {
+                let id = self.local_model.trim().to_string();
+                if id.is_empty() {
+                    return Err("Pick a model on this computer first.".into());
+                }
+                ProviderConfig::Local { model: id }
+            }
             RewriteKind::Anthropic => ProviderConfig::Anthropic {
                 model: (!model.is_empty()).then_some(model),
                 api_key: key_ref()?,
@@ -238,7 +259,12 @@ impl RewriteForm {
     }
 
     /// Draws the section; true when the file was saved.
-    pub fn show(&mut self, ui: &mut Ui, config_path: Option<&PathBuf>) -> bool {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        config_path: Option<&PathBuf>,
+        infer: &mut InferSettings,
+    ) -> bool {
         self.load(config_path.map(PathBuf::as_path));
         let p = pal(ui);
         let s = style::status(style::dark(ui));
@@ -263,23 +289,95 @@ impl RewriteForm {
                 );
         });
         if self.own {
-            let mut pick = None;
+            let mut pick: Option<RewriteKind> = None;
+            let mut pick_local: Option<String> = None;
+            let mut set_up = false;
+            let local_name = infer
+                .models(config_path)
+                .iter()
+                .find(|m| m.id == self.local_model)
+                .map(|m| m.name.clone());
+            let shown = if self.kind == RewriteKind::OnThisComputer {
+                local_name.unwrap_or_else(|| "Pick a model".to_string())
+            } else {
+                self.kind.label().to_string()
+            };
+            let models: Vec<_> = infer
+                .models(config_path)
+                .iter()
+                .map(|m| (m.id.clone(), m.name.clone()))
+                .collect();
             egui::ComboBox::from_id_salt("kraken_rewrite_kind")
-                .selected_text(self.kind.label())
+                .selected_text(shown)
                 .width(300.0)
                 .show_ui(ui, |ui| {
-                    for k in RewriteKind::ALL {
+                    ui.label(
+                        RichText::new("On this computer")
+                            .size(11.5)
+                            .color(p.text_dim),
+                    );
+                    for (id, name) in &models {
+                        let on =
+                            self.kind == RewriteKind::OnThisComputer && self.local_model == *id;
+                        if ui
+                            .selectable_label(on, name)
+                            .on_hover_text("Free and private: the model runs on this computer")
+                            .clicked()
+                        {
+                            pick_local = Some(id.clone());
+                        }
+                    }
+                    if ui
+                        .selectable_label(false, "+ Set up a model on this computer...")
+                        .on_hover_text(
+                            "Check this computer, pick a model that fits and download it",
+                        )
+                        .clicked()
+                    {
+                        set_up = true;
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Server you run").size(11.5).color(p.text_dim));
+                    if ui
+                        .selectable_label(
+                            self.kind == RewriteKind::Local,
+                            RewriteKind::Local.label(),
+                        )
+                        .on_hover_text(
+                            "Ollama, vLLM, LM Studio or any server with the OpenAI chat API",
+                        )
+                        .clicked()
+                    {
+                        pick = Some(RewriteKind::Local);
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Cloud").size(11.5).color(p.text_dim));
+                    for k in [
+                        RewriteKind::Anthropic,
+                        RewriteKind::OpenAi,
+                        RewriteKind::Gemini,
+                    ] {
                         if ui
                             .selectable_label(self.kind == k, k.label())
-                            .on_hover_text(match k {
-                                RewriteKind::Local => "Free and private: the model runs on this computer",
-                                RewriteKind::Agent => "Claude Code, Codex or Gemini CLI, billed by its own subscription",
-                                _ => "Billed per token by the provider",
-                            })
+                            .on_hover_text("Billed per token by the provider")
                             .clicked()
                         {
                             pick = Some(k);
                         }
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Terminal agent").size(11.5).color(p.text_dim));
+                    if ui
+                        .selectable_label(
+                            self.kind == RewriteKind::Agent,
+                            RewriteKind::Agent.label(),
+                        )
+                        .on_hover_text(
+                            "Claude Code, Codex or Gemini CLI, billed by its own subscription",
+                        )
+                        .clicked()
+                    {
+                        pick = Some(RewriteKind::Agent);
                     }
                 })
                 .response
@@ -287,7 +385,20 @@ impl RewriteForm {
             if let Some(k) = pick.filter(|k| *k != self.kind) {
                 self.switch(k);
             }
-            egui::Grid::new("kraken_rewrite_model")
+            if let Some(id) = pick_local {
+                if self.kind != RewriteKind::OnThisComputer {
+                    self.switch(RewriteKind::OnThisComputer);
+                }
+                self.local_model = id;
+            }
+            if set_up {
+                infer.request_setup();
+            }
+            if self.kind == RewriteKind::OnThisComputer && !self.local_model.is_empty() {
+                infer.card(ui, "rewrite", &self.local_model, config_path);
+            }
+            if self.kind != RewriteKind::OnThisComputer {
+                egui::Grid::new("kraken_rewrite_model")
                 .num_columns(2)
                 .spacing([10.0, 6.0])
                 .show(ui, |ui| {
@@ -332,6 +443,7 @@ impl RewriteForm {
                         ui.end_row();
                     }
                 });
+            }
         }
         let can_save = config_path.is_some();
         if ui
@@ -550,6 +662,34 @@ mod tests {
         f.switch(RewriteKind::Anthropic);
         f.key_env = "sk-ant-123 nope".into();
         assert!(f.config().is_err());
+    }
+
+    #[test]
+    fn a_model_on_this_computer_is_a_local_provider() {
+        let mut f = RewriteForm::from_config(None);
+        f.own = true;
+        f.switch(RewriteKind::OnThisComputer);
+        assert!(f.config().is_err(), "a model must be picked");
+        f.local_model = "qwen".into();
+        let cfg = f.config().unwrap().unwrap();
+        assert_eq!(
+            cfg,
+            ProviderConfig::Local {
+                model: "qwen".into()
+            }
+        );
+        let back = RewriteForm::from_config(Some(&cfg));
+        assert!(back.own);
+        assert_eq!(
+            (back.kind, back.local_model.as_str()),
+            (RewriteKind::OnThisComputer, "qwen")
+        );
+        let mut back = back;
+        back.model_removed("other");
+        assert!(back.own);
+        back.model_removed("qwen");
+        assert!(!back.own);
+        assert_eq!(back.config().unwrap(), None);
     }
 
     #[test]

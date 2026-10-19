@@ -925,6 +925,7 @@ mod audit;
 mod bench;
 mod help;
 mod loading;
+mod local_models;
 mod shell;
 mod shots;
 

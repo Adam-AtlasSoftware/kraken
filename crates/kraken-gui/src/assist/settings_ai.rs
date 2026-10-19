@@ -9,11 +9,13 @@ use egui::{RichText, Ui};
 use kraken_agent::ThinkingConfig;
 use kraken_viewmodel::agents::{AgentTestState, AgentsHub, Availability};
 use kraken_viewmodel::assist::{
-    BackendChoice, ProviderBadge, ProviderDraft, ProviderKind, ProviderStore, test_connection,
+    BackendChoice, PickEntry, ProviderBadge, ProviderDraft, ProviderKind, ProviderStore,
+    picker_groups, test_connection,
 };
 use tokio::runtime::Handle;
 
 use super::agents_ui::{SetupAct, availability_chip, notice_card, setup_card};
+use crate::infer::InferSettings;
 use crate::style::{self, chip, medium, pal};
 
 /// A change the app should pass on to the assistant.
@@ -24,12 +26,6 @@ pub enum Change {
     Clear,
     /// The settings were saved but cannot be used yet.
     Problem(String),
-}
-
-/// What the picker was used for this frame.
-enum Pick {
-    Api(ProviderKind),
-    Agent(String),
 }
 
 /// State of the AI settings form.
@@ -131,13 +127,6 @@ impl AiSettings {
     /// The change made since the last call, if any.
     pub fn take_change(&mut self) -> Option<Change> {
         self.change.take()
-    }
-
-    /// Passes on a change made elsewhere in Settings (the local-model section) and reloads the
-    /// form from the file next time.
-    pub(crate) fn push_change(&mut self, change: Change) {
-        self.change = Some(change);
-        self.reset();
     }
 
     /// True while a connection test runs.
@@ -259,19 +248,46 @@ impl AiSettings {
     }
 
     /// The text on the picker for the current choice.
-    fn picked_label(&self) -> String {
+    fn picked_label(&self, infer: &mut InferSettings, config_path: Option<&PathBuf>) -> String {
         if self.draft.kind.is_agent() {
             self.hub
                 .as_ref()
                 .and_then(|h| h.row(&self.draft.agent))
                 .map_or_else(|| self.draft.agent.clone(), |r| r.name.clone())
+        } else if self.draft.kind == ProviderKind::Local {
+            let name = infer
+                .models(config_path)
+                .iter()
+                .find(|m| m.id == self.draft.model)
+                .map_or_else(|| self.draft.model.clone(), |m| m.name.clone());
+            format!("{name} \u{b7} on this computer")
         } else {
             self.draft.kind.label().to_string()
         }
     }
 
+    /// A model was removed: the assistant stops using it when it did.
+    pub fn model_removed(&mut self, id: &str) {
+        self.rewrite.model_removed(id);
+        if self.draft.kind == ProviderKind::Local && self.draft.model == id {
+            self.draft = ProviderDraft::preset(ProviderKind::Ollama);
+            self.configured = false;
+            self.policy_dirty = true;
+            self.change = Some(Change::Clear);
+            self.status = Some(Ok(
+                "Removed. The assistant is off until you pick one.".into()
+            ));
+        }
+    }
+
     /// Draws the section.
-    pub fn show(&mut self, ui: &mut Ui, rt: &Handle, config_path: Option<&PathBuf>) {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        rt: &Handle,
+        config_path: Option<&PathBuf>,
+        infer: &mut InferSettings,
+    ) {
         self.load(config_path);
         self.drain();
         if self.hub.is_none() {
@@ -293,67 +309,67 @@ impl AiSettings {
         );
         ui.add_space(4.0);
 
-        let mut pick: Option<Pick> = None;
+        let mut pick: Option<PickEntry> = None;
+        let agents: Vec<(String, String)> = self.hub.as_ref().map_or_else(Vec::new, |h| {
+            h.rows
+                .iter()
+                .map(|r| {
+                    (
+                        r.id.clone(),
+                        format!("{}  \u{2014}  {}", r.name, r.availability.label()),
+                    )
+                })
+                .collect()
+        });
+        let groups = picker_groups(infer.models(config_path), &agents);
+        let looking = self.hub.as_ref().is_some_and(|h| !h.loaded);
+        let label = self.picked_label(infer, config_path);
         ui.horizontal(|ui| {
             ui.label("Assistant");
             let combo = egui::ComboBox::from_id_salt("kraken_ai_kind")
-                .selected_text(self.picked_label())
+                .selected_text(label)
                 .width(320.0)
                 .show_ui(ui, |ui| {
-                    ui.label(RichText::new("AI models").size(11.5).color(p.text_dim));
-                    for k in ProviderKind::ALL {
-                        let on = !self.draft.kind.is_agent() && self.draft.kind == k;
-                        if ui
-                            .selectable_label(on, k.label())
-                            .on_hover_text(k.help())
-                            .clicked()
-                        {
-                            pick = Some(Pick::Api(k));
+                    for (i, g) in groups.iter().enumerate() {
+                        if i > 0 {
+                            ui.separator();
                         }
-                    }
-                    ui.separator();
-                    ui.label(
-                        RichText::new("Terminal agents")
-                            .size(11.5)
-                            .color(p.text_dim),
-                    );
-                    if let Some(h) = &self.hub {
-                        for row in &h.rows {
-                            let on = self.draft.kind.is_agent() && self.draft.agent == row.id;
-                            let text =
-                                format!("{}  \u{2014}  {}", row.name, row.availability.label());
+                        ui.label(RichText::new(g.title).size(11.5).color(p.text_dim));
+                        for e in &g.entries {
                             if ui
-                                .selectable_label(on, text)
-                                .on_hover_text(format!("Use {} as the assistant", row.name))
+                                .selectable_label(self.draft.is_picked(e), e.label())
+                                .on_hover_text(e.help())
                                 .clicked()
                             {
-                                pick = Some(Pick::Agent(row.id.clone()));
+                                pick = Some(e.clone());
                             }
                         }
-                        if !h.loaded {
+                        if g.title == "Terminal agent" && looking {
                             ui.label(RichText::new("Looking for agents...").color(p.text_dim));
                         }
                     }
                 });
             combo.response.on_hover_text(
-                "Choose what answers: an AI service, a local model or a terminal agent",
+                "Choose what answers: a model on this computer, a server you run, a cloud service or a terminal agent",
             );
         });
-        match pick {
-            Some(Pick::Api(k)) => {
-                self.draft.switch_kind(k);
+        if let Some(e) = pick {
+            if self.draft.pick(&e) {
+                infer.request_setup();
+            } else {
                 self.status = None;
             }
-            Some(Pick::Agent(id)) if !(self.draft.kind.is_agent() && self.draft.agent == id) => {
-                self.draft = ProviderDraft::for_agent(&id);
-                self.status = None;
-            }
-            Some(Pick::Agent(_)) | None => {}
         }
         ui.add_space(2.0);
 
         if self.draft.kind.is_agent() {
             self.agent_form(ui, &p, &s);
+        } else if self.draft.kind == ProviderKind::Local {
+            if self.draft.model.is_empty() {
+                ui.label(RichText::new("Pick a model above, or set one up.").color(p.text_dim));
+            } else {
+                infer.card(ui, "assistant", &self.draft.model.clone(), config_path);
+            }
         } else {
             self.api_form(ui, rt, &p, &s);
         }
@@ -375,7 +391,9 @@ impl AiSettings {
                     self.save(config_path);
                 }
             });
-            let can_test = !self.testing() && (!agent || agent_ready);
+            let can_test = !self.testing()
+                && (!agent || agent_ready)
+                && self.draft.kind != ProviderKind::Local;
             ui.add_enabled_ui(can_test, |ui| {
                 if ui
                     .button(if agent { "Test agent" } else { "Test connection" })
@@ -456,10 +474,7 @@ impl AiSettings {
             self.extras.permissions(ui, config_path);
         }
         ui.separator();
-        let ctx = ui.ctx().clone();
-        self.extras.local_model(ui, rt, &ctx);
-        ui.separator();
-        if self.rewrite.show(ui, config_path) {
+        if self.rewrite.show(ui, config_path, infer) {
             self.policy_dirty = true;
         }
         ui.separator();

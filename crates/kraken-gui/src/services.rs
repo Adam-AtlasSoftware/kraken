@@ -39,6 +39,9 @@ pub struct Services {
     pub first_run_tour: bool,
     /// The daily totals of AI usage (for the daily budget); `None` keeps none.
     pub ai_daily: Option<kraken_model::DailyLedger>,
+    /// A fixed service for the local models (tests, screenshots); `None` uses the daemon, or
+    /// this process's own manager with `--no-daemon`.
+    pub serving: Option<Arc<dyn kraken_host::infer::ServingApi>>,
 }
 
 impl Services {
@@ -64,6 +67,7 @@ impl Services {
             agents: kraken_viewmodel::agents::AgentsConfig::from_env(!no_daemon),
             first_run_tour: true,
             ai_daily: kraken_model::DailyLedger::standard(),
+            serving: None,
         }
     }
 
@@ -82,6 +86,7 @@ impl Services {
             agents: Some(offline_agents()),
             first_run_tour: false,
             ai_daily: None,
+            serving: None,
         }
     }
 
