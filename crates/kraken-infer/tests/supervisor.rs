@@ -176,3 +176,48 @@ default = 0
     let tiny = MemoryBudget::new(1 << 20, None);
     assert!(b.start(json!({}), &tiny).await.is_err());
 }
+
+#[tokio::test]
+async fn a_taken_port_is_retried_once_on_a_new_port() {
+    let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let first = taken.local_addr().unwrap().port();
+    let (p, port) = kraken_infer::port::start_with_port_retry(
+        first,
+        |port| {
+            let mut s = ProcessSpec::new(FAKE, port, "/health");
+            s.args = vec!["--port".into(), port.to_string()];
+            s.health.interval = Duration::from_millis(50);
+            s.restart.initial_backoff = Duration::from_millis(50);
+            s.grace = Duration::from_millis(300);
+            s
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_ne!(port, first);
+    assert!(p.health().await);
+    p.stop().await;
+}
+
+#[tokio::test]
+async fn a_managed_port_ignores_the_port_setting() {
+    let manifest = format!(
+        r#"
+id = "m"
+license = "MIT"
+managed_port = true
+command = ['{FAKE}', '--port', '{{port}}']
+health_path = "/health"
+[capabilities]
+gpu_apis = ["cpu"]
+"#
+    );
+    let backend = GenericOpenAiServerBackend::from_manifest_str(&manifest).unwrap();
+    let budget = MemoryBudget::new(64 << 30, None);
+    let run = kraken_infer::InferenceBackend::start(&backend, json!({"port": 1}), &budget)
+        .await
+        .unwrap();
+    assert_ne!(run.process().port(), 1);
+    run.stop().await;
+}

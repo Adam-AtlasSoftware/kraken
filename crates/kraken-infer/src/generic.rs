@@ -70,6 +70,9 @@ pub struct Manifest {
     pub license: String,
     /// argv template; element 0 is the program (absolute path, or looked up on PATH).
     pub command: Vec<String>,
+    /// KRAKEN always picks the port; a `port` setting is ignored.
+    #[serde(default)]
+    pub managed_port: bool,
     #[serde(default = "default_health")]
     pub health_path: String,
     #[serde(default = "default_ready_secs")]
@@ -328,6 +331,12 @@ impl InferenceBackend for GenericOpenAiServerBackend {
 
     async fn start(&self, settings: Value, budget: &MemoryBudget) -> Result<RunningBackend> {
         let m = &self.manifest;
+        let mut settings = settings;
+        if m.managed_port
+            && let Value::Object(o) = &mut settings
+        {
+            o.remove("port");
+        }
         let values = m.resolve_settings(&settings)?;
         // Generic engines have no known memory model; charge the model file to RAM when a
         // `model` setting names an existing file, plus the manifest's minimum.

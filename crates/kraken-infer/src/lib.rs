@@ -10,6 +10,7 @@ pub mod budget;
 pub mod error;
 pub mod generic;
 pub mod hardware;
+pub mod launch;
 pub mod llama;
 pub mod logring;
 pub mod port;
@@ -28,6 +29,7 @@ pub use generic::{GenericOpenAiServerBackend, Manifest};
 pub use hardware::{
     GpuInfo, GpuVendor, HardwareInfo, Probe, SystemProbe, detect as detect_hardware,
 };
+pub use launch::{LaunchSpec, launch_spec};
 pub use llama::{LlamaServerBackend, LlamaSettings};
 pub use logring::{LogLine, LogRing, LogStream};
 pub use recommend::{
