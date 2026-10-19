@@ -83,6 +83,8 @@ pub fn build_argv(s: &LlamaSettings, port: u16) -> Vec<String> {
         port.to_string(),
         // `/slots` can expose in-flight prompts (decompiled code) to any API-key holder.
         "--no-slots".into(),
+        // Prometheus counters at `/metrics`: where the words-per-second figure comes from.
+        "--metrics".into(),
     ];
     if let Some(n) = s.gpu_layers {
         a.push("-ngl".into());
@@ -414,6 +416,7 @@ mod tests {
                 "--port",
                 "8080",
                 "--no-slots",
+                "--metrics",
                 "--jinja"
             ]
         );
@@ -437,6 +440,7 @@ mod tests {
                 "--port",
                 "9000",
                 "--no-slots",
+                "--metrics",
                 "-ngl",
                 "99",
                 "--n-cpu-moe",

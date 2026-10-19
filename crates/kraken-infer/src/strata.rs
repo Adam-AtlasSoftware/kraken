@@ -357,8 +357,9 @@ pub fn assess(hw: &HardwareInfo, m: &StrataManifest, missing: Vec<Missing>) -> A
 }
 
 /// The supervised-server manifest for an installed Strata: the private venv's Python runs
-/// `serve/server.py` from the install directory on a port KRAKEN picks, bound to loopback by
-/// the run config written at setup.
+/// `serve/server.py` from the install directory on the port KRAKEN picks (the manifest has no port
+/// setting, so a configured one cannot override it), bound to loopback by the run config written
+/// at setup. Card choices are appended as argv overrides by [`crate::launch::launch_spec`].
 pub fn backend_manifest_text(python: &str, install_dir: &str, config: &str) -> String {
     let esc = |s: &str| toml_str(&s.replace('{', "{{").replace('}', "}}"));
     format!(
@@ -366,6 +367,7 @@ pub fn backend_manifest_text(python: &str, install_dir: &str, config: &str) -> S
 name = "Strata"
 license = "MIT"
 command = [{}, {}, "--engine", "strata", "--config", {}, "--port", "{{port}}"]
+managed_port = true
 cwd = {}
 health_path = "/v1/models"
 ready_timeout_secs = 1800
@@ -379,11 +381,6 @@ supports_tool_calls = true
 
 [settings_schema]
 type = "object"
-
-[settings_schema.properties.port]
-type = "integer"
-title = "Port"
-default = 8080
 "#,
         esc(python),
         esc(&format!("{install_dir}/serve/server.py")),
@@ -533,5 +530,6 @@ mod tests {
         let m = backend_manifest("/d/venv/bin/python", "/d/src", "/d/cfg.json").expect("manifest");
         assert_eq!(m.cwd.as_deref(), Some("/d/src"));
         assert!(m.command.iter().any(|a| a == "{port}"));
+        assert!(m.managed_port);
     }
 }
