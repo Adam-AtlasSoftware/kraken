@@ -1,0 +1,29 @@
+{
+  "engine": {"model": "Qwen3.6-27B", "max_context": 32768, "images": false, "version": "0.1.44.1", "batch": 0},
+  "live": {
+    "state": "generating", "queued": 0, "phase": "decode", "prompt_tokens": 812,
+    "prompt_read": null, "prompt_total": null, "generated": 214, "max_tokens": 4096,
+    "elapsed_s": 6.9, "tok_s": 31.4, "tok_s_mean": 29.8, "prefill_tok_s_mean": 910.5, "tok_s_window_s": 3.0
+  },
+  "requests": [
+    {"id": "9f3c1a2b7d4e", "path": "/v1/chat/completions", "state": "done", "prompt_tokens": 640, "reused": 512, "output_tokens": 180, "tok_s": 32.1}
+  ],
+  "conversation_cache": {"enabled": false, "budget_mib": null, "slots": null, "requests": 1, "requests_reused": 1, "reused_tokens": 512, "prompt_tokens": 640, "last_reused": 512, "last_prompt": 640},
+  "requests_kept": 1,
+  "totals": {"since": 1792310000.5, "requests": 1, "prompt_tokens": 640, "reused": 512, "output_tokens": 180, "prompt_ms": 140.2, "decode_ms": 5600.0, "drafts_offered": 0, "drafts_accepted": 0},
+  "hardware": {
+    "gpu_util": 96.0, "gpu_mem_used": 23622320128, "gpu_mem_total": 25769803776,
+    "gpu_temp": 71, "gpu_power": 301.4, "gpu_power_limit": 350.0,
+    "gpu_pcie_gen": 4, "gpu_pcie_gen_max": 4, "gpu_pcie_width": 16, "gpu_pcie_rx_mb": 12.5, "gpu_pcie_tx_mb": 3.1,
+    "gpus": [
+      {"index": 0, "util": 97.0, "mem_used": 12884901888, "mem_total": 25769803776, "temp": 70, "power": 150.2},
+      {"index": 2, "util": 95.0, "mem_used": 10737418240, "mem_total": 25769803776, "temp": 71, "power": 151.2}
+    ],
+    "cpu": 18.5, "ram_used": 9663676416, "ram_total": 67108864000,
+    "disk_read_mb": 0.0, "disk_write_mb": 0.1,
+    "tok_s": 31.4, "tok_s_mean": 29.8, "prefill_tok_s_mean": 0.0
+  },
+  "hardware_static": {"gpu_name": "NVIDIA GeForce RTX 4090 + NVIDIA GeForce RTX 4090", "cpu_name": "AMD Ryzen 9 7950X"},
+  "history": {"gpu_util": [0, 0, 96.0], "tok_s": [0.0, 0.0, 31.4]},
+  "time": 1792310007.25
+}
