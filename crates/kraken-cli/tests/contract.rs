@@ -422,6 +422,13 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
         ("local_model_setup", json!({})),
+        ("local_model_list", json!({})),
+        ("local_model_devices", json!({})),
+        ("local_model_status", json!({"model": "m"})),
+        ("local_model_start", json!({"model": "m"})),
+        ("local_model_hold", json!({"model": "m"})),
+        ("local_model_release", json!({"model": "m"})),
+        ("local_model_stop", json!({"model": "m"})),
     ] {
         let r = step!(name, args);
         assert_eq!(r["code"], "unsupported", "{name}: {r}");

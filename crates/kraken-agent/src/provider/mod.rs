@@ -13,6 +13,7 @@ use crate::types::{ChatRequest, ChatStream, ProviderInfo, StreamEvent};
 
 pub mod anthropic;
 pub mod gemini;
+pub mod local;
 pub mod openai;
 pub mod replay;
 

@@ -241,7 +241,13 @@ impl KrakenConfig {
     /// [`load`](Self::load) with an injectable environment.
     pub fn load_with(env: &dyn Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
         let mut cfg = match Self::default_path_with(env) {
-            Some(p) => Self::from_file(&p)?,
+            Some(p) => {
+                // A local server written by an older release becomes a model entry once.
+                if p.is_file() {
+                    crate::infer::migrate_config_file(&p, env);
+                }
+                Self::from_file(&p)?
+            }
             None => Self::default(),
         };
         cfg.apply_env(env)?;

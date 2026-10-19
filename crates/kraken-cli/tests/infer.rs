@@ -413,3 +413,127 @@ async fn setup_llama_asks_before_downloading_and_rejects_unknown_variants() {
     );
     assert!(!work.tmp.path().join("data/kraken/llama/downloads").exists());
 }
+
+/// A computer with one model set up, `llama-server` being the fake inference server.
+fn llama_rig(role: bool) -> (Workdir, CliEnv, PathBuf) {
+    let work = workdir();
+    let bin = work.tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(fake_server_path(), bin.join("llama-server")).unwrap();
+    let model = work.tmp.path().join("tiny.gguf");
+    std::fs::write(&model, [0u8; 64]).unwrap();
+    let config = work.tmp.path().join("cfg/config.toml");
+    let mut cfg = KrakenConfig::default();
+    cfg.local_models.push(kraken_host::infer::new_local_model(
+        "tiny",
+        kraken_proto::infer::LocalEngine::Llama,
+        model,
+    ));
+    if role {
+        cfg.provider = Some(kraken_host::infer::local_provider_table("tiny"));
+    }
+    cfg.save(&config).unwrap();
+    let env = fresh_env(
+        KrakenConfig::default(),
+        vec![
+            ("KRAKEN_NO_DAEMON", "1".into()),
+            ("KRAKEN_CONFIG", s(&config)),
+            ("PATH", s(&bin)),
+            ("XDG_DATA_HOME", s(&work.tmp.path().join("data"))),
+            ("HOME", s(&work.tmp.path().join("home"))),
+        ],
+    );
+    (work, env, config)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn infer_start_by_model_id_is_a_pinned_start_and_use_writes_the_local_form() {
+    let (_work, env, config) = llama_rig(false);
+    let r = kraken(&env, &["infer", "start", "tiny", "--use"]).await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        r.stdout.contains("Ready: tiny at http://127.0.0.1:"),
+        "{}",
+        r.stdout
+    );
+    assert!(
+        !r.stdout.contains("key"),
+        "the per-run key stays private: {}",
+        r.stdout
+    );
+    let cfg = KrakenConfig::from_file(&config).unwrap();
+    assert_eq!(
+        cfg.provider,
+        Some(kraken_host::infer::local_provider_table("tiny"))
+    );
+    let unknown = kraken(&env, &["infer", "start", "nope"]).await;
+    assert_eq!(unknown.code, 3, "{}", unknown.stderr);
+    assert!(unknown.stderr.contains("tiny"), "{}", unknown.stderr);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn infer_start_with_an_engine_and_use_adds_a_model_entry() {
+    let (work, env, config) = llama_rig(false);
+    let file = work.tmp.path().join("other.gguf");
+    std::fs::write(&file, [0u8; 64]).unwrap();
+    let r = kraken(
+        &env,
+        &[
+            "infer",
+            "start",
+            "llama-server",
+            "--model",
+            &s(&file),
+            "--set",
+            "context_size=2048",
+            "--use",
+        ],
+    )
+    .await;
+    assert_eq!(r.code, 0, "{} {}", r.stderr, r.stdout);
+    let cfg = KrakenConfig::from_file(&config).unwrap();
+    let m = cfg
+        .local_models
+        .iter()
+        .find(|m| m.id == "other")
+        .expect("model entry added");
+    assert_eq!(m.model_path, file);
+    assert_eq!(
+        cfg.provider,
+        Some(kraken_host::infer::local_provider_table("other"))
+    );
+    assert_eq!(cfg.local_models.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn serve_local_holds_the_role_model_while_the_command_runs() {
+    let (_work, env, _config) = llama_rig(true);
+    let r = kraken(
+        &env,
+        &[
+            "--serve-local",
+            "--json",
+            "local-model-status",
+            "--model",
+            "tiny",
+        ],
+    )
+    .await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        r.stderr.contains("serving local model tiny"),
+        "{}",
+        r.stderr
+    );
+    let v = r.json();
+    // Held, so started: it may still be loading when the status is read.
+    let state = v["model"]["state"]["kind"].as_str().unwrap_or_default();
+    assert!(matches!(state, "loading" | "ready"), "{v}");
+    assert_eq!(v["model"]["holders"], 1, "{v}");
+    assert!(!v.to_string().contains("api_key"), "{v}");
+    // Without the flag nothing starts the model.
+    let (_w2, env2, _c2) = llama_rig(true);
+    let r = kraken(&env2, &["--json", "local-model-status", "--model", "tiny"]).await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(r.json()["model"]["state"]["kind"], "stopped");
+}

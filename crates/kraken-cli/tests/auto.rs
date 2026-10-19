@@ -467,6 +467,7 @@ fn rewrite_env(binary: &str, cassette: &str) -> CliEnv {
         session: None,
         daemon: DaemonMode::Direct,
         rewrite: Some(service.into_backend()),
+        owner: Default::default(),
     }
 }
 

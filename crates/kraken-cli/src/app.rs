@@ -151,10 +151,38 @@ pub struct CliEnv {
     /// The rewrite pipeline attached to sessions that run in this process (`rewrite_*`
     /// commands). Through the daemon, the daemon's own pipeline runs them.
     pub rewrite: Option<Arc<dyn RewriteBackend>>,
+    /// The local models this process runs when there is no daemon (made on first use); they are
+    /// stopped when the command ends.
+    pub owner: OwnerSlot,
+}
+
+/// Where the manager of the local models of a daemon-less run lives.
+#[derive(Clone, Default)]
+pub struct OwnerSlot(Arc<std::sync::OnceLock<Arc<kraken_host::infer::InferManager>>>);
+
+impl OwnerSlot {
+    /// Stops every model this process started.
+    pub async fn shutdown(&self) {
+        if let Some(m) = self.0.get() {
+            m.shutdown().await;
+            kraken_assist::set_serving(None);
+        }
+    }
 }
 
 /// Commands that need no open project.
-const PROJECTLESS: [&str; 3] = ["binary_probe", "ai_usage", "ai_jobs"];
+const PROJECTLESS: [&str; 10] = [
+    "binary_probe",
+    "ai_usage",
+    "ai_jobs",
+    "local_model_list",
+    "local_model_devices",
+    "local_model_status",
+    "local_model_start",
+    "local_model_hold",
+    "local_model_release",
+    "local_model_stop",
+];
 
 impl CliEnv {
     /// The environment of the real binary.
@@ -169,7 +197,23 @@ impl CliEnv {
             session: None,
             daemon: DaemonMode::Auto(DaemonAuto::default()),
             rewrite: Some(kraken_rewrite::RewriteService::standard().into_backend()),
+            owner: OwnerSlot::default(),
         }
+    }
+
+    /// The manager of the models this process runs itself (no daemon). The first use also makes
+    /// it the serving service that `local` providers of this process resolve through.
+    pub(crate) fn owner_manager(&self) -> Arc<kraken_host::infer::InferManager> {
+        let m = self
+            .owner
+            .0
+            .get_or_init(|| {
+                let env = |k: &str| self.var(k).map(OsString::from);
+                Arc::new(kraken_host::infer::InferManager::from_env_with(&env))
+            })
+            .clone();
+        kraken_assist::set_serving(Some(Arc::new(m.holder(kraken_host::infer::Holder::Owner))));
+        m
     }
 
     pub(crate) fn var(&self, k: &str) -> Option<String> {
@@ -186,6 +230,10 @@ impl CliEnv {
             if let Ok(lm) = kraken_host::local_models::LocalModels::system() {
                 s = s.with_local_models(Arc::new(lm));
             }
+            s = s.with_serving(Arc::new(kraken_host::infer::ServingBridge::new(Arc::new(
+                self.owner_manager()
+                    .holder(kraken_host::infer::Holder::Owner),
+            ))));
             Arc::new(s)
         })
     }
@@ -420,6 +468,13 @@ pub fn build_cli(registry: &Registry) -> Command {
                 .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Run in this process instead of through krakend (also KRAKEN_NO_DAEMON=1)"),
+        )
+        .arg(
+            Arg::new("serve-local")
+                .long("serve-local")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help("Keep the local models the assistant and rewriting use running while this command runs"),
         );
     for entry in registry.iter() {
         root = root.subcommand(sub_for(entry));
@@ -658,8 +713,8 @@ fn infer_command() -> Command {
         .subcommand(Command::new("list").about("Show the engines this computer can run, with their settings and the memory left"))
         .subcommand(
             Command::new("start")
-                .about("Start a model")
-                .arg(Arg::new("engine").required(true).value_name("ENGINE").help("An id from `kraken infer list`, for example llama-server"))
+                .about("Start a model and keep it running until `kraken infer stop`")
+                .arg(Arg::new("engine").required(true).value_name("ENGINE").help("A model you have set up (`kraken local-model-list`), or an engine from `kraken infer list`, for example llama-server"))
                 .arg(
                     Arg::new("model")
                         .long("model")
@@ -679,7 +734,19 @@ fn infer_command() -> Command {
                         .long("use")
                         .action(ArgAction::SetTrue)
                         .conflicts_with("no-wait")
-                        .help("Make the assistant use this model: writes [provider] (openai_compatible) to config.toml once the model is ready"),
+                        .help("Make the assistant use this model: with an engine and --model it is added to your models in config.toml first, then [provider] is set to it"),
+                )
+                .arg(
+                    Arg::new("cpu")
+                        .long("cpu")
+                        .action(ArgAction::SetTrue)
+                        .help("Run a model you have set up on the processor only"),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .help("Start a model you have set up even though it does not seem to fit in memory"),
                 )
                 .arg(
                     Arg::new("no-wait")
@@ -695,7 +762,11 @@ fn infer_command() -> Command {
                 ),
         )
         .subcommand(Command::new("status").about("Show the running model and how far loading is"))
-        .subcommand(Command::new("stop").about("Stop the running model"))
+        .subcommand(
+            Command::new("stop")
+                .about("Stop a model")
+                .arg(Arg::new("model").value_name("MODEL").help("A model you have set up; without it, the model started from an engine")),
+        )
         .subcommand(
             Command::new("logs")
                 .about("Show the model process's output")
@@ -1265,6 +1336,24 @@ pub async fn run_with_provider(
         return 2;
     };
     let json_out = sm.get_flag("json");
+    let serving = crate::serve_local::start(env, sm, err).await;
+    let code = dispatch(env, sub, sm, json_out, provider, out, err).await;
+    if let Some(s) = serving {
+        s.finish().await;
+    }
+    env.owner.shutdown().await;
+    code
+}
+
+async fn dispatch(
+    env: &CliEnv,
+    sub: &str,
+    sm: &ArgMatches,
+    json_out: bool,
+    provider: Option<Arc<dyn kraken_agent::ChatProvider>>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     match sub {
         "commands" => {
             if json_out {

@@ -17,9 +17,10 @@ const HELP: &str = "krakend: the KRAKEN daemon
 
 Normally started on demand by `kraken`; it exits after the idle timeout.
 
-USAGE: krakend [--log-stderr] [--help] [--version]
+USAGE: krakend [--log-stderr] [--serve-local] [--help] [--version]
 
   --log-stderr   log to stderr instead of <runtime dir>/krakend.log
+  --serve-local  keep the local models the assistant and rewriting use running while krakend runs
 
 Configuration comes from ~/.config/kraken/config.toml ([daemon] idle_secs, session_idle_secs,
 max_sessions) and the environment (KRAKEN_DAEMON_IDLE_SECS, KRAKEN_SESSION_IDLE_SECS,
@@ -28,6 +29,7 @@ KRAKEN_MAX_SESSIONS, KRAKEN_RUNTIME_DIR, KRAKEN_LOG, KRAKEN_GHIDRA_HOME, ...).
 
 struct Args {
     log_stderr: bool,
+    serve_local: bool,
     fake_engine: Option<PathBuf>,
     fake_stage_delay_ms: u64,
 }
@@ -35,6 +37,7 @@ struct Args {
 fn parse_args() -> Result<Args, ExitCode> {
     let mut a = Args {
         log_stderr: false,
+        serve_local: false,
         // Hidden, for tests of binaries that start the daemon without extra arguments.
         fake_engine: std::env::var_os("KRAKEN_FAKE_ENGINE")
             .filter(|v| !v.is_empty())
@@ -56,6 +59,7 @@ fn parse_args() -> Result<Args, ExitCode> {
                 return Err(ExitCode::SUCCESS);
             }
             "--log-stderr" => a.log_stderr = true,
+            "--serve-local" => a.serve_local = true,
             // Hidden, for tests: serve a fixture through the scripted fake engine.
             "--fake-engine" => match it.next() {
                 Some(p) => a.fake_engine = Some(PathBuf::from(p)),
@@ -200,10 +204,31 @@ fn main() -> ExitCode {
             build = env!("CARGO_PKG_VERSION"),
             "krakend started"
         );
+        if args.serve_local {
+            serve_local(&daemon);
+        }
         wait_for_signal_then_stop(&daemon);
         daemon.wait().await;
         ExitCode::SUCCESS
     })
+}
+
+/// Holds the models the assistant and rewriting use for as long as the daemon runs.
+fn serve_local(daemon: &krakend::Daemon) {
+    let api = daemon.infer().holder(kraken_host::infer::Holder::Owner);
+    tokio::spawn(async move {
+        match kraken_host::infer::hold_role_models(&api).await {
+            Ok(r) => {
+                for id in &r.started {
+                    tracing::info!(model = %id, "serving local model");
+                }
+                for s in &r.skipped {
+                    tracing::warn!(model = %s.model, "not serving: {}", s.reason);
+                }
+            }
+            Err(e) => tracing::warn!("cannot serve local models: {}", e.message),
+        }
+    });
 }
 
 /// Stops the daemon on SIGINT / SIGTERM (Ctrl-C elsewhere).

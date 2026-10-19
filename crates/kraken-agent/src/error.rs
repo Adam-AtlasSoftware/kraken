@@ -23,7 +23,26 @@ pub enum AgentError {
     Cassette(String),
     #[error("cancelled")]
     Cancelled,
+    /// A local model is not running and was not started for this request.
+    #[error("{message}")]
+    ModelNotRunning {
+        /// The model's id.
+        model: String,
+        /// What happened and how to start it, in plain words.
+        message: String,
+    },
     /// A call was refused because the work reached a limit (calls, estimated cost, daily budget).
     #[error("{0}")]
     Limit(String),
+}
+
+impl AgentError {
+    /// True when asking again may work: the connection broke or the server was busy or starting.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            AgentError::Transport(_) => true,
+            AgentError::Http { status, .. } => matches!(status, 429 | 502 | 503 | 504),
+            _ => false,
+        }
+    }
 }

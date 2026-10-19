@@ -822,6 +822,7 @@ pub struct Session {
     project: Arc<RwLock<Option<Arc<Project>>>>,
     rewrite: Option<Arc<dyn RewriteBackend>>,
     local_models: Option<Arc<dyn crate::commands::LocalModelBackend>>,
+    serving: Option<Arc<dyn crate::commands::ServingBackend>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -841,6 +842,7 @@ impl Session {
             project: Arc::new(RwLock::new(None)),
             rewrite: None,
             local_models: None,
+            serving: None,
         }
     }
 
@@ -848,6 +850,16 @@ impl Session {
     pub fn with_local_models(mut self, b: Arc<dyn crate::commands::LocalModelBackend>) -> Session {
         self.local_models = Some(b);
         self
+    }
+
+    /// Attaches the service the `local_model_*` commands start, stop and list models with.
+    pub fn with_serving(mut self, b: Arc<dyn crate::commands::ServingBackend>) -> Session {
+        self.serving = Some(b);
+        self
+    }
+
+    pub(crate) fn serving_backend(&self) -> Option<&Arc<dyn crate::commands::ServingBackend>> {
+        self.serving.as_ref()
     }
 
     pub(crate) fn local_models_backend(

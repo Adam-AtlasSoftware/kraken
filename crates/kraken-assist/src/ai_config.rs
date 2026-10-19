@@ -98,6 +98,8 @@ pub fn provider_kind_of(cfg: &ProviderConfig) -> AiProviderKind {
         ProviderConfig::TerminalAgent { .. } => AiProviderKind::TerminalAgent,
         // A recorded cassette answers from a file: nothing is sent anywhere.
         ProviderConfig::Replay { .. } => AiProviderKind::Local,
+        // Served on this computer: free, but still in the usage ledger.
+        ProviderConfig::Local { .. } => AiProviderKind::Local,
         _ => AiProviderKind::Api,
     }
 }
@@ -122,6 +124,7 @@ pub fn model_of(cfg: &ProviderConfig) -> (String, String) {
                 .unwrap_or_else(|| gemini::DEFAULT_MODEL.into()),
         ),
         ProviderConfig::Replay { .. } => ("replay".into(), String::new()),
+        ProviderConfig::Local { model } => ("local".into(), model.clone()),
         ProviderConfig::TerminalAgent { agent, model, .. } => {
             (agent.clone(), model.clone().unwrap_or_default())
         }
@@ -133,7 +136,9 @@ pub fn with_model(cfg: &ProviderConfig, model: &str) -> ProviderConfig {
     let m = model.trim().to_string();
     let mut out = cfg.clone();
     match &mut out {
-        ProviderConfig::OpenaiCompatible { model, .. } => *model = m,
+        ProviderConfig::OpenaiCompatible { model, .. } | ProviderConfig::Local { model } => {
+            *model = m
+        }
         ProviderConfig::Anthropic { model, .. }
         | ProviderConfig::Gemini { model, .. }
         | ProviderConfig::TerminalAgent { model, .. } => *model = Some(m),

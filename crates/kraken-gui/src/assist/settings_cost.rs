@@ -133,7 +133,8 @@ impl RewriteForm {
                 f.agent = agent.clone();
                 f.model = model.clone().unwrap_or_default();
             }
-            ProviderConfig::Replay { .. } => f.own = false,
+            // The settings window learns to show local models with the model list.
+            ProviderConfig::Replay { .. } | ProviderConfig::Local { .. } => f.own = false,
         }
         f
     }

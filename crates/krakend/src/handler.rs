@@ -12,7 +12,9 @@ use kraken_host::daemon::{
     METHOD_EVENTS, METHOD_GUI_SELECTION, METHOD_GUI_SELECTION_SET, METHOD_SHUTDOWN, METHOD_STATUS,
     event_kind,
 };
-use kraken_host::infer::{Holder, InferApi, InferManager, serve_rpc, serve_serving_rpc};
+use kraken_host::infer::{
+    Holder, InferApi, InferManager, ServingBridge, serve_rpc, serve_serving_rpc,
+};
 use kraken_ipc::{ClientKind, ConnInfo, Counter, CredentialClass, RpcHandler, Shutdown};
 use kraken_model::{AuthorKind, RunId};
 use kraken_proto::{ErrorCode, ProtoError, sanitize_capped};
@@ -328,7 +330,17 @@ impl DaemonHandler {
         let spec = entry.spec().clone();
         if matches!(
             p.command.as_str(),
-            "binary_probe" | "kraken_help" | "local_model_recommend" | "local_model_setup"
+            "binary_probe"
+                | "kraken_help"
+                | "local_model_recommend"
+                | "local_model_setup"
+                | "local_model_list"
+                | "local_model_devices"
+                | "local_model_status"
+                | "local_model_start"
+                | "local_model_hold"
+                | "local_model_release"
+                | "local_model_stop"
         ) {
             // About a file, not a project: no session is made for it. The command applies the
             // agent path policy itself.
@@ -337,6 +349,10 @@ impl DaemonHandler {
             if let Some(lm) = &self.host.config().local_models {
                 session = session.with_local_models(lm.clone());
             }
+            // Holds made by the serving commands belong to this connection and end with it.
+            session = session.with_serving(Arc::new(ServingBridge::new(Arc::new(
+                self.infer.holder(Holder::Connection(conn.id)),
+            ))));
             let result = registry
                 .call_json(&p.command, &session, &ctx, p.args.clone())
                 .await?;

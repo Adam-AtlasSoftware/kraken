@@ -14,6 +14,7 @@ mod edit;
 mod gui_navigate;
 mod help;
 mod history;
+mod infer;
 mod jobs;
 mod local_model;
 mod probe;
@@ -55,6 +56,12 @@ pub use help::{
     DEFAULT_HELP_HITS, HelpSection, KrakenHelp, KrakenHelpArgs, KrakenHelpOut, MAX_HELP_HITS,
 };
 pub use history::{History, HistoryArgs, ProposalFilter, ProposalsList, ProposalsListArgs};
+pub use infer::{
+    LocalModelArgs, LocalModelDevices, LocalModelDevicesOut, LocalModelHold, LocalModelList,
+    LocalModelListOut, LocalModelRelease, LocalModelReleaseOut, LocalModelStart,
+    LocalModelStartArgs, LocalModelStatus, LocalModelStatusOut, LocalModelStop, LocalModelStopOut,
+    NoArgs as LocalModelNoArgs, ServedModelView, ServingBackend,
+};
 pub use jobs::{
     Analyze, AnalyzeOut, AnalyzeResult, JobAwait, JobAwaitArgs, JobCancel, JobIdArgs, JobStatus,
     JobView,
@@ -224,6 +231,14 @@ pub fn register_all(r: &mut Registry) {
     r.register(KrakenHelp);
     r.register(LocalModelRecommend);
     r.register(LocalModelSetup);
+    // Card LOCAL-SERVING: the models KRAKEN runs on this computer.
+    r.register(LocalModelList);
+    r.register(LocalModelDevices);
+    r.register(LocalModelStatus);
+    r.register(LocalModelStart);
+    r.register(LocalModelHold);
+    r.register(LocalModelRelease);
+    r.register(LocalModelStop);
     // Card NAV: search and bookmarks.
     r.register(Search);
     r.register(BookmarkAdd);

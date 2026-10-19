@@ -31,8 +31,15 @@ const EXPECTED: &[&str] = &[
     "job_status",
     "kraken_help",
     "list_functions",
+    "local_model_devices",
+    "local_model_hold",
+    "local_model_list",
     "local_model_recommend",
+    "local_model_release",
     "local_model_setup",
+    "local_model_start",
+    "local_model_status",
+    "local_model_stop",
     "memory_map",
     "project_close",
     "project_create",
@@ -650,4 +657,98 @@ async fn binary_probe_needs_no_project_and_keeps_agents_out_of_hidden_folders() 
         .expect_err("refused");
     assert_eq!(e.code, ErrorCode::InvalidArgument);
     assert!(e.message.contains("refused for agents"), "{}", e.message);
+}
+
+#[derive(Debug, Default)]
+struct MockServing {
+    calls: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+}
+
+#[async_trait::async_trait]
+impl kraken_registry::commands::ServingBackend for MockServing {
+    async fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, kraken_proto::ProtoError> {
+        self.calls
+            .lock()
+            .expect("lock")
+            .push((method.to_string(), params));
+        let model = json!({
+            "id": "qwen", "name": "Qwen", "state": {"kind": "ready"},
+            "base_url": "http://127.0.0.1:9/v1", "served_model": "q.gguf",
+            "api_key": "run-key-never-shown", "holders": 1, "role_assigned": true,
+        });
+        Ok(match method {
+            "infer_models" => json!({"models": [model], "grace_secs": 120}),
+            "infer_model_logs" => {
+                json!({"lines": [{"seq": 1, "stream": "stderr", "text": "loaded"}], "last_seq": 1})
+            }
+            "infer_devices" => json!({"devices": []}),
+            "infer_release" => json!({"released": true}),
+            "infer_model_stop" => json!({"stopped": true}),
+            _ => model,
+        })
+    }
+}
+
+#[tokio::test]
+async fn local_model_commands_use_the_serving_service_and_hide_the_key() {
+    let mock = std::sync::Arc::new(MockServing::default());
+    let env = Setup::new(tiny()).start().await;
+    let session = Session::new(env.factory.clone()).with_serving(mock.clone());
+    let registry = Registry::standard();
+    let ctx = user();
+    let call = |name: &'static str, args: serde_json::Value| {
+        let (registry, session, ctx) = (&registry, &session, &ctx);
+        async move {
+            registry
+                .call_json(name, session, ctx, args)
+                .await
+                .unwrap_or_else(|e| panic!("{name}: {e}"))
+        }
+    };
+    let list = call("local_model_list", json!({})).await;
+    assert_eq!(list["models"][0]["id"], "qwen");
+    assert!(!list.to_string().contains("run-key-never-shown"), "{list}");
+    call("local_model_devices", json!({})).await;
+    let status = call("local_model_status", json!({"model": "qwen"})).await;
+    assert_eq!(status["log_tail"], json!(["loaded"]));
+    assert!(!status.to_string().contains("run-key-never-shown"));
+    let started = call("local_model_start", json!({"model": "qwen", "cpu": true})).await;
+    assert_eq!(started["id"], "qwen");
+    assert!(started.get("api_key").is_none(), "{started}");
+    call("local_model_hold", json!({"model": "qwen"})).await;
+    assert_eq!(
+        call("local_model_release", json!({"model": "qwen"})).await["released"],
+        true
+    );
+    assert_eq!(
+        call("local_model_stop", json!({"model": "qwen"})).await["stopped"],
+        true
+    );
+    assert!(
+        mock.calls
+            .lock()
+            .expect("lock")
+            .iter()
+            .any(|(m, p)| m == "infer_model_start" && p["cpu"] == true && p["model"] == "qwen")
+    );
+    let unknown = registry
+        .call_json(
+            "local_model_status",
+            &session,
+            &ctx,
+            json!({"model": "nope"}),
+        )
+        .await
+        .expect_err("unknown model");
+    assert_eq!(unknown.code, ErrorCode::NotFound);
+    let none = Session::new(env.factory.clone());
+    let e = registry
+        .call_json("local_model_list", &none, &ctx, json!({}))
+        .await
+        .expect_err("not attached");
+    assert_eq!(e.code, ErrorCode::Unsupported);
 }

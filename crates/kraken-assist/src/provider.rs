@@ -16,7 +16,7 @@ use crate::backend::{ApiBackend, AssistBackend};
 use crate::error::AssistError;
 
 /// Example `[provider]` tables: a heading and the TOML for each supported kind.
-pub const SAMPLES: [(&str, &str); 6] = [
+pub const SAMPLES: [(&str, &str); 7] = [
     (
         "Ollama (local; run `ollama serve` and `ollama pull <model>` first)",
         "[provider]\nkind = \"openai_compatible\"\nbase_url = \"http://localhost:11434/v1\"\nmodel = \"qwen3:14b\"\n",
@@ -28,6 +28,10 @@ pub const SAMPLES: [(&str, &str); 6] = [
     (
         "llama-server from llama.cpp (local; start it with --jinja so tool calls work)",
         "[provider]\nkind = \"openai_compatible\"\nbase_url = \"http://localhost:8080/v1\"\nmodel = \"local\"\n",
+    ),
+    (
+        "A model KRAKEN runs on this computer (set it up in Settings or with `kraken local-model-setup`; use its id from `kraken local-model-list`)",
+        "[provider]\nkind = \"local\"\nmodel = \"qwen3-8b-q4_k_m\"\n",
     ),
     (
         "Anthropic (cloud; the key stays in an environment variable, never in this file)",
@@ -96,7 +100,9 @@ pub fn build_provider(
 ) -> Result<Arc<dyn kraken_agent::ChatProvider>, kraken_agent::AgentError> {
     let path = provider_config_path(&|k| std::env::var_os(k));
     let effort = kraken_agent::ThinkingConfig::load(path.as_deref()).for_config(cfg);
-    cfg.build_with_thinking(secrets, effort)
+    let local: Arc<dyn kraken_agent::LocalResolver> =
+        Arc::new(crate::local::ServingResolver::new());
+    cfg.build_with_local(secrets, effort, Some(local))
 }
 
 /// Reads the `[provider]` table from the file at `path`.

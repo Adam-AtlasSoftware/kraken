@@ -37,8 +37,15 @@ logged; **dangerous** commands always ask for approval first.
 | [`job_status`](#job_status) | query | safe | Show a job's status, progress and result |
 | [`kraken_help`](#kraken_help) | query | safe | Search KRAKEN's own documentation and glossary |
 | [`list_functions`](#list_functions) | query | safe | List functions ordered by address, one page at a time |
+| [`local_model_devices`](#local_model_devices) | query | safe | List the graphics cards a local model could run on |
+| [`local_model_hold`](#local_model_hold) | query | safe | Keep a local model running for as long as this connection lasts |
+| [`local_model_list`](#local_model_list) | query | safe | List the models served on this computer and their state |
 | [`local_model_recommend`](#local_model_recommend) | query | safe | Recommend a local engine and model that fit this computer |
+| [`local_model_release`](#local_model_release) | query | safe | Give up this connection's hold of a local model |
 | [`local_model_setup`](#local_model_setup) | query | safe | Download and configure a local model (asks for approval first) |
+| [`local_model_start`](#local_model_start) | query | safe | Start a local model and keep it running until stopped |
+| [`local_model_status`](#local_model_status) | query | safe | Show one local model's state, memory, speed and recent log |
+| [`local_model_stop`](#local_model_stop) | query | safe | Stop a local model now, whoever is using it |
 | [`memory_map`](#memory_map) | query | safe | List the memory blocks (segments and sections) with permissions |
 | [`project_close`](#project_close) | mutation | mutating | Close the current project and stop its engine |
 | [`project_create`](#project_create) | mutation | mutating | Create a project for a binary and make it the current project |
@@ -5195,6 +5202,1046 @@ Example: `list_functions {"name_filter": "parse", "limit": 20}`
 
 </details>
 
+## local_model_devices
+
+List the graphics cards a local model could run on
+
+```sh
+kraken local-model-devices
+```
+
+- Kind: query
+- Permission: safe
+
+Returns each graphics card with its vendor, name, video memory (total and used) and state: usable, broken, or not supported yet (Intel cards, NPUs). Models run on the processor when no card is usable.
+
+Example: `local_model_devices {}`
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DeviceInfo": {
+      "description": "A card found on this computer.",
+      "properties": {
+        "index": {
+          "description": "The card's number as the vendor tool reports it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Product name.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/DeviceState",
+          "description": "Whether it can be used."
+        },
+        "uuid": {
+          "description": "The vendor's unique id; empty when the tool gives none.",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        },
+        "vram_total": {
+          "description": "Memory on the card in bytes (VRAM).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vram_used": {
+          "description": "Memory in use right now, in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index",
+        "uuid",
+        "vendor",
+        "name",
+        "vram_total",
+        "vram_used",
+        "state"
+      ],
+      "type": "object"
+    },
+    "DeviceState": {
+      "description": "Whether a card can be used.",
+      "oneOf": [
+        {
+          "description": "Working.",
+          "properties": {
+            "kind": {
+              "const": "ok",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Present but failing (driver missing or broken).",
+          "properties": {
+            "kind": {
+              "const": "error",
+              "type": "string"
+            },
+            "message": {
+              "description": "What is wrong, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Present but not usable by KRAKEN.",
+          "properties": {
+            "kind": {
+              "const": "unsupported",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GpuVendor": {
+      "description": "Who made a card.",
+      "oneOf": [
+        {
+          "const": "nvidia",
+          "description": "NVIDIA.",
+          "type": "string"
+        },
+        {
+          "const": "amd",
+          "description": "AMD.",
+          "type": "string"
+        },
+        {
+          "const": "intel",
+          "description": "Intel.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else, including processors for AI work (NPUs).",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `local_model_devices`.",
+  "properties": {
+    "devices": {
+      "description": "Every graphics card found, with memory and whether a model can use it.",
+      "items": {
+        "$ref": "#/$defs/DeviceInfo"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "devices"
+  ],
+  "title": "LocalModelDevicesOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## local_model_hold
+
+Keep a local model running for as long as this connection lasts
+
+```sh
+kraken local-model-hold --model <string> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Starts the model if it is not running and keeps it for this connection: when the connection ends (or after `local_model_release`) and nobody else holds it, it stops after a grace period. Same memory choices as `local_model_start`.
+
+Example: `local_model_hold {"model": "qwen3-8b-q4_k_m"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `model` | `--model` | string | yes | The model's id from `local_model_list`. |
+| `cpu` | `--cpu` | boolean | no | Run on the processor only, whatever cards the model is set to use. |
+| `force` | `--force` | boolean | no | Start even though the model does not seem to fit in memory. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DeviceRef": {
+      "description": "A card, named so it survives a renumbering: the UUID is the identity, the index only a hint.",
+      "properties": {
+        "index": {
+          "description": "The card's number when it was chosen.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uuid": {
+          "description": "The vendor's unique id of the card (`GPU-...` for NVIDIA).",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        }
+      },
+      "required": [
+        "uuid",
+        "index",
+        "vendor"
+      ],
+      "type": "object"
+    },
+    "DeviceVram": {
+      "description": "Memory a model uses on one card.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes in use by this model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/$defs/DeviceRef",
+          "description": "The card."
+        }
+      },
+      "required": [
+        "device",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "GpuVendor": {
+      "description": "Who made a card.",
+      "oneOf": [
+        {
+          "const": "nvidia",
+          "description": "NVIDIA.",
+          "type": "string"
+        },
+        {
+          "const": "amd",
+          "description": "AMD.",
+          "type": "string"
+        },
+        {
+          "const": "intel",
+          "description": "Intel.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else, including processors for AI work (NPUs).",
+          "type": "string"
+        }
+      ]
+    },
+    "LocalEngine": {
+      "description": "The program that serves a model.",
+      "oneOf": [
+        {
+          "const": "llama",
+          "description": "llama.cpp's `llama-server`.",
+          "type": "string"
+        },
+        {
+          "const": "strata",
+          "description": "Strata (CUDA only).",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelState": {
+      "description": "Where a served model is in its life.",
+      "oneOf": [
+        {
+          "description": "Not running.",
+          "properties": {
+            "kind": {
+              "const": "stopped",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Starting; the weights are being loaded.",
+          "properties": {
+            "kind": {
+              "const": "loading",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Serving requests.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shutting down.",
+          "properties": {
+            "kind": {
+              "const": "stopping",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Could not run, or stopped for good.",
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "description": "Why, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelStats": {
+      "description": "Live figures of one model.",
+      "properties": {
+        "devices": {
+          "default": [],
+          "description": "The cards in use.",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "load_fraction": {
+          "description": "How much of the loading is done, 0 to 1; `None` when the engine does not say.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model's id.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "ram_bytes": {
+          "default": 0,
+          "description": "Memory used on the computer (RAM) in bytes, summed over the engine's processes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tok_s": {
+          "description": "Words per second, roughly (tokens per second); `None` before the first reply.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tok_s_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `tok_s` comes from."
+        },
+        "vram_per_device": {
+          "default": [],
+          "description": "Card memory used by this model, per card.",
+          "items": {
+            "$ref": "#/$defs/DeviceVram"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "phase"
+      ],
+      "type": "object"
+    },
+    "TokSource": {
+      "description": "Where the words-per-second figure comes from.",
+      "oneOf": [
+        {
+          "const": "engine",
+          "description": "Reported by the engine.",
+          "type": "string"
+        },
+        {
+          "const": "approx",
+          "description": "Measured by KRAKEN from replies; shown as \"about N\".",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One local model as shown.",
+  "properties": {
+    "autostart": {
+      "default": false,
+      "description": "Served automatically when KRAKEN opens.",
+      "type": "boolean"
+    },
+    "base_url": {
+      "default": null,
+      "description": "OpenAI-compatible address while it runs.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "devices": {
+      "default": [],
+      "description": "The cards it runs on (empty: the processor).",
+      "items": {
+        "$ref": "#/$defs/DeviceRef"
+      },
+      "type": "array"
+    },
+    "engine": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LocalEngine"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The serving program."
+    },
+    "holders": {
+      "default": 0,
+      "description": "Callers holding it.",
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "id": {
+      "description": "The model's id (what `local { model = \"<id>\" }` names).",
+      "type": "string"
+    },
+    "load_fraction": {
+      "default": null,
+      "description": "Load progress 0..1 when known.",
+      "format": "float",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "name": {
+      "description": "Name for people.",
+      "type": "string"
+    },
+    "notice": {
+      "default": null,
+      "description": "Why it was not started automatically (it would not fit), in plain words.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pid": {
+      "default": null,
+      "description": "Process id.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "pinned": {
+      "default": false,
+      "description": "Started by hand: runs until stopped.",
+      "type": "boolean"
+    },
+    "role_assigned": {
+      "default": false,
+      "description": "Used by the assistant or by rewriting.",
+      "type": "boolean"
+    },
+    "served_model": {
+      "default": null,
+      "description": "Model name to put in chat requests.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "$ref": "#/$defs/ModelState",
+      "description": "Where it is in its life."
+    },
+    "stats": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelStats"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Live figures while it runs."
+    },
+    "stops_in_secs": {
+      "default": null,
+      "description": "Nobody holds it any more: seconds until it stops.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "uptime_secs": {
+      "default": null,
+      "description": "Seconds since the start.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "warnings": {
+      "default": [],
+      "description": "Memory warnings of the latest start.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "state"
+  ],
+  "title": "ServedModelView",
+  "type": "object"
+}
+```
+
+</details>
+
+## local_model_list
+
+List the models served on this computer and their state
+
+```sh
+kraken local-model-list
+```
+
+- Kind: query
+- Permission: safe
+
+Returns every model set up to run on this computer: id, state (stopped, loading, ready, failed), address while running, who holds it, cards, memory and speed. The run-time key of a server is not part of the answer.
+
+Example: `local_model_list {}`
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DeviceRef": {
+      "description": "A card, named so it survives a renumbering: the UUID is the identity, the index only a hint.",
+      "properties": {
+        "index": {
+          "description": "The card's number when it was chosen.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uuid": {
+          "description": "The vendor's unique id of the card (`GPU-...` for NVIDIA).",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        }
+      },
+      "required": [
+        "uuid",
+        "index",
+        "vendor"
+      ],
+      "type": "object"
+    },
+    "DeviceVram": {
+      "description": "Memory a model uses on one card.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes in use by this model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/$defs/DeviceRef",
+          "description": "The card."
+        }
+      },
+      "required": [
+        "device",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "GpuVendor": {
+      "description": "Who made a card.",
+      "oneOf": [
+        {
+          "const": "nvidia",
+          "description": "NVIDIA.",
+          "type": "string"
+        },
+        {
+          "const": "amd",
+          "description": "AMD.",
+          "type": "string"
+        },
+        {
+          "const": "intel",
+          "description": "Intel.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else, including processors for AI work (NPUs).",
+          "type": "string"
+        }
+      ]
+    },
+    "LocalEngine": {
+      "description": "The program that serves a model.",
+      "oneOf": [
+        {
+          "const": "llama",
+          "description": "llama.cpp's `llama-server`.",
+          "type": "string"
+        },
+        {
+          "const": "strata",
+          "description": "Strata (CUDA only).",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelState": {
+      "description": "Where a served model is in its life.",
+      "oneOf": [
+        {
+          "description": "Not running.",
+          "properties": {
+            "kind": {
+              "const": "stopped",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Starting; the weights are being loaded.",
+          "properties": {
+            "kind": {
+              "const": "loading",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Serving requests.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shutting down.",
+          "properties": {
+            "kind": {
+              "const": "stopping",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Could not run, or stopped for good.",
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "description": "Why, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelStats": {
+      "description": "Live figures of one model.",
+      "properties": {
+        "devices": {
+          "default": [],
+          "description": "The cards in use.",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "load_fraction": {
+          "description": "How much of the loading is done, 0 to 1; `None` when the engine does not say.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model's id.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "ram_bytes": {
+          "default": 0,
+          "description": "Memory used on the computer (RAM) in bytes, summed over the engine's processes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tok_s": {
+          "description": "Words per second, roughly (tokens per second); `None` before the first reply.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tok_s_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `tok_s` comes from."
+        },
+        "vram_per_device": {
+          "default": [],
+          "description": "Card memory used by this model, per card.",
+          "items": {
+            "$ref": "#/$defs/DeviceVram"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "phase"
+      ],
+      "type": "object"
+    },
+    "ServedModelView": {
+      "description": "One local model as shown.",
+      "properties": {
+        "autostart": {
+          "default": false,
+          "description": "Served automatically when KRAKEN opens.",
+          "type": "boolean"
+        },
+        "base_url": {
+          "default": null,
+          "description": "OpenAI-compatible address while it runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "devices": {
+          "default": [],
+          "description": "The cards it runs on (empty: the processor).",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalEngine"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The serving program."
+        },
+        "holders": {
+          "default": 0,
+          "description": "Callers holding it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "The model's id (what `local { model = \"<id>\" }` names).",
+          "type": "string"
+        },
+        "load_fraction": {
+          "default": null,
+          "description": "Load progress 0..1 when known.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Name for people.",
+          "type": "string"
+        },
+        "notice": {
+          "default": null,
+          "description": "Why it was not started automatically (it would not fit), in plain words.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "default": null,
+          "description": "Process id.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pinned": {
+          "default": false,
+          "description": "Started by hand: runs until stopped.",
+          "type": "boolean"
+        },
+        "role_assigned": {
+          "default": false,
+          "description": "Used by the assistant or by rewriting.",
+          "type": "boolean"
+        },
+        "served_model": {
+          "default": null,
+          "description": "Model name to put in chat requests.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Live figures while it runs."
+        },
+        "stops_in_secs": {
+          "default": null,
+          "description": "Nobody holds it any more: seconds until it stops.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "uptime_secs": {
+          "default": null,
+          "description": "Seconds since the start.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "warnings": {
+          "default": [],
+          "description": "Memory warnings of the latest start.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
+    "TokSource": {
+      "description": "Where the words-per-second figure comes from.",
+      "oneOf": [
+        {
+          "const": "engine",
+          "description": "Reported by the engine.",
+          "type": "string"
+        },
+        {
+          "const": "approx",
+          "description": "Measured by KRAKEN from replies; shown as \"about N\".",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `local_model_list`.",
+  "properties": {
+    "grace_secs": {
+      "description": "Seconds a model keeps running after its last holder goes.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "models": {
+      "description": "The models set up, in the configuration's order, then manual starts.",
+      "items": {
+        "$ref": "#/$defs/ServedModelView"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "models",
+    "grace_secs"
+  ],
+  "title": "LocalModelListOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## local_model_recommend
 
 Recommend a local engine and model that fit this computer
@@ -5530,6 +6577,48 @@ Example: `local_model_recommend {"engine": "strata"}`
 
 </details>
 
+## local_model_release
+
+Give up this connection's hold of a local model
+
+```sh
+kraken local-model-release --model <string>
+```
+
+- Kind: query
+- Permission: safe
+
+Removes the hold made by `local_model_hold`. The model stops after the grace period when nobody else holds it and it was not started by hand.
+
+Example: `local_model_release {"model": "qwen3-8b-q4_k_m"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `model` | `--model` | string | yes | The model's id from `local_model_list`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `local_model_release`.",
+  "properties": {
+    "released": {
+      "description": "False when the caller did not hold the model.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "released"
+  ],
+  "title": "LocalModelReleaseOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## local_model_setup
 
 Download and configure a local model (asks for approval first)
@@ -5613,6 +6702,915 @@ Example: `local_model_setup {"model": "qwen3-8b-q4_k_m", "use_for": ["assistant"
     "note"
   ],
   "title": "LocalModelSetupOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## local_model_start
+
+Start a local model and keep it running until stopped
+
+```sh
+kraken local-model-start --model <string> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Starts the model and returns while it loads (follow it with `local_model_status`). It keeps running until `local_model_stop`, even when nobody uses it. If it would not fit in memory the answer says so and offers the choices: stop another model, `cpu: true` to run on the processor, or `force: true` to start anyway.
+
+Example: `local_model_start {"model": "qwen3-8b-q4_k_m", "cpu": true}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `model` | `--model` | string | yes | The model's id from `local_model_list`. |
+| `cpu` | `--cpu` | boolean | no | Run on the processor only, whatever cards the model is set to use. |
+| `force` | `--force` | boolean | no | Start even though the model does not seem to fit in memory. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DeviceRef": {
+      "description": "A card, named so it survives a renumbering: the UUID is the identity, the index only a hint.",
+      "properties": {
+        "index": {
+          "description": "The card's number when it was chosen.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uuid": {
+          "description": "The vendor's unique id of the card (`GPU-...` for NVIDIA).",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        }
+      },
+      "required": [
+        "uuid",
+        "index",
+        "vendor"
+      ],
+      "type": "object"
+    },
+    "DeviceVram": {
+      "description": "Memory a model uses on one card.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes in use by this model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/$defs/DeviceRef",
+          "description": "The card."
+        }
+      },
+      "required": [
+        "device",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "GpuVendor": {
+      "description": "Who made a card.",
+      "oneOf": [
+        {
+          "const": "nvidia",
+          "description": "NVIDIA.",
+          "type": "string"
+        },
+        {
+          "const": "amd",
+          "description": "AMD.",
+          "type": "string"
+        },
+        {
+          "const": "intel",
+          "description": "Intel.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else, including processors for AI work (NPUs).",
+          "type": "string"
+        }
+      ]
+    },
+    "LocalEngine": {
+      "description": "The program that serves a model.",
+      "oneOf": [
+        {
+          "const": "llama",
+          "description": "llama.cpp's `llama-server`.",
+          "type": "string"
+        },
+        {
+          "const": "strata",
+          "description": "Strata (CUDA only).",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelState": {
+      "description": "Where a served model is in its life.",
+      "oneOf": [
+        {
+          "description": "Not running.",
+          "properties": {
+            "kind": {
+              "const": "stopped",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Starting; the weights are being loaded.",
+          "properties": {
+            "kind": {
+              "const": "loading",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Serving requests.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shutting down.",
+          "properties": {
+            "kind": {
+              "const": "stopping",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Could not run, or stopped for good.",
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "description": "Why, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelStats": {
+      "description": "Live figures of one model.",
+      "properties": {
+        "devices": {
+          "default": [],
+          "description": "The cards in use.",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "load_fraction": {
+          "description": "How much of the loading is done, 0 to 1; `None` when the engine does not say.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model's id.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "ram_bytes": {
+          "default": 0,
+          "description": "Memory used on the computer (RAM) in bytes, summed over the engine's processes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tok_s": {
+          "description": "Words per second, roughly (tokens per second); `None` before the first reply.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tok_s_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `tok_s` comes from."
+        },
+        "vram_per_device": {
+          "default": [],
+          "description": "Card memory used by this model, per card.",
+          "items": {
+            "$ref": "#/$defs/DeviceVram"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "phase"
+      ],
+      "type": "object"
+    },
+    "TokSource": {
+      "description": "Where the words-per-second figure comes from.",
+      "oneOf": [
+        {
+          "const": "engine",
+          "description": "Reported by the engine.",
+          "type": "string"
+        },
+        {
+          "const": "approx",
+          "description": "Measured by KRAKEN from replies; shown as \"about N\".",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One local model as shown.",
+  "properties": {
+    "autostart": {
+      "default": false,
+      "description": "Served automatically when KRAKEN opens.",
+      "type": "boolean"
+    },
+    "base_url": {
+      "default": null,
+      "description": "OpenAI-compatible address while it runs.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "devices": {
+      "default": [],
+      "description": "The cards it runs on (empty: the processor).",
+      "items": {
+        "$ref": "#/$defs/DeviceRef"
+      },
+      "type": "array"
+    },
+    "engine": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LocalEngine"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The serving program."
+    },
+    "holders": {
+      "default": 0,
+      "description": "Callers holding it.",
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "id": {
+      "description": "The model's id (what `local { model = \"<id>\" }` names).",
+      "type": "string"
+    },
+    "load_fraction": {
+      "default": null,
+      "description": "Load progress 0..1 when known.",
+      "format": "float",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "name": {
+      "description": "Name for people.",
+      "type": "string"
+    },
+    "notice": {
+      "default": null,
+      "description": "Why it was not started automatically (it would not fit), in plain words.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pid": {
+      "default": null,
+      "description": "Process id.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "pinned": {
+      "default": false,
+      "description": "Started by hand: runs until stopped.",
+      "type": "boolean"
+    },
+    "role_assigned": {
+      "default": false,
+      "description": "Used by the assistant or by rewriting.",
+      "type": "boolean"
+    },
+    "served_model": {
+      "default": null,
+      "description": "Model name to put in chat requests.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "$ref": "#/$defs/ModelState",
+      "description": "Where it is in its life."
+    },
+    "stats": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelStats"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Live figures while it runs."
+    },
+    "stops_in_secs": {
+      "default": null,
+      "description": "Nobody holds it any more: seconds until it stops.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "uptime_secs": {
+      "default": null,
+      "description": "Seconds since the start.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "warnings": {
+      "default": [],
+      "description": "Memory warnings of the latest start.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "state"
+  ],
+  "title": "ServedModelView",
+  "type": "object"
+}
+```
+
+</details>
+
+## local_model_status
+
+Show one local model's state, memory, speed and recent log
+
+```sh
+kraken local-model-status --model <string>
+```
+
+- Kind: query
+- Permission: safe
+
+State of one model from `local_model_list` plus the last lines of its log, which say why a start failed. Use it to follow a model that is loading.
+
+Example: `local_model_status {"model": "qwen3-8b-q4_k_m"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `model` | `--model` | string | yes | The model's id from `local_model_list`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DeviceRef": {
+      "description": "A card, named so it survives a renumbering: the UUID is the identity, the index only a hint.",
+      "properties": {
+        "index": {
+          "description": "The card's number when it was chosen.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uuid": {
+          "description": "The vendor's unique id of the card (`GPU-...` for NVIDIA).",
+          "type": "string"
+        },
+        "vendor": {
+          "$ref": "#/$defs/GpuVendor",
+          "description": "Who made it."
+        }
+      },
+      "required": [
+        "uuid",
+        "index",
+        "vendor"
+      ],
+      "type": "object"
+    },
+    "DeviceVram": {
+      "description": "Memory a model uses on one card.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes in use by this model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/$defs/DeviceRef",
+          "description": "The card."
+        }
+      },
+      "required": [
+        "device",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "GpuVendor": {
+      "description": "Who made a card.",
+      "oneOf": [
+        {
+          "const": "nvidia",
+          "description": "NVIDIA.",
+          "type": "string"
+        },
+        {
+          "const": "amd",
+          "description": "AMD.",
+          "type": "string"
+        },
+        {
+          "const": "intel",
+          "description": "Intel.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else, including processors for AI work (NPUs).",
+          "type": "string"
+        }
+      ]
+    },
+    "LocalEngine": {
+      "description": "The program that serves a model.",
+      "oneOf": [
+        {
+          "const": "llama",
+          "description": "llama.cpp's `llama-server`.",
+          "type": "string"
+        },
+        {
+          "const": "strata",
+          "description": "Strata (CUDA only).",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelState": {
+      "description": "Where a served model is in its life.",
+      "oneOf": [
+        {
+          "description": "Not running.",
+          "properties": {
+            "kind": {
+              "const": "stopped",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Starting; the weights are being loaded.",
+          "properties": {
+            "kind": {
+              "const": "loading",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Serving requests.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shutting down.",
+          "properties": {
+            "kind": {
+              "const": "stopping",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Could not run, or stopped for good.",
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "description": "Why, in plain words.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModelStats": {
+      "description": "Live figures of one model.",
+      "properties": {
+        "devices": {
+          "default": [],
+          "description": "The cards in use.",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "load_fraction": {
+          "description": "How much of the loading is done, 0 to 1; `None` when the engine does not say.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model's id.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "ram_bytes": {
+          "default": 0,
+          "description": "Memory used on the computer (RAM) in bytes, summed over the engine's processes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tok_s": {
+          "description": "Words per second, roughly (tokens per second); `None` before the first reply.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tok_s_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `tok_s` comes from."
+        },
+        "vram_per_device": {
+          "default": [],
+          "description": "Card memory used by this model, per card.",
+          "items": {
+            "$ref": "#/$defs/DeviceVram"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "phase"
+      ],
+      "type": "object"
+    },
+    "ServedModelView": {
+      "description": "One local model as shown.",
+      "properties": {
+        "autostart": {
+          "default": false,
+          "description": "Served automatically when KRAKEN opens.",
+          "type": "boolean"
+        },
+        "base_url": {
+          "default": null,
+          "description": "OpenAI-compatible address while it runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "devices": {
+          "default": [],
+          "description": "The cards it runs on (empty: the processor).",
+          "items": {
+            "$ref": "#/$defs/DeviceRef"
+          },
+          "type": "array"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalEngine"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The serving program."
+        },
+        "holders": {
+          "default": 0,
+          "description": "Callers holding it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "The model's id (what `local { model = \"<id>\" }` names).",
+          "type": "string"
+        },
+        "load_fraction": {
+          "default": null,
+          "description": "Load progress 0..1 when known.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Name for people.",
+          "type": "string"
+        },
+        "notice": {
+          "default": null,
+          "description": "Why it was not started automatically (it would not fit), in plain words.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "default": null,
+          "description": "Process id.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pinned": {
+          "default": false,
+          "description": "Started by hand: runs until stopped.",
+          "type": "boolean"
+        },
+        "role_assigned": {
+          "default": false,
+          "description": "Used by the assistant or by rewriting.",
+          "type": "boolean"
+        },
+        "served_model": {
+          "default": null,
+          "description": "Model name to put in chat requests.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ModelState",
+          "description": "Where it is in its life."
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Live figures while it runs."
+        },
+        "stops_in_secs": {
+          "default": null,
+          "description": "Nobody holds it any more: seconds until it stops.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "uptime_secs": {
+          "default": null,
+          "description": "Seconds since the start.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "warnings": {
+          "default": [],
+          "description": "Memory warnings of the latest start.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
+    "TokSource": {
+      "description": "Where the words-per-second figure comes from.",
+      "oneOf": [
+        {
+          "const": "engine",
+          "description": "Reported by the engine.",
+          "type": "string"
+        },
+        {
+          "const": "approx",
+          "description": "Measured by KRAKEN from replies; shown as \"about N\".",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `local_model_status`.",
+  "properties": {
+    "log_tail": {
+      "description": "The last lines of its log, oldest first.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "model": {
+      "$ref": "#/$defs/ServedModelView",
+      "description": "The model."
+    }
+  },
+  "required": [
+    "model",
+    "log_tail"
+  ],
+  "title": "LocalModelStatusOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## local_model_stop
+
+Stop a local model now, whoever is using it
+
+```sh
+kraken local-model-stop --model <string>
+```
+
+- Kind: query
+- Permission: safe
+
+Stops the model's server at once and frees its memory. Anything using it (the assistant, rewriting) starts it again on its next request if the model is assigned to it.
+
+Example: `local_model_stop {"model": "qwen3-8b-q4_k_m"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `model` | `--model` | string | yes | The model's id from `local_model_list`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `local_model_stop`.",
+  "properties": {
+    "stopped": {
+      "description": "False when the model was not running.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "stopped"
+  ],
+  "title": "LocalModelStopOut",
   "type": "object"
 }
 ```

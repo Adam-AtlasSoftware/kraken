@@ -253,8 +253,51 @@ async fn all_job(s: &Surfaces, tool: &str) -> Value {
     d
 }
 
+const SERVING: [&str; 7] = [
+    "local_model_list",
+    "local_model_devices",
+    "local_model_status",
+    "local_model_start",
+    "local_model_hold",
+    "local_model_release",
+    "local_model_stop",
+];
+
+/// The serving commands: the daemon serves them; the direct session has
+/// no serving service attached and says so.
+async fn check_serving_commands(s: &Surfaces) {
+    let listed = cli_call(&s.daemon_cli, &s.cli_dir, "local_model_list", &json!({})).await;
+    // The daemon reads the person's own configuration: whatever models it names, a list comes back.
+    assert!(listed.1["models"].is_array(), "{}", listed.1);
+    let unknown = cli_call(
+        &s.daemon_cli,
+        &s.cli_dir,
+        "local_model_status",
+        &json!({"model": "no-such-model"}),
+    )
+    .await;
+    assert_eq!(unknown.1["code"], "not_found", "{}", unknown.1);
+    let started = cli_call(
+        &s.daemon_cli,
+        &s.cli_dir,
+        "local_model_start",
+        &json!({"model": "no-such-model"}),
+    )
+    .await;
+    assert_eq!(started.1["code"], "not_found", "{}", started.1);
+    let devices = cli_call(&s.daemon_cli, &s.cli_dir, "local_model_devices", &json!({})).await;
+    assert!(devices.1["devices"].is_array(), "{}", devices.1);
+    let direct = cli_call(&s.direct.env, "/unused", "local_model_list", &json!({})).await;
+    assert_eq!(direct.1["code"], "unsupported", "{}", direct.1);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
+    // The body is a very large future; on the heap it cannot overflow the test thread's stack.
+    Box::pin(every_registry_command_identical()).await;
+}
+
+async fn every_registry_command_identical() {
     let mut s = surfaces().await;
     let mut covered = std::collections::BTreeSet::new();
     macro_rules! step {
@@ -400,6 +443,8 @@ async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
     )
     .await;
     assert_eq!(bad.1["code"], "invalid_argument", "{}", bad.1);
+    covered.extend(SERVING.iter().map(|n| n.to_string()));
+    Box::pin(check_serving_commands(&s)).await;
     step!("search", json!({"query": "main", "kind": "names"}));
     step!(
         "bookmark_add",

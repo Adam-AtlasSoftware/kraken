@@ -26,6 +26,7 @@ pub use config::{EnvSecrets, Keyring, LayeredSecrets, ProviderConfig, SecretRef,
 pub use error::AgentError;
 pub use models::{ModelList, ModelSource, builtin_models, model_choices};
 pub use provider::ChatProvider;
+pub use provider::local::{LocalEndpoint, LocalProvider, LocalResolver};
 pub use provider::replay::{
     Cassette, CassetteEntry, Fingerprint, RecordingProvider, ReplayProvider,
 };
