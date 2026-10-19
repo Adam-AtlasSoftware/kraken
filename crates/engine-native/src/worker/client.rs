@@ -88,8 +88,12 @@ pub(crate) enum Forward<'a> {
 
 /// What a request is allowed while it runs.
 pub(crate) struct Limits<'a> {
+    /// The longest the request may go without a progress event (the whole request when it has
+    /// no progress).
     deadline: Duration,
-    /// Progress events of the request: each one restarts the deadline, and is passed on.
+    /// Overall cap that progress cannot extend.
+    total: Option<Duration>,
+    /// Progress events of the request: each one restarts the idle deadline, and is passed on.
     progress: Option<(&'a mut JobSubscription, Forward<'a>)>,
 }
 
@@ -135,6 +139,7 @@ impl WorkerEngine {
     pub(crate) fn request_limits(&self) -> Limits<'static> {
         Limits {
             deadline: self.opts.request_timeout,
+            total: None,
             progress: None,
         }
     }
@@ -146,8 +151,37 @@ impl WorkerEngine {
                 .config
                 .decompile_timeout
                 .map_or(self.opts.request_timeout, |t| t + self.opts.decompile_grace),
+            total: None,
             progress: None,
         }
+    }
+
+    /// Test only: runs `method` with progress under explicit limits.
+    pub(crate) async fn test_progress_call(
+        &self,
+        method: &str,
+        idle: Duration,
+        total: Option<Duration>,
+        cancel: &CancellationToken,
+    ) -> Result<Value, ProtoError> {
+        let live = self.ensure(cancel).await?;
+        let job_id = format!(
+            "native-test-{}",
+            self.next_op.fetch_add(1, Ordering::Relaxed)
+        );
+        let mut sub = live.client.subscribe_progress(&job_id);
+        self.exec(
+            &live,
+            method,
+            json!({ "job_id": job_id }),
+            Limits {
+                deadline: idle,
+                total,
+                progress: Some((&mut sub, Forward::Drop)),
+            },
+            cancel,
+        )
+        .await
     }
 
     /// Opens `path` in a fresh worker (an open worker is replaced), telling `report` how it is
@@ -239,8 +273,9 @@ impl WorkerEngine {
             ));
         }
         let live = Arc::new(self.spawn(open).await?);
-        // the deadline is for the gap between two reports of the discovery, not for the whole
-        // open: the first open of a big binary takes a long time
+        // the idle deadline is for the gap between two reports of the discovery; the overall
+        // cap scales with the size of the binary
+        let bytes = std::fs::metadata(&open.path).map_or(0, |m| m.len());
         let job_id = format!(
             "native-open-{}",
             self.next_op.fetch_add(1, Ordering::Relaxed) + 1
@@ -252,7 +287,8 @@ impl WorkerEngine {
                 "open",
                 json!({ "open": open, "job_id": job_id }),
                 Limits {
-                    deadline: self.opts.open_timeout,
+                    deadline: self.opts.open_idle_timeout,
+                    total: Some(self.opts.total_cap(false, bytes)),
                     progress: Some((&mut sub, report.map_or(Forward::Drop, Forward::Open))),
                 },
                 cancel,
@@ -378,9 +414,9 @@ impl WorkerEngine {
         decode(method, v)
     }
 
-    /// Runs an analysis job in the worker, forwarding its progress. The hard deadline applies
+    /// Runs an analysis job in the worker, forwarding its progress. The idle deadline applies
     /// to the gap between two progress events, so every function of the expensive stage gets
-    /// the full deadline.
+    /// the full deadline; the overall cap bounds a job that keeps reporting.
     pub(crate) async fn analyze(
         &self,
         req: kraken_engine::AnalyzeRequest,
@@ -393,11 +429,16 @@ impl WorkerEngine {
             self.next_op.fetch_add(1, Ordering::Relaxed) + 1
         );
         let mut sub = live.client.subscribe_progress(&job_id);
+        let bytes = lock(&self.program)
+            .as_ref()
+            .and_then(|o| std::fs::metadata(&o.path).ok())
+            .map_or(0, |m| m.len());
         let limits = Limits {
             deadline: self
                 .decompile_limits()
                 .deadline
                 .max(self.opts.request_timeout),
+            total: Some(self.opts.total_cap(true, bytes)),
             progress: Some((&mut sub, Forward::Job(&tx))),
         };
         let v = self
@@ -484,7 +525,11 @@ impl WorkerEngine {
         if let Some(obj) = params.as_object_mut() {
             obj.insert("op".into(), json!(op));
         }
-        let Limits { deadline, progress } = limits;
+        let Limits {
+            deadline,
+            total,
+            progress,
+        } = limits;
         let (mut sub, to) = match progress {
             Some((sub, to)) => (Some(sub), to),
             None => (None, Forward::Drop),
@@ -493,6 +538,8 @@ impl WorkerEngine {
         tokio::pin!(call);
         let sleep = tokio::time::sleep(deadline);
         tokio::pin!(sleep);
+        let cap = tokio::time::sleep(total.unwrap_or(Duration::MAX / 4));
+        tokio::pin!(cap);
         let reply = loop {
             let next_event = async {
                 match sub.as_mut() {
@@ -514,18 +561,38 @@ impl WorkerEngine {
                     }
                     sleep.as_mut().reset(tokio::time::Instant::now() + deadline);
                 }
-                () = &mut sleep => {
+                () = &mut cap, if total.is_some() => {
                     live.kill();
+                    let total = total.unwrap_or_default();
                     return Err(ProtoError::new(
                         ErrorCode::Timeout,
                         format!(
-                            "native worker: `{method}` ran past its hard deadline of {deadline:?}; \
-                             the worker was killed and restarts on the next request"
+                            "native worker: `{method}` ran past its overall limit of {total:?} \
+                             although it kept reporting progress; the worker was killed and \
+                             restarts on the next request"
                         ),
                     )
                     .with_details(json!({
                         "worker": "killed",
                         "method": method,
+                        "reason": "total_limit",
+                        "total_ms": duration_ms(total),
+                    })));
+                }
+                () = &mut sleep => {
+                    live.kill();
+                    return Err(ProtoError::new(
+                        ErrorCode::Timeout,
+                        format!(
+                            "native worker: `{method}` ran past its hard deadline of {deadline:?} \
+                             (no progress for that long); the worker was killed and restarts on \
+                             the next request"
+                        ),
+                    )
+                    .with_details(json!({
+                        "worker": "killed",
+                        "method": method,
+                        "reason": "idle",
                         "deadline_ms": duration_ms(deadline),
                     })));
                 }

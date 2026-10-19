@@ -45,6 +45,7 @@ pub const CORE_DUMPS_ARG: &str = "--core-dumps";
 
 /// Where the native engine runs the decompiler.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Isolation {
     /// In a confined `kraken-native-worker` child under a watchdog (the default).
     Worker(WorkerOptions),
@@ -69,10 +70,18 @@ pub struct WorkerOptions {
     /// `allow_unconfined` is set).
     pub confinement: ConfinementOptions,
     /// Hard deadline for a request other than opening and decompiling, and for the gap between
-    /// two progress events of an analysis job.
+    /// two progress events of an analysis job (its idle limit).
     pub request_timeout: Duration,
-    /// Hard deadline for opening a program (loading and discovery; static binaries take seconds).
+    /// Idle limit of an open: the longest gap between two progress reports of the loader and
+    /// discovery. A worker that reports nothing for this long is hung and is killed.
+    pub open_idle_timeout: Duration,
+    /// Overall cap of an open, however much progress it reports, before the size term below.
     pub open_timeout: Duration,
+    /// Overall cap of an analysis job, before the size term below.
+    pub analyze_timeout: Duration,
+    /// Added to the overall caps of opens and analysis jobs for every MiB of the binary, so a big
+    /// binary gets a longer cap than a small one.
+    pub timeout_per_mib: Duration,
     /// Added to the cooperative decompile limit to get the hard deadline of a decompile. Without
     /// a decompile limit the decompile gets `request_timeout`.
     pub decompile_grace: Duration,
@@ -94,7 +103,10 @@ impl Default for WorkerOptions {
             program: None,
             confinement: ConfinementOptions::default(),
             request_timeout: Duration::from_secs(60),
-            open_timeout: Duration::from_secs(600),
+            open_idle_timeout: Duration::from_secs(120),
+            open_timeout: Duration::from_secs(1800),
+            analyze_timeout: Duration::from_secs(3600),
+            timeout_per_mib: Duration::from_secs(30),
             decompile_grace: Duration::from_secs(5),
             cancel_grace: Duration::from_secs(2),
             temp_root: None,
@@ -105,6 +117,17 @@ impl Default for WorkerOptions {
 }
 
 impl WorkerOptions {
+    /// Overall cap of an open (`analyze` false) or an analysis job for a binary of `bytes`.
+    pub fn total_cap(&self, analyze: bool, bytes: u64) -> Duration {
+        let base = if analyze {
+            self.analyze_timeout
+        } else {
+            self.open_timeout
+        };
+        let mib = u32::try_from(bytes.div_ceil(1 << 20)).unwrap_or(u32::MAX);
+        base.saturating_add(self.timeout_per_mib.saturating_mul(mib))
+    }
+
     /// Default options with an explicit worker executable.
     pub fn with_program(program: impl Into<PathBuf>) -> WorkerOptions {
         WorkerOptions {
