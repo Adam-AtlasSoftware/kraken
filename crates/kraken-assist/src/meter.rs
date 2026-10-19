@@ -33,6 +33,41 @@ use crate::backend::{ApiBackend, AssistBackend, BackendInfo, BackendKind, RunSpe
 use crate::host::HostStats;
 use crate::pricing::Pricing;
 
+type Replies = std::collections::VecDeque<(u64, f64)>;
+
+static SPEEDS: Mutex<Vec<(String, Replies)>> = Mutex::new(Vec::new());
+const SPEED_KEEP: usize = 8;
+
+fn note_speed(provider: &str, output_tokens: u64, wall: Duration) {
+    let secs = wall.as_secs_f64();
+    if output_tokens == 0 || secs <= 0.0 {
+        return;
+    }
+    let mut all = SPEEDS.lock().unwrap_or_else(PoisonError::into_inner);
+    let at = match all.iter().position(|(id, _)| id == provider) {
+        Some(i) => i,
+        None => {
+            all.push((provider.to_string(), Default::default()));
+            all.len() - 1
+        }
+    };
+    let q = &mut all[at].1;
+    if q.len() == SPEED_KEEP {
+        q.pop_front();
+    }
+    q.push_back((output_tokens, secs));
+}
+
+/// Words per second (tokens) the replies of the provider `provider` (its [`ProviderInfo::id`])
+/// came at in this process, over the last few; `None` before the first reply that reported
+/// tokens. Rough: the time includes the wait for the first word.
+pub fn measured_tok_s(provider: &str) -> Option<f32> {
+    let all = SPEEDS.lock().unwrap_or_else(PoisonError::into_inner);
+    let (_, q) = all.iter().find(|(id, _)| id == provider)?;
+    let (n, s) = q.iter().fold((0u64, 0f64), |(n, s), (t, d)| (n + t, s + d));
+    (s > 0.0).then(|| (n as f64 / s) as f32)
+}
+
 /// Hears every recorded call with the running totals of the meter.
 pub type MeterObserver = Arc<dyn Fn(&AiCallRecord, &AiUsageTotals) + Send + Sync>;
 
@@ -271,6 +306,11 @@ impl Meter {
         usage: Option<Usage>,
         wall: Duration,
     ) -> AiCallRecord {
+        if kind != AiProviderKind::TerminalAgent
+            && let Some(u) = usage
+        {
+            note_speed(&info.id, u.output_tokens, wall);
+        }
         let (billing, price) = self.0.pricing.billing(kind, &info.model);
         let cost_usd = match (price, usage) {
             (Some(p), Some(u)) => Some(p.cost(u.input_tokens, u.output_tokens)),
@@ -515,5 +555,21 @@ impl AssistBackend for MeteredBackend {
                 .record(&reply.provider, self.kind, usage, started.elapsed());
             Ok(reply)
         })
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+
+    #[test]
+    fn replies_with_tokens_give_a_rough_speed_per_provider() {
+        assert_eq!(measured_tok_s("speed-test-provider"), None);
+        note_speed("speed-test-provider", 0, Duration::from_secs(1));
+        assert_eq!(measured_tok_s("speed-test-provider"), None);
+        note_speed("speed-test-provider", 100, Duration::from_secs(2));
+        note_speed("speed-test-provider", 100, Duration::from_secs(2));
+        assert_eq!(measured_tok_s("speed-test-provider"), Some(50.0));
+        assert_eq!(measured_tok_s("another-provider"), None);
     }
 }

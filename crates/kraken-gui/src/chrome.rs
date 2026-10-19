@@ -7,19 +7,31 @@ use kraken_viewmodel::{AnalysisPhase, AppAction, LinkState, UiRequest, ViewModel
 
 use crate::style::{self, chip, level_color, medium, pal};
 
-/// The bar across the top: project, history arrows, analysis, palette and theme.
-pub fn top_bar(ui: &mut Ui, vm: &mut ViewModel, reqs: &mut Vec<UiRequest>) {
+/// The bar across the top: project, history arrows, analysis, palette and theme. `identity`
+/// shows the logo and the project's name (our own title bar has them already); `chips` draws
+/// the model chips at the right end.
+pub fn top_bar(
+    ui: &mut Ui,
+    vm: &mut ViewModel,
+    reqs: &mut Vec<UiRequest>,
+    identity: bool,
+    chips: &mut dyn FnMut(&mut Ui),
+) {
     let p = pal(ui);
     ui.horizontal_centered(|ui| {
         ui.add_space(2.0);
-        ui.label(medium("KRAKEN", 16.0).color(p.accent));
+        if identity {
+            ui.label(medium("KRAKEN", 16.0).color(p.accent));
+        }
         if let Some(info) = &vm.project {
             ui.add_space(6.0);
-            ui.label(medium(&info.name, 14.0).color(p.text_strong))
-                .on_hover_text(format!(
-                    "{}\nProject folder: {}",
-                    info.binary_path, info.project_dir
-                ));
+            if identity {
+                ui.label(medium(&info.name, 14.0).color(p.text_strong))
+                    .on_hover_text(format!(
+                        "{}\nProject folder: {}",
+                        info.binary_path, info.project_dir
+                    ));
+            }
             chip(ui, &format!("{} / {}", info.format, info.arch), p.text_dim)
                 .on_hover_text("File format and processor type of the program");
             if info.epoch_stale {
@@ -84,6 +96,7 @@ pub fn top_bar(ui: &mut Ui, vm: &mut ViewModel, reqs: &mut Vec<UiRequest>) {
                     .size(11.0)
                     .color(p.text_dim),
             );
+            chips(ui);
         });
     });
 }

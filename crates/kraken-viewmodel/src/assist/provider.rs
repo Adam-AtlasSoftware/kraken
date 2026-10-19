@@ -259,6 +259,20 @@ pub fn is_local_url(url: &str) -> bool {
     matches!(host_of(url), "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
 }
 
+/// A server the person runs (Ollama, LM Studio, vLLM, llama-server, any OpenAI-compatible
+/// address) as `(short name, address)`; `None` for anything else, the OpenAI cloud included.
+pub fn external_server(cfg: &ProviderConfig) -> Option<(String, String)> {
+    let ProviderConfig::OpenaiCompatible { base_url, .. } = cfg else {
+        return None;
+    };
+    let name = match ProviderDraft::guess_kind(base_url) {
+        ProviderKind::OpenAi => return None,
+        ProviderKind::OpenAiCompatible => host_of(base_url).to_string(),
+        k => k.label().split(" (").next().unwrap_or_default().to_string(),
+    };
+    Some((name, base_url.clone()))
+}
+
 /// The badge for a configured provider.
 pub fn badge_of(cfg: &ProviderConfig) -> ProviderBadge {
     match cfg {

@@ -13,6 +13,7 @@ mod import;
 mod infer;
 mod loading;
 mod menu;
+mod model_chip;
 mod overlays;
 mod panels;
 mod private;
@@ -21,6 +22,7 @@ mod rewrite;
 mod services;
 mod settings;
 mod style;
+mod titlebar;
 mod tour;
 mod welcome;
 mod workspace;
@@ -67,12 +69,16 @@ fn main() -> anyhow::Result<()> {
     } else {
         [1360.0, 840.0]
     };
+    let custom_bar =
+        opts.screenshot.is_none() && titlebar::custom_here(services.cfg.local_serving.titlebar);
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("KRAKEN")
             .with_app_id("kraken-gui")
             .with_inner_size(size)
-            .with_min_inner_size([900.0, 560.0]),
+            .with_min_inner_size([900.0, 560.0])
+            .with_decorations(!custom_bar)
+            .with_transparent(false),
         renderer: match opts.renderer {
             RendererChoice::Glow => eframe::Renderer::Glow,
             RendererChoice::Wgpu => eframe::Renderer::Wgpu,

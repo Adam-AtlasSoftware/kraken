@@ -5,10 +5,12 @@
 //! in-process manager, so the same code serves both modes.
 
 pub mod card;
+pub mod chips;
 #[cfg(feature = "daemon")]
 mod daemon;
 #[cfg(all(test, feature = "daemon"))]
 mod daemon_tests;
+pub mod external;
 pub mod fake;
 mod form;
 mod hub;
