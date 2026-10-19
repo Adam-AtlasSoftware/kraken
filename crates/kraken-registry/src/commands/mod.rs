@@ -12,8 +12,10 @@ mod bulk;
 mod data;
 mod edit;
 mod gui_navigate;
+mod help;
 mod history;
 mod jobs;
+mod local_model;
 mod probe;
 mod project;
 mod query;
@@ -22,6 +24,7 @@ mod rewrite;
 mod rewrite_build;
 mod rewrite_program;
 mod search;
+mod ui;
 mod undo_entry;
 
 pub use ai::{
@@ -48,10 +51,18 @@ pub use edit::{
     SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
+pub use help::{
+    DEFAULT_HELP_HITS, HelpSection, KrakenHelp, KrakenHelpArgs, KrakenHelpOut, MAX_HELP_HITS,
+};
 pub use history::{History, HistoryArgs, ProposalFilter, ProposalsList, ProposalsListArgs};
 pub use jobs::{
     Analyze, AnalyzeOut, AnalyzeResult, JobAwait, JobAwaitArgs, JobCancel, JobIdArgs, JobStatus,
     JobView,
+};
+pub use local_model::{
+    GpuView, LocalFeature, LocalModelBackend, LocalModelRecommend, LocalModelRecommendOut,
+    LocalModelSetup, LocalModelSetupArgs, LocalModelSetupOut, LocalSetupPlan, ModelView,
+    recommend_view, recommendation_now,
 };
 pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
 pub use project::{
@@ -86,6 +97,10 @@ pub use rewrite_program::{
 pub use search::{
     DEFAULT_SEARCH_HITS, MAX_SCAN_BYTES, MAX_SCAN_FUNCTIONS, MAX_SEARCH_HITS, Search, SearchArgs,
     SearchHit, SearchKind, parse_pattern,
+};
+pub use ui::{
+    DENIED_UI_ACTIONS, MAX_HIGHLIGHT_NOTE, UiAction, UiActionArgs, UiActionOut, UiHighlight,
+    UiHighlightArgs, UiHighlightOut, UiState, UiStateArgs, UiStateOut,
 };
 pub use undo_entry::{
     DependentView, TaintedClear, TaintedClearArgs, TaintedClearOut, TaintedFunction, TaintedList,
@@ -200,6 +215,13 @@ pub fn register_all(r: &mut Registry) {
     // Card AI
     r.register(ApplyEdits);
     r.register(GuiNavigate);
+    // Card ASSIST: the assistant drives the GUI, knows KRAKEN and sets up local models.
+    r.register(UiAction);
+    r.register(UiState);
+    r.register(UiHighlight);
+    r.register(KrakenHelp);
+    r.register(LocalModelRecommend);
+    r.register(LocalModelSetup);
     // Card NAV: search and bookmarks.
     r.register(Search);
     r.register(BookmarkAdd);

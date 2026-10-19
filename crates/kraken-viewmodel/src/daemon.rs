@@ -652,6 +652,14 @@ pub fn map_event(v: &Value, project_key: Option<&Path>) -> Option<BackendEvent> 
             key: str_field(v, "job_id").map(str::to_string),
             ..change(v)
         }),
+        event_kind::GUI_UI => BackendEvent::Ui {
+            action: str_field(v, "action").map(str::to_string),
+            tab: str_field(v, "tab").map(str::to_string),
+            address: str_field(v, "address").and_then(parse_hex),
+            target: str_field(v, "target").map(str::to_string),
+            note: str_field(v, "note").map(str::to_string),
+            author: str_field(v, "author_id").unwrap_or_default().to_string(),
+        },
         event_kind::GUI_NAVIGATE => BackendEvent::Navigate {
             address: parse_hex(str_field(v, "address")?)?,
             tab: str_field(v, "tab").map(str::to_string),

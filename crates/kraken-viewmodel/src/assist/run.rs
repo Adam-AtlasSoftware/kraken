@@ -354,6 +354,43 @@ impl ViewModel {
         );
     }
 
+    /// "Always for this tool": remembers the tool in `allow` of the `[permissions]` table of the
+    /// config file at `path`, then allows this request. A failure to save is shown and the
+    /// request is allowed once.
+    pub fn assist_always_allow_at(&mut self, id: &str, path: Option<&std::path::Path>) {
+        let key = self.assist.items.iter().find_map(|i| match i {
+            ChatItem::Permission(c) if c.id == id => {
+                Some(kraken_assist::tool_key(&c.title, c.kind.as_deref()))
+            }
+            _ => None,
+        });
+        if let Some(key) = key {
+            let saved = match path {
+                Some(p) => {
+                    kraken_assist::PermissionRules::allow_always(p, &key).map_err(|e| e.to_string())
+                }
+                None => Err("there is no config file location".to_string()),
+            };
+            match saved {
+                Ok(()) => self.toast(
+                    crate::ToastLevel::Info,
+                    format!("The agent may use `{key}` without asking from now on (Settings > AI > Permissions)."),
+                ),
+                Err(e) => self.toast(
+                    crate::ToastLevel::Error,
+                    format!("Could not remember that: {e}. Allowed once."),
+                ),
+            }
+        }
+        self.assist_answer_permission(id, true);
+    }
+
+    /// [`assist_always_allow_at`](Self::assist_always_allow_at) with the user's config file.
+    pub fn assist_always_allow(&mut self, id: &str) {
+        let path = kraken_assist::provider_config_path(&|k| std::env::var_os(k));
+        self.assist_always_allow_at(id, path.as_deref());
+    }
+
     /// Marks permission requests that were never answered as withdrawn (the run is over).
     fn withdraw_permissions(&mut self) {
         for item in &mut self.assist.items {

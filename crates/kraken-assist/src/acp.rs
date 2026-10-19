@@ -153,9 +153,16 @@ pub fn plan_agent(
             ),
         });
     };
-    let profile = base
+    let mut profile = base
         .clone()
         .with_choice(choice.model.as_deref(), &choice.args);
+    let path = crate::provider::provider_config_path(&|k| std::env::var_os(k));
+    if let Some(effort) = kraken_agent::ThinkingConfig::load(path.as_deref())
+        .0
+        .get(&format!("agent:{}", choice.agent))
+    {
+        profile = profile.with_effort(effort.as_str());
+    }
     match resolver.status(&profile) {
         AgentStatus::Detected(launch) => Ok(AcpSettings {
             profile,
@@ -781,6 +788,30 @@ impl Job {
         Some(req.allow())
     }
 
+    /// The answer the `[permissions]` table gives, re-read on every request so a change (or an
+    /// "Always for this tool" click) applies at once. Only the interactive assistant uses it:
+    /// tasks keep the tool list and read-only rules of `auto_decision`. A KRAKEN tool the
+    /// registry marks dangerous is only ever refused by it, never allowed.
+    fn policy_decision(&self, req: &PermissionRequest) -> Option<PermissionDecision> {
+        if !matches!(self.spec.purpose, Purpose::Chat) {
+            return None;
+        }
+        let rules = crate::permissions::PermissionRules::load(
+            crate::provider::provider_config_path(&|k| std::env::var_os(k)).as_deref(),
+        );
+        let (name, kraken) = classify_tool(&req.title);
+        let title = if kraken {
+            name.as_str()
+        } else {
+            req.title.as_str()
+        };
+        match rules.decide(title, req.tool_kind.as_deref()) {
+            crate::permissions::Verdict::Deny => Some(req.reject()),
+            crate::permissions::Verdict::Allow if !kraken => Some(req.allow()),
+            _ => None,
+        }
+    }
+
     async fn run(mut self) {
         let chat = matches!(self.spec.purpose, Purpose::Chat);
         let read_only = matches!(self.spec.purpose, Purpose::Task { read_only: true });
@@ -938,6 +969,10 @@ impl Job {
             }
             AcpEvent::PermissionRequested(req) => {
                 if let Some(d) = self.auto_decision(req, read_only) {
+                    host.answer_permission(req.request_id, d);
+                    return true;
+                }
+                if let Some(d) = self.policy_decision(req) {
                     host.answer_permission(req.request_id, d);
                     return true;
                 }

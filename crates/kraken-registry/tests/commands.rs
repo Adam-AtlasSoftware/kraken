@@ -29,7 +29,10 @@ const EXPECTED: &[&str] = &[
     "job_await",
     "job_cancel",
     "job_status",
+    "kraken_help",
     "list_functions",
+    "local_model_recommend",
+    "local_model_setup",
     "memory_map",
     "project_close",
     "project_create",
@@ -59,12 +62,69 @@ const EXPECTED: &[&str] = &[
     "strings",
     "tainted_clear",
     "tainted_list",
+    "ui_action",
+    "ui_highlight",
+    "ui_state",
     "undo",
     "undo_entry",
     "undo_preview",
     "undo_run",
     "xrefs",
 ];
+
+#[tokio::test]
+async fn kraken_help_finds_sections_and_ui_commands_validate() {
+    let env = Setup::new(tiny()).start().await;
+    let out = env
+        .ok(
+            &user(),
+            "kraken_help",
+            json!({"query": "local models", "limit": 3}),
+        )
+        .await;
+    let sections = out["sections"].as_array().unwrap();
+    assert!(!sections.is_empty() && sections.len() <= 3, "{out}");
+    assert!(
+        sections[0]["uri"]
+            .as_str()
+            .unwrap()
+            .starts_with("kraken://")
+    );
+    assert!(
+        out["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "assistant")
+    );
+    let none = env
+        .ok(&user(), "kraken_help", json!({"query": "zzqxjv"}))
+        .await;
+    assert!(none["sections"].as_array().unwrap().is_empty());
+
+    for bad in [
+        json!({}),
+        json!({"action": "Show History"}),
+        json!({"action": "close_project"}),
+    ] {
+        assert!(env.call(&user(), "ui_action", bad).await.is_err());
+    }
+    let ok = env
+        .ok(&user(), "ui_action", json!({"tab": "listing"}))
+        .await;
+    assert_eq!(ok["requested"], true);
+    let state = env.ok(&user(), "ui_state", json!({})).await;
+    assert_eq!(state["attached"], false);
+    assert!(
+        env.call(
+            &user(),
+            "ui_highlight",
+            json!({"target": "history", "note": " "})
+        )
+        .await
+        .is_err()
+    );
+}
 
 #[test]
 fn standard_registry_is_complete_and_self_describing() {

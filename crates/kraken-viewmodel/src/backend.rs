@@ -157,6 +157,21 @@ pub enum BackendEvent {
     OpenProgress(Box<kraken_proto::OpenProgress>),
     /// AI work in the daemon started, made model calls or ended.
     Ai(Box<kraken_proto::AiJobView>),
+    /// An agent drove the GUI (`ui_action`, `ui_highlight`).
+    Ui {
+        /// GUI action id to run.
+        action: Option<String>,
+        /// Tab to open and focus.
+        tab: Option<String>,
+        /// Address to show.
+        address: Option<u64>,
+        /// Tab or widget to flash.
+        target: Option<String>,
+        /// Note to show with the flash.
+        note: Option<String>,
+        /// Agent id that asked.
+        author: String,
+    },
     /// An agent asked the GUI to show an address (`gui_navigate`).
     Navigate {
         /// Address to show.

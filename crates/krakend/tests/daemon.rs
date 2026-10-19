@@ -445,6 +445,75 @@ async fn gui_navigate_and_job_starts_reach_the_other_clients() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ui_action_highlight_and_state_round_trip_through_the_daemon() {
+    let r = rig();
+    let watcher = r.client(ClientKind::Gui).await;
+    let mut rx = watcher.take_events().expect("event stream");
+    let worker = r.client(ClientKind::Cli).await;
+    let dir = r.create(&worker, "p").await;
+
+    // No GUI has published its state yet.
+    let st = call(&worker, &dir, "ui_state", json!({})).await.unwrap();
+    assert_eq!(st["attached"], false, "{st}");
+
+    // The GUI publishes tabs and a selection; an agent reads them back.
+    watcher
+        .set_gui_selection(
+            &dir,
+            Some(kraken_host::daemon::GuiSelection {
+                kind: "function".into(),
+                function: Some("0x401136".into()),
+                function_name: Some("main".into()),
+                tabs: vec!["decompiler".into(), "history".into()],
+                active_tab: Some("decompiler".into()),
+                actions: vec!["show_history".into()],
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+    let st = call(&worker, &dir, "ui_state", json!({})).await.unwrap();
+    assert_eq!(st["attached"], true, "{st}");
+    assert_eq!(st["tabs"], json!(["decompiler", "history"]));
+    assert_eq!(st["active_tab"], "decompiler");
+    assert_eq!(st["function_name"], "main");
+    assert_eq!(st["actions"], json!(["show_history"]));
+
+    // An action reaches the GUI as an event.
+    call(
+        &worker,
+        &dir,
+        "ui_action",
+        json!({"action": "show_history", "tab": "graph", "address": "0x401136"}),
+    )
+    .await
+    .unwrap();
+    let ev = next_event(&mut rx, "gui_ui").await;
+    assert_eq!(ev["action"], "show_history");
+    assert_eq!(ev["tab"], "graph");
+    assert_eq!(ev["address"], "0x401136");
+
+    call(
+        &worker,
+        &dir,
+        "ui_highlight",
+        json!({"target": "proposals", "note": "Review my renames"}),
+    )
+    .await
+    .unwrap();
+    let ev = next_event(&mut rx, "gui_ui").await;
+    assert_eq!(ev["target"], "proposals");
+    assert_eq!(ev["note"], "Review my renames");
+
+    // Closing the program or quitting is refused, and nothing is sent.
+    let err = call(&worker, &dir, "ui_action", json!({"action": "quit"}))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("not available to agents"), "{err:?}");
+    r.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_second_client_sees_the_change_event_stream() {
     let r = rig();
     let watcher = r.client(ClientKind::Gui).await;

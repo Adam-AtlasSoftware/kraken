@@ -197,6 +197,7 @@ fn file_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
 fn help_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     item(ui, AppAction::ShowHelp, env, out);
     item(ui, AppAction::TakeTour, env, out);
+    item(ui, AppAction::AskAboutKraken, env, out);
     item(ui, AppAction::OpenPalette, env, out);
     toggle(ui, AppAction::ToggleLearnMode, env.learn_mode, env, out);
     item(ui, AppAction::ShowShortcuts, env, out);

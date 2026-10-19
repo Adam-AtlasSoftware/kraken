@@ -38,7 +38,7 @@ pub(crate) fn selection_from_config(env: &CliEnv) -> Result<Selection, ProtoErro
     if let Some(choice) = AgentChoice::from_config(&cfg) {
         return Ok(Selection::Agent(choice));
     }
-    cfg.build(&EnvSecrets)
+    kraken_assist::build_provider(&cfg, &EnvSecrets)
         .map(Selection::Api)
         .map_err(|e| bad(format!("provider: {e}")))
 }

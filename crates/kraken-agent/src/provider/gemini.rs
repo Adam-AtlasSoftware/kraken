@@ -27,6 +27,7 @@ pub struct Gemini {
     api_key: Secret,
     model: String,
     context_window: Option<u32>,
+    thinking: Option<crate::thinking::Effort>,
 }
 
 impl Gemini {
@@ -46,7 +47,13 @@ impl Gemini {
             api_key: Secret(api_key),
             model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
             context_window: None,
+            thinking: None,
         })
+    }
+
+    pub fn with_thinking(mut self, e: Option<crate::thinking::Effort>) -> Self {
+        self.thinking = e;
+        self
     }
 
     pub fn with_context_window(mut self, w: Option<u32>) -> Self {
@@ -221,7 +228,10 @@ impl ChatProvider for Gemini {
         req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream, AgentError> {
-        let body = build_request(&req);
+        let mut body = build_request(&req);
+        if let Some(e) = self.thinking {
+            crate::thinking::apply_gemini(&mut body, e);
+        }
         let rb = self
             .client
             .post(format!(

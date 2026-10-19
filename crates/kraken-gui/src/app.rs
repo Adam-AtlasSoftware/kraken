@@ -596,10 +596,12 @@ impl KrakenApp {
                     return;
                 };
                 // The same rewrite pipeline krakend and the CLI attach.
-                let backend = InProcessBackend::with_session(
-                    kraken_registry::Session::new(factory)
-                        .with_rewrite(kraken_rewrite::RewriteService::standard().into_backend()),
-                );
+                let mut session = kraken_registry::Session::new(factory)
+                    .with_rewrite(kraken_rewrite::RewriteService::standard().into_backend());
+                if let Ok(lm) = kraken_host::local_models::LocalModels::system() {
+                    session = session.with_local_models(Arc::new(lm));
+                }
+                let backend = InProcessBackend::with_session(session);
                 backend.set_approver(Arc::new(self.approvals.clone()));
                 self.launch(choice, Arc::new(backend), ctx);
             }
@@ -744,6 +746,29 @@ impl KrakenApp {
                         .touch(&info.project_dir, &info.name, recent::now_ms());
                 }
                 self.state.flush_pending_nav(vm, ctx);
+                for (target, note) in vm.take_ui_highlights() {
+                    self.state.highlight = Some((target, Instant::now(), note));
+                    ctx.request_repaint_after(crate::workspace::HIGHLIGHT_FOR);
+                }
+                let tabs: Vec<String> = self
+                    .dock
+                    .iter_all_tabs()
+                    .map(|(_, t)| t.id().to_string())
+                    .collect();
+                let active = self.dock.focused_leaf().and_then(|path| {
+                    let leaf = self.dock[path.surface][path.node].get_leaf()?;
+                    leaf.tabs.get(leaf.active.0).map(|t| t.id().to_string())
+                });
+                vm.set_ui_info(tabs, active);
+                let asked = vm.take_ui_actions();
+                for id in asked {
+                    match AppAction::from_id(&id).filter(|a| a.agent_allowed()) {
+                        Some(a) => self.dispatch(a, ctx),
+                        None => self.problem(format!(
+                            "An agent asked for `{id}`, which is not available to it."
+                        )),
+                    }
+                }
             }
             Connection::NoProject => {
                 // the open was cancelled: back to the welcome screen
@@ -900,6 +925,13 @@ impl KrakenApp {
                 self.help.show_topic(help::topic_for_tab(tab));
             }
             UiRequest::TakeTour => self.tour.start(),
+            UiRequest::AskAboutKraken => {
+                self.state.bring_to_front = Some(Tab::Assistant);
+                if self.state.assist.input.trim().is_empty() {
+                    self.state.assist.input = "How do I ".to_string();
+                }
+                self.state.assist.focus_input = true;
+            }
             UiRequest::ShowAiActivity => {
                 if let Some(vm) = self.vm.as_mut() {
                     vm.ai_refresh();

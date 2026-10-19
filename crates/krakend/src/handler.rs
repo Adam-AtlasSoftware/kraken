@@ -194,6 +194,19 @@ fn clean_selection(mut s: GuiSelection) -> GuiSelection {
     s.function_name = clean(s.function_name, 256);
     s.address = clean(s.address, 32);
     s.text = clean(s.text, 8 * 1024);
+    s.active_tab = clean(s.active_tab, 32);
+    s.tabs = s
+        .tabs
+        .into_iter()
+        .take(40)
+        .map(|t| sanitize_capped(&t, 32))
+        .collect();
+    s.actions = s
+        .actions
+        .into_iter()
+        .take(80)
+        .map(|t| sanitize_capped(&t, 48))
+        .collect();
     s
 }
 
@@ -220,6 +233,15 @@ fn events_for(
     result: &Value,
     ctx: &CallContext,
 ) -> Vec<(&'static str, Value)> {
+    if matches!(name, "ui_action" | "ui_highlight") {
+        let mut ev = json!({"author_kind": ctx.author.kind, "author_id": ctx.author.id});
+        for k in ["action", "tab", "address", "target", "note"] {
+            if let Some(v) = result.get(k) {
+                ev[k] = v.clone();
+            }
+        }
+        return vec![(event_kind::GUI_UI, ev)];
+    }
     if name == "gui_navigate" {
         let mut ev = json!({"author_kind": ctx.author.kind, "author_id": ctx.author.id});
         for k in ["address", "tab"] {
@@ -304,11 +326,17 @@ impl DaemonHandler {
             )
         })?;
         let spec = entry.spec().clone();
-        if p.command == "binary_probe" {
+        if matches!(
+            p.command.as_str(),
+            "binary_probe" | "kraken_help" | "local_model_recommend" | "local_model_setup"
+        ) {
             // About a file, not a project: no session is made for it. The command applies the
             // agent path policy itself.
             let ctx = context(&p, conn, &self.approvals, Path::new(&p.project_dir));
-            let session = kraken_registry::Session::new(self.host.factory().clone());
+            let mut session = kraken_registry::Session::new(self.host.factory().clone());
+            if let Some(lm) = &self.host.config().local_models {
+                session = session.with_local_models(lm.clone());
+            }
             let result = registry
                 .call_json(&p.command, &session, &ctx, p.args.clone())
                 .await?;
@@ -431,7 +459,10 @@ impl DaemonHandler {
         if let Some(g) = guard {
             g.disarm();
         }
-        let result = result?;
+        let mut result = result?;
+        if p.command == "ui_state" {
+            result = self.ui_state(&key);
+        }
         if creating {
             // The person approved it (or is the person): agents may work on it from now on.
             self.grant(&key);
@@ -479,6 +510,30 @@ impl DaemonHandler {
             }
         }
         Ok(json!({"stored": true}))
+    }
+
+    /// The reply of `ui_state`: what the GUI of `key` last published.
+    fn ui_state(&self, key: &Path) -> Value {
+        let entry = self
+            .gui_selection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .cloned();
+        let Some((s, at)) = entry else {
+            return json!({"attached": false, "stale": false, "tabs": [], "actions": []});
+        };
+        json!({
+            "attached": true,
+            "stale": at.elapsed().as_secs() > GUI_SELECTION_FRESH_SECS,
+            "tabs": s.tabs,
+            "active_tab": s.active_tab,
+            "function": s.function,
+            "function_name": s.function_name,
+            "address": s.address,
+            "selection": s.text,
+            "actions": s.actions,
+        })
     }
 
     fn gui_selection(&self, conn: &ConnInfo, params: Value) -> Result<Value, ProtoError> {

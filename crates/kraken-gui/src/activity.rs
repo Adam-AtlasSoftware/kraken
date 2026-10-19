@@ -14,15 +14,7 @@ const OPEN_HISTORY: &str = "kraken_activity_open_history";
 
 /// The tab an agent's `gui_navigate` names.
 pub fn tab_from_name(name: &str) -> Option<Tab> {
-    Some(match name {
-        "decompiler" => Tab::Decompiler,
-        "listing" => Tab::Listing,
-        "graph" => Tab::Graph,
-        "hex" => Tab::Hex,
-        "xrefs" => Tab::Xrefs,
-        "functions" => Tab::Functions,
-        _ => return None,
-    })
+    Tab::ALL.into_iter().find(|t| t.id() == name)
 }
 
 /// The hover text of the chip.
@@ -117,7 +109,8 @@ mod tests {
     fn tab_names_map_and_unknown_names_do_not() {
         assert_eq!(tab_from_name("listing"), Some(Tab::Listing));
         assert_eq!(tab_from_name("decompiler"), Some(Tab::Decompiler));
-        assert_eq!(tab_from_name("assistant"), None);
+        assert_eq!(tab_from_name("assistant"), Some(Tab::Assistant));
+        assert_eq!(tab_from_name("nonsense"), None);
     }
 
     #[test]

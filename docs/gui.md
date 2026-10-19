@@ -108,6 +108,7 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 |---|---|---|
 | Help | Read how KRAKEN works: the first steps, every panel, shortcuts and the glossary | `F1` |
 | Take the tour | Walk through the main areas of the window, one step at a time |  |
+| Ask the assistant about KRAKEN | Ask how a KRAKEN feature works; the assistant reads KRAKEN's own documentation |  |
 | Search commands... | Find any action or command by typing part of its name | `Ctrl+K` |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Keyboard shortcuts | List every keyboard shortcut | `Ctrl+/` |

@@ -250,6 +250,94 @@ skip_confirm_under = 0.10  # start without asking when the estimate stays below 
 
 A run that reaches a limit stops with a message saying which, and keeps what it finished (every translation attempt is stored as it is made). The daily budget refuses new AI work until the next day (midnight UTC), or until you raise it. Changes apply to the next model call, also in a running daemon.
 
+## The assistant knows KRAKEN and can drive the window
+
+Ask the assistant how KRAKEN itself works ("How do I set up a local model?", "What does Rewrite
+do?") with **Help > Ask the assistant about KRAKEN**. It looks the answer up with `kraken_help`,
+which searches the user guide in `docs/` and the glossary and returns short sections. A whole
+page is the MCP resource `kraken://docs/{page}` (for example `kraken://docs/local-models`).
+
+When you have the GUI open, an agent can also show you things through three commands (they work
+the same over MCP, in the CLI and for the built-in assistant):
+
+| Command | What it does |
+|---|---|
+| `ui_state` | The open tabs, the tab in front, the function and address in view, the selected text and the action ids `ui_action` accepts. `attached: false` when no GUI has the project open. |
+| `ui_action` | Runs a GUI action by id (`show_history`, `go_to_main`, `search`...), opens a tab, or jumps to an address or function. Quit, close/open project, clear recent and delete are refused; you do those. |
+| `ui_highlight` | Flashes a tab (or the function filter) with a short note for a few seconds. |
+
+None of them changes the project; a GUI that is not open simply ignores them. The GUI publishes
+its state to the daemon the same way it publishes the selection (`kraken://gui/selection`).
+
+## Choose a model for each feature
+
+The assistant and the rewrite pipeline each pick their own backend, and either can be a model API
+in the cloud, a model on your computer, or a terminal agent:
+
+- the assistant: `[provider]` (Settings > AI > Assistant);
+- rewriting: `[rewrite]` (Settings > AI > Rewriting); without it the rewrite uses `[provider]`.
+
+### Pick a model
+
+In Settings > AI the model box has a **Look up models** button. KRAKEN asks the provider's
+`/models` endpoint and lists what it offers in the drop-down; when the provider cannot be
+reached it lists well-known Claude, Gemini and GPT ids instead and says so. The text box next to
+it still takes any model name you type.
+
+### Thinking effort
+
+`[thinking]` sets how hard a model thinks (`off`, `low`, `medium`, `high`), per provider; Settings
+> AI has a drop-down for the provider you use.
+
+```toml
+[thinking]
+anthropic = "medium"          # extended thinking with a token budget
+gemini = "low"                # thinkingBudget
+openai_compatible = "high"    # reasoning_effort (leave unset for models without it)
+"agent:claude" = "low"        # Claude Code: MAX_THINKING_TOKENS; "agent:codex": model_reasoning_effort
+```
+
+More thinking is slower and costs more. Gemini CLI has no such setting. For Anthropic, a request
+that continues a tool call is sent without thinking, because the API wants the earlier thinking
+blocks sent back and KRAKEN does not keep them.
+
+### Terminal agent permissions
+
+When a terminal agent asks to use one of its own tools, the Assistant tab shows a card with
+**Allow once**, **Always for this tool** and **Deny**. "Always" adds the tool to the allow list
+below. The `[permissions]` table decides without asking:
+
+```toml
+[permissions]
+default = "ask"           # ask | allow | deny, for a tool no list names
+allow = ["read", "edit"]  # tool kinds, or the first word of a tool's title ("web*" matches a prefix)
+deny = ["delete"]         # a deny entry always wins
+```
+
+KRAKEN's own dangerous commands keep asking whatever the table says; the table can only refuse
+them. The rewrite pipeline never reads this table: its terminal agent runs with every request
+denied.
+
+## Models on your computer: `local_model_recommend` and `local_model_setup`
+
+`local_model_recommend` (or Settings > AI > Run a model on this computer > Check this computer)
+reads your graphics card (`nvidia-smi`, `rocm-smi`, sysfs), video memory, RAM, free disk and CPU
+cores and recommends:
+
+- the engine: llama-server on the CPU, with CUDA (NVIDIA, 4 GiB or more) or with Vulkan (AMD,
+  Intel). The Strata manifest engine is recommended only with 12 GiB of video memory, 32 GiB of
+  RAM and 80 GiB of free disk;
+- the largest catalog model and quantisation that fits in video memory after 2 GiB of headroom
+  (on the CPU: half the RAM, up to 8B parameters), with the reasons.
+
+`local_model_setup` (the **Set up...** button) downloads llama-server and the model and points
+`[provider]` (and with `use_for`, `[rewrite]`) at a local server. It asks first, like
+`rewrite_program` does before it runs the original program: the question lists the download size
+and the disk use, an agent cannot skip it, and the GUI shows it as a dialog. Only catalog models
+can be downloaded (the argument is a catalog id, never a URL), and each file's SHA-256 is checked
+against the value pinned in the catalog (`crates/kraken-infer/data/models.toml`); a file that
+differs is deleted. Start the model afterwards from Settings > Local model.
+
 ## Commands
 
 All of them take `--project <dir>` (or `KRAKEN_PROJECT`) like the other commands, and use whatever the `[provider]` table selects, a model or a terminal agent. Text streams to standard output and tool calls go to standard error, so you can see what the assistant looked at. With `--json`, standard output holds one structured result instead (it says which kind of backend answered).

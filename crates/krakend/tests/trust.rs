@@ -486,6 +486,7 @@ async fn the_gui_selection_is_published_by_a_person_and_readable_by_an_agent() {
         function_name: Some("main\u{7}\u{1b}[31m".into()),
         address: Some("0x401004".into()),
         text: Some("x".repeat(20_000)),
+        ..Default::default()
     };
     let e = agent
         .set_gui_selection(&p, Some(sel.clone()))

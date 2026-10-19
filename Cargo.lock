@@ -3028,6 +3028,7 @@ dependencies = [
  "async-trait",
  "engine-fake",
  "kraken-engine",
+ "kraken-infer",
  "kraken-model",
  "kraken-proto",
  "object 0.39.1",
@@ -3037,6 +3038,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]

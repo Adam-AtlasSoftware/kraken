@@ -132,6 +132,12 @@ pub struct ViewModel {
     /// What agents did lately, for the status bar.
     pub agent_activity: crate::activity::AgentActivity,
     focus_request: Option<String>,
+    /// GUI action ids agents asked for (`ui_action`), waiting for the window.
+    ui_actions: Vec<String>,
+    /// Tabs or widgets agents asked to flash, with their notes (`ui_highlight`).
+    ui_highlights: Vec<(String, String)>,
+    /// Tab ids open and the tab in front, as the window last reported them (`ui_state`).
+    ui_info: Option<(Vec<String>, Option<String>)>,
     /// Go to, Search, Bookmarks, the type and function dialogs and generated command forms.
     pub tools: crate::navtools::NavTools,
     /// AI work: what runs and what it costs, and the question asked before it starts.
@@ -319,6 +325,9 @@ impl ViewModel {
             rewrite: crate::rewrite::RewriteState::default(),
             agent_activity: crate::activity::AgentActivity::default(),
             focus_request: None,
+            ui_actions: Vec::new(),
+            ui_highlights: Vec::new(),
+            ui_info: None,
             tools: crate::navtools::NavTools::default(),
             ai: crate::ai::AiState::default(),
         };
@@ -862,6 +871,36 @@ impl ViewModel {
                 self.agent_activity.job_started(&change, Instant::now());
             }
             BackendEvent::OpenProgress(p) => self.on_open_progress(*p),
+            BackendEvent::Ui {
+                action,
+                tab,
+                address,
+                target,
+                note,
+                author,
+            } => {
+                if self.connection == Connection::Open {
+                    if let Some(a) = address {
+                        self.navigate_to(a);
+                        self.focus_request =
+                            Some(tab.clone().unwrap_or_else(|| "decompiler".into()));
+                    } else if let Some(t) = tab {
+                        self.focus_request = Some(t);
+                    }
+                    if let Some(a) = action {
+                        self.ui_actions.push(a);
+                    }
+                    if let (Some(t), Some(n)) = (target, note) {
+                        self.ui_highlights.push((t, n));
+                    }
+                    let who = if author.is_empty() {
+                        "An agent".to_string()
+                    } else {
+                        format!("Agent {author}")
+                    };
+                    self.toast(ToastLevel::Info, format!("{who} is driving the window."));
+                }
+            }
             BackendEvent::Navigate {
                 address,
                 tab,
@@ -906,6 +945,26 @@ impl ViewModel {
     /// name (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`) to a tab.
     pub fn take_focus_request(&mut self) -> Option<String> {
         self.focus_request.take()
+    }
+
+    /// The GUI action ids agents asked for since the last call.
+    pub fn take_ui_actions(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.ui_actions)
+    }
+
+    /// The tabs or widgets agents asked to flash, with their notes, since the last call.
+    pub fn take_ui_highlights(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.ui_highlights)
+    }
+
+    /// The window reports its open tabs and the one in front; a change is published to the
+    /// daemon so agents can read it with `ui_state`.
+    pub fn set_ui_info(&mut self, tabs: Vec<String>, active: Option<String>) {
+        let info = Some((tabs, active));
+        if self.ui_info != info {
+            self.ui_info = info;
+            self.publish_selection();
+        }
     }
 
     /// Looks the agent's new log entries up and tells the person what changed, with an Undo.
@@ -1122,16 +1181,27 @@ impl ViewModel {
     /// function and address the person is looking at. Fire and forget: a backend without a
     /// daemon ignores it, and a failure changes nothing on screen.
     pub(crate) fn publish_selection(&self) {
-        let Some(cur) = &self.current else {
-            return;
+        let mut selection = match &self.current {
+            Some(cur) => json!({
+                "kind": "function",
+                "function": hex(cur.address),
+                "function_name": cur.name,
+                "address": hex(self.views.cursor.unwrap_or(cur.address)),
+            }),
+            None if self.ui_info.is_some() => json!({"kind": "ui"}),
+            None => return,
         };
-        let address = self.views.cursor.unwrap_or(cur.address);
-        let selection = json!({
-            "kind": "function",
-            "function": hex(cur.address),
-            "function_name": cur.name,
-            "address": hex(address),
-        });
+        if let Some((tabs, active)) = &self.ui_info {
+            selection["tabs"] = json!(tabs);
+            selection["active_tab"] = json!(active);
+            selection["actions"] = json!(
+                crate::AppAction::ALL
+                    .into_iter()
+                    .filter(|a| a.agent_allowed())
+                    .map(|a| a.id())
+                    .collect::<Vec<_>>()
+            );
+        }
         let backend = self.backend.clone();
         self.rt.spawn(async move {
             let _ = backend.publish_selection(Some(selection)).await;
@@ -1800,6 +1870,7 @@ impl ViewModel {
             AppAction::ExplainProgram => self.assist_overview(),
             AppAction::RewriteWizard => self.rewrite_wizard_open(),
             AppAction::Automate => return Some(UiRequest::OpenAutomate),
+            AppAction::AskAboutKraken => return Some(UiRequest::AskAboutKraken),
             AppAction::ShowAiActivity => {
                 self.ai.wake = true;
                 return Some(UiRequest::ShowAiActivity);

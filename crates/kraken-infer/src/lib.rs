@@ -9,9 +9,11 @@ pub mod backend;
 pub mod budget;
 pub mod error;
 pub mod generic;
+pub mod hardware;
 pub mod llama;
 pub mod logring;
 pub mod port;
+pub mod recommend;
 pub mod registry;
 pub mod supervisor;
 #[doc(hidden)]
@@ -21,8 +23,14 @@ pub use backend::{BackendCapabilities, GpuApi, InferenceBackend, RunningBackend}
 pub use budget::{MemoryBudget, Reservation, Verdict};
 pub use error::{InferError, Result};
 pub use generic::{GenericOpenAiServerBackend, Manifest};
+pub use hardware::{
+    GpuInfo, GpuVendor, HardwareInfo, Probe, SystemProbe, detect as detect_hardware,
+};
 pub use llama::{LlamaServerBackend, LlamaSettings};
 pub use logring::{LogLine, LogRing, LogStream};
+pub use recommend::{
+    EngineChoice, ModelEntry, Recommendation, catalog as model_catalog, models_dir_with, recommend,
+};
 pub use registry::{BackendRegistry, CapabilityFilter};
 pub use supervisor::{
     HealthCheck, LoadProgress, ManagedProcess, Phase, ProcessSpec, RestartPolicy,

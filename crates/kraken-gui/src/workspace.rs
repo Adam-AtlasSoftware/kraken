@@ -34,7 +34,49 @@ pub enum Tab {
     AiActivity,
 }
 
+/// How long a tab flashed by `ui_highlight` stays marked.
+pub const HIGHLIGHT_FOR: std::time::Duration = std::time::Duration::from_secs(8);
+
 impl Tab {
+    /// The snake_case id agents use (`ui_action`, `ui_state`, `ui_highlight`).
+    pub fn id(self) -> &'static str {
+        match self {
+            Tab::Functions => "functions",
+            Tab::Decompiler => "decompiler",
+            Tab::Hex => "hex",
+            Tab::Listing => "listing",
+            Tab::Graph => "graph",
+            Tab::Xrefs => "xrefs",
+            Tab::Strings => "strings",
+            Tab::Symbols => "symbols",
+            Tab::History => "history",
+            Tab::Proposals => "proposals",
+            Tab::Assistant => "assistant",
+            Tab::Rewrite => "rewrite",
+            Tab::Search => "search",
+            Tab::Bookmarks => "bookmarks",
+            Tab::AiActivity => "ai_activity",
+        }
+    }
+
+    pub const ALL: [Tab; 15] = [
+        Tab::Functions,
+        Tab::Decompiler,
+        Tab::Hex,
+        Tab::Listing,
+        Tab::Graph,
+        Tab::Xrefs,
+        Tab::Strings,
+        Tab::Symbols,
+        Tab::History,
+        Tab::Proposals,
+        Tab::Assistant,
+        Tab::Rewrite,
+        Tab::Search,
+        Tab::Bookmarks,
+        Tab::AiActivity,
+    ];
+
     pub fn title(self) -> &'static str {
         match self {
             Tab::Functions => "Functions",
@@ -120,6 +162,8 @@ pub struct UiState {
     /// Symbol highlighted when the decompiler first draws (screenshot mode).
     pub initial_highlight: Option<String>,
     pub bring_to_front: Option<Tab>,
+    /// A tab an agent asked to flash (`ui_highlight`), when, and its note.
+    pub highlight: Option<(String, Instant, String)>,
     /// State of the program views (listing, hex, graph, lists).
     pub panels: PanelState,
     pub assist: crate::assist::AssistUi,
@@ -194,6 +238,16 @@ impl TabViewer for Viewer<'_> {
 
     fn title(&mut self, tab: &mut Tab) -> WidgetText {
         let mut title = tab.title().to_string();
+        if let Some((id, at, note)) = &self.ui.highlight
+            && id == tab.id()
+            && at.elapsed() < HIGHLIGHT_FOR
+        {
+            title = format!("{title} - {note}");
+            return egui::RichText::new(title)
+                .strong()
+                .color(egui::Color32::from_rgb(255, 190, 60))
+                .into();
+        }
         if *tab == Tab::Proposals && !self.vm.proposals.items.is_empty() {
             title = format!("{title} ({})", self.vm.proposals.items.len());
         }
