@@ -71,6 +71,16 @@ pub(super) fn kit_with(demo: bool, gpu: bool) -> Kit {
 
 /// A harness over the app built from `services` and `opts`.
 pub(super) fn kit_from(services: Services, opts: &crate::args::Options, gpu: bool) -> Kit {
+    kit_sized(services, opts, gpu, [1280.0, 800.0])
+}
+
+/// [`kit_from`] on a screen of `size` points.
+pub(super) fn kit_sized(
+    services: Services,
+    opts: &crate::args::Options,
+    gpu: bool,
+    size: [f32; 2],
+) -> Kit {
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -81,7 +91,7 @@ pub(super) fn kit_from(services: Services, opts: &crate::args::Options, gpu: boo
     let ctx = egui::Context::default();
     let app = KrakenApp::new(&ctx, rt.clone(), services, opts);
     let mut fonts_done = false;
-    let builder = egui_kittest::Harness::builder().with_size([1280.0, 800.0]);
+    let builder = egui_kittest::Harness::builder().with_size(size);
     let builder = if gpu { builder.wgpu() } else { builder };
     let h = builder.build_ui_state(
         move |ui, app: &mut KrakenApp| {

@@ -1,30 +1,28 @@
-//! "Run a model on this computer": the local-inference section of Settings → AI (decisions 21,
-//! 30, 69).
+//! The model card of Settings > AI: the models KRAKEN serves on this computer, one card each
+//! (state, Start serving / Stop, "Serve automatically", the cards to run on, several-card
+//! options, Remove).
 //!
-//! The state and logic are `kraken_viewmodel::infer::InferPanel`; this module draws them. The
-//! model runs in `krakend` (it outlives the window) or, with `--no-daemon`, in this process.
-
-mod form_ui;
-#[cfg(test)]
-mod tests;
+//! The logic is in `kraken_viewmodel::infer` (`card`, `ServingHub`, `LocalModelStore`); this
+//! module draws it and owns the window's link to the serving service: the daemon connection of
+//! this window, or, with `--no-daemon`, a manager in this process that stops its models on exit.
+//! The window's lifetime holds the models marked "serve automatically".
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
 
 use egui::{RichText, Ui};
-use kraken_host::infer::InferManager;
+use kraken_host::infer::{Holder, InferManager, ModelStatus, ServingApi, StartOptions};
+use kraken_proto::infer::{DeviceInfo, LocalModel, MultiGpuMode};
 use kraken_viewmodel::DaemonClientBackend;
-use kraken_viewmodel::assist::{ProviderStore, badge_of};
-use kraken_viewmodel::infer::{DaemonInfer, HintLevel, InferApi, InferPanel, LOCAL_INFER_ACCOUNT};
+use kraken_viewmodel::infer::card::{self, Tone};
+use kraken_viewmodel::infer::{BackendServing, LocalModelStore, ServingHub};
 use tokio::runtime::Handle;
 
-use crate::assist::{AiSettings, Change};
 use crate::services::Mode;
-use crate::style::{self, chip, medium, pal};
+use crate::style::{self, medium, pal};
 
-/// Which service the panel is bound to, so a new daemon connection rebinds it.
+/// Which service the hub is bound to, so a new daemon connection rebinds it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Binding {
     Daemon(usize),
@@ -32,50 +30,108 @@ enum Binding {
     Fixed,
 }
 
-/// Result of the last "Use for the assistant".
-type Notice = Result<String, String>;
-
-/// State of the section.
+/// State of the cards.
 #[derive(Default)]
 pub struct InferSettings {
-    panel: Option<InferPanel>,
+    hub: Option<ServingHub>,
     binding: Option<Binding>,
-    local: Option<Arc<InferManager>>,
-    pick: Option<Receiver<PathBuf>>,
-    notice: Option<Notice>,
-    asked_to_start: bool,
+    manager: Option<Arc<InferManager>>,
+    models: Vec<LocalModel>,
+    models_loaded: bool,
+    models_error: Option<String>,
+    confirm_remove: Option<String>,
+    removed: Option<String>,
+    save_error: Option<String>,
 }
 
 impl InferSettings {
-    /// A section bound to a given service (tests).
-    #[cfg(test)]
-    pub fn with_service(api: Arc<dyn InferApi>, rt: Handle) -> Self {
-        let mut panel = InferPanel::new(api, rt);
-        panel.refresh();
+    /// Cards bound to a given service (tests, screenshots).
+    pub fn with_service(api: Arc<dyn ServingApi>, rt: Handle) -> Self {
         InferSettings {
-            panel: Some(panel),
+            hub: Some(ServingHub::new(api, rt)),
             binding: Some(Binding::Fixed),
             ..Default::default()
         }
     }
 
-    /// The panel's state (tests).
-    #[cfg(test)]
-    pub fn panel_mut(&mut self) -> Option<&mut InferPanel> {
-        self.panel.as_mut()
+    /// Looks at the configuration again the next time a card is drawn.
+    pub fn reload(&mut self) {
+        self.models_loaded = false;
     }
 
-    /// The last result of "Use for the assistant" (tests).
-    #[cfg(test)]
-    pub fn notice(&self) -> Option<&Notice> {
-        self.notice.as_ref()
+    fn ensure_models(&mut self, config_path: Option<&PathBuf>) {
+        if self.models_loaded {
+            return;
+        }
+        self.models_loaded = true;
+        match LocalModelStore::new(config_path.cloned()).load() {
+            Ok(m) => {
+                self.models = m;
+                self.models_error = None;
+            }
+            Err(e) => {
+                self.models_error = Some(format!("The saved model list could not be read: {e}"));
+            }
+        }
     }
 
-    /// Stops a model this process owns (`--no-daemon` runs); a daemon's model outlives the window.
+    /// The models set up, for the pickers.
+    pub fn models(&mut self, config_path: Option<&PathBuf>) -> &[LocalModel] {
+        self.ensure_models(config_path);
+        &self.models
+    }
+
+    /// True once after "Set up a model on this computer..." was chosen.
+    pub fn take_setup_request(&mut self) -> bool {
+        self.hub
+            .as_mut()
+            .is_some_and(ServingHub::take_setup_request)
+    }
+
+    /// Asks for the guided setup (the picker's last entry).
+    pub fn request_setup(&mut self) {
+        if let Some(h) = self.hub.as_mut() {
+            h.request_setup();
+        }
+    }
+
+    /// The model removed since the last call, so a form that used it can let go of it.
+    pub fn take_removed(&mut self) -> Option<String> {
+        self.removed.take()
+    }
+
+    /// Stops the models this process runs (`--no-daemon`); a daemon's holds end with this
+    /// window's connection.
     pub fn shutdown(&self, rt: &Handle) {
-        if let Some(m) = &self.local {
+        if let Some(m) = &self.manager {
             let m = m.clone();
+            kraken_assist::set_serving(None);
             rt.block_on(async move { m.shutdown().await });
+        }
+    }
+
+    /// Binds to the serving service (once, or again after a reconnect), refreshes the models
+    /// and lets the window hold the ones marked "serve automatically". Call every frame; with
+    /// nothing to show it only listens when `watch` is true or a model is set up.
+    pub fn frame(
+        &mut self,
+        ctx: &egui::Context,
+        rt: &Handle,
+        mode: Mode,
+        backend: Option<&Arc<DaemonClientBackend>>,
+        config_path: Option<&PathBuf>,
+        watch: bool,
+    ) {
+        self.ensure_models(config_path);
+        if !self.bind(ctx, rt, mode, backend) {
+            return;
+        }
+        if !(watch || !self.models.is_empty()) {
+            return;
+        }
+        if let Some(h) = self.hub.as_mut() {
+            let next = h.poll(Instant::now());
+            ctx.request_repaint_after(next.max(std::time::Duration::from_millis(50)));
         }
     }
 
@@ -89,331 +145,398 @@ impl InferSettings {
         let want = match mode {
             Mode::Daemon => match backend {
                 Some(b) => Binding::Daemon(Arc::as_ptr(b) as usize),
-                None => return self.panel.is_some(),
+                None => return self.hub.is_some(),
             },
             Mode::NoDaemon => Binding::Local,
         };
-        if self.binding == Some(want) && self.panel.is_some() {
-            return true;
+        if self.binding == Some(Binding::Fixed)
+            || (self.binding == Some(want) && self.hub.is_some())
+        {
+            return self.hub.is_some();
         }
-        if self.binding == Some(Binding::Fixed) && self.panel.is_some() {
-            return true;
-        }
-        let api: Arc<dyn InferApi> = match want {
-            Binding::Daemon(_) => match backend {
-                Some(b) => Arc::new(DaemonInfer(b.clone())),
-                None => return false,
-            },
-            Binding::Local => self
-                .local
-                .get_or_insert_with(|| Arc::new(InferManager::from_env()))
-                .clone(),
-            Binding::Fixed => return self.panel.is_some(),
-        };
         let c = ctx.clone();
-        let mut panel =
-            InferPanel::new(api, rt.clone()).with_repaint(Arc::new(move || c.request_repaint()));
-        panel.refresh();
-        self.panel = Some(panel);
+        let repaint: Arc<dyn Fn() + Send + Sync> = Arc::new(move || c.request_repaint());
+        let hub = match want {
+            Binding::Daemon(_) => {
+                let Some(b) = backend else { return false };
+                let api: Arc<dyn ServingApi> = Arc::new(BackendServing(b.clone()));
+                kraken_assist::set_serving(Some(api.clone()));
+                ServingHub::new(api, rt.clone())
+            }
+            Binding::Local => {
+                let m = self
+                    .manager
+                    .get_or_insert_with(|| Arc::new(InferManager::from_env()))
+                    .clone();
+                let held: Arc<dyn ServingApi> = Arc::new(m.holder(Holder::Owner));
+                kraken_assist::set_serving(Some(held.clone()));
+                ServingHub::new(held, rt.clone()).with_manager(m)
+            }
+            Binding::Fixed => return self.hub.is_some(),
+        };
+        self.hub = Some(hub.with_repaint(repaint));
         self.binding = Some(want);
         true
     }
 
-    /// Draws the section. Passes a chosen model on to `ai` so the assistant switches to it.
-    pub fn show(
-        &mut self,
-        ui: &mut Ui,
-        rt: &Handle,
-        mode: Mode,
-        backend: Option<&Arc<DaemonClientBackend>>,
-        config_path: Option<&PathBuf>,
-        ai: &mut AiSettings,
-    ) {
-        let p = pal(ui);
-        let s = style::status(style::dark(ui));
-        ui.label(medium("Run a model on this computer", 14.0).color(p.text_strong));
-        ui.label(
-            RichText::new(
-                "Runs a language model on your own computer with llama.cpp or another engine. \
-                 Nothing leaves your machine. You choose the model file; KRAKEN never downloads models.",
-            )
-            .size(12.0)
-            .color(p.text_dim),
-        );
-        ui.add_space(4.0);
-        if !self.bind(ui.ctx(), rt, mode, backend) {
-            ui.label(RichText::new("Connecting to krakend...").color(p.text_dim));
-            return;
-        }
-        if let Some(rx) = &self.pick
-            && let Ok(path) = rx.try_recv()
-        {
-            if let Some(panel) = self.panel.as_mut() {
-                panel.set_model_path(&path);
-            }
-            self.pick = None;
-        }
-        let ctx = ui.ctx().clone();
-        let Some(panel) = self.panel.as_mut() else {
+    /// The "Not enough memory" question, when a start was refused. Call every frame.
+    pub fn dialogs(&mut self, ctx: &egui::Context) {
+        let Some(hub) = self.hub.as_mut() else {
             return;
         };
-        panel.poll();
-        panel.tick(Instant::now());
-        ctx.request_repaint_after(panel.next_tick_in());
-
-        if !panel.loaded() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(RichText::new("Looking for engines...").color(p.text_dim));
-            });
-            if let Some(e) = &panel.error {
-                ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
-                if ui.button("Try again").clicked() {
-                    panel.error = None;
-                    panel.refresh();
-                }
-            }
+        let Some(q) = hub.fit_prompt() else {
             return;
-        }
-        if panel.backends().is_empty() {
-            ui.label(
-                RichText::new(
-                    "No engine can run on this computer. See docs/local-models.md for how to add one.",
-                )
-                .color(s.warning),
-            );
-            return;
-        }
-
-        let running = panel.is_running() || panel.is_busy();
-        let mut pick_for: Option<String> = None;
-        ui.add_enabled_ui(!running, |ui| {
-            // Engine picker.
-            ui.horizontal(|ui| {
-                ui.label("Engine");
-                let current = panel
-                    .selected_backend()
-                    .map(|b| b.display_name.clone())
-                    .unwrap_or_default();
-                let mut chosen = panel.selected.clone();
-                egui::ComboBox::from_id_salt("kraken_infer_engine")
-                    .selected_text(current)
-                    .width(300.0)
-                    .show_ui(ui, |ui| {
-                        for b in panel.backends() {
-                            ui.selectable_value(
-                                &mut chosen,
-                                Some(b.id.clone()),
-                                b.display_name.clone(),
-                            );
-                        }
-                    });
-                if chosen != panel.selected
-                    && let Some(id) = chosen
-                {
-                    panel.select(&id);
-                }
-                if let Some(b) = panel.selected_backend() {
-                    chip(
-                        ui,
-                        if b.builtin {
-                            "built in"
-                        } else {
-                            "from manifest"
-                        },
-                        p.text_dim,
-                    );
-                    if b.capabilities.supports_moe_offload {
-                        chip(ui, "big models on small GPUs", s.info).on_hover_text(
-                            "Can keep a mixture-of-experts model's expert weights in system RAM.",
-                        );
+        };
+        let mut answer = None;
+        let mut cancel = false;
+        egui::Window::new(medium("Not enough memory", 14.0))
+            .id(egui::Id::new("kraken_fit_prompt"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                ui.add(egui::Label::new(&q.message).wrap());
+                ui.add_space(6.0);
+                for o in &q.options {
+                    if ui.button(o.label()).on_hover_text(o.help()).clicked() {
+                        answer = Some(o.clone());
                     }
                 }
-            });
-            if let Some(l) = &panel.listing {
-                for w in &l.warnings {
-                    ui.add(egui::Label::new(RichText::new(w).size(12.0).color(s.warning)).wrap());
-                }
-            }
-            if let Some(h) = panel.install_hint() {
-                ui.add(egui::Label::new(RichText::new(h).size(12.0).color(s.warning)).wrap());
-            }
-            ui.add_space(2.0);
-            pick_for = form_ui::show(ui, &mut panel.form);
-        });
-        if let Some(key) = pick_for {
-            let (tx, rx) = channel();
-            self.pick = Some(rx);
-            let c = ctx.clone();
-            let start_dir = panel
-                .form
-                .field(&key)
-                .map(|f| f.text.trim().to_string())
-                .and_then(|t| PathBuf::from(t).parent().map(PathBuf::from))
-                .filter(|d| d.is_dir());
-            rt.spawn(async move {
-                let mut d = rfd::AsyncFileDialog::new().set_title("Choose a model file (GGUF)");
-                if let Some(dir) = start_dir {
-                    d = d.set_directory(dir);
-                }
-                if let Some(h) = d.pick_file().await {
-                    let _ = tx.send(h.path().to_path_buf());
-                    c.request_repaint();
-                }
-            });
-        }
-
-        if let Some(h) = panel.memory_hint() {
-            let color = match h.level {
-                HintLevel::Info => p.text_dim,
-                HintLevel::Warn => s.warning,
-                HintLevel::Bad => s.danger,
-            };
-            ui.add(egui::Label::new(RichText::new(h.text).size(12.0).color(color)).wrap());
-        }
-        ui.add_space(4.0);
-
-        // Start, stop, use.
-        let mut use_it = false;
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(panel.can_start(), |ui| {
-                if style::primary_button(ui, "Start").clicked() {
-                    panel.start();
-                    self.asked_to_start = true;
-                    self.notice = None;
-                }
-            });
-            ui.add_enabled_ui(panel.is_running() && !panel.is_busy(), |ui| {
-                if ui.button("Stop").clicked() {
-                    panel.stop();
-                }
-            });
-            ui.add_enabled_ui(panel.is_ready(), |ui| {
+                ui.add_space(4.0);
                 if ui
-                    .button("Use for the assistant")
-                    .on_hover_text(
-                        "Saves this model as the assistant's provider (an OpenAI-compatible server on this computer).",
+                    .button("Cancel")
+                    .on_hover_text("Do not start the model")
+                    .clicked()
+                {
+                    cancel = true;
+                }
+            });
+        if let Some(o) = answer {
+            hub.answer_fit(&o);
+        } else if cancel
+            || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            hub.cancel_fit();
+        }
+    }
+
+    /// Draws the card of the model `id`. `scope` keeps the widget ids apart when two cards
+    /// of the same model are on screen (assistant and rewriting).
+    pub fn card(&mut self, ui: &mut Ui, scope: &str, id: &str, config_path: Option<&PathBuf>) {
+        self.ensure_models(config_path);
+        let p = pal(ui);
+        let s = style::status(style::dark(ui));
+        if let Some(e) = &self.models_error {
+            ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
+        }
+        let Some(idx) = self.models.iter().position(|m| m.id == id) else {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!(
+                        "The model `{id}` is not set up on this computer (any more). Pick another one, or set one up."
+                    ))
+                    .color(s.warning),
+                )
+                .wrap(),
+            );
+            return;
+        };
+        let Some(hub) = self.hub.as_mut() else {
+            ui.label(RichText::new("Connecting to krakend...").color(p.text_dim));
+            return;
+        };
+        let found = hub.devices();
+        let status = hub.status(id);
+        let busy = hub.busy(id);
+        let mut model = self.models[idx].clone();
+        let before = model.clone();
+        let mut start = false;
+        let mut stop = false;
+        let mut remove = false;
+        let mut start_over = false;
+
+        ui.push_id((scope, id), |ui| {
+            status_block(ui, &p, &s, status.as_ref(), &found, busy, &mut start, &mut stop);
+            if let Some(e) = hub.error() {
+                ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
+            }
+            ui.add_space(4.0);
+            ui.checkbox(&mut model.autostart, "Serve automatically when KRAKEN opens")
+                .on_hover_text(
+                    "KRAKEN starts this model when it opens and stops it when it closes",
+                );
+            ui.label(
+                RichText::new("Unchecked: it only starts when you press Start serving.")
+                    .size(11.5)
+                    .color(p.text_dim),
+            );
+            ui.add_space(4.0);
+            run_on(ui, &p, &mut model, &found);
+            if card::several_cards(&model, &found) {
+                several(ui, &p, &mut model);
+            }
+            advanced(ui, &p, &mut model, &found);
+            if model != before && status.as_ref().is_some_and(ModelStatus::is_running) {
+                start_over = true;
+            }
+            if start_over {
+                ui.label(
+                    RichText::new("Stop and start the model again to use these choices.")
+                        .size(11.5)
+                        .color(s.warning),
+                );
+            }
+            ui.add_space(4.0);
+            if self.confirm_remove.as_deref() == Some(id) {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(
+                            "Remove it from KRAKEN? It stops serving. The downloaded files stay on your disk.",
+                        )
+                        .size(12.0),
+                    );
+                    if ui
+                        .button("Remove")
+                        .on_hover_text("Remove this model from the list")
+                        .clicked()
+                    {
+                        remove = true;
+                    }
+                    if ui
+                        .button("Keep it")
+                        .on_hover_text("Keep the model")
+                        .clicked()
+                    {
+                        self.confirm_remove = None;
+                    }
+                });
+            } else if ui
+                .button("Remove this model")
+                .on_hover_text("Take this model out of the list. The downloaded files stay on your disk")
+                .clicked()
+            {
+                self.confirm_remove = Some(id.to_string());
+            }
+        });
+
+        if start {
+            hub.start(id, StartOptions::default());
+        }
+        if stop {
+            hub.stop(id);
+        }
+        if remove {
+            if status.as_ref().is_some_and(ModelStatus::is_running) {
+                hub.stop(id);
+            }
+            match LocalModelStore::new(config_path.cloned()).remove(id) {
+                Ok(()) => {
+                    self.confirm_remove = None;
+                    self.removed = Some(id.to_string());
+                    self.models.remove(idx);
+                    self.save_error = None;
+                }
+                Err(e) => self.save_error = Some(e),
+            }
+            hub.refresh();
+        } else if model != before {
+            match LocalModelStore::new(config_path.cloned()).update(&model) {
+                Ok(()) => {
+                    self.models[idx] = model;
+                    self.save_error = None;
+                }
+                Err(e) => self.save_error = Some(e),
+            }
+            hub.refresh();
+        }
+        if let Some(e) = &self.save_error {
+            ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn status_block(
+    ui: &mut Ui,
+    p: &kraken_gui_widgets::Palette,
+    s: &style::Status,
+    status: Option<&ModelStatus>,
+    found: &[DeviceInfo],
+    busy: bool,
+    start: &mut bool,
+    stop: &mut bool,
+) {
+    let line = card::status_line(status, found);
+    let color = match line.tone {
+        Tone::Neutral => p.text,
+        Tone::Good => s.success,
+        Tone::Warn => s.warning,
+        Tone::Bad => s.danger,
+    };
+    let running = status.is_some_and(ModelStatus::is_running);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Status").color(p.text_dim));
+        if busy || matches!(line.tone, Tone::Warn) {
+            ui.spinner();
+        }
+        ui.label(RichText::new(&line.text).color(color));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if running {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Stop serving"))
+                    .on_hover_text("Stop the model and free its memory")
+                    .on_disabled_hover_text(
+                        "Wait until the model has finished starting or stopping",
                     )
                     .clicked()
                 {
-                    use_it = true;
+                    *stop = true;
                 }
-            });
-        });
-        if panel.is_running() || panel.is_busy() || self.asked_to_start {
-            ui.horizontal(|ui| {
-                if panel.is_busy() || matches!(panel.status.phase.as_str(), "starting" | "loading")
-                {
-                    ui.spinner();
-                }
-                ui.label(
-                    RichText::new(panel.phase_text()).color(if panel.is_ready() {
-                        s.success
-                    } else {
-                        p.text
-                    }),
-                );
-            });
-            if let Some(f) = panel.progress() {
-                ui.add(egui::ProgressBar::new(f).desired_width(380.0));
-            }
-        }
-        for w in &panel.warnings {
-            ui.add(egui::Label::new(RichText::new(w).size(12.0).color(s.warning)).wrap());
-        }
-        if let Some(e) = &panel.error {
-            ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
-        }
-        match &self.notice {
-            Some(Ok(t)) => {
-                ui.add(egui::Label::new(RichText::new(t).size(12.0).color(s.success)).wrap());
-            }
-            Some(Err(e)) => {
-                ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
-            }
-            None => {}
-        }
-        if panel.is_ready() {
-            ui.label(
-                RichText::new(
-                    "Tip: the address changes each time unless you set a Port, so \"Use for the assistant\" after every start.",
+            } else if ui
+                .add_enabled(
+                    status.is_some() && !busy,
+                    egui::Button::new("Start serving"),
                 )
-                .size(11.5)
-                .color(p.text_dim),
+                .on_hover_text("Start the model now and keep it running until you stop it")
+                .on_disabled_hover_text("Waiting for krakend, or the model is starting or stopping")
+                .clicked()
+            {
+                *start = true;
+            }
+        });
+    });
+    if let Some(f) = &line.figures {
+        ui.label(RichText::new(f).size(12.0).color(p.text_dim));
+    }
+    for n in &line.notes {
+        ui.add(egui::Label::new(RichText::new(n).size(11.5).color(s.warning)).wrap());
+    }
+}
+
+fn run_on(
+    ui: &mut Ui,
+    p: &kraken_gui_widgets::Palette,
+    model: &mut LocalModel,
+    found: &[DeviceInfo],
+) {
+    ui.label(medium("Run on", 13.0).color(p.text_strong));
+    for row in card::device_rows(model, found) {
+        let mut on = row.checked;
+        ui.horizontal(|ui| {
+            let r = ui.add_enabled(
+                row.unusable.is_none(),
+                egui::Checkbox::new(&mut on, &row.label),
             );
+            match &row.unusable {
+                Some(why) => {
+                    r.on_disabled_hover_text(why.clone());
+                    ui.label(
+                        RichText::new(format!("\u{b7} {why}"))
+                            .size(11.5)
+                            .color(p.text_dim),
+                    );
+                }
+                None => {
+                    r.on_hover_text("Run the model on this card");
+                }
+            }
+        });
+        if on != row.checked {
+            card::set_device(model, found, &row.device, on);
         }
+    }
+    if card::cpu_allowed(model) {
+        let mut cpu = card::cpu_checked(model, found);
+        let before = cpu;
+        ui.checkbox(&mut cpu, "CPU only (much slower)")
+            .on_hover_text("Run on the processor and the computer's memory, without a card");
+        if cpu != before {
+            card::set_cpu_only(model, found, cpu);
+        }
+    }
+    ui.add(
+        egui::Label::new(
+            RichText::new(
+                "KRAKEN found these on this computer. Video memory (VRAM) is the memory on the graphics card. The model runs fastest when it fits there.",
+            )
+            .size(11.5)
+            .color(p.text_dim),
+        )
+        .wrap(),
+    );
+}
 
-        // Log viewer.
-        let was_open = panel.show_logs;
-        let header = egui::CollapsingHeader::new("Model log")
-            .id_salt("kraken_infer_log")
-            .open(if panel.show_logs { Some(true) } else { None })
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(180.0)
-                    .stick_to_bottom(true)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        if panel.logs.is_empty() {
-                            ui.label(RichText::new("Nothing yet.").color(p.text_dim));
-                        }
-                        for l in &panel.logs {
-                            let color = if l.stream == "stderr" {
-                                s.warning
-                            } else {
-                                p.text_dim
-                            };
-                            ui.label(RichText::new(&l.text).monospace().size(11.5).color(color));
-                        }
-                    });
+fn several(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut LocalModel) {
+    ui.add_space(4.0);
+    ui.label(medium("How to use several cards", 13.0).color(p.text_strong));
+    for o in card::mode_options(model.engine) {
+        let mut mode: MultiGpuMode = model.multi_gpu;
+        ui.radio_value(&mut mode, o.mode, o.title)
+            .on_hover_text(o.help);
+        ui.label(RichText::new(o.help).size(11.5).color(p.text_dim));
+        if mode != model.multi_gpu {
+            card::set_mode(model, mode);
+        }
+    }
+}
+
+fn advanced(
+    ui: &mut Ui,
+    p: &kraken_gui_widgets::Palette,
+    model: &mut LocalModel,
+    found: &[DeviceInfo],
+) {
+    let chosen = card::effective_devices(model, found);
+    if chosen.len() < 2 {
+        return;
+    }
+    egui::CollapsingHeader::new("Advanced: share per card, main card")
+        .id_salt("kraken_card_advanced")
+        .show(ui, |ui| {
+            let names: Vec<String> = chosen
+                .iter()
+                .map(|c| {
+                    found
+                        .iter()
+                        .find(|d| d.index == c.index && d.uuid == c.uuid)
+                        .map_or_else(|| format!("card {}", c.index), |d| d.name.clone())
+                })
+                .collect();
+            ui.label(
+                RichText::new("How much of the model each card holds (percent).")
+                    .size(11.5)
+                    .color(p.text_dim),
+            );
+            let mut shares = card::shares(model, found);
+            for (i, name) in names.iter().enumerate() {
+                let before = shares[i];
+                ui.horizontal(|ui| {
+                    ui.label(name);
+                    ui.add(egui::Slider::new(&mut shares[i], 1..=99).suffix("%"))
+                        .on_hover_text("Share of the model on this card");
+                });
+                if shares[i] != before {
+                    card::set_share(model, found, i, shares[i]);
+                }
+            }
+            ui.label(RichText::new("Main card").size(12.0).color(p.text_dim));
+            let mut main = model.main_device.as_ref().and_then(|m| {
+                chosen
+                    .iter()
+                    .position(|c| c.uuid == m.uuid && c.index == m.index)
             });
-        if header.header_response.clicked() {
-            panel.show_logs = !was_open;
-        }
-
-        if use_it {
-            self.use_for_assistant(config_path, ai);
-        }
-    }
-
-    fn use_for_assistant(&mut self, config_path: Option<&PathBuf>, ai: &mut AiSettings) {
-        let Some(panel) = self.panel.as_ref() else {
-            return;
-        };
-        let Some(cfg) = panel.provider_config() else {
-            self.notice = Some(Err("Wait until the model has finished loading.".into()));
-            return;
-        };
-        let Some(path) = config_path else {
-            self.notice = Some(Err(
-                "There is no settings folder to save to (HOME is not set).".into(),
-            ));
-            return;
-        };
-        let store = ProviderStore::new(Some(path.clone()));
-        // The per-run key goes into the private (0600) secrets file; config.toml only refers to it.
-        if let (Some(key), Some(secrets)) = (panel.api_key(), store.secrets())
-            && let Err(e) = secrets.set_secret(LOCAL_INFER_ACCOUNT, key)
-        {
-            self.notice = Some(Err(e));
-            return;
-        }
-        if let Err(e) = store.write_config(path, &cfg) {
-            self.notice = Some(Err(e));
-            return;
-        }
-        match store.build(&cfg) {
-            Ok(provider) => {
-                ai.push_change(Change::Use(
-                    kraken_viewmodel::assist::BackendChoice::Api(provider),
-                    badge_of(&cfg),
-                ));
-                self.notice = Some(Ok("Saved. The assistant uses this model now.".into()));
+            let before = main;
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut main, None, "Let the engine choose")
+                    .on_hover_text("The engine picks the main card");
+                for (i, name) in names.iter().enumerate() {
+                    ui.radio_value(&mut main, Some(i), name)
+                        .on_hover_text("Keep the small shared parts of the model on this card");
+                }
+            });
+            if main != before {
+                card::set_main(model, found, main.map(|i| &chosen[i]));
             }
-            Err(e) => {
-                ai.push_change(Change::Problem(e.clone()));
-                self.notice = Some(Err(format!("Saved, but it cannot be used yet: {e}")));
-            }
-        }
-    }
+        });
 }

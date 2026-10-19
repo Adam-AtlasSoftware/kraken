@@ -50,6 +50,8 @@ pub enum ProviderKind {
     Anthropic,
     /// Google's Gemini cloud service.
     Gemini,
+    /// A model KRAKEN serves on this computer (`[[local_models]]`); the draft's `model` is its id.
+    Local,
 }
 
 impl ProviderKind {
@@ -78,6 +80,7 @@ impl ProviderKind {
             ProviderKind::OpenAi => "OpenAI",
             ProviderKind::Gemini => "Google Gemini",
             ProviderKind::TerminalAgent => "Terminal agent",
+            ProviderKind::Local => "On this computer",
         }
     }
 
@@ -106,6 +109,9 @@ impl ProviderKind {
             ProviderKind::Gemini => {
                 "Cloud service. The decompiled code the assistant reads is sent to Google."
             }
+            ProviderKind::Local => {
+                "A model KRAKEN runs on this computer. Nothing leaves your machine. KRAKEN starts it when it opens, if you ask it to."
+            }
             ProviderKind::TerminalAgent => {
                 "A coding agent that runs on your computer and signs in by itself. It uses KRAKEN's tools, so what it changes shows up here and can be undone, but its own tools (shell, files) are outside KRAKEN's safety net. The code it reads is sent to the service behind the agent."
             }
@@ -123,6 +129,7 @@ impl ProviderKind {
             ProviderKind::OpenAiCompatible
             | ProviderKind::Anthropic
             | ProviderKind::Gemini
+            | ProviderKind::Local
             | ProviderKind::TerminalAgent => None,
         }
     }
@@ -138,6 +145,7 @@ impl ProviderKind {
             ProviderKind::LmStudio
             | ProviderKind::Vllm
             | ProviderKind::OpenAiCompatible
+            | ProviderKind::Local
             | ProviderKind::TerminalAgent => "",
         }
     }
@@ -191,6 +199,7 @@ impl ProviderKind {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::Gemini => "gemini",
             ProviderKind::TerminalAgent => "terminal-agent",
+            ProviderKind::Local => "local",
         }
     }
 
@@ -351,6 +360,14 @@ impl ProviderDraft {
         }
     }
 
+    /// The form for the model `id` that KRAKEN serves.
+    pub fn for_local(id: &str) -> Self {
+        ProviderDraft {
+            model: id.to_string(),
+            ..ProviderDraft::preset(ProviderKind::Local)
+        }
+    }
+
     /// Switches to another kind and fills its defaults.
     pub fn switch_kind(&mut self, kind: ProviderKind) {
         if kind != self.kind {
@@ -423,10 +440,8 @@ impl ProviderDraft {
                 key_paste: String::new(),
                 existing_key: Some(api_key.clone()),
             },
-            // The settings window learns to edit local models with the model list.
-            ProviderConfig::Replay { .. } | ProviderConfig::Local { .. } => {
-                ProviderDraft::preset(ProviderKind::Ollama)
-            }
+            ProviderConfig::Local { model } => ProviderDraft::for_local(model),
+            ProviderConfig::Replay { .. } => ProviderDraft::preset(ProviderKind::Ollama),
             ProviderConfig::TerminalAgent { agent, model, args } => ProviderDraft {
                 model: model.clone().unwrap_or_default(),
                 agent_args: args.join(" "),
@@ -654,6 +669,15 @@ impl ProviderStore {
                         .map(str::to_string)
                         .collect(),
                 },
+                notes,
+            });
+        }
+        if d.kind == ProviderKind::Local {
+            if model.is_empty() {
+                return Err("Pick a model on this computer first.".to_string());
+            }
+            return Ok(SaveOutcome {
+                config: ProviderConfig::Local { model },
                 notes,
             });
         }
@@ -946,4 +970,28 @@ pub async fn test_connection(provider: Arc<dyn ChatProvider>) -> Result<TestRepo
         reply,
         millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     })
+}
+
+#[cfg(test)]
+mod local_tests {
+    use super::*;
+
+    #[test]
+    fn a_local_provider_round_trips_through_the_form() {
+        let cfg = ProviderConfig::Local {
+            model: "qwen".into(),
+        };
+        let d = ProviderDraft::from_config(&cfg);
+        assert_eq!((d.kind, d.model.as_str()), (ProviderKind::Local, "qwen"));
+        let out = ProviderStore::new(None).config_of(&d).unwrap();
+        assert_eq!(out, cfg);
+        let badge = badge_of(&cfg);
+        assert!(badge.local && badge.model == "qwen");
+        assert!(
+            ProviderStore::new(None)
+                .config_of(&ProviderDraft::preset(ProviderKind::Local))
+                .is_err(),
+            "a model must be picked"
+        );
+    }
 }

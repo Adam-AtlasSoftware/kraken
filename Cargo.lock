@@ -2837,7 +2837,6 @@ dependencies = [
  "kraken-assist",
  "kraken-gui-widgets",
  "kraken-host",
- "kraken-infer",
  "kraken-ipc",
  "kraken-model",
  "kraken-proto",
