@@ -776,7 +776,14 @@ impl InferManager {
                      Strata, or choose the peer tier.",
                 ));
             }
-            let display = kraken_infer::hardware::display_cards(&SystemProbe, &devices);
+            let display = {
+                let devices = devices.clone();
+                tokio::task::spawn_blocking(move || {
+                    kraken_infer::hardware::display_cards(&SystemProbe, &devices)
+                })
+                .await
+                .unwrap_or_default()
+            };
             let p = strata_plan(&PlanInput {
                 devices: &devices,
                 display: &display,

@@ -329,11 +329,9 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
         vision: tuning_in.vision,
         peer_reserve_mib: Some(reserve_mib),
         draft: Some(draft),
-        vram_reserve_mib: Some(tuning_in.vram_reserve_mib.unwrap_or(if on_display(main) {
-            MAIN_RESERVE_DISPLAY_MIB as u32
-        } else {
-            MAIN_RESERVE_MIB as u32
-        })),
+        vram_reserve_mib: tuning_in
+            .vram_reserve_mib
+            .or(on_display(main).then_some(MAIN_RESERVE_DISPLAY_MIB as u32)),
     };
     Plan {
         mode,
