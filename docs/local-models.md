@@ -331,6 +331,11 @@ The machine was a Ryzen 9 5900XT with 62 GB RAM, RTX 3070 Ti (8 GB) as the main 
 (6 GB) as the second card, running Swift 1.5 IQ2_XS. Layer split did not start because of the 6 GB
 limit on the second card.
 
+On the same machine, an engine built from source for these cards read prompts about 18 percent faster than
+the ready-made one, and "Second card reads prompts only" added at most about 5 percent on top of one card
+while keeping answers at one-card speed (about 61 against 65 tokens per second). That is why Automatic stays on
+one card: the second card is worth choosing yourself only when it is much faster at prompts than your processor.
+
 ## Other servers you run
 
 Ollama, LM Studio, vLLM and other servers are not managed by KRAKEN. You start them yourself, and

@@ -283,18 +283,16 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
         .copied();
     let wanted = if auto { None } else { Some(model.multi_gpu) };
     let (mode, devices) = match (wanted, peer) {
-        (None, Some(p)) if input.prefill_peer && fits => {
-            notes.push(format!(
-                "{} helps read long prompts and stays out of answering.",
-                p.name
-            ));
-            (MultiGpuMode::PrefillPeer, vec![dref(main), dref(p)])
-        }
         (None, Some(p)) => {
+            // Measured on a 3070 Ti with a 2060: a second card gains little for prompts (about 5 percent
+            // with prompts-only, about 30 percent but with answers a third slower as a peer tier), so
+            // Auto stays on one card and the second card is an explicit choice.
             advice.push(if input.prefill_peer {
                 format!(
-                    "{} is not used because {} is short of memory.",
-                    p.name, main.name
+                    "{} can help read long prompts without slowing answers; the gain was small on a \
+                     similar pair. Choose \"Second card reads prompts only\" under Several cards to \
+                     try it.",
+                    p.name
                 )
             } else {
                 format!(
@@ -415,11 +413,37 @@ mod tests {
     }
 
     #[test]
-    fn an_engine_with_prefill_peer_uses_the_second_card_for_prompts() {
+    fn automatic_stays_on_one_card_even_when_the_engine_can_read_prompts_on_two() {
         let p = run(&rig(0.1, 1.2), &[0], true);
+        assert_eq!(p.mode, MultiGpuMode::Split);
+        assert_eq!(
+            p.devices.iter().map(|d| d.index).collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert!(
+            p.advice.iter().any(|a| a.contains("reads prompts only")),
+            "{:?}",
+            p.advice
+        );
+    }
+
+    #[test]
+    fn an_explicit_prompts_only_choice_orders_the_cards_and_sets_the_reserve() {
+        let mut m = model();
+        m.multi_gpu = MultiGpuMode::PrefillPeer;
+        let d = rig(0.1, 1.2);
+        m.devices = vec![dref(&d[1]), dref(&d[0])];
+        let p = plan(&PlanInput {
+            devices: &d,
+            display: &[0],
+            model: &m,
+            prefill_peer: true,
+        });
         assert_eq!(p.mode, MultiGpuMode::PrefillPeer);
-        let order: Vec<u32> = p.devices.iter().map(|d| d.index).collect();
-        assert_eq!(order, vec![1, 0], "main card first");
+        assert_eq!(
+            p.devices.iter().map(|x| x.index).collect::<Vec<_>>(),
+            vec![1, 0]
+        );
         assert_eq!(p.tuning.peer_reserve_mib, Some(1000));
     }
 
