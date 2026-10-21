@@ -75,17 +75,16 @@ pub fn run_config(base: &Value, model: &LocalModel, cards: &[&DeviceInfo]) -> Re
     };
     let mut obj = obj.clone();
     let tuning = StrataTuning::from_extra(model.extra.as_ref());
+    let installed: Vec<Value> = obj
+        .get("args")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let kept_reserve =
+        value_of(&installed, "--vram-reserve-mib").and_then(|v| v.parse::<u32>().ok());
     let mut owned = OWNED.to_vec();
-    if tuning.vram_reserve_mib.is_some() {
-        owned.push(("--vram-reserve-mib", true));
-    }
-    let mut args = strip(
-        obj.get("args")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default(),
-        &owned,
-    );
+    owned.push(("--vram-reserve-mib", true));
+    let mut args = strip(installed, &owned);
 
     match model.multi_gpu {
         MultiGpuMode::Split | MultiGpuMode::Auto | MultiGpuMode::CopyPerCard => {}
@@ -158,8 +157,16 @@ pub fn run_config(base: &Value, model: &LocalModel, cards: &[&DeviceInfo]) -> Re
         obj.remove("vision");
         args.retain(|a| a.as_str() != Some("--vision"));
     }
-    if let Some(n) = tuning.vram_reserve_mib {
-        set_value(&mut args, "--vram-reserve-mib", &n.to_string());
+    // Never lower a reserve the installed config already asks for: it may be there because the
+    // card drives a monitor.
+    if let Some(n) = tuning.vram_reserve_mib.max(kept_reserve) {
+        push(
+            &mut args,
+            &[
+                "--vram-reserve-mib",
+                &n.max(kept_reserve.unwrap_or(0)).to_string(),
+            ],
+        );
     }
 
     obj.insert("args".into(), Value::Array(args));
@@ -369,6 +376,34 @@ mod tests {
         m.multi_gpu = MultiGpuMode::HelperCache;
         let once = run_config(&base(), &m, &[&a, &b]).expect("once");
         assert_eq!(once, run_config(&once, &m, &[&a, &b]).expect("twice"));
+    }
+
+    #[test]
+    fn an_installed_reserve_is_never_lowered() {
+        let mut b = base();
+        b["args"]
+            .as_array_mut()
+            .expect("args")
+            .extend(["--vram-reserve-mib".into(), "1500".into()]);
+        let mut m = model(MultiGpuMode::Split);
+        StrataTuning {
+            vram_reserve_mib: Some(1000),
+            ..StrataTuning::default()
+        }
+        .store(&mut m.extra);
+        let out = run_config(&b, &m, &[&card(1)]).expect("config");
+        let a = args(&out);
+        let at = a
+            .iter()
+            .position(|x| *x == "--vram-reserve-mib")
+            .expect("flag");
+        assert_eq!(a[at + 1], "1500");
+        assert_eq!(a.iter().filter(|x| **x == "--vram-reserve-mib").count(), 1);
+        let none = run_config(&b, &model(MultiGpuMode::Split), &[&card(1)]).expect("config");
+        assert!(
+            args(&none).contains(&"1500"),
+            "kept when the model sets none"
+        );
     }
 
     #[test]
