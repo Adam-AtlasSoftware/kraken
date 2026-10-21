@@ -1182,7 +1182,11 @@ pub fn new_local_model(id: &str, engine: LocalEngine, model_path: PathBuf) -> Lo
         model_path,
         devices: Vec::new(),
         cpu_only: false,
-        multi_gpu: MultiGpuMode::default(),
+        multi_gpu: if engine == LocalEngine::Strata {
+            MultiGpuMode::Auto
+        } else {
+            MultiGpuMode::default()
+        },
         shares: None,
         main_device: None,
         context_size: None,

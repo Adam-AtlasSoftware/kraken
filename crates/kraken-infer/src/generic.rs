@@ -37,6 +37,9 @@ pub struct ManifestCapabilities {
     pub supports_moe_offload: bool,
     #[serde(default)]
     pub supports_tool_calls: bool,
+    /// The engine can keep the second card out of answering (Strata `--peer-prefill-only`).
+    #[serde(default)]
+    pub prefill_peer: bool,
 }
 
 fn default_os() -> Vec<String> {

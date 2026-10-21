@@ -19,6 +19,7 @@ pub mod registry;
 pub mod stats;
 pub mod strata;
 pub mod strata_plan;
+pub mod strata_run;
 pub mod supervisor;
 #[doc(hidden)]
 pub mod testing;
