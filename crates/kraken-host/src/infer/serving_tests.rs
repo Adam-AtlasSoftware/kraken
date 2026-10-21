@@ -549,7 +549,9 @@ async fn strata_is_checked_against_ram_not_video_memory() {
     .expect("manifest");
     let weights = t.path().join("weights");
     std::fs::create_dir_all(&weights).expect("weights");
-    sparse(&weights, "part1.gguf", 40 * GIB);
+    // 40 GiB of experts plus the 28 GiB embedding table that Strata reads from disk.
+    sparse(&weights, "m-00001-of-00002.gguf", 40 * GIB);
+    sparse(&weights, "m-00002-of-00002.gguf", 28 * GIB);
     let manager = |ram: u64| {
         let mut a = model("s", weights.clone(), false);
         a.engine = LocalEngine::Strata;
@@ -567,7 +569,7 @@ async fn strata_is_checked_against_ram_not_video_memory() {
     manager(64 * GIB)
         .hold_model(Holder::Owner, "s", StartOptions::default())
         .await
-        .expect("40 GiB of weights on an 8 GiB card, with 64 GiB of RAM");
+        .expect("40 GiB of experts on an 8 GiB card, with 64 GiB of RAM; the table is not counted");
     let e = manager(16 * GIB)
         .hold_model(Holder::Owner, "s", StartOptions::default())
         .await

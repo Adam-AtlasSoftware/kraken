@@ -507,6 +507,29 @@ fn path_bytes(p: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// The bytes of `model` that have to be held in memory. Strata keeps the experts in RAM; the
+/// second shard of its two-shard models is the per-layer embedding table, which it reads from
+/// disk, so that shard does not count.
+fn memory_bytes(model: &LocalModel) -> u64 {
+    let total = path_bytes(&model.model_path);
+    if model.engine != LocalEngine::Strata {
+        return total;
+    }
+    let table: u64 = std::fs::read_dir(&model.model_path)
+        .map(|d| {
+            d.flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .ends_with("-00002-of-00002.gguf")
+                })
+                .map(|e| path_bytes(&e.path()))
+                .sum()
+        })
+        .unwrap_or(0);
+    if table < total { total - table } else { total }
+}
+
 fn gib(b: u64) -> String {
     super::gib(b)
 }
@@ -686,7 +709,7 @@ impl InferManager {
         let cards = chosen_cards(&model, &devices, &apis);
 
         let need = footprint(
-            path_bytes(&model.model_path),
+            memory_bytes(&model),
             model.context_size.unwrap_or(DEFAULT_CONTEXT),
         );
         // Strata keeps the experts in system memory and streams the hot ones to the card, so the
@@ -713,7 +736,7 @@ impl InferManager {
         let mut warnings = Vec::new();
         let pools = self.pools(&fit_cards, st_snapshot, &mut warnings);
         if let Some(pools) = pools {
-            let bytes = path_bytes(&model.model_path);
+            let bytes = memory_bytes(&model);
             let ctx = model.context_size.unwrap_or(DEFAULT_CONTEXT);
             match kraken_infer::budget::fit(bytes, ctx, &pools, model.multi_gpu) {
                 Fit::Fits => {}
