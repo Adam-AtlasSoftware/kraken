@@ -530,6 +530,55 @@ async fn strata_runs_from_its_manifest_on_the_picked_port_with_the_card_override
     assert_eq!(e.code, ErrorCode::Unsupported);
 }
 
+/// Strata keeps the experts in RAM, so a model far bigger than the card's memory still starts when
+/// the RAM holds it, and is refused by what RAM is free, not by the card.
+#[tokio::test]
+async fn strata_is_checked_against_ram_not_video_memory() {
+    let t = tmp();
+    let install = t.path().join("strata");
+    std::fs::create_dir_all(install.join("serve")).expect("install dir");
+    let manifest = t.path().join("backend.toml");
+    std::fs::write(
+        &manifest,
+        kraken_infer::strata::backend_manifest_text(
+            &fake_server_path().display().to_string(),
+            &install.display().to_string(),
+            "/nowhere/strata-x.json",
+        ),
+    )
+    .expect("manifest");
+    let weights = t.path().join("weights");
+    std::fs::create_dir_all(&weights).expect("weights");
+    sparse(&weights, "part1.gguf", 40 * GIB);
+    let manager = |ram: u64| {
+        let mut a = model("s", weights.clone(), false);
+        a.engine = LocalEngine::Strata;
+        let m = InferManager::with_registry(BackendRegistry::new())
+            .with_total_memory(ram, None)
+            .with_serving_config(ServingConfig {
+                models: vec![a],
+                ..Default::default()
+            })
+            .with_strata_manifest(manifest.clone())
+            .with_devices(|| vec![card(8 * GIB)]);
+        m.set_clock(Arc::new(ManualClock::new()));
+        m
+    };
+    manager(64 * GIB)
+        .hold_model(Holder::Owner, "s", StartOptions::default())
+        .await
+        .expect("40 GiB of weights on an 8 GiB card, with 64 GiB of RAM");
+    let e = manager(16 * GIB)
+        .hold_model(Holder::Owner, "s", StartOptions::default())
+        .await
+        .expect_err("too little RAM");
+    assert!(
+        e.message.contains("computer's memory (RAM)"),
+        "{}",
+        e.message
+    );
+}
+
 fn fake_process() -> RunningBackend {
     let port = pick_free_port().expect("port");
     let mut spec = ProcessSpec::new(fake_server_path(), port, "/health");

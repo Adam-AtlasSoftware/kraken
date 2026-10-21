@@ -689,22 +689,29 @@ impl InferManager {
             path_bytes(&model.model_path),
             model.context_size.unwrap_or(DEFAULT_CONTEXT),
         );
-        let n = cards.len().max(1) as u64;
+        // Strata keeps the experts in system memory and streams the hot ones to the card, so the
+        // model file has to fit in RAM, not in video memory.
+        let fit_cards: Vec<DeviceInfo> = if model.engine == LocalEngine::Strata {
+            Vec::new()
+        } else {
+            cards.clone()
+        };
+        let n = fit_cards.len().max(1) as u64;
         let per_card = match model.multi_gpu {
             kraken_proto::MultiGpuMode::CopyPerCard => need,
             _ => need / n,
         };
-        let uses: Vec<(PoolKey, u64)> = if cards.is_empty() {
+        let uses: Vec<(PoolKey, u64)> = if fit_cards.is_empty() {
             vec![(PoolKey::Ram, need)]
         } else {
-            cards
+            fit_cards
                 .iter()
                 .map(|c| (card_key(&c.uuid, c.index), per_card))
                 .collect()
         };
 
         let mut warnings = Vec::new();
-        let pools = self.pools(&cards, st_snapshot, &mut warnings);
+        let pools = self.pools(&fit_cards, st_snapshot, &mut warnings);
         if let Some(pools) = pools {
             let bytes = path_bytes(&model.model_path);
             let ctx = model.context_size.unwrap_or(DEFAULT_CONTEXT);
@@ -719,7 +726,7 @@ impl InferManager {
                     model.name
                 )),
                 Fit::NoFit => {
-                    return Err(self.no_fit(&model, need, &pools, &cards, st_snapshot));
+                    return Err(self.no_fit(&model, need, &pools, &fit_cards, st_snapshot));
                 }
             }
         }
