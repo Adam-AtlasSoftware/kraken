@@ -6631,6 +6631,7 @@ kraken local-model-setup [options]
 - Permission: safe
 
 Downloads the engine and the model from `local_model_recommend` (or the catalog model you name), checks the model's SHA-256 against the catalog and points the assistant (and optionally the rewrite pipeline) at it. A person is asked first, with the download size and disk use; agents cannot skip that question. Large download.
+Strata only: `strata_engine` (`prebuilt` or `build`), `strata_version` (`latest_release`, `pinned` or `latest_commit`) and `model_file` (the path of one shard of a Strata model already on this computer, used where it is).
 
 Example: `local_model_setup {"model": "qwen3-8b-q4_k_m", "use_for": ["assistant"]}`
 
@@ -6638,6 +6639,9 @@ Example: `local_model_setup {"model": "qwen3-8b-q4_k_m", "use_for": ["assistant"
 |---|---|---|---|---|
 | `engine` | `--engine` | string | no | `strata` sets up the Strata engine (its model ids start with `strata-`); `llama-server` the catalog. A `strata-` model id implies Strata. |
 | `model` | `--model` | string | no | Catalog id from `local_model_recommend` (`qwen3-8b-q4_k_m`); the recommended model when left out. |
+| `model_file` | `--model-file` | string | no | Strata only: the path of a Strata-supported `.gguf` model you already have (any shard; every shard must be in the same folder). It is used where it is, not copied. |
+| `strata_engine` | `--strata-engine` | string | no | Strata only: `prebuilt` (the ready-made engine, the default) or `build` (compile it here). |
+| `strata_version` | `--strata-version` | string | no | Strata only: `latest_release` (the default), `pinned` (the revision KRAKEN was tested with, checked against hashes written down in advance) or `latest_commit` (`build` only). |
 | `use_for` | `--use-for` | json | no | Features that should use the model afterwards; the assistant when left out. |
 
 <details>

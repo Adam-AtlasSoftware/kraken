@@ -299,7 +299,24 @@ impl ServingConfig {
 pub(super) type ConfigFn = Arc<dyn Fn() -> ServingConfig + Send + Sync>;
 pub(super) type DevicesFn = Arc<dyn Fn() -> Vec<DeviceInfo> + Send + Sync>;
 pub(super) type LlamaDevicesFn = Arc<dyn Fn(&Path) -> Vec<LlamaDevice> + Send + Sync>;
+/// A Strata start is refused for lack of video memory only when the main card is this far (1 GiB)
+/// below what the gentlest setting needs; closer than that, the plan is a warning.
+const SHORTFALL_REFUSED: u64 = 1 << 30;
+
 type Respawn = Arc<dyn Fn(u16) -> Result<RunningBackend, InferError> + Send + Sync>;
+
+/// Runs a respawn closure off the async threads: starting an engine reads the cards again and
+/// runs `nvidia-smi`, which can take a moment.
+async fn run_respawn(respawn: &Respawn, port: u16) -> Result<RunningBackend, InferError> {
+    let respawn = respawn.clone();
+    tokio::task::spawn_blocking(move || respawn(port))
+        .await
+        .unwrap_or_else(|e| {
+            Err(InferError::Settings(format!(
+                "the start was interrupted: {e}"
+            )))
+        })
+}
 
 // ---------------------------------------------------------------------------------------------
 // Slots
@@ -790,7 +807,7 @@ impl InferManager {
                 model: &model,
                 prefill_peer,
             });
-            if !p.fits && !opts.force {
+            if p.shortfall > SHORTFALL_REFUSED && !opts.force {
                 let message = p.notes.first().cloned().unwrap_or_else(|| {
                     format!("{} does not fit in the free video memory.", model.name)
                 });
@@ -802,6 +819,7 @@ impl InferManager {
                     })),
                 );
             }
+            // The levels are measured on one model: a small shortfall is a warning, not a refusal.
             warnings.extend(p.notes);
             warnings.extend(p.advice);
         }
@@ -1067,7 +1085,7 @@ impl InferManager {
             }
         };
         let port = pick_free_port().map_err(infer_error)?;
-        let running = (prepared.respawn)(port).map_err(|e| {
+        let running = run_respawn(&prepared.respawn, port).await.map_err(|e| {
             let e = infer_error(e);
             lock(&self.state)
                 .errors
@@ -1465,7 +1483,11 @@ async fn watch(
                 Err(e) => break Err(e),
             }
         };
-        match next.and_then(|port| respawn(port)) {
+        let started = match next {
+            Ok(port) => run_respawn(&respawn, port).await,
+            Err(e) => Err(e),
+        };
+        match started {
             Ok(new) => {
                 let port = new.port();
                 let pid = new.status().pid;

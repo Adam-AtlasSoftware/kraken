@@ -141,7 +141,15 @@ pub fn run_config(base: &Value, model: &LocalModel, cards: &[&DeviceInfo]) -> Re
         }
     }
 
-    if let Some(c) = model.context_size {
+    // A context the person chose is used as it is; a ceiling from the planner only lowers what Strata
+    // was installed with.
+    let mut context = model.context_size;
+    if let Some(cap) = tuning.context_cap {
+        let installed = context
+            .or_else(|| value_of(&args, "--max-context").and_then(|v| v.parse::<u32>().ok()));
+        context = Some(installed.map_or(cap, |c| c.min(cap)));
+    }
+    if let Some(c) = context {
         set_value(&mut args, "--max-context", &c.to_string());
         if value_of(&args, "--kv-resident")
             .and_then(|v| v.parse::<u32>().ok())
@@ -331,6 +339,7 @@ mod tests {
             draft: Some(false),
             vram_reserve_mib: Some(1000),
             peer_reserve_mib: None,
+            context_cap: None,
         }
         .store(&mut m.extra);
         let out = run_config(&base(), &m, &[&c]).expect("config");
@@ -368,6 +377,7 @@ mod tests {
             draft: Some(false),
             vram_reserve_mib: Some(700),
             peer_reserve_mib: Some(1000),
+            context_cap: None,
         }
         .store(&mut m.extra);
         let once = run_config(&base(), &m, &[&a, &b]).expect("once");
@@ -403,6 +413,46 @@ mod tests {
         assert!(
             args(&none).contains(&"1500"),
             "kept when the model sets none"
+        );
+    }
+
+    #[test]
+    fn a_planner_ceiling_only_lowers_the_installed_context() {
+        let mut b = base();
+        let mut m = model(MultiGpuMode::Split);
+        StrataTuning {
+            context_cap: Some(32_768),
+            ..StrataTuning::default()
+        }
+        .store(&mut m.extra);
+        let lowered = run_config(&b, &m, &[&card(1)]).expect("config");
+        assert!(
+            args(&lowered)
+                .windows(2)
+                .any(|w| w == ["--max-context", "32768"])
+        );
+        assert!(
+            args(&lowered)
+                .windows(2)
+                .any(|w| w == ["--kv-resident", "32768"])
+        );
+        let a = b["args"].as_array_mut().expect("args");
+        let at = a.iter().position(|x| x == "--max-context").expect("flag");
+        a[at + 1] = "8192".into();
+        let kept = run_config(&b, &m, &[&card(1)]).expect("config");
+        assert!(
+            args(&kept)
+                .windows(2)
+                .any(|w| w == ["--max-context", "8192"]),
+            "a smaller installed context is never raised"
+        );
+        m.context_size = Some(100_000);
+        let chosen = run_config(&b, &m, &[&card(1)]).expect("config");
+        assert!(
+            args(&chosen)
+                .windows(2)
+                .any(|w| w == ["--max-context", "32768"]),
+            "the ceiling still caps a context above it"
         );
     }
 

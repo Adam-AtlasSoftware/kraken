@@ -130,10 +130,12 @@ the engine. For llama.cpp, choose to split the model across the cards or split e
 
 For Strata, you have these choices:
 
-- **Automatic** (recommended): KRAKEN picks the method and adjusts the settings each time the model
-  starts, based on the video memory that is free at that moment.
+- **Automatic** (recommended): KRAKEN picks the main card, the context size and whether to use the
+  draft layer each time the model starts, based on the video memory that is free at that moment. It
+  always runs on one card; when a second card could help it says so and names the choice below.
 - **One card / split**: one model, shared by the cards. Use it when the model is too big for one card.
-  A layer split needs about 8 GB on each card, so it will not start on a 6 GB card.
+  On the test machine a layer split did not start on the 6 GB card, which had too little room left for
+  its own copy of the model's main weights.
 - **Each card runs its own full copy**: each card holds the whole model and answers its own requests.
   Use it when you have many requests, and each card has enough VRAM for the whole model. It needs
   equal cards.
@@ -388,7 +390,9 @@ titlebar = "auto"                      # "auto", "custom" or "system"
 after a restart. `extra` holds engine settings KRAKEN passes on unchanged. For Strata, `extra.strata`
 holds `vision` (boolean, read pictures), `draft` (boolean, use the draft layer), `peer_reserve_mib`
 (integer, keep this many MiB free on the second card, default 1000), and `vram_reserve_mib` (integer,
-keep this many MiB free on the main card).
+keep this many MiB free on the main card; KRAKEN never lowers it below the reserve in Strata's own
+installed config), and `context_cap` (integer, the longest context to run with; KRAKEN sets it when video
+memory is short and only ever lowers the context Strata was installed with).
 
 The assistant uses a local model through a `[provider]` table that names it by its `id`. KRAKEN adds
 the address and the key when a request is made, so they are never written to the file:
