@@ -246,9 +246,33 @@ max_calls_per_run = 200    # a run stops cleanly after this many model calls
 max_cost_per_run = 5.0     # ... or once its estimated cost reaches this (US dollars)
 daily_budget = 10.0        # no new AI work once today's estimated total reaches this
 skip_confirm_under = 0.10  # start without asking when the estimate stays below this
+low_context_mode = true    # tell the model about tools by name; it asks for the details
 ```
 
 A run that reaches a limit stops with a message saying which, and keeps what it finished (every translation attempt is stored as it is made). The daily budget refuses new AI work until the next day (midnight UTC), or until you raise it. Changes apply to the next model call, also in a running daemon.
+
+### Low context mode
+
+A model with a small context window (32k or 64k tokens, as many local models have) can run out of
+room before it answers. The assistant sends the model every tool's full description and parameters,
+about 17,000 tokens for KRAKEN's 53 tools, and every tool result stays in the conversation. Tick
+**Low context mode** in **Settings > AI** (under *Limits on AI work*, then **Save limits**), or set
+`low_context_mode = true` in `[ai_limits]`. It applies to the assistant's next run, in the window
+and on the command line, and only to models KRAKEN talks to over an API. Terminal agents do not use
+it.
+
+- **Tools by name.** The model gets each tool's name and a one-line description, about 10 KB
+  instead of 57 KB.
+- **`tool_help`.** One extra tool. The model calls it with the names of the tools it wants to use,
+  for example `{"names": ["decompile"]}`, and gets each one's full description and parameters. A
+  `{"query": "rename"}` finds tools by word. A call with wrong arguments fails with the tool's
+  parameters in the message, so the model can correct itself.
+- **Small results.** A list tool returns 20 items unless the model asks for more (at most 50), and
+  the model pages on with the cursor. Any other result above 12,000 characters is cut, with a note
+  telling the model to ask for less.
+
+Permissions and approvals are the same as without the mode: the tools are the same, only their
+descriptions are fetched on demand. The trade is one extra model call the first time a tool is used.
 
 ## The assistant knows KRAKEN and can drive the window
 

@@ -12,6 +12,7 @@
 pub mod agent;
 pub mod config;
 pub mod error;
+pub mod low_context;
 pub mod models;
 pub mod provider;
 pub mod safety;
@@ -24,6 +25,7 @@ pub use agent::{
 };
 pub use config::{EnvSecrets, Keyring, LayeredSecrets, ProviderConfig, SecretRef, SecretResolver};
 pub use error::AgentError;
+pub use low_context::{LowContextHost, TOOL_HELP};
 pub use models::{ModelList, ModelSource, builtin_models, model_choices};
 pub use provider::ChatProvider;
 pub use provider::local::{LocalEndpoint, LocalProvider, LocalResolver};

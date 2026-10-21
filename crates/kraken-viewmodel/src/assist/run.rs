@@ -259,7 +259,10 @@ impl ViewModel {
             return Ok(e.clone());
         }
         let engine: Arc<dyn AssistBackend> = match active.choice.clone() {
-            BackendChoice::Api(p) => Arc::new(ApiBackend::new(p)),
+            BackendChoice::Api(p) => Arc::new(ApiBackend::new(p).with_low_context(|| {
+                let path = kraken_assist::provider_config_path(&|k| std::env::var_os(k));
+                kraken_assist::AiLimits::load(path.as_deref()).low_context_mode
+            })),
             BackendChoice::Agent(choice) => self.agent_engine(&choice)?,
         };
         if let Some(active) = self.assist.backend.as_mut() {

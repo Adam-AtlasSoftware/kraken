@@ -257,7 +257,12 @@ pub(crate) async fn execute_task(
                     }
                 },
             };
-            (Arc::new(ApiBackend::new(p)), backend, session)
+            let low = policy.limits.low_context_mode;
+            (
+                Arc::new(ApiBackend::new(p).with_low_context(move || low)),
+                backend,
+                session,
+            )
         }
         Selection::Agent(choice) => {
             match agent_backend(env, sm, &choice, project, private_daemon, err) {

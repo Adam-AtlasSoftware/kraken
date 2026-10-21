@@ -683,3 +683,146 @@ async fn dangerous_commands_are_never_offered_or_callable() {
         Err(kraken_agent::ToolError::NotFound(_))
     ));
 }
+
+#[tokio::test]
+async fn low_context_mode_shrinks_the_real_tool_list_and_help_returns_the_rest() {
+    use kraken_agent::{LowContextHost, TOOL_HELP, ToolCtx, ToolHost};
+    let rig = rig(false, false).await;
+    let host = Arc::new(RegistryToolHost::new(
+        rig.registry.clone(),
+        rig.backend.clone(),
+        HostOptions {
+            surface: Surface::Test,
+            ..HostOptions::default()
+        },
+    ));
+    let low = LowContextHost::new(host.clone());
+    let size = |t: Vec<kraken_agent::ToolSpec>| serde_json::to_string(&t).expect("json").len();
+    let (full, short) = (size(host.tools()), size(low.tools()));
+    println!(
+        "tools: {}, full {full} bytes, low context {short} bytes",
+        host.tools().len()
+    );
+    assert!(short * 4 < full, "low context {short} bytes against {full}");
+    let ctx = ToolCtx {
+        run_id: "r".into(),
+        call_id: "c".into(),
+        cancel: Default::default(),
+    };
+    let name = host.tools()[0].name.clone();
+    let help = low
+        .call(
+            TOOL_HELP,
+            serde_json::json!({"names": [name.clone()]}),
+            &ctx,
+        )
+        .await
+        .expect("help");
+    assert_eq!(help["tools"][0]["name"], name);
+    assert_eq!(
+        help["tools"][0]["input_schema"],
+        host.tools()[0].input_schema,
+        "help returns the tool's complete schema"
+    );
+}
+
+/// Records what each model call is sent and plays one tool call, then an answer.
+struct Probe {
+    sent: Mutex<Vec<kraken_agent::ChatRequest>>,
+    tool: String,
+}
+
+#[async_trait]
+impl kraken_agent::ChatProvider for Probe {
+    fn info(&self) -> kraken_agent::ProviderInfo {
+        kraken_agent::ProviderInfo {
+            id: "probe".into(),
+            model: "probe".into(),
+            supports_tools: true,
+            context_window: None,
+        }
+    }
+
+    async fn complete(
+        &self,
+        req: kraken_agent::ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<kraken_agent::ChatStream, kraken_agent::AgentError> {
+        use kraken_agent::{FinishReason, StreamEvent};
+        let first = self.sent.lock().expect("lock").is_empty();
+        self.sent.lock().expect("lock").push(req);
+        let events = if first {
+            vec![
+                StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some("c1".into()),
+                    name: Some(kraken_agent::TOOL_HELP.into()),
+                    arguments: format!("{{\"names\": [\"{}\"]}}", self.tool),
+                },
+                StreamEvent::Finish {
+                    reason: FinishReason::ToolCalls,
+                },
+            ]
+        } else {
+            vec![
+                StreamEvent::TextDelta {
+                    text: "done".into(),
+                },
+                StreamEvent::Finish {
+                    reason: FinishReason::Stop,
+                },
+            ]
+        };
+        Ok(Box::pin(futures_util::stream::iter(
+            events.into_iter().map(Ok),
+        )))
+    }
+}
+
+#[tokio::test]
+async fn the_api_backend_sends_the_compact_tool_list_in_low_context_mode_and_serves_tool_help() {
+    use kraken_assist::{ApiBackend, AssistBackend, Purpose, RunSpec};
+    let rig = rig(false, false).await;
+    let host = Arc::new(RegistryToolHost::new(
+        rig.registry.clone(),
+        rig.backend.clone(),
+        HostOptions {
+            surface: Surface::Test,
+            ..HostOptions::default()
+        },
+    ));
+    let tool = {
+        use kraken_agent::ToolHost;
+        host.tools()[0].name.clone()
+    };
+    let probe = Arc::new(Probe {
+        sent: Mutex::new(Vec::new()),
+        tool: tool.clone(),
+    });
+    let backend = ApiBackend::new(probe.clone()).with_low_context(|| true);
+    let mut run = backend.start(RunSpec {
+        messages: vec![kraken_agent::Message::user("hi")],
+        config: kraken_agent::AgentConfig::default(),
+        tools: host.clone(),
+        purpose: Purpose::Chat,
+    });
+    while run.next_event().await.is_some() {}
+    let sent = probe.sent.lock().expect("lock");
+    assert_eq!(sent.len(), 2, "the help call and the answer");
+    let names: Vec<&str> = sent[0].tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(names.contains(&kraken_agent::TOOL_HELP) && names.contains(&tool.as_str()));
+    let listed = sent[0]
+        .tools
+        .iter()
+        .find(|t| t.name == tool)
+        .expect("listed");
+    assert!(
+        listed.input_schema.get("properties").is_none(),
+        "no parameters up front"
+    );
+    let second = serde_json::to_string(&sent[1].messages).expect("json");
+    assert!(
+        second.contains("input_schema"),
+        "the help result carries the schema: {second}"
+    );
+}
