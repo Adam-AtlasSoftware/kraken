@@ -362,8 +362,8 @@ fn pick_cards(ui: &mut Ui, setup: &mut LocalSetup) {
     ui.add_space(4.0);
     setup.edit_draft(|m, found| {
         run_on(ui, &p, m, found);
-        if kraken_viewmodel::infer::card::several_cards(m, found) {
-            several(ui, &p, m);
+        if kraken_viewmodel::infer::card::modes_shown(m, found) {
+            several(ui, &p, m, found);
         }
     });
     if let Some(t) = setup.fit_text() {

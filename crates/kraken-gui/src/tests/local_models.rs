@@ -287,6 +287,26 @@ fn strata_offers_a_full_copy_per_card_and_greys_out_cards_it_cannot_use() {
 }
 
 #[test]
+fn strata_tuning_is_saved_in_extra_and_reset_to_automatic_removes_it() {
+    let mut r = rig(local_provider("strata-iq1-m"));
+    r.until("the cards", |k| {
+        k.h.query_by_label_contains("RTX 3070 Ti").is_some()
+    });
+    assert!(r.has("Automatic (recommended)"), "offered with one card");
+    assert!(!r.has("Second card helps (peer tier)"));
+    assert!(!r.has("Reset to automatic"), "nothing set yet");
+    assert!(!r.has("Second card keeps free"));
+    r.click("Read pictures");
+    let t = kraken_proto::infer::StrataTuning::from_extra(r.saved().local_models[1].extra.as_ref());
+    assert_eq!(t.vision, Some(false));
+    r.click("RTX 3060");
+    r.press("Second card helps (peer tier)");
+    assert!(r.has("Second card keeps free (MiB)"));
+    r.click("Reset to automatic");
+    assert!(r.saved().local_models[1].extra.is_none());
+}
+
+#[test]
 fn running_out_of_memory_asks_what_to_do() {
     let mut r = rig(local_provider("qwen"));
     r.until("running", |k| k.h.query_by_label("Stop serving").is_some());
