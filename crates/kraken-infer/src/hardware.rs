@@ -433,13 +433,6 @@ fn sysfs_cards(probe: &dyn Probe) -> Vec<SysCard> {
         .collect()
 }
 
-/// Numbers (`DeviceInfo::index`) of the cards that have a monitor connected. A monitor takes
-/// video memory from its card for the desktop, and the planner treats such a card differently.
-pub fn display_cards(probe: &dyn Probe, devices: &[DeviceInfo]) -> Vec<u32> {
-    let _ = (probe, devices);
-    Vec::new()
-}
-
 /// AI accelerators (`/sys/class/accel`): listed so people see them, never usable.
 fn npus(probe: &dyn Probe) -> Vec<DeviceInfo> {
     let mut names = probe.list("/sys/class/accel");
