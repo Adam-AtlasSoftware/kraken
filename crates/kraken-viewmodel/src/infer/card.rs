@@ -5,7 +5,8 @@
 use kraken_host::infer::ModelStatus;
 use kraken_infer::hardware::{default_devices, usable};
 use kraken_proto::infer::{
-    DeviceInfo, DeviceRef, LocalEngine, LocalModel, ModelState, MultiGpuMode, TokSource,
+    DeviceInfo, DeviceRef, LocalEngine, LocalModel, ModelState, MultiGpuMode, StrataTuning,
+    TokSource,
 };
 
 /// One line of the "Run on" list.
@@ -30,6 +31,8 @@ pub struct ModeOption {
     pub title: &'static str,
     /// One line about what it does.
     pub help: &'static str,
+    /// Only makes sense with two or more cards ticked.
+    pub needs_two_cards: bool,
 }
 
 /// The status block of the card.
@@ -153,7 +156,10 @@ fn fix_after_device_change(model: &mut LocalModel) {
     {
         model.main_device = None;
     }
-    if model.devices.len() < 2 {
+    let one_card_ok = mode_options(model.engine)
+        .iter()
+        .any(|o| o.mode == model.multi_gpu && !o.needs_two_cards);
+    if model.devices.len() < 2 && !one_card_ok {
         model.multi_gpu = MultiGpuMode::Split;
     }
 }
@@ -163,26 +169,145 @@ pub fn several_cards(model: &LocalModel, found: &[DeviceInfo]) -> bool {
     effective_devices(model, found).len() >= 2
 }
 
-/// The ways to use several cards that the model's engine offers.
+/// The ways to use several cards that the model's engine offers, whatever cards are ticked.
 pub fn mode_options(engine: LocalEngine) -> Vec<ModeOption> {
-    let mut v = vec![ModeOption {
-        mode: MultiGpuMode::Split,
-        title: "Split the model across the cards",
-        help: "One model shared by the cards. Fits models too big for one card.",
-    }];
+    let opt = |mode, title, help, needs_two_cards| ModeOption {
+        mode,
+        title,
+        help,
+        needs_two_cards,
+    };
     match engine {
-        LocalEngine::Strata => v.push(ModeOption {
-            mode: MultiGpuMode::CopyPerCard,
-            title: "Each card runs its own full copy",
-            help: "Answers more requests at once. Each card must fit the whole model.",
-        }),
-        LocalEngine::Llama => v.push(ModeOption {
-            mode: MultiGpuMode::SplitEveryLayer,
-            title: "Split every layer between the cards",
-            help: "Can be faster with a fast link between the cards (NVLink). Usually slower otherwise.",
-        }),
+        LocalEngine::Llama => vec![
+            opt(
+                MultiGpuMode::Split,
+                "Split the model across the cards",
+                "One model shared by the cards. Fits models too big for one card.",
+                true,
+            ),
+            opt(
+                MultiGpuMode::SplitEveryLayer,
+                "Split every layer between the cards",
+                "Can be faster with a fast link between the cards (NVLink). Usually slower otherwise.",
+                true,
+            ),
+        ],
+        LocalEngine::Strata => vec![
+            opt(
+                MultiGpuMode::Auto,
+                "Automatic (recommended)",
+                "KRAKEN picks the cards and settings each time the model starts, from the free video memory.",
+                false,
+            ),
+            opt(
+                MultiGpuMode::Split,
+                "One card, or split across the cards",
+                "One model shared by the cards. Fits models too big for one card.",
+                false,
+            ),
+            opt(
+                MultiGpuMode::CopyPerCard,
+                "Each card runs its own full copy",
+                "Answers more requests at once. Each card must fit the whole model.",
+                true,
+            ),
+            opt(
+                MultiGpuMode::PeerTier,
+                "Second card helps (peer tier)",
+                "Long prompts are read about 30 to 40 percent faster. Answers are about a third slower.",
+                true,
+            ),
+            opt(
+                MultiGpuMode::HelperCache,
+                "Second card as helper cache",
+                "Measured slower than one card when the cards are different sizes.",
+                true,
+            ),
+            opt(
+                MultiGpuMode::PrefillPeer,
+                "Second card reads prompts only",
+                "Prompts are read faster and answers stay at one-card speed. Needs a Strata build with prompts-only support.",
+                true,
+            ),
+        ],
     }
-    v
+}
+
+/// The choices to draw now: those that need two cards only when two or more are ticked.
+pub fn visible_modes(model: &LocalModel, found: &[DeviceInfo]) -> Vec<ModeOption> {
+    let two = several_cards(model, found);
+    mode_options(model.engine)
+        .into_iter()
+        .filter(|o| two || !o.needs_two_cards)
+        .collect()
+}
+
+/// True when the "How to use several cards" block is drawn: two or more cards ticked, or a
+/// Strata model, which always has Automatic to choose.
+pub fn modes_shown(model: &LocalModel, found: &[DeviceInfo]) -> bool {
+    several_cards(model, found) || model.engine == LocalEngine::Strata
+}
+
+/// True for the modes where a second card keeps experts, which `peer_reserve_mib` applies to.
+pub fn is_peer_mode(mode: MultiGpuMode) -> bool {
+    matches!(
+        mode,
+        MultiGpuMode::PeerTier | MultiGpuMode::HelperCache | MultiGpuMode::PrefillPeer
+    )
+}
+
+/// The Strata tuning saved on the model.
+pub fn strata_tuning(model: &LocalModel) -> StrataTuning {
+    StrataTuning::from_extra(model.extra.as_ref())
+}
+
+/// True when the tuning block belongs on the card.
+pub fn has_strata_tuning(model: &LocalModel) -> bool {
+    model.engine == LocalEngine::Strata
+}
+
+/// True when "Second card keeps free" belongs on the card.
+pub fn shows_peer_reserve(model: &LocalModel) -> bool {
+    has_strata_tuning(model) && is_peer_mode(model.multi_gpu)
+}
+
+/// True when any card setting is set, so "Reset to automatic" has something to do.
+pub fn strata_tuning_is_set(model: &LocalModel) -> bool {
+    let t = strata_tuning(model);
+    t.vision.is_some() || t.draft.is_some() || t.peer_reserve_mib.is_some()
+}
+
+fn edit_tuning(model: &mut LocalModel, f: impl FnOnce(&mut StrataTuning)) {
+    if !has_strata_tuning(model) {
+        return;
+    }
+    let mut t = strata_tuning(model);
+    f(&mut t);
+    t.store(&mut model.extra);
+}
+
+/// Sets "Read pictures" (`None`: automatic).
+pub fn set_vision(model: &mut LocalModel, on: Option<bool>) {
+    edit_tuning(model, |t| t.vision = on);
+}
+
+/// Sets "Use the draft layer" (`None`: automatic).
+pub fn set_draft(model: &mut LocalModel, on: Option<bool>) {
+    edit_tuning(model, |t| t.draft = on);
+}
+
+/// Sets the video memory the second card keeps free, in MiB (`None`: automatic).
+pub fn set_peer_reserve(model: &mut LocalModel, mib: Option<u32>) {
+    edit_tuning(model, |t| t.peer_reserve_mib = mib);
+}
+
+/// Clears the three card settings back to automatic. Other tuning keys stay as they are.
+pub fn reset_strata_tuning(model: &mut LocalModel) {
+    edit_tuning(model, |t| {
+        t.vision = None;
+        t.draft = None;
+        t.peer_reserve_mib = None;
+    });
 }
 
 /// Chooses how several cards are used.
@@ -440,12 +565,108 @@ mod tests {
             .into_iter()
             .map(|o| o.mode)
             .collect();
-        assert_eq!(strata, vec![MultiGpuMode::Split, MultiGpuMode::CopyPerCard]);
+        assert_eq!(
+            strata,
+            vec![
+                MultiGpuMode::Auto,
+                MultiGpuMode::Split,
+                MultiGpuMode::CopyPerCard,
+                MultiGpuMode::PeerTier,
+                MultiGpuMode::HelperCache,
+                MultiGpuMode::PrefillPeer,
+            ]
+        );
         let mut m = model(LocalEngine::Llama);
         set_mode(&mut m, MultiGpuMode::CopyPerCard);
         assert_eq!(m.multi_gpu, MultiGpuMode::Split, "not offered by llama");
         set_mode(&mut m, MultiGpuMode::SplitEveryLayer);
         assert_eq!(m.multi_gpu, MultiGpuMode::SplitEveryLayer);
+    }
+
+    #[test]
+    fn strata_offers_automatic_on_one_card_and_the_peer_modes_on_two() {
+        let found = two_cards();
+        let mut m = model(LocalEngine::Strata);
+        let one: Vec<_> = visible_modes(&m, &found).iter().map(|o| o.mode).collect();
+        assert_eq!(one, vec![MultiGpuMode::Auto, MultiGpuMode::Split]);
+        assert!(modes_shown(&m, &found));
+        set_device(&mut m, &found, &found_ref(&found, 1), true);
+        assert_eq!(visible_modes(&m, &found).len(), 6);
+        for mode in [
+            MultiGpuMode::Auto,
+            MultiGpuMode::PeerTier,
+            MultiGpuMode::HelperCache,
+            MultiGpuMode::PrefillPeer,
+            MultiGpuMode::CopyPerCard,
+        ] {
+            set_mode(&mut m, mode);
+            assert_eq!(m.multi_gpu, mode);
+        }
+        set_mode(&mut m, MultiGpuMode::PrefillPeer);
+        set_device(&mut m, &found, &found_ref(&found, 1), false);
+        assert_eq!(
+            m.multi_gpu,
+            MultiGpuMode::Split,
+            "a peer mode needs two cards"
+        );
+        set_device(&mut m, &found, &found_ref(&found, 1), true);
+        set_mode(&mut m, MultiGpuMode::Auto);
+        set_device(&mut m, &found, &found_ref(&found, 1), false);
+        assert_eq!(
+            m.multi_gpu,
+            MultiGpuMode::Auto,
+            "automatic works on one card"
+        );
+
+        let mut l = model(LocalEngine::Llama);
+        set_device(&mut l, &found, &found_ref(&found, 1), true);
+        assert_eq!(visible_modes(&l, &found).len(), 2);
+        set_mode(&mut l, MultiGpuMode::Auto);
+        set_mode(&mut l, MultiGpuMode::PeerTier);
+        assert_eq!(l.multi_gpu, MultiGpuMode::Split);
+        assert!(!modes_shown(&model(LocalEngine::Llama), &found));
+    }
+
+    #[test]
+    fn the_strata_tuning_round_trips_through_extra_and_resets_to_automatic() {
+        let mut m = model(LocalEngine::Strata);
+        m.extra = Some(serde_json::json!({"other": 1}));
+        assert!(!strata_tuning_is_set(&m));
+        set_vision(&mut m, Some(false));
+        set_draft(&mut m, Some(true));
+        set_peer_reserve(&mut m, Some(1500));
+        let t = strata_tuning(&m);
+        assert_eq!(
+            (t.vision, t.draft, t.peer_reserve_mib),
+            (Some(false), Some(true), Some(1500))
+        );
+        assert!(strata_tuning_is_set(&m));
+        assert_eq!(m.extra.as_ref().map(|e| e["other"].clone()), Some(1.into()));
+        reset_strata_tuning(&mut m);
+        assert_eq!(m.extra, Some(serde_json::json!({"other": 1})));
+        assert!(!strata_tuning_is_set(&m));
+        let mut bare = model(LocalEngine::Strata);
+        set_draft(&mut bare, Some(false));
+        reset_strata_tuning(&mut bare);
+        assert_eq!(
+            bare.extra, None,
+            "the key goes, and the empty object with it"
+        );
+
+        let mut l = model(LocalEngine::Llama);
+        set_vision(&mut l, Some(true));
+        assert_eq!(l.extra, None, "not a Strata model");
+    }
+
+    #[test]
+    fn the_second_card_reserve_is_for_the_peer_modes() {
+        let mut m = model(LocalEngine::Strata);
+        assert!(!shows_peer_reserve(&m));
+        m.multi_gpu = MultiGpuMode::PeerTier;
+        assert!(shows_peer_reserve(&m));
+        let mut l = model(LocalEngine::Llama);
+        l.multi_gpu = MultiGpuMode::PeerTier;
+        assert!(!shows_peer_reserve(&l));
     }
 
     #[test]

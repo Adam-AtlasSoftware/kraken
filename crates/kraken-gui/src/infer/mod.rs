@@ -330,9 +330,10 @@ impl InferSettings {
             );
             ui.add_space(4.0);
             run_on(ui, &p, &mut model, &found);
-            if card::several_cards(&model, &found) {
-                several(ui, &p, &mut model);
+            if card::modes_shown(&model, &found) {
+                several(ui, &p, &mut model, &found);
             }
+            strata_tuning(ui, &p, &mut model);
             advanced(ui, &p, &mut model, &found);
             if model != before && status.as_ref().is_some_and(ModelStatus::is_running) {
                 start_over = true;
@@ -524,10 +525,15 @@ pub(crate) fn run_on(
     );
 }
 
-pub(crate) fn several(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut LocalModel) {
+pub(crate) fn several(
+    ui: &mut Ui,
+    p: &kraken_gui_widgets::Palette,
+    model: &mut LocalModel,
+    found: &[DeviceInfo],
+) {
     ui.add_space(4.0);
     ui.label(medium("How to use several cards", 13.0).color(p.text_strong));
-    for o in card::mode_options(model.engine) {
+    for o in card::visible_modes(model, found) {
         let mut mode: MultiGpuMode = model.multi_gpu;
         ui.radio_value(&mut mode, o.mode, o.title)
             .on_hover_text(o.help);
@@ -536,6 +542,64 @@ pub(crate) fn several(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut 
             card::set_mode(model, mode);
         }
     }
+}
+
+fn strata_tuning(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut LocalModel) {
+    if !card::has_strata_tuning(model) {
+        return;
+    }
+    let t = card::strata_tuning(model);
+    ui.add_space(4.0);
+    ui.label(medium("Strata settings", 13.0).color(p.text_strong));
+    let mut vision = t.vision.unwrap_or(true);
+    if ui
+        .checkbox(&mut vision, "Read pictures")
+        .on_hover_text("Off saves video memory on the main card")
+        .changed()
+    {
+        card::set_vision(model, Some(vision));
+    }
+    let mut draft = t.draft.unwrap_or(true);
+    if ui
+        .checkbox(&mut draft, "Use the draft layer")
+        .on_hover_text("Speeds answers up but takes video memory")
+        .changed()
+    {
+        card::set_draft(model, Some(draft));
+    }
+    if card::shows_peer_reserve(model) {
+        let mut mib = t.peer_reserve_mib.unwrap_or(1000);
+        ui.horizontal(|ui| {
+            ui.label("Second card keeps free (MiB)");
+            if ui
+                .add(egui::DragValue::new(&mut mib).range(0..=32768).speed(50))
+                .on_hover_text("Video memory left free on the second card")
+                .changed()
+            {
+                card::set_peer_reserve(model, Some(mib));
+            }
+        });
+    }
+    let set = card::strata_tuning_is_set(model);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(if set {
+                "Some of these are set by you."
+            } else {
+                "Automatic: KRAKEN chooses each time the model starts."
+            })
+            .size(11.5)
+            .color(p.text_dim),
+        );
+        if set
+            && ui
+                .link("Reset to automatic")
+                .on_hover_text("Let KRAKEN choose these each time the model starts")
+                .clicked()
+        {
+            card::reset_strata_tuning(model);
+        }
+    });
 }
 
 fn advanced(
