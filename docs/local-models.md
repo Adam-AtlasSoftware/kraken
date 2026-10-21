@@ -41,6 +41,11 @@ setup has four steps.
    - **Tight**: fits, but only just. Other programs using memory may push it out.
    - **Won't fit**: too big for this computer. You can still choose it, but it will not run well.
    Each one also shows its download size.
+
+   On a computer with an NVIDIA card, a **Strata** part sits under the list. **Use a model file I
+   already have...** opens the system file dialog: pick any shard of a Strata model on your disk,
+   and KRAKEN uses the files where they are, with no copy and no 60 GB download. See
+   [Strata](#strata). **Engine** and **Version** choose how Strata itself is installed.
 3. **Pick cards.** KRAKEN preselects the best card. With several cards you can change the choice.
    See [Several cards](#several-cards).
 4. **Download and test.** KRAKEN downloads the engine and the model, starts the model and asks it a
@@ -257,8 +262,36 @@ kraken infer start llama-server --model ~/models/big-moe-q4_k_m.gguf \
 Raise `n_cpu_moe` until the model loads. Lower it while the card still has room, because a higher
 value is slower.
 
+### Strata
+
 Strata is another engine for very large mixture-of-experts models. It keeps the expert weights in RAM
-and works on NVIDIA cards only. On Linux it is built from source, which takes 10 to 20 minutes.
+and works on NVIDIA cards only. Its files live under `<data dir>/engines/strata`, and KRAKEN never
+uses `sudo` for it.
+
+**Engine.** *Ready-made* downloads Strata's finished Linux engine (CUDA 13) from the release and checks
+it against the release's `SHA256SUMS.txt`. It needs only a driver and Python 3 with `venv`. *Build
+from source* compiles the engine here, which takes 10 to 20 minutes and needs `nvcc` and a C++
+compiler.
+
+**Version.**
+
+- *Latest release* (the default) looks up the newest published Strata when the setup runs.
+- *Tested* is the revision KRAKEN was tested with. Its archives are checked against hashes written
+  down in advance (`crates/kraken-infer/data/strata.toml`).
+- *Latest commit* is the newest commit of Strata's main branch. It can be broken, so it can only be
+  built from source.
+
+The newest release and commit have no hash written down in advance. KRAKEN records the SHA-256 of
+what it downloaded in the setup log (`<data dir>/engines/strata/setup.log`).
+
+**A model you already have.** Strata runs GGUF files named the way its installer names them, such as
+`Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf`. KRAKEN reads the family and the
+quantisation from the name and checks that every shard is in the same folder. The files are used where
+they are. KRAKEN does not check their hashes, because they are your files.
+
+The same choices are arguments of the `local_model_setup` command: `strata_engine` (`prebuilt` or
+`build`), `strata_version` (`latest_release`, `pinned` or `latest_commit`) and `model_file` (the path
+of one shard).
 
 ## Other servers you run
 

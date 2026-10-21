@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_agent::ProviderConfig;
+use kraken_infer::strata::{EngineMethod, EngineVersion};
 use kraken_proto::infer::LocalEngine;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::{LocalModelDevicesOut, LocalModelRecommendOut};
 use serde_json::{Value, json};
 
-use super::setup::{RawSurvey, SetupProbe};
+use super::setup::{InstallRequest, RawSurvey, SetupProbe};
 use crate::assist::{ProviderStore, TestReport, test_connection};
 use crate::backend::Backend;
 
@@ -64,16 +65,14 @@ impl SetupProbe for BackendSetupProbe {
         })
     }
 
-    async fn install(&self, id: &str, engine: LocalEngine) -> Result<(), ProtoError> {
-        let engine = match engine {
-            LocalEngine::Llama => "llama-server",
-            LocalEngine::Strata => "strata",
-        };
+    async fn install(
+        &self,
+        id: &str,
+        engine: LocalEngine,
+        request: &InstallRequest,
+    ) -> Result<(), ProtoError> {
         self.backend
-            .call(
-                "local_model_setup",
-                json!({"model": id, "engine": engine, "use_for": ["assistant"]}),
-            )
+            .call("local_model_setup", install_args(id, engine, request))
             .await
             .map(|_| ())
     }
@@ -90,6 +89,35 @@ impl SetupProbe for BackendSetupProbe {
             model: model.to_string(),
         })?;
         test_connection(provider).await
+    }
+}
+
+/// The arguments of `local_model_setup` for one install.
+fn install_args(id: &str, engine: LocalEngine, request: &InstallRequest) -> Value {
+    match engine {
+        LocalEngine::Llama => {
+            json!({"model": id, "engine": "llama-server", "use_for": ["assistant"]})
+        }
+        LocalEngine::Strata => {
+            let mut args = json!({
+                "model": id,
+                "engine": "strata",
+                "use_for": ["assistant"],
+                "strata_engine": match request.strata.method {
+                    EngineMethod::Prebuilt => "prebuilt",
+                    EngineMethod::Build => "build",
+                },
+                "strata_version": match request.strata.version {
+                    EngineVersion::LatestRelease => "latest_release",
+                    EngineVersion::Pinned => "pinned",
+                    EngineVersion::LatestCommit => "latest_commit",
+                },
+            });
+            if let Some(file) = &request.model_file {
+                args["model_file"] = json!(file.display().to_string());
+            }
+            args
+        }
     }
 }
 
@@ -127,6 +155,28 @@ fn dir_bytes(dir: &Path, depth: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strata_installs_carry_the_engine_choice_and_the_picked_file() {
+        let mut request = InstallRequest::default();
+        let a = install_args("strata-iq2-xs", LocalEngine::Strata, &request);
+        assert_eq!(a["strata_engine"], "prebuilt");
+        assert_eq!(a["strata_version"], "latest_release");
+        assert!(a.get("model_file").is_none());
+        request.strata.method = EngineMethod::Build;
+        request.strata.version = EngineVersion::LatestCommit;
+        request.model_file = Some("/m/x-00001-of-00002.gguf".into());
+        let a = install_args(
+            "strata-existing-swift-iq2_xs",
+            LocalEngine::Strata,
+            &request,
+        );
+        assert_eq!(a["strata_engine"], "build");
+        assert_eq!(a["strata_version"], "latest_commit");
+        assert_eq!(a["model_file"], "/m/x-00001-of-00002.gguf");
+        let l = install_args("m", LocalEngine::Llama, &request);
+        assert!(l.get("strata_engine").is_none() && l.get("model_file").is_none());
+    }
 
     #[test]
     fn the_size_counts_files_and_skips_environments() {

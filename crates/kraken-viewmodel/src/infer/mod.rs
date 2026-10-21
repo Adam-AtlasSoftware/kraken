@@ -29,10 +29,11 @@ pub use kraken_host::infer::{
     BackendInfo, InferApi, InferListReply, InferManager, LogEntry, StatusReply,
 };
 pub use kraken_host::infer::{ModelStatus, ServingApi, StartOptions};
+pub use kraken_infer::strata::{EngineMethod, EngineVersion};
 pub use panel::{HintLevel, InferPanel, LOCAL_INFER_ACCOUNT, MemoryHint};
 pub use setup::{
-    Choice, Computer, FitLevel, LocalSetup, Progress, RawSurvey, SetupProbe, SetupStep, Snapshot,
-    Stage, Survey, SurveyState, survey_from,
+    Choice, Computer, FitLevel, InstallRequest, LocalSetup, Progress, RawSurvey, SetupProbe,
+    SetupStep, Snapshot, Stage, Survey, SurveyState, survey_from,
 };
 pub use setup_probe::BackendSetupProbe;
 pub use store::LocalModelStore;

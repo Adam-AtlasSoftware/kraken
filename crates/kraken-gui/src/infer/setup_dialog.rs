@@ -3,8 +3,11 @@
 //! and presses its buttons.
 
 use egui::{Align, Color32, Layout, RichText, Ui};
+use kraken_proto::infer::LocalEngine;
+use kraken_viewmodel::infer::card::gb;
 use kraken_viewmodel::infer::{
-    Choice, FitLevel, LocalSetup, SetupStep, Stage, Survey, SurveyState,
+    Choice, EngineMethod, EngineVersion, FitLevel, LocalSetup, SetupStep, Stage, Survey,
+    SurveyState,
 };
 
 use super::{run_on, several};
@@ -164,6 +167,7 @@ fn fit_color(fit: FitLevel, s: &style::Status) -> Color32 {
 }
 
 fn pick_model(ui: &mut Ui, setup: &mut LocalSetup) {
+    setup.take_picked_file();
     let s = style::status(style::dark(ui));
     let p = pal(ui);
     let survey: std::sync::Arc<Survey> = match setup.survey() {
@@ -201,6 +205,111 @@ fn pick_model(ui: &mut Ui, setup: &mut LocalSetup) {
     if let Some(id) = pick {
         setup.choose(&id);
     }
+    if survey
+        .choices
+        .iter()
+        .any(|c| c.engine == LocalEngine::Strata)
+        || setup.own_model().is_some()
+    {
+        strata_options(ui, setup, &s, &p);
+    }
+}
+
+/// The Strata part of the step: a model file the person already has, and how the engine is
+/// installed.
+fn strata_options(
+    ui: &mut Ui,
+    setup: &mut LocalSetup,
+    s: &style::Status,
+    p: &kraken_gui_widgets::Palette,
+) {
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(medium("Strata", 13.0));
+    ui.horizontal(|ui| {
+        if ui
+            .button("Use a model file I already have\u{2026}")
+            .on_hover_text(
+                "Pick any shard of a Strata model on this computer (a GGUF named like \
+                 Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf). It is used where it \
+                 is, not copied.",
+            )
+            .clicked()
+        {
+            open_model_dialog(setup, ui.ctx());
+        }
+        if setup.own_model().is_some()
+            && ui
+                .button("Use the list instead")
+                .on_hover_text("Forget the file and pick a model from the list above.")
+                .clicked()
+        {
+            setup.forget_own_model();
+        }
+    });
+    if let Some(m) = setup.own_model() {
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!(
+                    "{} \u{b7} {} in {}",
+                    m.title(),
+                    gb(m.bytes),
+                    m.dir.display()
+                ))
+                .size(12.0)
+                .color(p.text_dim),
+            )
+            .wrap(),
+        );
+    }
+    if let Some(e) = setup.own_model_error() {
+        ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
+    }
+    ui.add_space(4.0);
+    let o = setup.strata_options();
+    let (mut method, mut version) = (o.method, o.version);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Engine").size(12.0).color(p.text_dim));
+        ui.radio_value(&mut method, EngineMethod::Prebuilt, "Ready-made")
+            .on_hover_text("Download Strata's finished engine. No compiler needed.");
+        ui.radio_value(&mut method, EngineMethod::Build, "Build from source")
+            .on_hover_text(
+                "Compile it here, 10 to 20 minutes. Needs the CUDA toolkit (nvcc) and a C++ compiler.",
+            );
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Version").size(12.0).color(p.text_dim));
+        ui.radio_value(&mut version, EngineVersion::LatestRelease, "Latest release")
+            .on_hover_text("The newest published Strata, looked up when the setup runs.");
+        ui.radio_value(&mut version, EngineVersion::Pinned, "Tested")
+            .on_hover_text("The revision KRAKEN was tested with, checked against known hashes.");
+        ui.radio_value(&mut version, EngineVersion::LatestCommit, "Latest commit")
+            .on_hover_text("The newest commit of Strata's main branch. It can be broken, so it is built from source.");
+    });
+    if method != o.method {
+        setup.set_strata_method(method);
+    }
+    if version != o.version {
+        setup.set_strata_version(version);
+    }
+}
+
+fn open_model_dialog(setup: &LocalSetup, ctx: &egui::Context) {
+    let (rt, inbox) = setup.file_dialog_parts();
+    let ctx = ctx.clone();
+    rt.spawn(async move {
+        let picked = rfd::AsyncFileDialog::new()
+            .set_title("Pick a Strata model file (any shard)")
+            .add_filter("GGUF model", &["gguf"])
+            .pick_file()
+            .await;
+        if let Some(h) = picked {
+            *inbox
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(h.path().to_path_buf());
+            ctx.request_repaint();
+        }
+    });
 }
 
 fn row(

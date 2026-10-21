@@ -145,6 +145,27 @@ fn fixture() -> Fixture {
     }
 }
 
+const BUILD_PINNED: SetupOptions = SetupOptions {
+    method: EngineMethod::Build,
+    version: EngineVersion::Pinned,
+};
+
+async fn install_with(
+    f: &Fixture,
+    root: &Path,
+    options: SetupOptions,
+    model: ModelSource<'_>,
+    runner: &Recorder,
+) -> Result<StrataInstall, StrataError> {
+    let layout = StrataLayout::at(root);
+    let req = StrataRequest {
+        manifest: &f.manifest,
+        options,
+        model,
+    };
+    install_strata(&layout, &f.fetcher, runner, &req, vec![], &mut |_| {}).await
+}
+
 async fn install(
     f: &Fixture,
     root: &Path,
@@ -152,16 +173,12 @@ async fn install(
     runner: &Recorder,
 ) -> Result<StrataInstall, StrataError> {
     let layout = StrataLayout::at(root);
-    install_strata(
-        &layout,
-        &f.fetcher,
-        runner,
-        &f.manifest,
-        &f.manifest.models[0],
-        missing,
-        &mut |_| {},
-    )
-    .await
+    let req = StrataRequest {
+        manifest: &f.manifest,
+        options: BUILD_PINNED,
+        model: ModelSource::Catalog(&f.manifest.models[0]),
+    };
+    install_strata(&layout, &f.fetcher, runner, &req, missing, &mut |_| {}).await
 }
 
 #[tokio::test]
@@ -272,4 +289,293 @@ async fn missing_system_pieces_stop_before_any_download() {
     assert!(err.to_string().contains("nvcc"), "{err}");
     assert!(f.fetcher.calls.lock().expect("lock").is_empty());
     assert!(!dir.path().join("s").exists());
+}
+
+fn setup_args(rec: &Recorder) -> Vec<String> {
+    let seen = rec.seen.lock().expect("lock");
+    let (_, cmd) = seen
+        .iter()
+        .find(|(step, _)| step == "build the engine")
+        .expect("setup.py ran");
+    cmd.args.clone()
+}
+
+const ENGINE_NAME: &str = "strata-engine-0.9.9-linux-x86_64-cuda-cuda13.tar.gz";
+
+fn with_release(f: &mut Fixture, tag: &str, setup_py_requirements: &[u8]) {
+    let archive = targz(&[
+        ("Strata-new/requirements.txt", setup_py_requirements),
+        ("Strata-new/serve/server.py", b"print(2)"),
+    ]);
+    let engine = targz(&[("strata", b"engine"), ("BUILD.json", b"{}")]);
+    let listing = format!(
+        "{{\"tag_name\": \"{tag}\", \"assets\": [\
+         {{\"name\": \"{ENGINE_NAME}\", \"browser_download_url\": \"https://example.test/engine.tgz\"}},\
+         {{\"name\": \"SHA256SUMS.txt\", \"browser_download_url\": \"https://example.test/sums\"}}]}}"
+    );
+    f.fetcher.files.insert(
+        "https://api.github.com/repos/Niko1221/Strata/releases/latest".into(),
+        listing.into_bytes(),
+    );
+    f.fetcher.files.insert(
+        format!("https://codeload.github.com/Niko1221/Strata/tar.gz/refs/tags/{tag}"),
+        archive,
+    );
+    f.fetcher.files.insert(
+        "https://example.test/sums".into(),
+        format!(
+            "{}  {ENGINE_NAME}\n{}  other.zip\n",
+            hex(&engine),
+            "0".repeat(64)
+        )
+        .into_bytes(),
+    );
+    f.fetcher
+        .files
+        .insert("https://example.test/engine.tgz".into(), engine);
+}
+
+fn your_files(dir: &Path) -> kraken_infer::strata::ExistingModel {
+    let prefix = "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS";
+    for i in 1..=2 {
+        fs::write(dir.join(format!("{prefix}-0000{i}-of-00002.gguf")), b"mine").expect("shard");
+    }
+    kraken_infer::strata::existing_model(&dir.join(format!("{prefix}-00001-of-00002.gguf")))
+        .expect("recognised")
+}
+
+#[tokio::test]
+async fn the_ready_made_engine_is_fetched_checked_packed_and_handed_over_as_a_folder() {
+    let mut f = fixture();
+    with_release(&mut f, "v9.9.9", b"numpy==9\n");
+    let dir = tempfile::tempdir().expect("dir");
+    let rec = Recorder::default();
+    let model = f.manifest.models[0].clone();
+    let root = dir.path().join("s");
+    let out = install_with(
+        &f,
+        &root,
+        SetupOptions::default(),
+        ModelSource::Catalog(&model),
+        &rec,
+    )
+    .await
+    .expect("installed");
+    let args = setup_args(&rec);
+    assert!(!args.iter().any(|a| a == "--build"), "{args:?}");
+    let folder = root.join("downloads/engine-v9.9.9/prebuilt");
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--prebuilt" && w[1] == format!("{}/", folder.display())),
+        "{args:?}"
+    );
+    {
+        let seen = rec.seen.lock().expect("lock");
+        let (_, pack) = seen
+            .iter()
+            .find(|(step, _)| step == "pack the engine")
+            .expect("the tarball is packed into the zip setup.py expects");
+        assert_eq!(pack.args[0], "-c");
+        assert!(pack.args[1].contains("strict_timestamps=False"));
+        assert!(
+            pack.args[2].ends_with("strata-linux-x64.zip"),
+            "{:?}",
+            pack.args
+        );
+        assert!(
+            pack.args[3..].contains(&"strata".to_string()),
+            "{:?}",
+            pack.args
+        );
+    }
+    assert!(out.description.contains("v9.9.9") && out.description.contains("ready-made"));
+    // The newest release has no pinned hashes, so the pinned llama.cpp is not placed either.
+    assert!(!root.join("src/third_party").exists());
+    let calls = f.fetcher.calls.lock().expect("lock");
+    assert!(calls.iter().all(|u| !u.contains("llama")), "{calls:?}");
+    let log = fs::read_to_string(root.join("setup.log")).unwrap_or_default();
+    assert!(log.contains("sha256"), "{log}");
+}
+
+#[tokio::test]
+async fn a_ready_made_engine_that_does_not_match_the_release_checksums_is_refused() {
+    let mut f = fixture();
+    with_release(&mut f, "v9.9.9", b"numpy==9\n");
+    f.fetcher.files.insert(
+        "https://example.test/engine.tgz".into(),
+        targz(&[("strata", b"evil")]),
+    );
+    let dir = tempfile::tempdir().expect("dir");
+    let rec = Recorder::default();
+    let model = f.manifest.models[0].clone();
+    let err = install_with(
+        &f,
+        &dir.path().join("s"),
+        SetupOptions::default(),
+        ModelSource::Catalog(&model),
+        &rec,
+    )
+    .await
+    .expect_err("refused");
+    assert!(err.to_string().contains("sha256 mismatch"), "{err}");
+    let seen = rec.seen.lock().expect("lock");
+    assert!(
+        seen.iter()
+            .all(|(s, _)| s != "pack the engine" && s != "build the engine")
+    );
+}
+
+#[test]
+fn the_engine_asset_and_its_checksum_are_found_in_a_release_listing() {
+    let v: serde_json::Value = serde_json::json!({"assets": [
+        {"name": "strata-engine-1.0-linux-x86_64-cuda-cuda12.tar.gz", "browser_download_url": "https://x/12"},
+        {"name": "strata-engine-1.0-linux-x86_64-cuda-cuda13.tar.gz", "browser_download_url": "https://x/13"},
+        {"name": "SHA256SUMS.txt", "browser_download_url": "https://x/sums"},
+    ]});
+    let (name, url, sums) = engine_assets(&v).expect("found");
+    assert_eq!(
+        (name.as_str(), url.as_str(), sums.as_str()),
+        (
+            "strata-engine-1.0-linux-x86_64-cuda-cuda13.tar.gz",
+            "https://x/13",
+            "https://x/sums"
+        )
+    );
+    assert!(engine_assets(&serde_json::json!({"assets": []})).is_err());
+    let no_sums = serde_json::json!({"assets": [
+        {"name": "strata-engine-1.0-linux-x86_64-cuda-cuda13.tar.gz", "browser_download_url": "https://x/13"}]});
+    assert!(engine_assets(&no_sums).is_err(), "no checksums, no engine");
+
+    let h = "ab".repeat(32);
+    let text = format!("{h}  file-a\n{}  *file-b\nnot a line\n", "cd".repeat(32));
+    assert_eq!(listed_sha256(&text, "file-a"), Some(h));
+    assert_eq!(listed_sha256(&text, "file-b"), Some("cd".repeat(32)));
+    assert_eq!(listed_sha256(&text, "file-c"), None);
+}
+
+#[tokio::test]
+async fn building_the_newest_release_passes_build() {
+    let mut f = fixture();
+    with_release(&mut f, "v9.9.9", b"numpy==9\n");
+    let dir = tempfile::tempdir().expect("dir");
+    let rec = Recorder::default();
+    let model = f.manifest.models[0].clone();
+    let options = SetupOptions {
+        method: EngineMethod::Build,
+        version: EngineVersion::LatestRelease,
+    };
+    install_with(
+        &f,
+        &dir.path().join("s"),
+        options,
+        ModelSource::Catalog(&model),
+        &rec,
+    )
+    .await
+    .expect("installed");
+    let args = setup_args(&rec);
+    assert!(args.iter().any(|a| a == "--build"));
+    assert!(!args.iter().any(|a| a == "--prebuilt"));
+}
+
+#[tokio::test]
+async fn the_newest_commit_is_looked_up_and_only_built() {
+    let mut f = fixture();
+    let sha = "a".repeat(40);
+    f.fetcher.files.insert(
+        "https://api.github.com/repos/Niko1221/Strata/commits/main".into(),
+        format!("{{\"sha\": \"{sha}\"}}").into_bytes(),
+    );
+    f.fetcher.files.insert(
+        format!("https://codeload.github.com/Niko1221/Strata/tar.gz/{sha}"),
+        targz(&[("Strata-x/requirements.txt", b"x")]),
+    );
+    let dir = tempfile::tempdir().expect("dir");
+    let rec = Recorder::default();
+    let model = f.manifest.models[0].clone();
+    let build = SetupOptions {
+        method: EngineMethod::Build,
+        version: EngineVersion::LatestCommit,
+    };
+    let out = install_with(
+        &f,
+        &dir.path().join("s"),
+        build,
+        ModelSource::Catalog(&model),
+        &rec,
+    )
+    .await
+    .expect("built");
+    assert!(out.description.contains(&sha[..12]), "{}", out.description);
+
+    let prebuilt = SetupOptions {
+        method: EngineMethod::Prebuilt,
+        version: EngineVersion::LatestCommit,
+    };
+    let rec = Recorder::default();
+    let err = install_with(
+        &f,
+        &dir.path().join("t"),
+        prebuilt,
+        ModelSource::Catalog(&model),
+        &rec,
+    )
+    .await
+    .expect_err("no ready-made engine for a commit");
+    assert!(matches!(err, StrataError::Pin(_)), "{err}");
+    assert!(rec.seen.lock().expect("lock").is_empty());
+}
+
+#[tokio::test]
+async fn a_strange_release_name_is_refused() {
+    let mut f = fixture();
+    with_release(&mut f, "../evil", b"x");
+    let dir = tempfile::tempdir().expect("dir");
+    let rec = Recorder::default();
+    let model = f.manifest.models[0].clone();
+    let err = install_with(
+        &f,
+        &dir.path().join("s"),
+        SetupOptions::default(),
+        ModelSource::Catalog(&model),
+        &rec,
+    )
+    .await
+    .expect_err("refused");
+    assert!(matches!(err, StrataError::Pin(_)), "{err}");
+}
+
+#[tokio::test]
+async fn your_own_model_files_are_used_in_place_and_nothing_is_downloaded_for_them() {
+    let mut f = fixture();
+    with_release(&mut f, "v9.9.9", b"numpy==9\n");
+    let dir = tempfile::tempdir().expect("dir");
+    let mine = dir.path().join("mine");
+    fs::create_dir_all(&mine).expect("dir");
+    let existing = your_files(&mine);
+    let rec = Recorder::default();
+    let root = dir.path().join("s");
+    let out = install_with(
+        &f,
+        &root,
+        SetupOptions::default(),
+        ModelSource::Existing(&existing),
+        &rec,
+    )
+    .await
+    .expect("installed");
+    let args = setup_args(&rec);
+    let pair = |k: &str, v: &str| args.windows(2).any(|w| w[0] == k && w[1] == v);
+    assert!(pair("--family", "swift"), "{args:?}");
+    assert!(pair("--model", "IQ2_XS"), "{args:?}");
+    assert!(pair("--gguf-dir", mine.to_str().expect("utf8")), "{args:?}");
+    assert_eq!(out.gguf_dir, mine);
+    let calls = f.fetcher.calls.lock().expect("lock");
+    assert!(
+        calls
+            .iter()
+            .all(|u| !u.contains("/m1") && !u.contains("/m2")),
+        "{calls:?}"
+    );
+    assert!(!root.join("models").exists(), "the files are not copied");
 }

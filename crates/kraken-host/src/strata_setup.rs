@@ -19,13 +19,18 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use kraken_infer::strata::{
-    Missing, Source, StrataManifest, StrataModel, backend_manifest, backend_manifest_text,
+    EngineMethod, EngineVersion, ExistingModel, Missing, SetupOptions, Source, StrataManifest,
+    StrataModel, backend_manifest, backend_manifest_text,
 };
 use sha2::{Digest, Sha256};
 
 use crate::provision::{
-    ArchiveFormat, ArtifactSpec, Fetcher, Progress, ProvisionError, download, extract_tar_gz,
+    ArchiveFormat, ArtifactSpec, Fetcher, Progress, ProvisionError, download, download_unpinned,
+    extract_tar_gz, fetch_text,
 };
+
+/// Strata's repository on GitHub.
+const REPO: &str = "Niko1221/Strata";
 
 /// Why a Strata setup stopped.
 #[derive(Debug, thiserror::Error)]
@@ -229,6 +234,8 @@ impl Runner for SystemRunner {
 /// What a finished setup produced.
 #[derive(Debug, Clone)]
 pub struct StrataInstall {
+    /// Which revision was installed and how, for people ("v0.2.1, ready-made engine").
+    pub description: String,
     pub root: PathBuf,
     pub gguf_dir: PathBuf,
     pub backend_manifest: PathBuf,
@@ -283,6 +290,14 @@ fn unpack_source(archive: &Path, dest: &Path) -> Result<(), StrataError> {
     Ok(())
 }
 
+/// Adds a line to the setup log (best effort).
+fn note(log: &Path, line: &str) {
+    use std::io::Write as _;
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(log) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn file_sha256(path: &Path) -> Result<String, StrataError> {
     let bytes = fs::read(path).map_err(io(format!("cannot read {}", path.display())))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -304,17 +319,173 @@ async fn fetch_source(
     Ok(download(fetcher, &spec, &layout.downloads(), progress).await?)
 }
 
-/// Installs Strata and `model`. `missing` is the result of the prerequisite check; a
-/// non-empty list stops the setup before anything is downloaded.
+/// Where the model comes from.
+#[derive(Debug, Clone, Copy)]
+pub enum ModelSource<'a> {
+    /// A catalog model: downloaded and checked against the pinned hashes.
+    Catalog(&'a StrataModel),
+    /// Files already on this computer, used where they are.
+    Existing(&'a ExistingModel),
+}
+
+/// What to install.
+#[derive(Debug, Clone, Copy)]
+pub struct StrataRequest<'a> {
+    pub manifest: &'a StrataManifest,
+    pub options: SetupOptions,
+    pub model: ModelSource<'a>,
+}
+
+/// The Strata revision chosen for this setup.
+struct Revision {
+    /// The source archive to fetch.
+    url: String,
+    /// `v0.2.1` or a commit id.
+    label: String,
+    /// The release whose ready-made engine to use, when the revision is a release.
+    release: Option<String>,
+    /// Set when the archive is checked against hashes written down in advance.
+    pinned: Option<Source>,
+    /// GitHub's listing of the release (its assets), when it was fetched already.
+    listing: Option<serde_json::Value>,
+}
+
+fn plain_ref(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+}
+
+/// The asset name of the ready-made Linux engine (CUDA 13) in a release listing.
+const ENGINE_SUFFIX: &str = "-linux-x86_64-cuda-cuda13.tar.gz";
+/// Writes the files named after the output path into a zip, whatever their timestamps (the
+/// tarball's are older than a zip can record, which `python -m zipfile` refuses).
+const PACK_SCRIPT: &str = concat!(
+    "import os, sys, zipfile\n",
+    "out, items = sys.argv[1], sys.argv[2:]\n",
+    "with zipfile.ZipFile(out, 'w', zipfile.ZIP_STORED, strict_timestamps=False) as z:\n",
+    "    for item in items:\n",
+    "        if os.path.isdir(item):\n",
+    "            for root, _, files in os.walk(item):\n",
+    "                for f in files:\n",
+    "                    z.write(os.path.join(root, f))\n",
+    "        else:\n",
+    "            z.write(item)\n",
+);
+/// The name setup.py looks for in a local folder given with `--prebuilt`.
+const ENGINE_ZIP: &str = "strata-linux-x64.zip";
+
+/// The download URLs of the ready-made engine and of the release's checksums.
+fn engine_assets(listing: &serde_json::Value) -> Result<(String, String, String), StrataError> {
+    let url_of = |pick: &dyn Fn(&str) -> bool| {
+        listing["assets"].as_array().and_then(|a| {
+            a.iter().find_map(|x| {
+                let name = x["name"].as_str()?;
+                let url = x["browser_download_url"].as_str()?;
+                pick(name).then(|| (name.to_string(), url.to_string()))
+            })
+        })
+    };
+    let (name, url) = url_of(&|n| n.starts_with("strata-engine-") && n.ends_with(ENGINE_SUFFIX))
+        .ok_or_else(|| {
+            StrataError::Pin(
+                "this Strata release has no ready-made Linux engine (CUDA 13); build it from source"
+                    .into(),
+            )
+        })?;
+    let (_, sums) = url_of(&|n| n == "SHA256SUMS.txt").ok_or_else(|| {
+        StrataError::Pin(
+            "this Strata release lists no SHA-256 checksums; refusing its engine".into(),
+        )
+    })?;
+    Ok((name, url, sums))
+}
+
+/// The hash `SHA256SUMS.txt` lists for `name`.
+fn listed_sha256(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (hash, file) = l.split_once(char::is_whitespace)?;
+        (file.trim().trim_start_matches('*') == name
+            && hash.len() == 64
+            && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| hash.to_ascii_lowercase())
+    })
+}
+
+/// Looks up the newest release or commit; the pinned revision needs no lookup.
+async fn resolve_revision(
+    fetcher: &dyn Fetcher,
+    manifest: &StrataManifest,
+    version: EngineVersion,
+) -> Result<Revision, StrataError> {
+    let json = |text: String, url: &str| {
+        serde_json::from_str::<serde_json::Value>(&text).map_err(|e| {
+            StrataError::Pin(format!(
+                "GitHub's answer from {url} is not what was expected: {e}"
+            ))
+        })
+    };
+    match version {
+        EngineVersion::Pinned => Ok(Revision {
+            url: manifest.engine.source.url.clone(),
+            label: format!("v{}", manifest.engine.version),
+            release: Some(format!("v{}", manifest.engine.version)),
+            pinned: Some(manifest.engine.source.clone()),
+            listing: None,
+        }),
+        EngineVersion::LatestRelease => {
+            let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+            let v = json(fetch_text(fetcher, &url).await?, &url)?;
+            let tag = v["tag_name"]
+                .as_str()
+                .filter(|t| plain_ref(t))
+                .ok_or_else(|| {
+                    StrataError::Pin("GitHub named no usable latest release of Strata".into())
+                })?;
+            Ok(Revision {
+                url: format!("https://codeload.github.com/{REPO}/tar.gz/refs/tags/{tag}"),
+                label: tag.into(),
+                release: Some(tag.into()),
+                pinned: None,
+                listing: Some(v.clone()),
+            })
+        }
+        EngineVersion::LatestCommit => {
+            let url = format!("https://api.github.com/repos/{REPO}/commits/main");
+            let v = json(fetch_text(fetcher, &url).await?, &url)?;
+            let sha = v["sha"]
+                .as_str()
+                .filter(|t| plain_ref(t) && t.len() == 40)
+                .ok_or_else(|| {
+                    StrataError::Pin("GitHub named no usable latest commit of Strata".into())
+                })?;
+            Ok(Revision {
+                url: format!("https://codeload.github.com/{REPO}/tar.gz/{sha}"),
+                label: sha[..12].into(),
+                release: None,
+                pinned: None,
+                listing: None,
+            })
+        }
+    }
+}
+
+/// Installs Strata and a model. `missing` is the result of the prerequisite check for the
+/// chosen method; a non-empty list stops the setup before anything is downloaded.
 pub async fn install_strata(
     layout: &StrataLayout,
     fetcher: &dyn Fetcher,
     runner: &dyn Runner,
-    manifest: &StrataManifest,
-    model: &StrataModel,
+    req: &StrataRequest<'_>,
     missing: Vec<Missing>,
     on_event: &mut (dyn FnMut(StrataEvent) + Send),
 ) -> Result<StrataInstall, StrataError> {
+    let (manifest, options) = (req.manifest, req.options);
+    if let Some(why) = options.problem() {
+        return Err(StrataError::Pin(why.into()));
+    }
     if !missing.is_empty() {
         return Err(StrataError::Missing(missing));
     }
@@ -335,44 +506,59 @@ pub async fn install_strata(
     }
     let log = layout.log();
 
-    // 1. Strata's source, at the pinned commit.
+    // 1. Strata's source: the pinned commit (hash-checked) or the newest release or commit.
     index += 1;
-    event("Strata source", 0, manifest.engine.source.size, index);
+    event("Looking up the Strata revision", 0, 0, index);
+    let revision = resolve_revision(fetcher, manifest, options.version).await?;
+    let size = revision.pinned.as_ref().map_or(0, |p| p.size);
+    event("Strata source", 0, size, index);
     let mut prog = |p: Progress| {
         if let Progress::Downloading { done, total, .. } = p {
-            event("Strata source", done, total.unwrap_or(0), index);
+            event("Strata source", done, total.unwrap_or(size), index);
         }
     };
-    let archive = fetch_source(
-        fetcher,
-        layout,
-        "strata",
-        &manifest.engine.source,
-        &mut prog,
-    )
-    .await?;
+    let archive = match &revision.pinned {
+        Some(source) => fetch_source(fetcher, layout, "strata", source, &mut prog).await?,
+        None => {
+            let dest = layout
+                .downloads()
+                .join(format!("strata-{}.tar.gz", revision.label));
+            let sha = download_unpinned(fetcher, "strata", &revision.url, &dest, &mut prog).await?;
+            note(
+                &log,
+                &format!(
+                    "Strata {} source: sha256 {sha} (no hash is pinned for it)",
+                    revision.label
+                ),
+            );
+            dest
+        }
+    };
     unpack_source(&archive, &layout.src())?;
-    let req = layout.src().join("requirements.txt");
-    if file_sha256(&req)? != manifest.engine.requirements_sha256 {
+    let req_file = layout.src().join("requirements.txt");
+    if revision.pinned.is_some() && file_sha256(&req_file)? != manifest.engine.requirements_sha256 {
         return Err(StrataError::Pin(
             "requirements.txt in the Strata source is not the pinned one; refusing to install it"
                 .into(),
         ));
     }
 
-    // 2. llama.cpp (ggml) at the commit Strata pins, placed where setup.py looks first.
-    index += 1;
-    let mut prog = |p: Progress| {
-        if let Progress::Downloading { done, total, .. } = p {
-            event("llama.cpp source", done, total.unwrap_or(0), index);
-        }
-    };
-    let archive =
-        fetch_source(fetcher, layout, "llama-cpp", &manifest.llama_cpp, &mut prog).await?;
-    unpack_source(
-        &archive,
-        &layout.src().join("third_party").join("llama.cpp"),
-    )?;
+    // 2. llama.cpp (ggml) at the commit KRAKEN pins, placed where setup.py looks first. A newer
+    // Strata asks for its own llama.cpp commit and fetches it itself.
+    if revision.pinned.is_some() {
+        index += 1;
+        let mut prog = |p: Progress| {
+            if let Progress::Downloading { done, total, .. } = p {
+                event("llama.cpp source", done, total.unwrap_or(0), index);
+            }
+        };
+        let archive =
+            fetch_source(fetcher, layout, "llama-cpp", &manifest.llama_cpp, &mut prog).await?;
+        unpack_source(
+            &archive,
+            &layout.src().join("third_party").join("llama.cpp"),
+        )?;
+    }
 
     // 3. A `sudo` that refuses, so no step can reach for system packages.
     let sudo = layout.shims().join("sudo");
@@ -425,7 +611,7 @@ pub async fn install_strata(
                 ]
                 .iter()
                 .map(|s| s.to_string())
-                .chain([req.display().to_string()])
+                .chain([req_file.display().to_string()])
                 .collect(),
                 cwd: layout.src(),
                 env: vec![],
@@ -434,53 +620,152 @@ pub async fn install_strata(
         )
         .await?;
 
-    // 5. The model, shard by shard.
+    // 5. The model: downloaded shard by shard and checked, or the person's own files as they are.
     index += 1;
-    let dir = layout.gguf_dir(&model.quant);
-    for f in &model.files {
-        let spec = spec_for(&model.id, &f.name, &f.url, &f.sha256);
-        let label = f.name.clone();
+    let (dir, family, quant) = match req.model {
+        ModelSource::Catalog(model) => {
+            let dir = layout.gguf_dir(&model.quant);
+            for f in &model.files {
+                let spec = spec_for(&model.id, &f.name, &f.url, &f.sha256);
+                let label = f.name.clone();
+                let mut prog = |p: Progress| match p {
+                    Progress::Downloading { done, total, .. } => {
+                        event(&label, done, total.unwrap_or(f.size), index)
+                    }
+                    Progress::Verifying { .. } => {
+                        event(&format!("Checking {label}"), f.size, f.size, index)
+                    }
+                    _ => {}
+                };
+                download(fetcher, &spec, &dir, &mut prog).await?;
+            }
+            (dir, model.family.clone(), model.quant.clone())
+        }
+        ModelSource::Existing(m) => {
+            event("Using your model files", 1, 1, index);
+            (m.dir.clone(), m.family.clone(), m.quant.clone())
+        }
+    };
+
+    // 5b. The ready-made engine. Strata publishes it for Linux as a tarball for its own app, not as
+    // the zip that setup.py downloads, so it is fetched here, checked against the release's
+    // checksums, and handed to setup.py as a local folder holding that zip.
+    let mut prebuilt_dir: Option<PathBuf> = None;
+    if options.method == EngineMethod::Prebuilt {
+        let tag = revision
+            .release
+            .clone()
+            .ok_or_else(|| StrataError::Pin("the newest commit has no ready-made engine".into()))?;
+        let listing = match &revision.listing {
+            Some(l) => l.clone(),
+            None => {
+                let url = format!("https://api.github.com/repos/{REPO}/releases/tags/{tag}");
+                serde_json::from_str(&fetch_text(fetcher, &url).await?).map_err(|e| {
+                    StrataError::Pin(format!(
+                        "GitHub's answer for release {tag} is unusable: {e}"
+                    ))
+                })?
+            }
+        };
+        let (name, url, sums_url) = engine_assets(&listing)?;
+        let sums = fetch_text(fetcher, &sums_url).await?;
+        let sha256 = listed_sha256(&sums, &name).ok_or_else(|| {
+            StrataError::Pin(format!("the release's checksums do not list {name}"))
+        })?;
+        index += 1;
+        let work = layout.downloads().join(format!("engine-{tag}"));
+        let spec = ArtifactSpec {
+            name: "Strata engine".into(),
+            file_name: name.clone(),
+            url,
+            sha256,
+            format: ArchiveFormat::TarGz,
+            top_dir: String::new(),
+        };
         let mut prog = |p: Progress| match p {
             Progress::Downloading { done, total, .. } => {
-                event(&label, done, total.unwrap_or(f.size), index)
+                event("Strata engine", done, total.unwrap_or(0), index)
             }
-            Progress::Verifying { .. } => {
-                event(&format!("Checking {label}"), f.size, f.size, index)
-            }
+            Progress::Verifying { .. } => event("Checking the Strata engine", 1, 1, index),
             _ => {}
         };
-        download(fetcher, &spec, &dir, &mut prog).await?;
+        let tarball = download(fetcher, &spec, &work, &mut prog).await?;
+        let unpacked = work.join("unpacked");
+        let _ = fs::remove_dir_all(&unpacked);
+        extract_tar_gz(&tarball, &unpacked)?;
+        let mut items: Vec<String> = fs::read_dir(&unpacked)
+            .map_err(io(format!("cannot read {}", unpacked.display())))?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        items.sort();
+        let folder = work.join("prebuilt");
+        fs::create_dir_all(&folder).map_err(io(format!("cannot create {}", folder.display())))?;
+        let mut args = vec![
+            "-c".to_string(),
+            PACK_SCRIPT.into(),
+            folder.join(ENGINE_ZIP).display().to_string(),
+        ];
+        args.extend(items);
+        runner
+            .run(
+                "pack the engine",
+                &Cmd {
+                    program: layout.python(),
+                    args,
+                    cwd: unpacked.clone(),
+                    env: vec![],
+                },
+                &log,
+            )
+            .await?;
+        let _ = fs::remove_dir_all(&unpacked);
+        prebuilt_dir = Some(folder);
     }
 
-    // 6. Strata's own installer builds the engine from the verified inputs.
+    // 6. Strata's own installer sets up the engine (ready-made, or compiled from the sources).
     index += 1;
-    event("Building the engine (10-20 minutes)", 0, 0, index);
+    event(
+        match options.method {
+            EngineMethod::Prebuilt => "Installing the engine",
+            EngineMethod::Build => "Building the engine (10-20 minutes)",
+        },
+        0,
+        0,
+        index,
+    );
     let data_dir = layout.root().join("data");
+    let mut args: Vec<String> = ["setup.py", "--yes", "--no-start", "--no-browser"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    match (options.method, &revision.release) {
+        (EngineMethod::Build, _) => args.push("--build".into()),
+        (EngineMethod::Prebuilt, _) => {
+            let dir = prebuilt_dir
+                .as_ref()
+                .ok_or_else(|| StrataError::Pin("the ready-made engine was not prepared".into()))?;
+            args.extend(["--prebuilt".into(), format!("{}/", dir.display())]);
+        }
+    }
+    args.extend([
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--family".into(),
+        family,
+        "--model".into(),
+        quant,
+        "--gguf-dir".into(),
+        dir.display().to_string(),
+        "--data-dir".into(),
+        data_dir.display().to_string(),
+    ]);
     runner
         .run(
             "build the engine",
             &Cmd {
                 program: layout.python(),
-                args: [
-                    "setup.py",
-                    "--build",
-                    "--yes",
-                    "--no-start",
-                    "--no-browser",
-                    "--host",
-                    "127.0.0.1",
-                    "--family",
-                    &model.family,
-                    "--model",
-                    &model.quant,
-                    "--gguf-dir",
-                    &dir.display().to_string(),
-                    "--data-dir",
-                    &data_dir.display().to_string(),
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+                args,
                 cwd: layout.src(),
                 env: vec![],
             },
@@ -515,7 +800,12 @@ pub async fn install_strata(
     )
     .map_err(io("cannot write backend.toml"))?;
     event("Done", 1, 1, steps);
+    let how = match options.method {
+        EngineMethod::Prebuilt => "ready-made engine",
+        EngineMethod::Build => "built from source",
+    };
     Ok(StrataInstall {
+        description: format!("Strata {} ({how})", revision.label),
         root: layout.root().to_path_buf(),
         gguf_dir: dir,
         backend_manifest: layout.backend_manifest(),

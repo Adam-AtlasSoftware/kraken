@@ -222,7 +222,7 @@ mod setup_fake {
 
     use super::{FakeServing, stopped_status};
     use crate::assist::TestReport;
-    use crate::infer::setup::{RawSurvey, SetupProbe};
+    use crate::infer::setup::{InstallRequest, RawSurvey, SetupProbe};
 
     const GIB: u64 = 1 << 30;
 
@@ -298,6 +298,7 @@ mod setup_fake {
         serving: Arc<FakeServing>,
         config: PathBuf,
         installs: Mutex<Vec<(String, LocalEngine)>>,
+        requests: Mutex<Vec<InstallRequest>>,
         fail_install: Mutex<Option<ProtoError>>,
         fail_test: Mutex<Option<String>>,
         delay: Duration,
@@ -312,6 +313,7 @@ mod setup_fake {
                 serving,
                 config: config.to_path_buf(),
                 installs: Mutex::default(),
+                requests: Mutex::default(),
                 fail_install: Mutex::default(),
                 fail_test: Mutex::default(),
                 delay: Duration::ZERO,
@@ -347,6 +349,14 @@ mod setup_fake {
                 .unwrap_or_else(PoisonError::into_inner) = Some(message.to_string());
         }
 
+        /// What each install was asked, in order.
+        pub fn requests(&self) -> Vec<InstallRequest> {
+            self.requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
         /// Models installed so far.
         pub fn installs(&self) -> Vec<(String, LocalEngine)> {
             self.installs
@@ -365,7 +375,16 @@ mod setup_fake {
                 .clone()
         }
 
-        async fn install(&self, id: &str, engine: LocalEngine) -> Result<(), ProtoError> {
+        async fn install(
+            &self,
+            id: &str,
+            engine: LocalEngine,
+            request: &InstallRequest,
+        ) -> Result<(), ProtoError> {
+            self.requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(request.clone());
             if !self.delay.is_zero() {
                 for _ in 0..4 {
                     tokio::time::sleep(self.delay / 4).await;
