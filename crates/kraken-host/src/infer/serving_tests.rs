@@ -695,3 +695,160 @@ async fn a_vulkan_build_is_told_its_card_by_name_not_by_cuda_variables() {
     assert!(e.message.contains("Vulkan"), "{}", e.message);
     assert_eq!(m.loaded_models(), 0);
 }
+
+/// RTX 3070 Ti (number 1, 1.2 GiB in use by the desktop) and RTX 2060 (number 0), as on the
+/// machine of the measurements.
+fn rig() -> Vec<DeviceInfo> {
+    let mk = |index: u32, name: &str, total: u64, used: u64| DeviceInfo {
+        index,
+        uuid: format!("GPU-{index}"),
+        vendor: GpuVendor::Nvidia,
+        name: name.into(),
+        vram_total: total,
+        vram_used: used,
+        state: DeviceState::Ok,
+    };
+    vec![
+        mk(0, "RTX 2060", 6 * GIB, GIB / 10),
+        mk(1, "RTX 3070 Ti", 8 * GIB, GIB + GIB / 5),
+    ]
+}
+
+const STRATA_BASE: &str = r#"{
+ "args": ["--pack", "/p", "--max-context", "65536", "--kv-resident", "32768", "--vision"],
+ "gpu": 1,
+ "env": {"LD_LIBRARY_PATH": "/lib"},
+ "vision": {"gpu": false},
+ "mtp": true,
+ "args_written": ["--pack", "/p", "--vision"]
+}"#;
+
+struct StrataRun {
+    _t: tempfile::TempDir,
+    manager: Arc<InferManager>,
+    config: PathBuf,
+}
+
+fn strata_run(mode: MultiGpuMode, prefill_peer: bool) -> StrataRun {
+    let t = tmp();
+    let install = t.path().join("strata");
+    std::fs::create_dir_all(install.join("serve")).expect("install dir");
+    let config = t.path().join("strata-x.json");
+    std::fs::write(&config, STRATA_BASE).expect("config");
+    let mut text = kraken_infer::strata::backend_manifest_text(
+        &fake_server_path().display().to_string(),
+        &install.display().to_string(),
+        &config.display().to_string(),
+    );
+    if prefill_peer {
+        text = text.replace("min_ram_mb", "prefill_peer = true\nmin_ram_mb");
+    }
+    let manifest = t.path().join("backend.toml");
+    std::fs::write(&manifest, text).expect("manifest");
+    let weights = t.path().join("weights");
+    std::fs::create_dir_all(&weights).expect("weights");
+    sparse(&weights, "part1.gguf", GIB);
+    let mut a = model("s", weights, false);
+    a.engine = LocalEngine::Strata;
+    a.multi_gpu = mode;
+    a.context_size = None;
+    let manager = Arc::new(
+        InferManager::with_registry(BackendRegistry::new())
+            .with_total_memory(8 * GIB, None)
+            .with_serving_config(ServingConfig {
+                models: vec![a],
+                ..Default::default()
+            })
+            .with_strata_manifest(manifest)
+            .with_devices(rig),
+    );
+    manager.set_clock(Arc::new(ManualClock::new()));
+    StrataRun {
+        _t: t,
+        manager,
+        config,
+    }
+}
+
+async fn start_strata(r: &StrataRun) -> (String, Value) {
+    r.manager
+        .hold_model(Holder::Owner, "s", StartOptions::default())
+        .await
+        .expect("start");
+    wait_state(&r.manager, "s", |s| *s == ModelState::Ready).await;
+    let logs = r.manager.model_logs(&ModelLogsParams {
+        model: "s".into(),
+        ..Default::default()
+    });
+    let spawn = logs.lines[0].text.clone();
+    let overlay = r
+        .config
+        .parent()
+        .expect("dir")
+        .join("kraken-run")
+        .join("s.json");
+    let run: Value =
+        serde_json::from_str(&std::fs::read_to_string(overlay).expect("overlay")).expect("json");
+    (spawn, run)
+}
+
+#[tokio::test]
+async fn an_auto_strata_model_runs_on_the_big_card_alone_from_its_own_config() {
+    let r = strata_run(MultiGpuMode::Auto, false);
+    let (spawn, run) = start_strata(&r).await;
+    assert_eq!(run["gpu"], 1);
+    let args = run["args"].to_string();
+    assert!(!args.contains("--peer"), "{args}");
+    assert!(spawn.contains("kraken-run/s.json"), "{spawn}");
+    assert!(spawn.ends_with("--gpu 1 --replicas 1"), "{spawn}");
+    assert_eq!(
+        std::fs::read_to_string(&r.config).expect("config"),
+        STRATA_BASE,
+        "the installed config is not touched"
+    );
+}
+
+#[tokio::test]
+async fn a_peer_tier_strata_model_gets_the_peer_flags_and_environment() {
+    let r = strata_run(MultiGpuMode::PeerTier, false);
+    let (spawn, run) = start_strata(&r).await;
+    assert_eq!(run["gpu"], json!([1, 0]));
+    let args: Vec<&str> = run["args"]
+        .as_array()
+        .expect("args")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        args.windows(4)
+            .any(|w| w == ["--peer-device", "1", "--peer-reserve-mib", "1000"]),
+        "{args:?}"
+    );
+    assert_eq!(run["env"]["STRATA_PEER_NO_P2P"], "1");
+    assert_eq!(run["env"]["LD_LIBRARY_PATH"], "/lib");
+    assert!(spawn.ends_with("--replicas 1"), "{spawn}");
+    assert_eq!(
+        std::fs::read_to_string(&r.config).expect("config"),
+        STRATA_BASE
+    );
+}
+
+#[tokio::test]
+async fn prefill_peer_needs_an_engine_that_can_do_it() {
+    let r = strata_run(MultiGpuMode::PrefillPeer, false);
+    let e = r
+        .manager
+        .hold_model(Holder::Owner, "s", StartOptions::default())
+        .await
+        .expect_err("not supported");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert_eq!(
+        e.message,
+        "This Strata build cannot keep the second card out of answering. Update Strata, or \
+         choose the peer tier."
+    );
+    let r = strata_run(MultiGpuMode::PrefillPeer, true);
+    let (_, run) = start_strata(&r).await;
+    assert!(run["args"].to_string().contains("--peer-prefill-only"));
+    assert_eq!(run["env"]["STRATA_PEER_HOT"], "0");
+}

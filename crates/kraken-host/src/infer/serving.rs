@@ -19,12 +19,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use kraken_infer::SystemProbe;
 use kraken_infer::budget::{MemoryPool, footprint};
 use kraken_infer::generic::Manifest;
 use kraken_infer::hardware::LlamaDevice;
 use kraken_infer::launch::{launch_spec_with, needs_llama_devices};
 use kraken_infer::port::{generate_api_key, pick_free_port, shows_bind_failure};
 use kraken_infer::stats::{StatsKind, StatsSampler, Target};
+use kraken_infer::strata_plan::{PlanInput, plan as strata_plan};
 use kraken_infer::{GpuApi, InferError, LoadProgress, ManagedProcess, Phase, ProcessSpec};
 use kraken_infer::{RunningBackend, budget::Fit};
 use kraken_ipc::Clock;
@@ -570,6 +572,60 @@ fn device_ref(d: &DeviceInfo) -> DeviceRef {
     }
 }
 
+/// Writes the config this start runs with, next to the installed one, and points `--config` at
+/// it. The installed file is only read. Without a readable `--config` the engine starts as it is.
+fn overlay_config(
+    argv: &mut [String],
+    effective: &LocalModel,
+    cards: &[DeviceInfo],
+) -> Result<(), InferError> {
+    let Some(at) = argv.iter().position(|a| a == "--config") else {
+        return Ok(());
+    };
+    let Some(path) = argv.get(at + 1).map(PathBuf::from) else {
+        return Ok(());
+    };
+    let Some(base) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    else {
+        return Ok(());
+    };
+    let used: Vec<&DeviceInfo> = effective
+        .devices
+        .iter()
+        .filter_map(|r| {
+            cards.iter().find(|c| {
+                if r.uuid.is_empty() {
+                    c.index == r.index && c.vendor == r.vendor
+                } else {
+                    c.uuid == r.uuid
+                }
+            })
+        })
+        .collect();
+    let run = kraken_infer::strata_run::run_config(&base, effective, &used)?;
+    let dir = path.parent().unwrap_or(Path::new(".")).join("kraken-run");
+    std::fs::create_dir_all(&dir)?;
+    let name: String = effective
+        .id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let out = dir.join(format!("{name}.json"));
+    let text =
+        serde_json::to_string_pretty(&run).map_err(|e| InferError::Settings(e.to_string()))?;
+    std::fs::write(&out, text)?;
+    argv[at + 1] = out.to_string_lossy().into_owned();
+    Ok(())
+}
+
 /// The plan of one start, before anything runs.
 struct Prepared {
     model: LocalModel,
@@ -708,6 +764,41 @@ impl InferManager {
         launch_spec_with(&model, &devices, &apis, &llama_devices, 0).map_err(infer_error)?;
         let cards = chosen_cards(&model, &devices, &apis);
 
+        let mut warnings = Vec::new();
+        if model.engine == LocalEngine::Strata {
+            let prefill_peer = self
+                .strata_manifest()
+                .is_ok_and(|m| m.capabilities.prefill_peer);
+            if model.multi_gpu == kraken_proto::MultiGpuMode::PrefillPeer && !prefill_peer {
+                return Err(ProtoError::new(
+                    ErrorCode::Unsupported,
+                    "This Strata build cannot keep the second card out of answering. Update \
+                     Strata, or choose the peer tier.",
+                ));
+            }
+            let display = kraken_infer::hardware::display_cards(&SystemProbe, &devices);
+            let p = strata_plan(&PlanInput {
+                devices: &devices,
+                display: &display,
+                model: &model,
+                prefill_peer,
+            });
+            if !p.fits && !opts.force {
+                let message = p.notes.first().cloned().unwrap_or_else(|| {
+                    format!("{} does not fit in the free video memory.", model.name)
+                });
+                return Err(
+                    ProtoError::new(ErrorCode::Unsupported, message).with_details(json!({
+                        "reason": "no_fit",
+                        "model": model.id,
+                        "choices": [{"kind": "start_anyway"}],
+                    })),
+                );
+            }
+            warnings.extend(p.notes);
+            warnings.extend(p.advice);
+        }
+
         let need = footprint(
             memory_bytes(&model),
             model.context_size.unwrap_or(DEFAULT_CONTEXT),
@@ -733,7 +824,6 @@ impl InferManager {
                 .collect()
         };
 
-        let mut warnings = Vec::new();
         let pools = self.pools(&fit_cards, st_snapshot, &mut warnings);
         if let Some(pools) = pools {
             let bytes = memory_bytes(&model);
@@ -897,11 +987,29 @@ impl InferManager {
             }
             LocalEngine::Strata => {
                 let m = self.strata_manifest()?;
+                let detect = self.devices.clone();
                 let f = move |port: u16| -> Result<RunningBackend, InferError> {
-                    let l = launch_spec_with(&model, &devices, &apis, &[], port)?;
+                    // The cards are read again so the plan sees the memory free right now.
+                    let fresh = detect();
+                    let cards = if fresh.is_empty() {
+                        devices.clone()
+                    } else {
+                        fresh
+                    };
+                    let display = kraken_infer::hardware::display_cards(&SystemProbe, &cards);
+                    let p = strata_plan(&PlanInput {
+                        devices: &cards,
+                        display: &display,
+                        model: &model,
+                        prefill_peer: m.capabilities.prefill_peer,
+                    });
+                    let effective = p.apply(&model);
+                    let l = launch_spec_with(&effective, &cards, &apis, &[], port)?;
                     // `{port}` is always KRAKEN's pick; a `port` setting of an older manifest
                     // is never read.
-                    let mut argv = m.expand(&Value::Null, port)?.into_iter();
+                    let mut argv = m.expand(&Value::Null, port)?;
+                    overlay_config(&mut argv, &effective, &cards)?;
+                    let mut argv = argv.into_iter();
                     let program = argv.next().unwrap_or_default();
                     let mut spec = ProcessSpec::new(program, port, m.health_path.clone());
                     spec.args = argv.chain(l.argv).collect();
