@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use kraken_agent::{
-    Agent, AgentConfig, AgentError, AgentRun, ChatProvider, ChatRequest, Message, ProviderInfo,
-    StreamAssembler, ToolHost, Usage,
+    Agent, AgentConfig, AgentError, AgentRun, ChatProvider, ChatRequest, LowContextHost, Message,
+    ProviderInfo, StreamAssembler, ToolHost, Usage,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -141,12 +141,24 @@ pub trait AssistBackend: Send + Sync {
 /// A chat model API behind the `kraken-agent` loop.
 pub struct ApiBackend {
     provider: Arc<dyn ChatProvider>,
+    low_context: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl ApiBackend {
     /// A backend over `provider`.
     pub fn new(provider: Arc<dyn ChatProvider>) -> Self {
-        ApiBackend { provider }
+        ApiBackend {
+            provider,
+            low_context: None,
+        }
+    }
+
+    /// Asks `on` at the start of every run whether to use low context mode: the model gets each
+    /// tool's name and a short line, and asks for the rest through `tool_help`
+    /// ([`LowContextHost`]).
+    pub fn with_low_context(mut self, on: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        self.low_context = Some(Arc::new(on));
+        self
     }
 }
 
@@ -170,12 +182,11 @@ impl AssistBackend for ApiBackend {
     }
 
     fn start(&self, spec: RunSpec) -> AgentRun {
-        Agent::run(
-            spec.messages,
-            spec.tools,
-            self.provider.clone(),
-            spec.config,
-        )
+        let tools: Arc<dyn ToolHost> = match &self.low_context {
+            Some(on) if on() => Arc::new(LowContextHost::new(spec.tools)),
+            _ => spec.tools,
+        };
+        Agent::run(spec.messages, tools, self.provider.clone(), spec.config)
     }
 
     fn complete_text(&self, req: ChatRequest, cancel: CancellationToken) -> TextFuture<'_> {

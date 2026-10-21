@@ -497,6 +497,8 @@ pub struct LimitsForm {
     pub daily: String,
     /// Do not ask below this many dollars.
     pub skip_under: String,
+    /// Low context mode.
+    pub low_context: bool,
     loaded: bool,
     status: Option<Result<String, String>>,
 }
@@ -513,6 +515,7 @@ impl LimitsForm {
             max_cost: text_of(l.max_cost_per_run),
             daily: text_of(l.daily_budget),
             skip_under: text_of(l.skip_confirm_under),
+            low_context: l.low_context_mode,
             loaded: true,
             status: None,
         }
@@ -544,6 +547,7 @@ impl LimitsForm {
             max_cost_per_run: num(&self.max_cost, "Most cost per run")?,
             daily_budget: num(&self.daily, "The daily budget")?,
             skip_confirm_under: num(&self.skip_under, "The ask-first threshold")?,
+            low_context_mode: self.low_context,
         })
     }
 
@@ -587,6 +591,20 @@ impl LimitsForm {
                     .on_hover_text("AI work estimated below this starts without the question. Free local models never ask");
                 ui.end_row();
             });
+        ui.checkbox(&mut self.low_context, "Low context mode")
+            .on_hover_text(
+                "For a model with a small context window. The assistant is told what tools exist by name and one line, and asks for a tool's full description and parameters before using it. Saves thousands of tokens per request. Save limits to apply it",
+            );
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Low context mode sends each tool as a name and one line, and the model asks for the details with the tool_help tool.",
+                )
+                .size(11.5)
+                .color(p.text_dim),
+            )
+            .wrap(),
+        );
         if let Some(d) = kraken_model::DailyLedger::standard() {
             let today = d.today();
             ui.label(
@@ -703,6 +721,35 @@ mod tests {
         assert_eq!(l.max_calls_per_run, Some(100));
         f.max_cost = "lots".into();
         assert!(f.limits().is_err());
+        f.max_cost.clear();
+        assert!(!f.limits().unwrap().low_context_mode, "off unless ticked");
+        f.low_context = true;
+        let on = f.limits().unwrap();
+        assert!(on.low_context_mode);
+        assert!(LimitsForm::from_limits(&on).low_context);
+    }
+
+    #[test]
+    fn low_context_mode_is_saved_in_the_limits_table_and_off_leaves_no_trace() {
+        let dir = crate::testutil::tempdir();
+        let path = dir.path().join("config.toml");
+        let on = AiLimits {
+            low_context_mode: true,
+            ..AiLimits::default()
+        };
+        on.save(&path).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("low_context_mode = true")
+        );
+        assert!(AiLimits::load(Some(&path)).low_context_mode);
+        AiLimits::default().save(&path).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("low_context_mode")
+        );
     }
 
     #[test]

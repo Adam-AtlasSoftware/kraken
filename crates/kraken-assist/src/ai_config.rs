@@ -8,6 +8,7 @@
 //! max_cost_per_run = 5.0      # ... or once its estimated cost reaches this many US dollars
 //! daily_budget = 10.0         # no new AI work once today's estimated total reaches this
 //! skip_confirm_under = 0.10   # do not ask before runs estimated below this
+//! low_context_mode = true     # send tools to the model by name; it asks for the details
 //! ```
 
 use std::path::Path;
@@ -38,6 +39,12 @@ pub struct AiLimits {
     /// subscription runs count as 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_confirm_under: Option<f64>,
+    /// Low context mode: the assistant's model is told what tools exist by name and a short
+    /// line, and asks for a tool's full description and parameters when it wants to use it
+    /// (the `tool_help` tool). Saves thousands of tokens per request on a model with a small
+    /// context window.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub low_context_mode: bool,
 }
 
 impl AiLimits {
