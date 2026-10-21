@@ -125,18 +125,24 @@ If a command uses a local model that is not running, it says so and offers to st
 
 ## Several cards
 
-With two or more cards ticked, the card shows **How to use several cards** with three choices.
+With two or more cards ticked, the card shows **How to use several cards**. The choices depend on
+the engine. For llama.cpp, choose to split the model across the cards or split every layer between them.
 
-- **Split the model across the cards**: one model, shared by the cards. Use it when the model is too
-  big for one card. This is the default.
-- **Each card runs its own full copy** (Strata only): each card holds the whole model and answers
-  its own requests. Use it when you have many requests, and each card has enough VRAM for the whole
-  model. It needs equal cards.
-- **Split every layer between the cards** (llama.cpp only): every layer is split across the cards.
-  It can be faster when the cards are linked by a fast connection such as NVLink. Usually it is
-  slower otherwise.
+For Strata, you have these choices:
 
-For llama.cpp, choose the first or the third. For Strata, choose the first or the second.
+- **Automatic** (recommended): KRAKEN picks the method and adjusts the settings each time the model
+  starts, based on the video memory that is free at that moment.
+- **One card / split**: one model, shared by the cards. Use it when the model is too big for one card.
+  A layer split needs about 8 GB on each card, so it will not start on a 6 GB card.
+- **Each card runs its own full copy**: each card holds the whole model and answers its own requests.
+  Use it when you have many requests, and each card has enough VRAM for the whole model. It needs
+  equal cards.
+- **Second card helps (peer tier)**: the second card reads prompts about 30 to 40 percent faster, but
+  answers about a third slower.
+- **Second card as helper cache**: speeds up short prompts, but was slower than one card on cards of
+  different sizes.
+- **Second card reads prompts only**: keeps answers at one-card speed and needs a Strata build with
+  that support.
 
 **Advanced: share per card, main card** opens two more settings. The share is how much of the model
 each card takes. The main card is the one that does the work that is not shared. Leave them alone
@@ -293,6 +299,37 @@ The same choices are arguments of the `local_model_setup` command: `strata_engin
 `build`), `strata_version` (`latest_release`, `pinned` or `latest_commit`) and `model_file` (the path
 of one shard).
 
+### Choosing automatically
+
+When you choose **Automatic** for several cards, KRAKEN looks at the cards, the free video memory on
+each, and which card has a monitor connected. A monitor takes video memory from its card—on one test
+machine that was 1.2 GB with the monitor on the small card and 2.4 GB with it on the large one. You
+can connect the monitors to the smaller card to free memory on the main one.
+
+If there is not enough free memory, KRAKEN first shortens the context from 65,536 to 32,768 tokens.
+If that is not enough, it turns the draft layer off (answers get slower). KRAKEN tells you what it
+changed. Settings you choose yourself are never overridden.
+
+Three Strata settings control the automatic choice:
+
+- **Read pictures** (or `extra.strata.vision` in the config): turns on image input.
+- **Use the draft layer** (or `extra.strata.draft`): when on, KRAKEN tries to use it if memory allows.
+- **Second card keeps free** (or `extra.strata.peer_reserve_mib`, default 1000): how much video memory
+  to leave free on the second card.
+
+Here are measurements from one machine and one model to help you choose:
+
+| Setting | Answers (tok/s) | Prompts at 4K tokens | Prompts at 16K tokens | Prompts at 32K tokens |
+| --- | --- | --- | --- | --- |
+| One card alone | 66.5 | 653 | 693 | 675 |
+| Peer tier | 45.1 | 913 | 901 | 875 |
+| Helper cache | 45.8 | 707 | 637 | 625 |
+| Layer split | — | — | — | — |
+
+The machine was a Ryzen 9 5900XT with 62 GB RAM, RTX 3070 Ti (8 GB) as the main card and RTX 2060
+(6 GB) as the second card, running Swift 1.5 IQ2_XS. Layer split did not start because of the 6 GB
+limit on the second card.
+
 ## Other servers you run
 
 Ollama, LM Studio, vLLM and other servers are not managed by KRAKEN. You start them yourself, and
@@ -330,7 +367,7 @@ engine = "llama"                       # "llama" or "strata"
 model_path = "/home/you/models/qwen3-8b-q4_k_m.gguf"
 devices = [{ uuid = "GPU-1234-...", index = 0, vendor = "nvidia" }]
 cpu_only = false                       # true: processor only, no card
-multi_gpu = "split"                    # "split", "copy_per_card" (Strata) or "split_every_layer" (llama)
+multi_gpu = "split"                    # "auto" (Strata), "split", "copy_per_card" (Strata), "peer_tier" (Strata), "helper_cache" (Strata), "prefill_peer" (Strata), or "split_every_layer" (llama)
 shares = [60, 40]                      # optional: share per card, in the order of devices
 main_device = { uuid = "GPU-1234-...", index = 0, vendor = "nvidia" }   # optional
 context_size = 8192                    # optional: engine default when unset
@@ -342,7 +379,10 @@ titlebar = "auto"                      # "auto", "custom" or "system"
 ```
 
 `devices` names the cards by their UUID. The index is only a hint, because card numbers can change
-after a restart. `extra` holds engine settings KRAKEN passes on unchanged.
+after a restart. `extra` holds engine settings KRAKEN passes on unchanged. For Strata, `extra.strata`
+holds `vision` (boolean, read pictures), `draft` (boolean, use the draft layer), `peer_reserve_mib`
+(integer, keep this many MiB free on the second card, default 1000), and `vram_reserve_mib` (integer,
+keep this many MiB free on the main card).
 
 The assistant uses a local model through a `[provider]` table that names it by its `id`. KRAKEN adds
 the address and the key when a request is made, so they are never written to the file:
