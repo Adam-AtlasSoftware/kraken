@@ -44,6 +44,60 @@ pub enum MultiGpuMode {
     CopyPerCard,
     /// Split every layer between the cards (llama.cpp row split).
     SplitEveryLayer,
+    /// Strata: KRAKEN chooses from the cards and their free memory each time the model starts
+    /// (one card, or a second card helping with long prompts).
+    Auto,
+    /// Strata: a second card keeps extra experts and helps read prompts and answer. Prompts are
+    /// read about 30 to 40 percent faster, answers about a third slower.
+    PeerTier,
+    /// Strata: a second card keeps extra experts in a cache that answers use too. Measured slower
+    /// than one card on mismatched cards; offered for completeness.
+    HelperCache,
+    /// Strata (engines that support it): a second card helps read prompts and stays out of
+    /// answering, so answers run at one-card speed.
+    PrefillPeer,
+}
+
+/// Strata settings kept in [`LocalModel::extra`] under the key `strata`. Unset fields are
+/// chosen from the hardware each time the model starts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StrataTuning {
+    /// Read pictures. Off saves memory on the main card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
+    /// Video memory the second card leaves free, in MiB (default 1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_reserve_mib: Option<u32>,
+    /// Use the model's draft layer, which speeds answers up but takes video memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+    /// Video memory the main card keeps free, in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vram_reserve_mib: Option<u32>,
+}
+
+impl StrataTuning {
+    /// Reads the tuning out of a model's `extra`; anything unreadable counts as unset.
+    pub fn from_extra(extra: Option<&serde_json::Value>) -> Self {
+        extra
+            .and_then(|e| e.get("strata"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// Stores the tuning in `extra`, leaving other keys alone; an empty tuning removes the key.
+    pub fn store(&self, extra: &mut Option<serde_json::Value>) {
+        let mut map = match extra.take() {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        if *self == Self::default() {
+            map.remove("strata");
+        } else if let Ok(v) = serde_json::to_value(self) {
+            map.insert("strata".into(), v);
+        }
+        *extra = (!map.is_empty()).then_some(serde_json::Value::Object(map));
+    }
 }
 
 /// A card, named so it survives a renumbering: the UUID is the identity, the index only a hint.
