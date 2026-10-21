@@ -244,6 +244,9 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
     let auto = model.multi_gpu == MultiGpuMode::Auto;
     let cards = chosen_cards(input);
     let on_display = |d: &DeviceInfo| input.display.contains(&d.index);
+    // A monitor only costs the card something when the desktop really renders there: with the
+    // compositor on another card, the card holds little more than the picture it sends out.
+    let heavy_display = |d: &DeviceInfo| on_display(d) && d.vram_used >= SIGNIFICANT_USE;
     let mut notes = Vec::new();
     let mut advice = Vec::new();
 
@@ -251,7 +254,7 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
     // largest card.
     let explicit = !auto && !model.devices.is_empty();
     let level_of =
-        |c: &DeviceInfo| level_for(c, on_display(c), model.context_size, tuning_in.draft);
+        |c: &DeviceInfo| level_for(c, heavy_display(c), model.context_size, tuning_in.draft);
     let main_pick = if explicit {
         cards
             .first()
@@ -278,7 +281,12 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
     let shortfall = if fits {
         0
     } else {
-        shortfall_of(main, on_display(main), model.context_size, tuning_in.draft)
+        shortfall_of(
+            main,
+            heavy_display(main),
+            model.context_size,
+            tuning_in.draft,
+        )
     };
     let lv = &LEVELS[level];
 
@@ -290,7 +298,7 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
             gib(free(main))
         ));
     }
-    if on_display(main) {
+    if heavy_display(main) {
         notes.push(format!(
             "A monitor is connected to {}, so the engine keeps more of its video memory free \
              ({} is in use right now).",
@@ -313,8 +321,7 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
             "The draft layer is off to save video memory; answers are slower without it.".into(),
         );
     }
-    if on_display(main)
-        && main.vram_used >= SIGNIFICANT_USE
+    if heavy_display(main)
         && let Some(other) = cards
             .iter()
             .find(|c| !std::ptr::eq(**c, main) && !on_display(c))
@@ -391,7 +398,7 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
         draft: Some(draft),
         vram_reserve_mib: tuning_in
             .vram_reserve_mib
-            .or(on_display(main).then_some(MAIN_RESERVE_DISPLAY_MIB as u32)),
+            .or(heavy_display(main).then_some(MAIN_RESERVE_DISPLAY_MIB as u32)),
         context_cap,
     };
     Plan {
@@ -652,6 +659,31 @@ mod tests {
         };
         assert_eq!(draft_of(&usual), Some(true));
         assert_eq!(draft_of(&big), Some(false));
+    }
+
+    #[test]
+    fn a_monitor_whose_desktop_renders_elsewhere_costs_no_extra_reserve() {
+        // Monitor on the big card, but only 0.2 GiB in use there: the compositor is on the other card.
+        let d = rig(0.7, 0.2);
+        let p = run(&d, &[1], false);
+        assert!(p.fits);
+        assert_eq!(
+            p.tuning.vram_reserve_mib, None,
+            "the engine's own reserve is kept"
+        );
+        assert!(
+            p.notes.iter().all(|n| !n.contains("monitor")),
+            "{:?}",
+            p.notes
+        );
+        assert!(
+            p.advice
+                .iter()
+                .all(|a| !a.contains("Connecting your monitors"))
+        );
+        // The same wiring with the desktop rendering on the card still asks for more.
+        let heavy = run(&rig(0.1, 2.4), &[1], false);
+        assert_eq!(heavy.tuning.vram_reserve_mib, Some(1000));
     }
 
     #[test]
