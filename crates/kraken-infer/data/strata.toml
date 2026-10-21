@@ -8,13 +8,13 @@
 # release, so the engine is compiled from the pinned source (needs nvcc and a C++ compiler).
 
 [engine]
-version = "0.1.45"
-commit = "477ac13cbe8e582c20484871ce459d20d82df09d"
-url = "https://codeload.github.com/Niko1221/Strata/tar.gz/477ac13cbe8e582c20484871ce459d20d82df09d"
-sha256 = "77b65bd6ee29bda0f9195fa6dc18e91a2b24687246dd36b4fc2c77608890f3c9"
-size = 21072237
+version = "0.2.1"
+commit = "90767252f420e25223c739d604145ad15911d48b"
+url = "https://codeload.github.com/Niko1221/Strata/tar.gz/90767252f420e25223c739d604145ad15911d48b"
+sha256 = "8bf2a576534841b4951842f26dae04c257a43b7346a3fb8eb90ecf5a03e08a61"
+size = 27918695
 license = "MIT"
-requirements_sha256 = "b9c75993366079fbbcf80deb544e12f932228cf3c98f34b2481d45e1afddd5a8"
+requirements_sha256 = "d30c7dd2c862894b549f903007dafeb0fffa8f2134715c1e31f34dda5f3fa314"
 min_vram_gib = 12
 min_ram_gib = 32
 min_disk_gib = 80
