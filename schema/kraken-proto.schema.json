@@ -1757,6 +1757,26 @@
           "const": "split_every_layer",
           "description": "Split every layer between the cards (llama.cpp row split).",
           "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Strata: KRAKEN chooses from the cards and their free memory each time the model starts\n(one card, or a second card helping with long prompts).",
+          "type": "string"
+        },
+        {
+          "const": "peer_tier",
+          "description": "Strata: a second card keeps extra experts and helps read prompts and answer. Prompts are\nread about 30 to 40 percent faster, answers about a third slower.",
+          "type": "string"
+        },
+        {
+          "const": "helper_cache",
+          "description": "Strata: a second card keeps extra experts in a cache that answers use too. Measured slower\nthan one card on mismatched cards; offered for completeness.",
+          "type": "string"
+        },
+        {
+          "const": "prefill_peer",
+          "description": "Strata (engines that support it): a second card helps read prompts and stays out of\nanswering, so answers run at one-card speed.",
+          "type": "string"
         }
       ]
     },

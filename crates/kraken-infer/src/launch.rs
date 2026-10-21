@@ -259,11 +259,16 @@ fn llama(
         argv.extend(["--split-mode".into(), "none".into()]);
     } else {
         let mode = match model.multi_gpu {
-            MultiGpuMode::Split => "layer",
+            MultiGpuMode::Split | MultiGpuMode::Auto => "layer",
             MultiGpuMode::SplitEveryLayer => "row",
             MultiGpuMode::CopyPerCard => {
                 return Err(bad(
                     "A full copy of the model on each card needs the Strata engine.",
+                ));
+            }
+            MultiGpuMode::PeerTier | MultiGpuMode::HelperCache | MultiGpuMode::PrefillPeer => {
+                return Err(bad(
+                    "Keeping extra experts on a second card needs the Strata engine.",
                 ));
             }
         };
@@ -314,12 +319,17 @@ fn strata(model: &LocalModel, cards: &[&DeviceInfo]) -> Result<Vec<String>> {
     }
     let n = cards.len();
     let replicas = match model.multi_gpu {
-        MultiGpuMode::Split => 1,
+        MultiGpuMode::Split | MultiGpuMode::Auto => 1,
         MultiGpuMode::CopyPerCard => n,
         MultiGpuMode::SplitEveryLayer => {
             return Err(bad(
                 "Splitting every layer between cards needs the llama.cpp engine.",
             ));
+        }
+        // The cards and their roles are written into the run's own config (`strata_run`); an
+        // appended `--gpu` would turn them into a layer split.
+        MultiGpuMode::PeerTier | MultiGpuMode::HelperCache | MultiGpuMode::PrefillPeer => {
+            return Ok(vec!["--replicas".into(), "1".into()]);
         }
     };
     if !n.is_multiple_of(replicas) {
