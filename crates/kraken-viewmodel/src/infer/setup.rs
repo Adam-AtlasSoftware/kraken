@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use kraken_host::infer::{ModelStatus, ServingApi, StartOptions};
 use kraken_infer::budget::{self, Fit, MemoryPool};
 use kraken_infer::hardware::{default_devices, usable};
+use kraken_infer::strata::{EngineMethod, EngineVersion, ExistingModel, SetupOptions};
 use kraken_infer::{ModelEntry, model_catalog};
 use kraken_proto::infer::{
     DeviceInfo, DeviceRef, DeviceState, LocalEngine, LocalModel, ModelState, MultiGpuMode,
@@ -60,6 +61,15 @@ pub struct RawSurvey {
     pub strata: Option<LocalModelRecommendOut>,
 }
 
+/// What the person decided about the Strata engine and model, passed along with an install.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstallRequest {
+    /// How to get the engine and which revision (Strata only).
+    pub strata: SetupOptions,
+    /// A model file the person already has (any shard; Strata only).
+    pub model_file: Option<PathBuf>,
+}
+
 /// The work of the setup that reaches outside the window.
 #[async_trait]
 pub trait SetupProbe: Send + Sync {
@@ -68,7 +78,12 @@ pub trait SetupProbe: Send + Sync {
 
     /// Downloads and registers the model (asks the person first; downloads are large). When it
     /// returns the model is in `config.toml` and the assistant uses it.
-    async fn install(&self, id: &str, engine: LocalEngine) -> Result<(), ProtoError>;
+    async fn install(
+        &self,
+        id: &str,
+        engine: LocalEngine,
+        request: &InstallRequest,
+    ) -> Result<(), ProtoError>;
 
     /// Bytes on disk where downloads and installs land, to show how far a download is.
     fn bytes_on_disk(&self) -> u64;
@@ -577,6 +592,27 @@ fn lock(m: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+fn lock_inbox(m: &Mutex<Option<PathBuf>>) -> MutexGuard<'_, Option<PathBuf>> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The list entry of a model the person brought: fits by definition (their own choice), and
+/// there is nothing to download but the engine.
+fn own_choice(m: &ExistingModel) -> Choice {
+    Choice {
+        id: m.id(),
+        name: m.title(),
+        engine: LocalEngine::Strata,
+        quant: m.quant.clone(),
+        size_bytes: m.bytes,
+        download_bytes: 0,
+        disk_bytes: m.bytes,
+        fit: FitLevel::Fits,
+        why: format!("Your own files in {}.", m.dir.display()),
+        recommended: false,
+    }
+}
+
 /// The setup: its step, the choices made, and the work in progress.
 pub struct LocalSetup {
     rt: Handle,
@@ -590,6 +626,12 @@ pub struct LocalSetup {
     draft: Option<LocalModel>,
     task: Option<JoinHandle<()>>,
     closed: bool,
+    strata: SetupOptions,
+    /// A model file the person picked from their disk, with what was recognised in it.
+    own: Option<(PathBuf, ExistingModel)>,
+    own_error: Option<String>,
+    /// Where the file dialog leaves the path it returns.
+    inbox: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl Drop for LocalSetup {
@@ -620,6 +662,10 @@ impl LocalSetup {
             draft: None,
             task: None,
             closed: false,
+            strata: SetupOptions::default(),
+            own: None,
+            own_error: None,
+            inbox: Arc::new(Mutex::new(None)),
         };
         s.look();
         s
@@ -698,6 +744,9 @@ impl LocalSetup {
     /// The model picked.
     pub fn chosen(&self) -> Option<Choice> {
         let id = self.chosen.as_deref()?;
+        if let Some((_, m)) = self.own.as_ref().filter(|(_, m)| m.id() == id) {
+            return Some(own_choice(m));
+        }
         match self.survey() {
             SurveyState::Ready(s) => s.choices.iter().find(|c| c.id == id).cloned(),
             _ => None,
@@ -717,6 +766,8 @@ impl LocalSetup {
         else {
             return false;
         };
+        self.own = None;
+        self.own_error = None;
         if self.chosen.as_deref() != Some(id) {
             let mut model = kraken_host::infer::new_local_model(&c.id, c.engine, PathBuf::new());
             model.name = c.name.clone();
@@ -726,6 +777,83 @@ impl LocalSetup {
             self.chosen = Some(c.id.clone());
         }
         true
+    }
+
+    /// How the Strata engine is installed and which revision.
+    pub fn strata_options(&self) -> SetupOptions {
+        self.strata
+    }
+
+    /// Chooses how the Strata engine is installed. The newest commit has no ready-made engine,
+    /// so asking for the ready-made one with it falls back to the newest release.
+    pub fn set_strata_method(&mut self, method: EngineMethod) {
+        self.strata.method = method;
+        if method == EngineMethod::Prebuilt && self.strata.version == EngineVersion::LatestCommit {
+            self.strata.version = EngineVersion::LatestRelease;
+        }
+    }
+
+    /// Chooses the Strata revision. The newest commit can only be built from source.
+    pub fn set_strata_version(&mut self, version: EngineVersion) {
+        self.strata.version = version;
+        if version == EngineVersion::LatestCommit {
+            self.strata.method = EngineMethod::Build;
+        }
+    }
+
+    /// The model file the person picked, as recognised.
+    pub fn own_model(&self) -> Option<&ExistingModel> {
+        self.own.as_ref().map(|(_, m)| m)
+    }
+
+    /// Why the last picked file cannot be used.
+    pub fn own_model_error(&self) -> Option<&str> {
+        self.own_error.as_deref()
+    }
+
+    /// The runtime and the mailbox for a file dialog: the window opens the dialog, and its
+    /// answer is taken up by [`Self::take_picked_file`].
+    pub fn file_dialog_parts(&self) -> (Handle, Arc<Mutex<Option<PathBuf>>>) {
+        (self.rt.clone(), self.inbox.clone())
+    }
+
+    /// Takes up a file the dialog returned. Call it every frame.
+    pub fn take_picked_file(&mut self) {
+        let picked = lock_inbox(&self.inbox).take();
+        if let Some(path) = picked
+            && let Err(e) = self.use_own_model(&path)
+        {
+            self.own_error = Some(e);
+        }
+    }
+
+    /// Uses a Strata model the person already has, instead of one from the list. Fails with a
+    /// sentence when the file is not a whole, Strata-supported model.
+    pub fn use_own_model(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let SurveyState::Ready(survey) = self.survey() else {
+            return Err("Still looking at this computer.".into());
+        };
+        let model = kraken_infer::strata::existing_model(path).inspect_err(|e| {
+            self.own_error = Some(e.clone());
+        })?;
+        let mut draft =
+            kraken_host::infer::new_local_model(&model.id(), LocalEngine::Strata, PathBuf::new());
+        draft.name = model.title();
+        draft.devices = default_devices(LocalEngine::Strata, &survey.computer.cards, &[]);
+        self.draft = Some(draft);
+        self.chosen = Some(model.id());
+        self.own = Some((path.to_path_buf(), model));
+        self.own_error = None;
+        Ok(())
+    }
+
+    /// Goes back to the models of the list.
+    pub fn forget_own_model(&mut self) {
+        if self.own.take().is_some() {
+            self.chosen = None;
+            self.draft = None;
+        }
+        self.own_error = None;
     }
 
     /// The record being filled in by the third step.
@@ -911,6 +1039,10 @@ impl LocalSetup {
                         .collect();
                     out.push_str(&format!(" Models: {}.", list.join(", ")));
                 }
+                out.push_str(&format!(
+                    " Strata engine: {:?}, {:?}; \"Use a model file I have\" opens a file dialog.",
+                    self.strata.method, self.strata.version
+                ));
                 match &self.chosen {
                     Some(id) => out.push_str(&format!(" Chosen: {id}.")),
                     None => out.push_str(" None chosen yet; the person picks one."),
@@ -1013,7 +1145,11 @@ impl LocalSetup {
             repaint: self.repaint.clone(),
             run,
         };
-        self.task = Some(self.rt.spawn(job.go(choice, draft)));
+        let request = InstallRequest {
+            strata: self.strata,
+            model_file: self.own.as_ref().map(|(p, _)| p.clone()),
+        };
+        self.task = Some(self.rt.spawn(job.go(choice, draft, request)));
     }
 }
 
@@ -1050,9 +1186,12 @@ impl Job {
         self.set(Stage::Failed(why));
     }
 
-    async fn go(self, choice: Choice, draft: LocalModel) {
+    async fn go(self, choice: Choice, draft: LocalModel, request: InstallRequest) {
         let sampler = self.sample();
-        let installed = self.probe.install(&choice.id, choice.engine).await;
+        let installed = self
+            .probe
+            .install(&choice.id, choice.engine, &request)
+            .await;
         sampler.abort();
         if let Err(e) = installed {
             self.fail(download_error(&e));
@@ -1406,6 +1545,83 @@ mod tests {
             assert!(self.setup.go_next());
             assert!(self.setup.go_next());
         }
+    }
+
+    fn own_files(dir: &std::path::Path) -> PathBuf {
+        let prefix = "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS";
+        for i in 1..=2 {
+            std::fs::write(dir.join(format!("{prefix}-0000{i}-of-00002.gguf")), b"mine").unwrap();
+        }
+        dir.join(format!("{prefix}-00001-of-00002.gguf"))
+    }
+
+    #[test]
+    fn a_model_file_the_person_has_is_installed_where_it_is_with_the_engine_choice() {
+        let mut r = rig_with(sample_survey(vec![rtx()], 64.0, 400.0), Duration::ZERO);
+        r.until("the survey", |s| {
+            matches!(s.survey(), SurveyState::Ready(_))
+        });
+        r.setup.go_next();
+        let files = tempfile::tempdir().unwrap();
+        let first = own_files(files.path());
+
+        r.setup
+            .use_own_model(&files.path().join("notes.txt"))
+            .unwrap_err();
+        assert!(r.setup.own_model_error().is_some());
+        assert!(r.setup.chosen().is_none(), "a bad file picks nothing");
+
+        r.setup.use_own_model(&first).unwrap();
+        let c = r.setup.chosen().unwrap();
+        assert_eq!(c.engine, LocalEngine::Strata);
+        assert_eq!(c.id, "strata-existing-swift-iq2_xs");
+        assert_eq!((c.download_bytes, c.fit), (0, FitLevel::Fits));
+        assert!(r.setup.own_model_error().is_none());
+        r.setup.set_strata_version(EngineVersion::LatestCommit);
+        assert_eq!(r.setup.strata_options().method, EngineMethod::Build);
+        r.setup.set_strata_method(EngineMethod::Prebuilt);
+        assert_eq!(
+            r.setup.strata_options().version,
+            EngineVersion::LatestRelease,
+            "the newest commit has no ready-made engine"
+        );
+        r.setup.set_strata_version(EngineVersion::Pinned);
+
+        assert!(r.setup.go_next());
+        assert!(r.setup.go_next());
+        r.until("done", |s| s.stage() == Stage::Done);
+        assert_eq!(
+            r.probe.installs(),
+            vec![(
+                "strata-existing-swift-iq2_xs".to_string(),
+                LocalEngine::Strata
+            )]
+        );
+        let request = r.probe.requests().remove(0);
+        assert_eq!(request.model_file.as_deref(), Some(first.as_path()));
+        assert_eq!(request.strata.version, EngineVersion::Pinned);
+        assert_eq!(request.strata.method, EngineMethod::Prebuilt);
+    }
+
+    #[test]
+    fn picking_a_listed_model_drops_the_file_and_the_dialog_answer_is_taken_up() {
+        let mut r = rig_with(sample_survey(vec![rtx()], 64.0, 400.0), Duration::ZERO);
+        r.until("the survey", |s| {
+            matches!(s.survey(), SurveyState::Ready(_))
+        });
+        r.setup.go_next();
+        let files = tempfile::tempdir().unwrap();
+        let first = own_files(files.path());
+        let (_, inbox) = r.setup.file_dialog_parts();
+        *inbox.lock().unwrap() = Some(first);
+        r.setup.take_picked_file();
+        assert!(r.setup.own_model().is_some());
+        assert!(r.setup.choose("qwen3-8b-q4_k_m"));
+        assert!(r.setup.own_model().is_none());
+        assert_eq!(r.setup.chosen().unwrap().id, "qwen3-8b-q4_k_m");
+        *inbox.lock().unwrap() = Some(files.path().join("missing.gguf"));
+        r.setup.take_picked_file();
+        assert!(r.setup.own_model_error().is_some());
     }
 
     #[test]

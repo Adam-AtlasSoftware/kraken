@@ -638,3 +638,38 @@ fn screenshot_local_setup() {
     });
     save(&mut r, "setup-4-done.png");
 }
+
+#[test]
+fn the_pick_step_offers_strata_engine_choices_and_a_model_file_you_have() {
+    let mut r = build(
+        None,
+        true,
+        [900.0, 1100.0],
+        Some((sample_survey(one_card(), 64.0, 412.0), Duration::ZERO)),
+    );
+    r.open_setup();
+    r.until("the computer", |k| {
+        k.h.query_by_label_contains("Your graphics card").is_some()
+    });
+    r.press("Next");
+    assert!(r.has("Use a model file I already have\u{2026}"));
+    assert!(r.has("Ready-made") && r.has("Build from source"));
+    assert!(r.has("Latest release") && r.has("Tested") && r.has("Latest commit"));
+    assert!(!r.has("Use the list instead"), "no file picked yet");
+
+    // The newest commit has no ready-made engine, so choosing it switches to a build.
+    r.k.h.get_by_label("Latest commit").click();
+    r.k.h.run_steps(3);
+    r.k.h.get_by_label("Ready-made").click();
+    r.k.h.run_steps(3);
+
+    if let Ok(dir) = std::env::var("KRAKEN_SHOT_DIR") {
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        r.k.h
+            .render()
+            .expect("render")
+            .save(dir.join("setup-2-strata.png"))
+            .unwrap();
+    }
+}

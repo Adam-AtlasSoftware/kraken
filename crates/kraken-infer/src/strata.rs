@@ -6,6 +6,8 @@
 //! decides which model fits. Nothing here downloads or runs anything: `kraken-host` installs
 //! from [`manifest`] and `kraken-infer`'s generic backend supervises the server.
 
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 use crate::generic::Manifest;
@@ -72,6 +74,122 @@ impl StrataModel {
     }
 }
 
+/// A model the person already has on disk: every shard of a Strata-supported GGUF in one folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExistingModel {
+    /// The folder with every shard (Strata's `--gguf-dir`).
+    pub dir: PathBuf,
+    /// Strata's `--family` value (`qwen`, `swift`, `coder`, `unsloth`).
+    pub family: String,
+    /// Strata's `--model` value (the quantisation).
+    pub quant: String,
+    pub shards: u32,
+    /// Size of all shards together.
+    pub bytes: u64,
+}
+
+impl ExistingModel {
+    /// The id this model is registered under: `strata-existing-<family>-<quant>`.
+    pub fn id(&self) -> String {
+        format!(
+            "strata-existing-{}-{}",
+            self.family,
+            self.quant.to_ascii_lowercase()
+        )
+    }
+
+    /// A name for people.
+    pub fn title(&self) -> String {
+        let family = match self.family.as_str() {
+            "swift" => "Swift 1.5",
+            "coder" => "Qwen3.8 Flash Next Coder",
+            "unsloth" => "Qwen3.8 Flash Next (Unsloth)",
+            _ => "Qwen3.8 Flash Next",
+        };
+        format!("{family} {} (your file)", self.quant)
+    }
+
+    /// The model as the setup treats it: no files to download.
+    pub fn as_model(&self) -> StrataModel {
+        StrataModel {
+            id: self.id(),
+            name: self.title(),
+            family: self.family.clone(),
+            quant: self.quant.clone(),
+            min_ram_gib: 0,
+            arena_gib: 0.0,
+            license: "your own file".into(),
+            files: Vec::new(),
+        }
+    }
+}
+
+/// Recognises a Strata model from the name of one of its shards and checks that the folder has
+/// all of them. Strata only runs GGUFs named the way its installer names them, so the name tells
+/// the family and the quantisation.
+pub fn existing_model(path: &Path) -> Result<ExistingModel, String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("that is not a file")?;
+    let stem = name
+        .strip_suffix(".gguf")
+        .ok_or("pick a .gguf file (any shard of the model)")?;
+    let bad = || {
+        format!(
+            "`{name}` is not named like a Strata model, for example \
+             `Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf`"
+        )
+    };
+    let (head, of) = stem.rsplit_once("-of-").ok_or_else(bad)?;
+    let (prefix, index) = head.rsplit_once('-').ok_or_else(bad)?;
+    let digits = |t: &str| t.len() == 5 && t.bytes().all(|b| b.is_ascii_digit());
+    if !digits(index) || !digits(of) {
+        return Err(bad());
+    }
+    let shards: u32 = of.parse().map_err(|_| bad())?;
+    let (family, quant) = if let Some(q) = prefix.strip_prefix("Swift-Qwen3.8-Flash-Next-GSQ-RCO-")
+    {
+        ("swift", q)
+    } else if let Some(q) = prefix.strip_prefix("Qwen3.8-Flash-Next-GSQ-RCO-") {
+        (if q == "IQ1_M" { "coder" } else { "qwen" }, q)
+    } else if let Some(q) = prefix.strip_prefix("Qwen3.8-Flash-Next-") {
+        ("unsloth", q)
+    } else {
+        return Err(bad());
+    };
+    if quant.is_empty()
+        || !quant
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(bad());
+    }
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let mut bytes = 0;
+    for i in 1..=shards {
+        let shard = dir.join(format!("{prefix}-{i:05}-of-{shards:05}.gguf"));
+        let meta = std::fs::metadata(&shard).map_err(|_| {
+            format!(
+                "shard {i} of {shards} is missing: `{}` must sit next to the file you picked",
+                shard.file_name().and_then(|n| n.to_str()).unwrap_or("")
+            )
+        })?;
+        bytes += meta.len();
+    }
+    Ok(ExistingModel {
+        dir,
+        family: family.into(),
+        quant: quant.into(),
+        shards,
+        bytes,
+    })
+}
+
 /// The bundled, pinned manifest (`data/strata.toml`).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct StrataManifest {
@@ -123,12 +241,57 @@ pub struct Missing {
     pub how_to_fix: String,
 }
 
-/// Looks for the system pieces Strata's build needs: an NVIDIA driver, `nvcc`, a C++ compiler
-/// and Python with `venv`. KRAKEN never installs these (no sudo, no system packages).
+/// How Strata's engine gets onto the computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineMethod {
+    /// Strata's ready-made engine for this computer, downloaded by Strata's own installer.
+    #[default]
+    Prebuilt,
+    /// Compiled here from source (10 to 20 minutes; needs `nvcc` and a C++ compiler).
+    Build,
+}
+
+/// Which Strata revision to install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineVersion {
+    /// The newest published release.
+    #[default]
+    LatestRelease,
+    /// The revision pinned in the bundled manifest: its archives are checked against SHA-256
+    /// hashes written down in advance.
+    Pinned,
+    /// The newest commit of the main branch (can be broken; source build only).
+    LatestCommit,
+}
+
+/// What the person chose for the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SetupOptions {
+    pub method: EngineMethod,
+    pub version: EngineVersion,
+}
+
+impl SetupOptions {
+    /// Why this combination cannot be installed, or `None`.
+    pub fn problem(&self) -> Option<&'static str> {
+        (self.method == EngineMethod::Prebuilt && self.version == EngineVersion::LatestCommit)
+            .then_some(
+                "The newest commit has no ready-made engine; build it from source or pick the \
+                 latest release.",
+            )
+    }
+}
+
+/// Looks for the system pieces the engine's setup needs: an NVIDIA driver, Python with `venv`,
+/// and for a source build also `nvcc` and a C++ compiler. KRAKEN never installs these (no
+/// sudo, no system packages).
 pub fn missing_prerequisites(
     probe: &dyn Probe,
     hw: &HardwareInfo,
     python_min: &str,
+    method: EngineMethod,
 ) -> Vec<Missing> {
     let mut out = Vec::new();
     if !hw.gpus.iter().any(|g| g.vendor == GpuVendor::Nvidia) {
@@ -139,7 +302,7 @@ pub fn missing_prerequisites(
                 .into(),
         });
     }
-    if probe.run("nvcc", &["--version"]).is_none() {
+    if method == EngineMethod::Build && probe.run("nvcc", &["--version"]).is_none() {
         out.push(Missing {
             what: "CUDA toolkit (`nvcc` not on PATH)".into(),
             how_to_fix: "Install the CUDA toolkit from your distribution or NVIDIA (for example \
@@ -148,10 +311,11 @@ pub fn missing_prerequisites(
                 .into(),
         });
     }
-    if probe
-        .run("c++", &["--version"])
-        .or_else(|| probe.run("g++", &["--version"]))
-        .is_none()
+    if method == EngineMethod::Build
+        && probe
+            .run("c++", &["--version"])
+            .or_else(|| probe.run("g++", &["--version"]))
+            .is_none()
     {
         out.push(Missing {
             what: "C++ compiler (`c++`/`g++`)".into(),
@@ -510,7 +674,7 @@ mod tests {
             free_disk_bytes: 500 * GIB,
             cpu_cores: 8,
         };
-        let m = missing_prerequisites(&Tools(&["python3"]), &none, "3.10");
+        let m = missing_prerequisites(&Tools(&["python3"]), &none, "3.10", EngineMethod::Build);
         let all: String = m
             .iter()
             .map(|x| x.what.clone())
@@ -520,8 +684,12 @@ mod tests {
         assert!(all.contains("nvcc"), "{all}");
         assert!(all.contains("C++ compiler"), "{all}");
         assert!(!all.contains("Python"), "{all}");
-        let ok =
-            missing_prerequisites(&Tools(&["python3", "nvcc", "c++"]), &hw(12, 32, 80), "3.10");
+        let ok = missing_prerequisites(
+            &Tools(&["python3", "nvcc", "c++"]),
+            &hw(12, 32, 80),
+            "3.10",
+            EngineMethod::Build,
+        );
         assert!(ok.is_empty(), "{ok:?}");
     }
 
@@ -531,5 +699,93 @@ mod tests {
         assert_eq!(m.cwd.as_deref(), Some("/d/src"));
         assert!(m.command.iter().any(|a| a == "{port}"));
         assert!(m.managed_port);
+    }
+
+    #[test]
+    fn a_prebuilt_engine_needs_no_compiler() {
+        let none = hw(12, 32, 80);
+        let tools = Tools(&["python3"]);
+        let m = missing_prerequisites(&tools, &none, "3.10", EngineMethod::Prebuilt);
+        assert!(
+            m.iter()
+                .all(|x| !x.what.contains("nvcc") && !x.what.contains("C++"))
+        );
+        let m = missing_prerequisites(&tools, &none, "3.10", EngineMethod::Build);
+        assert!(m.iter().any(|x| x.what.contains("nvcc")));
+        assert!(m.iter().any(|x| x.what.contains("C++")));
+    }
+
+    #[test]
+    fn the_newest_commit_has_no_prebuilt_engine() {
+        let mut o = SetupOptions::default();
+        assert_eq!(o.method, EngineMethod::Prebuilt);
+        assert_eq!(o.version, EngineVersion::LatestRelease);
+        assert!(o.problem().is_none());
+        o.version = EngineVersion::LatestCommit;
+        assert!(o.problem().is_some());
+        o.method = EngineMethod::Build;
+        assert!(o.problem().is_none());
+    }
+
+    fn shards(dir: &Path, prefix: &str, n: u32) -> PathBuf {
+        for i in 1..=n {
+            std::fs::write(
+                dir.join(format!("{prefix}-{i:05}-of-{n:05}.gguf")),
+                vec![0u8; 10],
+            )
+            .expect("shard");
+        }
+        dir.join(format!("{prefix}-00001-of-{n:05}.gguf"))
+    }
+
+    #[test]
+    fn an_existing_model_is_recognised_by_its_shard_names() {
+        let d = tempfile::tempdir().expect("dir");
+        let swift = shards(d.path(), "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS", 2);
+        let m = existing_model(&swift).expect("swift");
+        assert_eq!(
+            (m.family.as_str(), m.quant.as_str(), m.shards),
+            ("swift", "IQ2_XS", 2)
+        );
+        assert_eq!((m.bytes, m.dir.as_path()), (20, d.path()));
+        assert_eq!(m.id(), "strata-existing-swift-iq2_xs");
+        assert!(m.as_model().files.is_empty());
+        let second = d
+            .path()
+            .join("Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf");
+        assert_eq!(existing_model(&second).expect("any shard"), m);
+
+        let q = shards(d.path(), "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S", 2);
+        assert_eq!(existing_model(&q).expect("qwen").family, "qwen");
+        let c = shards(d.path(), "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M", 2);
+        assert_eq!(existing_model(&c).expect("coder").family, "coder");
+        let u = shards(d.path(), "Qwen3.8-Flash-Next-UD-IQ4_XS", 3);
+        let u = existing_model(&u).expect("unsloth");
+        assert_eq!(
+            (u.family.as_str(), u.quant.as_str(), u.shards),
+            ("unsloth", "UD-IQ4_XS", 3)
+        );
+    }
+
+    #[test]
+    fn an_existing_model_must_be_whole_and_named_for_strata() {
+        let d = tempfile::tempdir().expect("dir");
+        let first = shards(d.path(), "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS", 2);
+        std::fs::remove_file(
+            d.path()
+                .join("Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf"),
+        )
+        .expect("rm");
+        let e = existing_model(&first).expect_err("incomplete");
+        assert!(e.contains("shard 2 of 2"), "{e}");
+        for name in [
+            "llama-7b.gguf",
+            "model.bin",
+            "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-1-of-2.gguf",
+        ] {
+            let p = d.path().join(name);
+            std::fs::write(&p, b"x").expect("file");
+            assert!(existing_model(&p).is_err(), "{name}");
+        }
     }
 }

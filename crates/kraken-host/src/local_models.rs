@@ -16,7 +16,9 @@ use crate::config::KrakenConfig;
 use crate::infer::{local_provider_table, new_local_model};
 use crate::llama_setup::{LlamaLayout, choose, current_releases, install_llama};
 use crate::provision::{ArchiveFormat, ArtifactSpec, Fetcher, HttpsFetcher, download};
-use crate::strata_setup::{Runner, StrataError, StrataLayout, SystemRunner, install_strata};
+use crate::strata_setup::{
+    ModelSource, Runner, StrataError, StrataLayout, StrataRequest, SystemRunner, install_strata,
+};
 
 /// The base URL the written provider points at: llama-server's default port.
 pub const LOCAL_BASE_URL: &str = "http://127.0.0.1:8080/v1";
@@ -72,12 +74,14 @@ impl LocalModels {
             .to_path_buf();
         let layout = StrataLayout::in_data_dir(&data_dir);
         let python_min = sp.manifest.engine.python_min.clone();
+        let method = sp.options.method;
         let missing = tokio::task::spawn_blocking(move || {
             let hw = kraken_infer::detect_hardware(&kraken_infer::SystemProbe, &data_dir);
             kraken_infer::strata::missing_prerequisites(
                 &kraken_infer::SystemProbe,
                 &hw,
                 &python_min,
+                method,
             )
         })
         .await
@@ -100,12 +104,19 @@ impl LocalModels {
                 };
             }
         };
+        let request = StrataRequest {
+            manifest: &sp.manifest,
+            options: sp.options,
+            model: match &sp.existing {
+                Some(m) => ModelSource::Existing(m),
+                None => ModelSource::Catalog(&sp.model),
+            },
+        };
         let out = install_strata(
             &layout,
             self.fetcher.as_ref(),
             runner.as_ref(),
-            &sp.manifest,
-            &sp.model,
+            &request,
             missing,
             &mut on_event,
         )
@@ -139,11 +150,8 @@ impl LocalModels {
         Ok(LocalModelSetupOut {
             model_id: sp.model.id.clone(),
             path: out.gguf_dir.display().to_string(),
-            engine: format!(
-                "Strata {} (built from commit {})",
-                sp.manifest.engine.version, sp.manifest.engine.source.commit
-            ),
-            sha256_verified: true,
+            engine: out.description.clone(),
+            sha256_verified: sp.existing.is_none(),
             configured,
             note: format!(
                 "Start it with `kraken infer start {}` (or Settings); KRAKEN supervises it and \

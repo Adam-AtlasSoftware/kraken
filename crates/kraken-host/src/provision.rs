@@ -567,6 +567,76 @@ pub async fn download(
     }
 }
 
+/// A small text resource (a release listing): at most 1 MiB, HTTPS only.
+pub async fn fetch_text(fetcher: &dyn Fetcher, url: &str) -> Result<String, ProvisionError> {
+    require_https(url)?;
+    let mut body = fetcher.fetch(url, 0).await?.body;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.next_chunk().await? {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > 1 << 20 {
+            return Err(ProvisionError::Http {
+                url: url.into(),
+                message: "the answer is unexpectedly large".into(),
+            });
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| ProvisionError::Http {
+        url: url.into(),
+        message: "the answer is not text".into(),
+    })
+}
+
+/// Downloads a file that has no hash written down in advance (the newest release or commit of
+/// a project) to `dest` and returns its SHA-256, so the caller can record what was fetched.
+/// Prefer [`download`] whenever a hash is known.
+pub async fn download_unpinned(
+    fetcher: &dyn Fetcher,
+    name: &str,
+    url: &str,
+    dest: &Path,
+    progress: ProgressFn<'_>,
+) -> Result<String, ProvisionError> {
+    require_https(url)?;
+    if let Some(dir) = dest.parent() {
+        fs::create_dir_all(dir).map_err(io_err(format!("cannot create {}", dir.display())))?;
+    }
+    let fetched = fetcher.fetch(url, 0).await?;
+    let mut file =
+        File::create(dest).map_err(io_err(format!("cannot create {}", dest.display())))?;
+    let mut hash = Sha256::new();
+    let (mut done, mut body) = (0u64, fetched.body);
+    let mut last_report = std::time::Instant::now();
+    while let Some(chunk) = body.next_chunk().await? {
+        file.write_all(&chunk)
+            .map_err(io_err(format!("cannot write {}", dest.display())))?;
+        hash.update(&chunk);
+        done += chunk.len() as u64;
+        if last_report.elapsed() >= Duration::from_millis(250) {
+            last_report = std::time::Instant::now();
+            progress(Progress::Downloading {
+                name: name.into(),
+                done,
+                total: fetched.total,
+                resumed_from: 0,
+            });
+        }
+    }
+    file.flush()
+        .map_err(io_err(format!("cannot write {}", dest.display())))?;
+    if let Some(expected) = fetched.total
+        && done < expected
+    {
+        let _ = fs::remove_file(dest);
+        return Err(ProvisionError::Truncated {
+            name: name.into(),
+            got: done,
+            expected,
+        });
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Extraction
 

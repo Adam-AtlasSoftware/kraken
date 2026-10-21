@@ -10,7 +10,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use kraken_infer::strata::{self, Assessment, Fit, StrataManifest, StrataModel};
+use kraken_infer::strata::{
+    self, Assessment, EngineMethod, EngineVersion, ExistingModel, Fit, SetupOptions,
+    StrataManifest, StrataModel,
+};
 use kraken_infer::{
     EngineChoice, GpuApi, HardwareInfo, ModelEntry, Recommendation, SystemProbe, detect_hardware,
     model_catalog, models_dir_with, recommend,
@@ -50,8 +53,13 @@ pub struct LocalSetupPlan {
 /// The Strata part of a setup plan.
 #[derive(Debug, Clone)]
 pub struct StrataPlan {
+    /// The model; for an existing one ([`Self::existing`]) it lists no files to download.
     pub model: StrataModel,
     pub manifest: StrataManifest,
+    /// How to get the engine, and which revision.
+    pub options: SetupOptions,
+    /// A model already on this computer, used where it is instead of downloading one.
+    pub existing: Option<ExistingModel>,
 }
 
 /// Progress of a running setup, shared with whoever draws a progress bar.
@@ -265,8 +273,25 @@ pub fn strata_now() -> (HardwareInfo, Assessment, StrataManifest, PathBuf) {
     let dir = models_dir_with(&|k| std::env::var_os(k)).unwrap_or_else(std::env::temp_dir);
     let hw = detect_hardware(&SystemProbe, &dir);
     let m = strata::manifest();
-    let missing = strata::missing_prerequisites(&SystemProbe, &hw, &m.engine.python_min);
-    let a = strata::assess(&hw, &m, missing);
+    let missing = strata::missing_prerequisites(
+        &SystemProbe,
+        &hw,
+        &m.engine.python_min,
+        EngineMethod::Prebuilt,
+    );
+    let mut a = strata::assess(&hw, &m, missing);
+    let build =
+        strata::missing_prerequisites(&SystemProbe, &hw, &m.engine.python_min, EngineMethod::Build);
+    if a.missing.is_empty() && !build.is_empty() {
+        a.notes.push(format!(
+            "Building the engine from source also needs: {}. The ready-made engine does not.",
+            build
+                .iter()
+                .map(|x| x.what.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     (hw, a, m, dir)
 }
 
@@ -477,6 +502,62 @@ pub struct LocalModelSetupArgs {
     /// Features that should use the model afterwards; the assistant when left out.
     #[serde(default)]
     pub use_for: Option<Vec<LocalFeature>>,
+    /// Strata only: `prebuilt` (the ready-made engine, the default) or `build` (compile it here).
+    #[serde(default)]
+    pub strata_engine: Option<String>,
+    /// Strata only: `latest_release` (the default), `pinned` (the revision KRAKEN was tested
+    /// with, checked against hashes written down in advance) or `latest_commit` (`build` only).
+    #[serde(default)]
+    pub strata_version: Option<String>,
+    /// Strata only: the path of a Strata-supported `.gguf` model you already have (any shard;
+    /// every shard must be in the same folder). It is used where it is, not copied.
+    #[serde(default)]
+    pub model_file: Option<String>,
+}
+
+/// The engine options named by the arguments of `local_model_setup`.
+fn setup_options(args: &LocalModelSetupArgs) -> Result<SetupOptions, ProtoError> {
+    let bad = |what: &str, v: &str, ok: &str| {
+        ProtoError::new(
+            ErrorCode::InvalidArgument,
+            format!("`{v}` is not a {what}; use {ok}"),
+        )
+    };
+    let method = match args.strata_engine.as_deref() {
+        None | Some("prebuilt") => EngineMethod::Prebuilt,
+        Some("build") => EngineMethod::Build,
+        Some(v) => return Err(bad("Strata engine", v, "prebuilt or build")),
+    };
+    let version = match args.strata_version.as_deref() {
+        None | Some("latest_release") => EngineVersion::LatestRelease,
+        Some("pinned") => EngineVersion::Pinned,
+        Some("latest_commit") => EngineVersion::LatestCommit,
+        Some(v) => {
+            return Err(bad(
+                "Strata version",
+                v,
+                "latest_release, pinned or latest_commit",
+            ));
+        }
+    };
+    let options = SetupOptions { method, version };
+    match options.problem() {
+        Some(why) => Err(ProtoError::new(ErrorCode::InvalidArgument, why)),
+        None => Ok(options),
+    }
+}
+
+/// What the engine part of a Strata setup does, in words for the approval.
+fn engine_phrase(o: SetupOptions) -> String {
+    let which = match o.version {
+        EngineVersion::LatestRelease => "the newest release of Strata",
+        EngineVersion::Pinned => "the tested Strata revision",
+        EngineVersion::LatestCommit => "the newest Strata commit",
+    };
+    match o.method {
+        EngineMethod::Prebuilt => format!("download {which} and its ready-made engine"),
+        EngineMethod::Build => format!("download {which} and compile the engine here"),
+    }
 }
 
 /// Downloads a recommended model and configures it, after approval.
@@ -499,6 +580,9 @@ impl Command for LocalModelSetup {
              model you name), checks the model's SHA-256 against the catalog and points the \
              assistant (and optionally the rewrite pipeline) at it. A person is asked first, with \
              the download size and disk use; agents cannot skip that question. Large download.\n\
+             Strata only: `strata_engine` (`prebuilt` or `build`), `strata_version` \
+             (`latest_release`, `pinned` or `latest_commit`) and `model_file` (the path of one shard \
+             of a Strata model already on this computer, used where it is).\n\
              Example: local_model_setup {\"model\": \"qwen3-8b-q4_k_m\", \"use_for\": [\"assistant\"]}",
         )
     }
@@ -511,10 +595,21 @@ impl Command for LocalModelSetup {
     ) -> Result<LocalModelSetupOut, ProtoError> {
         let backend = s.local_models()?.clone();
         let want_strata = is_strata(args.engine.as_deref())?
+            || args.model_file.is_some()
             || args
                 .model
                 .as_deref()
                 .is_some_and(|m| m.starts_with("strata-"));
+        if !want_strata
+            && (args.strata_engine.is_some()
+                || args.strata_version.is_some()
+                || args.model_file.is_some())
+        {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                "strata_engine, strata_version and model_file are for the Strata engine only",
+            ));
+        }
         let assign = args
             .use_for
             .clone()
@@ -526,16 +621,35 @@ impl Command for LocalModelSetup {
             .join(" and ");
 
         let (engine, model, models_dir, strata_plan, summary, details) = if want_strata {
-            let (_, a, m, models_dir) = tokio::task::spawn_blocking(strata_now)
+            let options = setup_options(&args)?;
+            let existing = args
+                .model_file
+                .as_deref()
+                .map(|f| {
+                    strata::existing_model(std::path::Path::new(f))
+                        .map_err(|why| ProtoError::new(ErrorCode::InvalidArgument, why))
+                })
+                .transpose()?;
+            let (hw, a, m, models_dir) = tokio::task::spawn_blocking(strata_now)
                 .await
                 .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))?;
-            if !a.missing.is_empty() {
+            let mut missing = a.missing.clone();
+            if options.method == EngineMethod::Build {
+                missing.extend(strata::missing_prerequisites(
+                    &SystemProbe,
+                    &hw,
+                    &m.engine.python_min,
+                    EngineMethod::Build,
+                ));
+                missing.dedup_by(|x, y| x.what == y.what);
+            }
+            if !missing.is_empty() {
                 return Err(ProtoError::new(
                     ErrorCode::Unsupported,
                     format!(
                         "this computer is missing what Strata needs; KRAKEN installs no system \
                          software, so install these yourself first: {}",
-                        a.missing
+                        missing
                             .iter()
                             .map(|x| format!("{} ({})", x.what, x.how_to_fix))
                             .collect::<Vec<_>>()
@@ -543,81 +657,103 @@ impl Command for LocalModelSetup {
                     ),
                 ));
             }
-            let cand = match &args.model {
-                Some(id) => a.candidates.iter().find(|c| &c.model.id == id),
-                None => a.recommended.map(|i| &a.candidates[i]),
-            }
-            .ok_or_else(|| {
-                ProtoError::new(
-                    ErrorCode::InvalidArgument,
-                    "no such Strata model, or none fits the free disk; see `local_model_recommend` with engine strata",
-                )
-            })?;
-            if cand.fit == Fit::NoDisk {
-                return Err(ProtoError::new(
-                    ErrorCode::InvalidArgument,
-                    format!(
-                        "{} does not fit the free disk: {}",
-                        cand.model.id,
-                        cand.warnings.join(" ")
-                    ),
-                ));
-            }
-            let downloads = strata_downloads(&m, &cand.model);
-            let total: u64 = downloads.iter().map(|d| d.size_bytes).sum();
-            let listing = downloads
-                .iter()
-                .map(|d| format!("{} ({:.1} GiB)", d.name, gib(d.size_bytes)))
-                .collect::<Vec<_>>()
-                .join("; ");
-            let mut summary = format!(
-                "download {} files for Strata {} ({:.1} GiB in total, {:.1} GiB of disk under \
-                 <data dir>/engines/strata, compile the engine there, no sudo), and set it up for the {}: {}",
-                downloads.len(),
-                cand.model.quant,
-                gib(total),
-                gib(cand.disk_bytes),
-                features,
-                listing
-            );
-            if cand.fit == Fit::BelowMinimum {
-                summary.push_str(&format!(" WARNING: {}", cand.warnings.join(" ")));
-            }
-            let details = serde_json::json!({
-                "model": cand.model.id,
-                "download_bytes": total,
-                "disk_bytes": cand.disk_bytes,
-                "downloads": downloads,
-            });
-            let synth = ModelEntry {
-                id: cand.model.id.clone(),
-                name: cand.model.name.clone(),
-                params_b: 0,
-                quant: cand.model.quant.clone(),
-                file: cand
-                    .model
-                    .files
-                    .first()
-                    .map(|f| f.name.clone())
-                    .unwrap_or_default(),
-                url: cand
-                    .model
-                    .files
-                    .first()
-                    .map(|f| f.url.clone())
-                    .unwrap_or_default(),
-                size: cand.download_bytes,
-                sha256: cand
-                    .model
-                    .files
-                    .first()
-                    .map(|f| f.sha256.clone())
-                    .unwrap_or_default(),
-                license: cand.model.license.clone(),
+            let phrase = engine_phrase(options);
+            let (model, synth, summary, details) = if let Some(ex) = &existing {
+                // No model download: Strata's installer packs the files where they are.
+                let summary = format!(
+                    "{phrase} under <data dir>/engines/strata (no sudo), use your {} files in {} \
+                     ({:.1} GiB, not copied), and set it up for the {}",
+                    ex.quant,
+                    ex.dir.display(),
+                    gib(ex.bytes),
+                    features
+                );
+                let details = serde_json::json!({
+                    "model": ex.id(),
+                    "model_dir": ex.dir,
+                    "download_bytes": 0,
+                    "disk_bytes": ex.bytes,
+                    "options": options,
+                });
+                let synth = ModelEntry {
+                    id: ex.id(),
+                    name: ex.title(),
+                    params_b: 0,
+                    quant: ex.quant.clone(),
+                    file: String::new(),
+                    url: String::new(),
+                    size: ex.bytes,
+                    sha256: String::new(),
+                    license: "your own file".into(),
+                };
+                (ex.as_model(), synth, summary, details)
+            } else {
+                let cand = match &args.model {
+                    Some(id) => a.candidates.iter().find(|c| &c.model.id == id),
+                    None => a.recommended.map(|i| &a.candidates[i]),
+                }
+                .ok_or_else(|| {
+                    ProtoError::new(
+                        ErrorCode::InvalidArgument,
+                        "no such Strata model, or none fits the free disk; see `local_model_recommend` with engine strata",
+                    )
+                })?;
+                if cand.fit == Fit::NoDisk {
+                    return Err(ProtoError::new(
+                        ErrorCode::InvalidArgument,
+                        format!(
+                            "{} does not fit the free disk: {}",
+                            cand.model.id,
+                            cand.warnings.join(" ")
+                        ),
+                    ));
+                }
+                let downloads = strata_downloads(&m, &cand.model);
+                let total: u64 = downloads.iter().map(|d| d.size_bytes).sum();
+                let listing = downloads
+                    .iter()
+                    .map(|d| format!("{} ({:.1} GiB)", d.name, gib(d.size_bytes)))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let mut summary = format!(
+                    "{phrase}, plus {} model files for Strata {} ({:.1} GiB in total, {:.1} GiB \
+                     of disk under <data dir>/engines/strata, no sudo), and set it up for the {}: {}",
+                    cand.model.files.len(),
+                    cand.model.quant,
+                    gib(total),
+                    gib(cand.disk_bytes),
+                    features,
+                    listing
+                );
+                if cand.fit == Fit::BelowMinimum {
+                    summary.push_str(&format!(" WARNING: {}", cand.warnings.join(" ")));
+                }
+                let details = serde_json::json!({
+                    "model": cand.model.id,
+                    "download_bytes": total,
+                    "disk_bytes": cand.disk_bytes,
+                    "downloads": downloads,
+                    "options": options,
+                });
+                let first = cand.model.files.first();
+                let synth = ModelEntry {
+                    id: cand.model.id.clone(),
+                    name: cand.model.name.clone(),
+                    params_b: 0,
+                    quant: cand.model.quant.clone(),
+                    file: first.map(|f| f.name.clone()).unwrap_or_default(),
+                    url: first.map(|f| f.url.clone()).unwrap_or_default(),
+                    size: cand.download_bytes,
+                    sha256: first.map(|f| f.sha256.clone()).unwrap_or_default(),
+                    license: cand.model.license.clone(),
+                };
+                (cand.model.clone(), synth, summary, details)
             };
             let plan = StrataPlan {
-                model: cand.model.clone(),
+                model,
                 manifest: m,
+                options,
+                existing,
             };
             (
                 EngineChoice {

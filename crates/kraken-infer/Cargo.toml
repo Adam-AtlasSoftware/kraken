@@ -22,4 +22,5 @@ kraken-proto.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
