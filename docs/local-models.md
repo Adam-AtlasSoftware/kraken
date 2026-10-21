@@ -139,8 +139,8 @@ For Strata, you have these choices:
   equal cards.
 - **Second card helps (peer tier)**: the second card reads prompts about 30 to 40 percent faster, but
   answers about a third slower.
-- **Second card as helper cache**: speeds up short prompts, but was slower than one card on cards of
-  different sizes.
+- **Second card as helper cache**: gave a small gain on 4K prompts, but was slower than one card for
+  longer prompts and for answers on cards of different sizes.
 - **Second card reads prompts only**: keeps answers at one-card speed and needs a Strata build with
   that support.
 
@@ -302,13 +302,14 @@ of one shard).
 ### Choosing automatically
 
 When you choose **Automatic** for several cards, KRAKEN looks at the cards, the free video memory on
-each, and which card has a monitor connected. A monitor takes video memory from its card—on one test
-machine that was 1.2 GB with the monitor on the small card and 2.4 GB with it on the large one. You
-can connect the monitors to the smaller card to free memory on the main one.
+each, and which card has a monitor connected. A monitor takes video memory from its card. On one test
+machine the large card had 1.2 GB in use with the monitors on the small card and 2.4 GB in use with
+the monitors on the large card. You can connect the monitors to the smaller card to free memory on
+the main one.
 
-If there is not enough free memory, KRAKEN first shortens the context from 65,536 to 32,768 tokens.
-If that is not enough, it turns the draft layer off (answers get slower). KRAKEN tells you what it
-changed. Settings you choose yourself are never overridden.
+If there is not enough free memory, KRAKEN first shortens the context (from 65,536 to 32,768
+tokens, or less), and if that is not enough it turns the draft layer off (answers get slower).
+KRAKEN tells you what it changed. Settings you choose yourself are never overridden.
 
 Three Strata settings control the automatic choice:
 

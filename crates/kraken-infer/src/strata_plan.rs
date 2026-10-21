@@ -30,6 +30,8 @@ const MAIN_RESERVE_DISPLAY_MIB: u64 = 1000;
 /// card must have left after its reserve to be worth using.
 const MIN_CACHE: u64 = 524 * MIB;
 const MIN_PEER_CACHE: u64 = 3 * GIB / 2;
+/// Video memory in use above which moving a monitor to another card is worth suggesting.
+const SIGNIFICANT_USE: u64 = 512 * MIB;
 /// A card smaller than this cannot hold the dense weights of the main card.
 const MIN_CARD: u64 = 4 * GIB;
 
@@ -236,8 +238,8 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
     }
     if on_display(main) {
         notes.push(format!(
-            "A monitor is connected to {}, so the desktop is using {} of its video memory and the \
-             engine keeps more of it free.",
+            "A monitor is connected to {}, so the engine keeps more of its video memory free \
+             ({} is in use right now).",
             main.name,
             gib(main.vram_used)
         ));
@@ -258,15 +260,14 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
         );
     }
     if on_display(main)
+        && main.vram_used >= SIGNIFICANT_USE
         && let Some(other) = cards
             .iter()
             .find(|c| !std::ptr::eq(**c, main) && !on_display(c))
     {
         advice.push(format!(
-            "Connecting your monitors to {} instead would free the {} the desktop uses on {}.",
-            other.name,
-            gib(main.vram_used),
-            main.name
+            "Connecting your monitors to {} instead would leave more video memory on {}.",
+            other.name, main.name
         ));
     }
 
