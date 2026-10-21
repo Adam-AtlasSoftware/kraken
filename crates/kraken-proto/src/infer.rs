@@ -44,8 +44,9 @@ pub enum MultiGpuMode {
     CopyPerCard,
     /// Split every layer between the cards (llama.cpp row split).
     SplitEveryLayer,
-    /// Strata: KRAKEN chooses from the cards and their free memory each time the model starts
-    /// (one card, or a second card helping with long prompts).
+    /// Strata: KRAKEN chooses the main card, the context and the draft layer from the free
+    /// video memory each time the model starts. It always runs on one card and names the
+    /// second-card choices in its advice.
     Auto,
     /// Strata: a second card keeps extra experts and helps read prompts and answer. Prompts are
     /// read about 30 to 40 percent faster, answers about a third slower.
@@ -74,15 +75,32 @@ pub struct StrataTuning {
     /// Video memory the main card keeps free, in MiB.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vram_reserve_mib: Option<u32>,
+    /// The longest context to run with, in tokens. KRAKEN sets it when video memory is short and
+    /// only ever lowers the context Strata was installed with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_cap: Option<u32>,
 }
 
 impl StrataTuning {
-    /// Reads the tuning out of a model's `extra`; anything unreadable counts as unset.
+    /// Reads the tuning out of a model's `extra`; a field that cannot be read counts as unset and
+    /// leaves the others alone.
     pub fn from_extra(extra: Option<&serde_json::Value>) -> Self {
-        extra
-            .and_then(|e| e.get("strata"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default()
+        let Some(v) = extra.and_then(|e| e.get("strata")) else {
+            return Self::default();
+        };
+        let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool);
+        let num = |k: &str| {
+            v.get(k)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+        };
+        Self {
+            vision: flag("vision"),
+            peer_reserve_mib: num("peer_reserve_mib"),
+            draft: flag("draft"),
+            vram_reserve_mib: num("vram_reserve_mib"),
+            context_cap: num("context_cap"),
+        }
     }
 
     /// Stores the tuning in `extra`, leaving other keys alone; an empty tuning removes the key.

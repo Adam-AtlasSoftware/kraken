@@ -32,6 +32,9 @@ const MIN_CACHE: u64 = 524 * MIB;
 const MIN_PEER_CACHE: u64 = 3 * GIB / 2;
 /// Video memory in use above which moving a monitor to another card is worth suggesting.
 const SIGNIFICANT_USE: u64 = 512 * MIB;
+/// Video memory one token of context takes on the main card with the usual q4_0 cache (451 MiB at
+/// 65,536 tokens).
+const KV_BYTES_PER_TOKEN: i64 = 7_200;
 /// A card smaller than this cannot hold the dense weights of the main card.
 const MIN_CARD: u64 = 4 * GIB;
 
@@ -98,6 +101,10 @@ pub struct Plan {
     pub context_size: Option<u32>,
     /// Whether the main card has room for the model at all.
     pub fits: bool,
+    /// How many bytes of video memory short the main card is at the gentlest setting that is
+    /// allowed; 0 when [`Plan::fits`]. The levels are measured on one model, so a small shortfall
+    /// is a warning and only a large one is a refusal.
+    pub shortfall: u64,
     /// What was decided and why, in plain words.
     pub notes: Vec<String>,
     /// What the person could change to get more speed.
@@ -135,6 +142,34 @@ fn gib(bytes: u64) -> String {
     format!("{:.1} GiB", bytes as f64 / GIB as f64)
 }
 
+/// The memory `level` needs on the main card. With a context the person fixed, the level's base
+/// (costed at the engine's own context) is moved by the cache of the difference.
+fn needed(level: &Level, display: bool, context: Option<u32>) -> u64 {
+    let reserve = if display {
+        MAIN_RESERVE_DISPLAY_MIB
+    } else {
+        MAIN_RESERVE_MIB
+    } * MIB;
+    let base = match context {
+        None => level.base as i64,
+        Some(c) => {
+            level.base as i64 + (i64::from(c) - i64::from(ENGINE_CONTEXT)) * KV_BYTES_PER_TOKEN
+        }
+    };
+    base.max(0) as u64 + reserve + MIN_CACHE
+}
+
+/// The levels open to a card: all of them, or only the engine-context ones when the person fixed
+/// the context, and only the draft setting they chose.
+fn open_levels(
+    context: Option<u32>,
+    draft: Option<bool>,
+) -> impl Iterator<Item = (usize, &'static Level)> {
+    LEVELS.iter().enumerate().filter(move |(_, l)| {
+        (context.is_none() || l.context == ENGINE_CONTEXT) && draft.is_none_or(|d| d == l.draft)
+    })
+}
+
 /// The first level at which `card` works as the main card, with `context` fixed when the person
 /// set one and `draft` fixed when they chose it.
 fn level_for(
@@ -143,16 +178,22 @@ fn level_for(
     context: Option<u32>,
     draft: Option<bool>,
 ) -> Option<usize> {
-    let reserve = if display {
-        MAIN_RESERVE_DISPLAY_MIB
-    } else {
-        MAIN_RESERVE_MIB
-    } * MIB;
-    LEVELS.iter().position(|l| {
-        (context.is_none() || l.context == ENGINE_CONTEXT)
-            && draft.is_none_or(|d| d == l.draft)
-            && free(card) >= l.base + reserve + MIN_CACHE
-    })
+    open_levels(context, draft)
+        .find(|(_, l)| free(card) >= needed(l, display, context))
+        .map(|(i, _)| i)
+}
+
+/// How far `card` is from the gentlest open level, in bytes.
+fn shortfall_of(
+    card: &DeviceInfo,
+    display: bool,
+    context: Option<u32>,
+    draft: Option<bool>,
+) -> u64 {
+    open_levels(context, draft)
+        .map(|(_, l)| needed(l, display, context))
+        .min()
+        .map_or(0, |n| n.saturating_sub(free(card)))
 }
 
 fn chosen_cards<'a>(input: &PlanInput<'a>) -> Vec<&'a DeviceInfo> {
@@ -161,23 +202,30 @@ fn chosen_cards<'a>(input: &PlanInput<'a>) -> Vec<&'a DeviceInfo> {
             && d.vram_total >= MIN_CARD
             && usable(LocalEngine::Strata, d, &[]).is_ok()
     };
-    if input.model.multi_gpu != MultiGpuMode::Auto && !input.model.devices.is_empty() {
-        return input
-            .model
-            .devices
-            .iter()
-            .filter_map(|r| {
-                input.devices.iter().find(|d| {
-                    if r.uuid.is_empty() {
-                        d.index == r.index && d.vendor == r.vendor
-                    } else {
-                        d.uuid == r.uuid
-                    }
-                })
+    let listed: Vec<&DeviceInfo> = input
+        .model
+        .devices
+        .iter()
+        .filter_map(|r| {
+            input.devices.iter().find(|d| {
+                if r.uuid.is_empty() {
+                    d.index == r.index && d.vendor == r.vendor
+                } else {
+                    d.uuid == r.uuid
+                }
             })
-            .collect();
+        })
+        .collect();
+    // The cards the person listed, in their order, for every choice they made themselves.
+    if input.model.multi_gpu != MultiGpuMode::Auto && !listed.is_empty() {
+        return listed;
     }
-    let mut cards: Vec<&DeviceInfo> = input.devices.iter().filter(usable_card).collect();
+    // Automatic looks only at the cards that are ticked, else at all of them; largest first.
+    let mut cards: Vec<&DeviceInfo> = if listed.is_empty() {
+        input.devices.iter().filter(usable_card).collect()
+    } else {
+        listed.into_iter().filter(usable_card).collect()
+    };
     cards.sort_by(|a, b| {
         b.vram_total
             .cmp(&a.vram_total)
@@ -221,11 +269,17 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
             tuning: tuning_in,
             context_size: model.context_size,
             fits: false,
+            shortfall: u64::MAX,
             notes: vec!["No NVIDIA card that Strata can use was found.".into()],
             advice,
         };
     };
     let fits = level_of(main).is_some();
+    let shortfall = if fits {
+        0
+    } else {
+        shortfall_of(main, on_display(main), model.context_size, tuning_in.draft)
+    };
     let lv = &LEVELS[level];
 
     if !fits {
@@ -244,14 +298,14 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
             gib(main.vram_used)
         ));
     }
-    let context_size = if model.context_size.is_none() && lv.context != ENGINE_CONTEXT {
+    let context_cap = if model.context_size.is_none() && lv.context != ENGINE_CONTEXT {
         notes.push(format!(
-            "The context is {} tokens instead of {} to fit the free video memory.",
+            "The context is at most {} tokens instead of {} to fit the free video memory.",
             lv.context, ENGINE_CONTEXT
         ));
         Some(lv.context)
     } else {
-        model.context_size
+        tuning_in.context_cap
     };
     let draft = tuning_in.draft.unwrap_or(lv.draft);
     if tuning_in.draft.is_none() && !lv.draft {
@@ -322,7 +376,14 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
             ));
             (MultiGpuMode::Split, vec![dref(main)])
         }
-        (Some(m), _) => (m, cards.iter().map(|c| dref(c)).collect()),
+        (Some(m), _) => (
+            m,
+            if explicit {
+                cards.iter().map(|c| dref(c)).collect()
+            } else {
+                vec![dref(main)]
+            },
+        ),
     };
     let tuning = StrataTuning {
         vision: tuning_in.vision,
@@ -331,13 +392,15 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
         vram_reserve_mib: tuning_in
             .vram_reserve_mib
             .or(on_display(main).then_some(MAIN_RESERVE_DISPLAY_MIB as u32)),
+        context_cap,
     };
     Plan {
         mode,
         devices,
         tuning,
-        context_size,
+        context_size: model.context_size,
         fits,
+        shortfall,
         notes,
         advice,
     }
@@ -452,7 +515,11 @@ mod tests {
         let p = run(&rig(0.1, 2.4), &[1], true);
         assert!(p.fits, "{:?}", p.notes);
         assert_eq!(p.devices[0].index, 1);
-        assert_eq!(p.context_size, Some(32_768));
+        assert_eq!(
+            p.context_size, None,
+            "the person's own context is not touched"
+        );
+        assert_eq!(p.tuning.context_cap, Some(32_768));
         assert_eq!(p.tuning.draft, Some(false));
         assert_eq!(p.tuning.vram_reserve_mib, Some(1000));
         assert!(p.notes.iter().any(|n| n.contains("monitor")));
@@ -515,6 +582,89 @@ mod tests {
     }
 
     #[test]
+    fn a_split_model_without_listed_cards_runs_on_the_main_card_only() {
+        for mode in [MultiGpuMode::Split, MultiGpuMode::CopyPerCard] {
+            let mut m = model();
+            m.multi_gpu = mode;
+            let d = rig(0.1, 1.2);
+            let p = plan(&PlanInput {
+                devices: &d,
+                display: &[0],
+                model: &m,
+                prefill_peer: false,
+            });
+            assert_eq!(
+                p.devices.iter().map(|x| x.index).collect::<Vec<_>>(),
+                vec![1],
+                "{mode:?}"
+            );
+            assert_eq!(p.mode, mode);
+        }
+    }
+
+    #[test]
+    fn automatic_only_looks_at_the_cards_that_are_ticked() {
+        let mut m = model();
+        let d = rig(0.1, 1.2);
+        m.devices = vec![dref(&d[0])];
+        let p = plan(&PlanInput {
+            devices: &d,
+            display: &[],
+            model: &m,
+            prefill_peer: false,
+        });
+        assert_eq!(
+            p.devices.iter().map(|x| x.index).collect::<Vec<_>>(),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn a_context_the_person_set_is_costed_at_that_size() {
+        // 2 GiB in use on the big card: 64K with the draft layer does not fit, 16K with it does.
+        let d = rig(0.1, 2.0);
+        let mut m = model();
+        m.context_size = Some(16_384);
+        let p = plan(&PlanInput {
+            devices: &d,
+            display: &[],
+            model: &m,
+            prefill_peer: false,
+        });
+        assert!(p.fits, "{:?}", p.notes);
+        assert_eq!(p.tuning.draft, Some(true), "the draft layer is kept");
+        assert_eq!(p.context_size, Some(16_384));
+        // 1.5 GiB in use: the usual 64K keeps the draft layer, 128K costs more and cannot.
+        let tight = rig(0.1, 1.5);
+        let mut usual = model();
+        usual.context_size = Some(65_536);
+        let mut big = model();
+        big.context_size = Some(131_072);
+        let draft_of = |m: &LocalModel| {
+            plan(&PlanInput {
+                devices: &tight,
+                display: &[],
+                model: m,
+                prefill_peer: false,
+            })
+            .tuning
+            .draft
+        };
+        assert_eq!(draft_of(&usual), Some(true));
+        assert_eq!(draft_of(&big), Some(false));
+    }
+
+    #[test]
+    fn a_shortfall_is_zero_when_it_fits_and_counts_the_missing_bytes_when_not() {
+        let fits = run(&rig(0.1, 1.2), &[0], false);
+        assert_eq!(fits.shortfall, 0);
+        let short = run(&[card(1, "RTX 3060", 4.0, 0.1)], &[], false);
+        assert!(!short.fits && short.shortfall > GIB, "{}", short.shortfall);
+        let near = run(&[card(1, "Card", 5.0, 0.1)], &[], false);
+        assert!(!near.fits && near.shortfall < GIB, "{}", near.shortfall);
+    }
+
+    #[test]
     fn no_usable_card_is_said_plainly() {
         let p = run(&[], &[], true);
         assert!(!p.fits && p.devices.is_empty());
@@ -534,7 +684,11 @@ mod tests {
         let run = p.apply(&m);
         assert_eq!(m.multi_gpu, MultiGpuMode::Auto);
         assert_eq!(run.multi_gpu, MultiGpuMode::Split);
-        assert_eq!(run.context_size, Some(32_768));
+        assert_eq!(run.context_size, None);
+        assert_eq!(
+            StrataTuning::from_extra(run.extra.as_ref()).context_cap,
+            Some(32_768)
+        );
         assert_eq!(
             StrataTuning::from_extra(run.extra.as_ref()).draft,
             Some(false)

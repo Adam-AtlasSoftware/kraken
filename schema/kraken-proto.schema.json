@@ -1760,7 +1760,7 @@
         },
         {
           "const": "auto",
-          "description": "Strata: KRAKEN chooses from the cards and their free memory each time the model starts\n(one card, or a second card helping with long prompts).",
+          "description": "Strata: KRAKEN chooses the main card, the context and the draft layer from the free\nvideo memory each time the model starts. It always runs on one card and names the\nsecond-card choices in its advice.",
           "type": "string"
         },
         {
