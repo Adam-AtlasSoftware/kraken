@@ -604,6 +604,74 @@ pub fn parse_meminfo_total(text: &str) -> Option<u64> {
     Some(kb * 1024)
 }
 
+/// Lowercase `bb:dd.f` of a PCI address, without the domain (`00000000:0B:00.0` and
+/// `0000:0b:00.0` both give `0b:00.0`).
+fn pci_short(addr: &str) -> String {
+    let addr = addr.trim().to_ascii_lowercase();
+    let parts: Vec<&str> = addr.split(':').collect();
+    if parts.len() >= 3 {
+        parts[parts.len() - 2..].join(":")
+    } else {
+        addr
+    }
+}
+
+/// Indexes of the NVIDIA devices in `devices` that have a monitor connected, sorted. Empty when
+/// `nvidia-smi` or the sysfs files are missing.
+pub fn display_cards(probe: &dyn Probe, devices: &[DeviceInfo]) -> Vec<u32> {
+    let Some(out) = probe.run(
+        "nvidia-smi",
+        &[
+            "--query-gpu=index,pci.bus_id",
+            "--format=csv,noheader,nounits",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    let buses: Vec<(u32, String)> = out
+        .lines()
+        .filter_map(|l| {
+            let (index, bus) = l.split_once(',')?;
+            Some((index.trim().parse().ok()?, pci_short(bus)))
+        })
+        .collect();
+
+    let connected: Vec<String> = probe
+        .list("/sys/class/drm")
+        .into_iter()
+        .filter_map(|entry| {
+            let (card, _connector) = entry.split_once('-')?;
+            let digits = card.strip_prefix("card")?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let status = probe.read(&format!("/sys/class/drm/{entry}/status"))?;
+            if status.trim() != "connected" {
+                return None;
+            }
+            let uevent = probe.read(&format!("/sys/class/drm/{card}/device/uevent"))?;
+            uevent
+                .lines()
+                .find_map(|l| l.strip_prefix("PCI_SLOT_NAME="))
+                .map(pci_short)
+        })
+        .collect();
+
+    let mut found: Vec<u32> = buses
+        .into_iter()
+        .filter(|(_, bus)| connected.contains(bus))
+        .map(|(index, _)| index)
+        .filter(|index| {
+            devices
+                .iter()
+                .any(|d| d.index == *index && d.vendor == GpuVendor::Nvidia)
+        })
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
 /// Free bytes on the disk holding `dir` (the nearest existing parent), from `df`.
 fn free_disk(probe: &dyn Probe, dir: &Path) -> u64 {
     let mut at = dir;
@@ -671,6 +739,80 @@ mod tests {
             vram_used: 0,
             state: DeviceState::Ok,
         }
+    }
+
+    fn display_fake(connected: &[(&'static str, &'static str)]) -> Fake {
+        let mut f = Fake::default();
+        f.cmds
+            .insert("nvidia-smi", "0, 00000000:01:00.0\n1, 00000000:0B:00.0\n");
+        let mut entries = vec!["card0", "card1", "card2"];
+        for (n, slot) in [
+            ("card0", "0000:00:02.0"),
+            ("card1", "0000:01:00.0"),
+            ("card2", "0000:0b:00.0"),
+        ] {
+            f.files.insert(
+                Box::leak(format!("/sys/class/drm/{n}/device/uevent").into_boxed_str()),
+                Box::leak(format!("DRIVER=x\nPCI_SLOT_NAME={slot}\n").into_boxed_str()),
+            );
+        }
+        for (entry, status) in connected {
+            entries.push(entry);
+            f.files.insert(
+                Box::leak(format!("/sys/class/drm/{entry}/status").into_boxed_str()),
+                status,
+            );
+        }
+        f.dirs.insert("/sys/class/drm", entries);
+        f
+    }
+
+    fn two_nvidia() -> Vec<DeviceInfo> {
+        let mut a = dev(GpuVendor::Nvidia, 8);
+        let mut b = dev(GpuVendor::Nvidia, 6);
+        a.index = 0;
+        b.index = 1;
+        vec![a, b]
+    }
+
+    #[test]
+    fn display_on_second_nvidia_card() {
+        let f = display_fake(&[
+            ("card2-DP-1", "connected\n"),
+            ("card1-HDMI-A-1", "disconnected\n"),
+        ]);
+        assert_eq!(display_cards(&f, &two_nvidia()), vec![1]);
+    }
+
+    #[test]
+    fn no_connector_connected_gives_none() {
+        let f = display_fake(&[("card1-DP-1", "disconnected\n")]);
+        assert!(display_cards(&f, &two_nvidia()).is_empty());
+    }
+
+    #[test]
+    fn display_without_nvidia_smi_is_empty() {
+        let mut f = display_fake(&[("card2-DP-1", "connected\n")]);
+        f.cmds.clear();
+        assert!(display_cards(&f, &two_nvidia()).is_empty());
+    }
+
+    #[test]
+    fn display_bus_ids_drop_the_domain_and_case() {
+        let f = display_fake(&[("card1-DP-1", "connected\n"), ("card2-DP-2", "connected\n")]);
+        assert_eq!(display_cards(&f, &two_nvidia()), vec![0, 1]);
+    }
+
+    #[test]
+    fn integrated_display_matches_no_nvidia_card() {
+        let f = display_fake(&[("card0-eDP-1", "connected\n")]);
+        assert!(display_cards(&f, &two_nvidia()).is_empty());
+    }
+
+    #[test]
+    fn display_ignores_devices_not_listed() {
+        let f = display_fake(&[("card2-DP-1", "connected\n")]);
+        assert!(display_cards(&f, &two_nvidia()[..1]).is_empty());
     }
 
     #[test]
