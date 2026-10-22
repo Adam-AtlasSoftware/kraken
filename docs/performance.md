@@ -27,6 +27,7 @@ is this tree. Times are wall clock. Cold opens vary by about 15 % with the load 
 | Open `libpython` again (saved state) | 25.7 min (nothing was kept) | **6 s** |
 | Open `libQt6Widgets` the first time | fails: the worker's 10 minute limit (2.4 hours of switch analysis in one thread) | **20 to 25 min** |
 | Open `libQt6Widgets` again | not possible | **7 s** |
+| Analysis job, `libQt6Core` (open plus decompiling every function) | 52 min | **9 min** |
 | Open `cargo` | fails: `jump_tables: unable to load 16 bytes` | **4.7 min**, again in 26 s |
 | Open `libzstd` again, through `krakend` | 47 s | **1.4 s** |
 | Rename a function (`libzstd`, through `krakend`) | 394 ms | **5 ms** |
@@ -108,8 +109,9 @@ of the functions that have none and counts the ones that time out. Through the w
 | `libzstd` | 7.7 s | 0 ms | 0.16 ms | 553 s | 902 |
 
 Everything is in the decompiler: `libzstd` has about 45 functions of 3 to 25 seconds each. The
-stage runs one decompile at a time, as the decompiler library allows, and a decompile asked for by
-the GUI waits for the one in flight (it does not wait for the others).
+stage now runs on several decompiler sessions at once (see [The analysis job on several
+sessions](#the-analysis-job-on-several-sessions)), and a decompile asked for by the GUI no longer
+waits for it.
 
 ## Engine, `libpython` (6.7 MB, 11 270 functions)
 
@@ -286,8 +288,41 @@ function once (to fill in signatures); Ghidra's runs its analyzers.
 
 The decompiler is the same C++ code in both, so its times agree; the native engine answers the
 listing, cross-reference and edit queries 3 to 20 times faster than the JVM engine and reopens a project
-faster. Its analysis job is slower on `libzstd`: it decompiles every function, including the few that take
-20 seconds, one after another (the decompiler allows one decompile at a time per process).
+faster. Its analysis job was slower on `libzstd`: it decompiled every function, including the few that
+take 20 seconds, one after another; it now runs on several sessions at once (below).
+
+## The analysis job on several sessions
+
+The first analysis of a big C++ library is its first open (discovery, already on several sessions)
+and then the analysis job, which decompiles every function once. Measured on `libQt6Core.so.6.11.2`
+(7.2 MB, 14 455 functions), in process, 6 sessions, with `KRAKEN_BENCH_ANALYZE=1`:
+
+| | Before | After |
+|---|---:|---:|
+| `open_binary`, first time (two runs each) | 30.6 s, 37.4 s | 28.5 s, 33.0 s |
+| of which finding functions | 29.7 s, 36.3 s | 27.5 s, 32.0 s |
+| analysis job, `expensive` stage | 3 062 s (CPU time 3 060 s: one core) | 481 to 561 s in four runs |
+| peak RSS | 2.4 GB | 2.5 to 2.7 GB |
+
+The open did not change: discovery already ran on 6 sessions and keeps them busy (about 5
+CPU-seconds per second); types and signatures take 1 s, the string scan 0.1 s, demangling and the
+reference index well under a second, so none of those was worth spreading out. The analysis job was
+the time: one decompile after another, wall time equal to CPU time. A CPU profile of it is
+entirely the decompiler (the red-black trees of `VarnodeBank` and the `HighEdge` cache,
+`Heritage::renameRecurse`, the dead-code and rule pools, about 8 % in the allocator).
+
+The job now runs on as many sessions as discovery (`KRAKEN_NATIVE_THREADS`, up to 6 by default),
+each a copy of the program's session made from its journal of edits, so every function decompiles
+exactly as on the program's session and the signatures are the same with any number of sessions
+(`tests/parallel.rs`, `analyze::tests`). That is 5.5 to 6.4 times faster on 6 sessions. Two things
+measured and kept out: handing out the biggest functions first (617 s against 481 s, every session in
+a huge function at once) and giving memory back after every decompile over 200 ms (a quarter
+slower; it is done after decompiles over 2 s, which keeps the peak at 2.7 GB instead of 3.0 GB, and
+Qt Widgets from growing to 25 GB).
+
+`libQt6Widgets.so.6.11.2` (8.0 MB, 14 963 functions): the first open takes 1 206 s as before (a
+handful of functions with minutes of switch analysis each). Its analysis job has not been timed on
+6 sessions yet; on one session its CPU time puts it at about 9 hours.
 
 ## Progress while a project opens
 
@@ -320,10 +355,8 @@ counting on screen. A cancelled open leaves no session and no worker. Run it aga
   needs either fewer calls (the three overlapping entries of one Qt function each run the same 40-second
   analysis) or a decompiler that does less per jump table; neither is safe to change while the results
   have to stay identical.
-- **The analysis job** decompiles every function one after another in the worker (553 s for the 902
-  functions of `libzstd`, almost all of it in the 45 functions that take seconds each). A decompile in the
-  GUI waits for the one in flight. Running decompiles side by side would need one session per thread
-  with the same types and names in each.
+- **The analysis job** is the decompiler's own time spread over up to 6 sessions; a program with a
+  few huge functions still waits for them (each decompile has the per-function limit).
 - **Memory** for the largest programs (above).
 - **Warm opens** (6 s for `libpython`, 26 s for `cargo`) are the decoding of every instruction with
   Sleigh. Spreading it over several sessions did not pay for the sessions' setup (measured: no change).

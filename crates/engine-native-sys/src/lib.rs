@@ -1,15 +1,20 @@
 //! Ghidra's C++ decompiler and Sleigh, built from source, behind a small KRAKEN shim.
 //!
-//! The decompiler library keeps global state (capability registries, the language list, static
-//! caches) and is not thread-safe, so every call into it takes one process-wide lock; only
-//! `decode`, `lift` and `jump_tables`, which touch nothing but their own session, share it, so the
-//! analysis of one program can run on several sessions at once. A crash or
+//! The decompiler library keeps some global state (capability registries, the language list,
+//! operator tables set up with a session, the C parser), so every call into it takes one
+//! process-wide lock: exclusively for the calls that reach that state (starting the library,
+//! creating and dropping a session, parsing C declarations and prototypes), shared for the calls
+//! that touch nothing but their own session (decoding, lifting, the switch analysis, decompiling,
+//! and the function, mark, convention and comment edits), so the analysis of one program can run
+//! on several sessions at once. Several sessions for one program are kept alike through the
+//! session's [`Journal`] of its edits ([`Session::fork`]). A crash or
 //! hang in the C++ code takes the whole process with it; the plan (ADR 0014) is to move
 //! [`Session`] into a confined child process once the in-process phase has proven the glue.
 //!
 //! When the crate was built without the Ghidra sources (see `build.rs`), [`available`] is false
 //! and every call returns [`NativeError::Unavailable`].
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -367,9 +372,11 @@ fn lock() -> RwLockWriteGuard<'static, ()> {
     LOCK.write().unwrap_or_else(|p| p.into_inner())
 }
 
-/// The shared lock of [`Session::decode`], [`Session::lift`] and [`Session::jump_tables`]: they
-/// only read the session's own program image and Sleigh translator (no process-wide state), so
-/// calls on different sessions may overlap, but never with an exclusive call.
+/// The shared lock of the calls that touch only their own session (its program image, Sleigh
+/// translator, symbol table, types and actions; no process-wide state): calls on different
+/// sessions may overlap, but never with an exclusive call. `tests/parallel.rs` of `engine-native`
+/// runs them side by side, and ThreadSanitizer found no race there (see the native engine's
+/// notes).
 #[cfg(kraken_native)]
 fn lock_shared() -> RwLockReadGuard<'static, ()> {
     LOCK.read().unwrap_or_else(|p| p.into_inner())
@@ -380,7 +387,7 @@ mod real {
     use super::*;
 
     /// Rust side of the load image callback, plus the stop flag decompiles poll.
-    pub struct ImageSource(pub Image, pub Arc<AtomicBool>);
+    pub struct ImageSource(pub Arc<Image>, pub Arc<AtomicBool>);
 
     impl ImageSource {
         fn load_fill(&self, addr: u64, buf: &mut [u8]) -> bool {
@@ -496,6 +503,7 @@ mod real {
                 image: Box<ImageSource>,
             ) -> Result<UniquePtr<Session>>;
             fn add_function(self: Pin<&mut Session>, addr: u64, name: &str) -> Result<()>;
+            fn ensure_function(self: Pin<&mut Session>, addr: u64) -> Result<()>;
             fn decode(self: Pin<&mut Session>, addr: u64, max: u32) -> Result<Vec<InsnOut>>;
             fn lift(self: Pin<&mut Session>, start: u64, end: u64) -> Result<Vec<PcodeOpOut>>;
             fn decompile(self: Pin<&mut Session>, addr: u64, timeout_ms: u32) -> Result<DecompOut>;
@@ -513,7 +521,8 @@ mod real {
         }
     }
 
-    // SAFETY: a Session is only touched while holding the global LOCK, and it owns everything it
+    // SAFETY: a Session is only touched through `&mut` while holding the global LOCK (shared
+    // only by calls that reach nothing outside their own session), and it owns everything it
     // points to (architecture, translator, load image with its boxed ImageSource).
     unsafe impl Send for ffi::Session {}
 
@@ -569,11 +578,63 @@ fn unavailable() -> NativeError {
     )
 }
 
+/// What a session was built for: its language, compiler and program image. Cheap to clone (the
+/// image is shared).
+// the stub build makes no sessions
+#[cfg_attr(not(kraken_native), allow(dead_code))]
+#[derive(Debug, Clone)]
+pub struct Origin {
+    language: String,
+    compiler: String,
+    image: Arc<Image>,
+}
+
+/// One edit of a session's state, as recorded in its [`Journal`].
+// the stub build makes no sessions
+#[cfg_attr(not(kraken_native), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Call {
+    AddFunction(u64, String),
+    /// A function a decompile or switch analysis created with its default name.
+    EnsureFunction(u64),
+    DeclareType(String),
+    SetPrototype(u64, String),
+    SetNoreturn(u64, bool),
+    RemoveFunction(u64),
+    SetConvention(u64, String),
+}
+
+/// The edits made to a session (functions and their names, types, prototypes, marks and
+/// conventions, and the functions decompiles created), in order. Replayed on a new session over
+/// the same [`Origin`] it gives a session the decompiler sees the same way. User comments are not
+/// in it: they are set before each decompile.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Journal {
+    calls: Vec<Call>,
+}
+
+impl Journal {
+    /// Number of edits.
+    pub fn len(&self) -> usize {
+        self.calls.len()
+    }
+
+    /// Whether it holds none.
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty()
+    }
+}
+
 /// A decompiler and Sleigh instance over one program image.
 pub struct Session {
     #[cfg(kraken_native)]
     inner: cxx::UniquePtr<real::ffi::Session>,
     stop: Arc<AtomicBool>,
+    origin: Origin,
+    journal: Journal,
+    /// Addresses whose function a decompile or switch analysis created (or found), journaled once.
+    #[cfg_attr(not(kraken_native), allow(dead_code))]
+    touched: HashSet<u64>,
 }
 
 impl std::fmt::Debug for Session {
@@ -586,25 +647,92 @@ impl Session {
     /// Builds a session for `language_id` and `compiler_id` (such as `gcc` or `default`).
     /// [`start`] must have run.
     pub fn new(language_id: &str, compiler_id: &str, image: Image) -> NativeResult<Session> {
+        Session::from_origin(&Origin {
+            language: language_id.to_string(),
+            compiler: compiler_id.to_string(),
+            image: Arc::new(image),
+        })
+    }
+
+    /// A fresh session for `origin`, with no edits.
+    pub fn from_origin(origin: &Origin) -> NativeResult<Session> {
         #[cfg(kraken_native)]
         {
             let _g = lock();
             let stop = Arc::new(AtomicBool::new(false));
             let inner = real::ffi::new_session(
-                language_id,
-                compiler_id,
-                Box::new(real::ImageSource(image, stop.clone())),
+                &origin.language,
+                &origin.compiler,
+                Box::new(real::ImageSource(origin.image.clone(), stop.clone())),
             )
             .map_err(real::err)?;
             if inner.is_null() {
                 return Err(NativeError::Native("new_session returned null".into()));
             }
-            Ok(Session { inner, stop })
+            Ok(Session {
+                inner,
+                stop,
+                origin: origin.clone(),
+                journal: Journal::default(),
+                touched: HashSet::new(),
+            })
         }
         #[cfg(not(kraken_native))]
         {
-            let _ = (language_id, compiler_id, image);
+            let _ = origin;
             Err(unavailable())
+        }
+    }
+
+    /// What this session was built for, to build more like it ([`Session::from_origin`]).
+    pub fn origin(&self) -> Origin {
+        self.origin.clone()
+    }
+
+    /// Number of edits in the journal so far.
+    pub fn journal_len(&self) -> usize {
+        self.journal.len()
+    }
+
+    /// The edits from the `from`-th on.
+    pub fn journal_since(&self, from: usize) -> Journal {
+        Journal {
+            calls: self.journal.calls.get(from..).unwrap_or_default().to_vec(),
+        }
+    }
+
+    /// Makes the edits of `journal` on this session, in order. An edit that fails here failed
+    /// the same way on the session it was recorded on, and is passed over.
+    pub fn replay(&mut self, journal: &Journal) -> NativeResult<()> {
+        for call in &journal.calls {
+            let r = match call {
+                Call::AddFunction(a, n) => self.add_function(*a, n),
+                Call::EnsureFunction(a) => self.ensure_function(*a),
+                Call::DeclareType(d) => self.declare_type(d),
+                Call::SetPrototype(a, d) => self.set_prototype(*a, d),
+                Call::SetNoreturn(a, n) => self.set_noreturn(*a, *n),
+                Call::RemoveFunction(a) => self.remove_function(*a),
+                Call::SetConvention(a, n) => self.set_convention(*a, n),
+            };
+            if let Err(e @ NativeError::Unavailable(_)) = r {
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    /// A new session over the same program with the same edits: the decompiler gives the same
+    /// answers on it, and it can run beside this one.
+    pub fn fork(&self) -> NativeResult<Session> {
+        let mut s = Session::from_origin(&self.origin)?;
+        s.replay(&self.journal)?;
+        Ok(s)
+    }
+
+    #[cfg(kraken_native)]
+    fn touch(&mut self, addr: u64) {
+        if self.touched.insert(addr) {
+            self.journal.calls.push(Call::EnsureFunction(addr));
         }
     }
 
@@ -619,12 +747,31 @@ impl Session {
     pub fn add_function(&mut self, addr: u64, name: &str) -> NativeResult<()> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            self.journal
+                .calls
+                .push(Call::AddFunction(addr, name.to_string()));
+            let _g = lock_shared();
             self.pinned()?.add_function(addr, name).map_err(real::err)
         }
         #[cfg(not(kraken_native))]
         {
             let _ = (addr, name);
+            Err(unavailable())
+        }
+    }
+
+    /// Creates the function at `addr` with its default name (`FUN_` and the address) unless
+    /// there is one, as a decompile of an unknown address does.
+    pub fn ensure_function(&mut self, addr: u64) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            self.touch(addr);
+            let _g = lock_shared();
+            self.pinned()?.ensure_function(addr).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = addr;
             Err(unavailable())
         }
     }
@@ -711,7 +858,8 @@ impl Session {
         #[cfg(kraken_native)]
         {
             let ms = timeout.map_or(0, |t| t.as_millis().clamp(1, u128::from(u32::MAX)) as u32);
-            let _g = lock();
+            self.touch(addr);
+            let _g = lock_shared();
             let out = self.pinned()?.decompile(addr, ms).map_err(real::err)?;
             if out.interrupted {
                 return Err(NativeError::Interrupted);
@@ -749,6 +897,7 @@ impl Session {
     pub fn jump_tables(&mut self, addr: u64) -> NativeResult<Vec<JumpEdge>> {
         #[cfg(kraken_native)]
         {
+            self.touch(addr);
             let _g = lock_shared();
             let mut t: Vec<JumpEdge> = self
                 .pinned()?
@@ -784,6 +933,7 @@ impl Session {
     pub fn declare_type(&mut self, decl: &str) -> NativeResult<()> {
         #[cfg(kraken_native)]
         {
+            self.journal.calls.push(Call::DeclareType(decl.to_string()));
             let _g = lock();
             self.pinned()?.declare_type(decl).map_err(real::err)
         }
@@ -799,6 +949,9 @@ impl Session {
     pub fn set_prototype(&mut self, addr: u64, decl: &str) -> NativeResult<()> {
         #[cfg(kraken_native)]
         {
+            self.journal
+                .calls
+                .push(Call::SetPrototype(addr, decl.to_string()));
             let _g = lock();
             self.pinned()?.set_prototype(addr, decl).map_err(real::err)
         }
@@ -814,7 +967,8 @@ impl Session {
     pub fn set_noreturn(&mut self, addr: u64, noreturn: bool) -> NativeResult<()> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            self.journal.calls.push(Call::SetNoreturn(addr, noreturn));
+            let _g = lock_shared();
             self.pinned()?
                 .set_noreturn(addr, noreturn)
                 .map_err(real::err)
@@ -831,7 +985,9 @@ impl Session {
     pub fn remove_function(&mut self, addr: u64) -> NativeResult<()> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            self.journal.calls.push(Call::RemoveFunction(addr));
+            self.touched.remove(&addr);
+            let _g = lock_shared();
             self.pinned()?.remove_function(addr).map_err(real::err)
         }
         #[cfg(not(kraken_native))]
@@ -846,7 +1002,10 @@ impl Session {
     pub fn set_convention(&mut self, addr: u64, name: &str) -> NativeResult<()> {
         #[cfg(kraken_native)]
         {
-            let _g = lock();
+            self.journal
+                .calls
+                .push(Call::SetConvention(addr, name.to_string()));
+            let _g = lock_shared();
             self.pinned()?.set_convention(addr, name).map_err(real::err)
         }
         #[cfg(not(kraken_native))]
@@ -868,7 +1027,7 @@ impl Session {
                     text: c.text.clone(),
                 })
                 .collect();
-            let _g = lock();
+            let _g = lock_shared();
             self.pinned()?.set_comments(fad, &list).map_err(real::err)
         }
         #[cfg(not(kraken_native))]

@@ -98,7 +98,7 @@ const CHUNK: u32 = 64;
 /// targets names and the gaps between bodies).
 const MAX_ROUNDS: usize = 8;
 /// Stack of a discovery thread: the decompiler recurses deeply on big functions.
-const WALK_STACK: usize = 64 * 1024 * 1024;
+pub(crate) const WALK_STACK: usize = 64 * 1024 * 1024;
 
 /// A discovered function.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -518,7 +518,7 @@ fn available_memory() -> Option<u64> {
 }
 
 /// Whether the system has less than [`MIN_FREE_MEMORY`] available (false when unknown).
-fn low_on_memory() -> bool {
+pub(crate) fn low_on_memory() -> bool {
     available_memory().is_some_and(|b| b < MIN_FREE_MEMORY)
 }
 
@@ -1016,9 +1016,10 @@ pub fn walk_function(
 /// Code smaller than this is discovered on one session: starting another costs more than it saves.
 pub const PARALLEL_MIN_CODE: u64 = 256 * 1024;
 
-/// How many sessions discovery uses: `KRAKEN_NATIVE_THREADS` if set (1 to 16), else the number of
-/// CPUs, at most 6 and at most one per 3 GB of available memory (each session holds its own copy
-/// of the Sleigh specification, and the switch analysis of a big function can take gigabytes).
+/// How many sessions discovery and the analysis job use: `KRAKEN_NATIVE_THREADS` if set (1 to
+/// 16), else the number of CPUs, at most 6 and at most one per 3 GB of available memory (each
+/// session holds its own copy of the Sleigh specification, and the switch analysis or decompile of
+/// a big function can take gigabytes).
 pub fn default_threads() -> usize {
     match std::env::var("KRAKEN_NATIVE_THREADS")
         .ok()

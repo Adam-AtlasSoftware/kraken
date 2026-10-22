@@ -63,7 +63,7 @@ pub struct NativeConfig {
     /// it in the engine directory of a project). Opening the same binary again restores them.
     /// `None` keeps everything in memory only.
     pub state_dir: Option<PathBuf>,
-    /// How many decompiler sessions the first open of a big binary uses (see
+    /// How many decompiler sessions the first open of a big binary and the analysis job use (see
     /// [`crate::discover::default_threads`]); `None` takes that default. The confined worker has
     /// no environment and cannot read the memory figures, so its parent decides.
     pub discovery_threads: Option<usize>,
@@ -314,6 +314,11 @@ impl Program {
     /// and after every change to names, types, prototypes, comments or the function table.
     pub(crate) fn touch(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// The number of [`Program::touch`] calls so far.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
     }
 
     pub(crate) fn session(&self) -> MutexGuard<'_, Session> {
@@ -883,7 +888,7 @@ pub(crate) fn signature_of(text: &str, name: &str) -> Option<String> {
 }
 
 /// Returns freed heap pages to the system (glibc keeps them, one arena per thread, otherwise).
-fn release_free_memory() {
+pub(crate) fn release_free_memory() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     // SAFETY: malloc_trim only releases memory the allocator already considers free.
     unsafe {
