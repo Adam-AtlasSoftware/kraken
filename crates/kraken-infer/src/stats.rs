@@ -778,6 +778,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // The process tree and its memory come from /proc.
+    #[cfg(target_os = "linux")]
     #[test]
     fn real_proc_reports_this_process() {
         let me = std::process::id();
