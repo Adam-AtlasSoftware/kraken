@@ -274,7 +274,102 @@ pub fn shows_peer_reserve(model: &LocalModel) -> bool {
 /// True when any card setting is set, so "Reset to automatic" has something to do.
 pub fn strata_tuning_is_set(model: &LocalModel) -> bool {
     let t = strata_tuning(model);
-    t.vision.is_some() || t.draft.is_some() || t.peer_reserve_mib.is_some()
+    t.vision.is_some()
+        || t.draft.is_some()
+        || t.peer_reserve_mib.is_some()
+        || answer_speed(model) != AnswerSpeed::Standard
+}
+
+/// How fast Strata answers, traded against how closely it follows the full model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerSpeed {
+    /// Nothing stored: Strata's own settings.
+    Standard,
+    Faster,
+    Fastest,
+    Exact,
+    /// Stored values that match no preset; shown as such and left alone.
+    Custom,
+}
+
+/// One preset and the values it stores (`None`: left unset, Strata's own).
+pub struct SpeedPreset {
+    pub speed: AnswerSpeed,
+    pub tail_skip: Option<u32>,
+    pub spec: Option<u32>,
+    pub spec_min_p_percent: Option<u32>,
+}
+
+const fn preset(
+    speed: AnswerSpeed,
+    tail_skip: Option<u32>,
+    spec: Option<u32>,
+    spec_min_p_percent: Option<u32>,
+) -> SpeedPreset {
+    SpeedPreset {
+        speed,
+        tail_skip,
+        spec,
+        spec_min_p_percent,
+    }
+}
+
+/// The presets a person can pick. The numbers live here and nowhere else.
+pub const ANSWER_SPEED_PRESETS: [SpeedPreset; 4] = [
+    preset(AnswerSpeed::Standard, None, None, None),
+    preset(AnswerSpeed::Faster, Some(5), Some(3), Some(65)),
+    preset(AnswerSpeed::Fastest, Some(4), Some(3), Some(65)),
+    preset(AnswerSpeed::Exact, Some(0), None, None),
+];
+
+impl AnswerSpeed {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Faster => "Faster",
+            Self::Fastest => "Fastest",
+            Self::Exact => "Exact",
+            Self::Custom => "Custom",
+        }
+    }
+
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Standard => "Strata's own settings.",
+            Self::Faster => {
+                "About 20 percent faster answers. More rarely used experts are skipped: in one test the model's top choice for the next word changed in about 4 more places per 100 than with Standard."
+            }
+            Self::Fastest => {
+                "About 30 percent faster. Skips still more experts: in the same test the top choice changed in about 6 more places per 100 than with Standard."
+            }
+            Self::Exact => {
+                "No experts skipped. About 18 percent slower than Standard, but closest to the full model."
+            }
+            Self::Custom => "Set by hand in the configuration file. Pick a preset to replace it.",
+        }
+    }
+}
+
+/// The preset the stored values match, or `Custom`.
+pub fn answer_speed(model: &LocalModel) -> AnswerSpeed {
+    let t = strata_tuning(model);
+    let stored = (t.tail_skip, t.spec, t.spec_min_p_percent);
+    ANSWER_SPEED_PRESETS
+        .iter()
+        .find(|p| (p.tail_skip, p.spec, p.spec_min_p_percent) == stored)
+        .map_or(AnswerSpeed::Custom, |p| p.speed)
+}
+
+/// Applies a preset; the other tuning fields and keys of `extra` stay. `Custom` is not a preset.
+pub fn set_answer_speed(model: &mut LocalModel, speed: AnswerSpeed) {
+    let Some(p) = ANSWER_SPEED_PRESETS.iter().find(|p| p.speed == speed) else {
+        return;
+    };
+    edit_tuning(model, |t| {
+        t.tail_skip = p.tail_skip;
+        t.spec = p.spec;
+        t.spec_min_p_percent = p.spec_min_p_percent;
+    });
 }
 
 fn edit_tuning(model: &mut LocalModel, f: impl FnOnce(&mut StrataTuning)) {
@@ -301,12 +396,15 @@ pub fn set_peer_reserve(model: &mut LocalModel, mib: Option<u32>) {
     edit_tuning(model, |t| t.peer_reserve_mib = mib);
 }
 
-/// Clears the three card settings back to automatic. Other tuning keys stay as they are.
+/// Clears the card settings and the answer speed back to automatic. Other tuning keys stay as they are.
 pub fn reset_strata_tuning(model: &mut LocalModel) {
     edit_tuning(model, |t| {
         t.vision = None;
         t.draft = None;
         t.peer_reserve_mib = None;
+        t.tail_skip = None;
+        t.spec = None;
+        t.spec_min_p_percent = None;
     });
 }
 
@@ -625,6 +723,71 @@ mod tests {
         set_mode(&mut l, MultiGpuMode::PeerTier);
         assert_eq!(l.multi_gpu, MultiGpuMode::Split);
         assert!(!modes_shown(&model(LocalEngine::Llama), &found));
+    }
+
+    #[test]
+    fn every_answer_speed_preset_round_trips_and_keeps_the_rest() {
+        let mut m = model(LocalEngine::Strata);
+        m.extra = Some(serde_json::json!({"other": 1}));
+        assert_eq!(answer_speed(&m), AnswerSpeed::Standard);
+        set_vision(&mut m, Some(false));
+        set_draft(&mut m, Some(true));
+        set_peer_reserve(&mut m, Some(1500));
+        for SpeedPreset { speed: preset, .. } in ANSWER_SPEED_PRESETS {
+            set_answer_speed(&mut m, preset);
+            assert_eq!(answer_speed(&m), preset);
+            let t = strata_tuning(&m);
+            assert_eq!(
+                (t.vision, t.draft, t.peer_reserve_mib),
+                (Some(false), Some(true), Some(1500))
+            );
+            assert_eq!(m.extra.as_ref().map(|e| e["other"].clone()), Some(1.into()));
+        }
+        set_answer_speed(&mut m, AnswerSpeed::Faster);
+        let t = strata_tuning(&m);
+        assert_eq!(
+            (t.tail_skip, t.spec, t.spec_min_p_percent),
+            (Some(5), Some(3), Some(65))
+        );
+        set_answer_speed(&mut m, AnswerSpeed::Fastest);
+        assert_eq!(strata_tuning(&m).tail_skip, Some(4));
+        set_answer_speed(&mut m, AnswerSpeed::Exact);
+        let t = strata_tuning(&m);
+        assert_eq!(
+            (t.tail_skip, t.spec, t.spec_min_p_percent),
+            (Some(0), None, None)
+        );
+        set_answer_speed(&mut m, AnswerSpeed::Standard);
+        let t = strata_tuning(&m);
+        assert_eq!(
+            (t.tail_skip, t.spec, t.spec_min_p_percent),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn unmatched_answer_speed_values_are_custom_until_a_preset_is_picked() {
+        let mut m = model(LocalEngine::Strata);
+        m.extra = Some(serde_json::json!({"strata": {"tail_skip": 6}}));
+        assert_eq!(answer_speed(&m), AnswerSpeed::Custom);
+        set_answer_speed(&mut m, AnswerSpeed::Custom);
+        assert_eq!(answer_speed(&m), AnswerSpeed::Custom);
+        assert_eq!(strata_tuning(&m).tail_skip, Some(6), "left untouched");
+        assert!(strata_tuning_is_set(&m));
+        set_answer_speed(&mut m, AnswerSpeed::Faster);
+        assert_eq!(answer_speed(&m), AnswerSpeed::Faster);
+    }
+
+    #[test]
+    fn reset_clears_the_answer_speed() {
+        let mut m = model(LocalEngine::Strata);
+        m.extra = Some(serde_json::json!({"other": 1}));
+        set_answer_speed(&mut m, AnswerSpeed::Fastest);
+        assert!(strata_tuning_is_set(&m));
+        reset_strata_tuning(&mut m);
+        assert_eq!(answer_speed(&m), AnswerSpeed::Standard);
+        assert_eq!(m.extra, Some(serde_json::json!({"other": 1})));
+        assert!(!strata_tuning_is_set(&m));
     }
 
     #[test]

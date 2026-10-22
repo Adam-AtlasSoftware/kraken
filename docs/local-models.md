@@ -313,12 +313,20 @@ If there is not enough free memory, KRAKEN first shortens the context (from 65,5
 tokens, or less), and if that is not enough it turns the draft layer off (answers get slower).
 KRAKEN tells you what it changed. Settings you choose yourself are never overridden.
 
-Three Strata settings control the automatic choice:
+Four Strata settings control the automatic choice and the speed:
 
 - **Read pictures** (or `extra.strata.vision` in the config): turns on image input.
 - **Use the draft layer** (or `extra.strata.draft`): when on, KRAKEN tries to use it if memory allows.
 - **Second card keeps free** (or `extra.strata.peer_reserve_mib`, default 1000): how much video memory
   to leave free on the second card.
+- **Answer speed**: *Standard* (Strata's own settings, the default), *Faster* (about 20 percent faster
+  answers), *Fastest* (about 30 percent faster) or *Exact* (no experts skipped, slower, closest to the
+  full model). The speed-ups come from skipping rarely used experts and a shorter draft window. Skipping
+  changes answers: on one test text (5,000 positions of code, documents, English, other languages and an
+  agent transcript, one computer) the model's top choice for the next word differed from the
+  no-skip output in 9 of 100 places with *Standard*, 14 with *Faster* and 15 with *Fastest*, and the
+  likelihood of the real text barely moved. The percentages are from one computer. A hand-edited
+  combination shows as *Custom* and stays until you pick a preset.
 
 Here are measurements from one machine and one model to help you choose:
 
@@ -389,7 +397,9 @@ titlebar = "auto"                      # "auto", "custom" or "system"
 `devices` names the cards by their UUID. The index is only a hint, because card numbers can change
 after a restart. `extra` holds engine settings KRAKEN passes on unchanged. For Strata, `extra.strata`
 holds `vision` (boolean, read pictures), `draft` (boolean, use the draft layer), `peer_reserve_mib`
-(integer, keep this many MiB free on the second card, default 1000), and `vram_reserve_mib` (integer,
+(integer, keep this many MiB free on the second card, default 1000), `tail_skip` (integer, how rarely used an expert must be to be skipped; lower skips more, 0 skips none),
+`spec` (integer, tokens the draft layer proposes per check), `spec_min_p_percent` (integer, how sure the
+draft layer must be to extend its guess, in percent), and `vram_reserve_mib` (integer,
 keep this many MiB free on the main card; KRAKEN never lowers it below the reserve in Strata's own
 installed config), and `context_cap` (integer, the longest context to run with; KRAKEN sets it when video
 memory is short and only ever lowers the context Strata was installed with).

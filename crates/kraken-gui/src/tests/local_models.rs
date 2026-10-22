@@ -307,6 +307,28 @@ fn strata_tuning_is_saved_in_extra_and_reset_to_automatic_removes_it() {
 }
 
 #[test]
+fn answer_speed_presets_are_saved_in_extra_and_reset_clears_them() {
+    let mut r = rig(local_provider("strata-iq1-m"));
+    r.until("the cards", |k| {
+        k.h.query_by_label_contains("RTX 3070 Ti").is_some()
+    });
+    assert!(r.has("Answer speed"));
+    assert!(r.has("Strata's own settings."));
+    r.press("Faster");
+    assert!(r.has("About 20 percent faster answers"));
+    let t = kraken_proto::infer::StrataTuning::from_extra(r.saved().local_models[1].extra.as_ref());
+    assert_eq!(
+        (t.tail_skip, t.spec, t.spec_min_p_percent),
+        (Some(5), Some(3), Some(65))
+    );
+    r.press("Exact");
+    let t = kraken_proto::infer::StrataTuning::from_extra(r.saved().local_models[1].extra.as_ref());
+    assert_eq!((t.tail_skip, t.spec), (Some(0), None));
+    r.click("Reset to automatic");
+    assert!(r.saved().local_models[1].extra.is_none());
+}
+
+#[test]
 fn running_out_of_memory_asks_what_to_do() {
     let mut r = rig(local_provider("qwen"));
     r.until("running", |k| k.h.query_by_label("Stop serving").is_some());

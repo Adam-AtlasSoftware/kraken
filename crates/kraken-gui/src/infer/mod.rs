@@ -580,6 +580,7 @@ fn strata_tuning(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut Local
             }
         });
     }
+    answer_speed(ui, p, model);
     let set = card::strata_tuning_is_set(model);
     ui.horizontal(|ui| {
         ui.label(
@@ -600,6 +601,25 @@ fn strata_tuning(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut Local
             card::reset_strata_tuning(model);
         }
     });
+}
+
+fn answer_speed(ui: &mut Ui, p: &kraken_gui_widgets::Palette, model: &mut LocalModel) {
+    let current = card::answer_speed(model);
+    ui.add_space(2.0);
+    ui.label("Answer speed");
+    let mut chosen = current;
+    let shown = card::ANSWER_SPEED_PRESETS
+        .iter()
+        .map(|preset| preset.speed)
+        .chain((current == card::AnswerSpeed::Custom).then_some(card::AnswerSpeed::Custom));
+    for speed in shown {
+        ui.radio_value(&mut chosen, speed, speed.title())
+            .on_hover_text(speed.help());
+    }
+    ui.add(egui::Label::new(RichText::new(current.help()).size(11.5).color(p.text_dim)).wrap());
+    if chosen != current {
+        card::set_answer_speed(model, chosen);
+    }
 }
 
 fn advanced(
