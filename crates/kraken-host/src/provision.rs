@@ -859,6 +859,10 @@ fn extract(spec: &ArtifactSpec, archive: &Path, dest: &Path) -> Result<(), Provi
 /// the downloaded JDK.
 pub const EXT_SOURCES: &[(&str, &str)] = &[
     (
+        "Assemble.java",
+        include_str!("../../../java/kraken-ghidra/src/main/java/kraken/ghidra/Assemble.java"),
+    ),
+    (
         "Dispatcher.java",
         include_str!("../../../java/kraken-ghidra/src/main/java/kraken/ghidra/Dispatcher.java"),
     ),
@@ -899,6 +903,35 @@ pub const EXT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../java/kraken-ghidra/src/main/java/kraken/ghidra/Wire.java"),
     ),
 ];
+
+/// SHA-256 over [`EXT_SOURCES`]: which sources an installed extension was built from.
+pub fn ext_sources_fingerprint() -> String {
+    let mut h = Sha256::new();
+    for (name, text) in EXT_SOURCES {
+        h.update(name.as_bytes());
+        h.update([0]);
+        h.update(text.as_bytes());
+        h.update([0]);
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The stamp next to an installed extension that names the sources it was built from.
+fn ext_stamp(jar: &Path) -> PathBuf {
+    jar.with_extension("jar.sources")
+}
+
+/// True when the extension at `jar` was built from this binary's sources. A jar without a stamp
+/// predates the stamp and is treated as out of date.
+pub fn ext_is_current(jar: &Path) -> bool {
+    fs::read_to_string(ext_stamp(jar)).is_ok_and(|s| s.trim() == ext_sources_fingerprint())
+}
+
+fn write_ext_stamp(jar: &Path) -> Result<(), ProvisionError> {
+    let p = ext_stamp(jar);
+    fs::write(&p, ext_sources_fingerprint())
+        .map_err(io_err(format!("cannot write {}", p.display())))
+}
 
 fn jars_under(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
@@ -1147,11 +1180,15 @@ pub async fn setup(
     }
 
     let have = layout.provisioned();
-    if opts.force || installed_now || have.ext_jar.is_none() {
+    // An extension built by an older KRAKEN lacks the sidecar methods this one calls.
+    let stale = have.ext_jar.as_deref().is_some_and(|j| !ext_is_current(j));
+    if opts.force || installed_now || have.ext_jar.is_none() || stale {
         if let Some(bundled) = opts.bundled_jar.as_ref().filter(|p| p.is_file()) {
             progress(Progress::InstallingBundledExtension);
             let (b, out) = (bundled.clone(), layout.ext_jar());
-            blocking(move || install_bundled_extension(&b, &out)).await?;
+            let o = out.clone();
+            blocking(move || install_bundled_extension(&b, &o)).await?;
+            write_ext_stamp(&out)?;
             return Ok(layout.provisioned());
         }
         let (Some(ghidra), Some(jdk)) = (have.ghidra_home.clone(), have.java_home.clone()) else {
@@ -1163,9 +1200,11 @@ pub async fn setup(
         let work = layout.root().join(".ext-build");
         let out = layout.ext_jar();
         let w = work.clone();
-        let built = blocking(move || build_extension(&jdk, &ghidra, &w, &out)).await;
+        let o = out.clone();
+        let built = blocking(move || build_extension(&jdk, &ghidra, &w, &o)).await;
         let _ = fs::remove_dir_all(&work);
         built?;
+        write_ext_stamp(&out)?;
     }
     Ok(layout.provisioned())
 }

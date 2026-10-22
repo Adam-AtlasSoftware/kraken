@@ -821,3 +821,31 @@ fn tar_extraction_masks_group_and_other_write_bits() {
     assert_eq!(m("top/bin/run") & 0o022, 0);
     assert_eq!(m("top/bin/run") & 0o111, 0o111, "exec bit kept");
 }
+
+#[test]
+fn every_extension_source_is_embedded() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../java/kraken-ghidra/src/main/java/kraken/ghidra");
+    let mut on_disk: Vec<String> = fs::read_dir(&dir)
+        .expect("extension sources")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".java"))
+        .collect();
+    on_disk.sort();
+    let mut embedded: Vec<String> = EXT_SOURCES.iter().map(|(n, _)| n.to_string()).collect();
+    embedded.sort();
+    assert_eq!(on_disk, embedded, "add new .java files to EXT_SOURCES");
+}
+
+#[test]
+fn an_extension_without_this_builds_stamp_is_out_of_date() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let jar = tmp.path().join("kraken-ghidra.jar");
+    fs::write(&jar, b"jar").expect("jar");
+    assert!(!ext_is_current(&jar), "no stamp: built by an older KRAKEN");
+    fs::write(jar.with_extension("jar.sources"), "0123").expect("stamp");
+    assert!(!ext_is_current(&jar), "other sources");
+    write_ext_stamp(&jar).expect("stamp");
+    assert!(ext_is_current(&jar));
+}
