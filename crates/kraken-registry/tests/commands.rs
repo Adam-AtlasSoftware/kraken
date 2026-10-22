@@ -10,6 +10,7 @@ const EXPECTED: &[&str] = &[
     "ai_usage",
     "analyze",
     "apply_edits",
+    "assemble",
     "binary_probe",
     "bookmark_add",
     "bookmark_list",

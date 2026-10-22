@@ -4,7 +4,8 @@
 use egui::{Align2, Id, Key, Margin, Modifiers, RichText, vec2};
 use kraken_gui_widgets::{KrakenTheme, Palette};
 use kraken_viewmodel::navtools::{
-    FieldKind, FunctionDialogKind, PatchOrigin, ResultSegment, TypeMode, result_lines, spaced_hex,
+    AsmState, FieldKind, FunctionDialogKind, PatchOrigin, ResultSegment, TypeMode, result_lines,
+    spaced_hex,
 };
 use kraken_viewmodel::{Permission, ViewModel, humanize_command};
 
@@ -255,6 +256,8 @@ fn bookmark_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
 
 // ---------------------------------------------------------------- byte patch
 
+const ASM_ID: &str = "kraken_patch_asm";
+
 fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let Some(d) = vm.tools.patch_dialog.clone() else {
         return;
@@ -263,7 +266,13 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let (enter, esc) = enter_escape(ctx);
     let mut input = d.input.clone();
     let mut note = d.note.clone();
+    let mut asm = d.asm.clone();
     let (mut save, mut cancel, mut pad) = (false, false, false);
+    let (mut assemble, mut pick) = (false, None);
+    // Enter in the instruction field assembles a new line; once it is assembled (or anywhere
+    // else) Enter stages.
+    let in_asm = ctx.memory(|m| m.has_focus(Id::new(ASM_ID)));
+    let focused_once = ctx.memory(|m| m.focused().is_some());
     let title = if d.existing {
         "Edit byte patch"
     } else {
@@ -288,7 +297,11 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         });
         if let PatchOrigin::Instruction(text) = &d.origin {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Instruction").size(12.0).color(p.text_dim));
+                ui.label(
+                    RichText::new("Instruction now")
+                        .size(12.0)
+                        .color(p.text_dim),
+                );
                 ui.label(RichText::new(text).monospace().color(p.text));
             });
         }
@@ -305,6 +318,64 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         });
         ui.add_space(4.0);
         ui.label(
+            RichText::new("New instruction")
+                .size(12.0)
+                .color(p.text_dim),
+        );
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut asm)
+                    .id(Id::new(ASM_ID))
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("mov eax, 0x7")
+                    .desired_width(ui.available_width() - 90.0),
+            )
+            .on_hover_text(
+                "Type one instruction and press Enter: it is assembled for this address and its \
+                 bytes go in the field below",
+            );
+            let busy = matches!(d.asm_state, AsmState::Busy);
+            if ui
+                .add_enabled(
+                    !busy && !asm.trim().is_empty(),
+                    egui::Button::new("Assemble"),
+                )
+                .on_hover_text("Turn the instruction into bytes (Enter)")
+                .on_disabled_hover_text(if busy {
+                    "Assembling..."
+                } else {
+                    "Type an instruction first"
+                })
+                .clicked()
+            {
+                assemble = true;
+            }
+        });
+        match &d.asm_state {
+            AsmState::Failed(why) => {
+                ui.label(RichText::new(why).size(12.0).color(s.danger));
+            }
+            AsmState::Done(enc) if enc.len() > 1 => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new("Other encodings:")
+                            .size(12.0)
+                            .color(p.text_dim),
+                    );
+                    for (i, b) in enc.iter().enumerate().skip(1).take(5) {
+                        if ui
+                            .small_button(RichText::new(spaced_hex(b)).monospace())
+                            .on_hover_text("Use this encoding instead")
+                            .clicked()
+                        {
+                            pick = Some(i);
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
+        ui.label(
             RichText::new("New bytes (hex)")
                 .size(12.0)
                 .color(p.text_dim),
@@ -317,15 +388,11 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                     .hint_text("90 90, eb 10, b8 07 00 00 00")
                     .desired_width(f32::INFINITY),
             )
-            .on_hover_text(
-                "The bytes to put here, as hex. Spaces are ignored. An assembler for typing \
-                 instructions is not built in yet",
-            );
-        if !r.has_focus()
-            && !d.submitting
-            && !ui.memory(|m| m.has_focus(Id::new("kraken_patch_note")))
-        {
-            r.request_focus();
+            .on_hover_text("The bytes to put here, as hex. Spaces are ignored");
+        let elsewhere = ui
+            .memory(|m| m.has_focus(Id::new("kraken_patch_note")) || m.has_focus(Id::new(ASM_ID)));
+        if !r.has_focus() && !d.submitting && !elsewhere && !focused_once {
+            ui.memory_mut(|m| m.request_focus(Id::new(ASM_ID)));
         }
         if let Some(n) = d.length_note() {
             ui.horizontal_wrapped(|ui| {
@@ -379,11 +446,24 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     if note != d.note {
         vm.set_patch_note(note);
     }
+    if asm != d.asm {
+        vm.set_patch_asm(asm);
+    }
+    if let Some(i) = pick {
+        vm.pick_patch_encoding(i);
+    }
     if pad {
         vm.pad_patch_with_nops();
     }
     if esc || cancel {
         vm.cancel_patch();
+    } else if assemble
+        || (enter
+            && in_asm
+            && !d.asm.trim().is_empty()
+            && !matches!(d.asm_state, AsmState::Done(_)))
+    {
+        vm.assemble_patch();
     } else if save || enter {
         vm.submit_patch();
     }

@@ -15,10 +15,13 @@ Everything below is also in the GUI, under the **Patch** menu:
 
 1. **Stage a patch.** In the **Listing**, click an instruction and press **Patch bytes**; in the
    **Hex** view, select bytes and press **Patch selection** (or **Patch > Patch bytes here...**).
-   The dialog shows the instruction and the bytes there now; type the new bytes as hex. When the
-   replacement is shorter than the instruction it says so, and on x86 **Fill with nop** pads it
-   with `90`. A longer one is flagged too, since it overwrites what follows. Typing an instruction
-   (`mov eax, 7`) instead of hex needs an assembler, which is not built in yet.
+   The dialog shows the instruction and the bytes there now. Type the new instruction
+   (`mov eax, 0x7`, in either case) and press Enter: it is assembled for that address and its
+   shortest encoding goes in the hex field, with the other encodings offered beside it. Or type
+   the bytes as hex yourself. When the replacement is shorter than the instruction it says so,
+   and on x86 **Fill with nop** pads it with `90`. A longer one is flagged too, since it
+   overwrites what follows. Assembling uses Ghidra's SLEIGH assembler, so it needs a project on
+   the Ghidra engine; on the native engine type the hex.
 2. **Check it.** **Patch > Show patches** opens the **Patches** tab: every staged patch with its
    original and new bytes, note and author, with **Edit** and **Remove**. **Run original vs
    patched** runs the program twice in the emulator and puts the two runs side by side. Staged
@@ -73,6 +76,8 @@ analysis engine, carry no undo entry and never alter the program you are analysi
 - `patch_remove` — delete the patch at an address, putting the overlay back the way it was.
 - `patch_list` — every patch with its original and replacement bytes, note and who set it.
 - `patch_export` — write a copy of the binary with every patch applied.
+- `assemble` — one instruction to its encodings at an address (`assemble {"address":
+  "0x401136", "text": "mov eax, 0x7"}`), shortest first; nothing is written.
 
 Recording and removing patches are ordinary reversible edits to the overlay — nothing is written
 to disk and nothing runs — so they do not ask for approval. Producing a patched binary with

@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use kraken_engine::{
-    AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
-    DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph,
-    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, Progress,
-    Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider,
-    XrefRequest, type_def_name,
+    AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, Assembler, CancellationToken, Cap,
+    Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter,
+    ProgramInfo, Progress, Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark,
+    XrefProvider, XrefRequest, type_def_name,
 };
 use kraken_proto::{
     BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, LogOp,
@@ -219,6 +219,56 @@ impl Engine for FakeEngine {
     }
     fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         self.has(Cap::Symbols).then_some(self as &dyn SymbolLister)
+    }
+    fn assembler(&self) -> Option<&dyn Assembler> {
+        self.has(Cap::Assembler).then_some(self as &dyn Assembler)
+    }
+}
+
+/// A few x86 instructions, enough to exercise the patch dialog in tests and the demo. A real
+/// engine runs its processor's assembler.
+fn fake_assemble(text: &str) -> Option<Vec<Vec<u8>>> {
+    let t = text.trim().to_ascii_lowercase();
+    let t: String = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    let one = |b: &[u8]| Some(vec![b.to_vec()]);
+    match t.as_str() {
+        "nop" => one(&[0x90]),
+        "ret" => one(&[0xc3]),
+        "int3" => one(&[0xcc]),
+        "xor eax, eax" | "xor eax,eax" => Some(vec![vec![0x31, 0xc0], vec![0x33, 0xc0]]),
+        _ => {
+            let imm = t
+                .strip_prefix("mov eax, ")
+                .or_else(|| t.strip_prefix("mov eax,"))?
+                .trim();
+            let v = match imm.strip_prefix("0x") {
+                Some(h) => u32::from_str_radix(h, 16).ok()?,
+                None => imm.parse::<u32>().ok()?,
+            };
+            let mut b = vec![0xb8];
+            b.extend_from_slice(&v.to_le_bytes());
+            one(&b)
+        }
+    }
+}
+
+#[async_trait]
+impl Assembler for FakeEngine {
+    async fn assemble(
+        &self,
+        _at: &Locator,
+        text: &str,
+        _cancel: &CancellationToken,
+    ) -> EngineResult<Vec<Vec<u8>>> {
+        fake_assemble(text).ok_or_else(|| {
+            ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "`{}` is not an instruction the fake engine knows",
+                    text.trim()
+                ),
+            )
+        })
     }
 }
 

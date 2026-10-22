@@ -145,6 +145,24 @@ pub struct PatchDialog {
     pub submitting: bool,
     /// The program is x86 (one-byte `nop` is 0x90).
     pub x86: bool,
+    /// The instruction typed to be assembled into `input`.
+    pub asm: String,
+    /// Where assembling the instruction stands.
+    pub asm_state: AsmState,
+}
+
+/// Assembling the typed instruction.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AsmState {
+    /// Nothing asked.
+    #[default]
+    Idle,
+    /// The engine is assembling.
+    Busy,
+    /// The encodings, shortest first; the first one is in the hex field.
+    Done(Vec<Vec<u8>>),
+    /// Why it did not assemble (plain language).
+    Failed(String),
 }
 
 impl PatchDialog {
@@ -409,6 +427,8 @@ impl ViewModel {
             error: None,
             submitting: false,
             x86: self.is_x86(),
+            asm: String::new(),
+            asm_state: AsmState::Idle,
         });
     }
 
@@ -456,6 +476,79 @@ impl ViewModel {
     pub fn set_patch_note(&mut self, text: impl Into<String>) {
         if let Some(d) = self.tools.patch_dialog.as_mut() {
             d.note = text.into();
+            d.error = None;
+        }
+    }
+
+    /// Updates the instruction being typed.
+    pub fn set_patch_asm(&mut self, text: impl Into<String>) {
+        if let Some(d) = self.tools.patch_dialog.as_mut() {
+            d.asm = text.into();
+            if !matches!(d.asm_state, AsmState::Busy) {
+                d.asm_state = AsmState::Idle;
+            }
+        }
+    }
+
+    /// Assembles the typed instruction at the dialog's address and puts the shortest encoding
+    /// in the hex field.
+    pub fn assemble_patch(&mut self) {
+        let Some(d) = self.tools.patch_dialog.as_mut() else {
+            return;
+        };
+        let text = d.asm.trim().to_string();
+        if text.is_empty() || matches!(d.asm_state, AsmState::Busy) {
+            return;
+        }
+        d.asm_state = AsmState::Busy;
+        let address = d.address;
+        self.call(
+            "assemble",
+            json!({"address": hex(address), "text": text}),
+            move |vm, res| {
+                let Some(d) = vm
+                    .tools
+                    .patch_dialog
+                    .as_mut()
+                    .filter(|d| d.address == address)
+                else {
+                    return;
+                };
+                match res {
+                    Ok(v) => {
+                        let enc: Vec<Vec<u8>> = v["encodings"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|h| h.as_str()).map(unhex).collect())
+                            .unwrap_or_default();
+                        match enc.first() {
+                            Some(first) => {
+                                d.input = spaced_hex(first);
+                                d.error = None;
+                                d.asm_state = AsmState::Done(enc);
+                            }
+                            None => d.asm_state = AsmState::Failed("No encoding came back.".into()),
+                        }
+                    }
+                    Err(e) if e.code == kraken_proto::ErrorCode::Unsupported => {
+                        d.asm_state = AsmState::Failed(
+                            "This engine cannot assemble instructions; open the project with the \
+                             Ghidra engine, or type the bytes as hex."
+                                .into(),
+                        );
+                    }
+                    Err(e) => d.asm_state = AsmState::Failed(plain_error(&e)),
+                }
+            },
+        );
+    }
+
+    /// Uses another encoding of the assembled instruction.
+    pub fn pick_patch_encoding(&mut self, index: usize) {
+        if let Some(d) = self.tools.patch_dialog.as_mut()
+            && let AsmState::Done(enc) = &d.asm_state
+            && let Some(b) = enc.get(index)
+        {
+            d.input = spaced_hex(b);
             d.error = None;
         }
     }

@@ -221,8 +221,11 @@ fn screenshot_the_patch_dialog_and_the_patches_tab() {
         .as_ref()
         .and_then(|d| d.original.as_ref())
         .map_or(1, Vec::len);
-    vm.set_patch_input(if len > 2 { "31 c0" } else { "90" });
+    let _ = len;
+    vm.set_patch_asm("xor eax, eax");
+    vm.assemble_patch();
     vm.set_patch_note("return 0 instead");
+    k.h.run_steps(4);
     save(&mut k, "patch-dialog.png");
 
     let vm = k.h.state_mut().view_model_mut().expect("vm");

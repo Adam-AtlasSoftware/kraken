@@ -20,8 +20,8 @@ pub use form::{
     result_lines,
 };
 pub use patches::{
-    ExportDialog, ExportDone, MAX_PATCH_BYTES, PatchDialog, PatchItem, PatchOrigin, PatchesPanel,
-    RunCompare, RunSide, parse_hex, spaced_hex,
+    AsmState, ExportDialog, ExportDone, MAX_PATCH_BYTES, PatchDialog, PatchItem, PatchOrigin,
+    PatchesPanel, RunCompare, RunSide, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};

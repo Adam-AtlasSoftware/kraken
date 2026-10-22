@@ -9,11 +9,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use kraken_engine::ProgressSender;
 use kraken_engine::{
-    AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, CancellationToken, Cap, Decompiler,
-    DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph,
-    FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, Progress,
-    Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark, XrefProvider,
-    XrefRequest, type_def_name, unsupported,
+    AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, Assembler, CancellationToken, Cap,
+    Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter,
+    ProgramInfo, Progress, Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark,
+    XrefProvider, XrefRequest, type_def_name, unsupported,
 };
 use kraken_proto::{
     Anchor, BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Hex64, Locator,
@@ -928,6 +928,48 @@ impl Engine for GhidraEngine {
     }
     fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         Some(self)
+    }
+    fn assembler(&self) -> Option<&dyn Assembler> {
+        Some(self)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Assembled {
+    encodings: Vec<String>,
+}
+
+#[async_trait]
+impl Assembler for GhidraEngine {
+    async fn assemble(
+        &self,
+        at: &Locator,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Vec<Vec<u8>>> {
+        let out: Assembled = self
+            .rpc_typed(
+                "assemble",
+                json!({"locator": at, "text": text}),
+                self.deadline(),
+                cancel,
+            )
+            .await?;
+        out.encodings
+            .iter()
+            .map(|h| {
+                (0..h.len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(h.get(i..i + 2).unwrap_or("zz"), 16))
+                    .collect::<Result<Vec<u8>, _>>()
+                    .map_err(|_| {
+                        ProtoError::new(
+                            ErrorCode::Internal,
+                            "the sidecar sent bytes that are not hex",
+                        )
+                    })
+            })
+            .collect()
     }
 }
 
