@@ -42,6 +42,11 @@ pub trait LocalResolver: Send + Sync {
     /// The endpoint of `model` (its id in `[[local_models]]`), waiting while it loads. Fails with
     /// [`AgentError::ModelNotRunning`] when it is not running and may not be started.
     async fn resolve(&self, model: &str) -> Result<LocalEndpoint, AgentError>;
+
+    /// The context length `model` is served with, in tokens, when it is known.
+    fn context_window(&self, _model: &str) -> Option<u32> {
+        None
+    }
 }
 
 /// The chat provider of `kind = "local"`.
@@ -109,7 +114,7 @@ impl ChatProvider for LocalProvider {
             id: "local".into(),
             model: self.model.clone(),
             supports_tools: true,
-            context_window: None,
+            context_window: self.resolver.context_window(&self.model),
         }
     }
 
@@ -186,6 +191,26 @@ mod tests {
         assert!(!e.is_retryable());
         assert_eq!(r.calls.load(Ordering::SeqCst), 1);
         assert_eq!(p.info().model, "x");
+        assert_eq!(p.info().context_window, None);
+    }
+
+    #[test]
+    fn the_resolver_gives_the_context_window() {
+        struct Sized;
+        #[async_trait]
+        impl LocalResolver for Sized {
+            async fn resolve(&self, model: &str) -> Result<LocalEndpoint, AgentError> {
+                Err(AgentError::ModelNotRunning {
+                    model: model.into(),
+                    message: String::new(),
+                })
+            }
+            fn context_window(&self, _model: &str) -> Option<u32> {
+                Some(32_768)
+            }
+        }
+        let p = LocalProvider::new("x", Arc::new(Sized));
+        assert_eq!(p.info().context_window, Some(32_768));
     }
 
     #[tokio::test]
