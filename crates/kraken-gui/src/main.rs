@@ -75,6 +75,7 @@ fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("KRAKEN")
             .with_app_id("kraken-gui")
+            .with_icon(window_icon())
             .with_inner_size(size)
             .with_min_inner_size([900.0, 560.0])
             .with_decorations(!custom_bar)
@@ -104,4 +105,21 @@ fn main() -> anyhow::Result<()> {
         }),
     )
     .map_err(|e| anyhow!("{e}"))
+}
+
+/// The window icon (taskbars that do not read the desktop entry, such as X11 and Windows ones).
+fn window_icon() -> egui::IconData {
+    let png = include_bytes!("../assets/kraken-icon.png");
+    match image::load_from_memory(png) {
+        Ok(img) => {
+            let img = img.into_rgba8();
+            let (width, height) = img.dimensions();
+            egui::IconData {
+                rgba: img.into_raw(),
+                width,
+                height,
+            }
+        }
+        Err(_) => egui::IconData::default(),
+    }
 }
