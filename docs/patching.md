@@ -22,10 +22,14 @@ Everything below is also in the GUI, under the **Patch** menu:
    and on x86 **Fill with nop** pads it with `90`. A longer one is flagged too, since it
    overwrites what follows. Assembling uses Ghidra's SLEIGH assembler, so it needs a project on
    the Ghidra engine; on the native engine type the hex.
+   ![The patch dialog: the instruction there now, a new instruction assembled to 31 c0 with its other encoding, and the note that the rest of the instruction stays](images/patch-dialog.png)
+
 2. **Check it.** **Patch > Show patches** opens the **Patches** tab: every staged patch with its
    original and new bytes, note and author, with **Edit** and **Remove**. **Run original vs
    patched** runs the program twice in the emulator and puts the two runs side by side. Staged
    bytes are tinted in the Hex view (which keeps showing the bytes on disk).
+   ![The Patches tab with one staged patch, its original and new bytes, and the Run, Export and Refresh buttons; the staged bytes tinted in the Hex view](images/patches.png)
+
 3. **Export.** **Export patched binary...** asks where to write the copy (a relative path lands in
    the project folder), then asks for approval like every dangerous command.
 
@@ -45,6 +49,8 @@ before you see it:
   the model compares that with your edit. The tab says **Verified**, **Partly verified**, **Not
   verified**, or **Not checked** when the second engine could not run, and shows the patched
   decompile. A failed check is planned again once with what it saw.
+
+![The Edit tab next to the decompiler: the edited C on the left, the plan with its verdict and the patch on the right](images/edit-tab.png)
 
 **Stage patches** stages the plan with `patch_set` (each patch's note says it came from your
 edit); **Run original vs patched** then compares the two in the Patches tab. It works best for

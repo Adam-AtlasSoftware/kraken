@@ -11,11 +11,11 @@ use std::fmt;
 
 use object::read::{Object, ObjectSegment};
 
-/// Load base the native engine uses for a position-independent executable (ADR 0014); tried as a
-/// fallback when a patch address does not sit at the file's own virtual addresses.
-pub const NATIVE_PIE_BASE: u64 = 0x10000;
-/// Load base Ghidra gives a position-independent ELF; tried after the native engine's.
-pub const GHIDRA_PIE_BASE: u64 = 0x100000;
+/// Load base Ghidra and the native engine give a position-independent executable; tried when a
+/// patch address does not sit at the file's own virtual addresses.
+pub const PIE_BASE: u64 = 0x100000;
+/// The native engine's load base for a position-independent 32-bit x86 executable.
+pub const PIE_BASE_32: u64 = 0x10000;
 
 /// A byte patch ready to write to a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,7 +146,7 @@ fn resolve(
 
 /// Writes `patches` into a copy of `image` and returns the patched bytes with where each one
 /// landed (ordered by address). The load base is found automatically: the file's own virtual
-/// addresses first, then the native engine's and Ghidra's PIE bases.
+/// addresses first, then the engines' PIE bases.
 pub fn patch_file_bytes(
     image: &[u8],
     patches: &[FilePatch],
@@ -174,7 +174,7 @@ pub fn patch_file_bytes_at(
         .and_then(|b| b.checked_sub(lowest))
         .into_iter()
         .collect();
-    for b in [0, NATIVE_PIE_BASE, GHIDRA_PIE_BASE] {
+    for b in [0, PIE_BASE_32, PIE_BASE] {
         if !bases.contains(&b) {
             bases.push(b);
         }
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn a_pie_maps_at_either_engine_base_or_the_one_reported() {
         let image = elf_pie();
-        for base in [NATIVE_PIE_BASE, GHIDRA_PIE_BASE, 0x5555_0000] {
+        for base in [PIE_BASE_32, PIE_BASE, 0x5555_0000] {
             let patches = vec![FilePatch {
                 address: base + 0x100,
                 original: vec![0x74, 0x10],
@@ -324,7 +324,7 @@ mod tests {
         // the 0x10000 base on top of the file's own 0x400100.
         let image = elf_exec();
         let patches = vec![FilePatch {
-            address: 0x400100 + NATIVE_PIE_BASE,
+            address: 0x400100 + PIE_BASE_32,
             original: vec![0x74, 0x10],
             replacement: vec![0x90, 0x90],
         }];
