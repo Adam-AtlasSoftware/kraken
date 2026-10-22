@@ -26,6 +26,33 @@ Everything below is also in the GUI, under the **Patch** menu:
 3. **Export.** **Export patched binary...** asks where to write the copy (a relative path lands in
    the project folder), then asks for approval like every dangerous command.
 
+### Edit the C instead (experimental)
+
+With a function open, **Patch function** in the Decompiler opens the **Edit** tab next to it:
+the function's C, editable. Change what you want (a constant, a comparison, which branch runs)
+and press **Plan patch**. The assistant's model gets the decompile, your edit and the disassembly
+and plans the smallest in-place byte change that does the same; KRAKEN then checks the plan
+before you see it:
+
+- every patch must lie inside the function's instructions, replace bytes with the same number of
+  bytes, and actually change something; the original bytes come from the disassembly, never
+  from the model;
+- the patched bytes are decompiled again: a copy of the binary with the patches goes into a
+  temporary directory and a second engine of the project's kind decompiles the function, and
+  the model compares that with your edit. The tab says **Verified**, **Partly verified**, **Not
+  verified**, or **Not checked** when the second engine could not run, and shows the patched
+  decompile. A failed check is planned again once with what it saw.
+
+**Stage patches** stages the plan with `patch_set` (each patch's note says it came from your
+edit); **Run original vs patched** then compares the two in the Patches tab. It works best for
+small, local changes: an edit that needs more room, a new call or new data comes back with no
+patches and says why. Planning costs AI calls on the assistant's model (two per round) and asks
+first like other AI work. The command behind it is `patch_from_source`, a job that only plans:
+
+```
+patch_from_source {"address": "0x401136", "source": "int f(void)\n{\n  return 7;\n}"}
+```
+
 The assistant can stage and remove patches too. Whether it may export is the assistant's
 [danger mode](assistant.md#dangerous-commands-deny-ask-or-yolo): never (Deny), after asking you
 (Ask, the default) or without asking (YOLO).

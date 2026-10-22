@@ -241,3 +241,41 @@ fn screenshot_the_patch_dialog_and_the_patches_tab() {
     k.h.state_mut().dispatch(AppAction::ShowPatches, &ctx);
     save(&mut k, "patches.png");
 }
+
+#[test]
+#[ignore = "writes PNG files and needs a GPU; run by hand"]
+fn screenshot_the_edit_tab_with_a_plan() {
+    let mut k = kit_with(true, true);
+    ready_demo(&mut k);
+    let ctx = k.h.ctx.clone();
+    let vm = k.h.state_mut().view_model_mut().expect("vm");
+    vm.begin_source_edit();
+    let text = vm
+        .tools
+        .source_edit
+        .as_ref()
+        .map(|e| e.text.replacen("return 2;", "return 0;  // keep going", 1))
+        .expect("edit");
+    vm.set_source_edit_text(text);
+    vm.plan_source_edit();
+    let _ = ctx;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        k.h.run_steps(1);
+        let vm = k.h.state_mut().view_model_mut().expect("vm");
+        if vm.ai.confirm.is_some() {
+            vm.ai_confirm_yes();
+        }
+        if vm
+            .tools
+            .source_edit
+            .as_ref()
+            .is_some_and(|e| e.plan().is_some())
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no plan");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    save(&mut k, "edit-tab.png");
+}

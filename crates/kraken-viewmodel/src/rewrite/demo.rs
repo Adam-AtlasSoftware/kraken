@@ -545,6 +545,10 @@ impl RewriteBackend for DemoRewrite {
         Ok(())
     }
 
+    fn source_patch(&self) -> Option<Arc<dyn kraken_registry::commands::SourcePatchBackend>> {
+        Some(Arc::new(DemoSourcePatch))
+    }
+
     async fn plan(
         &self,
         _s: &Session,
@@ -945,5 +949,74 @@ impl RewriteBackend for DemoRewrite {
             "coverage": {"accepted": st.accepted.len(), "planned": FUNCS.len(), "functions_total": 21},
             "readme": {"untrusted": true, "value": "README.md"},
         }))
+    }
+}
+
+/// A scripted `patch_from_source`: the function's first instruction becomes `nop`s, and the
+/// "check" says it matches when the edit is in the source. No model, nothing decompiled again.
+pub struct DemoSourcePatch;
+
+#[async_trait]
+impl kraken_registry::commands::SourcePatchBackend for DemoSourcePatch {
+    async fn patch_from_source(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::PatchFromSourceArgs,
+        job: &JobReporter,
+    ) -> Result<kraken_registry::commands::PatchFromSourceResult, ProtoError> {
+        use kraken_registry::Command;
+        use kraken_registry::commands::{
+            Disassemble, DisassembleArgs, PatchFromSourceResult, PlannedPatch, SourcePatchCheck,
+            SourcePatchVerdict,
+        };
+        job.progress(JobProgress {
+            phase: "plan".into(),
+            done: 1,
+            total: 3,
+            message: "planning the patch (demo)".into(),
+        });
+        tokio::time::sleep(STEP).await;
+        let page = Disassemble
+            .run(
+                s,
+                ctx,
+                DisassembleArgs {
+                    address: None,
+                    function: Some(args.address),
+                    max_instructions: Some(4),
+                    cursor: None,
+                },
+            )
+            .await?;
+        let first = page.items.first().ok_or_else(|| {
+            ProtoError::new(ErrorCode::NotFound, "the function has no instructions")
+        })?;
+        let n = first.bytes.len() / 2;
+        Ok(PatchFromSourceResult {
+            function: args.address,
+            patches: vec![PlannedPatch {
+                address: first.address,
+                original: first.bytes.clone(),
+                replacement: "90".repeat(n),
+                explanation: kraken_proto::Untrusted(format!(
+                    "Replaces `{}` with {n} nop{} (demo).",
+                    first.mnemonic,
+                    if n == 1 { "" } else { "s" }
+                )),
+            }],
+            summary: kraken_proto::Untrusted(
+                "A scripted plan for the demo project: the first instruction is skipped.".into(),
+            ),
+            check: SourcePatchCheck {
+                verdict: SourcePatchVerdict::Matches,
+                reason: kraken_proto::Untrusted(
+                    "The demo does not decompile again; this verdict is scripted.".into(),
+                ),
+                patched_decompile: Some(kraken_proto::Untrusted(args.source)),
+            },
+            attempts: 1,
+            warnings: Vec::new(),
+        })
     }
 }

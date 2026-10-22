@@ -32,6 +32,7 @@ pub enum Tab {
     Search,
     Bookmarks,
     Patches,
+    Edit,
     AiActivity,
 }
 
@@ -57,11 +58,12 @@ impl Tab {
             Tab::Search => "search",
             Tab::Bookmarks => "bookmarks",
             Tab::Patches => "patches",
+            Tab::Edit => "edit",
             Tab::AiActivity => "ai_activity",
         }
     }
 
-    pub const ALL: [Tab; 16] = [
+    pub const ALL: [Tab; 17] = [
         Tab::Functions,
         Tab::Decompiler,
         Tab::Hex,
@@ -77,6 +79,7 @@ impl Tab {
         Tab::Search,
         Tab::Bookmarks,
         Tab::Patches,
+        Tab::Edit,
         Tab::AiActivity,
     ];
 
@@ -97,6 +100,7 @@ impl Tab {
             Tab::Search => "Search",
             Tab::Bookmarks => "Bookmarks",
             Tab::Patches => "Patches",
+            Tab::Edit => "Edit",
             Tab::AiActivity => "AI Activity",
         }
     }
@@ -208,18 +212,25 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
             NavTab::Search => Tab::Search,
             NavTab::Bookmarks => Tab::Bookmarks,
             NavTab::Patches => Tab::Patches,
+            NavTab::Edit => Tab::Edit,
             NavTab::History => Tab::History,
             NavTab::Rewrite => Tab::Rewrite,
         });
     }
     if let Some(tab) = state.bring_to_front.take() {
-        // A layout without the tab (a screenshot scene) gets it in the focused pane.
+        // A layout without the tab (a screenshot scene) gets it in the focused pane; the code
+        // editor goes next to the decompiler, where there is room for code.
         if dock.find_tab(&tab).is_none()
             && matches!(
                 tab,
-                Tab::Search | Tab::Bookmarks | Tab::Patches | Tab::AiActivity
+                Tab::Search | Tab::Bookmarks | Tab::Patches | Tab::Edit | Tab::AiActivity
             )
         {
+            if tab == Tab::Edit
+                && let Some(path) = dock.find_tab(&Tab::Decompiler)
+            {
+                dock.set_focused_node_and_surface(path.node_path());
+            }
             dock.push_to_focused_leaf(tab);
         }
         if let Some(path) = dock.find_tab(&tab) {
@@ -319,6 +330,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Search => panels::search::show(ui, self.vm, &mut self.ui.panels),
             Tab::Bookmarks => panels::bookmarks::show(ui, self.vm, &mut self.ui.panels),
             Tab::Patches => panels::patches::show(ui, self.vm),
+            Tab::Edit => panels::source_edit::show(ui, self.vm),
             Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
         }
     }
@@ -491,6 +503,7 @@ enum Act {
     SyncListing(u64),
     RewriteThis,
     Signature,
+    PatchThis,
 }
 
 fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
@@ -560,6 +573,18 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                 {
                     acts.push(Act::RewriteThis);
                 }
+                let ready = matches!(cur.decompiled, Load::Ready(_));
+                if ui
+                    .add_enabled(ready, egui::Button::new("Patch function"))
+                    .on_hover_text(
+                        "Experimental: edit this C and let the assistant turn your change into a \
+                         byte patch. Best for small changes. Opens the Edit tab",
+                    )
+                    .on_disabled_hover_text("Wait for the decompiler")
+                    .clicked()
+                {
+                    acts.push(Act::PatchThis);
+                }
                 if ui
                     .button("Rename  (N)")
                     .on_hover_text("Give this function a better name")
@@ -622,6 +647,7 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                 vm.rewrite_run_current();
                 st.bring_to_front = Some(Tab::Rewrite);
             }
+            Act::PatchThis => vm.begin_source_edit(),
         }
     }
 }

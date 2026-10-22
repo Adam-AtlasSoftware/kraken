@@ -155,6 +155,19 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         terms: &["patch", "opcode", "offset", "byte"],
     },
     PanelHelp {
+        panel: "Edit",
+        short: "Experimental: edit a function's C and let the assistant turn it into a byte patch.",
+        text: "Change the decompiled C of a function, for example a constant, a comparison or which branch runs. The assistant's model works out the smallest change to the machine code that does the same, then the patched bytes are decompiled again to check it. Nothing changes until you stage the patches, and nothing on disk changes until you export. It works best for small, local changes; for anything bigger, patch the bytes by hand or rewrite the function.",
+        how: &[
+            "Open a function and press Patch function in the Decompiler.",
+            "Edit the C on the left, then press Plan patch.",
+            "Read the check and the patched decompile, then press Stage patches.",
+            "Run original vs patched from the Patches tab before you export.",
+        ],
+        keys: &[],
+        terms: &["patch", "decompiler", "pseudocode", "instruction"],
+    },
+    PanelHelp {
         panel: "History",
         short: "Every change made to this project, who made it, and a way to undo it.",
         text: "A log of every change to this project: who made it, when, and a way to undo it. Nothing the assistant does is permanent.",

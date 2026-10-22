@@ -45,7 +45,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, History, Proposals, Assistant, Rewrite, AI Activity. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Edit, History, Proposals, Assistant, Rewrite, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -281,6 +281,19 @@ How to use it:
 - Type the new bytes as hex. A shorter patch on x86 can be filled with nop (90).
 - Press Run original vs patched to compare them in the emulator.
 - Press Export patched binary to write the copy.
+
+### Edit
+
+Experimental: edit a function's C and let the assistant turn it into a byte patch.
+
+Change the decompiled C of a function, for example a constant, a comparison or which branch runs. The assistant's model works out the smallest change to the machine code that does the same, then the patched bytes are decompiled again to check it. Nothing changes until you stage the patches, and nothing on disk changes until you export. It works best for small, local changes; for anything bigger, patch the bytes by hand or rewrite the function.
+
+How to use it:
+
+- Open a function and press Patch function in the Decompiler.
+- Edit the C on the left, then press Plan patch.
+- Read the check and the patched decompile, then press Stage patches.
+- Run original vs patched from the Patches tab before you export.
 
 ### History
 

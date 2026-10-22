@@ -76,6 +76,8 @@ pub enum AiAction {
     AutoName(usize),
     /// Automate towards a goal.
     Automate(AutomateGoal),
+    /// Plan a byte patch from the edited code of the function at this address.
+    PatchFromSource(u64),
 }
 
 impl AiAction {
@@ -96,6 +98,7 @@ impl AiAction {
             AiAction::Overview => "Ask the assistant for an overview?",
             AiAction::AutoName(_) => "Suggest names?",
             AiAction::Automate(_) => "Start Automate?",
+            AiAction::PatchFromSource(_) => "Plan a patch from your edit?",
         }
     }
 }
@@ -319,6 +322,11 @@ impl ViewModel {
             AiAction::AutoName(limit) => {
                 (AiFeature::AutoName, 2, (10 + *limit as u64 * 3).min(100))
             }
+            AiAction::PatchFromSource(_) => (
+                AiFeature::Patch,
+                2,
+                2 * u64::from(kraken_registry::commands::DEFAULT_SOURCE_PATCH_ATTEMPTS),
+            ),
             AiAction::Automate(goal) => (
                 AiFeature::Automate,
                 5,
@@ -459,6 +467,7 @@ impl ViewModel {
             AiAction::Overview => self.assist_overview(),
             AiAction::AutoName(limit) => self.assist_auto_name(limit),
             AiAction::Automate(goal) => self.assist_automate(goal),
+            AiAction::PatchFromSource(_) => self.plan_source_edit_now(),
         }
     }
 

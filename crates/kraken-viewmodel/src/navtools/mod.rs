@@ -8,6 +8,7 @@ mod edits;
 mod form;
 mod patches;
 mod search;
+mod source_edit;
 
 #[cfg(test)]
 mod tests;
@@ -23,6 +24,7 @@ pub use patches::{
     RunCompare, RunSide, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
+pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
 
 use kraken_proto::Page;
 use serde_json::json;
@@ -46,6 +48,8 @@ pub enum NavTab {
     Rewrite,
     /// The Patches tab.
     Patches,
+    /// The Edit tab (patching from edited decompiled code).
+    Edit,
 }
 
 /// What a Go to suggestion is.
@@ -119,6 +123,8 @@ pub struct NavTools {
     pub patch_dialog: Option<PatchDialog>,
     /// The dialog that exports the patched binary, when open.
     pub export_dialog: Option<ExportDialog>,
+    /// The Edit tab's function, when one is being edited.
+    pub source_edit: Option<SourceEdit>,
     /// The Retype / Edit signature dialog, when open.
     pub type_dialog: Option<TypeDialog>,
     /// The Create / Delete function dialog, when open.

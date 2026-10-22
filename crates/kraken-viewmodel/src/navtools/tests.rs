@@ -496,3 +496,86 @@ fn an_instruction_patch_is_staged_listed_edited_removed_and_exported_after_a_que
     assert!(vm.block_until(WAIT, |v| !v.tools.patches.loading && !v.busy()));
     assert!(vm.tools.patches.items.is_empty());
 }
+
+// ---------------------------------------------------------------- edit tab
+
+#[test]
+fn an_edit_of_the_decompile_is_planned_staged_and_listed() {
+    let mut r = rig();
+    // Nothing open: a hint, no edit.
+    r.vm.begin_source_edit();
+    assert!(r.vm.tools.source_edit.is_none());
+
+    let main = addr_of(&r.vm, "main");
+    r.vm.select_function(main);
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.current
+            .as_ref()
+            .is_some_and(|c| matches!(c.decompiled, crate::Load::Ready(_)))
+    }));
+    r.vm.begin_source_edit();
+    assert_eq!(r.vm.tools.take_tab(), Some(NavTab::Edit));
+    let e = r.vm.tools.source_edit.clone().expect("edit");
+    assert_eq!((e.address, e.name.as_str()), (main, "main"));
+    assert!(!e.changed());
+
+    // Unchanged code is not sent.
+    r.vm.plan_source_edit();
+    assert_eq!(
+        r.vm.tools.source_edit.as_ref().unwrap().phase,
+        SourceEditPhase::Editing
+    );
+
+    let edited = e.text.replacen("return", "return 7; //", 1);
+    r.vm.set_source_edit_text(edited.clone());
+    let e = r.vm.tools.source_edit.clone().unwrap();
+    assert!(e.changed());
+    assert!(!e.changed_lines().is_empty());
+    r.vm.ai.bypass = true;
+    r.vm.plan_source_edit();
+    assert!(r.vm.tools.source_edit.as_ref().unwrap().busy());
+    assert!(r.vm.block_until(WAIT, |v| {
+        matches!(
+            v.tools.source_edit.as_ref().map(|e| &e.phase),
+            Some(SourceEditPhase::Planned(_) | SourceEditPhase::Failed(_))
+        )
+    }));
+    let plan =
+        r.vm.tools
+            .source_edit
+            .as_ref()
+            .and_then(|e| e.plan().cloned())
+            .unwrap_or_else(|| panic!("{:?}", r.vm.tools.source_edit));
+    assert_eq!(plan.patches.len(), 1);
+    assert!(
+        verdict_text(plan.check.verdict).1,
+        "the demo planner says it matches"
+    );
+
+    r.vm.stage_source_edit();
+    assert!(r.vm.block_until(WAIT, |v| {
+        matches!(
+            v.tools.source_edit.as_ref().map(|e| &e.phase),
+            Some(SourceEditPhase::Staged(_))
+        ) && v.tools.patches.loaded
+            && !v.tools.patches.loading
+            && !v.busy()
+    }));
+    let staged = &r.vm.tools.patches.items;
+    assert_eq!(staged.len(), 1);
+    assert_eq!(staged[0].address, plan.patches[0].address.0);
+    assert!(
+        staged[0].note.starts_with("From an edit of main"),
+        "{:?}",
+        staged[0]
+    );
+
+    // Editing again goes back to editing; discarding closes it.
+    r.vm.set_source_edit_text(edited + "\n");
+    assert_eq!(
+        r.vm.tools.source_edit.as_ref().unwrap().phase,
+        SourceEditPhase::Editing
+    );
+    r.vm.discard_source_edit();
+    assert!(r.vm.tools.source_edit.is_none());
+}
