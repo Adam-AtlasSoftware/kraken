@@ -139,8 +139,9 @@ For Strata, you have these choices:
 - **Each card runs its own full copy**: each card holds the whole model and answers its own requests.
   Use it when you have many requests, and each card has enough VRAM for the whole model. It needs
   equal cards.
-- **Second card helps (peer tier)**: the second card reads prompts about 30 to 40 percent faster, but
-  answers about a third slower.
+- **Second card helps (peer tier)**: the second card keeps extra experts. Answers were about a third
+  slower. Prompts were read faster in one early test, but not clearly so later, once the main card had
+  more free memory.
 - **Second card as helper cache**: gave a small gain on 4K prompts, but was slower than one card for
   longer prompts and for answers on cards of different sizes.
 - **Second card reads prompts only**: keeps answers at one-card speed and needs a Strata build with
@@ -328,7 +329,8 @@ Four Strata settings control the automatic choice and the speed:
   likelihood of the real text barely moved. The percentages are from one computer. A hand-edited
   combination shows as *Custom* and stays until you pick a preset.
 
-Here are measurements from one machine and one model to help you choose:
+Here are measurements from one machine and one model, taken early in the testing, when the main card
+had less free video memory than it has today:
 
 | Setting | Answers (tok/s) | Prompts at 4K tokens | Prompts at 16K tokens | Prompts at 32K tokens |
 | --- | --- | --- | --- | --- |
@@ -341,10 +343,11 @@ The machine was a Ryzen 9 5900XT with 62 GB RAM, RTX 3070 Ti (8 GB) as the main 
 (6 GB) as the second card, running Swift 1.5 IQ2_XS. Layer split did not start because of the 6 GB
 limit on the second card.
 
-On the same machine, an engine built from source for these cards read prompts about 18 percent faster than
-the ready-made one, and "Second card reads prompts only" added at most about 5 percent on top of one card
-while keeping answers at one-card speed (about 61 against 65 tokens per second). That is why Automatic stays on
-one card: the second card is worth choosing yourself only when it is much faster at prompts than your processor.
+Later, with the desktop drawn by the second card and more video memory free on the main card, one card
+alone read prompts at about 1,100 to 1,200 tokens per second and answered at about 66 to 69, which is
+faster at prompts than the peer tier in the table. "Second card reads prompts only" added at most about
+5 percent on top of one card while keeping answers at one-card speed. That is why Automatic stays on one
+card: the second card is worth choosing yourself only when it is much faster at prompts than your processor.
 
 ## Other servers you run
 

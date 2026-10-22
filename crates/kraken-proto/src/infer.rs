@@ -48,8 +48,9 @@ pub enum MultiGpuMode {
     /// video memory each time the model starts. It always runs on one card and names the
     /// second-card choices in its advice.
     Auto,
-    /// Strata: a second card keeps extra experts and helps read prompts and answer. Prompts are
-    /// read about 30 to 40 percent faster, answers about a third slower.
+    /// Strata: a second card keeps extra experts and helps read prompts and answer. In an early
+    /// test prompts were read faster, answers about a third slower; a later test with more free
+    /// video memory on the main card showed no clear gain for prompts.
     PeerTier,
     /// Strata: a second card keeps extra experts in a cache that answers use too. Measured slower
     /// than one card on mismatched cards; offered for completeness.

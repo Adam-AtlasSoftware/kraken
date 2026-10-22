@@ -214,7 +214,7 @@ pub fn mode_options(engine: LocalEngine) -> Vec<ModeOption> {
             opt(
                 MultiGpuMode::PeerTier,
                 "Second card helps (peer tier)",
-                "Long prompts are read about 30 to 40 percent faster. Answers are about a third slower.",
+                "Answers are about a third slower. Prompts were read faster in one early test, but not clearly so once the main card had more free memory.",
                 true,
             ),
             opt(
