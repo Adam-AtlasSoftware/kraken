@@ -734,7 +734,7 @@ fn javac_argument_file_quotes_paths_and_lists_sources() {
 /// Compiles the real extension with a real JDK and Ghidra. Needs the dev environment:
 /// `KRAKEN_JAVA_HOME` and `KRAKEN_GHIDRA_HOME`.
 #[test]
-#[ignore = "needs a JDK 21 and Ghidra 12.1.4 (plans/dev-env.sh)"]
+#[ignore = "needs a JDK 21 and Ghidra 12.1.4 (scripts/dev-env.sh)"]
 fn the_real_extension_compiles_with_javac() {
     let (Some(jdk), Some(ghidra)) = (
         std::env::var_os("KRAKEN_JAVA_HOME"),

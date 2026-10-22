@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo xtask ghidra-ext && \
-//!   env $(sed 's/^export //' plans/dev-env.sh) \
+//!   . scripts/dev-env.sh && \
 //!   cargo test -p kraken-e2e --test undo_dependents -- --ignored
 //! ```
 //!

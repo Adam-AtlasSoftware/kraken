@@ -1,7 +1,7 @@
 //! Smoke test of the built `kraken` binary against a real Ghidra. `#[ignore]`d:
 //!
 //! ```text
-//! source plans/dev-env.sh && cargo xtask ghidra-ext && \
+//! source scripts/dev-env.sh && cargo xtask ghidra-ext && \
 //!   cargo test -p kraken-cli --test real_ghidra -- --ignored --nocapture
 //! ```
 //!
@@ -97,14 +97,14 @@ impl Drop for Kraken {
 }
 
 #[test]
-#[ignore = "needs Ghidra: source plans/dev-env.sh && cargo xtask ghidra-ext"]
+#[ignore = "needs Ghidra: source scripts/dev-env.sh && cargo xtask ghidra-ext"]
 fn project_create_analyze_list_decompile_rename_undo() {
     flow(true);
 }
 
 /// The same flow through an auto-started `krakend`, then `daemon status` and `daemon stop`.
 #[test]
-#[ignore = "needs Ghidra: source plans/dev-env.sh && cargo xtask ghidra-ext"]
+#[ignore = "needs Ghidra: source scripts/dev-env.sh && cargo xtask ghidra-ext"]
 fn the_same_flow_through_an_auto_started_daemon() {
     flow(false);
 }

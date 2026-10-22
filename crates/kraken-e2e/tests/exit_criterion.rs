@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo xtask ghidra-ext && \
-//!   env $(sed 's/^export //' plans/dev-env.sh) cargo test -p kraken-e2e -- --ignored
+//!   . scripts/dev-env.sh && cargo test -p kraken-e2e -- --ignored
 //! ```
 //!
 //! An agent drives the built `kraken mcp` binary (a child process speaking MCP over stdio): it
