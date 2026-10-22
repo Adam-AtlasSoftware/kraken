@@ -6,7 +6,7 @@
 //! that a role uses is held for this process and started on first use if it fits; any other
 //! model that is not running gives a plain message that says how to start it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
@@ -88,12 +88,29 @@ struct Held {
 pub struct ServingResolver {
     api: RwLock<Option<Conn>>,
     held: Mutex<Held>,
+    /// Context length per model id, from `[[local_models]]`.
+    contexts: HashMap<String, u32>,
 }
 
 impl ServingResolver {
     /// A resolver for the standard service of this process.
     pub fn new() -> Self {
-        Self::default()
+        let models = kraken_host::KrakenConfig::load()
+            .map(|c| c.local_models)
+            .unwrap_or_default();
+        Self::default().with_contexts(models.iter().map(|m| {
+            (
+                m.id.clone(),
+                m.context_size
+                    .unwrap_or(kraken_host::infer::serving::DEFAULT_CONTEXT),
+            )
+        }))
+    }
+
+    /// Sets the context length each model is served with.
+    pub fn with_contexts(mut self, contexts: impl IntoIterator<Item = (String, u32)>) -> Self {
+        self.contexts = contexts.into_iter().collect();
+        self
     }
 
     /// A resolver that always asks `api`.
@@ -101,6 +118,7 @@ impl ServingResolver {
         Self {
             api: RwLock::new(Some((api, next_connection()))),
             held: Mutex::default(),
+            contexts: HashMap::new(),
         }
     }
 
@@ -221,6 +239,10 @@ fn not_running(model: &str, why: &str) -> AgentError {
 
 #[async_trait]
 impl LocalResolver for ServingResolver {
+    fn context_window(&self, model: &str) -> Option<u32> {
+        self.contexts.get(model).copied()
+    }
+
     async fn resolve(&self, model: &str) -> Result<LocalEndpoint, AgentError> {
         let deadline = Instant::now() + LOAD_TIMEOUT;
         let mut tried_start = false;
@@ -455,5 +477,13 @@ mod tests {
             .expect("ready");
         assert_eq!(ep.base_url, "http://127.0.0.1:7/v1");
         assert!(fake.holds.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn context_window_comes_from_the_model_card() {
+        let r = ServingResolver::with_api(Fake::new(vec![], None))
+            .with_contexts([("qwen".to_string(), 32_768)]);
+        assert_eq!(r.context_window("qwen"), Some(32_768));
+        assert_eq!(r.context_window("other"), None);
     }
 }

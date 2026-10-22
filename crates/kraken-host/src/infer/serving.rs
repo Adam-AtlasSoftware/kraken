@@ -60,7 +60,8 @@ pub const METHOD_INFER_MODEL_LOGS: &str = "infer_model_logs";
 /// rather than a set-up model).
 pub const MANUAL_MODEL_ID: &str = "(manual)";
 
-const DEFAULT_CONTEXT: u32 = 8192;
+/// The context length a local model is served with when its card sets none.
+pub const DEFAULT_CONTEXT: u32 = 8192;
 const POLL: Duration = Duration::from_millis(200);
 
 // ---------------------------------------------------------------------------------------------
