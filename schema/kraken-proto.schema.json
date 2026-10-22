@@ -1472,6 +1472,51 @@
             "new"
           ],
           "type": "object"
+        },
+        {
+          "description": "Set, replace or remove a byte patch: replacement bytes laid over the program's bytes at\nthe anchor's address. Kept in the log so it shows in the history and can be undone; it is\nnever pushed to the engine (see [`LogOp::is_engine_op`]).",
+          "properties": {
+            "anchor": {
+              "$ref": "#/$defs/Anchor",
+              "description": "The patched address."
+            },
+            "new": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PatchBytes"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The patch after the edit; absent removes it."
+            },
+            "old": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PatchBytes"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The patch before the edit; absent when there was none."
+            },
+            "op": {
+              "const": "set_patch",
+              "type": "string"
+            },
+            "original": {
+              "description": "The program's own bytes there, lower-case hex; as long as the replacement.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "original"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1917,6 +1962,24 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object"
+    },
+    "PatchBytes": {
+      "description": "The replacement bytes and note of a byte patch.",
+      "properties": {
+        "note": {
+          "default": "",
+          "description": "Why; may be empty. Written by people or agents: untrusted.",
+          "type": "string"
+        },
+        "replacement": {
+          "description": "Replacement bytes, lower-case hex.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "replacement"
       ],
       "type": "object"
     },

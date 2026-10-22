@@ -50,6 +50,15 @@ pub enum StateValue {
         /// Convention name.
         name: String,
     },
+    /// A byte patch.
+    Patch {
+        /// The program's bytes, hex.
+        original: String,
+        /// The replacement bytes, hex.
+        replacement: String,
+        /// Its note.
+        note: String,
+    },
 }
 
 /// Entity key to current value; absent keys have no value.
@@ -95,6 +104,11 @@ pub fn apply_op(state: &mut AnnotationState, op: &LogOp) {
         LogOp::SetCallingConvention { new, .. } => {
             (!new.is_empty()).then(|| StateValue::CallingConvention { name: new.clone() })
         }
+        LogOp::SetPatch { original, new, .. } => new.as_ref().map(|b| StateValue::Patch {
+            original: original.clone(),
+            replacement: b.replacement.clone(),
+            note: b.note.clone(),
+        }),
     };
     match value {
         Some(v) => {
@@ -174,6 +188,17 @@ pub fn invert_op(op: &LogOp) -> LogOp {
             anchor,
             old: Some(new),
             new: old.unwrap_or_default(),
+        },
+        LogOp::SetPatch {
+            anchor,
+            original,
+            old,
+            new,
+        } => LogOp::SetPatch {
+            anchor,
+            original,
+            old: new,
+            new: old,
         },
     }
 }

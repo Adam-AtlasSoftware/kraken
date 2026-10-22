@@ -82,8 +82,8 @@ pub use local_model::{
 };
 pub use patch::{
     AppliedPatchView, Assemble, AssembleArgs, AssembleOut, MAX_ASSEMBLY_LINE, MAX_PATCH_BYTES,
-    MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchExport, PatchExportArgs, PatchExportOut, PatchList,
-    PatchListArgs, PatchRemove, PatchRemoveArgs, PatchRemoveOut, PatchSet, PatchSetArgs, PatchView,
+    MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchEditOut, PatchExport, PatchExportArgs, PatchExportOut,
+    PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs, PatchSet, PatchSetArgs, PatchView,
 };
 pub use patch_source::{
     DEFAULT_SOURCE_PATCH_ATTEMPTS, MAX_SOURCE_BYTES, MAX_SOURCE_PATCH_ATTEMPTS, PatchFromSource,

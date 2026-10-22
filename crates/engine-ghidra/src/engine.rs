@@ -166,7 +166,8 @@ fn op_anchor(op: &LogOp) -> &Anchor {
         | LogOp::DeleteFunction { anchor, .. }
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
-        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+        | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetPatch { anchor, .. } => anchor,
     }
 }
 

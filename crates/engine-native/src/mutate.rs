@@ -229,7 +229,8 @@ fn anchor_of(op: &LogOp) -> &Anchor {
         | LogOp::DeleteFunction { anchor, .. }
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
-        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+        | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetPatch { anchor, .. } => anchor,
     }
 }
 
@@ -380,6 +381,8 @@ fn apply_inner(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
                 return Err(err);
             }
         }
+        // Patches stay in the project; the registry never pushes them.
+        LogOp::SetPatch { .. } => return Ok(()),
     }
     e.journal.push(Journaled::Op(op.clone()));
     Ok(())

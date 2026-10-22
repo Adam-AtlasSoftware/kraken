@@ -315,7 +315,8 @@ async fn permission_classes_map_to_tool_annotations() {
         match spec.permission {
             Permission::Safe => {
                 assert_eq!(a.read_only_hint, Some(true), "{}", spec.name);
-                assert_eq!(spec.kind, CommandKind::Query, "{} is safe", spec.name);
+                // a safe command changes nothing; a long one (planning a patch) runs as a job
+                assert_ne!(spec.kind, CommandKind::Mutation, "{} is safe", spec.name);
             }
             Permission::Mutating => {
                 assert_eq!(a.read_only_hint, Some(false), "{}", spec.name);

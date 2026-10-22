@@ -83,6 +83,7 @@ pub fn what_it_does(command: &str) -> &'static str {
     match command {
         "rename_symbol" => "renaming",
         "set_comment" => "commenting",
+        "patch_set" | "patch_remove" => "patching",
         "set_type" | "set_calling_convention" => "retyping",
         "apply_edits" => "editing",
         "create_function" | "delete_function" | "set_function_bounds" => "reshaping functions",
@@ -130,7 +131,9 @@ impl AgentActivity {
             return;
         }
         let a = self.actor(&c.author, now);
-        a.applied += 1;
+        // Only edit-log entries count as changes: they are what the History tab shows and undo
+        // takes back. A command that wrote none (a bookmark) is activity, not a change.
+        a.applied += c.entry_ids.len() as u32;
         a.last_command = c.command.clone();
         a.last_at = now;
     }
@@ -191,7 +194,7 @@ mod tests {
             by_agent,
             author: author.into(),
             run_id: None,
-            entry_ids: vec![],
+            entry_ids: vec![1],
             key: None,
         }
     }
@@ -212,6 +215,20 @@ mod tests {
         assert!(s.active);
         assert_eq!(s.what, "analysing");
         assert_eq!(s.text(), "claude: 3 changes, 1 job, analysing...");
+    }
+
+    #[test]
+    fn a_command_that_logged_nothing_is_no_change() {
+        let t0 = Instant::now();
+        let mut a = AgentActivity::default();
+        let mut bookmark = change("kraken-assistant", "bookmark_add", true);
+        bookmark.entry_ids.clear();
+        a.applied(&bookmark, t0);
+        let mut bulk = change("kraken-assistant", "apply_edits", true);
+        bulk.entry_ids = vec![7, 8, 9];
+        a.applied(&bulk, t0);
+        let s = a.summary(t0).expect("summary");
+        assert_eq!(s.changes, 3, "three entries in the log, not four commands");
     }
 
     #[test]

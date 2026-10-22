@@ -138,6 +138,39 @@ pub enum LogOp {
         /// Convention after the edit.
         new: String,
     },
+    /// Set, replace or remove a byte patch: replacement bytes laid over the program's bytes at
+    /// the anchor's address. Kept in the log so it shows in the history and can be undone; it is
+    /// never pushed to the engine (see [`LogOp::is_engine_op`]).
+    SetPatch {
+        /// The patched address.
+        anchor: Anchor,
+        /// The program's own bytes there, lower-case hex; as long as the replacement.
+        original: String,
+        /// The patch before the edit; absent when there was none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old: Option<PatchBytes>,
+        /// The patch after the edit; absent removes it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new: Option<PatchBytes>,
+    },
+}
+
+/// The replacement bytes and note of a byte patch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PatchBytes {
+    /// Replacement bytes, lower-case hex.
+    pub replacement: String,
+    /// Why; may be empty. Written by people or agents: untrusted.
+    #[serde(default)]
+    pub note: String,
+}
+
+impl LogOp {
+    /// False for ops that live only in the project (byte patches): they are logged and undone
+    /// like any edit but never applied to the engine.
+    pub fn is_engine_op(&self) -> bool {
+        !matches!(self, LogOp::SetPatch { .. })
+    }
 }
 
 /// A [`LogOp`] together with the schema version it was written under.

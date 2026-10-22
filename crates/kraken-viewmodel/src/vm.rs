@@ -237,6 +237,7 @@ fn agent_edit_text(author: &str, op: &str, description: &str) -> String {
             format!("Agent renamed {old} \u{2192} {new}{suffix}")
         }
         ("set_comment", [_, addr, ..]) => format!("Agent commented on {addr}{suffix}"),
+        ("set_patch", [_, addr, ..]) => format!("Agent patched the bytes at {addr}{suffix}"),
         (_, [_, addr, ..]) => format!("Agent changed {addr} ({op}){suffix}"),
         _ => format!("Agent edited the project ({op}){suffix}"),
     }
@@ -715,6 +716,10 @@ impl ViewModel {
         self.refresh_current();
         if self.tools.bookmarks.loaded {
             self.refresh_bookmarks();
+        }
+        // patches are log entries: an undo can remove or restore one
+        if self.tools.patches.loaded {
+            self.refresh_patches();
         }
     }
 

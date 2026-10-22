@@ -300,6 +300,8 @@ impl ViewModel {
                 };
             }
             self.refresh_patches();
+            self.refresh_history();
+            self.refresh_project();
             if errors.is_empty() {
                 self.toast(
                     ToastLevel::Success,

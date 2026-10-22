@@ -7,8 +7,8 @@
 //! original bytes are stored so a patch can be checked against the file it is applied to and so
 //! anchors, which hash the original bytes, keep working. Removing a patch is the way back.
 
-use kraken_proto::{ErrorCode, Page, PageRequest, ProtoError};
-use rusqlite::{OptionalExtension, params};
+use kraken_proto::{ErrorCode, LogOp, Page, PageRequest, ProtoError};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::store::{db, kind_str, now_ms, parse_kind};
@@ -64,7 +64,156 @@ fn from_db(a: i64) -> u64 {
     a as u64
 }
 
+/// Lays an applied `SetPatch` log op onto the overlay table: sets, replaces or removes the patch
+/// at its address. Other ops leave the table alone. Called for every entry written as applied,
+/// so the table always matches the log, undo entries included.
+pub(crate) fn apply_patch_op(conn: &Connection, op: &LogOp, author: &Author) -> Result<()> {
+    let LogOp::SetPatch {
+        anchor,
+        original,
+        new,
+        ..
+    } = op
+    else {
+        return Ok(());
+    };
+    let (_, address, _, _) = anchor.native()?;
+    match new {
+        None => {
+            conn.execute("DELETE FROM patches WHERE address = ?1", [to_db(address.0)])
+                .map_err(db)?;
+        }
+        Some(b) => {
+            let original = unhex(original)?;
+            let replacement = unhex(&b.replacement)?;
+            // the originals may cover a longer patch this one replaced
+            let original = original.get(..replacement.len()).unwrap_or(&original);
+            write_patch(conn, address.0, original, &replacement, &b.note, author)?;
+        }
+    }
+    Ok(())
+}
+
+/// Bytes from lower-case (or upper-case) hex.
+pub fn unhex(s: &str) -> Result<Vec<u8>> {
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "malformed hex bytes in a patch",
+        ));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|_| ProtoError::new(ErrorCode::InvalidArgument, "malformed hex bytes"))
+        })
+        .collect()
+}
+
+fn write_patch(
+    conn: &Connection,
+    address: u64,
+    original: &[u8],
+    replacement: &[u8],
+    note: &str,
+    author: &Author,
+) -> Result<Patch> {
+    if replacement.is_empty() {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "a patch covers at least one byte",
+        ));
+    }
+    if original.len() != replacement.len() {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "the original and the replacement must be the same length",
+        ));
+    }
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO patches(address, original, replacement, note, author_kind, author_id, ts)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(address) DO UPDATE SET original = excluded.original,
+            replacement = excluded.replacement, note = excluded.note,
+            author_kind = excluded.author_kind, author_id = excluded.author_id,
+            ts = excluded.ts",
+        params![
+            to_db(address),
+            original,
+            replacement,
+            note,
+            kind_str(author.kind),
+            author.id,
+            ts
+        ],
+    )
+    .map_err(db)?;
+    Ok(Patch {
+        address,
+        original: original.to_vec(),
+        replacement: replacement.to_vec(),
+        note: note.to_string(),
+        author: author.clone(),
+        ts_ms: ts,
+    })
+}
+
 impl Store {
+    /// Gives every patch that has no edit-log entry one, under the author who set it and with
+    /// its time: patches recorded before they were logged then show in the history and can be
+    /// undone. Returns how many were added.
+    pub(crate) fn backfill_patch_entries(&mut self) -> Result<usize> {
+        let mut added = 0;
+        for p in self.all_patches()? {
+            let anchor = kraken_proto::Anchor::Native {
+                space: kraken_proto::DEFAULT_SPACE.into(),
+                offset: kraken_proto::Hex64(p.address),
+                fn_entry: kraken_proto::Hex64(p.address),
+                fn_hash: String::new(),
+            };
+            let op = LogOp::SetPatch {
+                anchor,
+                original: kraken_proto::hex_bytes(&p.original),
+                old: None,
+                new: Some(kraken_proto::PatchBytes {
+                    replacement: kraken_proto::hex_bytes(&p.replacement),
+                    note: p.note.clone(),
+                }),
+            };
+            let key = crate::keys::op_key(&op)?;
+            if self.entity_version(&key)? > 0 {
+                continue;
+            }
+            let draft = crate::EntryDraft {
+                op: kraken_proto::VersionedLogOp::new(op),
+                provenance: match p.author.kind {
+                    crate::AuthorKind::User => kraken_proto::Provenance::User,
+                    crate::AuthorKind::Agent => kraken_proto::Provenance::Agent,
+                },
+                author: p.author.clone(),
+                run_id: None,
+                read_set: std::collections::BTreeMap::from([(key, 0)]),
+            };
+            let id = self.append(draft)?;
+            self.conn
+                .execute(
+                    "UPDATE entries SET ts = ?1 WHERE id = ?2",
+                    params![p.ts_ms, id.0 as i64],
+                )
+                .map_err(db)?;
+            self.conn
+                .execute(
+                    "UPDATE patches SET ts = ?1 WHERE address = ?2",
+                    params![p.ts_ms, to_db(p.address)],
+                )
+                .map_err(db)?;
+            added += 1;
+        }
+        Ok(added)
+    }
+
     /// Records the patch at `address`, replacing one already there. `original` and `replacement`
     /// must be the same non-zero length.
     pub fn patch_set(
@@ -75,46 +224,7 @@ impl Store {
         note: &str,
         author: &Author,
     ) -> Result<Patch> {
-        if replacement.is_empty() {
-            return Err(ProtoError::new(
-                ErrorCode::InvalidArgument,
-                "a patch covers at least one byte",
-            ));
-        }
-        if original.len() != replacement.len() {
-            return Err(ProtoError::new(
-                ErrorCode::InvalidArgument,
-                "the original and the replacement must be the same length",
-            ));
-        }
-        let ts = now_ms();
-        self.conn
-            .execute(
-                "INSERT INTO patches(address, original, replacement, note, author_kind, author_id, ts)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT(address) DO UPDATE SET original = excluded.original,
-                    replacement = excluded.replacement, note = excluded.note,
-                    author_kind = excluded.author_kind, author_id = excluded.author_id,
-                    ts = excluded.ts",
-                params![
-                    to_db(address),
-                    original,
-                    replacement,
-                    note,
-                    kind_str(author.kind),
-                    author.id,
-                    ts
-                ],
-            )
-            .map_err(db)?;
-        Ok(Patch {
-            address,
-            original: original.to_vec(),
-            replacement: replacement.to_vec(),
-            note: note.to_string(),
-            author: author.clone(),
-            ts_ms: ts,
-        })
+        write_patch(&self.conn, address, original, replacement, note, author)
     }
 
     /// Removes the patch at `address`; false when there was none.
@@ -296,5 +406,32 @@ mod tests {
         let me = Author::user("me");
         assert!(s.patch_set(0x10, &[], &[], "", &me).is_err());
         assert!(s.patch_set(0x10, &[0x00], &[0x01, 0x02], "", &me).is_err());
+    }
+
+    #[test]
+    fn patches_from_before_the_log_get_an_entry_once_and_undo_removes_them() {
+        let mut s = Store::open_in_memory().expect("store");
+        let bot = Author::agent("kraken-assistant");
+        s.patch_set(0x401000, &[0x89, 0xe8], &[0x31, 0xc0], "return 0", &bot)
+            .expect("patch");
+        assert_eq!(s.backfill_patch_entries().expect("backfill"), 1);
+        assert_eq!(s.backfill_patch_entries().expect("again"), 0, "only once");
+        let page = s
+            .history(&PageRequest::default(), &crate::HistoryFilter::default())
+            .expect("history");
+        assert_eq!(page.items.len(), 1);
+        let e = &page.items[0];
+        assert_eq!(e.author, bot);
+        assert!(matches!(e.op.op, LogOp::SetPatch { .. }));
+        assert_eq!(
+            s.patch_get(0x401000).expect("get").expect("kept").note,
+            "return 0"
+        );
+
+        s.undo_entry(e.id, &Author::user("me")).expect("undo");
+        assert!(
+            s.patch_get(0x401000).expect("get").is_none(),
+            "undo removes it"
+        );
     }
 }

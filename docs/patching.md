@@ -72,8 +72,12 @@ A patch records an address, the **replacement** bytes you give, and the **origin
 there (read from the program when you set the patch). Keeping the originals means a patch can be
 checked against the file before it is written and can be removed to get the exact bytes back.
 
-Patches live in their own table of the project database, outside the edit log. They do not reach the
-analysis engine, carry no undo entry and never alter the program you are analysing. The commands:
+Setting and removing a patch are edits in the project's edit log, like a rename: each shows in the
+**History** tab with who made it and in which assistant or agent run, and **Undo**, undoing one
+entry or undoing a whole run take it back (undoing a replacement brings the earlier patch back).
+An agent's new patch applies at once; an agent replacing or removing a patch makes a proposal for
+you to accept. Patches never reach the analysis engine and never alter the program you are
+analysing. The commands:
 
 - `patch_set` — record (or replace) the patch at an address. `bytes` is hex, with or without spaces
   and a leading `0x` (`"eb 10"`, `"eb10"` and `"0xEB10"` are the same two bytes). The replacement

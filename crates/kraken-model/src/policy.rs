@@ -52,6 +52,9 @@ pub fn classify(op: &LogOp, state: &AnnotationState) -> Classification {
         LogOp::SetCodeData { old, .. } => {
             current.is_none() && matches!(old, None | Some(CodeData::Undefined))
         }
+        // A new patch only adds to the overlay: nothing on disk changes, and exporting a patched
+        // binary always asks. Replacing or removing a patch overwrites someone's work.
+        LogOp::SetPatch { old, new, .. } => new.is_some() && old.is_none() && current.is_none(),
         LogOp::CreateFunction { .. }
         | LogOp::DeleteFunction { .. }
         | LogOp::SetFunctionBounds { .. } => false,

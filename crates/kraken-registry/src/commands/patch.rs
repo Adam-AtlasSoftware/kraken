@@ -2,11 +2,13 @@
 //! layer over the program's bytes.
 //!
 //! A patch records replacement bytes at an address together with the bytes that were there (see
-//! `kraken_model::Patch`). Patches live in their own table, not the edit log: they are not
-//! annotations the engine replays but an edit to the program's bytes. Nothing in the project or
-//! on disk changes when a patch is set; the bytes are written only by `patch_export`, which
-//! produces a patched copy of the binary, or by `emulate_run {"patched": true}`, which runs one.
-//! Setting and removing a patch are reversible edits; exporting one is dangerous and always asks
+//! `kraken_model::Patch`). Setting and removing one are edit-log entries (`LogOp::SetPatch`) like
+//! any rename: they carry their author and run, show in the history, go through the agent policy
+//! (a new patch is additive, replacing or removing one is a proposal) and are undone by `undo`,
+//! `undo_entry` and `undo_run`. The `patches` table is the overlay those entries maintain. They
+//! are never pushed to the engine: nothing in the engine or on disk changes when a patch is set;
+//! the bytes are written only by `patch_export`, which produces a patched copy of the binary, or
+//! by `emulate_run {"patched": true}`, which runs one. Exporting is dangerous and always asks
 //! for approval (ADR 0005).
 
 use std::fs;
@@ -15,7 +17,9 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use kraken_engine::{Cap, unsupported};
 use kraken_model::{AuthorKind, Patch};
-use kraken_proto::{ErrorCode, Hex64, Page, ProtoError, Untrusted, hex_bytes, sanitize};
+use kraken_proto::{
+    ErrorCode, Hex64, LogOp, Page, PatchBytes, ProtoError, Untrusted, hex_bytes, sanitize,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +27,7 @@ use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
 use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
 use crate::session::{Session, blocking};
+use crate::views::MutationOutput;
 
 use super::{locator, page_request};
 
@@ -123,13 +128,28 @@ pub struct PatchSetArgs {
     pub note: Option<String>,
 }
 
+/// Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PatchEditOut {
+    /// How the edit was taken: `applied`, or `proposed` when an agent's edit waits for the
+    /// person (`proposal_id`, `reason`).
+    #[serde(flatten)]
+    pub edit: MutationOutput,
+    /// The patch now at the address (as proposed, for a proposal); absent after a removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<PatchView>,
+    /// For `patch_remove`: false when the address had no patch (nothing was logged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<bool>,
+}
+
 /// Records a byte patch.
 pub struct PatchSet;
 
 #[async_trait]
 impl Command for PatchSet {
     type Args = PatchSetArgs;
-    type Output = PatchView;
+    type Output = PatchEditOut;
 
     fn spec() -> CommandSpec {
         CommandSpec::new(
@@ -144,7 +164,9 @@ impl Command for PatchSet {
              nothing on disk and does not run anything: it is a reversible overlay entry. \
              `patch_export` (which writes a patched binary) is the step that asks for approval; \
              `emulate_run {\"patched\": true}` runs a patched copy in the sandbox to check it. A \
-             patch where one exists replaces it.\n\
+             patch where one exists replaces it. The edit is logged like a rename: it shows in \
+             `history` and `undo`/`undo_run` take it back; an agent's new patch applies at once, \
+             an agent replacing a patch makes a proposal.\n\
              Example: patch_set {\"address\": \"0x401136\", \"bytes\": \"9090\", \"note\": \"skip the check\"}",
         )
         .details(
@@ -160,7 +182,7 @@ impl Command for PatchSet {
         s: &Session,
         ctx: &CallContext,
         args: PatchSetArgs,
-    ) -> Result<PatchView, ProtoError> {
+    ) -> Result<PatchEditOut, ProtoError> {
         let replacement = parse_hex(&args.bytes)?;
         let note = sanitize(args.note.as_deref().unwrap_or(""))
             .trim()
@@ -171,38 +193,80 @@ impl Command for PatchSet {
             )));
         }
         let project = s.project()?;
-        let engine = project.engine();
-        let reader = engine
-            .memory_reader()
-            .ok_or_else(|| unsupported("memory_reader"))?;
-        let read = reader
-            .read_bytes(
-                &locator(args.address),
-                replacement.len() as u32,
-                &ctx.cancel,
-            )
-            .await?;
-        if read.bytes.len() != replacement.len() {
-            return Err(invalid(format!(
-                "the {} bytes at {} are not all mapped",
-                replacement.len(),
-                args.address.to_hex()
-            )));
-        }
-        if !read.uninitialized.is_empty() {
-            return Err(invalid(format!(
-                "{} is in uninitialized memory; there are no bytes on disk to patch there",
-                args.address.to_hex()
-            )));
-        }
-        let original = read.bytes;
-        let author = ctx.author.clone();
         let address = args.address.0;
-        let p = project
-            .with_store(move |st| st.patch_set(address, &original, &replacement, &note, &author))
-            .await?;
-        Ok(PatchView::from(&p))
+        let old = project.with_store(move |st| st.patch_get(address)).await?;
+        // The originals cover the old patch too, so undoing a replacement restores it whole.
+        let len = replacement
+            .len()
+            .max(old.as_ref().map_or(0, |p| p.replacement.len()));
+        let original = read_original(&project, ctx, args.address, len).await?;
+        let new = PatchBytes {
+            replacement: hex_bytes(&replacement),
+            note: note.clone(),
+        };
+        let resolved = crate::mutate::anchor_for(&project, ctx, args.address).await?;
+        let op = LogOp::SetPatch {
+            anchor: resolved.anchor,
+            original: hex_bytes(&original),
+            old: old.as_ref().map(patch_bytes),
+            new: Some(new),
+        };
+        let edit = crate::mutate::submit(s, ctx, op, None).await?;
+        let patch = Patch {
+            address,
+            original: original[..replacement.len()].to_vec(),
+            replacement,
+            note,
+            author: ctx.author.clone(),
+            ts_ms: 0,
+        };
+        let patch = match project.with_store(move |st| st.patch_get(address)).await? {
+            Some(stored) if edit.entry_id.is_some() => stored,
+            _ => patch,
+        };
+        Ok(PatchEditOut {
+            edit,
+            patch: Some(PatchView::from(&patch)),
+            removed: None,
+        })
     }
+}
+
+fn patch_bytes(p: &Patch) -> PatchBytes {
+    PatchBytes {
+        replacement: hex_bytes(&p.replacement),
+        note: p.note.clone(),
+    }
+}
+
+/// The program's own bytes at `address`: the engine never holds patches, so these are the
+/// unpatched bytes. All of them must be mapped and initialized.
+async fn read_original(
+    project: &crate::session::Project,
+    ctx: &CallContext,
+    address: Hex64,
+    len: usize,
+) -> Result<Vec<u8>, ProtoError> {
+    let engine = project.engine();
+    let reader = engine
+        .memory_reader()
+        .ok_or_else(|| unsupported("memory_reader"))?;
+    let read = reader
+        .read_bytes(&locator(address), len as u32, &ctx.cancel)
+        .await?;
+    if read.bytes.len() != len {
+        return Err(invalid(format!(
+            "the {len} bytes at {} are not all mapped",
+            address.to_hex()
+        )));
+    }
+    if !read.uninitialized.is_empty() {
+        return Err(invalid(format!(
+            "{} is in uninitialized memory; there are no bytes on disk to patch there",
+            address.to_hex()
+        )));
+    }
+    Ok(read.bytes)
 }
 
 // ---- patch_remove -----------------------------------------------------------------------
@@ -215,20 +279,13 @@ pub struct PatchRemoveArgs {
     pub address: Hex64,
 }
 
-/// Result of `patch_remove`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct PatchRemoveOut {
-    /// False when there was no patch at the address.
-    pub removed: bool,
-}
-
 /// Removes a byte patch.
 pub struct PatchRemove;
 
 #[async_trait]
 impl Command for PatchRemove {
     type Args = PatchRemoveArgs;
-    type Output = PatchRemoveOut;
+    type Output = PatchEditOut;
 
     fn spec() -> CommandSpec {
         CommandSpec::new(
@@ -240,7 +297,8 @@ impl Command for PatchRemove {
         .doc(
             "Deletes the patch at an address, putting the overlay back the way it was; the binary \
              is unaffected (patches are not written until `patch_export`). `removed` is false \
-             when the address had none.\n\
+             when the address had none. Logged like any edit, so `undo` puts the patch back; \
+             an agent's removal is a proposal.\n\
              Example: patch_remove {\"address\": \"0x401136\"}",
         )
     }
@@ -248,15 +306,39 @@ impl Command for PatchRemove {
     async fn run(
         &self,
         s: &Session,
-        _ctx: &CallContext,
+        ctx: &CallContext,
         args: PatchRemoveArgs,
-    ) -> Result<PatchRemoveOut, ProtoError> {
+    ) -> Result<PatchEditOut, ProtoError> {
         let project = s.project()?;
         let address = args.address.0;
-        let removed = project
-            .with_store(move |st| st.patch_remove(address))
-            .await?;
-        Ok(PatchRemoveOut { removed })
+        let Some(old) = project.with_store(move |st| st.patch_get(address)).await? else {
+            return Ok(PatchEditOut {
+                edit: MutationOutput {
+                    status: crate::views::MutationStatus::Applied,
+                    entry_id: None,
+                    proposal_id: None,
+                    key: String::new(),
+                    versions: Default::default(),
+                    reason: None,
+                },
+                patch: None,
+                removed: Some(false),
+            });
+        };
+        let resolved = crate::mutate::anchor_for(&project, ctx, args.address).await?;
+        let op = LogOp::SetPatch {
+            anchor: resolved.anchor,
+            original: hex_bytes(&old.original),
+            old: Some(patch_bytes(&old)),
+            new: None,
+        };
+        let edit = crate::mutate::submit(s, ctx, op, None).await?;
+        let removed = edit.entry_id.is_some();
+        Ok(PatchEditOut {
+            edit,
+            patch: (!removed).then(|| PatchView::from(&old)),
+            removed: Some(removed),
+        })
     }
 }
 

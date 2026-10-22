@@ -746,6 +746,7 @@ fn op_name(op: &LogOp) -> &'static str {
         LogOp::SetFunctionBounds { .. } => "set_function_bounds",
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
+        LogOp::SetPatch { .. } => "set_patch",
     }
 }
 

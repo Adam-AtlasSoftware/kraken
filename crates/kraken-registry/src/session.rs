@@ -534,7 +534,7 @@ impl Project {
         let mutator = engine.mutator().ok_or_else(|| unsupported("mutator"))?;
         for entry in pending {
             let id = entry.id;
-            match mutator.apply(&entry.op, cancel).await {
+            match apply_to_engine(mutator, &entry.op, cancel).await {
                 Ok(()) => {
                     self.with_store(move |s| s.mark_pushed(id)).await?;
                     lock(&self.known).insert(id.0);
@@ -654,7 +654,7 @@ impl Project {
         let mutator = engine.mutator().ok_or_else(|| unsupported("mutator"))?;
         for id in missing {
             let entry = self.with_store(move |s| s.get_entry(id)).await?;
-            match mutator.apply(&authoritative(&entry), cancel).await {
+            match apply_to_engine(mutator, &authoritative(&entry), cancel).await {
                 Err(rej) if rej.code == ErrorCode::Cancelled => return Err(rej.into()),
                 // a refusal leaves the entry as the log has it; a rebuild replays it afresh
                 _ => {
@@ -709,7 +709,7 @@ impl Project {
             ..ResyncReport::default()
         };
         for entry in &entries {
-            match mutator.apply(&authoritative(entry), cancel).await {
+            match apply_to_engine(mutator, &authoritative(entry), cancel).await {
                 Ok(()) => report.reapplied += 1,
                 Err(rej) if rej.code == ErrorCode::Cancelled => return Err(rej.into()),
                 Err(_) => report.failed.push(entry.id),
@@ -718,6 +718,19 @@ impl Project {
         self.checkpoint(cancel).await?;
         Ok(report)
     }
+}
+
+/// Applies a log op to the engine. Ops that live only in the project (byte patches) are not
+/// sent and count as applied, so every push path treats them alike.
+pub(crate) async fn apply_to_engine(
+    mutator: &dyn kraken_engine::Mutator,
+    op: &VersionedLogOp,
+    cancel: &CancellationToken,
+) -> Result<(), kraken_engine::EngineRejected> {
+    if !op.op.is_engine_op() {
+        return Ok(());
+    }
+    mutator.apply(op, cancel).await
 }
 
 /// The op of a log entry as the log has it: a rename does not depend on the name the engine

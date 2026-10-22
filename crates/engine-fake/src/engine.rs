@@ -660,7 +660,8 @@ fn anchor_of(op: &LogOp) -> &kraken_proto::Anchor {
         | LogOp::DeleteFunction { anchor, .. }
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
-        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+        | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetPatch { anchor, .. } => anchor,
     }
 }
 
@@ -861,6 +862,8 @@ impl State {
                     .ok_or_else(|| not_found(format!("function at {space}:{entry}")))?;
                 check_hash(f, hash)
             }
+            // Patches stay in the project; the registry never pushes them.
+            LogOp::SetPatch { .. } => Ok(()),
         }
     }
 }
