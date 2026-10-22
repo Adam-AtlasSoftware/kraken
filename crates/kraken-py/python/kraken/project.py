@@ -61,6 +61,8 @@ __all__ = [
 
 Address = int | str
 ProgressCallback = Callable[[JobProgress], None]
+# Fields a newer daemon may add to a progress report are left out rather than refused.
+_PROGRESS_FIELDS = frozenset(JobProgress.__dataclass_fields__)
 
 
 class KrakenWarning(UserWarning):
@@ -201,7 +203,7 @@ class Job:
                 if prog is not None and prog != last:
                     last = prog
                     if progress is not None:
-                        progress(JobProgress(**prog))
+                        progress(JobProgress(**{k: v for k, v in prog.items() if k in _PROGRESS_FIELDS}))
                 if st["status"] != "running":
                     break
                 if deadline is not None and time.monotonic() >= deadline:

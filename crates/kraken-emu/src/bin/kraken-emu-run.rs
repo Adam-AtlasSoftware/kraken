@@ -2,11 +2,19 @@
 //! the sandbox, it reads one run request from the socket on fd 0, emulates the program and
 //! writes the outcome back.
 
-use std::os::fd::AsFd;
-use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
+#[cfg(not(unix))]
 fn main() -> ExitCode {
+    eprintln!("kraken-emu-run: the emulation sandbox runs on Unix only");
+    ExitCode::FAILURE
+}
+
+#[cfg(unix)]
+fn main() -> ExitCode {
+    use std::os::fd::AsFd;
+    use std::os::unix::net::UnixStream;
+
     let fd = match std::io::stdin().as_fd().try_clone_to_owned() {
         Ok(fd) => fd,
         Err(e) => {

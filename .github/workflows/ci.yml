@@ -134,10 +134,12 @@ jobs:
       - name: Build the Ghidra extension
         run: cargo xtask ghidra-ext
 
-      # Fails loudly when Landlock is unavailable: allow_unconfined stays false.
+      # Fails loudly when Landlock is unavailable: allow_unconfined stays false. The GUI's
+      # screenshot tests are ignored too, but they render with a GPU this runner does not have;
+      # they are run by hand to refresh the documentation images.
       - name: Run the ignored (real Ghidra) tests
         shell: bash
-        run: cargo test --workspace -- --ignored --test-threads=1 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+        run: cargo test --workspace -- --ignored --test-threads=1 --skip screenshot --skip _png 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
       - name: Report test failures as annotations
         if: failure()
         shell: bash

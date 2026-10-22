@@ -1,5 +1,6 @@
 //! Whole-program emulation inside the sandbox child (`kraken-emu-run` under kraken-sidecar's
 //! spawner: Landlock, seccomp, network namespace).
+#![cfg(unix)]
 
 mod common;
 

@@ -8,10 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[cfg(target_os = "linux")]
+pub use kraken_confine::system_read_paths;
 pub use kraken_confine::{
     Captured, Confinement, ConfinementReport, LANDLOCK_ABI_FLOOR, Limits, NetworkIsolation,
     ReadScope, enforced, landlock_abi_version, run_captured, run_captured_with_input, scratch_dir,
-    system_read_paths,
 };
 
 use crate::error::RewriteError;

@@ -363,8 +363,15 @@ mod terminal_agent {
             ],
         )
         .await;
-        assert_eq!(run.code, 0, "{}\n{}", run.stdout, run.stderr);
         assert!(run.stderr.contains("private one"), "{}", run.stderr);
+        if let Err(why) = kraken_acp::confine::probe() {
+            // Without namespaces (some CI runners) the agent cannot be confined, so by design it
+            // is not told where the daemon is and cannot edit; the run says so.
+            let all = format!("{}{}", run.stdout, run.stderr);
+            assert!(all.contains("runs without confinement"), "{why}: {all}");
+            return;
+        }
+        assert_eq!(run.code, 0, "{}\n{}", run.stdout, run.stderr);
         assert!(
             run.stdout.contains("mcp rename_symbol: ok"),
             "{}\n{}",
