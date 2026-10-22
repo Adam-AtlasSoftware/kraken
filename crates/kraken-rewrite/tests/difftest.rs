@@ -272,3 +272,64 @@ fn a_constructor_is_checked_by_the_object_it_returns() {
     let d = &r.counterexamples[0].differences;
     assert!(d.iter().any(|x| x.contains("returned pointer")), "{d:?}");
 }
+
+/// `print_rec` of pie_list prints a record with a double through printf: the oracle formats the
+/// double as glibc does, so the function is checked on its own and a wrong layout is caught.
+fn print_rec_run(code: &str) -> DiffReport {
+    let mut o = oracle(&corpus_bin("pie_list-O0"));
+    let entry = o.symbol("print_rec").expect("symbol");
+    let sig = kraken_rewrite::infer::infer_signature(
+        "void print_rec(record * r, void * ctx)",
+        "print_rec",
+    )
+    .expect("signature");
+    let opts = DiffOptions {
+        random_cases: 60,
+        trusted_prelude: kraken_rewrite::rt_module_source(),
+        ..DiffOptions::default()
+    };
+    let inputs = kraken_rewrite::infer::generic_inputs(&sig);
+    run_differential(&mut o, entry, &sig, code, &inputs, &opts).expect("differential run")
+}
+
+const PRINT_REC: &str = r#"
+#[repr(C)]
+struct Pos { x: i32, y: i32 }
+#[repr(C)]
+struct Rec { id: i32, name: [u8; 16], pos: Pos, weight: f64 }
+
+pub unsafe extern "C" fn print_rec(a0: *mut u8, _a1: *mut u8) {
+    let r = a0 as *const Rec;
+    unsafe {
+        rt::printf(
+            b"  #%d %-6s (%d,%d) %.1f\n\0".as_ptr(),
+            &[
+                rt::Arg::Int((*r).id as i64),
+                rt::Arg::Ptr((*r).name.as_ptr()),
+                rt::Arg::Int((*r).pos.x as i64),
+                rt::Arg::Int((*r).pos.y as i64),
+                rt::Arg::Double((*r).weight),
+            ],
+        );
+    }
+}
+"#;
+
+#[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+fn a_function_printing_a_double_is_checked_on_its_own() {
+    let r = print_rec_run(PRINT_REC);
+    assert_eq!(r.verdict, Verdict::Pass, "{:#?}", r.counterexamples.first());
+    assert!(r.passed > 0 && r.skipped == 0, "{r:?}");
+
+    // The weight first, as a 2-bit local model laid the record out.
+    let wrong = mutate(
+        PRINT_REC,
+        "struct Rec { id: i32, name: [u8; 16], pos: Pos, weight: f64 }",
+        "struct Rec { weight: f64, id: i32, name: [u8; 16], pos: Pos }",
+    );
+    let r = print_rec_run(&wrong);
+    assert_eq!(r.verdict, Verdict::Fail, "the wrong layout passed");
+    let d = &r.counterexamples[0].differences;
+    assert!(d.iter().any(|x| x.contains("stdout")), "{d:?}");
+}

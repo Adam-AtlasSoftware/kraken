@@ -779,8 +779,19 @@ impl FunctionOracle {
             n += 1;
             v
         };
+        // Variadic doubles of the System V x86-64 ABI arrive in xmm0..xmm7 in order.
+        let mut d = 0usize;
+        let mut next_double = || {
+            let mut t = this.borrow_mut();
+            if t.m.arch() != kraken_emu::Arch::X86_64 || d >= 8 {
+                return None;
+            }
+            let v = t.m.read_reg(&format!("XMM{d}")).ok()?;
+            d += 1;
+            Some(f64::from_bits(v))
+        };
         let mut cstr = |a: u64| this.borrow_mut().read_cstr(a);
-        format_printf(&fmt, &mut next, &mut cstr)
+        format_printf(&fmt, &mut next, &mut next_double, &mut cstr)
     }
 
     /// Runs the stub for import `name`. `None` means the call continues (returned to the caller).
