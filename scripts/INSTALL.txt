@@ -13,6 +13,8 @@ Contents
   share/kraken/kraken-dotnet/
                              prebuilt .NET sidecar; `kraken setup --dotnet` installs it next to
                              a pinned .NET runtime
+  share/applications, share/icons
+                             (Linux) the app's desktop entry and icon
   docs/                      the documentation (open docs/index.html)
   README.md, LICENSE, THIRD-PARTY-NOTICES.md
   licenses/                  license and notice files of the Ghidra decompiler (Apache-2.0)
@@ -21,6 +23,7 @@ Contents
 Install
   1. Put the three programs on your PATH, keeping share/kraken next to bin/:
        Linux/macOS:  cp -R bin share ~/.local/        (and make sure ~/.local/bin is on PATH)
+     or run scripts/install.sh from the repository, which does this after checking the download.
        Windows:      unzip anywhere and add its bin folder to PATH
      KRAKEN finds kraken-ghidra.jar next to the program or in ../share/kraken.
   2. Linux: the native engine works right away (`kraken setup --native` checks it). For the

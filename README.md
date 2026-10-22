@@ -13,6 +13,11 @@
 - Listing, hex, control-flow graph, cross-references, strings, imports and exports, memory map.
 - Rename functions, set types and comments. Search, filter and jump between views.
 
+**Patch**
+- Change a program's bytes: type a new instruction and KRAKEN assembles it, or edit the decompiled C and let the assistant work out the smallest machine-code change.
+- Run the original and the patched program side by side in a sandboxed emulator before anything is written, then export a patched copy. The original file is never touched.
+- Every patch is an edit in the history, so an assistant's patches can be reviewed and undone like anything else.
+
 **AI**
 - Built-in assistant: explain a function, a guided first look at a program, name suggestions that you review before anything changes, and an offline glossary.
 - Works with a model on your computer (Ollama, LM Studio, llama.cpp, or one KRAKEN runs for you) or a cloud provider.
@@ -42,24 +47,39 @@ KRAKEN is **pre-alpha** (0.1a). Expect rough edges and breaking changes.
 
 "Builds" means the code compiles and is checked in CI, not that the whole product has been proven there. Linux is the platform to use today.
 
+## Install
+
+**Linux x86_64** (no Java needed: the native engine and its processor files are in the release):
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Adam-AtlasSoftware/kraken/main/scripts/install.sh | bash
+```
+
+The script checks the download against the release's `SHA256SUMS`, needs no `sudo` and installs into `~/.local`. Or take the AppImage from the [latest release](https://github.com/Adam-AtlasSoftware/kraken/releases/latest) (`chmod +x KRAKEN-*.AppImage`, then run it; `./KRAKEN-*.AppImage kraken --help` runs the command line), or on Arch Linux install `kraken-workbench-bin` from the AUR. Windows and macOS archives are on the releases page too, and are experimental (see [Status](#status)). [Install](docs/install.md) has the details and the build from source.
+
 ## Quick start
 
-The default path on Linux needs no Java and no Ghidra: KRAKEN's native engine runs Ghidra's decompiler as a library. From a checkout (the native pieces are not in the release archives yet):
+```sh
+kraken project-create --binary /usr/bin/ls --project ~/kraken-projects/ls
+kraken analyze --project ~/kraken-projects/ls
+kraken list-functions --project ~/kraken-projects/ls --limit 20
+kraken-gui                             # or open the app and pick the project
+```
+
+New projects use the native engine when it can open the file, else the optional Ghidra engine (Mach-O, other processors, Windows debug information), which `kraken setup` downloads with a JDK on first use. The [native engine page](docs/native-engine.md) compares the two. The practice programs in [`corpus/bin/`](corpus/bin) are a good start, and the [tutorial](docs/tutorial.md) walks through a first session.
+
+Connect an agent: `claude mcp add kraken -- kraken mcp --project ~/kraken-projects/ls`.
+
+### From source
+
+You need Rust and a C++ compiler:
 
 ```sh
 git clone https://github.com/Adam-AtlasSoftware/kraken && cd kraken
-cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native
+cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native -p kraken-emu
 export PATH="$PWD/target/release:$PATH"
 kraken setup --native                  # once: fetches the pinned sources, compiles the Sleigh files (about a minute)
-kraken project-create --binary corpus/bin/stripped_calc-O2-stripped --engine native --project ~/kraken-projects/calc
-kraken analyze --project ~/kraken-projects/calc
-kraken list-functions --project ~/kraken-projects/calc --limit 20
-kraken-gui                             # or open the project in the app (Engine: Native)
 ```
-
-You need Rust and a C++ compiler. Set `engine = "native"` in `~/.config/kraken/config.toml` to make it the default for new projects. The practice programs are in `corpus/bin/`. Native handles ELF (x86-64, AArch64 and 32-bit x86) and Windows PE (x86 and x86-64). For Mach-O, other processors or Windows debug information (PDB) use the optional Ghidra engine: `kraken setup` downloads Ghidra and a JDK, and the release archives and the one-line installer cover that path (see [Install](docs/install.md)). The [native engine page](docs/native-engine.md) compares the two.
-
-Connect an agent: `claude mcp add kraken -- kraken mcp --project ~/kraken-projects/calc`.
 
 ## Documentation
 
