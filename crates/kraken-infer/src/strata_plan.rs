@@ -345,9 +345,9 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
     let wanted = if auto { None } else { Some(model.multi_gpu) };
     let (mode, devices) = match (wanted, peer) {
         (None, Some(p)) => {
-            // Measured on a 3070 Ti with a 2060: a second card gains little for prompts (about 5 percent
-            // with prompts-only, about 30 percent but with answers a third slower as a peer tier), so
-            // Auto stays on one card and the second card is an explicit choice.
+            // Measured on a 3070 Ti with a 2060: the peer tier made answers a third slower and its prompt
+            // gain disappeared once the main card had its full cache, and prompts-only added at most about
+            // 5 percent, so Auto stays on one card and the second card is an explicit choice.
             advice.push(if input.prefill_peer {
                 format!(
                     "{} can help read long prompts without slowing answers; the gain was small on a \
@@ -357,9 +357,9 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
                 )
             } else {
                 format!(
-                    "{} could read long prompts about 30 percent faster as a peer tier, at the \
-                     cost of answering about a third slower. Choose \"Peer tier\" under Several \
-                     cards to try it.",
+                    "{} can be tried as a peer tier under Several cards. In tests it made answers \
+                     about a third slower, and it helped prompts only when the main card had little \
+                     free memory.",
                     p.name
                 )
             });
