@@ -9,12 +9,12 @@ publish = false
 
 [dev-dependencies]
 async-trait = "0.1.89"
-engine-fake = { path = "../engine-fake", version = "0.0.0" }
-engine-native = { path = "../engine-native", version = "0.0.0" }
-kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
-kraken-mcp = { path = "../kraken-mcp", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0" }
+engine-native = { path = "../engine-native", version = "0.1.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
+kraken-mcp = { path = "../kraken-mcp", version = "0.1.0" }
 kraken-proto.workspace = true
-kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-registry = { path = "../kraken-registry", version = "0.1.0" }
 rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "transport-child-process", "elicitation"] }
 schemars.workspace = true
 serde.workspace = true

@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 egui = { version = "=0.36.2", default-features = false }
 kraken-proto.workspace = true
-kraken-layout = { path = "../kraken-layout", version = "0.0.0" }
+kraken-layout = { path = "../kraken-layout", version = "0.1.0" }
 
 [dev-dependencies]
 anyhow = "1"

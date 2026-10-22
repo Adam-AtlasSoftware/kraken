@@ -16,7 +16,7 @@ thiserror.workspace = true
 tokio = { version = "1.47", features = ["rt", "sync", "time", "macros", "io-util", "net", "fs"] }
 tokio-util = { version = "0.7.16", default-features = false }
 tracing = "0.1"
-kraken-procguard = { path = "../kraken-procguard", version = "0.0.0" }
+kraken-procguard = { path = "../kraken-procguard", version = "0.1.0" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

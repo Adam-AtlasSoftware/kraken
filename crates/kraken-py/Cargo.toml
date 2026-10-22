@@ -21,12 +21,12 @@ testing = ["python", "dep:engine-fake", "dep:tempfile"]
 
 [dependencies]
 async-trait = "0.1.89"
-engine-fake = { path = "../engine-fake", version = "0.0.0", optional = true }
-kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
-kraken-host = { path = "../kraken-host", version = "0.0.0" }
-kraken-ipc = { path = "../kraken-ipc", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0", optional = true }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
+kraken-host = { path = "../kraken-host", version = "0.1.0" }
+kraken-ipc = { path = "../kraken-ipc", version = "0.1.0" }
 kraken-proto.workspace = true
-kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-registry = { path = "../kraken-registry", version = "0.1.0" }
 pyo3 = { version = "0.30", optional = true, features = ["abi3-py310"] }
 regex = { version = "1", default-features = false, features = ["std"] }
 serde.workspace = true
@@ -36,6 +36,6 @@ thiserror.workspace = true
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
-engine-fake = { path = "../engine-fake", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0" }
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "macros"] }

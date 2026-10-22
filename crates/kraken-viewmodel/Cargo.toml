@@ -19,17 +19,17 @@ daemon = ["dep:kraken-ipc"]
 [dependencies]
 async-trait = "0.1.89"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-engine-fake = { path = "../engine-fake", version = "0.0.0", optional = true }
-kraken-engine = { path = "../kraken-engine", version = "0.0.0", optional = true }
-kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
-kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
-kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
-kraken-host = { path = "../kraken-host", version = "0.0.0" }
-kraken-infer = { path = "../kraken-infer", version = "0.0.0" }
-kraken-ipc = { path = "../kraken-ipc", version = "0.0.0", optional = true }
-kraken-model = { path = "../kraken-model", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0", optional = true }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0", optional = true }
+kraken-acp = { path = "../kraken-acp", version = "0.1.0" }
+kraken-agent = { path = "../kraken-agent", version = "0.1.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.1.0" }
+kraken-host = { path = "../kraken-host", version = "0.1.0" }
+kraken-infer = { path = "../kraken-infer", version = "0.1.0" }
+kraken-ipc = { path = "../kraken-ipc", version = "0.1.0", optional = true }
+kraken-model = { path = "../kraken-model", version = "0.1.0" }
 kraken-proto.workspace = true
-kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-registry = { path = "../kraken-registry", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile = { version = "3", optional = true }
@@ -40,7 +40,7 @@ toml = "0.8"
 
 [dev-dependencies]
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
-engine-fake = { path = "../engine-fake", version = "0.0.0" }
-krakend = { path = "../krakend", version = "0.0.0" }
-kraken-ipc = { path = "../kraken-ipc", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0" }
+krakend = { path = "../krakend", version = "0.1.0" }
+kraken-ipc = { path = "../kraken-ipc", version = "0.1.0" }
 tempfile = "3"

@@ -9,10 +9,10 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
-kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
-kraken-host = { path = "../kraken-host", version = "0.0.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.1.0" }
+kraken-host = { path = "../kraken-host", version = "0.1.0" }
 kraken-proto.workspace = true
-kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-registry = { path = "../kraken-registry", version = "0.1.0" }
 rmcp = { version = "=3.5.1", features = ["server", "transport-io", "elicitation"] }
 schemars.workspace = true
 serde.workspace = true
@@ -22,8 +22,8 @@ tokio = { version = "1.47", features = ["rt", "sync", "time", "macros"] }
 tracing = "0.1"
 
 [dev-dependencies]
-kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
-engine-fake = { path = "../engine-fake", version = "0.0.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0" }
 rmcp = { version = "=3.5.1", features = ["server", "client", "transport-io", "elicitation"] }
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }

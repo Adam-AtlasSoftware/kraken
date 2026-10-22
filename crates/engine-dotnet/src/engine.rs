@@ -308,7 +308,7 @@ impl Drop for DotnetEngine {
 impl Engine for DotnetEngine {
     fn capabilities(&self) -> EngineCaps {
         EngineCaps::new(
-            "engine-dotnet 0.0.0 (ilspy)",
+            concat!("engine-dotnet ", env!("CARGO_PKG_VERSION"), " (ilspy)"),
             [
                 Cap::Loader,
                 Cap::Decompiler,
