@@ -179,6 +179,11 @@ pub trait Engine: Send + Sync {
     fn assembler(&self) -> Option<&dyn Assembler> {
         None
     }
+    /// The process doing the engine's work (a sidecar or worker), so its activity can be shown
+    /// while a long step reports nothing; `None` when it runs in this process or is not running.
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// How the registry holds engines.

@@ -3,7 +3,9 @@
 use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, Ui, vec2,
 };
-use kraken_viewmodel::{AnalysisPhase, AppAction, LinkState, UiRequest, ViewModel};
+use kraken_viewmodel::{
+    AnalysisPhase, AppAction, LinkState, Liveness, StageState, UiRequest, ViewModel,
+};
 
 use crate::style::{self, chip, level_color, medium, pal};
 
@@ -106,6 +108,7 @@ fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
     match vm.analysis.phase {
         AnalysisPhase::Running => {
             let a = &vm.analysis;
+            let s = style::status(style::dark(ui));
             let mut text = match a.stage_label() {
                 Some(stage) => format!("Analyzing: {stage}"),
                 None => "Analyzing".to_string(),
@@ -123,9 +126,19 @@ fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
                 .text(RichText::new(text).size(12.0).color(p.text_strong))
                 .animate(true);
             let mut tip = String::from(
-                "KRAKEN is analyzing the program. You can keep working; edits wait until it finishes.",
+                "KRAKEN is analyzing the program. You can keep working; edits wait until it finishes.\n",
             );
-            if let Some(msg) = a
+            for (label, state) in a.stage_list() {
+                let mark = match state {
+                    StageState::Done => "done",
+                    StageState::Running => "running",
+                    StageState::Waiting => "waiting",
+                };
+                tip.push_str(&format!("\n{label}: {mark}"));
+            }
+            if let Some(step) = a.step_text() {
+                tip.push_str(&format!("\n\nNow: {step}"));
+            } else if let Some(msg) = a
                 .progress
                 .as_ref()
                 .map(|pr| pr.message.as_str())
@@ -133,7 +146,46 @@ fn analysis(ui: &mut Ui, vm: &mut ViewModel) {
             {
                 tip.push_str(&format!("\n\nNow: {msg}"));
             }
+            if let Some(e) = a.elapsed_text() {
+                tip.push_str(&format!("\nRunning for {e}."));
+            }
             ui.add(bar).on_hover_text(tip);
+            if let Some(step) = a.step_text() {
+                ui.label(RichText::new(step).size(11.5).color(p.text_dim))
+                    .on_hover_text("What the engine is doing inside this stage");
+            }
+            if let Some(e) = a.elapsed_text() {
+                ui.label(RichText::new(e).monospace().size(11.0).color(p.text_dim))
+                    .on_hover_text("Time since the analysis started");
+            }
+            match a.liveness() {
+                Some(Liveness::Busy { cpu_percent }) => {
+                    ui.label(
+                        RichText::new(format!("engine busy {cpu_percent}% CPU"))
+                            .size(11.0)
+                            .color(p.text_dim),
+                    )
+                    .on_hover_text(
+                        "The engine is working. Some steps of a large program report nothing for \
+                         minutes; this shows they are still running.",
+                    );
+                }
+                Some(Liveness::Quiet { secs }) => {
+                    ui.label(
+                        RichText::new(format!(
+                            "no engine activity for {}",
+                            kraken_viewmodel::duration_words(secs)
+                        ))
+                        .size(11.0)
+                        .color(s.warning),
+                    )
+                    .on_hover_text(
+                        "The engine has used no processor time and reported nothing for a while. \
+                         It may be stuck or waiting; Cancel stops it, and what it found is kept.",
+                    );
+                }
+                None => {}
+            }
             if ui
                 .small_button("Cancel")
                 .on_hover_text("Stop the analysis. What it found so far is kept.")

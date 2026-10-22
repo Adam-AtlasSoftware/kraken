@@ -70,7 +70,7 @@ impl JobState {
 }
 
 /// Latest progress report of a job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobProgress {
     /// Phase name such as an analysis stage.
     pub phase: String,
@@ -81,6 +81,35 @@ pub struct JobProgress {
     /// Human-readable status.
     #[serde(default)]
     pub message: String,
+    /// The step inside the phase (the engine's analyzer running and its count).
+    #[serde(default)]
+    pub step: Option<JobStep>,
+    /// Milliseconds since the job started.
+    #[serde(default)]
+    pub elapsed_ms: Option<u64>,
+    /// How busy the engine's process is.
+    #[serde(default)]
+    pub activity: Option<EngineActivity>,
+}
+
+/// The step inside a job's phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobStep {
+    /// Its name; engine text.
+    pub name: String,
+    /// Units done.
+    pub done: u64,
+    /// Units in all; 0 when the step gives no count.
+    pub total: u64,
+}
+
+/// The engine process's recent activity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EngineActivity {
+    /// Processor use in percent of one core.
+    pub cpu_percent: u32,
+    /// Seconds since the engine last used the processor or reported progress.
+    pub quiet_secs: u64,
 }
 
 /// A job as the `job_status` command shows it; also the payload of [`BackendEvent::Job`].
@@ -124,7 +153,7 @@ pub struct ChangeInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BackendEvent {
     /// A job made progress or ended.
-    Job(JobInfo),
+    Job(Box<JobInfo>),
     /// Another client changed the project; panels should refresh.
     ProjectChanged,
     /// Somebody (a person in another window, an agent over MCP) edited the open project.

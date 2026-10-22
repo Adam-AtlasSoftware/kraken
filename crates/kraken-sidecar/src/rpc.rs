@@ -89,6 +89,22 @@ pub struct WireProgress {
     /// while it opens a program).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<Value>,
+    /// The step inside the stage (the Ghidra analyzer running), when the sidecar tells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<WireStep>,
+}
+
+/// The `step` of a [`WireProgress`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WireStep {
+    /// Its name (engine text).
+    pub name: String,
+    /// Units done.
+    #[serde(default)]
+    pub done: u64,
+    /// Units in all; 0 when unknown.
+    #[serde(default)]
+    pub total: u64,
 }
 
 fn exited() -> ProtoError {

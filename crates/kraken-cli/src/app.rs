@@ -963,13 +963,7 @@ pub(crate) async fn wait_for_job(
         if let Some(p) = view.get("progress")
             && last.as_ref() != Some(p)
         {
-            printer.job(
-                p["phase"].as_str().unwrap_or(""),
-                p["done"].as_u64().unwrap_or(0),
-                p["total"].as_u64().unwrap_or(0),
-                p["message"].as_str().unwrap_or(""),
-                err,
-            );
+            printer.job(p, err);
             last = Some(p.clone());
         }
         let status = view.get("status").and_then(Value::as_str);

@@ -3997,6 +3997,28 @@ Example: `job_await {"job_id": "job-1", "timeout_ms": 60000}`
 ```json
 {
   "$defs": {
+    "EngineActivity": {
+      "description": "The engine process's recent activity: whether a step that reports nothing is still working.",
+      "properties": {
+        "cpu_percent": {
+          "description": "Processor use over the last few seconds, in percent of one core (above 100 with several\nthreads busy).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quiet_secs": {
+          "description": "Seconds since the engine last used the processor or reported progress; a large value\nwith a near-zero `cpu_percent` means it is stuck or waiting.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_percent",
+        "quiet_secs"
+      ],
+      "type": "object"
+    },
     "ErrorCode": {
       "description": "Stable machine-readable error code; the snake_case strings never change once released.",
       "oneOf": [
@@ -4055,11 +4077,31 @@ Example: `job_await {"job_id": "job-1", "timeout_ms": 60000}`
     "JobProgress": {
       "description": "The latest progress report of a job.",
       "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineActivity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How busy the engine's process is, when it runs in its own process."
+        },
         "done": {
           "description": "Work units done in the phase.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "elapsed_ms": {
+          "description": "Milliseconds since the job started; reported even while the engine says nothing.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "message": {
           "description": "Human-readable status; may contain engine text.",
@@ -4068,6 +4110,17 @@ Example: `job_await {"job_id": "job-1", "timeout_ms": 60000}`
         "phase": {
           "description": "Phase name such as an analysis stage.",
           "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The step inside the phase (for analysis, the engine's analyzer running and its count)."
         },
         "total": {
           "description": "Work units in the phase.",
@@ -4108,6 +4161,33 @@ Example: `job_await {"job_id": "job-1", "timeout_ms": 60000}`
           "type": "string"
         }
       ]
+    },
+    "JobStep": {
+      "description": "The step inside a job's phase.",
+      "properties": {
+        "done": {
+          "description": "Units done; with `total` 0 the step gives no count.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Its name; engine text.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Units in all; 0 when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "done",
+        "total"
+      ],
+      "type": "object"
     },
     "OpenProgress": {
       "description": "Progress of a running `project_create` or `project_open`, as clients see it.",
@@ -4382,6 +4462,28 @@ Example: `job_cancel {"job_id": "job-1"}`
 ```json
 {
   "$defs": {
+    "EngineActivity": {
+      "description": "The engine process's recent activity: whether a step that reports nothing is still working.",
+      "properties": {
+        "cpu_percent": {
+          "description": "Processor use over the last few seconds, in percent of one core (above 100 with several\nthreads busy).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quiet_secs": {
+          "description": "Seconds since the engine last used the processor or reported progress; a large value\nwith a near-zero `cpu_percent` means it is stuck or waiting.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_percent",
+        "quiet_secs"
+      ],
+      "type": "object"
+    },
     "ErrorCode": {
       "description": "Stable machine-readable error code; the snake_case strings never change once released.",
       "oneOf": [
@@ -4440,11 +4542,31 @@ Example: `job_cancel {"job_id": "job-1"}`
     "JobProgress": {
       "description": "The latest progress report of a job.",
       "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineActivity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How busy the engine's process is, when it runs in its own process."
+        },
         "done": {
           "description": "Work units done in the phase.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "elapsed_ms": {
+          "description": "Milliseconds since the job started; reported even while the engine says nothing.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "message": {
           "description": "Human-readable status; may contain engine text.",
@@ -4453,6 +4575,17 @@ Example: `job_cancel {"job_id": "job-1"}`
         "phase": {
           "description": "Phase name such as an analysis stage.",
           "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The step inside the phase (for analysis, the engine's analyzer running and its count)."
         },
         "total": {
           "description": "Work units in the phase.",
@@ -4493,6 +4626,33 @@ Example: `job_cancel {"job_id": "job-1"}`
           "type": "string"
         }
       ]
+    },
+    "JobStep": {
+      "description": "The step inside a job's phase.",
+      "properties": {
+        "done": {
+          "description": "Units done; with `total` 0 the step gives no count.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Its name; engine text.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Units in all; 0 when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "done",
+        "total"
+      ],
+      "type": "object"
     },
     "OpenProgress": {
       "description": "Progress of a running `project_create` or `project_open`, as clients see it.",
@@ -4767,6 +4927,28 @@ Example: `job_status {"job_id": "job-1"}`
 ```json
 {
   "$defs": {
+    "EngineActivity": {
+      "description": "The engine process's recent activity: whether a step that reports nothing is still working.",
+      "properties": {
+        "cpu_percent": {
+          "description": "Processor use over the last few seconds, in percent of one core (above 100 with several\nthreads busy).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quiet_secs": {
+          "description": "Seconds since the engine last used the processor or reported progress; a large value\nwith a near-zero `cpu_percent` means it is stuck or waiting.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_percent",
+        "quiet_secs"
+      ],
+      "type": "object"
+    },
     "ErrorCode": {
       "description": "Stable machine-readable error code; the snake_case strings never change once released.",
       "oneOf": [
@@ -4825,11 +5007,31 @@ Example: `job_status {"job_id": "job-1"}`
     "JobProgress": {
       "description": "The latest progress report of a job.",
       "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineActivity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How busy the engine's process is, when it runs in its own process."
+        },
         "done": {
           "description": "Work units done in the phase.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "elapsed_ms": {
+          "description": "Milliseconds since the job started; reported even while the engine says nothing.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "message": {
           "description": "Human-readable status; may contain engine text.",
@@ -4838,6 +5040,17 @@ Example: `job_status {"job_id": "job-1"}`
         "phase": {
           "description": "Phase name such as an analysis stage.",
           "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The step inside the phase (for analysis, the engine's analyzer running and its count)."
         },
         "total": {
           "description": "Work units in the phase.",
@@ -4878,6 +5091,33 @@ Example: `job_status {"job_id": "job-1"}`
           "type": "string"
         }
       ]
+    },
+    "JobStep": {
+      "description": "The step inside a job's phase.",
+      "properties": {
+        "done": {
+          "description": "Units done; with `total` 0 the step gives no count.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Its name; engine text.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Units in all; 0 when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "done",
+        "total"
+      ],
+      "type": "object"
     },
     "OpenProgress": {
       "description": "Progress of a running `project_create` or `project_open`, as clients see it.",

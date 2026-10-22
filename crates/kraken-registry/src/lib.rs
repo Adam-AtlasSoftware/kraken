@@ -11,6 +11,7 @@
 //! Binary-derived strings in outputs are sanitised and wrapped as
 //! [`Untrusted<String>`](kraken_proto::Untrusted).
 
+pub mod activity;
 pub mod ai;
 pub mod command;
 pub mod commands;
@@ -33,7 +34,10 @@ pub use context::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, DenyApprover,
     OpenProgressSink, Surface,
 };
-pub use jobs::{JobId, JobProgress, JobReporter, JobSnapshot, JobStatus, JobTable, TrackedJob};
+pub use jobs::{
+    EngineActivity, JobId, JobProgress, JobReporter, JobSnapshot, JobStatus, JobStep, JobTable,
+    TrackedJob,
+};
 pub use opening::OpenOptions;
 pub use session::{
     AnalysisPhase, EngineChoice, EngineFactory, EngineKind, EngineSelection, EngineStatus, Epoch,

@@ -387,6 +387,7 @@ impl Analyzer for FakeEngine {
                         done: step,
                         total: STEPS_PER_STAGE,
                         message: format!("{} pass {step}/{STEPS_PER_STAGE}", stage.as_str()),
+                        step: None,
                     });
                 }
                 done.push(stage);

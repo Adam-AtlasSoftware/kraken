@@ -42,7 +42,7 @@ impl JobStatus {
 }
 
 /// The latest progress report of a job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobProgress {
     /// Phase name such as an analysis stage.
     pub phase: String,
@@ -52,6 +52,37 @@ pub struct JobProgress {
     pub total: u64,
     /// Human-readable status; may contain engine text.
     pub message: String,
+    /// The step inside the phase (for analysis, the engine's analyzer running and its count).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<JobStep>,
+    /// Milliseconds since the job started; reported even while the engine says nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+    /// How busy the engine's process is, when it runs in its own process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<EngineActivity>,
+}
+
+/// The step inside a job's phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JobStep {
+    /// Its name; engine text.
+    pub name: String,
+    /// Units done; with `total` 0 the step gives no count.
+    pub done: u64,
+    /// Units in all; 0 when unknown.
+    pub total: u64,
+}
+
+/// The engine process's recent activity: whether a step that reports nothing is still working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EngineActivity {
+    /// Processor use over the last few seconds, in percent of one core (above 100 with several
+    /// threads busy).
+    pub cpu_percent: u32,
+    /// Seconds since the engine last used the processor or reported progress; a large value
+    /// with a near-zero `cpu_percent` means it is stuck or waiting.
+    pub quiet_secs: u64,
 }
 
 /// A point-in-time view of a job.
@@ -106,6 +137,7 @@ impl JobReporter {
                 done: found,
                 total: found + p.queued.unwrap_or(0),
                 message: p.message.clone(),
+                ..Default::default()
             });
             s.open = Some(p);
         });
@@ -428,6 +460,7 @@ mod tests {
             done: 1,
             total: 2,
             message: String::new(),
+            ..Default::default()
         });
         assert_eq!(t.snapshot(&id).unwrap().status, JobStatus::Running);
         t.cancel(&id).unwrap();

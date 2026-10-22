@@ -16,6 +16,8 @@ const PLAIN_AFTER_MS: u64 = 2000;
 const BAR_AFTER_MS: u64 = 300;
 /// Width of the bar in characters.
 const BAR: usize = 24;
+/// While a job reports nothing new, a plain line says it is still running this often.
+const STILL_EVERY: Duration = Duration::from_secs(30);
 
 /// Draws progress reports.
 pub(crate) struct ProgressPrinter {
@@ -24,6 +26,8 @@ pub(crate) struct ProgressPrinter {
     printed: Option<Instant>,
     in_line: bool,
     started: Instant,
+    /// The last plain job line, so a heartbeat that changes nothing prints nothing.
+    last_job: Option<String>,
 }
 
 /// `12,410`: a count as people read it.
@@ -104,6 +108,7 @@ impl ProgressPrinter {
             printed: None,
             in_line: false,
             started: Instant::now(),
+            last_job: None,
         }
     }
 
@@ -129,32 +134,86 @@ impl ProgressPrinter {
         self.show(&name, &line, &plain, true, err);
     }
 
-    /// Shows one report of a job: its phase, `done` of `total` and the message.
-    pub(crate) fn job(
-        &mut self,
-        phase: &str,
-        done: u64,
-        total: u64,
-        message: &str,
-        err: &mut dyn Write,
-    ) {
-        let elapsed = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let fraction = (total > 0).then(|| done as f64 / total as f64);
-        let counts = if total > 0 {
+    /// Shows one report of a job (`job_status`'s `progress`): its phase, `done` of `total`, the
+    /// message, the step inside the phase with its count, and how busy the engine is. Plain
+    /// output prints a line when something changed and, while nothing does, one every
+    /// [`STILL_EVERY`] that says the job is still running.
+    pub(crate) fn job(&mut self, p: &serde_json::Value, err: &mut dyn Write) {
+        let phase = p["phase"].as_str().unwrap_or("");
+        let done = p["done"].as_u64().unwrap_or(0);
+        let total = p["total"].as_u64().unwrap_or(0);
+        let message = p["message"].as_str().unwrap_or("");
+        let elapsed = p["elapsed_ms"].as_u64().unwrap_or_else(|| {
+            u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+        });
+        let step = &p["step"];
+        let (step_done, step_total) = (
+            step["done"].as_u64().unwrap_or(0),
+            step["total"].as_u64().unwrap_or(0),
+        );
+        let step_counts = (step_total > 0).then(|| {
+            format!(
+                "{} of {}",
+                count(step_done.min(step_total)),
+                count(step_total)
+            )
+        });
+        // a count of a handful of sub-stages is no measure of the work; the step's is
+        let fraction = if total > 3 {
+            Some(done as f64 / total as f64)
+        } else {
+            (step_total > 0).then(|| step_done.min(step_total) as f64 / step_total as f64)
+        };
+        let activity = &p["activity"];
+        let busy = activity["cpu_percent"].as_u64().map(|cpu| {
+            let quiet = activity["quiet_secs"].as_u64().unwrap_or(0);
+            if quiet >= 60 {
+                format!("no engine activity for {}", clock(quiet * 1000))
+            } else {
+                format!("engine {cpu}% CPU")
+            }
+        });
+        let counts = if total > 3 {
             format!("{} of {}", count(done), count(total))
         } else {
             String::new()
         };
-        let text = [phase, counts.as_str(), message]
-            .iter()
-            .filter(|s| !s.is_empty())
-            .copied()
-            .collect::<Vec<_>>()
-            .join("  ");
+        let text = [
+            phase,
+            counts.as_str(),
+            message,
+            step_counts.as_deref().unwrap_or(""),
+            busy.as_deref().unwrap_or(""),
+        ]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("  ");
         let line = format!("{} {}  {text}", bar(fraction, elapsed), clock(elapsed));
         // the plain form keeps the format scripts already read
-        let plain = format!("[{phase}] {done}/{total} {message}");
-        self.show(phase, &line, &plain, false, err);
+        let mut plain = format!("[{phase}] {done}/{total} {message}");
+        if let Some(c) = &step_counts {
+            plain.push_str(&format!(" ({c})"));
+        }
+        if self.tty {
+            self.show(phase, &line, &plain, false, err);
+            return;
+        }
+        let changed = self.last_job.as_deref() != Some(plain.as_str());
+        let still = !changed && self.printed.is_some_and(|t| t.elapsed() >= STILL_EVERY);
+        if changed {
+            self.last_job = Some(plain.clone());
+            self.show(phase, &line, &plain, true, err);
+        } else if still {
+            let mut l = format!("{plain} (still running, {}", clock(elapsed));
+            if let Some(b) = &busy {
+                l.push_str(&format!(", {b}"));
+            }
+            l.push(')');
+            emit(err, &format!("{l}\n"));
+            self.printed = Some(Instant::now());
+        }
     }
 
     /// `throttle` keeps plain output to one line per stage plus one every [`PLAIN_EVERY`].
@@ -264,5 +323,28 @@ mod tests {
         assert_eq!(count(1_234_567), "1,234,567");
         assert_eq!(clock(5_000), "0:05");
         assert_eq!(clock(3_723_000), "1:02:03");
+    }
+
+    #[test]
+    fn a_job_heartbeat_that_changes_nothing_prints_nothing() {
+        let mut out = Vec::new();
+        let mut p = ProgressPrinter::new(false);
+        let report = |elapsed: u64, done: u64| {
+            serde_json::json!({
+                "phase": "core", "done": 0, "total": 2,
+                "message": "GCC Exception Handlers: Marking up Call Site records",
+                "step": {"name": "GCC Exception Handlers", "done": done, "total": 58_000},
+                "elapsed_ms": elapsed,
+                "activity": {"cpu_percent": 98, "quiet_secs": 0}
+            })
+        };
+        p.job(&report(2_000, 31_200), &mut out);
+        p.job(&report(4_000, 31_200), &mut out);
+        p.job(&report(6_000, 31_200), &mut out);
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(
+            text,
+            "[core] 0/2 GCC Exception Handlers: Marking up Call Site records (31,200 of 58,000)\n"
+        );
     }
 }

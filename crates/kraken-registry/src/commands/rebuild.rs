@@ -176,6 +176,7 @@ fn progress(reporter: &JobReporter, phase: &str, done: u64, total: u64, message:
         done,
         total,
         message: sanitize(message),
+        ..Default::default()
     });
 }
 

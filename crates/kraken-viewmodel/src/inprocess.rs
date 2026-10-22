@@ -95,7 +95,7 @@ impl InProcessBackend {
                 let terminal = snap.status.is_terminal();
                 let info = job_info(snap);
                 if last.as_ref() != Some(&info) {
-                    let _ = events.send(BackendEvent::Job(info.clone()));
+                    let _ = events.send(BackendEvent::Job(Box::new(info.clone())));
                     last = Some(info);
                 }
                 if terminal {
@@ -146,6 +146,16 @@ fn job_info(s: JobSnapshot) -> JobInfo {
             done: p.done,
             total: p.total,
             message: p.message,
+            step: p.step.map(|st| crate::backend::JobStep {
+                name: st.name,
+                done: st.done,
+                total: st.total,
+            }),
+            elapsed_ms: p.elapsed_ms,
+            activity: p.activity.map(|a| crate::backend::EngineActivity {
+                cpu_percent: a.cpu_percent,
+                quiet_secs: a.quiet_secs,
+            }),
         }),
         result: s.result,
         error: s.error,

@@ -995,7 +995,7 @@ fn analysis_progress_flows_from_events_to_the_status_bar() {
     assert_eq!(r.vm.status_text(), "Analyzing: load (1 of 3)");
 
     r.backend
-        .emit(BackendEvent::Job(job("running", 2, 3, "core")));
+        .emit(BackendEvent::Job(Box::new(job("running", 2, 3, "core"))));
     assert!(r.vm.block_until(WAIT, |vm| {
         vm.analysis
             .progress
@@ -1003,11 +1003,16 @@ fn analysis_progress_flows_from_events_to_the_status_bar() {
             .is_some_and(|p| p.phase == "core")
     }));
     assert_eq!(r.vm.status_text(), "Analyzing: core (2 of 3)");
-    assert!((r.vm.analysis.fraction().unwrap() - 2.0 / 3.0).abs() < 1e-6);
+    // A count of stages is no measure of the work; the bar animates without a percentage.
+    assert_eq!(r.vm.analysis.fraction(), None);
 
     let lists = r.backend.calls_to("list_functions").len();
-    r.backend
-        .emit(BackendEvent::Job(job("succeeded", 3, 3, "expensive")));
+    r.backend.emit(BackendEvent::Job(Box::new(job(
+        "succeeded",
+        3,
+        3,
+        "expensive",
+    ))));
     assert!(r.vm.block_until(WAIT, |vm| vm.analysis.phase == AnalysisPhase::Complete));
     assert!(r.vm.block_until_idle(WAIT));
     assert_eq!(r.vm.analysis.function_count, Some(12));
@@ -1024,8 +1029,12 @@ fn analysis_progress_flows_from_events_to_the_status_bar() {
 
     // A repeated terminal event does not toast twice.
     let n = r.vm.toasts.len();
-    r.backend
-        .emit(BackendEvent::Job(job("succeeded", 3, 3, "expensive")));
+    r.backend.emit(BackendEvent::Job(Box::new(job(
+        "succeeded",
+        3,
+        3,
+        "expensive",
+    ))));
     std::thread::sleep(Duration::from_millis(50));
     r.vm.poll();
     assert_eq!(r.vm.toasts.len(), n);
@@ -1057,7 +1066,7 @@ fn analysis_failure_and_cancel_are_reported() {
 
     let mut failed = job("failed", 1, 3, "core");
     failed.error = Some(ProtoError::new(ErrorCode::Internal, "engine crashed"));
-    r.backend.emit(BackendEvent::Job(failed));
+    r.backend.emit(BackendEvent::Job(Box::new(failed)));
     assert!(r.vm.block_until(WAIT, |vm| vm.analysis.phase == AnalysisPhase::Failed));
     assert!(
         r.vm.analysis
@@ -1109,7 +1118,7 @@ fn backend_events_for_other_jobs_and_disconnects() {
     let mut r = opened(base_backend());
     let mut other = job("running", 1, 2, "x");
     other.command = "rebuild".into();
-    r.backend.emit(BackendEvent::Job(other));
+    r.backend.emit(BackendEvent::Job(Box::new(other)));
     r.backend
         .emit(BackendEvent::Disconnected("socket closed".into()));
     assert!(r.vm.block_until(WAIT, |vm| !vm.toasts.is_empty()));

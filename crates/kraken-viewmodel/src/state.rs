@@ -391,11 +391,81 @@ pub struct AnalysisState {
 }
 
 impl AnalysisState {
-    /// Fraction done in the current stage, if running with a report.
+    /// Fraction done, if running with a count: the stage's when it counts functions, else the
+    /// current step's (a Ghidra analyzer's) when it gives one. A stage that only counts its
+    /// sub-stages ("0 of 2") has no meaningful fraction.
     pub fn fraction(&self) -> Option<f32> {
         let p = self.progress.as_ref()?;
-        (self.phase == AnalysisPhase::Running && p.total > 0)
-            .then(|| (p.done as f32 / p.total as f32).clamp(0.0, 1.0))
+        if self.phase != AnalysisPhase::Running {
+            return None;
+        }
+        let f = |d: u64, t: u64| (d as f32 / t as f32).clamp(0.0, 1.0);
+        if p.total > 3 {
+            return Some(f(p.done, p.total));
+        }
+        p.step
+            .as_ref()
+            .filter(|s| s.total > 0)
+            .map(|s| f(s.done, s.total))
+    }
+
+    /// The step running inside the stage: `GCC Exception Handlers  31,200 of 58,000`.
+    pub fn step_text(&self) -> Option<String> {
+        let s = self.progress.as_ref()?.step.as_ref()?;
+        let name = s.name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(if s.total > 0 {
+            format!(
+                "{name}  {} of {}",
+                crate::loading::thousands(s.done.min(s.total)),
+                crate::loading::thousands(s.total)
+            )
+        } else {
+            name.to_string()
+        })
+    }
+
+    /// How long the run has taken: `45s`, `6m 40s`, `1h 12m`.
+    pub fn elapsed_text(&self) -> Option<String> {
+        let ms = self.progress.as_ref()?.elapsed_ms?;
+        Some(duration_words(ms / 1000))
+    }
+
+    /// Whether the engine is visibly working, from its processor use.
+    pub fn liveness(&self) -> Option<Liveness> {
+        let a = self.progress.as_ref()?.activity?;
+        Some(if a.quiet_secs >= QUIET_WARNING_SECS {
+            Liveness::Quiet { secs: a.quiet_secs }
+        } else {
+            Liveness::Busy {
+                cpu_percent: a.cpu_percent,
+            }
+        })
+    }
+
+    /// The stages with where the run is: done, running or waiting.
+    pub fn stage_list(&self) -> Vec<(&'static str, StageState)> {
+        const STAGES: [(&str, &str); 3] = [
+            ("load", "Load the program"),
+            ("core", "Analyze (find functions, references, types)"),
+            ("expensive", "Decompile every function"),
+        ];
+        let current = self.progress.as_ref().map(|p| p.phase.as_str());
+        let at = current.and_then(|c| STAGES.iter().position(|(k, _)| *k == c));
+        STAGES
+            .iter()
+            .enumerate()
+            .map(|(i, (_, label))| {
+                let state = match at {
+                    Some(a) if i < a => StageState::Done,
+                    Some(a) if i == a => StageState::Running,
+                    _ => StageState::Waiting,
+                };
+                (*label, state)
+            })
+            .collect()
     }
 
     /// True while a run is in progress.
@@ -435,6 +505,44 @@ impl AnalysisState {
             self.phase,
             AnalysisPhase::Complete | AnalysisPhase::Failed | AnalysisPhase::Cancelled
         )
+    }
+}
+
+/// Seconds without processor use or progress after which the engine is said to be quiet.
+pub const QUIET_WARNING_SECS: u64 = 60;
+
+/// Whether the engine is visibly working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// It is using the processor (or reported progress lately).
+    Busy {
+        /// Percent of one core.
+        cpu_percent: u32,
+    },
+    /// No processor use and no progress for this long: stuck, or waiting on something.
+    Quiet {
+        /// Seconds.
+        secs: u64,
+    },
+}
+
+/// Where the run is with one stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageState {
+    /// Finished.
+    Done,
+    /// Running now.
+    Running,
+    /// Not started yet.
+    Waiting,
+}
+
+/// `45s`, `6m 40s`, `1h 12m`.
+pub fn duration_words(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
+        s => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
     }
 }
 
@@ -510,5 +618,71 @@ impl Toast {
             ToastLevel::Warning => std::time::Duration::from_secs(8),
             _ => std::time::Duration::from_secs(4),
         }
+    }
+}
+
+#[cfg(test)]
+mod analysis_progress_tests {
+    use super::*;
+    use crate::backend::{EngineActivity, JobProgress, JobStep};
+
+    fn running(p: JobProgress) -> AnalysisState {
+        AnalysisState {
+            phase: AnalysisPhase::Running,
+            job_id: Some("job-1".into()),
+            progress: Some(p),
+            function_count: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn a_ghidra_stage_shows_its_analyzer_time_and_activity() {
+        let a = running(JobProgress {
+            phase: "core".into(),
+            done: 0,
+            total: 2,
+            message: "GCC Exception Handlers".into(),
+            step: Some(JobStep {
+                name: "GCC Exception Handlers".into(),
+                done: 31_200,
+                total: 58_000,
+            }),
+            elapsed_ms: Some(400_000),
+            activity: Some(EngineActivity {
+                cpu_percent: 97,
+                quiet_secs: 0,
+            }),
+        });
+        assert_eq!(
+            a.step_text().as_deref(),
+            Some("GCC Exception Handlers  31,200 of 58,000")
+        );
+        let f = a.fraction().expect("the step's count");
+        assert!((f - 31_200.0 / 58_000.0).abs() < 1e-4);
+        assert_eq!(a.elapsed_text().as_deref(), Some("6m 40s"));
+        assert_eq!(a.liveness(), Some(Liveness::Busy { cpu_percent: 97 }));
+        let stages = a.stage_list();
+        assert_eq!(stages[0].1, StageState::Done);
+        assert_eq!(stages[1].1, StageState::Running);
+        assert_eq!(stages[2].1, StageState::Waiting);
+    }
+
+    #[test]
+    fn a_silent_engine_is_called_quiet_and_a_stage_count_is_no_fraction() {
+        let a = running(JobProgress {
+            phase: "core".into(),
+            total: 2,
+            activity: Some(EngineActivity {
+                cpu_percent: 0,
+                quiet_secs: 125,
+            }),
+            ..Default::default()
+        });
+        assert_eq!(a.fraction(), None);
+        assert_eq!(a.step_text(), None);
+        assert_eq!(a.liveness(), Some(Liveness::Quiet { secs: 125 }));
+        assert_eq!(duration_words(125), "2m 05s");
+        assert_eq!(duration_words(4000), "1h 06m");
     }
 }
