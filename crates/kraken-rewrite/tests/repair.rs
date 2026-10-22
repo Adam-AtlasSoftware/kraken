@@ -98,6 +98,7 @@ fn counterexample() -> Counterexample {
         global_writes: Vec::new(),
         global_writes_observed: false,
         instructions: 0,
+        ret_object: None,
     };
     Counterexample {
         args: vec![Arg::Int { value: u64::MAX }],

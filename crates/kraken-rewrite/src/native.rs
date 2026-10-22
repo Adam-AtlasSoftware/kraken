@@ -56,7 +56,7 @@ pub enum Build {
 /// `f <n>` (callback number), `b <hex>` (buffer) or `g <objects> <links>` followed by that many
 /// `o <hex>` lines and `l <from> <offset> <to> <to_offset>` lines (a graph). Objects are laid out
 /// in that order, which is also the order of the `buf` lines of the result.
-fn runner_source(sig: &Signature, image: Option<&RunnerImage>) -> String {
+fn runner_source(sig: &Signature, image: Option<&RunnerImage>, shim: bool) -> String {
     let call_args: Vec<String> = sig
         .params
         .iter()
@@ -81,13 +81,39 @@ fn runner_source(sig: &Signature, image: Option<&RunnerImage>) -> String {
             "let r = {call};\n    let ret: Option<u64> = Some((r as u64) & {:#x}u64);",
             mask(bits)
         ),
-        Ret::Ptr => format!("let r = {call};\n    let ret: Option<u64> = Some(r as u64);"),
+        // A pointer result is described by what it points at, as the oracle does: heap blocks
+        // differ in address between the two sides (see `ptrdesc`).
+        Ret::Ptr => {
+            let (track, blocks) = if shim {
+                (
+                    "translation::rt::track_blocks();\n    ",
+                    "translation::rt::tracked_blocks()",
+                )
+            } else {
+                ("", "Vec::new()")
+            };
+            format!(
+                "{track}let r = {call};\n    let ret: Option<u64> = None;\n    \
+                 let ret_object = Some(ptrdesc::describe_pointer(r as u64, &{blocks}, &mut |a, n| \
+                 unsafe {{ std::slice::from_raw_parts(a as *const u8, n) }}.to_vec()));"
+            )
+        }
         Ret::Double => {
             format!("let r: f64 = {call};\n    let ret: Option<u64> = Some(r.to_bits());")
         }
         Ret::Float => format!(
             "let r: f32 = {call};\n    let ret: Option<u64> = Some(u64::from(r.to_bits()));"
         ),
+    };
+    let body = if sig.ret == Ret::Ptr {
+        body
+    } else {
+        format!("{body}\n    let ret_object: Option<String> = None;")
+    };
+    let ptrdesc_mod = if sig.ret == Ret::Ptr {
+        format!("mod ptrdesc {{\n{}}}\n", crate::PTRDESC_SOURCE)
+    } else {
+        String::new()
     };
     // With the program image: installed where the emulator has the same bytes, then every
     // changed range of the compared parts is reported as the oracle reports writes to globals.
@@ -138,7 +164,7 @@ fn runner_source(sig: &Signature, image: Option<&RunnerImage>) -> String {
     format!(
         r#"#![allow(warnings)]
 mod translation;
-{image_mod}
+{image_mod}{ptrdesc_mod}
 use std::cell::RefCell;
 use std::fmt::Write as _;
 
@@ -280,6 +306,9 @@ fn main() {{
         Some(r) => writeln!(out, "ret {{:x}}", r).unwrap(),
         None => writeln!(out, "ret none").unwrap(),
     }}
+    if let Some(o) = &ret_object {{
+        writeln!(out, "ro {{}}", o).unwrap();
+    }}
     for (i, b) in bufs.iter_mut().enumerate() {{
         let mut hex = String::new();
         for byte in b.bytes().iter() {{
@@ -370,7 +399,10 @@ fn build_parts(
             .map_err(|e| RewriteError::Compile(format!("{name}: {e}")))
     };
     wr("translation.rs", &format!("{trusted}{rust_code}"))?;
-    wr("main.rs", &runner_source(sig, image))?;
+    wr(
+        "main.rs",
+        &runner_source(sig, image, trusted.contains("mod rt {")),
+    )?;
     if let Some(img) = image {
         std::fs::write(dir.path().join("image.bin"), &img.image.bytes)
             .map_err(|e| RewriteError::Compile(format!("image.bin: {e}")))?;
@@ -537,6 +569,9 @@ impl NativeRunner {
                     }
                     (Some("buf"), Some(_), None) => obs.buffers.push(Vec::new()),
                     (Some("cb"), Some(ev), _) => obs.callbacks.push(ev.to_string()),
+                    (Some("ro"), Some(_), _) => {
+                        obs.ret_object = line.strip_prefix("ro ").map(str::to_string);
+                    }
                     (Some("gw"), Some(v), Some(before)) => {
                         let after = it.next().unwrap_or("");
                         let bad = || RewriteError::Native("bad global write".into());

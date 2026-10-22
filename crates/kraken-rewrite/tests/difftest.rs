@@ -210,3 +210,65 @@ pub unsafe extern "C" fn cmp_id(_a: *const u8, _b: *const u8) -> i32 {
         Build::Ready(_) => panic!("the alias must be refused by the lint"),
     }
 }
+
+/// `node_new` of pie_list: a constructor. Its result is a heap pointer, compared by the block
+/// it points at, so a translation with the wrong struct layout is caught at function level.
+fn node_new_run(code: &str) -> DiffReport {
+    let mut o = oracle(&corpus_bin("pie_list-O0"));
+    let entry = o.symbol("node_new").expect("symbol");
+    let sig = kraken_rewrite::infer::infer_signature(
+        "node * node_new(int id, char * name, int x, int y, double w)",
+        "node_new",
+    )
+    .expect("signature");
+    let opts = DiffOptions {
+        random_cases: 60,
+        trusted_prelude: kraken_rewrite::rt_module_source(),
+        ..DiffOptions::default()
+    };
+    let inputs = kraken_rewrite::infer::generic_inputs(&sig);
+    run_differential(&mut o, entry, &sig, code, &inputs, &opts).expect("differential run")
+}
+
+const NODE_NEW: &str = r#"
+#[repr(C)]
+struct Pos { x: i32, y: i32 }
+#[repr(C)]
+struct Rec { id: i32, name: [u8; 16], pos: Pos, weight: f64 }
+#[repr(C)]
+struct Node { rec: Rec, next: *mut Node }
+
+pub unsafe extern "C" fn node_new(a0: i32, a1: *mut u8, a2: i32, a3: i32, a4: f64) -> *const u8 {
+    let n = unsafe { rt::calloc(1, 0x30) } as *mut Node;
+    if n.is_null() {
+        rt::exit(3);
+    }
+    unsafe {
+        (*n).rec.id = a0;
+        rt::strncpy((*n).rec.name.as_mut_ptr(), a1, 15);
+        (*n).rec.pos.x = a2;
+        (*n).rec.pos.y = a3;
+        (*n).rec.weight = a4;
+    }
+    n as *const u8
+}
+"#;
+
+#[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+fn a_constructor_is_checked_by_the_object_it_returns() {
+    let r = node_new_run(NODE_NEW);
+    assert_eq!(r.verdict, Verdict::Pass, "{:#?}", r.counterexamples.first());
+    assert!(r.passed > 0 && r.passed == r.cases_run, "{r:?}");
+
+    // The layout a 2-bit local model wrote: 12 bytes of padding after `id`.
+    let wrong = mutate(
+        NODE_NEW,
+        "struct Rec { id: i32, name: [u8; 16], pos: Pos, weight: f64 }",
+        "struct Rec { id: i32, _pad: [u8; 12], name: [u8; 16], pos: Pos, weight: f64, _p: [u8; 4] }",
+    );
+    let r = node_new_run(&wrong);
+    assert_eq!(r.verdict, Verdict::Fail, "the wrong layout passed");
+    let d = &r.counterexamples[0].differences;
+    assert!(d.iter().any(|x| x.contains("returned pointer")), "{d:?}");
+}

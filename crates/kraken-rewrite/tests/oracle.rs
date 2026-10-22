@@ -175,44 +175,73 @@ fn jump_table_loop_counts_down() {
 #[test]
 #[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn unknown_import_is_reported_not_guessed() {
-    // pie_list main-less: call list_sort's callee through a null function pointer faults, and an
-    // import with no model ends the call as unsupported. node_new calls calloc (modelled), then
-    // strncpy (not).
-    let mut o = oracle(&corpus_bin("pie_list-O0"));
-    let entry = o.symbol("node_new").expect("node_new");
+    // `join` starts by constructing a std::string through libstdc++, which the oracle does not
+    // model: the call ends as unsupported, naming the import, instead of being guessed.
+    let mut o = oracle(&corpus_bin("cpp_shapes-O0"));
+    let entry = o
+        .symbol(
+            "_ZL4joinRKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS5_EERKS5_",
+        )
+        .expect("join");
     let sig = Signature {
-        name: "node_new".into(),
-        params: vec![
-            Param::Int {
-                bits: 32,
-                signed: true,
-            },
-            Param::Buf,
-            Param::Int {
-                bits: 32,
-                signed: true,
-            },
-            Param::Int {
-                bits: 32,
-                signed: true,
-            },
-        ],
-        ret: Ret::Int {
-            bits: 64,
-            signed: false,
-        },
+        name: "join".into(),
+        // The hidden result object, the vector and the separator.
+        params: vec![Param::Buf, Param::Buf, Param::Buf],
+        ret: Ret::Void,
     };
     let r = o
         .call(
             entry,
             &sig,
-            &[int(1), buf(b"abc\0".to_vec()), int(2), int(3)],
+            &[buf(vec![0; 32]), buf(vec![0; 24]), buf(vec![0; 32])],
         )
         .expect("call");
     assert!(
-        matches!(&r.termination, Termination::Unsupported { detail } if detail.contains("strncpy")),
+        matches!(&r.termination, Termination::Unsupported { detail } if detail.contains("call to import")),
         "{:?}",
         r.termination
+    );
+}
+
+#[test]
+#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
+fn strncpy_is_modelled_as_c_does() {
+    // node_new: calloc, then strncpy of at most 15 bytes into a zeroed 16-byte name.
+    let mut o = oracle(&corpus_bin("pie_list-O0"));
+    let entry = o.symbol("node_new").expect("node_new");
+    let sig = kraken_rewrite::infer::infer_signature(
+        "node * node_new(int id, char * name, int x, int y, double w)",
+        "node_new",
+    )
+    .expect("signature");
+    let long = b"abcdefghijklmnopqrstuvwxyz\0".to_vec();
+    let r = o
+        .call(
+            entry,
+            &sig,
+            &[
+                int(7),
+                buf(long),
+                int(1),
+                int(2),
+                Arg::Double {
+                    bits: 1.5f64.to_bits(),
+                },
+            ],
+        )
+        .expect("call");
+    assert_eq!(r.termination, Termination::Returned, "{r:?}");
+    let d = r.ret_object.expect("described");
+    // Block 0 of 0x30 bytes: id 7, then 15 copied bytes and the zero the calloc left.
+    assert!(d.starts_with("a0+0:48:07000000"), "{d}");
+    assert!(
+        d.contains(
+            &"abcdefghijklmno"
+                .bytes()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        ),
+        "{d}"
     );
 }
 

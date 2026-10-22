@@ -549,13 +549,13 @@ async fn accept_verified_accepts_what_passed_and_reports_the_export() {
 }
 
 #[tokio::test]
-async fn an_export_calls_an_unaccepted_callee_in_the_original() {
+async fn a_function_returning_a_pointer_is_verified_accepted_and_exported() {
     if !kraken_rewrite::sandbox::enforced() || ghidra_home().is_none() {
         eprintln!("skipped: needs Landlock and a Ghidra install for the SLEIGH specs");
         return;
     }
-    // `op_name` returns a pointer, so it is never accepted, and `main` calls it: the export
-    // declares the original `op_name` and calls it, and the README says so.
+    // `op_name` returns a pointer to a string constant: it is checked by the string, verified
+    // and accepted, so the export has it in Rust and calls nothing of the original for it.
     let env = rewrite_env("switch_vm-O0", "program-switch-vm.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = path_str(&tmp.path().join("p"));
@@ -578,9 +578,13 @@ async fn an_export_calls_an_unaccepted_callee_in_the_original() {
     assert_eq!(v["rewrite"]["verdict"], "pass", "{v:#}");
     let export = v["rewrite"]["export_dir"].as_str().expect("export dir");
     let readme = std::fs::read_to_string(Path::new(export).join("README.md")).expect("readme");
+    let original = readme
+        .split("## Calls into the original program")
+        .nth(1)
+        .unwrap_or("");
+    assert!(!original.contains("op_name"), "{readme}");
     assert!(
-        readme.contains("Calls into the original program"),
-        "{readme}"
+        readme.contains("op_name"),
+        "listed among the exported functions: {readme}"
     );
-    assert!(readme.contains("op_name"), "{readme}");
 }

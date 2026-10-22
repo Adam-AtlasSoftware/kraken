@@ -3,8 +3,9 @@
 //!
 //! The guess is deliberately narrow: integers up to 64 bits, `double`, pointers to caller-owned
 //! buffers and function pointers in registers (six integer-class and eight floating-point
-//! parameters at most), and an integer, `double` or void result. Anything else (single-precision
-//! floating point, structs by value, varargs, pointer results) is refused with a reason, so a
+//! parameters at most), and an integer, `double`, pointer or void result (a pointer result is
+//! compared by what it points at). Anything else (single-precision
+//! floating point, structs by value, varargs) is refused with a reason, so a
 //! function outside what the oracle can check never gets a verdict that means nothing. Buffer
 //! sizes are unknown here, so the generic inputs mix raw random bytes with small pointer graphs; a
 //! curated input generator (see `targets`) tests structs far better.
@@ -294,13 +295,9 @@ fn classify_ret(ty: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Ret, Un
     if ty == "undefined" && program {
         return Ok(Ret::Void);
     }
-    if is_pointer(ty) && program {
-        return Ok(Ret::Ptr);
-    }
+    // A pointer result is compared by what it points at (`ptrdesc`).
     if is_pointer(ty) {
-        return Err(un(
-            "pointer result (addresses are not comparable between the original and the Rust build)",
-        ));
+        return Ok(Ret::Ptr);
     }
     match base_word(ty) {
         "double" if !ty.contains("long") => return Ok(Ret::Double),
@@ -354,13 +351,9 @@ pub fn infer_signature_for_program(
 ) -> Result<ProgramSignature, Unsupported> {
     let mut guesses = Vec::new();
     let sig = infer_with(signature, name, Some(display), Mode::Program, &mut guesses)?;
-    let compile_only = (sig.ret == Ret::Ptr).then(|| {
-        "pointer result: addresses are not comparable between the original and the Rust build"
-            .to_string()
-    });
     Ok(ProgramSignature {
         signature: sig,
-        compile_only,
+        compile_only: None,
         guesses,
     })
 }
@@ -570,10 +563,6 @@ mod tests {
     #[test]
     fn what_the_oracle_cannot_check_is_refused_with_a_reason() {
         for (text, needle) in [
-            (
-                "node * node_new(int id, char * name, int x, int y, double w)",
-                "pointer result",
-            ),
             ("long double f(int w)", "floating-point"),
             ("int f(long double w)", "floating-point"),
             (
@@ -632,11 +621,16 @@ mod tests {
     }
 
     #[test]
-    fn a_program_rewrite_accepts_pointer_and_untyped_results_but_only_compiles_the_first() {
+    fn pointer_and_untyped_results_are_accepted_and_pointers_are_checked() {
         let r = infer_signature_for_program("char * op_name(uint op)", "op_name", "op_name")
             .expect("sig");
-        assert_eq!(r.signature.ret, Ret::Ptr);
-        assert!(r.compile_only.expect("note").contains("pointer result"));
+        assert_eq!((r.signature.ret, r.compile_only), (Ret::Ptr, None));
+        assert_eq!(
+            sig("node * node_new(int id, char * name, int x, int y, double w)")
+                .expect("a function-level signature too")
+                .ret,
+            Ret::Ptr
+        );
         assert!(r.signature.rust_prototype().ends_with("-> *const u8"));
         let r = infer_signature_for_program(
             "undefined FUN_00101149(long * param_1)",

@@ -523,7 +523,7 @@ Does the whole flow for one program in one command: it checks the file, creates 
 
 - `--names` lets the configured assistant look the program over and name its important functions (the Automate task below, goal "understand").
 - `--rewrite` plans a Rust rewrite of the whole program, translates it with the configured provider (see "Rewriting uses the same assistant"), runs the original and the rewrite on the same inputs inside a sandbox, and reports whether they agree. `--cases '[{"name": "help", "argv": ["--help"]}]'` adds your own test cases. `--no-function-tests` only compiles each function and leaves the program-level test as the only evidence.
-- `--accept-verified` (with `--rewrite`) accepts the rewritten functions that passed their own test and exports the Rust workspace to `<project>/rewrite-export`. You are the person deciding here. Without the flag the command tells you how to accept (`kraken rewrite-status`, then `kraken rewrite-accept --unit <id>`). If some function cannot be accepted (for example one that returns a pointer, which the function test cannot compare) and an accepted function calls it, the export is refused; the summary says so and the exit status is 4.
+- `--accept-verified` (with `--rewrite`) accepts the rewritten functions that passed their own test and exports the Rust workspace to `<project>/rewrite-export`. You are the person deciding here. Without the flag the command tells you how to accept (`kraken rewrite-status`, then `kraken rewrite-accept --unit <id>`). If some function cannot be accepted (for example one whose test could not decide) and an accepted function calls it, the export is refused; the summary says so and the exit status is 4.
 
 ```sh
 kraken auto ./a.out --names

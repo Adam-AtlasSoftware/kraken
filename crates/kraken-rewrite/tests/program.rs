@@ -595,7 +595,7 @@ async fn switch_vm_is_rewritten_and_matches_the_original() {
         json!(["vm_fail", "push", "pop"])
     );
     assert_eq!(function(&out, "push")["reused_callees"], json!(["vm_fail"]));
-    // `op_name` returns a pointer, which the function-level test cannot compare.
+    // Without the function-level test every function is only compiled, `op_name` too.
     let op_name = function(&out, "op_name");
     assert_eq!(op_name["check"], "compile_only");
     let v = &out["verdict"];
@@ -883,7 +883,7 @@ async fn pie_list_is_rewritten_with_function_pointers_doubles_and_linked_nodes()
             .map(|a| a.len()),
         Some(10)
     );
-    // `node_new` returns a pointer and takes a double: compiled, not compared.
+    // Without the function-level test `node_new` is only compiled.
     assert_eq!(function(&out, "node_new")["check"], "compile_only");
     // The program-level verdict: same output, including the doubles.
     let v = &out["verdict"];
@@ -1281,7 +1281,13 @@ async fn switch_vm_is_checked_function_by_function_and_as_a_program() {
         assert_eq!(f["verdict"], "pass", "{f}");
         assert_eq!(f["status"], "verified", "{f}");
     }
-    assert_eq!(function(&out, "op_name")["check"], "compile_only");
+    // A pointer result is compared by the string it points at.
+    let op_name = function(&out, "op_name");
+    assert_eq!(
+        (&op_name["check"], &op_name["verdict"]),
+        (&json!("differential"), &json!("pass")),
+        "{op_name}"
+    );
     assert_eq!(out["verdict"]["verdict"], "pass");
 }
 
@@ -1396,13 +1402,19 @@ async fn pie_list_is_checked_function_by_function_and_as_a_program() {
     }
     // `cmp_name` calls `strcmp`, which the emulator models as glibc does.
     assert_eq!(function(&out, "cmp_name")["verdict"], "pass");
-    // These call `printf` with a double or `calloc` and `free`, which the emulator does not
-    // model: the test says it could not tell instead of passing.
+    // These print a double with `printf` or `free` an object the test passed in, which the
+    // emulator does not model: the test says it could not tell instead of passing.
     for name in ["print_rec", "list_free", "main"] {
         let f = function(&out, name);
         assert_eq!(f["verdict"], "inconclusive", "{f}");
     }
-    assert_eq!(function(&out, "node_new")["check"], "compile_only");
+    // The constructor is compared by the heap block it returns.
+    let node_new = function(&out, "node_new");
+    assert_eq!(
+        (&node_new["check"], &node_new["verdict"]),
+        (&json!("differential"), &json!("pass")),
+        "{node_new}"
+    );
     assert_eq!(out["verdict"]["verdict"], "pass");
 }
 
