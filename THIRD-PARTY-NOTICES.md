@@ -7479,9 +7479,9 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 
 ### CDLA-Permissive-2.0
 
-- webpki-roots 1.0.9 (<https://github.com/rustls/webpki-roots>)
+- webpki-roots 1.0.10 (<https://github.com/rustls/webpki-roots>)
 
-**LICENSE** — webpki-roots 1.0.9
+**LICENSE** — webpki-roots 1.0.10
 
     # Community Data License Agreement - Permissive - Version 2.0
 
@@ -7548,7 +7548,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 ### ISC
 
 - libloading 0.8.9 (<https://github.com/nagisa/rust_libloading/>)
-- rustls-webpki 0.103.15 (<https://github.com/rustls/webpki>)
+- rustls-webpki 0.103.16 (<https://github.com/rustls/webpki>)
 - untrusted 0.9.0 (<https://github.com/briansmith/untrusted>)
 
 **LICENSE.txt** — untrusted 0.9.0
@@ -7582,7 +7582,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
     THIS SOFTWARE.
 
-**LICENSE** — rustls-webpki 0.103.15
+**LICENSE** — rustls-webpki 0.103.16
 
     Except as otherwise noted, this project is licensed under the following
     (ISC-style) terms:
