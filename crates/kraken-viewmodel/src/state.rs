@@ -99,6 +99,14 @@ impl FunctionList {
     pub fn find(&self, address: u64) -> Option<&FunctionItem> {
         self.items.iter().find(|f| f.address == address)
     }
+
+    /// The loaded function whose body (entry plus size) holds `address`.
+    pub fn containing(&self, address: u64) -> Option<&FunctionItem> {
+        self.items.iter().find(|f| {
+            f.size
+                .is_some_and(|n| (f.address..f.address.saturating_add(n.max(1))).contains(&address))
+        })
+    }
 }
 
 /// Facts about the open project.

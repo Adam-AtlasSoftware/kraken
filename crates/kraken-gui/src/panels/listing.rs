@@ -140,6 +140,17 @@ pub fn show(
             ui.spinner();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let row = vm.views.listing.selected_row().is_some();
+            if ui
+                .add_enabled(row, egui::Button::new("Patch bytes"))
+                .on_hover_text(
+                    "Replace this instruction's bytes. Nothing on disk changes until you export",
+                )
+                .on_disabled_hover_text("Click an instruction first")
+                .clicked()
+            {
+                vm.begin_patch_instruction();
+            }
             if ui
                 .button("Graph  (Space)")
                 .on_hover_text("See the same code as boxes joined by arrows")

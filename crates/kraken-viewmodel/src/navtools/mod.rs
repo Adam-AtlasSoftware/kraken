@@ -1,4 +1,4 @@
-//! Navigation and editing tools on par with Ghidra and IDA: Go to, Search, Bookmarks, the
+//! Navigation and editing tools on par with Ghidra and IDA: Go to, Search, Bookmarks, Patches, the
 //! Retype / Edit signature / Create and Delete function dialogs, and the generated forms that let
 //! the command palette run every registry command.
 
@@ -6,6 +6,7 @@ mod bookmarks;
 pub mod ctype;
 mod edits;
 mod form;
+mod patches;
 mod search;
 
 #[cfg(test)]
@@ -16,6 +17,10 @@ pub use edits::{FunctionDialog, FunctionDialogKind, TypeDialog, TypeMode};
 pub use form::{
     CommandForm, CommandResult, FieldKind, FormField, ResultSegment, fields_for_schema,
     result_lines,
+};
+pub use patches::{
+    ExportDialog, ExportDone, MAX_PATCH_BYTES, PatchDialog, PatchItem, PatchOrigin, PatchesPanel,
+    RunCompare, RunSide, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 
@@ -39,6 +44,8 @@ pub enum NavTab {
     History,
     /// The Rewrite tab.
     Rewrite,
+    /// The Patches tab.
+    Patches,
 }
 
 /// What a Go to suggestion is.
@@ -106,6 +113,12 @@ pub struct NavTools {
     pub bookmarks: BookmarksPanel,
     /// The bookmark note dialog, when open.
     pub bookmark_dialog: Option<BookmarkDialog>,
+    /// The Patches tab.
+    pub patches: PatchesPanel,
+    /// The dialog that stages a byte patch, when open.
+    pub patch_dialog: Option<PatchDialog>,
+    /// The dialog that exports the patched binary, when open.
+    pub export_dialog: Option<ExportDialog>,
     /// The Retype / Edit signature dialog, when open.
     pub type_dialog: Option<TypeDialog>,
     /// The Create / Delete function dialog, when open.
@@ -138,6 +151,8 @@ impl NavTools {
     pub fn dialog_open(&self) -> bool {
         self.goto.is_some()
             || self.bookmark_dialog.is_some()
+            || self.patch_dialog.is_some()
+            || self.export_dialog.is_some()
             || self.type_dialog.is_some()
             || self.function_dialog.is_some()
             || self.form.is_some()

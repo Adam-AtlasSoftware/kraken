@@ -467,6 +467,7 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         Tab::Rewrite,
         Tab::Search,
         Tab::Bookmarks,
+        Tab::Patches,
     ] {
         assert!(!t.title().is_empty());
         let tip = t.tooltip();
@@ -926,6 +927,7 @@ mod bench;
 mod help;
 mod loading;
 mod local_models;
+mod patches;
 mod shell;
 mod shots;
 mod titlebar;

@@ -142,6 +142,19 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         terms: &["annotation", "comment", "address"],
     },
     PanelHelp {
+        panel: "Patches",
+        short: "Byte patches staged on the program, run them in the emulator and export a patched copy.",
+        text: "A patch replaces bytes at an address, for example to skip a check. Staging one changes nothing on disk: it is kept in the project, with the bytes that were there, so it can be removed. Run the program with the patches in the sandboxed emulator next to the original to see what changed, then export a patched copy of the binary. Export always asks first; the original file is never touched.",
+        how: &[
+            "In the Listing, click an instruction and press Patch bytes; in the Hex view, select bytes and press Patch selection.",
+            "Type the new bytes as hex. A shorter patch on x86 can be filled with nop (90).",
+            "Press Run original vs patched to compare them in the emulator.",
+            "Press Export patched binary to write the copy.",
+        ],
+        keys: &[],
+        terms: &["patch", "opcode", "offset", "byte"],
+    },
+    PanelHelp {
         panel: "History",
         short: "Every change made to this project, who made it, and a way to undo it.",
         text: "A log of every change to this project: who made it, when, and a way to undo it. Nothing the assistant does is permanent.",

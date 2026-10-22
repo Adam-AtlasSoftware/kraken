@@ -80,6 +80,12 @@ pub enum AppAction {
     AddBookmark,
     /// Show the Bookmarks tab.
     ShowBookmarks,
+    /// Stage a byte patch on the selected instruction (or Hex selection).
+    PatchHere,
+    /// Show the Patches tab.
+    ShowPatches,
+    /// Write a copy of the binary with the patches applied.
+    ExportPatched,
     /// Mark the code at the cursor as a function.
     CreateFunctionHere,
     /// Remove the function being viewed.
@@ -100,7 +106,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 42] = [
+    pub const ALL: [AppAction; 45] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -111,6 +117,9 @@ impl AppAction {
         AppAction::ShowReferences,
         AppAction::AddBookmark,
         AppAction::ShowBookmarks,
+        AppAction::PatchHere,
+        AppAction::ShowPatches,
+        AppAction::ExportPatched,
         AppAction::CreateFunctionHere,
         AppAction::DeleteFunction,
         AppAction::Back,
@@ -223,6 +232,9 @@ impl AppAction {
             AppAction::ShowReferences => "Show references",
             AppAction::AddBookmark => "Bookmark this address",
             AppAction::ShowBookmarks => "Show bookmarks",
+            AppAction::PatchHere => "Patch bytes here...",
+            AppAction::ShowPatches => "Show patches",
+            AppAction::ExportPatched => "Export patched binary...",
             AppAction::CreateFunctionHere => "Create function here",
             AppAction::DeleteFunction => "Delete this function...",
             AppAction::ShowAiActivity => "Show AI activity",
@@ -280,6 +292,14 @@ impl AppAction {
             AppAction::ShowReferences => "List everything that uses the address at the cursor",
             AppAction::AddBookmark => "Mark the address at the cursor to come back to",
             AppAction::ShowBookmarks => "See every address you or an agent bookmarked",
+            AppAction::PatchHere => {
+                "Replace the bytes of the selected instruction or Hex selection; nothing on disk \
+                 changes until you export"
+            }
+            AppAction::ShowPatches => "See every staged byte patch, run them and export",
+            AppAction::ExportPatched => {
+                "Write a copy of the program with every patch applied; the original is untouched"
+            }
             AppAction::CreateFunctionHere => "Tell KRAKEN the code at the cursor is a function",
             AppAction::DeleteFunction => "Remove a function the analysis got wrong",
             AppAction::AskAboutKraken => {
@@ -336,6 +356,9 @@ impl AppAction {
             "search" => AppAction::Search,
             "bookmark_list" => AppAction::ShowBookmarks,
             "bookmark_add" => AppAction::AddBookmark,
+            "patch_set" => AppAction::PatchHere,
+            "patch_list" => AppAction::ShowPatches,
+            "patch_export" => AppAction::ExportPatched,
             "create_function" => AppAction::CreateFunctionHere,
             "delete_function" => AppAction::DeleteFunction,
             _ => return None,

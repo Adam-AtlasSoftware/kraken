@@ -9,6 +9,27 @@ they change nothing until you export or run them.
 patch_set {"address": "0x401136", "bytes": "9090", "note": "two NOPs over the jump"}
 ```
 
+## In the window
+
+Everything below is also in the GUI, under the **Patch** menu:
+
+1. **Stage a patch.** In the **Listing**, click an instruction and press **Patch bytes**; in the
+   **Hex** view, select bytes and press **Patch selection** (or **Patch > Patch bytes here...**).
+   The dialog shows the instruction and the bytes there now; type the new bytes as hex. When the
+   replacement is shorter than the instruction it says so, and on x86 **Fill with nop** pads it
+   with `90`. A longer one is flagged too, since it overwrites what follows. Typing an instruction
+   (`mov eax, 7`) instead of hex needs an assembler, which is not built in yet.
+2. **Check it.** **Patch > Show patches** opens the **Patches** tab: every staged patch with its
+   original and new bytes, note and author, with **Edit** and **Remove**. **Run original vs
+   patched** runs the program twice in the emulator and puts the two runs side by side. Staged
+   bytes are tinted in the Hex view (which keeps showing the bytes on disk).
+3. **Export.** **Export patched binary...** asks where to write the copy (a relative path lands in
+   the project folder), then asks for approval like every dangerous command.
+
+The assistant can stage and remove patches too. Whether it may export is the assistant's
+[danger mode](assistant.md#dangerous-commands-deny-ask-or-yolo): never (Deny), after asking you
+(Ask, the default) or without asking (YOLO).
+
 ## How it works
 
 A patch records an address, the **replacement** bytes you give, and the **original** bytes that were

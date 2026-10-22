@@ -353,3 +353,146 @@ fn result_lines_link_addresses_only_at_word_starts() {
         .collect();
     assert_eq!(joined, "  \"a\": \"0x401000\", \"b\": \"ab0x12\"");
 }
+
+// ---------------------------------------------------------------- patches
+
+#[test]
+fn hex_input_parses_like_the_registry() {
+    assert_eq!(parse_hex("b8 07 00 00 00").unwrap(), vec![0xb8, 7, 0, 0, 0]);
+    assert_eq!(parse_hex("0xEB10").unwrap(), vec![0xeb, 0x10]);
+    assert!(parse_hex("").is_err());
+    assert!(parse_hex("abc").unwrap_err().contains("two hex digits"));
+    assert!(parse_hex("zz").unwrap_err().contains("not a hex digit"));
+    assert_eq!(spaced_hex(&[0xb8, 7]), "b8 07");
+}
+
+#[test]
+fn a_short_replacement_is_flagged_and_can_be_padded_with_nops() {
+    let mut d = PatchDialog {
+        address: 0x40113a,
+        original: Some(vec![0xb8, 3, 0, 0, 0]),
+        origin: PatchOrigin::Instruction("mov eax, 0x3".into()),
+        input: "31 c0".into(),
+        note: String::new(),
+        existing: false,
+        error: None,
+        submitting: false,
+        x86: true,
+    };
+    assert!(d.length_note().expect("note").contains("first 2 of the 5"));
+    d.pad_with_nops();
+    assert_eq!(d.input, "31 c0 90 90 90");
+    assert_eq!(d.length_note(), None);
+    d.input = "b8 07 00 00 00 90".into();
+    assert!(
+        d.length_note()
+            .expect("note")
+            .contains("overwrite what follows")
+    );
+    // No nop padding on other processors.
+    d.input = "00".into();
+    d.x86 = false;
+    d.pad_with_nops();
+    assert_eq!(d.input, "00");
+}
+
+/// An approver that always says yes and counts the questions.
+#[derive(Default)]
+struct Yes(std::sync::Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl crate::backend::Approver for Yes {
+    async fn approve(&self, prompt: crate::backend::ApprovalPrompt) -> bool {
+        self.0.lock().expect("lock").push(prompt.command);
+        true
+    }
+}
+
+#[test]
+fn an_instruction_patch_is_staged_listed_edited_removed_and_exported_after_a_question() {
+    let rt = Runtime::new().expect("runtime");
+    let d = demo_project_with(demo_fixture(), Duration::ZERO).expect("demo");
+    let yes = std::sync::Arc::new(Yes::default());
+    d.backend.set_approver(yes.clone());
+    let mut vm = ViewModel::new(d.backend.clone(), rt.handle().clone());
+    vm.create_project(
+        d.binary.to_string_lossy().into_owned(),
+        d.project_dir.to_string_lossy().into_owned(),
+    );
+    assert!(vm.block_until(WAIT, |v| v.connection == Connection::Open));
+    vm.start_analysis();
+    assert!(
+        vm.block_until(WAIT, |v| v.analysis.phase == AnalysisPhase::Complete
+            && !v.functions.items.is_empty()
+            && !v.busy())
+    );
+
+    // Nothing selected: a hint, no dialog.
+    vm.begin_patch_instruction();
+    assert!(vm.tools.patch_dialog.is_none());
+
+    let main = addr_of(&vm, "main");
+    vm.goto(main);
+    idle(&mut vm);
+    vm.ensure_listing();
+    assert!(vm.block_until(WAIT, |v| v.views.listing.loaded && !v.busy()));
+    vm.select_listing_row(0);
+    let row = vm.views.listing.selected_row().cloned().expect("a row");
+    vm.begin_patch_instruction();
+    idle(&mut vm);
+    let dialog = vm.tools.patch_dialog.clone().expect("dialog");
+    assert_eq!(dialog.address, row.address);
+    assert_eq!(dialog.original.as_deref(), Some(row.bytes.as_slice()));
+    assert_eq!(
+        dialog.input,
+        spaced_hex(&row.bytes),
+        "starts from the bytes there"
+    );
+    assert!(matches!(dialog.origin, PatchOrigin::Instruction(_)));
+
+    vm.set_patch_input("zz");
+    vm.submit_patch();
+    assert!(vm.tools.patch_dialog.as_ref().unwrap().error.is_some());
+    let new = vec![0x90; row.bytes.len()];
+    vm.set_patch_input(spaced_hex(&new));
+    vm.set_patch_note("skip it");
+    vm.submit_patch();
+    idle(&mut vm);
+    assert!(vm.tools.patch_dialog.is_none(), "staged and closed");
+    assert!(vm.block_until(WAIT, |v| v.tools.patches.loaded && !v.busy()));
+    let p = vm.tools.patches.items.first().cloned().expect("listed");
+    assert_eq!(
+        (p.address, &p.original, &p.replacement),
+        (row.address, &row.bytes, &new)
+    );
+    assert_eq!((p.note.as_str(), p.who.as_str()), ("skip it", "you"));
+    assert!(vm.tools.patches.covering(row.address).is_some());
+    assert!(yes.0.lock().unwrap().is_empty(), "staging asks nothing");
+
+    // Opening the dialog again at the address edits that patch.
+    vm.begin_patch_instruction();
+    let again = vm.tools.patch_dialog.clone().expect("dialog");
+    assert!(again.existing);
+    assert_eq!(again.input, spaced_hex(&new));
+    vm.cancel_patch();
+
+    // Export is the dangerous step: it asks, then really tries (the demo binary is no ELF).
+    vm.begin_patch_export();
+    let e = vm.tools.export_dialog.clone().expect("export dialog");
+    assert!(e.output_path.ends_with(".patched"), "{e:?}");
+    vm.submit_patch_export();
+    idle(&mut vm);
+    assert_eq!(yes.0.lock().unwrap().as_slice(), ["patch_export"]);
+    let err = vm
+        .tools
+        .export_dialog
+        .as_ref()
+        .and_then(|d| d.error.clone())
+        .expect("the placeholder binary cannot be patched");
+    assert!(!err.contains("approval"), "{err}");
+
+    vm.remove_patch(row.address);
+    idle(&mut vm);
+    assert!(vm.block_until(WAIT, |v| !v.tools.patches.loading && !v.busy()));
+    assert!(vm.tools.patches.items.is_empty());
+}
