@@ -596,6 +596,8 @@ impl ViewModel {
                     ),
                 );
                 vm.refresh_patches();
+                vm.refresh_history();
+                vm.refresh_project();
             }
             Err(e) => {
                 if let Some(d) = vm.tools.patch_dialog.as_mut() {
@@ -618,6 +620,8 @@ impl ViewModel {
                         format!("Removed the patch at {}.", hex(addr)),
                     );
                     vm.refresh_patches();
+                    vm.refresh_history();
+                    vm.refresh_project();
                 }
                 Err(e) => vm.toast_error(&e),
             },

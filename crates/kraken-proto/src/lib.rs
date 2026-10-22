@@ -37,7 +37,7 @@ pub use infer::{
     ModelStats, MultiGpuMode, TokSource,
 };
 pub use locator::{AddressRange, Anchor, DEFAULT_SPACE, Locator};
-pub use logop::{CodeData, CommentKind, LOG_SCHEMA_VERSION, LogOp, VersionedLogOp};
+pub use logop::{CodeData, CommentKind, LOG_SCHEMA_VERSION, LogOp, PatchBytes, VersionedLogOp};
 pub use meta::{
     Capability, Completeness, FunctionSummary, Handshake, LogStatus, PROTOCOL_VERSION,
     ProtocolVersion, Provenance, SyncState,

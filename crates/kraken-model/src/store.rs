@@ -269,7 +269,11 @@ pub(crate) fn insert_entry(
         ],
     )
     .map_err(db)?;
-    Ok(EntryId(conn.last_insert_rowid() as u64))
+    let id = EntryId(conn.last_insert_rowid() as u64);
+    if disp.status == "applied" {
+        crate::patches::apply_patch_op(conn, &draft.op.op, &draft.author)?;
+    }
+    Ok(id)
 }
 
 fn validate(conn: &Connection, draft: &EntryDraft, key: &str) -> Result<Option<ProtoError>> {
@@ -371,7 +375,9 @@ impl Store {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;")
             .map_err(db)?;
         Self::migrate(&mut conn)?;
-        Ok(Store { conn })
+        let mut store = Store { conn };
+        store.backfill_patch_entries()?;
+        Ok(store)
     }
 
     fn migrate(conn: &mut Connection) -> Result<()> {

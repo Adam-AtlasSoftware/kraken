@@ -217,6 +217,7 @@ fn op_kind(op: &LogOp) -> &'static str {
         LogOp::SetFunctionBounds { .. } => "set_function_bounds",
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
+        LogOp::SetPatch { .. } => "set_patch",
     }
 }
 
@@ -248,6 +249,21 @@ fn describe_op(op: &LogOp) -> String {
         LogOp::SetFunctionBounds { new, .. } => format!("{}..{}", new.start, new.end),
         LogOp::SetCodeData { new, .. } => format!("{new:?}"),
         LogOp::SetCallingConvention { new, .. } => new.clone(),
+        LogOp::SetPatch {
+            original, old, new, ..
+        } => match new {
+            Some(b) => {
+                let mut d = format!("{original} -> {}", b.replacement);
+                if !b.note.is_empty() {
+                    d.push_str(&format!(": {}", b.note));
+                }
+                d
+            }
+            None => format!(
+                "removed (was {})",
+                old.as_ref().map_or("?", |b| b.replacement.as_str())
+            ),
+        },
     };
     let text = format!("{} {addr} {detail}", op_kind(op));
     let (cut, _) = crate::validate::truncate_utf8(text, 400);

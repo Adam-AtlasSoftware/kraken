@@ -210,7 +210,7 @@ fn zero(v: &mut Value) {
     match v {
         Value::Object(m) => {
             for (k, x) in m.iter_mut() {
-                if k == "ts_ms" {
+                if k == "ts_ms" || k == "elapsed_ms" {
                     *x = json!(0);
                 } else if k == "engine_dir"
                     && x.as_str().is_some_and(|d| d.starts_with("ghidra-rebuild-"))

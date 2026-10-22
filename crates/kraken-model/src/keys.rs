@@ -30,7 +30,7 @@ pub fn entity_key(anchor: &Anchor, aspect: &str) -> Result<String, ProtoError> {
 }
 
 /// The aspect string a log op writes: `name`, `type`, `comment:<kind>`, `function`, `bounds`,
-/// `codedata` or `cc`.
+/// `codedata`, `cc` or `patch`.
 pub fn op_aspect(op: &LogOp) -> String {
     match op {
         LogOp::Rename { .. } => "name".into(),
@@ -42,6 +42,7 @@ pub fn op_aspect(op: &LogOp) -> String {
         LogOp::SetFunctionBounds { .. } => "bounds".into(),
         LogOp::SetCodeData { .. } => "codedata".into(),
         LogOp::SetCallingConvention { .. } => "cc".into(),
+        LogOp::SetPatch { .. } => "patch".into(),
     }
 }
 
@@ -55,7 +56,8 @@ pub fn op_anchor(op: &LogOp) -> &Anchor {
         | LogOp::DeleteFunction { anchor, .. }
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
-        | LogOp::SetCallingConvention { anchor, .. } => anchor,
+        | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetPatch { anchor, .. } => anchor,
     }
 }
 
@@ -75,5 +77,6 @@ pub fn op_kind_name(op: &LogOp) -> &'static str {
         LogOp::SetFunctionBounds { .. } => "set_function_bounds",
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
+        LogOp::SetPatch { .. } => "set_patch",
     }
 }

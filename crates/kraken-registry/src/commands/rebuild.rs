@@ -245,7 +245,7 @@ async fn rebuild(
             total,
             "replaying the edit log",
         );
-        match mutator.apply(&e.op, &token).await {
+        match crate::session::apply_to_engine(mutator, &e.op, &token).await {
             Ok(()) => {
                 replayed += 1;
                 last_ok = Some(e.id);
