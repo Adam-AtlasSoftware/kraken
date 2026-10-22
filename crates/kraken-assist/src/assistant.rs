@@ -8,14 +8,14 @@ use kraken_agent::{
 use kraken_host::RunIdGen;
 use kraken_host::backend::CommandBackend;
 use kraken_proto::sanitize;
-use kraken_registry::{Registry, Surface};
+use kraken_registry::{ApprovalRequester, Registry, Surface};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::ASSISTANT_ID;
 use crate::backend::{ApiBackend, AssistBackend, BackendKind, Purpose, RunSpec};
-use crate::host::{HostOptions, RegistryToolHost};
+use crate::host::{DangerMode, HostOptions, RegistryToolHost};
 use crate::output::{
     RESULT_OPEN, TaskOutput, build_autoname, parse_explanation, parse_overview, split_result,
 };
@@ -79,6 +79,8 @@ pub struct Assistant {
     agent_id: String,
     run_ids: RunIdGen,
     approver: Option<Approver>,
+    danger: DangerMode,
+    reg_approver: Option<Arc<dyn ApprovalRequester>>,
 }
 
 impl Assistant {
@@ -108,7 +110,23 @@ impl Assistant {
             agent_id: ASSISTANT_ID.to_string(),
             run_ids: RunIdGen::new(),
             approver: None,
+            danger: DangerMode::default(),
+            reg_approver: None,
         }
+    }
+
+    /// Sets what the assistant may do with dangerous commands (default [`DangerMode::Deny`]).
+    /// For [`DangerMode::Ask`] to prompt rather than refuse, also set an approver with
+    /// [`Self::with_registry_approver`].
+    pub fn with_danger_mode(mut self, mode: DangerMode) -> Self {
+        self.danger = mode;
+        self
+    }
+
+    /// Who approves a dangerous command in [`DangerMode::Ask`] (the GUI dialog, the CLI prompt).
+    pub fn with_registry_approver(mut self, approver: Arc<dyn ApprovalRequester>) -> Self {
+        self.reg_approver = Some(approver);
+        self
     }
 
     /// Hands every run's approval handle to `f` and leaves approval requests to it. Without
@@ -138,7 +156,7 @@ impl Assistant {
 
     /// The tool host a task would run with (for inspection and tests).
     pub fn host_for(&self, task: &Task) -> RegistryToolHost {
-        RegistryToolHost::new(
+        let host = RegistryToolHost::new(
             self.registry.clone(),
             self.backend.clone(),
             HostOptions {
@@ -151,8 +169,13 @@ impl Assistant {
                 job_timeout: task
                     .job_timeout
                     .unwrap_or_else(|| HostOptions::default().job_timeout),
+                danger: self.danger,
             },
-        )
+        );
+        match &self.reg_approver {
+            Some(a) => host.with_approver(a.clone()),
+            None => host,
+        }
     }
 
     /// Runs `task`, calling `on_event` for every agent event as it happens (streamed text,

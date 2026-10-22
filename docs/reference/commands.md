@@ -51,7 +51,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`patch_export`](#patch_export) | query | dangerous | Write a copy of the binary with every byte patch applied |
 | [`patch_list`](#patch_list) | query | safe | List byte patches ordered by address, one page at a time |
 | [`patch_remove`](#patch_remove) | mutation | mutating | Remove the byte patch at an address |
-| [`patch_set`](#patch_set) | mutation | dangerous | Record a byte patch: replacement bytes at an address, with the originals kept |
+| [`patch_set`](#patch_set) | mutation | mutating | Record a byte patch: replacement bytes at an address, with the originals kept |
 | [`project_close`](#project_close) | mutation | mutating | Close the current project and stop its engine |
 | [`project_create`](#project_create) | mutation | mutating | Create a project for a binary and make it the current project |
 | [`project_info`](#project_info) | query | safe | Show the current project, engine and analysis state |
@@ -8201,10 +8201,10 @@ kraken patch-set --address <address> --bytes <string> [options]
 ```
 
 - Kind: mutation
-- Permission: dangerous
+- Permission: mutating
 - Engine needs: `Memory`
 
-Records replacement bytes at an address. The bytes there now are read and kept as the originals, so the patch can be checked and undone. Setting a patch changes nothing on disk; `patch_export` writes the patched bytes into a copy of the binary, and `emulate_run {"patched": true}` runs a patched copy. A patch where one exists replaces it. Always asks for approval.
+Records replacement bytes at an address. The bytes there now are read and kept as the originals, so the patch can be checked and undone. Setting a patch changes nothing on disk and does not run anything: it is a reversible overlay entry. `patch_export` (which writes a patched binary) is the step that asks for approval; `emulate_run {"patched": true}` runs a patched copy in the sandbox to check it. A patch where one exists replaces it.
 
 Example: `patch_set {"address": "0x401136", "bytes": "9090", "note": "skip the check"}`
 
