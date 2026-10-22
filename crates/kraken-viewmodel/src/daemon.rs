@@ -456,7 +456,9 @@ impl Backend for DaemonClientBackend {
     }
 
     async fn call_as(&self, who: &CallAs, command: &str, args: Value) -> Result<Value, ProtoError> {
-        // An agent never gets a dangerous command through: nobody was asked.
+        // A dangerous command goes through only when the caller already asked (the assistant's
+        // danger mode and its permission card).
+        let approved = who.approved;
         let who = Identity {
             kind: if who.agent {
                 AuthorKind::Agent
@@ -466,7 +468,7 @@ impl Backend for DaemonClientBackend {
             id: who.id.clone(),
             run_id: who.run_id.clone(),
         };
-        self.send(command, args, who, false).await
+        self.send(command, args, who, approved).await
     }
 
     async fn publish_selection(&self, selection: Option<Value>) -> Result<(), ProtoError> {

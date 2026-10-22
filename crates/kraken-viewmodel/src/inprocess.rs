@@ -160,6 +160,11 @@ impl Backend for InProcessBackend {
             (None, true) => CallContext::agent(who.id.clone(), who.id.clone(), Surface::Gui),
             (_, false) => CallContext::user(who.id.clone(), Surface::Gui),
         };
+        let ctx = if who.approved {
+            ctx.with_approval(Arc::new(kraken_registry::AutoApprove))
+        } else {
+            ctx
+        };
         self.registry
             .call_json(command, &self.session, &ctx, args)
             .await

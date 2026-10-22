@@ -5,10 +5,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kraken_host::backend::CommandBackend;
 use kraken_proto::ProtoError;
-use kraken_registry::CallContext;
+use kraken_registry::{ApprovalDecision, ApprovalRequest, CallContext};
 use serde_json::Value;
 
-use crate::backend::{Backend, CallAs};
+use crate::backend::{Backend, CallAs, Permission};
 
 /// A [`CommandBackend`] over a view-model [`Backend`]. Calls keep the identity of the context
 /// they were made with, so the assistant's edits are logged under its agent id and run id and
@@ -27,10 +27,31 @@ impl VmCommands {
 #[async_trait]
 impl CommandBackend for VmCommands {
     async fn call(&self, name: &str, ctx: &CallContext, args: Value) -> Result<Value, ProtoError> {
+        // The GUI's backend does not see the context's approver: a dangerous command is asked
+        // of it here (the tool host's, chosen by the danger mode) and the answer travels on.
+        let dangerous = self
+            .inner
+            .commands()
+            .iter()
+            .any(|c| c.name == name && c.permission == Permission::Dangerous);
+        let approved = dangerous
+            && matches!(
+                ctx.approval
+                    .request(ApprovalRequest {
+                        command: name.to_string(),
+                        summary: String::new(),
+                        args: args.clone(),
+                        author: ctx.author.clone(),
+                        surface: ctx.surface,
+                    })
+                    .await,
+                ApprovalDecision::Allow
+            );
         let who = CallAs {
             agent: ctx.author.kind == kraken_model::AuthorKind::Agent,
             id: ctx.author.id.clone(),
             run_id: ctx.run_id.as_ref().map(|r| r.0.clone()),
+            approved,
         };
         self.inner.call_as(&who, name, args).await
     }

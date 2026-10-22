@@ -465,6 +465,7 @@ fn a_backend_that_cannot_attribute_calls_refuses_agent_writes() {
         agent: true,
         id: "kraken-assistant".into(),
         run_id: Some("run-1".into()),
+        approved: false,
     };
     let res = rt.block_on(b.call_as(&who, "rename_symbol", json!({})));
     assert!(res.is_err(), "no silent fallback to the person's identity");
@@ -1359,4 +1360,80 @@ fn danger_mode_is_used_at_once_and_saved_with_the_rest_of_the_config() {
     let cfg = kraken_host::KrakenConfig::from_file(&path).expect("read back");
     assert_eq!(cfg.danger_mode, kraken_host::DangerMode::Yolo);
     assert_eq!(cfg.per_run_cap, Some(3), "other keys survive");
+}
+
+/// The chat asks for `patch_export` in danger mode `mode`; returns the rig once the call is
+/// waiting for the person or has finished.
+fn export_chat(mode: kraken_host::DangerMode) -> Rig {
+    let mut r = rig(vec![
+        tool_call("c1", "patch_export", json!({"output_path": "patched.bin"})),
+        say("done"),
+    ]);
+    r.vm.assist.danger = Some(mode);
+    r.vm.assist_send("Export the patched binary");
+    assert!(r.vm.block_until(WAIT, |vm| {
+        !vm.assist.busy()
+            || vm
+                .assist
+                .items
+                .iter()
+                .any(|i| matches!(i, ChatItem::Permission(_)))
+    }));
+    r
+}
+
+/// The `patch_export` chip, when the call started at all (a refused call has none).
+fn export_chip(r: &Rig) -> Option<ToolChip> {
+    r.vm.assist.items.iter().find_map(|i| match i {
+        ChatItem::Tool(c) if c.name == "patch_export" => Some(c.clone()),
+        _ => None,
+    })
+}
+
+/// The export ran and wrote its file.
+fn exported(r: &Rig) -> bool {
+    export_chip(r).is_some_and(|c| !c.is_error) && project_dir(r).join("patched.bin").is_file()
+}
+
+#[test]
+fn ask_mode_shows_a_card_and_an_allowed_export_gets_past_approval() {
+    let mut r = export_chat(kraken_host::DangerMode::Ask);
+    let card = permission_card(&r).expect("the export waits for the person");
+    assert_eq!(card.title, "patch_export");
+    assert_eq!(card.kind.as_deref(), Some("dangerous KRAKEN command"));
+    assert!(
+        card.input
+            .as_deref()
+            .is_some_and(|i| i.contains("patched.bin")),
+        "{card:?}"
+    );
+    r.vm.assist_answer_permission(&card.id, true);
+    r.settle();
+    assert!(exported(&r), "asked once, not twice: {:?}", export_chip(&r));
+}
+
+#[test]
+fn ask_mode_does_not_export_when_the_person_says_no() {
+    let mut r = export_chat(kraken_host::DangerMode::Ask);
+    let card = permission_card(&r).expect("card");
+    r.vm.assist_answer_permission(&card.id, false);
+    r.settle();
+    assert_eq!(
+        permission_card(&r).expect("card").state,
+        PermissionState::Denied
+    );
+    assert!(!exported(&r));
+}
+
+#[test]
+fn yolo_exports_without_a_card_and_deny_never_offers_it() {
+    let mut r = export_chat(kraken_host::DangerMode::Yolo);
+    r.settle();
+    assert!(permission_card(&r).is_none());
+    assert!(exported(&r), "{:?}", export_chip(&r));
+
+    let mut r = export_chat(kraken_host::DangerMode::Deny);
+    r.settle();
+    assert!(permission_card(&r).is_none());
+    assert!(!exported(&r));
 }
