@@ -66,8 +66,14 @@ impl ApprovalRequester for DenyApprover {
         ApprovalDecision::Deny {
             reason: format!(
                 "`{}` is a dangerous command and no approval channel is attached on the {:?} surface; \
-                 attach a GUI or run it from an interactive CLI to approve it",
-                req.command, req.surface
+                 attach a GUI, run it from an interactive CLI to approve it{}",
+                req.command,
+                req.surface,
+                if req.surface == Surface::Cli {
+                    ", or pass --yes"
+                } else {
+                    ""
+                }
             ),
         }
     }
