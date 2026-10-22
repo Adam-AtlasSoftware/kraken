@@ -6,7 +6,8 @@
 //! annotations the engine replays but an edit to the program's bytes. Nothing in the project or
 //! on disk changes when a patch is set; the bytes are written only by `patch_export`, which
 //! produces a patched copy of the binary, or by `emulate_run {"patched": true}`, which runs one.
-//! Setting a patch and exporting one are dangerous and always ask for approval (ADR 0005).
+//! Setting and removing a patch are reversible edits; exporting one is dangerous and always asks
+//! for approval (ADR 0005).
 
 use std::fs;
 use std::path::PathBuf;

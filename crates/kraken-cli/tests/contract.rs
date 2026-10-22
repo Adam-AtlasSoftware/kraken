@@ -199,7 +199,8 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     macro_rules! step {
         ($tool:expr, $args:expr) => {{
             covered.insert($tool.to_string());
-            both(&s, $tool, $args).await
+            // Boxed: every step inlined in this one future overflows the test thread's stack.
+            Box::pin(both(&s, $tool, $args)).await
         }};
     }
 
@@ -389,6 +390,18 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     let rebuilt = both_job(&s, "rebuild").await;
     assert!(rebuilt["result"]["replayed"].is_number(), "{rebuilt}");
     step!("list_functions", json!({}));
+
+    // Byte patches: the overlay alike over both surfaces. Exporting is dangerous and is refused
+    // alike without an approver; running is refused alike (no emulator for the fixture).
+    step!(
+        "patch_set",
+        json!({"address": "0x401040", "bytes": "90", "note": "nop"})
+    );
+    step!("patch_list", json!({}));
+    step!("patch_export", json!({"output_path": "patched.bin"}));
+    step!("emulate_run", json!({"patched": true}));
+    step!("patch_remove", json!({"address": "0x401040"}));
+    step!("patch_remove", json!({"address": "0x401040"}));
 
     let closed = step!("project_close", json!({}));
     assert_eq!(closed["closed"], true, "{closed}");
