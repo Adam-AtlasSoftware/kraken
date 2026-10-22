@@ -193,8 +193,18 @@ async fn mcp_call(s: &Surfaces, tool: &str, args: &Value) -> (bool, Value) {
 }
 
 fn normalise(v: &Value, s: &Surfaces) -> Value {
-    let text = v
-        .to_string()
+    // The daemon names a project by its canonical path (on macOS /var is /private/var), the
+    // direct surface by the path it was given; canonical forms first, as they contain the others.
+    let canonical = |d: &str| {
+        std::fs::canonicalize(d)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| d.to_string())
+    };
+    let mut text = v.to_string();
+    for d in [&s.direct_dir, &s.cli_dir, &s.mcp_dir] {
+        text = text.replace(&canonical(d), "<dir>");
+    }
+    let text = text
         .replace(&s.direct_dir, "<dir>")
         .replace(&s.cli_dir, "<dir>")
         .replace(&s.mcp_dir, "<dir>")

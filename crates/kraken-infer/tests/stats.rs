@@ -38,6 +38,8 @@ async fn load_steps_report_progress_then_ready() {
     p.stop().await;
 }
 
+// The RAM of the server's process tree comes from /proc.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn sampler_reads_prometheus_counters_from_the_fake_server() {
     let spec = spec(&["--prometheus"]);
