@@ -49,6 +49,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`local_model_stop`](#local_model_stop) | query | mutating | Stop a local model now, whoever is using it |
 | [`memory_map`](#memory_map) | query | safe | List the memory blocks (segments and sections) with permissions |
 | [`patch_export`](#patch_export) | query | dangerous | Write a copy of the binary with every byte patch applied |
+| [`patch_from_source`](#patch_from_source) | job | safe | Plan a byte patch from an edit of a function's decompiled C (experimental, job) |
 | [`patch_list`](#patch_list) | query | safe | List byte patches ordered by address, one page at a time |
 | [`patch_remove`](#patch_remove) | mutation | mutating | Remove the byte patch at an address |
 | [`patch_set`](#patch_set) | mutation | mutating | Record a byte patch: replacement bytes at an address, with the originals kept |
@@ -135,6 +136,11 @@ Arguments: none.
         {
           "const": "rewrite",
           "description": "The Rust rewrite: translations, specs and repairs.",
+          "type": "string"
+        },
+        {
+          "const": "patch",
+          "description": "Byte patches planned from edited decompiled code (`patch_from_source`).",
           "type": "string"
         },
         {
@@ -567,6 +573,11 @@ Every model call (assistant chat, explain and overview, Suggest names, Automate,
         {
           "const": "rewrite",
           "description": "The Rust rewrite: translations, specs and repairs.",
+          "type": "string"
+        },
+        {
+          "const": "patch",
+          "description": "Byte patches planned from edited decompiled code (`patch_from_source`).",
           "type": "string"
         },
         {
@@ -8008,6 +8019,53 @@ Addresses map through ELF program headers or PE/Mach-O sections. The file's own 
     "bytes_written"
   ],
   "title": "PatchExportOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## patch_from_source
+
+Plan a byte patch from an edit of a function's decompiled C (experimental, job)
+
+```sh
+kraken patch-from-source --address <address> --source <string> [options]
+```
+
+- Kind: job
+- Permission: safe
+- Engine needs: `Decompiler`, `Disassembler`, `Memory`
+
+Experimental. Give a function's decompiled C with your change made (a constant, a comparison, a branch taken or skipped). The assistant's model plans the smallest in-place byte patch that does the same, the patched bytes are decompiled again to check it, and the job result lists the patches with the check. Nothing is staged: pass the patches to `patch_set`. Best for small, local changes. Sends the decompile and the disassembly to the model provider.
+
+Example: `patch_from_source {"address": "0x401136", "source": "int f(void)\n{\n  return 7;\n}"}`
+
+Uses the assistant's model (`[provider]` in config.toml) and is metered like other AI work. Patches stay inside the function and keep each instruction's length (no code is moved or inserted), so an edit that needs more room comes back with no patches and the reason in `summary`. The check copies the binary with the patches applied into a temporary directory, opens it in a second engine of the project's kind, decompiles the function and has the model compare that with the edit: `matches`, `partial` or `mismatch`; `unverified` when the second engine could not run. A failed check is planned again with what it saw, up to `max_attempts`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Entry of the function, as `0x...`. |
+| `source` | `--source` | string | yes | The function's decompiled C with the person's edit applied. |
+| `max_attempts` | `--max-attempts` | integer | no | Plan-and-check rounds (default 2, at most 4): a patch whose check fails is planned again with what the check saw. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
   "type": "object"
 }
 ```

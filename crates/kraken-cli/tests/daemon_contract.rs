@@ -597,6 +597,10 @@ async fn every_registry_command_identical() {
         ("rewrite_build", json!({"dir": "out"})),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
+        (
+            "patch_from_source",
+            json!({"address": "0x401040", "source": "int f(void) { return 7; }"}),
+        ),
     ] {
         let r = step!(name, args);
         assert_eq!(r["code"], "unsupported", "{name}: {r}");

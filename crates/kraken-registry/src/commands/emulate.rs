@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::patchfile::{FilePatch, PatchError, patch_file_bytes};
+use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
 use crate::session::{Session, blocking};
 
 /// Default instruction budget of `emulate_run`.
@@ -158,7 +158,11 @@ impl Command for EmulateRun {
         } else {
             Vec::new()
         };
-        blocking(move || emulate(&binary, args, limits, patches, find_runner())).await
+        let patched = Patched {
+            patches,
+            engine_base: project.program().base.0,
+        };
+        blocking(move || emulate(&binary, args, limits, patched, find_runner())).await
     }
 }
 
@@ -263,15 +267,25 @@ fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
     }
 }
 
+/// The byte patches of a patched run and the image base the engine loaded the program at.
+struct Patched {
+    patches: Vec<kraken_model::Patch>,
+    engine_base: u64,
+}
+
 /// One run of `binary` in the confined runner. `runner` is the `kraken-emu-run` binary. When
-/// `patches` is non-empty, a patched copy is run instead of `binary`.
+/// there are patches, a patched copy is run instead of `binary`.
 fn emulate(
     binary: &Path,
     args: EmulateRunArgs,
     limits: Limits,
-    patches: Vec<kraken_model::Patch>,
+    patched: Patched,
     runner: Option<PathBuf>,
 ) -> Result<EmulateRunOut, ProtoError> {
+    let Patched {
+        patches,
+        engine_base,
+    } = patched;
     let runner = runner.filter(|p| p.is_file()).ok_or_else(|| {
         problem(
             ErrorCode::Unsupported,
@@ -297,7 +311,7 @@ fn emulate(
     // A patched run executes a copy with the project's byte patches applied; the copy lives in
     // the run's private directory and is read only by the confined child.
     let program = if args.patched && !patches.is_empty() {
-        let patched = build_patched_copy(binary, &patches, work.path())?;
+        let patched = build_patched_copy(binary, &patches, work.path(), engine_base)?;
         notes.push(format!(
             "ran a patched copy with {} byte patch{} applied",
             patches.len(),
@@ -350,6 +364,7 @@ fn build_patched_copy(
     binary: &Path,
     patches: &[kraken_model::Patch],
     work_dir: &Path,
+    engine_base: u64,
 ) -> Result<PathBuf, ProtoError> {
     let image = std::fs::read(binary).map_err(|e| {
         problem(
@@ -365,10 +380,11 @@ fn build_patched_copy(
             replacement: p.replacement.clone(),
         })
         .collect();
-    let (patched, _) = patch_file_bytes(&image, &file_patches).map_err(|e| match e {
-        PatchError::NotAnObject(_) => problem(ErrorCode::Unsupported, e.to_string()),
-        PatchError::NoMapping(_) => problem(ErrorCode::InvalidArgument, e.to_string()),
-    })?;
+    let (patched, _) =
+        patch_file_bytes_at(&image, &file_patches, Some(engine_base)).map_err(|e| match e {
+            PatchError::NotAnObject(_) => problem(ErrorCode::Unsupported, e.to_string()),
+            PatchError::NoMapping(_) => problem(ErrorCode::InvalidArgument, e.to_string()),
+        })?;
     let out = work_dir.join("program");
     std::fs::write(&out, &patched).map_err(|e| {
         problem(
@@ -539,7 +555,10 @@ mod tests {
                 steps: 1,
                 seconds: 1,
             },
-            Vec::new(),
+            Patched {
+                patches: Vec::new(),
+                engine_base: 0,
+            },
             None,
         )
         .expect_err("no runner");

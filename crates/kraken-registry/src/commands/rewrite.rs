@@ -1028,6 +1028,12 @@ pub trait RewriteBackend: Send + Sync {
     /// Fails with a clear message when generated code cannot run confined on this host.
     fn require_sandbox(&self) -> Result<(), ProtoError>;
 
+    /// The `patch_from_source` planner that comes with this pipeline, if any;
+    /// [`Session::with_rewrite`] attaches it too.
+    fn source_patch(&self) -> Option<std::sync::Arc<dyn super::SourcePatchBackend>> {
+        None
+    }
+
     /// `rewrite_plan`.
     async fn plan(
         &self,

@@ -242,7 +242,7 @@ impl RewriteService {
     }
 }
 
-fn proto(e: RewriteError) -> ProtoError {
+pub(crate) fn proto(e: RewriteError) -> ProtoError {
     match e {
         RewriteError::Provider(kraken_agent::AgentError::Limit(m)) => {
             crate::metering::limit_error(m)
@@ -268,7 +268,7 @@ fn internal(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::Internal, msg)
 }
 
-fn progress(job: &JobReporter, phase: &str, done: u64, total: u64, message: &str) {
+pub(crate) fn progress(job: &JobReporter, phase: &str, done: u64, total: u64, message: &str) {
     job.progress(JobProgress {
         phase: phase.to_string(),
         done,
@@ -849,6 +849,13 @@ impl RewriteService {
 
 #[async_trait]
 impl RewriteBackend for RewriteService {
+    fn source_patch(&self) -> Option<Arc<dyn kraken_registry::commands::SourcePatchBackend>> {
+        Some(Arc::new(RewriteService {
+            backends: self.backends.clone(),
+            cfg: self.cfg.clone(),
+        }))
+    }
+
     fn require_sandbox(&self) -> Result<(), ProtoError> {
         if sandbox::enforced() {
             Ok(())
@@ -1696,5 +1703,35 @@ impl RewriteService {
             ..kraken_assist::AiPolicy::default()
         };
         Some(policy.estimate_with(kraken_proto::AiFeature::Rewrite, &choice, min, max))
+    }
+}
+
+#[async_trait]
+impl kraken_registry::commands::SourcePatchBackend for RewriteService {
+    fn check_budget(&self) -> Result<(), ProtoError> {
+        RewriteBackend::check_budget(self)
+    }
+
+    async fn patch_from_source(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::PatchFromSourceArgs,
+        job: &JobReporter,
+    ) -> Result<kraken_registry::commands::PatchFromSourceResult, ProtoError> {
+        // The assistant's model: patching is an assistant feature, not the rewrite's.
+        let ai = crate::metering::JobAi::new(
+            self.backends.clone(),
+            s,
+            ctx,
+            job,
+            crate::source_patch::label(args.address),
+            Some("assistant"),
+            None,
+        )?
+        .with_feature(crate::source_patch::FEATURE);
+        let out = crate::source_patch::run(s, ctx, args, job, &ai).await;
+        ai.finish(&out);
+        out
     }
 }

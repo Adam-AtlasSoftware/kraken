@@ -345,8 +345,8 @@ pub fn rewrite_max_calls(
 /// Typical tokens of one call: (input, output) at the low and the high end.
 fn typical_tokens(feature: AiFeature) -> ((u64, u64), (u64, u64)) {
     match feature {
-        // One prompt with the decompile and callees, one reply with the code.
-        AiFeature::Rewrite => ((2_500, 700), (9_000, 2_500)),
+        // One prompt with the decompile (and callees or disassembly), one reply.
+        AiFeature::Rewrite | AiFeature::Patch => ((2_500, 700), (9_000, 2_500)),
         // A tool loop: the context grows with every step.
         _ => ((3_000, 300), (14_000, 1_500)),
     }

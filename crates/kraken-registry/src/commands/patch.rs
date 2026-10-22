@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::patchfile::{FilePatch, PatchError, patch_file_bytes};
+use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
 use crate::session::{Session, blocking};
 
 use super::{locator, page_request};
@@ -402,7 +402,8 @@ impl Command for PatchExport {
         };
         let patches = project.with_store(|st| st.all_patches()).await?;
         let overwrite = args.overwrite;
-        blocking(move || export(&binary, &out, &patches, overwrite)).await
+        let base = project.program().base.0;
+        blocking(move || export(&binary, &out, &patches, overwrite, base)).await
     }
 }
 
@@ -412,6 +413,7 @@ fn export(
     out: &std::path::Path,
     patches: &[Patch],
     overwrite: bool,
+    engine_base: u64,
 ) -> Result<PatchExportOut, ProtoError> {
     if out.exists() && !overwrite {
         return Err(ProtoError::new(
@@ -436,10 +438,11 @@ fn export(
             replacement: p.replacement.clone(),
         })
         .collect();
-    let (patched, applied) = patch_file_bytes(&image, &file_patches).map_err(|e| match e {
-        PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
-        PatchError::NoMapping(_) => ProtoError::new(ErrorCode::InvalidArgument, e.to_string()),
-    })?;
+    let (patched, applied) = patch_file_bytes_at(&image, &file_patches, Some(engine_base))
+        .map_err(|e| match e {
+            PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
+            PatchError::NoMapping(_) => ProtoError::new(ErrorCode::InvalidArgument, e.to_string()),
+        })?;
     fs::write(out, &patched).map_err(|e| {
         ProtoError::new(
             ErrorCode::Internal,

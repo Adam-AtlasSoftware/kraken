@@ -434,6 +434,10 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ("rewrite_build", json!({"dir": "out"})),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
+        (
+            "patch_from_source",
+            json!({"address": "0x401040", "source": "int f(void) { return 7; }"}),
+        ),
         ("local_model_setup", json!({})),
         ("local_model_list", json!({})),
         ("local_model_devices", json!({})),

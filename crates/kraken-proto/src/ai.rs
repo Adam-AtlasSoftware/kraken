@@ -22,6 +22,8 @@ pub enum AiFeature {
     Automate,
     /// The Rust rewrite: translations, specs and repairs.
     Rewrite,
+    /// Byte patches planned from edited decompiled code (`patch_from_source`).
+    Patch,
     /// `kraken eval`.
     Eval,
     /// Anything else.
@@ -36,6 +38,7 @@ impl AiFeature {
             AiFeature::AutoName => "auto_name",
             AiFeature::Automate => "automate",
             AiFeature::Rewrite => "rewrite",
+            AiFeature::Patch => "patch",
             AiFeature::Eval => "eval",
             AiFeature::Other => "other",
         }
@@ -48,6 +51,7 @@ impl AiFeature {
             AiFeature::AutoName => "Suggest names",
             AiFeature::Automate => "Automate",
             AiFeature::Rewrite => "Rust rewrite",
+            AiFeature::Patch => "Patch from source",
             AiFeature::Eval => "Evaluation",
             AiFeature::Other => "AI work",
         }
@@ -60,6 +64,7 @@ impl AiFeature {
             "auto_name" => AiFeature::AutoName,
             "automate" => AiFeature::Automate,
             "rewrite" => AiFeature::Rewrite,
+            "patch" => AiFeature::Patch,
             "eval" => AiFeature::Eval,
             _ => AiFeature::Other,
         }
