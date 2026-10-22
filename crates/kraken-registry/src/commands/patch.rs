@@ -491,3 +491,85 @@ mod tests {
         assert!(parse_hex(&"00".repeat(MAX_PATCH_BYTES + 1)).is_err()); // too long
     }
 }
+
+// ---- assemble ---------------------------------------------------------------------------
+
+/// Arguments of `assemble`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AssembleArgs {
+    /// Where the instruction would go, as `0x...` (relative branches and RIP-relative operands
+    /// are encoded for this address).
+    pub address: Hex64,
+    /// One instruction in the processor's assembly syntax, e.g. `mov eax, 0x7`.
+    pub text: String,
+}
+
+/// Result of `assemble`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AssembleOut {
+    /// Encodings of the instruction as lower-case hex, shortest first.
+    pub encodings: Vec<String>,
+}
+
+/// Longest assembly line accepted, in characters.
+pub const MAX_ASSEMBLY_LINE: usize = 200;
+
+/// Assembles one instruction.
+pub struct Assemble;
+
+#[async_trait]
+impl Command for Assemble {
+    type Args = AssembleArgs;
+    type Output = AssembleOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "assemble",
+            "Turn one assembly instruction into machine-code bytes at an address",
+            CommandKind::Query,
+            Permission::Safe,
+        )
+        .doc(
+            "Assembles a single instruction for the program's processor at `address` and returns \
+             its encodings, shortest first. Nothing is written: pass the bytes to `patch_set` to \
+             stage them.\n\
+             Example: assemble {\"address\": \"0x401136\", \"text\": \"mov eax, 0x7\"}",
+        )
+        .details(
+            "Uses the engine's assembler (Ghidra's SLEIGH assembler on the Ghidra engine). The \
+             syntax is the one the Listing shows. An instruction the processor does not have, or \
+             an operand that does not fit, is `invalid_argument` with the reason.",
+        )
+        .needs(&[Cap::Assembler])
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: AssembleArgs,
+    ) -> Result<AssembleOut, ProtoError> {
+        let text = sanitize(&args.text).trim().to_string();
+        if text.is_empty() {
+            return Err(invalid("text is empty; give one instruction such as `nop`"));
+        }
+        if text.chars().count() > MAX_ASSEMBLY_LINE || text.contains('\n') {
+            return Err(invalid(format!(
+                "give one instruction of at most {MAX_ASSEMBLY_LINE} characters"
+            )));
+        }
+        let project = s.project()?;
+        let engine = project.engine();
+        let asm = engine.assembler().ok_or_else(|| unsupported("assembler"))?;
+        let encodings = asm
+            .assemble(&locator(args.address), &text, &ctx.cancel)
+            .await?;
+        if encodings.is_empty() {
+            return Err(invalid(format!("`{text}` has no encoding here")));
+        }
+        Ok(AssembleOut {
+            encodings: encodings.iter().map(|b| hex_bytes(b)).collect(),
+        })
+    }
+}

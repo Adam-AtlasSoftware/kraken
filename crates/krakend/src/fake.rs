@@ -159,6 +159,9 @@ impl Engine for Controlled {
     fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
         self.inner.symbol_lister()
     }
+    fn assembler(&self) -> Option<&dyn kraken_engine::Assembler> {
+        self.inner.assembler()
+    }
 }
 
 /// An [`EngineFactory`] over `engine-fake`. Every engine it creates starts from the same fixture

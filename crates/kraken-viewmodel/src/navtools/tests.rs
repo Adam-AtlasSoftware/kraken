@@ -378,6 +378,8 @@ fn a_short_replacement_is_flagged_and_can_be_padded_with_nops() {
         error: None,
         submitting: false,
         x86: true,
+        asm: String::new(),
+        asm_state: AsmState::Idle,
     };
     assert!(d.length_note().expect("note").contains("first 2 of the 5"));
     d.pad_with_nops();
@@ -449,6 +451,28 @@ fn an_instruction_patch_is_staged_listed_edited_removed_and_exported_after_a_que
         "starts from the bytes there"
     );
     assert!(matches!(dialog.origin, PatchOrigin::Instruction(_)));
+
+    // Typing an instruction fills the hex with its shortest encoding; others can be picked.
+    vm.set_patch_asm("xor eax, eax");
+    vm.assemble_patch();
+    idle(&mut vm);
+    let d = vm.tools.patch_dialog.clone().expect("dialog");
+    assert_eq!(d.input, "31 c0");
+    assert!(
+        matches!(&d.asm_state, AsmState::Done(e) if e.len() == 2),
+        "{d:?}"
+    );
+    vm.pick_patch_encoding(1);
+    assert_eq!(vm.tools.patch_dialog.as_ref().unwrap().input, "33 c0");
+    vm.set_patch_asm("frobnicate");
+    vm.assemble_patch();
+    idle(&mut vm);
+    let d = vm.tools.patch_dialog.clone().expect("dialog");
+    assert!(
+        matches!(&d.asm_state, AsmState::Failed(m) if m.contains("frobnicate")),
+        "{d:?}"
+    );
+    assert_eq!(d.input, "33 c0", "a failed line leaves the hex alone");
 
     vm.set_patch_input("zz");
     vm.submit_patch();

@@ -398,6 +398,14 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         json!({"address": "0x401040", "bytes": "90", "note": "nop"})
     );
     step!("patch_list", json!({}));
+    step!(
+        "assemble",
+        json!({"address": "0x401040", "text": "xor eax, eax"})
+    );
+    step!(
+        "assemble",
+        json!({"address": "0x401040", "text": "frobnicate"})
+    );
     step!("patch_export", json!({"output_path": "patched.bin"}));
     step!("emulate_run", json!({"patched": true}));
     step!("patch_remove", json!({"address": "0x401040"}));

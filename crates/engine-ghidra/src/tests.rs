@@ -173,6 +173,7 @@ fn handler(fake: Arc<Fake>) -> Handler {
                 "start": params["locator"]["offset"], "bytes": "AAEC",
                 "uninitialized": [{"space": "ram", "start": "0x1002", "end": "0x1003"}],
             })),
+            "assemble" => Reply::Result(json!({"encodings": ["b807000000", "c7c007000000"]})),
             "disassemble" => Reply::Result(json!({
                 "items": [{"address": "0x1000", "bytes": "90", "mnemonic": "nop",
                            "operands": [], "flow": "fallthrough"}],
@@ -269,8 +270,9 @@ fn rename(offset: u64, old: Option<&str>, new: &str) -> VersionedLogOp {
 async fn capabilities_cover_every_trait() {
     let r = rig();
     let caps = r.engine.capabilities();
-    assert_eq!(caps.present.len(), 12);
+    assert_eq!(caps.present.len(), 13);
     assert!(r.engine.disassembler().is_some() && r.engine.symbol_lister().is_some());
+    assert!(r.engine.assembler().is_some());
     assert!(r.engine.loader().is_some() && r.engine.mutator().is_some());
     assert_eq!(caps.handshake.protocol, kraken_proto::PROTOCOL_VERSION);
     assert!(caps.handshake.build.contains("12.1.4"));
@@ -859,6 +861,18 @@ async fn data_queries_map_requests_and_results() {
     let map = e.memory_map(&cancel).await.unwrap();
     assert_eq!(map[0].name, ".text");
     assert_eq!(map[0].perms, "r-x");
+
+    let asm = e
+        .assembler()
+        .expect("assembler")
+        .assemble(&at(0x1000), "mov eax, 0x7", &cancel)
+        .await
+        .unwrap();
+    assert_eq!(
+        asm,
+        vec![vec![0xb8, 7, 0, 0, 0], vec![0xc7, 0xc0, 7, 0, 0, 0]]
+    );
+    assert_eq!(last_call("assemble")["text"], "mov eax, 0x7");
 
     let read = e.read_bytes(&at(0x1000), 3, &cancel).await.unwrap();
     assert_eq!(read.bytes, [0, 1, 2]);

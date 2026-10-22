@@ -7,8 +7,8 @@ use kraken_proto::{Capability, Handshake, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 
 use crate::traits::{
-    Analyzer, Decompiler, Disassembler, FlowGraph, FunctionLister, Loader, MemoryReader, Mutator,
-    StringLister, SymbolLister, TypeStore, XrefProvider,
+    Analyzer, Assembler, Decompiler, Disassembler, FlowGraph, FunctionLister, Loader, MemoryReader,
+    Mutator, StringLister, SymbolLister, TypeStore, XrefProvider,
 };
 
 /// A capability an engine may provide.
@@ -39,11 +39,13 @@ pub enum Cap {
     Strings,
     /// [`SymbolLister`].
     Symbols,
+    /// [`Assembler`].
+    Assembler,
 }
 
 impl Cap {
     /// All capabilities.
-    pub const ALL: [Cap; 12] = [
+    pub const ALL: [Cap; 13] = [
         Cap::Loader,
         Cap::Analyzer,
         Cap::Decompiler,
@@ -56,11 +58,12 @@ impl Cap {
         Cap::Cfg,
         Cap::Strings,
         Cap::Symbols,
+        Cap::Assembler,
     ];
 
     /// Name used in the handshake: `"loader"`, `"analyzer"`, `"decompiler"`, `"type_store"`,
     /// `"function_lister"`, `"mutator"`, `"memory"`, `"disassembler"`, `"xrefs"`, `"cfg"`,
-    /// `"strings"`, `"symbols"`.
+    /// `"strings"`, `"symbols"`, `"assembler"`.
     pub fn name(self) -> &'static str {
         match self {
             Cap::Loader => "loader",
@@ -75,6 +78,7 @@ impl Cap {
             Cap::Cfg => "cfg",
             Cap::Strings => "strings",
             Cap::Symbols => "symbols",
+            Cap::Assembler => "assembler",
         }
     }
 }
@@ -169,6 +173,10 @@ pub trait Engine: Send + Sync {
     }
     /// The import/export lister, if supported.
     fn symbol_lister(&self) -> Option<&dyn SymbolLister> {
+        None
+    }
+    /// The assembler, if supported.
+    fn assembler(&self) -> Option<&dyn Assembler> {
         None
     }
 }

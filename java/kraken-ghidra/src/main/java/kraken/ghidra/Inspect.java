@@ -66,6 +66,11 @@ final class Inspect {
         this.programs = programs;
     }
 
+    /** The open program, for the assembler. */
+    Program programForAssembly() {
+        return program();
+    }
+
     private Program program() {
         return programs.get();
     }
@@ -79,7 +84,7 @@ final class Inspect {
         }
     }
 
-    private Address at(Locator l) {
+    Address at(Locator l) {
         if (!(l instanceof Locator.Native n)) {
             throw KrakenError.unsupported("managed locators are not supported by Ghidra");
         }

@@ -75,3 +75,51 @@ fn patch_here_stages_from_the_listing_and_show_patches_opens_the_tab() {
             .is_some_and(|vm| vm.tools.export_dialog.is_none())
     );
 }
+
+#[test]
+fn enter_assembles_the_typed_instruction_then_stages_it() {
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    h.app.dispatch(AppAction::GoToMain, &ctx);
+    h.run_until("the listing of main", |a| {
+        a.view_model()
+            .is_some_and(|vm| vm.views.listing.loaded && !vm.views.listing.rows.is_empty())
+    });
+    let vm = h.app.view_model_mut().expect("vm");
+    vm.select_listing_row(0);
+    let at = vm.views.listing.selected_row().expect("row").address;
+    h.app.dispatch(AppAction::PatchHere, &ctx);
+    h.step();
+    h.step();
+    assert!(
+        h.ctx
+            .memory(|m| m.has_focus(egui::Id::new("kraken_patch_asm"))),
+        "the instruction field has the focus"
+    );
+    h.app
+        .view_model_mut()
+        .expect("vm")
+        .set_patch_asm("xor eax, eax");
+    h.step();
+    h.key(Key::Enter, Modifiers::NONE);
+    h.run_until("the instruction to be assembled", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools
+                .patch_dialog
+                .as_ref()
+                .is_some_and(|d| d.input == "31 c0")
+        })
+    });
+    h.key(Key::Enter, Modifiers::NONE);
+    h.run_until("the assembled bytes to be staged", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools.patch_dialog.is_none()
+                && vm
+                    .tools
+                    .patches
+                    .items
+                    .iter()
+                    .any(|p| p.address == at && p.replacement == [0x31, 0xc0])
+        })
+    });
+}

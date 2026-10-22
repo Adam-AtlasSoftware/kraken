@@ -166,6 +166,20 @@ pub trait Disassembler: Send + Sync {
     ) -> EngineResult<Page<DisasmRow>>;
 }
 
+/// Turns one line of assembly into machine code.
+#[async_trait]
+pub trait Assembler: Send + Sync {
+    /// The encodings of the single instruction `text` placed at `at`, shortest first (several
+    /// when the instruction has more than one form). `invalid_argument` with the reason when it
+    /// does not assemble.
+    async fn assemble(
+        &self,
+        at: &Locator,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Vec<Vec<u8>>>;
+}
+
 /// Answers cross-reference queries.
 #[async_trait]
 pub trait XrefProvider: Send + Sync {

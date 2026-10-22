@@ -430,3 +430,33 @@ async fn switch_vm_o0_cfg_has_switch_edges() {
     assert_eq!(last.flow, FlowKind::Indirect, "{name}: {last:?}");
     engine.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a real Ghidra (cargo xtask ghidra-ext)"]
+async fn the_sleigh_assembler_encodes_lines_in_either_case() {
+    let dir = scratch_dir();
+    let engine = new_engine(&dir.path().join("project"));
+    let info = open_and_analyze(&engine, &corpus_binary()).await;
+    let cancel = CancellationToken::new();
+    let asm = engine.assembler().expect("assembler");
+    let at = Locator::ram(info.base.0 + 0x1266);
+    let enc = asm
+        .assemble(&at, "SUB EAX, EDX", &cancel)
+        .await
+        .expect("sub");
+    assert_eq!(enc[0], [0x29, 0xd0]);
+    let enc = asm
+        .assemble(&at, "mov eax, 0x7", &cancel)
+        .await
+        .expect("lower case");
+    assert_eq!(enc[0], [0xb8, 7, 0, 0, 0]);
+    // A short jump two bytes ahead is relative to `at`.
+    let target = format!("JMP {:#x}", info.base.0 + 0x1268);
+    let enc = asm.assemble(&at, &target, &cancel).await.expect("jmp");
+    assert_eq!(enc[0], [0xeb, 0x00]);
+    let e = asm
+        .assemble(&at, "frobnicate rax", &cancel)
+        .await
+        .expect_err("not an instruction");
+    assert_eq!(e.code, kraken_proto::ErrorCode::InvalidArgument);
+}

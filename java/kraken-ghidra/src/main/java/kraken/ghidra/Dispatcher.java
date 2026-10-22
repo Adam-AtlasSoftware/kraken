@@ -154,6 +154,11 @@ final class Dispatcher {
                     .readBytes(Locator.fromJson(J.req(params, "locator")), J.num(params, "length"))
                     .toJson();
             }
+            case "assemble" -> {
+                Inspect in = engine.inspect();
+                return Assemble.line(
+                    in.programForAssembly(), in.at(Locator.fromJson(J.req(params, "locator"))), J.str(params, "text"));
+            }
             case "disassemble" -> {
                 return engine
                     .inspect()
@@ -235,6 +240,7 @@ final class Dispatcher {
                 new Capability("memory_map", 1),
                 new Capability("read_bytes", 1),
                 new Capability("disassemble", 1),
+                new Capability("assemble", 1),
                 new Capability("xrefs", 1),
                 new Capability("cfg", 1),
                 new Capability("strings", 1),

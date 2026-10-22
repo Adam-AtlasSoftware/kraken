@@ -81,9 +81,9 @@ pub use local_model::{
     strata_view,
 };
 pub use patch::{
-    AppliedPatchView, MAX_PATCH_BYTES, MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchExport,
-    PatchExportArgs, PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs,
-    PatchRemoveOut, PatchSet, PatchSetArgs, PatchView,
+    AppliedPatchView, Assemble, AssembleArgs, AssembleOut, MAX_ASSEMBLY_LINE, MAX_PATCH_BYTES,
+    MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchExport, PatchExportArgs, PatchExportOut, PatchList,
+    PatchListArgs, PatchRemove, PatchRemoveArgs, PatchRemoveOut, PatchSet, PatchSetArgs, PatchView,
 };
 pub use patch_source::{
     DEFAULT_SOURCE_PATCH_ATTEMPTS, MAX_SOURCE_BYTES, MAX_SOURCE_PATCH_ATTEMPTS, PatchFromSource,
@@ -262,6 +262,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(BookmarkRemove);
     r.register(BookmarkList);
     r.register(PatchSet);
+    r.register(Assemble);
     r.register(PatchFromSource);
     r.register(PatchRemove);
     r.register(PatchList);
