@@ -9,6 +9,7 @@ pub mod hex;
 pub mod listing;
 pub mod patches;
 pub mod search;
+pub mod source_edit;
 pub mod strings;
 pub mod symbols;
 pub mod xrefs;
