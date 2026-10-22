@@ -550,3 +550,39 @@ fn a_refusal_in_the_window_reaches_the_agent() {
     assert_eq!(err.details, Some(json!({"approval": "denied"})), "{err:?}");
     assert!(!project.exists());
 }
+
+/// The assistant's call path in the window: the tool host's approver (the danger mode and the
+/// person's answer on the permission card) travels through `VmCommands` and the daemon client
+/// as `approved`, and the daemon honours it for a dangerous command.
+#[test]
+fn the_assistants_approval_reaches_the_daemon() {
+    use kraken_host::backend::CommandBackend;
+    use kraken_registry::{AutoApprove, CallContext, DenyApprover, Surface};
+
+    let rig = Rig::new();
+    let backend = rig.backend();
+    let _vm = rig.analyzed_vm(&backend);
+    let commands = crate::assist::VmCommands::new(backend.clone());
+    let out = rig.tmp.path().join("patched.bin");
+    let args = json!({"output_path": out.to_string_lossy()});
+    let call = |approver: Arc<dyn kraken_registry::ApprovalRequester>| {
+        let ctx =
+            CallContext::agent("kraken-assistant", "run-1", Surface::Gui).with_approval(approver);
+        rig.rt
+            .block_on(commands.call("patch_export", &ctx, args.clone()))
+    };
+
+    let denied = call(Arc::new(DenyApprover)).unwrap_err();
+    assert_eq!(
+        denied.details,
+        Some(json!({"approval": "denied"})),
+        "{denied:?}"
+    );
+
+    assert!(!out.exists(), "nothing written when denied");
+
+    // Approved: the daemon runs the export (with no patches staged it writes an exact copy).
+    let done = call(Arc::new(AutoApprove)).expect("approved export");
+    assert_eq!(done["applied"], json!([]));
+    assert!(out.is_file());
+}
