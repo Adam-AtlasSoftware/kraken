@@ -39,9 +39,27 @@ one private directory.
 A statically linked program runs as it is. A dynamically linked program needs its loader and C
 library. The emulator does **not** use the libraries of this computer: it reads them from a sysroot,
 `~/.cache/kraken-dev/emu-sysroots/<set>` (or `$KRAKEN_EMU_SYSROOTS/<set>`), which
-`cargo xtask emu-sysroots` extracts for 32-bit x86, ARM, AArch64 and RISC-V 64. Without one the
-command says so and names this fix. There is no sysroot for x86-64 yet, so dynamically linked
-x86-64 programs are refused.
+`cargo xtask emu-sysroots` extracts for 32-bit x86, x86-64, ARM, AArch64 and RISC-V 64. The
+corpus sets come from the corpus build images; the `x86_64` set comes from the local
+`debian:trixie-slim` image (`KRAKEN_EMU_X86_64_IMAGE` picks another; needs docker). Without a
+sysroot the command says so and names this fix.
+
+Why not the libraries of this computer: many distributions build glibc for x86-64-v3, with AVX2
+instructions inside, and the emulated CPU implements no VEX/AVX instructions (a program that
+executes one stops with `kind: unsupported`). Debian's glibc is built for baseline x86-64.
+
+Two adjustments are made so such programs start, and each is listed in the run's `notes`:
+
+- A program linked from distribution objects can carry a minimum-CPU marker (the
+  `GNU_PROPERTY_X86_ISA_1_NEEDED` property, for example "x86-64-v3 needed") although it only uses
+  baseline instructions. The loader would then refuse to start it on the emulated baseline CPU
+  (`CPU ISA level is lower than required`). The emulator zeroes the marker in the copy it loads;
+  the file in the project is not touched and no instruction changes.
+- x86-64 dynamic programs run with `LD_BIND_NOW=1` (unless the run sets it itself), because the
+  lazy-binding trampoline uses FXSAVE, which the CPU model does not implement.
+
+Not supported: AVX/VEX instructions, and the other vector-state instructions (FXSAVE, XSAVE) of
+the CPU model. A program that really executes one ends with `kind: unsupported` and the address.
 
 ## What you need
 

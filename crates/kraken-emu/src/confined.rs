@@ -85,6 +85,22 @@ pub fn run_program_confined(
         b
     };
     let arch = Arch::from_elf(&head)?;
+    if spec.sysroot.is_none() {
+        // The child's errors cross as text; this one the caller acts on (it supplies a sysroot).
+        let data = std::fs::read(&spec.program)
+            .map_err(|e| EmuError::Image(format!("{}: {e}", spec.program.display())))?;
+        if let Some(interp) = crate::loader::parse_elf(&data).ok().and_then(|i| i.interp) {
+            return Err(EmuError::NeedsSysroot {
+                binary: spec
+                    .program
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                interp,
+                arch,
+            });
+        }
+    }
     let processors =
         SpecRoots::discover_with(spec.spec_roots.iter().cloned()).processors_for(arch)?;
     let root = processors

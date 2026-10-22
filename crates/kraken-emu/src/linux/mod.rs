@@ -11,6 +11,7 @@
 //! deterministic, so two runs of the same program on the same input agree byte for byte.
 
 pub mod fs;
+mod isa_marker;
 pub mod sysno;
 
 use std::collections::BTreeMap;
@@ -167,6 +168,9 @@ pub struct ProgramOutcome {
     pub syscalls: BTreeMap<String, u64>,
     /// Numbers of system calls the layer does not know (answered `ENOSYS`).
     pub unknown_syscalls: Vec<u64>,
+    /// What the emulator changed or assumed to run the program (shown to the user).
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 impl ProgramOutcome {
@@ -349,6 +353,7 @@ pub struct LinuxProcess {
     entry: u64,
     main_bias: u64,
     setup_ms: u64,
+    notes: Vec<String>,
     _tmp: Option<tempfile::TempDir>,
 }
 
@@ -430,7 +435,10 @@ impl LinuxProcess {
     /// stops before the first instruction.
     pub fn spawn(spec: &RunSpec) -> Result<LinuxProcess, EmuError> {
         let t0 = Instant::now();
-        let data = read_program(&spec.program)?;
+        let mut data = read_program(&spec.program)?;
+        let notes: Vec<String> = isa_marker::clear_isa_needed(&mut data)
+            .into_iter()
+            .collect();
         let info = loader::parse_elf(&data)?;
         let arch = info.arch;
         let (workdir, tmp) = match &spec.workdir {
@@ -519,16 +527,30 @@ impl LinuxProcess {
             entry,
             main_bias: bias,
             setup_ms: 0,
+            notes,
             _tmp: tmp,
         };
         let argv0 = spec.argv0.clone().unwrap_or_else(|| PROG_NAME.to_string());
         let mut argv = vec![argv0.into_bytes()];
         argv.extend(spec.args.iter().map(|a| a.clone().into_bytes()));
-        let envp: Vec<Vec<u8>> = spec
+        let mut envp: Vec<Vec<u8>> = spec
             .env
             .iter()
             .map(|(k, v)| format!("{k}={v}").into_bytes())
             .collect();
+        // x86-64 glibc's lazy-binding trampoline saves the vector state with FXSAVE, which the
+        // CPU model does not implement; binding at start never enters it.
+        if arch == Arch::X86_64
+            && interp.is_some()
+            && !spec.env.iter().any(|(k, _)| k == "LD_BIND_NOW")
+        {
+            envp.push(b"LD_BIND_NOW=1".to_vec());
+            p.notes.push(
+                "Set LD_BIND_NOW=1 for the guest: lazy symbol binding uses FXSAVE, which the \
+                 emulated CPU cannot execute."
+                    .to_string(),
+            );
+        }
         let auxv_phdr = main.phdr;
         p.build_stack(
             &lay,
@@ -1562,6 +1584,7 @@ impl LinuxProcess {
             files: written_files(self.k.vfs.workdir()),
             syscalls: self.k.syscalls.clone(),
             unknown_syscalls: self.k.unknown.clone(),
+            notes: self.notes.clone(),
         }
     }
 }
