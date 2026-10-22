@@ -380,6 +380,32 @@ impl ViewModel {
         (Some(sanitize(command)), reason, program)
     }
 
+    /// What the assistant may do with dangerous commands (the config's `danger_mode`).
+    pub fn assist_danger_mode(&mut self) -> kraken_host::DangerMode {
+        *self.assist.danger.get_or_insert_with(|| {
+            kraken_host::KrakenConfig::load()
+                .map(|c| c.danger_mode)
+                .unwrap_or_default()
+        })
+    }
+
+    /// Uses `mode` from the next assistant run on and saves it to the config file at `path`
+    /// (keeping everything else in it). The mode applies even when saving fails; the error says
+    /// why it will not last.
+    pub fn assist_set_danger_mode(
+        &mut self,
+        mode: kraken_host::DangerMode,
+        path: Option<&std::path::Path>,
+    ) -> Result<(), String> {
+        self.assist.danger = Some(mode);
+        let Some(path) = path else {
+            return Ok(());
+        };
+        let mut cfg = kraken_host::KrakenConfig::from_file(path).map_err(|e| e.to_string())?;
+        cfg.danger_mode = mode;
+        cfg.save(path).map_err(|e| e.to_string())
+    }
+
     /// The global `[assistant_shell]` table.
     fn shell_settings(&self) -> kraken_host::ShellConfig {
         #[cfg(test)]
@@ -837,8 +863,10 @@ impl ViewModel {
     ) {
         let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
         let approver = self.poster();
+        let danger = self.assist_danger_mode();
         let assistant = Assistant::with_engine(self.assist.registry.clone(), backend, engine)
             .with_surface(Surface::Gui)
+            .with_danger_mode(danger)
             .with_approver(move |handle| {
                 approver.post(move |vm| vm.assist_set_approvals(seq, handle));
             });
@@ -992,12 +1020,26 @@ impl ViewModel {
                     .map(|a| a.iter().filter_map(Value::as_str).map(sanitize).collect())
                     .unwrap_or_default();
                 let (command, ask_reason, allow_program) = self.shell_card_parts(&name, &arguments);
+                // A dangerous KRAKEN command (danger mode Ask) shows its arguments.
+                let dangerous =
+                    self.assist.registry.get(&name).is_some_and(|e| {
+                        e.spec().permission == kraken_registry::Permission::Dangerous
+                    });
+                let input = if dangerous {
+                    Some(sanitize(&clip_args(&arguments)))
+                } else {
+                    text("input")
+                };
                 end_stream(&mut self.assist.items);
                 self.assist.items.push(ChatItem::Permission(PermissionCard {
                     id,
                     title: sanitize(&name),
-                    kind: text("kind"),
-                    input: text("input"),
+                    kind: if dangerous {
+                        Some("dangerous KRAKEN command".to_string())
+                    } else {
+                        text("kind")
+                    },
+                    input,
                     paths,
                     command,
                     ask_reason,
@@ -1258,5 +1300,15 @@ impl ViewModel {
         } else {
             self.refresh_proposals();
         }
+    }
+}
+
+/// The arguments of a tool call as one line, cut to a readable length.
+fn clip_args(args: &Value) -> String {
+    const MAX: usize = 400;
+    let s = args.to_string();
+    match s.char_indices().nth(MAX) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s,
     }
 }

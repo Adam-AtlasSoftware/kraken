@@ -5,7 +5,7 @@
 //! `config.toml`; see `docs/assistant.md`.
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -309,8 +309,22 @@ pub(crate) async fn execute_task(
         ),
     }
     let writes = !task.read_only;
-    let assistant = Assistant::with_engine(env.registry.clone(), backend.clone(), engine.clone())
-        .with_surface(Surface::Cli);
+    let mut assistant =
+        Assistant::with_engine(env.registry.clone(), backend.clone(), engine.clone())
+            .with_surface(Surface::Cli)
+            .with_danger_mode(env.config.danger_mode);
+    // On a terminal, approval requests (a dangerous command in danger mode Ask, a terminal
+    // agent's own tool) are asked; without one they are declined.
+    let approvals: Arc<std::sync::Mutex<Option<kraken_agent::ApprovalHandle>>> = Arc::default();
+    let can_ask = env.interactive && std::io::stdin().is_terminal();
+    if can_ask {
+        let slot = approvals.clone();
+        assistant = assistant.with_approver(move |h| {
+            *slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(h);
+        });
+    }
 
     let cancel = CancellationToken::new();
     let ctrl_c = env.interactive.then(|| {
@@ -362,6 +376,38 @@ pub(crate) async fn execute_task(
             } => {
                 let tag = if *is_error { "error" } else { "ok" };
                 emit(err, &format!("    {tag}: {}\n", clip(summary, 100)));
+            }
+            AgentEvent::ApprovalRequired {
+                id,
+                name,
+                arguments,
+            } if can_ask => {
+                let handle = approvals
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                emit(
+                    err,
+                    &format!(
+                        "  ? the assistant asks to run {} {}\n    Allow? [y/N] ",
+                        clip(name, 80),
+                        clip(&arguments.to_string(), 200)
+                    ),
+                );
+                let _ = err.flush();
+                let mut line = String::new();
+                let _ = std::io::stdin().lock().read_line(&mut line);
+                let yes = matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+                if let Some(h) = handle {
+                    h.decide(
+                        id.clone(),
+                        if yes {
+                            kraken_agent::ApprovalDecision::Approve
+                        } else {
+                            kraken_agent::ApprovalDecision::Deny
+                        },
+                    );
+                }
             }
             AgentEvent::ApprovalRequired { name, .. } => {
                 emit(

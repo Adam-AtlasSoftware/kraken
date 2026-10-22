@@ -112,6 +112,49 @@ pub enum TitlebarMode {
     System,
 }
 
+/// What the assistant may do with KRAKEN's dangerous commands (byte-patch export, delete, the
+/// rewrite pipeline): `danger_mode` in the config. Shell access is governed separately
+/// (`[assistant_shell]`), because running commands is far riskier than editing the project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DangerMode {
+    /// Dangerous commands are not offered to the assistant at all; the person runs them by hand.
+    /// Reversible edits (renames, comments, staging a byte patch) still work.
+    Deny,
+    /// The assistant may call a dangerous command, but each one asks the person first.
+    #[default]
+    Ask,
+    /// The assistant runs dangerous commands without asking. Full hands-off control of KRAKEN.
+    Yolo,
+}
+
+impl DangerMode {
+    /// Every mode, in the order a picker shows them.
+    pub const ALL: [DangerMode; 3] = [DangerMode::Deny, DangerMode::Ask, DangerMode::Yolo];
+
+    /// Short name for people.
+    pub fn label(self) -> &'static str {
+        match self {
+            DangerMode::Deny => "Deny",
+            DangerMode::Ask => "Ask",
+            DangerMode::Yolo => "YOLO",
+        }
+    }
+
+    /// One line on what the mode does.
+    pub fn describe(self) -> &'static str {
+        match self {
+            DangerMode::Deny => "The assistant never runs dangerous commands; you run them.",
+            DangerMode::Ask => "The assistant asks you before each dangerous command.",
+            DangerMode::Yolo => "The assistant runs dangerous commands without asking.",
+        }
+    }
+}
+
+fn is_default_danger(m: &DangerMode) -> bool {
+    *m == DangerMode::default()
+}
+
 /// The `[local_serving]` table: how local models are kept running and shown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -206,6 +249,9 @@ pub struct KrakenConfig {
     /// How local models are kept running and shown.
     #[serde(skip_serializing_if = "is_default_serving")]
     pub local_serving: LocalServingSettings,
+    /// What the assistant may do with dangerous commands (default `ask`).
+    #[serde(skip_serializing_if = "is_default_danger")]
+    pub danger_mode: DangerMode,
     /// The `[assistant_shell]` table: the assistant's shell tool.
     #[serde(skip_serializing_if = "ShellConfig::is_empty")]
     pub assistant_shell: ShellConfig,
@@ -615,6 +661,17 @@ mod tests {
     }
 
     #[test]
+    fn danger_mode_defaults_to_ask_and_round_trips() {
+        let c = KrakenConfig::from_toml("").unwrap();
+        assert_eq!(c.danger_mode, DangerMode::Ask);
+        assert!(!c.to_toml().unwrap().contains("danger_mode"));
+        let c = KrakenConfig::from_toml("danger_mode = \"yolo\"\n").unwrap();
+        assert_eq!(c.danger_mode, DangerMode::Yolo);
+        assert_eq!(KrakenConfig::from_toml(&c.to_toml().unwrap()).unwrap(), c);
+        assert!(KrakenConfig::from_toml("danger_mode = \"maybe\"\n").is_err());
+    }
+
+    #[test]
     fn local_models_and_serving_round_trip_and_other_tables_survive() {
         let mut c = KrakenConfig::from_toml(
             "per_run_cap = 7\n[provider]\nkind = \"anthropic\"\nmodel = \"x\"\n\
@@ -667,6 +724,7 @@ mod tests {
         let c = KrakenConfig::from_toml("").unwrap();
         assert_eq!(c.local_serving.grace_secs, 120);
         assert_eq!(c.local_serving.titlebar, TitlebarMode::Auto);
+        assert_eq!(c.danger_mode, DangerMode::Ask);
         assert!(c.local_models.is_empty());
         let m = KrakenConfig::from_toml(
             "[[local_models]]\nid = \"a\"\nname = \"A\"\nengine = \"llama\"\nmodel_path = \"/x\"\n",
