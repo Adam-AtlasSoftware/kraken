@@ -26,10 +26,10 @@ pub use kraken_host::DangerMode;
 use crate::ASSISTANT_ID;
 
 /// Commands never offered to the model by default: they open, create or rebuild projects (the
-/// person's decision), are user-only decisions about the assistant's own work, start the
-/// rewrite pipeline's model calls, sandboxed builds and exports (`rewrite_plan`,
-/// `rewrite_status`, `rewrite_unit` and `rewrite_program_status` are read-only and stay
-/// available), or start and stop local model servers (`local_model_list`, `local_model_status`
+/// person's decision), are user-only decisions about the assistant's own work, start the model
+/// calls of the rewrite pipeline and of `patch_from_source`, sandboxed builds and exports
+/// (`rewrite_plan`, `rewrite_status`, `rewrite_unit` and `rewrite_program_status` are read-only
+/// and stay available), or start and stop local model servers (`local_model_list`, `local_model_status`
 /// and `local_model_devices` stay available).
 pub const DEFAULT_EXCLUDED: &[&str] = &[
     "project_create",
@@ -46,6 +46,7 @@ pub const DEFAULT_EXCLUDED: &[&str] = &[
     "rewrite_spec",
     "rewrite_export",
     "rewrite_accept",
+    "patch_from_source",
     "local_model_start",
     "local_model_hold",
     "local_model_release",

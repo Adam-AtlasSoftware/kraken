@@ -19,6 +19,7 @@ mod infer;
 mod jobs;
 mod local_model;
 mod patch;
+mod patch_source;
 mod probe;
 mod project;
 mod query;
@@ -83,6 +84,11 @@ pub use patch::{
     AppliedPatchView, MAX_PATCH_BYTES, MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchExport,
     PatchExportArgs, PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs,
     PatchRemoveOut, PatchSet, PatchSetArgs, PatchView,
+};
+pub use patch_source::{
+    DEFAULT_SOURCE_PATCH_ATTEMPTS, MAX_SOURCE_BYTES, MAX_SOURCE_PATCH_ATTEMPTS, PatchFromSource,
+    PatchFromSourceArgs, PatchFromSourceResult, PlannedPatch, SourcePatchBackend, SourcePatchCheck,
+    SourcePatchVerdict, source_patch_result,
 };
 pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
 pub use project::{
@@ -256,6 +262,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(BookmarkRemove);
     r.register(BookmarkList);
     r.register(PatchSet);
+    r.register(PatchFromSource);
     r.register(PatchRemove);
     r.register(PatchList);
     r.register(PatchExport);

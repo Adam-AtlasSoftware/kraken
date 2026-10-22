@@ -821,6 +821,7 @@ pub struct Session {
     ai: crate::ai::AiBoard,
     project: Arc<RwLock<Option<Arc<Project>>>>,
     rewrite: Option<Arc<dyn RewriteBackend>>,
+    source_patch: Option<Arc<dyn crate::commands::SourcePatchBackend>>,
     local_models: Option<Arc<dyn crate::commands::LocalModelBackend>>,
     serving: Option<Arc<dyn crate::commands::ServingBackend>>,
 }
@@ -841,6 +842,7 @@ impl Session {
             ai: crate::ai::AiBoard::new(),
             project: Arc::new(RwLock::new(None)),
             rewrite: None,
+            source_patch: None,
             local_models: None,
             serving: None,
         }
@@ -868,9 +870,13 @@ impl Session {
         self.local_models.as_ref()
     }
 
-    /// Attaches the rewrite pipeline that the `rewrite_*` commands run on (kraken-rewrite).
-    /// Without one those commands answer `unsupported`.
+    /// Attaches the rewrite pipeline that the `rewrite_*` commands run on (kraken-rewrite), and
+    /// the `patch_from_source` planner that comes with it. Without one those commands answer
+    /// `unsupported`.
     pub fn with_rewrite(mut self, backend: Arc<dyn RewriteBackend>) -> Session {
+        if self.source_patch.is_none() {
+            self.source_patch = backend.source_patch();
+        }
         self.rewrite = Some(backend);
         self
     }
@@ -882,6 +888,30 @@ impl Session {
                 ErrorCode::Unsupported,
                 "the rewrite pipeline is not attached to this session; use the kraken CLI or \
                  krakend, which link it",
+            )
+        })
+    }
+
+    /// Attaches what `patch_from_source` plans with (kraken-rewrite). Without one the command
+    /// answers `unsupported`.
+    pub fn with_source_patch(
+        mut self,
+        backend: Arc<dyn crate::commands::SourcePatchBackend>,
+    ) -> Session {
+        self.source_patch = Some(backend);
+        self
+    }
+
+    /// The attached `patch_from_source` planner; `unsupported` when this build or surface has
+    /// none.
+    pub fn source_patch(
+        &self,
+    ) -> Result<&Arc<dyn crate::commands::SourcePatchBackend>, ProtoError> {
+        self.source_patch.as_ref().ok_or_else(|| {
+            ProtoError::new(
+                ErrorCode::Unsupported,
+                "patching from edited source is not attached to this session; use the kraken \
+                 CLI or krakend, which link it",
             )
         })
     }

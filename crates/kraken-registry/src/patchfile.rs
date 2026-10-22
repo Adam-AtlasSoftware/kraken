@@ -14,6 +14,8 @@ use object::read::{Object, ObjectSegment};
 /// Load base the native engine uses for a position-independent executable (ADR 0014); tried as a
 /// fallback when a patch address does not sit at the file's own virtual addresses.
 pub const NATIVE_PIE_BASE: u64 = 0x10000;
+/// Load base Ghidra gives a position-independent ELF; tried after the native engine's.
+pub const GHIDRA_PIE_BASE: u64 = 0x100000;
 
 /// A byte patch ready to write to a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,21 +146,42 @@ fn resolve(
 
 /// Writes `patches` into a copy of `image` and returns the patched bytes with where each one
 /// landed (ordered by address). The load base is found automatically: the file's own virtual
-/// addresses first, then the native engine's PIE base.
+/// addresses first, then the native engine's and Ghidra's PIE bases.
 pub fn patch_file_bytes(
     image: &[u8],
     patches: &[FilePatch],
+) -> Result<(Vec<u8>, Vec<AppliedPatch>), PatchError> {
+    patch_file_bytes_at(image, patches, None)
+}
+
+/// [`patch_file_bytes`] for a program the engine reports loaded at `engine_base` (its image
+/// base): the shift from the file's lowest loaded address to it is tried first.
+pub fn patch_file_bytes_at(
+    image: &[u8],
+    patches: &[FilePatch],
+    engine_base: Option<u64>,
 ) -> Result<(Vec<u8>, Vec<AppliedPatch>), PatchError> {
     if patches.is_empty() {
         return Ok((image.to_vec(), Vec::new()));
     }
     let segs = segments(image)?;
 
-    // Prefer the file's own addresses (base 0); fall back to the engine's PIE base. The recorded
-    // original bytes have to match under the chosen base, which rejects a wrong base.
+    // The shift the engine reports, then the file's own addresses (base 0), then the engines'
+    // usual PIE bases. The recorded original bytes have to match under the chosen base, which
+    // rejects a wrong one.
+    let lowest = segs.iter().map(|s| s.vaddr).min().unwrap_or(0);
+    let mut bases: Vec<u64> = engine_base
+        .and_then(|b| b.checked_sub(lowest))
+        .into_iter()
+        .collect();
+    for b in [0, NATIVE_PIE_BASE, GHIDRA_PIE_BASE] {
+        if !bases.contains(&b) {
+            bases.push(b);
+        }
+    }
     let mut first_err = None;
     let mut applied = None;
-    for base in [0, NATIVE_PIE_BASE] {
+    for base in bases {
         match resolve(image, &segs, patches, base) {
             Ok(a) => {
                 applied = Some(a);
@@ -220,6 +243,39 @@ mod tests {
         // Some code bytes to patch at offset 0x100 (vaddr 0x400100).
         e[0x100..0x104].copy_from_slice(&[0x74, 0x10, 0x90, 0x90]);
         e
+    }
+
+    /// [`elf_exec`] as a position-independent file: ET_DYN loaded at vaddr 0.
+    fn elf_pie() -> Vec<u8> {
+        let mut e = elf_exec();
+        e[16..18].copy_from_slice(&3u16.to_le_bytes()); // ET_DYN
+        e[0x40 + 16..0x40 + 24].copy_from_slice(&0u64.to_le_bytes()); // p_vaddr
+        e[0x40 + 24..0x40 + 32].copy_from_slice(&0u64.to_le_bytes()); // p_paddr
+        e
+    }
+
+    #[test]
+    fn a_pie_maps_at_either_engine_base_or_the_one_reported() {
+        let image = elf_pie();
+        for base in [NATIVE_PIE_BASE, GHIDRA_PIE_BASE, 0x5555_0000] {
+            let patches = vec![FilePatch {
+                address: base + 0x100,
+                original: vec![0x74, 0x10],
+                replacement: vec![0xeb, 0x10],
+            }];
+            let hint = (base == 0x5555_0000).then_some(base);
+            let (out, applied) = patch_file_bytes_at(&image, &patches, hint)
+                .unwrap_or_else(|e| panic!("{base:#x}: {e}"));
+            assert_eq!(applied[0].file_offset, 0x100, "{base:#x}");
+            assert_eq!(&out[0x100..0x102], &[0xeb, 0x10]);
+        }
+        // An unusual base needs the hint.
+        let far = vec![FilePatch {
+            address: 0x5555_0100,
+            original: vec![0x74, 0x10],
+            replacement: vec![0xeb, 0x10],
+        }];
+        assert!(patch_file_bytes(&image, &far).is_err());
     }
 
     #[test]

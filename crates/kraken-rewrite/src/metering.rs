@@ -36,6 +36,7 @@ struct Started {
 /// The AI side of one rewrite job.
 pub struct JobAi {
     source: Arc<dyn BackendSource>,
+    feature: AiFeature,
     board: AiBoard,
     which: RewriteModel,
     model: Option<String>,
@@ -62,6 +63,7 @@ impl JobAi {
             .map_err(|e| ProtoError::new(ErrorCode::InvalidArgument, e))?;
         Ok(JobAi {
             source,
+            feature: AiFeature::Rewrite,
             board: s.ai().clone(),
             which,
             model: model.map(str::to_string).filter(|m| !m.trim().is_empty()),
@@ -72,6 +74,12 @@ impl JobAi {
             ledger: s.project().ok().map(|p| p.dir().join(DB_FILE)),
             started: Mutex::new(None),
         })
+    }
+
+    /// Records the work under `feature` instead of the rewrite.
+    pub fn with_feature(mut self, feature: AiFeature) -> Self {
+        self.feature = feature;
+        self
     }
 
     /// The metered backend; made (and the work put on the AI board) on the first call.
@@ -95,7 +103,7 @@ impl JobAi {
             }
         }
         let board_id = self.board.start(AiWork {
-            feature: AiFeature::Rewrite,
+            feature: self.feature,
             label: self.label.clone(),
             job_id: Some(self.job_id.clone()),
             provider_kind: kind,
@@ -104,12 +112,11 @@ impl JobAi {
             origin: self.origin,
             started_by: self.started_by.clone(),
         });
-        let mut b =
-            Meter::builder(MeterSpec::new(AiFeature::Rewrite, self.origin).job(&self.job_id))
-                .pricing(self.source.pricing())
-                .limits(limits)
-                .daily(self.source.daily())
-                .kind(kind);
+        let mut b = Meter::builder(MeterSpec::new(self.feature, self.origin).job(&self.job_id))
+            .pricing(self.source.pricing())
+            .limits(limits)
+            .daily(self.source.daily())
+            .kind(kind);
         if let Some(p) = &self.ledger {
             b = b.sink(Arc::new(ProjectLedger::new(p)));
         }

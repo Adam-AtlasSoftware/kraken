@@ -37,6 +37,7 @@ pub mod reuse;
 pub mod rt;
 pub mod sandbox;
 pub mod service;
+pub mod source_patch;
 pub mod store;
 pub mod targets;
 pub mod task;
