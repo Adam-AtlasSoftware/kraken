@@ -21,6 +21,7 @@ pub mod export;
 pub mod fetch;
 pub mod image;
 pub mod infer;
+pub mod layouts;
 pub mod lift;
 pub mod lint;
 pub mod metering;

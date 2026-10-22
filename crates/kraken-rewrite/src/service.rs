@@ -533,7 +533,9 @@ impl RewriteService {
     ) -> Result<Prepared, ProtoError> {
         let lift = Lift::new(s, ctx);
         let (f, callees) = self.function_with_callees(&lift, address).await?;
-        self.prepared(f, callees)
+        let mut p = self.prepared(f, callees)?;
+        add_layouts(s, &mut p.task, &ctx.cancel).await;
+        Ok(p)
     }
 
     async fn spec_for_function(
@@ -1432,7 +1434,8 @@ impl RewriteService {
 
         progress(job, "lift", 0, 4, "reading the function");
         let (f, callees) = self.function_with_callees(&lift, args.address.0).await?;
-        let prepared = self.prepared(f, callees)?;
+        let mut prepared = self.prepared(f, callees)?;
+        add_layouts(s, &mut prepared.task, &job.cancel_token()).await;
 
         let mut task = prepared.task.clone();
         let mut spec_id = None;
@@ -1733,5 +1736,25 @@ impl kraken_registry::commands::SourcePatchBackend for RewriteService {
         let out = crate::source_patch::run(s, ctx, args, job, &ai).await;
         ai.finish(&out);
         out
+    }
+}
+
+/// Appends the layouts of the structs `task`'s function uses (`layouts`) to its layout notes.
+pub(crate) async fn add_layouts(
+    s: &Session,
+    task: &mut crate::task::RewriteTask,
+    cancel: &tokio_util::sync::CancellationToken,
+) {
+    let Ok(project) = s.project() else {
+        return;
+    };
+    let engine = project.engine();
+    let sig = task.function.signature.clone().unwrap_or_default();
+    let text = crate::layouts::describe(&engine, &[&sig, &task.function.decompile], cancel).await;
+    if !text.is_empty() {
+        if !task.layout_notes.trim().is_empty() {
+            task.layout_notes.push_str("\n\n");
+        }
+        task.layout_notes.push_str(&text);
     }
 }

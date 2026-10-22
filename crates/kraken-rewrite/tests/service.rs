@@ -1367,3 +1367,23 @@ async fn estimates_count_every_planned_function_and_the_repair_rounds() {
         .expect("estimate");
     assert_eq!(one.max_calls, 4);
 }
+
+#[tokio::test]
+async fn the_prompt_states_the_layouts_the_engine_knows() {
+    let r = rig("pie_list-O0").await;
+    let engine = r.session.project().expect("project").engine();
+    let text = kraken_rewrite::layouts::describe(
+        &engine,
+        &["node * node_new(int id, char * name, int x, int y, double w)"],
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
+    eprintln!("{text}");
+    // node, then the record and point it contains, with their offsets.
+    assert!(text.contains("struct node (0x30 bytes"), "{text}");
+    assert!(text.contains("+0x0000 record rec"), "{text}");
+    assert!(text.contains("struct record (0x28 bytes"), "{text}");
+    assert!(text.contains("+0x0004 char[16] name"), "{text}");
+    assert!(text.contains("+0x0020 double weight"), "{text}");
+    assert!(text.contains("struct point"), "{text}");
+}
