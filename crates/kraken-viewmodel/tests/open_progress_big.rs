@@ -217,8 +217,11 @@ fn workers(worker: &Path) -> usize {
 #[test]
 #[ignore = "opens big programs for minutes; run by hand (see the module docs)"]
 fn big_programs_report_honest_progress_and_cancel_cleanly() {
-    let binaries: Vec<PathBuf> = std::env::var("KRAKEN_BIG_BINARIES")
-        .expect("set KRAKEN_BIG_BINARIES")
+    let Ok(list) = std::env::var("KRAKEN_BIG_BINARIES") else {
+        eprintln!("skipped: set KRAKEN_BIG_BINARIES to a colon-separated list of big programs");
+        return;
+    };
+    let binaries: Vec<PathBuf> = list
         .split(':')
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
