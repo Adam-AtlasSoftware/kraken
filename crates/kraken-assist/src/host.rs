@@ -18,25 +18,10 @@ use kraken_registry::{
     ApprovalRequester, AutoApprove, CallContext, CommandKind, CommandSpec, DenyApprover,
     Permission as RegPermission, Registry, Surface,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
-/// What the assistant may do with KRAKEN's dangerous commands (byte-patch export, delete, the
-/// rewrite pipeline). Shell access is governed separately (see `crate::permissions`), because
-/// running commands is far riskier than editing the project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DangerMode {
-    /// Dangerous commands are not offered to the assistant at all; the person runs them by hand.
-    /// Reversible edits (renames, comments, staging a byte patch) still work.
-    #[default]
-    Deny,
-    /// The assistant may call a dangerous command, but each one asks the person first.
-    Ask,
-    /// The assistant runs dangerous commands without asking. Full hands-off control of KRAKEN.
-    Yolo,
-}
+pub use kraken_host::DangerMode;
 
 use crate::ASSISTANT_ID;
 
@@ -100,9 +85,9 @@ pub struct HostOptions {
     /// commands that stay inside the registry's policy belong here; never the person's own
     /// decisions (`rewrite_accept`, proposals, undo, opening projects).
     pub unlock: BTreeSet<String>,
-    /// What the assistant may do with dangerous commands. `Ask` and `Yolo` also expose them;
-    /// `Ask` needs an approver on the host (see [`RegistryToolHost::with_approver`]), else a
-    /// dangerous call is denied.
+    /// What the assistant may do with dangerous commands (default `Deny` here; the config's
+    /// `danger_mode` defaults to `Ask`). `Ask` and `Yolo` expose them; in `Ask` each call is an
+    /// approval request of the agent loop.
     pub danger: DangerMode,
 }
 
@@ -116,7 +101,7 @@ impl Default for HostOptions {
             max_writes: None,
             job_timeout: Duration::from_secs(600),
             unlock: BTreeSet::new(),
-            danger: DangerMode::default(),
+            danger: DangerMode::Deny,
         }
     }
 }
@@ -170,9 +155,6 @@ pub struct RegistryToolHost {
     registry: Arc<Registry>,
     backend: Arc<dyn CommandBackend>,
     opts: HostOptions,
-    /// Asked before a dangerous command runs in [`DangerMode::Ask`]. `DenyApprover` by default,
-    /// so without an approver an `Ask`-mode dangerous call is refused rather than run unasked.
-    approver: Arc<dyn ApprovalRequester>,
     stats: Mutex<HostStats>,
 }
 
@@ -187,27 +169,19 @@ impl RegistryToolHost {
             registry,
             backend,
             opts,
-            approver: Arc::new(DenyApprover),
             stats: Mutex::new(HostStats::default()),
         }
     }
 
-    /// Sets who approves dangerous commands in [`DangerMode::Ask`] (the GUI dialog, the CLI
-    /// prompt). `Yolo` auto-approves and needs none; `Deny` never exposes them.
-    pub fn with_approver(mut self, approver: Arc<dyn ApprovalRequester>) -> Self {
-        self.approver = approver;
-        self
-    }
-
-    /// The approver the backend call context should carry for `spec`, given the mode.
+    /// The approver the backend call context carries. A dangerous command reaches the backend
+    /// only after [`ToolHost::decide`] allowed it (asking the person first in
+    /// [`DangerMode::Ask`]), so the registry's own gate is told yes; anything else keeps the
+    /// refusing default.
     fn approver_for(&self, spec: &CommandSpec) -> Arc<dyn ApprovalRequester> {
-        if spec.permission != RegPermission::Dangerous {
-            return Arc::new(DenyApprover);
-        }
-        match self.opts.danger {
-            DangerMode::Yolo => Arc::new(AutoApprove),
-            DangerMode::Ask => self.approver.clone(),
-            DangerMode::Deny => Arc::new(DenyApprover),
+        if spec.permission == RegPermission::Dangerous && self.opts.danger != DangerMode::Deny {
+            Arc::new(AutoApprove)
+        } else {
+            Arc::new(DenyApprover)
         }
     }
 
@@ -355,14 +329,20 @@ impl ToolHost for RegistryToolHost {
             .collect()
     }
 
-    /// Approval for a dangerous command is enforced by the registry when the call runs, through
-    /// the approver this host puts on the call context (chosen by [`DangerMode`]). So the agent
-    /// loop itself always proceeds: it must not raise a second prompt of its own, and it must not
-    /// block on an approval channel the API path has no one to answer. A command the mode hides
-    /// is refused here.
+    /// A dangerous command in [`DangerMode::Ask`] is `Ask`: the agent loop raises
+    /// `ApprovalRequired` and waits for the person (the GUI's permission card, the CLI prompt);
+    /// with nobody to answer the assistant declines it. A command the mode hides is refused.
     fn decide(&self, name: &str, _args: &Value) -> Decision {
         match self.registry.get(name) {
-            Some(e) if self.exposed(e.spec()) => Decision::Allow,
+            Some(e) if self.exposed(e.spec()) => {
+                if e.spec().permission == RegPermission::Dangerous
+                    && self.opts.danger == DangerMode::Ask
+                {
+                    Decision::Ask
+                } else {
+                    Decision::Allow
+                }
+            }
             _ => Decision::Deny(format!("`{name}` is not available to the assistant")),
         }
     }
@@ -524,15 +504,15 @@ mod tests {
 
     #[test]
     fn ask_and_yolo_expose_dangerous() {
-        for mode in [DangerMode::Ask, DangerMode::Yolo] {
+        for (mode, want) in [
+            (DangerMode::Ask, Decision::Ask),
+            (DangerMode::Yolo, Decision::Allow),
+        ] {
             let (h, _) = host(mode);
             assert!(has_tool(&h, "patch_export"), "{mode:?}");
-            // The agent layer always proceeds; approval is enforced by the call context.
-            assert_eq!(
-                h.decide("patch_export", &json!({})),
-                Decision::Allow,
-                "{mode:?}"
-            );
+            assert_eq!(h.decide("patch_export", &json!({})), want, "{mode:?}");
+            // Reversible edits never ask.
+            assert_eq!(h.decide("patch_set", &json!({})), Decision::Allow);
         }
     }
 
@@ -559,34 +539,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ask_without_an_approver_denies() {
-        // Ask mode exposes the command, but with no approver attached the default DenyApprover
-        // refuses it (ADR 0003 fallback) rather than running it unasked.
+    async fn ask_runs_once_the_agent_gate_allowed_it() {
+        // The person already said yes to the agent's ApprovalRequired; the registry's gate must
+        // not refuse a second time.
         let (h, backend) = host(DangerMode::Ask);
-        let err = h
-            .call("patch_export", json!({"output_path": "x"}), &ctx())
-            .await
-            .expect_err("no approval channel -> denied");
-        assert!(matches!(err, ToolError::Failed(_)), "{err:?}");
-        assert_eq!(
-            backend.approved.lock().unwrap().as_slice(),
-            &[("patch_export".to_string(), false)]
-        );
-    }
-
-    #[tokio::test]
-    async fn ask_with_an_approver_runs_after_approval() {
-        let (h, backend) = host(DangerMode::Ask);
-        let h = h.with_approver(Arc::new(kraken_registry::AutoApprove));
         let out = h
             .call("patch_export", json!({"output_path": "x"}), &ctx())
             .await
-            .expect("approved");
+            .expect("approved by the agent layer");
         assert_eq!(out["status"], "applied");
         assert_eq!(
             backend.approved.lock().unwrap().as_slice(),
             &[("patch_export".to_string(), true)]
         );
+    }
+
+    #[tokio::test]
+    async fn deny_refuses_a_hidden_dangerous_call() {
+        let (h, backend) = host(DangerMode::Deny);
+        let err = h
+            .call("patch_export", json!({"output_path": "x"}), &ctx())
+            .await
+            .expect_err("hidden");
+        assert!(matches!(err, ToolError::NotFound(_)), "{err:?}");
+        assert!(backend.approved.lock().unwrap().is_empty());
     }
 
     #[test]

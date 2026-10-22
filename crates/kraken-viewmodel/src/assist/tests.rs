@@ -1346,3 +1346,17 @@ fn the_shell_tool_is_one_short_entry_in_low_context_mode() {
     );
     assert!(!shell.description.contains('\n'));
 }
+
+#[test]
+fn danger_mode_is_used_at_once_and_saved_with_the_rest_of_the_config() {
+    let mut r = project_rig();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "per_run_cap = 3\n").expect("config");
+    r.vm.assist_set_danger_mode(kraken_host::DangerMode::Yolo, Some(&path))
+        .expect("saved");
+    assert_eq!(r.vm.assist_danger_mode(), kraken_host::DangerMode::Yolo);
+    let cfg = kraken_host::KrakenConfig::from_file(&path).expect("read back");
+    assert_eq!(cfg.danger_mode, kraken_host::DangerMode::Yolo);
+    assert_eq!(cfg.per_run_cap, Some(3), "other keys survive");
+}

@@ -143,6 +143,7 @@ fn header(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi) {
         }
     });
     ui.horizontal(|ui| {
+        danger_chip(ui, vm);
         let can_clear = !vm.assist.busy() && !vm.assist.items.is_empty();
         if ui
             .add_enabled(can_clear, egui::Button::new("New chat").small())
@@ -182,6 +183,42 @@ fn header(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi) {
                 super::learn::term_list(ui, vm, h.terms);
             });
     }
+}
+
+/// "assistant: Ask" chip; a click picks another danger mode (saved to the config).
+fn danger_chip(ui: &mut Ui, vm: &mut ViewModel) {
+    use kraken_host::DangerMode;
+    let s = style::status(style::dark(ui));
+    let mode = vm.assist_danger_mode();
+    let color = match mode {
+        DangerMode::Deny => pal(ui).text_dim,
+        DangerMode::Ask => s.warning,
+        DangerMode::Yolo => s.danger,
+    };
+    let chip = chip(ui, &format!("assistant: {}", mode.label()), color)
+        .interact(egui::Sense::click())
+        .on_hover_text(format!(
+            "{} Click to change what the assistant may do with dangerous commands.",
+            mode.describe()
+        ));
+    egui::Popup::menu(&chip).show(|ui| {
+        for m in DangerMode::ALL {
+            if ui
+                .radio(m == mode, m.label())
+                .on_hover_text(m.describe())
+                .clicked()
+            {
+                let path = kraken_host::KrakenConfig::default_path();
+                if let Err(e) = vm.assist_set_danger_mode(m, path.as_deref()) {
+                    vm.toast(
+                        kraken_viewmodel::ToastLevel::Error,
+                        format!("The mode is used now but could not be saved: {e}"),
+                    );
+                }
+                ui.close();
+            }
+        }
+    });
 }
 
 fn setup_state(ui: &mut Ui, vm: &ViewModel, a: &mut AssistUi) {

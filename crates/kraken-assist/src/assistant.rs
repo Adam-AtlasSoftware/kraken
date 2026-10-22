@@ -8,7 +8,7 @@ use kraken_agent::{
 use kraken_host::RunIdGen;
 use kraken_host::backend::CommandBackend;
 use kraken_proto::sanitize;
-use kraken_registry::{ApprovalRequester, Registry, Surface};
+use kraken_registry::{Registry, Surface};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -80,7 +80,6 @@ pub struct Assistant {
     run_ids: RunIdGen,
     approver: Option<Approver>,
     danger: DangerMode,
-    reg_approver: Option<Arc<dyn ApprovalRequester>>,
 }
 
 impl Assistant {
@@ -110,22 +109,16 @@ impl Assistant {
             agent_id: ASSISTANT_ID.to_string(),
             run_ids: RunIdGen::new(),
             approver: None,
-            danger: DangerMode::default(),
-            reg_approver: None,
+            danger: DangerMode::Deny,
         }
     }
 
-    /// Sets what the assistant may do with dangerous commands (default [`DangerMode::Deny`]).
-    /// For [`DangerMode::Ask`] to prompt rather than refuse, also set an approver with
-    /// [`Self::with_registry_approver`].
+    /// Sets what the assistant may do with dangerous commands (default [`DangerMode::Deny`]; hosts
+    /// pass the config's `danger_mode`).
+    /// In [`DangerMode::Ask`] each one raises `ApprovalRequired`, answered through the handle
+    /// given to [`Self::with_approver`]; without one it is declined.
     pub fn with_danger_mode(mut self, mode: DangerMode) -> Self {
         self.danger = mode;
-        self
-    }
-
-    /// Who approves a dangerous command in [`DangerMode::Ask`] (the GUI dialog, the CLI prompt).
-    pub fn with_registry_approver(mut self, approver: Arc<dyn ApprovalRequester>) -> Self {
-        self.reg_approver = Some(approver);
         self
     }
 
@@ -156,7 +149,7 @@ impl Assistant {
 
     /// The tool host a task would run with (for inspection and tests).
     pub fn host_for(&self, task: &Task) -> RegistryToolHost {
-        let host = RegistryToolHost::new(
+        RegistryToolHost::new(
             self.registry.clone(),
             self.backend.clone(),
             HostOptions {
@@ -171,11 +164,7 @@ impl Assistant {
                     .unwrap_or_else(|| HostOptions::default().job_timeout),
                 danger: self.danger,
             },
-        );
-        match &self.reg_approver {
-            Some(a) => host.with_approver(a.clone()),
-            None => host,
-        }
+        )
     }
 
     /// Runs `task`, calling `on_event` for every agent event as it happens (streamed text,
@@ -265,9 +254,9 @@ impl Assistant {
                     break;
                 }
                 AgentEvent::ApprovalRequired { id, .. } => {
-                    // Nothing dangerous is offered to a model API, and a terminal agent asking
-                    // for one of its own tools has nobody to ask unless an approver is set:
-                    // never leave a run hanging.
+                    // A dangerous command in Ask mode, or a terminal agent asking for one of its
+                    // own tools, has nobody to ask unless an approver is set: never leave a run
+                    // hanging.
                     if self.approver.is_none() {
                         run.approvals()
                             .decide(id, kraken_agent::ApprovalDecision::Deny);

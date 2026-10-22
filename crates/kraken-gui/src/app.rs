@@ -1216,12 +1216,45 @@ impl KrakenApp {
         }
     }
 
+    /// The assistant's danger mode: the open project's, else the config's.
+    fn danger_mode(&mut self) -> kraken_host::DangerMode {
+        match self.vm.as_mut() {
+            Some(vm) => vm.assist_danger_mode(),
+            None => self
+                .services
+                .config_path
+                .as_ref()
+                .and_then(|p| kraken_host::KrakenConfig::from_file(p).ok())
+                .map(|c| c.danger_mode)
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Uses `mode` from now on and saves it to the config file.
+    fn set_danger_mode(&mut self, mode: kraken_host::DangerMode) -> Result<(), String> {
+        let path = self.services.config_path.clone();
+        match self.vm.as_mut() {
+            Some(vm) => vm.assist_set_danger_mode(mode, path.as_deref()),
+            None => {
+                let Some(path) = path else {
+                    return Ok(());
+                };
+                let mut cfg =
+                    kraken_host::KrakenConfig::from_file(&path).map_err(|e| e.to_string())?;
+                cfg.danger_mode = mode;
+                cfg.save(&path).map_err(|e| e.to_string())
+            }
+        }
+    }
+
     fn settings_window(&mut self, ctx: &egui::Context) {
+        let danger = self.danger_mode();
         let backend = match &self.slot {
             Slot::Ready(b) => Some(b),
             _ => None,
         };
         let env = SettingsEnv {
+            danger,
             rt: self.rt.handle(),
             mode: self.services.mode,
             dark: self.theme.dark,
@@ -1242,6 +1275,16 @@ impl KrakenApp {
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
                 SettingsAction::DefaultEngine(engine) => self.welcome.engine = engine,
                 SettingsAction::SetUpLocalModel => self.open_local_setup(ctx),
+                SettingsAction::SetDangerMode(mode) => {
+                    let saved = self.set_danger_mode(mode);
+                    self.settings.danger_note = Some(match saved {
+                        Ok(()) => Ok(format!(
+                            "Saved: {}. Used from the next question.",
+                            mode.label()
+                        )),
+                        Err(e) => Err(format!("The mode could not be saved: {e}")),
+                    });
+                }
             }
         }
         self.keep_local_models_served(ctx);
@@ -1292,6 +1335,8 @@ impl KrakenApp {
             backend,
             connecting: false,
             connect_error: None,
+            // The serving frame shows no assistant control.
+            danger: kraken_host::DangerMode::default(),
         };
         self.settings.serving_frame(ctx, &env);
         // Here, not in the settings window: a chip's Start can raise the question with

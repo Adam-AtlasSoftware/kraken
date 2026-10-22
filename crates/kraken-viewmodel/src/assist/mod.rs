@@ -417,6 +417,8 @@ pub struct AssistState {
     /// Replaces the `[assistant_shell]` table in tests.
     #[cfg(test)]
     pub(crate) shell_config_override: Option<kraken_host::ShellConfig>,
+    /// The config's `danger_mode`, read on first use.
+    pub(crate) danger: Option<kraken_host::DangerMode>,
 }
 
 impl Default for AssistState {
@@ -445,6 +447,7 @@ impl Default for AssistState {
             auto_continue_override: None,
             #[cfg(test)]
             shell_config_override: None,
+            danger: None,
         }
     }
 }

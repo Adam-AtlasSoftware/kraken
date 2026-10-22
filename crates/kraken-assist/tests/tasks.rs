@@ -75,7 +75,10 @@ async fn rig(canary: bool, analyze: bool) -> Rig {
         .create_project(&tmp.path().join("p"), &binary)
         .await
         .expect("project");
-    let registry = Arc::new(Registry::standard());
+    // `patch_bytes` stands for a dangerous command; danger mode Deny (the default) hides it.
+    let mut registry = Registry::standard();
+    registry.register(PatchBytes);
+    let registry = Arc::new(registry);
     let backend = Arc::new(LocalBackend::new(registry.clone(), session.clone(), None));
     let r = Rig {
         _tmp: tmp,
@@ -825,4 +828,80 @@ async fn the_api_backend_sends_the_compact_tool_list_in_low_context_mode_and_ser
         second.contains("input_schema"),
         "the help result carries the schema: {second}"
     );
+}
+
+/// A task that may call `patch_bytes`, run in danger mode Ask; the person answers `decision`.
+async fn ask_mode_run(
+    decision: kraken_agent::ApprovalDecision,
+) -> (kraken_assist::TaskResult, Vec<AgentEvent>) {
+    let rig = rig(false, false).await;
+    let provider: Arc<dyn ChatProvider> = Arc::new(ReplayProvider::scripted(vec![
+        call("c1", "patch_bytes", json!({})),
+        say("done"),
+    ]));
+    let mut task = Task::custom(
+        &rig.registry,
+        "patch it",
+        "patch",
+        kraken_assist::Budget {
+            max_steps: 4,
+            max_tool_calls: 4,
+            token_budget: None,
+            max_tokens: None,
+            temperature: None,
+        },
+    );
+    task.read_only = false;
+    task.allow.insert("patch_bytes".into());
+    let handle: Arc<Mutex<Option<kraken_agent::ApprovalHandle>>> = Arc::default();
+    let slot = handle.clone();
+    let a = rig
+        .assistant(provider)
+        .with_danger_mode(kraken_assist::DangerMode::Ask)
+        .with_approver(move |h| *slot.lock().expect("lock") = Some(h));
+    let mut events = Vec::new();
+    let r = a
+        .run(task, &CancellationToken::new(), &mut |e| {
+            if let AgentEvent::ApprovalRequired { id, .. } = e
+                && let Some(h) = handle.lock().expect("lock").as_ref()
+            {
+                h.decide(id.clone(), decision);
+            }
+            events.push(e.clone());
+        })
+        .await;
+    (r, events)
+}
+
+fn patch_result(events: &[AgentEvent]) -> Option<bool> {
+    events.iter().find_map(|e| match e {
+        AgentEvent::ToolCallFinished { is_error, .. } => Some(!is_error),
+        _ => None,
+    })
+}
+
+#[tokio::test]
+async fn ask_mode_asks_the_person_and_runs_a_dangerous_command_once_allowed() {
+    let (r, events) = ask_mode_run(kraken_agent::ApprovalDecision::Approve).await;
+    let asked: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ApprovalRequired { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, ["patch_bytes"]);
+    assert_eq!(patch_result(&events), Some(true), "{events:?}");
+    assert_eq!(r.stop, StopReason::Completed);
+}
+
+#[tokio::test]
+async fn ask_mode_does_not_run_a_dangerous_command_the_person_declined() {
+    let (_, events) = ask_mode_run(kraken_agent::ApprovalDecision::Deny).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ApprovalRequired { .. }))
+    );
+    assert_ne!(patch_result(&events), Some(true), "{events:?}");
 }

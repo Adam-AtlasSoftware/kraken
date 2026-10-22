@@ -28,6 +28,8 @@ pub enum SettingsAction {
     ConnectDaemon,
     /// "Set up a model on this computer..." was chosen in a picker.
     SetUpLocalModel,
+    /// A danger mode for the assistant was picked.
+    SetDangerMode(kraken_host::DangerMode),
 }
 
 enum SetupMsg {
@@ -72,6 +74,8 @@ pub struct Settings {
     loaded_from: Option<PathBuf>,
     note: Option<Result<String, String>>,
     titlebar_note: Option<Result<String, String>>,
+    /// Outcome of the last danger mode change.
+    pub danger_note: Option<Result<String, String>>,
     status: Option<Result<Value, String>>,
     status_asked: Option<Instant>,
     status_in_flight: bool,
@@ -95,6 +99,7 @@ impl Default for Settings {
             loaded_from: None,
             note: None,
             titlebar_note: None,
+            danger_note: None,
             status: None,
             status_asked: None,
             status_in_flight: false,
@@ -117,6 +122,8 @@ pub struct SettingsEnv<'a> {
     pub backend: Option<&'a Arc<DaemonClientBackend>>,
     pub connecting: bool,
     pub connect_error: Option<&'a str>,
+    /// The assistant's danger mode in use.
+    pub danger: kraken_host::DangerMode,
 }
 
 fn mib(bytes: u64) -> f64 {
@@ -409,6 +416,8 @@ impl Settings {
                         ui.separator();
                         self.ai.show(ui, env.rt, env.config_path, &mut self.infer);
                         ui.separator();
+                        self.danger_choice(ui, env.danger, &mut actions);
+                        ui.separator();
                         self.engine(ui, env, &mut actions);
                         ui.separator();
                         self.setup_section(ui, env, ctx);
@@ -456,6 +465,57 @@ impl Settings {
             }
         });
         self.titlebar_choice(ui, config_path);
+    }
+
+    /// "Assistant control": what the assistant may do with dangerous commands. Saved at once by
+    /// the app, used from the next assistant run.
+    fn danger_choice(
+        &mut self,
+        ui: &mut Ui,
+        current: kraken_host::DangerMode,
+        actions: &mut Vec<SettingsAction>,
+    ) {
+        let p = pal(ui);
+        ui.label(medium("Assistant control of KRAKEN", 14.0).color(p.text_strong));
+        ui.label(
+            RichText::new(
+                "What the assistant may do with dangerous commands: exporting a patched binary, \
+                 the rewrite pipeline. Staging a patch, renames and comments are reversible and \
+                 always allowed. Shell access has its own, stricter policy.",
+            )
+            .size(12.0)
+            .color(p.text_dim),
+        );
+        ui.horizontal(|ui| {
+            for mode in kraken_host::DangerMode::ALL {
+                if ui
+                    .radio(current == mode, mode.label())
+                    .on_hover_text(mode.describe())
+                    .clicked()
+                    && current != mode
+                {
+                    actions.push(SettingsAction::SetDangerMode(mode));
+                }
+            }
+        });
+        ui.label(RichText::new(current.describe()).size(12.0).color(p.text));
+        match &self.danger_note {
+            Some(Ok(t)) => {
+                ui.label(
+                    RichText::new(t)
+                        .size(12.0)
+                        .color(style::status(style::dark(ui)).success),
+                );
+            }
+            Some(Err(e)) => {
+                ui.label(
+                    RichText::new(e)
+                        .size(12.0)
+                        .color(style::status(style::dark(ui)).danger),
+                );
+            }
+            None => {}
+        }
     }
 
     /// "Title bar": saved at once, used the next time KRAKEN starts.

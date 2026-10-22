@@ -319,6 +319,28 @@ the same over MCP, in the CLI and for the built-in assistant):
 None of them changes the project; a GUI that is not open simply ignores them. The GUI publishes
 its state to the daemon the same way it publishes the selection (`kraken://gui/selection`).
 
+## Dangerous commands: Deny, Ask or YOLO
+
+Some KRAKEN commands are marked dangerous: writing a patched binary (`patch_export`), the rewrite
+pipeline's builds and exports. One setting decides what the assistant may do with them:
+
+| Mode | What happens |
+|---|---|
+| **Deny** | They are not offered to the assistant at all; you run them yourself. |
+| **Ask** (default) | The assistant may call them, and each call asks you first: a card with Allow/Deny in the Assistant tab, a `[y/N]` question in `kraken assist` on a terminal. Without a terminal the call is declined. |
+| **YOLO** | The assistant runs them without asking. |
+
+Reversible edits never ask in any mode: renames, comments, types, and staging or removing a byte
+patch (`patch_set`, `patch_remove`; nothing reaches a file until `patch_export`). Change the mode
+in **Settings > Assistant control of KRAKEN**, with the `assistant: Ask` chip at the top of the
+Assistant tab, or in the config:
+
+```toml
+danger_mode = "ask"   # deny | ask | yolo
+```
+
+The shell below has its own, stricter policy, whatever this mode is.
+
 ## The shell and the emulator
 
 The chat can run a small shell command for you, for the helper work a model gets wrong when it does
