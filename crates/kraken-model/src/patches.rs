@@ -1,0 +1,300 @@
+//! Byte patches: a separate overlay layer that records replacement bytes at an address, with the
+//! original bytes kept beside them.
+//!
+//! Like [bookmarks](crate::bookmarks) they live in their own table, not the edit log: a byte
+//! patch is not an annotation the engine replays, it is an edit to the program's bytes that a
+//! later step (`patch_export`, or a patched emulation) applies to a copy of the binary. The
+//! original bytes are stored so a patch can be checked against the file it is applied to and so
+//! anchors, which hash the original bytes, keep working. Removing a patch is the way back.
+
+use kraken_proto::{ErrorCode, Page, PageRequest, ProtoError};
+use rusqlite::{OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+
+use crate::store::{db, kind_str, now_ms, parse_kind};
+use crate::{Author, Store};
+
+pub(crate) const MIGRATION: &str = "CREATE TABLE patches (
+        address INTEGER PRIMARY KEY,
+        original BLOB NOT NULL,
+        replacement BLOB NOT NULL,
+        note TEXT NOT NULL,
+        author_kind TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        ts INTEGER NOT NULL
+    );";
+
+type Result<T> = std::result::Result<T, ProtoError>;
+
+/// One stored byte patch. `original` and `replacement` are always the same length.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Patch {
+    /// First address of the patched bytes.
+    pub address: u64,
+    /// The bytes at `address` when the patch was recorded.
+    pub original: Vec<u8>,
+    /// The bytes to write in their place.
+    pub replacement: Vec<u8>,
+    /// The note; empty when none was given.
+    pub note: String,
+    /// Who set it last.
+    pub author: Author,
+    /// When it was set last, milliseconds since the Unix epoch.
+    pub ts_ms: i64,
+}
+
+impl Patch {
+    /// The number of bytes the patch covers.
+    pub fn len(&self) -> usize {
+        self.replacement.len()
+    }
+
+    /// Whether the patch covers no bytes (never true for a stored patch).
+    pub fn is_empty(&self) -> bool {
+        self.replacement.is_empty()
+    }
+}
+
+// SQLite integers are signed; addresses above i64::MAX keep their bits.
+fn to_db(a: u64) -> i64 {
+    a as i64
+}
+
+fn from_db(a: i64) -> u64 {
+    a as u64
+}
+
+impl Store {
+    /// Records the patch at `address`, replacing one already there. `original` and `replacement`
+    /// must be the same non-zero length.
+    pub fn patch_set(
+        &mut self,
+        address: u64,
+        original: &[u8],
+        replacement: &[u8],
+        note: &str,
+        author: &Author,
+    ) -> Result<Patch> {
+        if replacement.is_empty() {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                "a patch covers at least one byte",
+            ));
+        }
+        if original.len() != replacement.len() {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                "the original and the replacement must be the same length",
+            ));
+        }
+        let ts = now_ms();
+        self.conn
+            .execute(
+                "INSERT INTO patches(address, original, replacement, note, author_kind, author_id, ts)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(address) DO UPDATE SET original = excluded.original,
+                    replacement = excluded.replacement, note = excluded.note,
+                    author_kind = excluded.author_kind, author_id = excluded.author_id,
+                    ts = excluded.ts",
+                params![
+                    to_db(address),
+                    original,
+                    replacement,
+                    note,
+                    kind_str(author.kind),
+                    author.id,
+                    ts
+                ],
+            )
+            .map_err(db)?;
+        Ok(Patch {
+            address,
+            original: original.to_vec(),
+            replacement: replacement.to_vec(),
+            note: note.to_string(),
+            author: author.clone(),
+            ts_ms: ts,
+        })
+    }
+
+    /// Removes the patch at `address`; false when there was none.
+    pub fn patch_remove(&mut self, address: u64) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM patches WHERE address = ?1", [to_db(address)])
+            .map_err(db)?;
+        Ok(n > 0)
+    }
+
+    /// The patch at `address`, if any.
+    pub fn patch_get(&self, address: u64) -> Result<Option<Patch>> {
+        self.conn
+            .query_row(
+                "SELECT address, original, replacement, note, author_kind, author_id, ts
+                 FROM patches WHERE address = ?1",
+                [to_db(address)],
+                row,
+            )
+            .optional()
+            .map_err(db)?
+            .map(finish)
+            .transpose()
+    }
+
+    /// Every patch, ordered by address, for applying them to a file. Not paginated: the overlay
+    /// is small and a patched binary needs all of it at once.
+    pub fn all_patches(&self) -> Result<Vec<Patch>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT address, original, replacement, note, author_kind, author_id, ts
+                 FROM patches ORDER BY address < 0, address",
+            )
+            .map_err(db)?;
+        let raw = stmt
+            .query_map([], row)
+            .map_err(db)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(db)?;
+        raw.into_iter().map(finish).collect()
+    }
+
+    /// Patches ordered by address, one page at a time. The cursor is the address of the last row
+    /// of the previous page, in hex.
+    pub fn patches(&self, page: &PageRequest) -> Result<Page<Patch>> {
+        let limit = page.effective_limit();
+        let after: Option<i64> = match &page.cursor {
+            None => None,
+            Some(c) => Some(
+                u64::from_str_radix(c.trim_start_matches("0x"), 16)
+                    .map(to_db)
+                    .map_err(|_| {
+                        ProtoError::new(ErrorCode::InvalidArgument, "malformed patch cursor")
+                    })?,
+            ),
+        };
+        let total: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM patches", [], |r| r.get(0))
+            .map_err(db)?;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT address, original, replacement, note, author_kind, author_id, ts
+                 FROM patches
+                 WHERE ?1 IS NULL OR (address < 0, address) > (?1 < 0, ?1)
+                 ORDER BY address < 0, address LIMIT ?2",
+            )
+            .map_err(db)?;
+        let raw = stmt
+            .query_map(params![after, limit as i64 + 1], row)
+            .map_err(db)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(db)?;
+        let mut items = raw.into_iter().map(finish).collect::<Result<Vec<_>>>()?;
+        let next_cursor = if items.len() > limit as usize {
+            items.truncate(limit as usize);
+            items.last().map(|p| format!("{:#x}", p.address))
+        } else {
+            None
+        };
+        Ok(Page {
+            items,
+            next_cursor,
+            total: Some(total as u64),
+        })
+    }
+}
+
+type Raw = (i64, Vec<u8>, Vec<u8>, String, String, String, i64);
+
+fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Raw> {
+    Ok((
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+        r.get(6)?,
+    ))
+}
+
+fn finish((address, original, replacement, note, kind, id, ts): Raw) -> Result<Patch> {
+    Ok(Patch {
+        address: from_db(address),
+        original,
+        replacement,
+        note,
+        author: Author {
+            kind: parse_kind(&kind)?,
+            id,
+        },
+        ts_ms: ts,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_replace_get_list_and_remove() {
+        let mut s = Store::open_in_memory().expect("store");
+        let me = Author::user("me");
+        s.patch_set(
+            0x401000,
+            &[0x74, 0x10],
+            &[0xeb, 0x10],
+            "flip jz to jmp",
+            &me,
+        )
+        .expect("set");
+        s.patch_set(0x400500, &[0x00], &[0x01], "", &Author::agent("a1"))
+            .expect("set");
+        // Replace the patch at the same address.
+        let p = s
+            .patch_set(0x401000, &[0x74, 0x10], &[0x90, 0x90], "nop it", &me)
+            .expect("replace");
+        assert_eq!(p.replacement, vec![0x90, 0x90]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(
+            s.patch_get(0x401000).expect("get").expect("there").note,
+            "nop it"
+        );
+
+        let all = s.all_patches().expect("all");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].address, 0x400500);
+        assert_eq!(all[1].address, 0x401000);
+
+        let page = s
+            .patches(&PageRequest {
+                cursor: None,
+                limit: Some(1),
+            })
+            .expect("page");
+        assert_eq!(page.total, Some(2));
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].address, 0x400500);
+        let page2 = s
+            .patches(&PageRequest {
+                cursor: page.next_cursor,
+                limit: Some(1),
+            })
+            .expect("page 2");
+        assert_eq!(page2.items[0].address, 0x401000);
+
+        assert!(s.patch_remove(0x401000).expect("remove"));
+        assert!(!s.patch_remove(0x401000).expect("remove again"));
+        assert!(s.patch_get(0x401000).expect("get").is_none());
+    }
+
+    #[test]
+    fn length_and_emptiness_are_checked() {
+        let mut s = Store::open_in_memory().expect("store");
+        let me = Author::user("me");
+        assert!(s.patch_set(0x10, &[], &[], "", &me).is_err());
+        assert!(s.patch_set(0x10, &[0x00], &[0x01, 0x02], "", &me).is_err());
+    }
+}

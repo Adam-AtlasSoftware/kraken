@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
+use crate::patchfile::{FilePatch, PatchError, patch_file_bytes};
 use crate::session::{Session, blocking};
 
 /// Default instruction budget of `emulate_run`.
@@ -56,6 +57,10 @@ pub struct EmulateRunArgs {
     /// Wall-clock limit in seconds (default 20, at most 120).
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// Run a copy with the project's byte patches applied, instead of the original (default
+    /// false).
+    #[serde(default)]
+    pub patched: bool,
 }
 
 /// How an emulated run ended.
@@ -148,7 +153,12 @@ impl Command for EmulateRun {
         let limits = validate(&args)?;
         let project = s.project()?;
         let binary = PathBuf::from(project.meta().binary_path);
-        blocking(move || emulate(&binary, args, limits, find_runner())).await
+        let patches = if args.patched {
+            project.with_store(|st| st.all_patches()).await?
+        } else {
+            Vec::new()
+        };
+        blocking(move || emulate(&binary, args, limits, patches, find_runner())).await
     }
 }
 
@@ -253,11 +263,13 @@ fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
     }
 }
 
-/// One run of `binary` in the confined runner. `runner` is the `kraken-emu-run` binary.
+/// One run of `binary` in the confined runner. `runner` is the `kraken-emu-run` binary. When
+/// `patches` is non-empty, a patched copy is run instead of `binary`.
 fn emulate(
     binary: &Path,
     args: EmulateRunArgs,
     limits: Limits,
+    patches: Vec<kraken_model::Patch>,
     runner: Option<PathBuf>,
 ) -> Result<EmulateRunOut, ProtoError> {
     let runner = runner.filter(|p| p.is_file()).ok_or_else(|| {
@@ -281,7 +293,27 @@ fn emulate(
         .prefix("kraken-emulate-")
         .tempdir()
         .map_err(|e| problem(ErrorCode::Internal, format!("private directory: {e}")))?;
-    let mut spec = RunSpec::new(binary);
+    let mut notes = Vec::new();
+    // A patched run executes a copy with the project's byte patches applied; the copy lives in
+    // the run's private directory and is read only by the confined child.
+    let program = if args.patched && !patches.is_empty() {
+        let patched = build_patched_copy(binary, &patches, work.path())?;
+        notes.push(format!(
+            "ran a patched copy with {} byte patch{} applied",
+            patches.len(),
+            if patches.len() == 1 { "" } else { "es" }
+        ));
+        patched
+    } else {
+        if args.patched {
+            notes.push(
+                "patched run requested, but the project has no byte patches; ran the original"
+                    .into(),
+            );
+        }
+        binary.to_path_buf()
+    };
+    let mut spec = RunSpec::new(&program);
     spec.args = args.argv;
     spec.stdin = args.stdin.into_bytes();
     spec.max_instructions = limits.steps;
@@ -290,7 +322,6 @@ fn emulate(
     spec.workdir = Some(work.path().to_path_buf());
 
     let run = |spec: &RunSpec| run_program_confined(spec, &runner, ConfinementOptions::default());
-    let mut notes = Vec::new();
     let result = match run(&spec) {
         Err(EmuError::NeedsSysroot { arch, .. }) if sysroot_for(arch).is_some() => {
             spec.sysroot = sysroot_for(arch);
@@ -311,6 +342,46 @@ fn emulate(
         ));
     }
     Ok(present(outcome, notes))
+}
+
+/// Writes a copy of `binary` with `patches` applied into `work_dir` and returns its path. The
+/// recorded original bytes are checked, so a patch that does not line up is reported, not written.
+fn build_patched_copy(
+    binary: &Path,
+    patches: &[kraken_model::Patch],
+    work_dir: &Path,
+) -> Result<PathBuf, ProtoError> {
+    let image = std::fs::read(binary).map_err(|e| {
+        problem(
+            ErrorCode::NotFound,
+            format!("cannot read the project's binary {}: {e}", binary.display()),
+        )
+    })?;
+    let file_patches: Vec<FilePatch> = patches
+        .iter()
+        .map(|p| FilePatch {
+            address: p.address,
+            original: p.original.clone(),
+            replacement: p.replacement.clone(),
+        })
+        .collect();
+    let (patched, _) = patch_file_bytes(&image, &file_patches).map_err(|e| match e {
+        PatchError::NotAnObject(_) => problem(ErrorCode::Unsupported, e.to_string()),
+        PatchError::NoMapping(_) => problem(ErrorCode::InvalidArgument, e.to_string()),
+    })?;
+    let out = work_dir.join("program");
+    std::fs::write(&out, &patched).map_err(|e| {
+        problem(
+            ErrorCode::Internal,
+            format!("cannot write the patched copy: {e}"),
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(out)
 }
 
 /// Cuts `bytes` to [`OUTPUT_CHARS`] characters and sanitises them; the flag says it was cut.
@@ -468,6 +539,7 @@ mod tests {
                 steps: 1,
                 seconds: 1,
             },
+            Vec::new(),
             None,
         )
         .expect_err("no runner");

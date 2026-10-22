@@ -19,6 +19,7 @@ pub mod docs;
 pub mod jobs;
 mod mutate;
 mod opening;
+mod patchfile;
 pub mod project_lock;
 pub mod session;
 pub mod trust;

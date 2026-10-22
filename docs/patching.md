@@ -1,0 +1,62 @@
+# Byte patching
+
+Byte patches let you change a program's bytes — overwrite an instruction, flip a constant, blank a
+call — and produce a patched copy of the binary, or run one in the emulator to see what the change
+does. Patches are a separate overlay over the program's bytes; they are not analysis annotations and
+they change nothing until you export or run them.
+
+```
+patch_set {"address": "0x401136", "bytes": "9090", "note": "two NOPs over the jump"}
+```
+
+## How it works
+
+A patch records an address, the **replacement** bytes you give, and the **original** bytes that were
+there (read from the program when you set the patch). Keeping the originals means a patch can be
+checked against the file before it is written and can be removed to get the exact bytes back.
+
+Patches live in their own table of the project database, outside the edit log. They do not reach the
+analysis engine, carry no undo entry and never alter the program you are analysing. The commands:
+
+- `patch_set` — record (or replace) the patch at an address. `bytes` is hex, with or without spaces
+  and a leading `0x` (`"eb 10"`, `"eb10"` and `"0xEB10"` are the same two bytes). The replacement
+  length decides how many original bytes are read; the address must be mapped and hold that many
+  bytes. At most 4096 bytes per patch.
+- `patch_remove` — delete the patch at an address, putting the overlay back the way it was.
+- `patch_list` — every patch with its original and replacement bytes, note and who set it.
+- `patch_export` — write a copy of the binary with every patch applied.
+
+Setting a patch and exporting one are **dangerous** operations: they ask for approval every time
+(ADR 0005), whether the caller is you or an agent.
+
+## Exporting a patched binary
+
+```
+patch_export {"output_path": "patched.bin", "overwrite": true}
+```
+
+`patch_export` reads the project's binary, applies every patch to a fresh copy and writes it to
+`output_path` (a relative path is taken relative to the project directory). The original file is
+never touched, and on Unix the copy keeps the original's executable permission so it stays runnable.
+
+Each patch's address is turned into a file offset through the binary's own layout — ELF program
+headers, or PE and Mach-O sections. The file's own virtual addresses are tried first and then the
+native engine's load base for a position-independent executable, and the recorded original bytes are
+checked at the mapped offset before anything is written. If a patch does not line up — an address
+that is in no part of the file that holds bytes, or bytes that are not what the patch recorded — the
+export is refused with that patch named, rather than a corrupted file being written. The result lists
+each patch and the offset it landed at.
+
+## Running a patched copy in the emulator
+
+Pass `patched: true` to [`emulate_run`](emulation.md) to run a copy with the patches applied instead
+of the original:
+
+```
+emulate_run {"patched": true, "stdin": "hello\n"}
+```
+
+The patched copy is built in the run's private directory and, like any emulated run, executes fully
+confined — nothing runs on your computer and nothing in the project changes. The `notes` say how many
+patches were applied. It is the quickest way to tell whether a patch does what you intended before
+you export a binary from it.
