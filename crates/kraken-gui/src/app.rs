@@ -498,7 +498,7 @@ impl KrakenApp {
         &self.settings
     }
 
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub fn settings_mut(&mut self) -> &mut Settings {
         &mut self.settings
     }
