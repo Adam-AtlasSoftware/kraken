@@ -95,6 +95,13 @@ for b in kraken krakend kraken-gui $worker; do
 done
 cp -R "$native_licenses" "$pkg/licenses"
 cp "$jar" "$pkg/share/kraken/kraken-ghidra.jar"
+case "$target" in
+  *linux*)
+    mkdir -p "$pkg/share/applications" "$pkg/share/icons/hicolor/scalable/apps"
+    cp "$root/packaging/linux/kraken-gui.desktop" "$pkg/share/applications/"
+    cp "$root/packaging/linux/kraken.svg" "$pkg/share/icons/hicolor/scalable/apps/kraken-gui.svg"
+    ;;
+esac
 sla_dir=${KRAKEN_NATIVE_SLA_DIR:-}
 if [ -n "$sla_dir" ]; then
   [ -f "$sla_dir/Ghidra/Processors/x86/data/languages/x86-64.sla" ] \

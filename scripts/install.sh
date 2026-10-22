@@ -159,10 +159,21 @@ for f in "$src"/bin/*; do
   chmod 755 "$prefix/bin/.$name.new"
   mv -f "$prefix/bin/.$name.new" "$prefix/bin/$name"
 done
+# Files and directories (the .NET sidecar, the native engine's Sleigh files) alike: copied beside
+# the old one first, then swapped in.
 for f in "$src"/share/kraken/*; do
   name=$(basename "$f")
-  cp "$f" "$prefix/share/kraken/.$name.new"
+  rm -rf "$prefix/share/kraken/.$name.new"
+  cp -R "$f" "$prefix/share/kraken/.$name.new"
+  rm -rf "$prefix/share/kraken/$name"
   mv -f "$prefix/share/kraken/.$name.new" "$prefix/share/kraken/$name"
+done
+# The app's desktop entry and icon, so it shows in the application menu.
+for f in applications/kraken-gui.desktop icons/hicolor/scalable/apps/kraken-gui.svg; do
+  if [ -f "$src/share/$f" ]; then
+    mkdir -p "$(dirname "$prefix/share/$f")"
+    cp "$src/share/$f" "$prefix/share/$f"
+  fi
 done
 
 echo

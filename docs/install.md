@@ -2,7 +2,7 @@
 
 KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It has two analysis engines:
 
-- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN, and the processor specifications are compiled once by `kraken setup --native`. It opens Linux and Windows programs and libraries of every kind (see [Supported files](#supported-files)). This is the shortest path for a new Linux user; today it is installed from a source checkout (see [Install from source](#install-from-source)), because the release archives do not carry the native worker or the compiled specifications yet.
+- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN. It opens Linux and Windows programs and libraries of every kind (see [Supported files](#supported-files)). The Linux release (archive, AppImage and AUR package) carries it ready to use, with Ghidra's processor specifications compiled for it; new projects use it whenever it can open the file.
 - **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 21 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
 
 The [native engine page](native-engine.md#native-or-ghidra) compares them.
@@ -39,6 +39,26 @@ The script finds the latest release for your platform, downloads it over HTTPS, 
 
 Set `KRAKEN_VERSION=v0.1.0` to pick a release, or `KRAKEN_PREFIX=/some/dir` to install somewhere other than `~/.local`. If `~/.local/bin` is not on your `PATH`, the script says so.
 
+### AppImage (Linux)
+
+Download `KRAKEN-<version>-x86_64.AppImage` from the [releases page](https://github.com/Adam-AtlasSoftware/kraken/releases), make it executable and run it:
+
+```sh
+chmod +x KRAKEN-*-x86_64.AppImage
+./KRAKEN-*-x86_64.AppImage                     # the app
+./KRAKEN-*-x86_64.AppImage kraken --help       # the command line
+```
+
+The first argument `kraken` or `krakend` runs that program instead of the app, so an agent can be connected with `claude mcp add kraken -- /path/to/KRAKEN.AppImage kraken mcp --project ~/kraken-projects/calc`. The AppImage holds the same programs as the archive, native engine included.
+
+### Arch Linux (AUR)
+
+```sh
+yay -S kraken-workbench-bin        # or paru, or makepkg -si in a clone of the AUR repository
+```
+
+It installs the release archive's programs into `/usr/bin` and its data into `/usr/share/kraken`, with the desktop entry. Update it with your AUR helper as usual.
+
 ### By hand
 
 1. Download `kraken-<version>-<target>.tar.gz` (`.zip` on Windows) and `SHA256SUMS` from the [releases page](https://github.com/Adam-AtlasSoftware/kraken/releases).
@@ -56,6 +76,10 @@ The archive also holds this documentation (`docs/`), the license and `THIRD-PART
 ### macOS and Windows warnings
 
 The first macOS and Windows releases are not signed by a recognised publisher (signing comes later). The macOS binaries are ad-hoc signed so they launch, but Gatekeeper may still block a download. Remove the quarantine flag with `xattr -d com.apple.quarantine ~/.local/bin/kraken*`, or allow the programs in System Settings, Privacy & Security. On Windows, SmartScreen shows "More info", then "Run anyway".
+
+### Windows
+
+Windows support is an early preview. Unzip `kraken-<version>-x86_64-pc-windows-msvc.zip` anywhere and add its `bin` folder to your `PATH`: `kraken.exe` is the command line and MCP server, `kraken-gui.exe` the app and `krakend.exe` the daemon. Windows has the Ghidra engine only (`kraken setup` downloads Ghidra and a JDK). KRAKEN's sandbox around the engine exists on Linux only, so on Windows analysis is refused until you set the environment variable `KRAKEN_ALLOW_UNCONFINED=1` (or `allow_unconfined = true` in the config file that `KRAKEN_CONFIG` names); Ghidra then runs as you, unconfined, so open only files you trust. Linux is the platform to use today. An installer that updates itself is planned.
 
 ## Install from source
 
