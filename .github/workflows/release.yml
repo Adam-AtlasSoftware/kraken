@@ -183,16 +183,20 @@ jobs:
           path: ~/.cache/kraken-dev/ghidra-src
           key: kraken-dev-ghidra-src-${{ hashFiles('xtask/src/native_src.rs') }}
 
-      - name: Fetch the native engine sources
+      - name: Fetch the native engine sources and compile its Sleigh files
         if: runner.os == 'Linux'
-        run: cargo xtask native-src
+        run: |
+          set -euo pipefail
+          cargo xtask native-src
+          cargo xtask native-sla
+          echo "KRAKEN_NATIVE_SLA_DIR=$HOME/.cache/kraken-dev/native-sla/Ghidra_${GHIDRA_VERSION}_build" >> "$GITHUB_ENV"
 
       - name: Build release binaries
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = Linux ]; then
             cargo build --release --locked -p kraken-cli -p krakend -p kraken-gui -p engine-native \
-              --features engine-native-sys/require-native
+              -p kraken-emu --features engine-native-sys/require-native
           else
             cargo build --release --locked -p kraken-cli -p krakend -p kraken-gui
           fi

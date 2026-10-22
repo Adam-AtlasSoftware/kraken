@@ -4,7 +4,9 @@ KRAKEN release archive
 Contents
   bin/                       kraken (CLI and MCP server), krakend (daemon), kraken-gui, and on
                              Linux kraken-native-worker (the native engine's decompiler
-                             process; `kraken setup --native` explains the rest)
+                             process) and kraken-emu-run (the emulator's sandbox)
+  share/kraken/native-sla/   (Linux) Ghidra's processor specifications compiled for the native
+                             engine, so it needs no Java, no Ghidra and no setup
   share/kraken/kraken-ghidra.jar
                              prebuilt Ghidra extension; `kraken setup` installs it, so you do
                              not need Gradle or a JDK to build it
@@ -21,7 +23,9 @@ Install
        Linux/macOS:  cp -R bin share ~/.local/        (and make sure ~/.local/bin is on PATH)
        Windows:      unzip anywhere and add its bin folder to PATH
      KRAKEN finds kraken-ghidra.jar next to the program or in ../share/kraken.
-  2. Run `kraken setup`. It downloads the pinned Ghidra and Temurin JDK 21 (both checked against
+  2. Linux: the native engine works right away (`kraken setup --native` checks it). For the
+     optional Ghidra engine (Mach-O, other processors, PDB) and on macOS and Windows, run
+     `kraken setup`: it downloads the pinned Ghidra and Temurin JDK 21 (both checked against
      compiled-in SHA-256 hashes) into your user data directory. Nothing needs root.
   3. Optional, for .NET assemblies (C# decompilation): `kraken setup --dotnet`. It downloads the
      pinned .NET runtime (SHA-256 checked before it is unpacked) and installs the sidecar from

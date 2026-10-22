@@ -12,6 +12,10 @@
 #   KRAKEN_REQUIRE_NATIVE
 #                      1: fail unless kraken-native-worker was built (the native engine's
 #                      confined decompiler process; Linux release builds link the decompiler)
+#                      and KRAKEN_NATIVE_SLA_DIR holds the compiled Sleigh files
+#   KRAKEN_NATIVE_SLA_DIR
+#                      the tree `cargo xtask native-sla` compiled (Ghidra_<version>_build); shipped
+#                      as share/kraken/native-sla so the native engine works without a checkout
 #
 # The archive always carries THIRD-PARTY-NOTICES.md and licenses/ (the Ghidra decompiler and
 # zlib license and notice files from crates/engine-native-sys/licenses), because the binaries
@@ -91,6 +95,15 @@ for b in kraken krakend kraken-gui $worker; do
 done
 cp -R "$native_licenses" "$pkg/licenses"
 cp "$jar" "$pkg/share/kraken/kraken-ghidra.jar"
+sla_dir=${KRAKEN_NATIVE_SLA_DIR:-}
+if [ -n "$sla_dir" ]; then
+  [ -f "$sla_dir/Ghidra/Processors/x86/data/languages/x86-64.sla" ] \
+    || { echo "missing compiled Sleigh files in $sla_dir" >&2; exit 1; }
+  cp -R "$sla_dir" "$pkg/share/kraken/native-sla"
+elif [ "${KRAKEN_REQUIRE_NATIVE:-0}" = 1 ]; then
+  echo "KRAKEN_NATIVE_SLA_DIR is not set (KRAKEN_REQUIRE_NATIVE=1)" >&2
+  exit 1
+fi
 # The managed sidecar is platform independent; `kraken setup --dotnet` installs it. Debug symbols
 # are left out.
 mkdir -p "$pkg/share/kraken/kraken-dotnet"

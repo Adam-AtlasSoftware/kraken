@@ -1,7 +1,7 @@
 //! Where the SLEIGH sources come from. icicle compiles a language from its `.slaspec` at start-up,
 //! so a spec root must hold the sources, not just compiled `.sla` files. The roots tried are the
-//! ones engine-native uses: `KRAKEN_NATIVE_SPECS`, the tree `cargo xtask native-sla` builds, a
-//! Ghidra install (`KRAKEN_GHIDRA_HOME`, else the newest under `~/.cache/kraken-dev/ghidra`), plus
+//! ones engine-native uses: `KRAKEN_NATIVE_SPECS`, the tree `cargo xtask native-sla` builds, the
+//! tree a release ships in `share/kraken/native-sla`, a Ghidra install (`KRAKEN_GHIDRA_HOME`, else the newest under `~/.cache/kraken-dev/ghidra`), plus
 //! any the caller adds first. Each architecture takes the first root that has its files (the
 //! `native-sla` tree, for one, holds only x86 and AArch64).
 
@@ -12,6 +12,24 @@ use crate::error::EmuError;
 
 /// The source tag of the pinned Ghidra sources (`cargo xtask native-sla` names its tree after it).
 const SOURCE_TAG: &str = "Ghidra_12.1.4_build";
+
+/// The tree a release ships beside the programs: `share/kraken/native-sla` in the prefix of the
+/// running executable, or `native-sla` next to it.
+fn bundled() -> Vec<PathBuf> {
+    let Ok(exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+    let exe = exe.canonicalize().unwrap_or(exe);
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    let mut out = vec![dir.join("native-sla")];
+    if let Some(prefix) = dir.parent() {
+        out.push(prefix.join("share/kraken/native-sla"));
+    }
+    out.retain(|p| p.join("Ghidra/Processors").is_dir());
+    out
+}
 
 /// An ordered list of spec roots (each a directory that contains `Ghidra/Processors`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -50,6 +68,7 @@ impl SpecRoots {
         if let Some(h) = &home {
             roots.push(h.join(".cache/kraken-dev/native-sla").join(SOURCE_TAG));
         }
+        roots.extend(bundled());
         if let Some(p) = env("KRAKEN_GHIDRA_HOME") {
             roots.push(p);
         }

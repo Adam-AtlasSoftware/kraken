@@ -248,7 +248,25 @@ fn sysroot_for(arch: Arch) -> Option<PathBuf> {
         None => PathBuf::from(std::env::var_os("HOME")?).join(".cache/kraken-dev/emu-sysroots"),
     };
     let dir = root.join(set);
-    dir.join("lib").is_dir().then_some(dir)
+    if dir.join("lib").is_dir() {
+        return Some(dir);
+    }
+    host_sysroot(arch)
+}
+
+/// The host's own libraries, when the program is built for the host: an x86-64 Linux host runs
+/// x86-64 programs (and 32-bit x86 ones with multilib installed) against its own loader and libc,
+/// so a release install emulates dynamic programs without building sysroots first.
+fn host_sysroot(arch: Arch) -> Option<PathBuf> {
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return None;
+    }
+    let loader = match arch {
+        Arch::X86_64 => "/lib64/ld-linux-x86-64.so.2",
+        Arch::X86 => "/lib/ld-linux.so.2",
+        _ => return None,
+    };
+    Path::new(loader).exists().then(|| PathBuf::from("/"))
 }
 
 fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
@@ -358,10 +376,20 @@ fn emulate(
         Err(EmuError::NeedsSysroot { arch, .. }) if sysroot_for(arch).is_some() => {
             spec.sysroot = sysroot_for(arch);
             if let Some(s) = &spec.sysroot {
-                notes.push(format!(
-                    "dynamic program: libraries from the sysroot {}",
-                    s.display()
-                ));
+                if s == Path::new("/") {
+                    notes.push(
+                        "dynamic program: libraries of this computer. If emulation stops at an \
+                         unsupported vector instruction, this system's libraries are built for \
+                         newer CPUs (some distributions build for x86-64-v3); in a source checkout \
+                         `cargo xtask emu-sysroots` extracts portable ones"
+                            .into(),
+                    );
+                } else {
+                    notes.push(format!(
+                        "dynamic program: libraries from the sysroot {}",
+                        s.display()
+                    ));
+                }
             }
             run(&spec)
         }

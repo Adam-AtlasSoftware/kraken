@@ -84,13 +84,17 @@ impl NativeConfig {
     }
 
     /// The first usable spec tree of: `KRAKEN_NATIVE_SPECS`, the tree compiled by `cargo xtask
-    /// native-sla` (`~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build`), `KRAKEN_GHIDRA_HOME`,
-    /// and the newest Ghidra install under `~/.cache/kraken-dev/ghidra`.
+    /// native-sla` (`~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build`), the tree a release
+    /// ships (`share/kraken/native-sla` beside `bin`), `KRAKEN_GHIDRA_HOME`, and the newest
+    /// Ghidra install under `~/.cache/kraken-dev/ghidra`.
     pub fn discover() -> Option<NativeConfig> {
         if let Some(p) = std::env::var_os("KRAKEN_NATIVE_SPECS") {
             return Some(NativeConfig::new(p));
         }
         if let Some(p) = compiled_specs_dir().filter(|p| has_specs(p)) {
+            return Some(NativeConfig::new(p));
+        }
+        if let Some(p) = bundled_specs_dir() {
             return Some(NativeConfig::new(p));
         }
         Self::discover_ghidra()
@@ -120,6 +124,22 @@ pub fn compiled_specs_dir() -> Option<PathBuf> {
             .join(".cache/kraken-dev/native-sla")
             .join(SOURCE_TAG),
     )
+}
+
+/// Directory name of the compiled specifications in a release archive, under `share/kraken`.
+pub const BUNDLED_SPECS_DIR: &str = "native-sla";
+
+/// The compiled specifications a release ships: `share/kraken/native-sla` in the prefix of the
+/// running executable (symlinks resolved), or `native-sla` beside it.
+pub fn bundled_specs_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    let dir = exe.parent()?;
+    let mut candidates = vec![dir.join(BUNDLED_SPECS_DIR)];
+    if let Some(prefix) = dir.parent() {
+        candidates.push(prefix.join("share/kraken").join(BUNDLED_SPECS_DIR));
+    }
+    candidates.into_iter().find(|p| has_specs(p))
 }
 
 /// Whether `root` holds the x86-64 Sleigh specification.
