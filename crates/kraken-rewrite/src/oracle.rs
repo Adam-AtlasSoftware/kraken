@@ -50,6 +50,10 @@ pub const STUBBED_IMPORTS: &[&str] = &[
     "putchar",
     "strlen",
     "strcmp",
+    "strncmp",
+    "strcpy",
+    "strncpy",
+    "strcat",
     "memcpy",
     "memmove",
     "memset",
@@ -256,6 +260,8 @@ pub struct FunctionOracle {
     stderr: Vec<u8>,
     /// Next free byte of the emulated heap.
     heap_next: u64,
+    /// The heap blocks of the call in progress, with the size asked for.
+    blocks: Vec<(u64, usize)>,
 }
 
 impl std::fmt::Debug for FunctionOracle {
@@ -370,6 +376,7 @@ impl FunctionOracle {
             stdout: Vec::new(),
             stderr: Vec::new(),
             heap_next: layout.heap_base,
+            blocks: Vec::new(),
         })
     }
 
@@ -429,6 +436,7 @@ impl FunctionOracle {
         self.stderr.clear();
         self.callbacks.clear();
         self.heap_next = self.layout.heap_base;
+        self.blocks.clear();
         self.objects.clear();
 
         let mut mapped: Vec<(u64, u64)> = Vec::new();
@@ -666,6 +674,17 @@ impl FunctionOracle {
             if let Some(k) = kind {
                 obs.ret = read_return(&mut self.m, k).map_err(from_emu)?;
             }
+            if sig.ret == Ret::Ptr {
+                let bits = if self.m.arch().bits() == 32 { 32 } else { 64 };
+                let p = read_return(&mut self.m, RetKind::Int { bits })
+                    .map_err(from_emu)?
+                    .unwrap_or(0);
+                let blocks = self.blocks.clone();
+                let m = &mut self.m;
+                obs.ret_object = Some(crate::ptrdesc::describe_pointer(p, &blocks, &mut |a, n| {
+                    m.read_vec(a, n).unwrap_or_default()
+                }));
+            }
             for &(addr, len) in buffers {
                 obs.buffers
                     .push(self.m.read_vec(addr, len).map_err(from_emu)?);
@@ -730,6 +749,11 @@ impl FunctionOracle {
     /// The `n`th integer argument of the stubbed call at the current stop.
     fn stub_arg(&mut self, n: usize) -> u64 {
         incoming_int_arg(&mut self.m, n)
+    }
+
+    fn byte_at(&mut self, addr: u64) -> Option<u8> {
+        let mut b = [0u8; 1];
+        self.m.read_mem(addr, &mut b).ok().map(|()| b[0])
     }
 
     fn read_cstr(&mut self, addr: u64) -> Option<Vec<u8>> {
@@ -844,6 +868,68 @@ impl FunctionOracle {
                     _ => return unsupported("strcmp of unreadable pointer".into()),
                 }
             }
+            "strncmp" => {
+                let (a, b, n) = (self.stub_arg(0), self.stub_arg(1), self.stub_arg(2));
+                let mut d = 0i64;
+                for i in 0..n.min(MAX_BUFFER as u64) {
+                    let (Some(x), Some(y)) = (self.byte_at(a + i), self.byte_at(b + i)) else {
+                        return Some(Termination::Fault {
+                            detail: "strncmp of an unreadable pointer".into(),
+                        });
+                    };
+                    if x != y || x == 0 {
+                        d = i64::from(x) - i64::from(y);
+                        break;
+                    }
+                }
+                d as u64
+            }
+            "strcpy" | "strcat" | "strncpy" => {
+                let (dst, src) = (self.stub_arg(0), self.stub_arg(1));
+                let limit = if name == "strncpy" {
+                    self.stub_arg(2)
+                } else {
+                    MAX_BUFFER as u64
+                };
+                if limit > MAX_BUFFER as u64 {
+                    return unsupported(format!("{name} of {limit} bytes"));
+                }
+                let start = if name == "strcat" {
+                    match self.read_cstr(dst) {
+                        Some(s) => dst + s.len() as u64,
+                        None => return unsupported("strcat to an unreadable string".into()),
+                    }
+                } else {
+                    dst
+                };
+                // As C: copy up to the NUL (strcpy and strcat copy it too); strncpy pads with
+                // NULs to `n` and leaves a truncated copy unterminated.
+                let mut out = Vec::new();
+                let mut i = 0u64;
+                while i < limit {
+                    let Some(c) = self.byte_at(src + i) else {
+                        return Some(Termination::Fault {
+                            detail: format!("{name} source {src:#x} unreadable"),
+                        });
+                    };
+                    out.push(c);
+                    i += 1;
+                    if c == 0 {
+                        break;
+                    }
+                }
+                if name == "strncpy" {
+                    out.resize(limit as usize, 0);
+                } else if out.last() != Some(&0) {
+                    return unsupported(format!("{name} of an unterminated string"));
+                }
+                if self.m.write_mem(start, &out).is_err() {
+                    return Some(Termination::Fault {
+                        detail: format!("{name} destination {start:#x} unwritable"),
+                    });
+                }
+                dst
+            }
             "memcpy" | "memmove" | "memset" => {
                 let (dst, a1, n) = (self.stub_arg(0), self.stub_arg(1), self.stub_arg(2));
                 if n > MAX_BUFFER as u64 {
@@ -917,6 +1003,9 @@ impl FunctionOracle {
             "malloc" | "_Znwm" | "_Znam" | "operator.new" | "operator.new[]" => {
                 let n = self.stub_arg(0);
                 let p = self.allocate(n);
+                if p != 0 {
+                    self.blocks.push((p, n as usize));
+                }
                 if p == 0 && name != "malloc" {
                     // `operator new` never returns null: libstdc++ throws, nobody catches.
                     self.stderr.extend_from_slice(
@@ -931,7 +1020,11 @@ impl FunctionOracle {
             }
             "calloc" => {
                 let n = self.stub_arg(0).saturating_mul(self.stub_arg(1));
-                self.allocate(n)
+                let p = self.allocate(n);
+                if p != 0 {
+                    self.blocks.push((p, n as usize));
+                }
+                p
             }
             "free" | "_ZdlPv" | "_ZdlPvm" | "_ZdaPv" | "_ZdaPvm" | "operator.delete"
             | "operator.delete[]" => {

@@ -36,7 +36,7 @@ For each function the assistant reads the decompiled C and writes Rust. KRAKEN b
 
 ### 3. Verify
 
-KRAKEN runs the original function (in an emulator) and the Rust function on the same inputs, and compares the results and what they write to memory. The status of a function says what came out:
+KRAKEN runs the original function (in an emulator) and the Rust function on the same inputs, and compares the results and what they write to memory. A function that returns a pointer is compared by what the pointer leads to: the heap object it allocated (byte for byte, so a struct laid out differently is caught), or the string it points at. The status of a function says what came out:
 
 - **planned**: nothing has been translated yet.
 - **translated**: Rust exists, but the test could not decide (for example, the function calls a library function the test cannot imitate).

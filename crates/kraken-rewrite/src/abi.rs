@@ -306,6 +306,9 @@ pub struct Observation {
     /// Instructions emulated (oracle only).
     #[serde(default)]
     pub instructions: u64,
+    /// For a pointer result, what it points at ([`crate::ptrdesc::describe_pointer`]).
+    #[serde(default)]
+    pub ret_object: Option<String>,
 }
 
 impl Observation {
@@ -321,6 +324,7 @@ impl Observation {
             global_writes_observed: false,
             callbacks: Vec::new(),
             instructions: 0,
+            ret_object: None,
         }
     }
 }

@@ -30,6 +30,8 @@ pub mod pipeline;
 pub mod plan;
 pub mod process;
 pub mod program;
+#[path = "runtime/ptrdesc.rs"]
+pub mod ptrdesc;
 pub mod repair;
 pub mod reuse;
 #[path = "runtime/rt.rs"]
@@ -47,6 +49,9 @@ pub use error::RewriteError;
 pub use service::{
     BackendSource, ConfigBackend, FixedBackend, FixedProvider, RewriteConfig, RewriteService,
 };
+
+/// [`ptrdesc`] as source text, pasted into the function-level test runner.
+pub const PTRDESC_SOURCE: &str = include_str!("runtime/ptrdesc.rs");
 
 /// The runtime shim ([`rt`]) as source text: the program crate's `src/rt.rs`.
 pub const RT_SOURCE: &str = include_str!("runtime/rt.rs");

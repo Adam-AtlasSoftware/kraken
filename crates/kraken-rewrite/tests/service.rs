@@ -362,7 +362,7 @@ async fn switch_vm_plan_puts_callees_first_and_leaves_out_imports_and_glue() {
 }
 
 #[tokio::test]
-async fn pie_list_plan_flags_what_the_oracle_cannot_model() {
+async fn pie_list_plan_is_ordered_and_needs_no_stubs() {
     let r = rig("pie_list-O0").await;
     let plan = r
         .call(&user(), "rewrite_plan", json!({"limit": 200}))
@@ -374,18 +374,11 @@ async fn pie_list_plan_flags_what_the_oracle_cannot_model() {
     assert!(pos(&n, "node_new") < pos(&n, "main"));
     assert!(pos(&n, "list_free") < pos(&n, "main"));
     assert_eq!(n.last().map(String::as_str), Some("main"), "{n:?}");
-    // strncpy is not stubbed in the oracle; calloc and free are.
+    // strncpy, calloc and free are stubbed in the oracle: node_new needs nothing more.
     let node_new = entry_named(&plan, "node_new");
-    let stubs: Vec<&str> = node_new["needs_stubs"]
-        .as_array()
-        .expect("stubs")
-        .iter()
-        .filter_map(|v| v["value"].as_str())
-        .collect();
-    assert!(stubs.contains(&"strncpy"), "{stubs:?}");
-    assert!(!stubs.contains(&"calloc"), "{stubs:?}");
+    assert_eq!(node_new["needs_stubs"], json!([]), "{node_new}");
     assert!(
-        node_new["flags"]
+        !node_new["flags"]
             .as_array()
             .expect("flags")
             .contains(&json!("needs_stubs"))
@@ -404,13 +397,9 @@ async fn pie_list_plan_flags_what_the_oracle_cannot_model() {
         assert_eq!(e["needs_stubs"], json!([]), "{c}");
         assert_eq!(e["callees"], json!([]), "{c}");
     }
-    // A caller inherits the flag of its callees.
-    assert!(
-        entry_named(&plan, "main")["flags"]
-            .as_array()
-            .expect("flags")
-            .contains(&json!("needs_stubs"))
-    );
+    // Nothing in the program calls outside the oracle's C library now, main included
+    // (inheritance through callers: `plan::tests`).
+    assert_eq!(entry_named(&plan, "main")["needs_stubs"], json!([]));
 }
 
 #[tokio::test]
@@ -738,24 +727,18 @@ async fn spec_mode_writes_the_spec_first_then_reimplements_from_it() {
 }
 
 #[tokio::test]
-async fn functions_the_oracle_cannot_check_are_refused_before_any_model_call() {
+async fn a_constructor_is_checked_and_reaches_the_model() {
     let r = rig("pie_list-O0").await;
-    // No provider set: a model call would fail with "no provider set". node_new returns a pointer
-    // and takes a double.
+    // node_new returns a heap pointer and takes a double: both are checked now, so the job gets
+    // as far as the model call, which fails because the test set no provider.
     let err = r
         .job(&user(), "rewrite_function", json!({"address": "0x101189"}))
         .await
-        .expect_err("unsupported");
-    assert_eq!(err.code, ErrorCode::Unsupported, "{err}");
-    // The host confinement gate comes first by design (the command refuses to run model-written
-    // code on a host that cannot confine it, whatever the function), so where the sandbox is not
-    // enforced (macOS, Windows) the refusal is that gate's; the function-level check is reached,
-    // and asserted, only where it is.
+        .expect_err("no provider");
+    // The host confinement gate comes first by design, so where the sandbox is not enforced
+    // (macOS, Windows) the refusal is that gate's.
     if kraken_rewrite::sandbox::enforced() {
-        assert!(
-            err.message.contains("pointer result") || err.message.contains("floating-point"),
-            "{err}"
-        );
+        assert!(err.message.contains("no provider set"), "{err}");
     } else {
         assert!(err.message.contains("cannot confine"), "{err}");
     }

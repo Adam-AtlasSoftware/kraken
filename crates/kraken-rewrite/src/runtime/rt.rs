@@ -1785,6 +1785,28 @@ pub fn tolower(c: i32) -> i32 {
 /// Bytes in front of every block that `malloc` returns: the block size, kept 16-aligned.
 const HEADER: usize = 16;
 
+/// Whether [`malloc`] records the blocks it hands out; only the function-level test runner turns
+/// it on, to describe a pointer result by the block it points into.
+static TRACK_BLOCKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BLOCKS: std::sync::Mutex<Vec<(u64, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// Starts recording the blocks [`malloc`] hands out (and forgets earlier ones).
+pub fn track_blocks() {
+    BLOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+    TRACK_BLOCKS.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The blocks handed out since [`track_blocks`], in order, with the size asked for.
+pub fn tracked_blocks() -> Vec<(u64, usize)> {
+    BLOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// `malloc`: 16-byte aligned, null on failure; `malloc(0)` returns a valid unique pointer.
 ///
 /// # Safety
@@ -1801,7 +1823,14 @@ pub unsafe fn malloc(n: usize) -> *mut u8 {
         return base;
     }
     unsafe { *(base as *mut usize) = n };
-    unsafe { base.add(HEADER) }
+    let p = unsafe { base.add(HEADER) };
+    if TRACK_BLOCKS.load(std::sync::atomic::Ordering::Relaxed) {
+        BLOCKS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((p as u64, n));
+    }
+    p
 }
 
 /// `calloc`: zeroed, null when `count * size` overflows.

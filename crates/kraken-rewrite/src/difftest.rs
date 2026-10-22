@@ -644,6 +644,18 @@ fn first_diff(a: &[u8], b: &[u8]) -> Option<usize> {
         .or_else(|| (a.len() != b.len()).then_some(a.len().min(b.len())))
 }
 
+/// A pointer description shortened for a verdict: the block and its first differing bytes are
+/// what matter.
+fn clip_desc(d: Option<&str>) -> String {
+    match d {
+        None => "nothing".into(),
+        Some(t) if t.chars().count() > 120 => {
+            format!("{}...", t.chars().take(120).collect::<String>())
+        }
+        Some(t) => t.to_string(),
+    }
+}
+
 /// Compares what the original and the translation did.
 pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
     let mut d = Vec::new();
@@ -673,6 +685,13 @@ pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
             d.push(format!(
                 "return value: original {:?}, translation {:?}",
                 orig.ret, native.ret
+            ));
+        }
+        if orig.ret_object != native.ret_object {
+            d.push(format!(
+                "returned pointer: original points at {}, translation at {}",
+                clip_desc(orig.ret_object.as_deref()),
+                clip_desc(native.ret_object.as_deref())
             ));
         }
         for (i, (a, b)) in orig.buffers.iter().zip(&native.buffers).enumerate() {

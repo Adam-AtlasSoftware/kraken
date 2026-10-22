@@ -256,7 +256,8 @@ async fn rewrite_accept_and_export_from_the_command_line() {
     );
     assert!(dir.join("export/README.md").is_file());
 
-    // A function the oracle cannot check is explained, not attempted.
+    // A function the oracle cannot check is explained, not attempted: `frame_dummy` has a
+    // result the decompiler could not type.
     let bad = kraken(
         &env,
         &[
@@ -264,13 +265,13 @@ async fn rewrite_accept_and_export_from_the_command_line() {
             project,
             "rewrite-function",
             "--address",
-            "0x101189",
+            "0x101180",
         ],
     )
     .await;
     assert_ne!(bad.code, 0);
     assert!(
-        bad.stderr.contains("cannot check `node_new` yet"),
+        bad.stderr.contains("cannot check `frame_dummy` yet"),
         "{}",
         bad.stderr
     );
