@@ -9,14 +9,14 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
-engine-fake = { path = "../engine-fake", version = "0.0.0" }
-kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
-kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
-kraken-assist = { path = "../kraken-assist", version = "0.0.0" }
-kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
-kraken-host = { path = "../kraken-host", version = "0.0.0" }
+engine-fake = { path = "../engine-fake", version = "0.1.0" }
+kraken-acp = { path = "../kraken-acp", version = "0.1.0" }
+kraken-agent = { path = "../kraken-agent", version = "0.1.0" }
+kraken-assist = { path = "../kraken-assist", version = "0.1.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
+kraken-host = { path = "../kraken-host", version = "0.1.0" }
 kraken-proto.workspace = true
-kraken-registry = { path = "../kraken-registry", version = "0.0.0" }
+kraken-registry = { path = "../kraken-registry", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

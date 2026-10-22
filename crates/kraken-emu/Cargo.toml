@@ -14,7 +14,7 @@ icicle-cpu = { version = "0.1.0", git = "https://github.com/icicle-emu/icicle-em
 icicle-vm = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
 pcode = { version = "0.2.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
 sleigh-runtime = { version = "0.1.0", git = "https://github.com/icicle-emu/icicle-emu", rev = "638508b72f480f9be6fe2e267ef09de8f1541f9a" }
-kraken-sidecar = { path = "../kraken-sidecar", version = "0.0.0" }
+kraken-sidecar = { path = "../kraken-sidecar", version = "0.1.0" }
 object = { version = "0.38", default-features = false, features = ["read_core", "elf", "pe", "std"] }
 serde.workspace = true
 serde_json.workspace = true

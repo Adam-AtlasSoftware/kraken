@@ -14,10 +14,10 @@ path = "src/bin/kraken-native-worker.rs"
 [dependencies]
 async-trait = "0.1.89"
 cpp_demangle = "0.5.1"
-engine-native-sys = { path = "../engine-native-sys", version = "0.0.0" }
-kraken-engine = { path = "../kraken-engine", version = "0.0.0" }
+engine-native-sys = { path = "../engine-native-sys", version = "0.1.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
 kraken-proto.workspace = true
-kraken-sidecar = { path = "../kraken-sidecar", version = "0.0.0" }
+kraken-sidecar = { path = "../kraken-sidecar", version = "0.1.0" }
 gimli = { version = "0.33", default-features = false, features = ["read", "std"] }
 object = { version = "0.39", default-features = false, features = ["read_core", "elf", "pe", "coff", "archive", "std"] }
 msvc-demangler = "0.11"
@@ -33,6 +33,6 @@ tokio-util = { version = "0.7.16", default-features = false }
 libc = "0.2"
 
 [dev-dependencies]
-kraken-engine = { path = "../kraken-engine", version = "0.0.0", features = ["testing"] }
+kraken-engine = { path = "../kraken-engine", version = "0.1.0", features = ["testing"] }
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
