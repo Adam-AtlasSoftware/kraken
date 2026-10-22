@@ -400,6 +400,9 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
             .vram_reserve_mib
             .or(heavy_display(main).then_some(MAIN_RESERVE_DISPLAY_MIB as u32)),
         context_cap,
+        tail_skip: tuning_in.tail_skip,
+        spec: tuning_in.spec,
+        spec_min_p_percent: tuning_in.spec_min_p_percent,
     };
     Plan {
         mode,

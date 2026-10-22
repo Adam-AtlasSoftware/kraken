@@ -79,6 +79,18 @@ pub struct StrataTuning {
     /// only ever lowers the context Strata was installed with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_cap: Option<u32>,
+    /// How rarely routed an expert must be for a missed one to be skipped in a verify window
+    /// (Strata's tail skip): lower skips more, 0 turns it off. Unset keeps Strata's own default (7).
+    /// Skipping makes answers faster and changes them slightly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_skip: Option<u32>,
+    /// How many tokens the draft layer proposes per check (Strata's `--spec`, usually 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec: Option<u32>,
+    /// How sure the draft layer must be to extend a window by one more guess, in percent
+    /// (Strata's `--spec-min-p`, usually 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_min_p_percent: Option<u32>,
 }
 
 impl StrataTuning {
@@ -100,6 +112,9 @@ impl StrataTuning {
             draft: flag("draft"),
             vram_reserve_mib: num("vram_reserve_mib"),
             context_cap: num("context_cap"),
+            tail_skip: num("tail_skip"),
+            spec: num("spec"),
+            spec_min_p_percent: num("spec_min_p_percent"),
         }
     }
 

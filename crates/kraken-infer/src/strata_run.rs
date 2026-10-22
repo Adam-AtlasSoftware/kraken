@@ -158,6 +158,19 @@ pub fn run_config(base: &Value, model: &LocalModel, cards: &[&DeviceInfo]) -> Re
             set_value(&mut args, "--kv-resident", &c.to_string());
         }
     }
+    if let Some(n) = tuning.spec {
+        set_value(&mut args, "--spec", &n.to_string());
+    }
+    if let Some(p) = tuning.spec_min_p_percent {
+        set_value(
+            &mut args,
+            "--spec-min-p",
+            &format!("{:.2}", f64::from(p) / 100.0),
+        );
+    }
+    if let Some(rank) = tuning.tail_skip {
+        merge_env(&mut obj, &[("STRATA_ROUTE_TAIL_SKIP", rank.to_string())]);
+    }
     if tuning.draft == Some(false) {
         obj.insert("mtp".into(), Value::Bool(false));
     }
@@ -340,6 +353,9 @@ mod tests {
             vram_reserve_mib: Some(1000),
             peer_reserve_mib: None,
             context_cap: None,
+            tail_skip: None,
+            spec: None,
+            spec_min_p_percent: None,
         }
         .store(&mut m.extra);
         let out = run_config(&base(), &m, &[&c]).expect("config");
@@ -378,6 +394,9 @@ mod tests {
             vram_reserve_mib: Some(700),
             peer_reserve_mib: Some(1000),
             context_cap: None,
+            tail_skip: None,
+            spec: None,
+            spec_min_p_percent: None,
         }
         .store(&mut m.extra);
         let once = run_config(&base(), &m, &[&a, &b]).expect("once");
@@ -453,6 +472,61 @@ mod tests {
                 .windows(2)
                 .any(|w| w == ["--max-context", "32768"]),
             "the ceiling still caps a context above it"
+        );
+    }
+
+    #[test]
+    fn a_tail_skip_rank_becomes_an_environment_variable_and_unset_leaves_it_alone() {
+        let mut m = model(MultiGpuMode::Split);
+        let unset = run_config(&base(), &m, &[&card(1)]).expect("config");
+        assert!(unset["env"].get("STRATA_ROUTE_TAIL_SKIP").is_none());
+        StrataTuning {
+            tail_skip: Some(5),
+            ..StrataTuning::default()
+        }
+        .store(&mut m.extra);
+        let five = run_config(&base(), &m, &[&card(1)]).expect("config");
+        assert_eq!(five["env"]["STRATA_ROUTE_TAIL_SKIP"], "5");
+        assert_eq!(
+            five["env"]["LD_LIBRARY_PATH"], "/opt/lib",
+            "other variables stay"
+        );
+        StrataTuning {
+            tail_skip: Some(0),
+            ..StrataTuning::default()
+        }
+        .store(&mut m.extra);
+        let off = run_config(&base(), &m, &[&card(1)]).expect("config");
+        assert_eq!(
+            off["env"]["STRATA_ROUTE_TAIL_SKIP"], "0",
+            "0 turns it off, it is not 'unset'"
+        );
+    }
+
+    #[test]
+    fn speculation_settings_replace_the_installed_ones() {
+        let mut m = model(MultiGpuMode::Split);
+        StrataTuning {
+            spec: Some(3),
+            spec_min_p_percent: Some(65),
+            ..StrataTuning::default()
+        }
+        .store(&mut m.extra);
+        let mut b = base();
+        b["args"]
+            .as_array_mut()
+            .expect("args")
+            .extend(["--spec-min-p".into(), "0.5".into()]);
+        let out = run_config(&b, &m, &[&card(1)]).expect("config");
+        let a = args(&out);
+        assert!(a.windows(2).any(|w| w == ["--spec", "3"]), "{a:?}");
+        assert!(a.windows(2).any(|w| w == ["--spec-min-p", "0.65"]), "{a:?}");
+        assert_eq!(a.iter().filter(|x| **x == "--spec").count(), 1);
+        assert_eq!(a.iter().filter(|x| **x == "--spec-min-p").count(), 1);
+        let untouched = run_config(&b, &model(MultiGpuMode::Split), &[&card(1)]).expect("config");
+        assert!(
+            args(&untouched).windows(2).any(|w| w == ["--spec", "4"]),
+            "unset keeps the installed value"
         );
     }
 
