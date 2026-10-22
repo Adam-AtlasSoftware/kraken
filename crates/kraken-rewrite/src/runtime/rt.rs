@@ -55,6 +55,44 @@ fn pad(out: &mut Vec<u8>, body: &[u8], width: usize, left: bool, zero: bool, sig
     }
 }
 
+/// One `%f %F %e %E %g %G` conversion of `v` as glibc prints it, before padding: the text and
+/// the length of its sign. The oracle's `printf` uses it too, so both sides agree.
+pub fn format_double(
+    v: f64,
+    conv: u8,
+    prec: Option<usize>,
+    plus: bool,
+    space: bool,
+    alt: bool,
+) -> (String, usize) {
+    let p = prec.unwrap_or(6);
+    let mut body = if v.is_nan() {
+        "nan".to_string()
+    } else if v.is_infinite() {
+        "inf".to_string()
+    } else {
+        match conv {
+            b'f' | b'F' => format!("{:.*}", p, v.abs()),
+            b'e' | b'E' => exp_form(v.abs(), p, conv == b'E'),
+            _ => general_form(v.abs(), p, conv == b'G', alt),
+        }
+    };
+    if conv.is_ascii_uppercase() {
+        body = body.to_uppercase();
+    }
+    // glibc prints the sign of a NaN too (`-nan`).
+    let sign = if v.is_sign_negative() {
+        "-"
+    } else if plus {
+        "+"
+    } else if space {
+        " "
+    } else {
+        ""
+    };
+    (format!("{sign}{body}"), sign.len())
+}
+
 fn exp_form(v: f64, prec: usize, upper: bool) -> String {
     let s = format!("{:.*e}", prec, v);
     let (mant, exp) = s.split_once('e').unwrap_or((&s, "0"));
@@ -295,39 +333,14 @@ pub unsafe fn format_c(fmt: *const u8, args: &[Arg]) -> Vec<u8> {
                     _ => 0.0,
                 };
                 at += 1;
-                let p = prec.unwrap_or(6);
-                let mut body = if v.is_nan() {
-                    "nan".to_string()
-                } else if v.is_infinite() {
-                    "inf".to_string()
-                } else {
-                    match conv {
-                        b'f' | b'F' => format!("{:.*}", p, v.abs()),
-                        b'e' | b'E' => exp_form(v.abs(), p, conv == b'E'),
-                        _ => general_form(v.abs(), p, conv == b'G', alt),
-                    }
-                };
-                if conv.is_ascii_uppercase() {
-                    body = body.to_uppercase();
-                }
-                // glibc prints the sign of a NaN too (`-nan`).
-                let sign = if v.is_sign_negative() {
-                    "-"
-                } else if plus {
-                    "+"
-                } else if space {
-                    " "
-                } else {
-                    ""
-                };
-                let body = format!("{sign}{body}");
+                let (body, sign_len) = format_double(v, conv, prec, plus, space, alt);
                 pad(
                     &mut out,
                     body.as_bytes(),
                     width,
                     left,
                     zero && v.is_finite(),
-                    sign.len(),
+                    sign_len,
                 );
             }
             _ => out.extend_from_slice(unsafe {

@@ -1402,12 +1402,14 @@ async fn pie_list_is_checked_function_by_function_and_as_a_program() {
     }
     // `cmp_name` calls `strcmp`, which the emulator models as glibc does.
     assert_eq!(function(&out, "cmp_name")["verdict"], "pass");
-    // These print a double with `printf` or `free` an object the test passed in, which the
-    // emulator does not model: the test says it could not tell instead of passing.
-    for name in ["print_rec", "list_free", "main"] {
-        let f = function(&out, name);
-        assert_eq!(f["verdict"], "inconclusive", "{f}");
+    // `print_rec` and `main` print doubles, which the emulator formats as glibc does.
+    for name in ["print_rec", "main"] {
+        assert_eq!(function(&out, name)["verdict"], "pass", "{name}");
     }
+    // `list_free` frees objects the test passed in, which the emulator cannot reproduce: the
+    // test says it could not tell instead of passing.
+    let f = function(&out, "list_free");
+    assert_eq!(f["verdict"], "inconclusive", "{f}");
     // The constructor is compared by the heap block it returns.
     let node_new = function(&out, "node_new");
     assert_eq!(

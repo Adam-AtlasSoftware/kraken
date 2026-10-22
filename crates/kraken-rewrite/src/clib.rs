@@ -1,14 +1,17 @@
-//! Models of the few libc facts the oracle stubs need: a `printf` formatter for integer, string
-//! and character conversions, and glibc's C-locale `ctype` table.
+//! Models of the few libc facts the oracle stubs need: a `printf` formatter for integer, string,
+//! character and floating-point conversions, and glibc's C-locale `ctype` table.
 
 /// Formats `fmt` the way C `printf` would for the supported conversions
-/// (`%d %i %u %x %X %o %c %s %p %%`, flags `-0+ #`, width, `.precision` for `%s`, length
-/// modifiers `hh h l ll z j t`). Floating point is not supported and returns an error.
+/// (`%d %i %u %x %X %o %c %s %p %f %F %e %E %g %G %%`, flags `-0+ #`, width, `.precision`,
+/// length modifiers `hh h l ll z j t`). Floating-point text comes from the runtime shim's
+/// [`crate::rt::format_double`], so the oracle and a translation print a double alike.
 ///
-/// `next` yields the next variadic integer argument; `cstr` reads a NUL-terminated string.
+/// `next` yields the next variadic integer argument, `next_double` the next floating-point one
+/// (`None` when there is none to read); `cstr` reads a NUL-terminated string.
 pub fn format_printf(
     fmt: &[u8],
     next: &mut dyn FnMut() -> u64,
+    next_double: &mut dyn FnMut() -> Option<f64>,
     cstr: &mut dyn FnMut(u64) -> Option<Vec<u8>>,
 ) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
@@ -134,6 +137,25 @@ pub fn format_printf(
                     ("0x".into(), format!("{v:x}").into_bytes())
                 }
             }
+            b'f' | b'F' | b'e' | b'E' | b'g' | b'G' => {
+                let v = next_double()
+                    .ok_or("more floating-point arguments than the oracle can read")?;
+                let (body, sign_len) = crate::rt::format_double(v, conv, prec, plus, space, alt);
+                let body = body.as_bytes();
+                let fill = width.saturating_sub(body.len());
+                if left {
+                    out.extend_from_slice(body);
+                    out.extend(std::iter::repeat_n(b' ', fill));
+                } else if zero && v.is_finite() {
+                    out.extend_from_slice(&body[..sign_len]);
+                    out.extend(std::iter::repeat_n(b'0', fill));
+                    out.extend_from_slice(&body[sign_len..]);
+                } else {
+                    out.extend(std::iter::repeat_n(b' ', fill));
+                    out.extend_from_slice(body);
+                }
+                continue;
+            }
             b'c' => {
                 let v = next() as u8;
                 pad(&mut out, &[v], width, left, false);
@@ -152,9 +174,7 @@ pub fn format_printf(
                 pad(&mut out, &s, width, left, false);
                 continue;
             }
-            b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
-                return Err("floating point conversions are not modelled".into());
-            }
+            b'a' | b'A' => return Err("hexadecimal floating point is not modelled".into()),
             other => return Err(format!("unsupported conversion %{}", other as char)),
         };
         if let Some(p) = prec
@@ -251,10 +271,55 @@ mod tests {
     use super::*;
 
     fn fmt(f: &str, args: &[u64]) -> String {
+        fmt_d(f, args, &[])
+    }
+
+    fn fmt_d(f: &str, args: &[u64], doubles: &[f64]) -> String {
         let mut it = args.iter().copied();
         let mut next = move || it.next().unwrap_or(0);
+        let mut ds = doubles.iter().copied();
+        let mut next_double = move || ds.next();
         let mut cstr = |_a: u64| Some(b"str".to_vec());
-        String::from_utf8(format_printf(f.as_bytes(), &mut next, &mut cstr).unwrap()).unwrap()
+        String::from_utf8(
+            format_printf(f.as_bytes(), &mut next, &mut next_double, &mut cstr).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn doubles_print_as_glibc_and_as_the_runtime_shim_does() {
+        assert_eq!(
+            fmt_d(
+                "  #%d %-6s (%d,%d) %.1f\n",
+                &[1, 0x1000, (-2i32) as u32 as u64, 7],
+                &[1.25]
+            ),
+            "  #1 str    (-2,7) 1.2\n"
+        );
+        assert_eq!(
+            fmt_d("%f|%e|%g", &[], &[0.5, 1234.5, 0.0001]),
+            "0.500000|1.234500e+03|0.0001"
+        );
+        assert_eq!(
+            fmt_d("%08.3f|%-8.2f|%+G", &[], &[-4.56789, 2.0, 1e-10]),
+            "-004.568|2.00    |+1E-10"
+        );
+        // The shim formats the same conversions the same way.
+        let shim = unsafe {
+            crate::rt::format_c(
+                c"%08.3f|%-8.2f|%+G".as_ptr().cast(),
+                &[
+                    crate::rt::Arg::Double(-4.56789),
+                    crate::rt::Arg::Double(2.0),
+                    crate::rt::Arg::Double(1e-10),
+                ],
+            )
+        };
+        assert_eq!(String::from_utf8(shim).unwrap(), "-004.568|2.00    |+1E-10");
+        let mut next = || 0;
+        let mut none = || None;
+        let mut cstr = |_a: u64| None;
+        assert!(format_printf(b"%f", &mut next, &mut none, &mut cstr).is_err());
     }
 
     #[test]
