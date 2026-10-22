@@ -61,6 +61,7 @@ const MIGRATIONS: &[&str] = &[
     crate::lineage::MIGRATION,
     crate::bookmarks::MIGRATION,
     crate::ai_usage::MIGRATION,
+    crate::patches::MIGRATION,
 ];
 
 /// Number of schema migrations this build knows; the version of a fully migrated database.

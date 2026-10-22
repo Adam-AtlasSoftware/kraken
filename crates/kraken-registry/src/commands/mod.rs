@@ -18,6 +18,7 @@ mod history;
 mod infer;
 mod jobs;
 mod local_model;
+mod patch;
 mod probe;
 mod project;
 mod query;
@@ -77,6 +78,11 @@ pub use local_model::{
     LocalModelSetupOut, LocalSetupPlan, MissingView, ModelView, SetupProgress, StrataCandidateView,
     StrataPlan, StrataView, recommend_view, recommendation_now, strata_downloads, strata_now,
     strata_view,
+};
+pub use patch::{
+    AppliedPatchView, MAX_PATCH_BYTES, MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchExport,
+    PatchExportArgs, PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs,
+    PatchRemoveOut, PatchSet, PatchSetArgs, PatchView,
 };
 pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
 pub use project::{
@@ -249,6 +255,10 @@ pub fn register_all(r: &mut Registry) {
     r.register(BookmarkAdd);
     r.register(BookmarkRemove);
     r.register(BookmarkList);
+    r.register(PatchSet);
+    r.register(PatchRemove);
+    r.register(PatchList);
+    r.register(PatchExport);
     // Card COST: what AI work costs and what runs.
     r.register(AiUsage);
     r.register(AiJobs);
