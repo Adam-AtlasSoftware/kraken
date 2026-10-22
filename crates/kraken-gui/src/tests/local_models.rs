@@ -683,9 +683,11 @@ fn screenshot_local_setup() {
 
 #[test]
 fn the_pick_step_offers_strata_engine_choices_and_a_model_file_you_have() {
+    // A GPU is needed only for the screenshot; CI runners have none.
+    let shot = std::env::var_os("KRAKEN_SHOT_DIR").is_some();
     let mut r = build(
         None,
-        true,
+        shot,
         [900.0, 1100.0],
         Some((sample_survey(one_card(), 64.0, 412.0), Duration::ZERO)),
     );

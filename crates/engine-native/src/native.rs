@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(unix)]
 use crate::engine::check;
 use crate::engine::{InProcessEngine, NativeConfig, NativeStats};
+#[cfg(unix)]
 use crate::worker::Isolation;
 #[cfg(unix)]
 use crate::worker::client::WorkerEngine;
