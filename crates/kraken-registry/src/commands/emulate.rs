@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
+#[cfg(unix)]
 use kraken_emu::confined::{find_runner, run_program_confined};
 use kraken_emu::{Arch, EmuError, Exit, ProgramOutcome, RunSpec};
 use kraken_proto::{ErrorCode, ProtoError, Untrusted, sanitize};
@@ -19,6 +20,23 @@ use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
 use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
 use crate::session::{Session, blocking};
+
+// The sandboxed runner is Unix-only: elsewhere no runner is found and `emulate_run` says so.
+#[cfg(not(unix))]
+fn find_runner() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(unix))]
+fn run_program_confined(
+    _spec: &RunSpec,
+    _runner: &Path,
+    _options: ConfinementOptions,
+) -> Result<(ProgramOutcome, kraken_sidecar::ConfinementReport), EmuError> {
+    Err(EmuError::Unsupported(
+        "whole-program emulation runs on Linux only".into(),
+    ))
+}
 
 /// Default instruction budget of `emulate_run`.
 pub const DEFAULT_MAX_STEPS: u64 = 20_000_000;

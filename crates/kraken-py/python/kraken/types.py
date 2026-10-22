@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 __all__ = [
     "Block",
@@ -132,12 +132,21 @@ class ProjectInfo:
 
 @dataclass(frozen=True)
 class JobProgress:
-    """Progress of a running job."""
+    """Progress of a running job.
+
+    ``step`` is the step inside the phase (for analysis, the engine's analyzer with its own
+    ``name``, ``done`` and ``total``), ``elapsed_ms`` the time since the job started and
+    ``activity`` how busy the engine's process is (``cpu_percent``, ``quiet_secs``); each is
+    ``None`` when not reported.
+    """
 
     phase: str
     done: int
     total: int
     message: str
+    step: Optional[dict] = None
+    elapsed_ms: Optional[int] = None
+    activity: Optional[dict] = None
 
 
 @dataclass(frozen=True)
