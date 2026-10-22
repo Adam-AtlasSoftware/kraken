@@ -135,6 +135,13 @@ pub struct PermissionCard {
     pub input: Option<String>,
     /// Files involved.
     pub paths: Vec<String>,
+    /// The `shell` tool: the exact command, shown in full.
+    pub command: Option<String>,
+    /// The `shell` tool: why it asks (the policy's reason).
+    pub ask_reason: Option<String>,
+    /// The `shell` tool: the program the "Always allow in this project" button adds. `None`
+    /// when no project is open, the command cannot be allowed by a list entry, or it is refused.
+    pub allow_program: Option<String>,
     /// Where it stands.
     pub state: PermissionState,
 }
@@ -397,6 +404,8 @@ pub struct AssistState {
     pub(crate) registry: Arc<Registry>,
     pub(crate) run: Option<ActiveRun>,
     pub(crate) history: Vec<kraken_agent::Message>,
+    /// The shell tool's scratch directory: kept for the whole conversation.
+    pub(crate) shell_session: Arc<kraken_assist::ShellSession>,
     pub(crate) run_ids: RunIdGen,
     pub(crate) seq: u64,
     pub(crate) offered_once: bool,
@@ -405,6 +414,9 @@ pub struct AssistState {
     /// Replaces `[ai_limits] auto_continue` in tests.
     #[cfg(test)]
     pub(crate) auto_continue_override: Option<u32>,
+    /// Replaces the `[assistant_shell]` table in tests.
+    #[cfg(test)]
+    pub(crate) shell_config_override: Option<kraken_host::ShellConfig>,
 }
 
 impl Default for AssistState {
@@ -424,12 +436,15 @@ impl Default for AssistState {
             registry: Arc::new(Registry::standard()),
             run: None,
             history: Vec::new(),
+            shell_session: Arc::new(kraken_assist::ShellSession::new()),
             run_ids: RunIdGen::new(),
             seq: 0,
             offered_once: false,
             auto_continues: 0,
             #[cfg(test)]
             auto_continue_override: None,
+            #[cfg(test)]
+            shell_config_override: None,
         }
     }
 }

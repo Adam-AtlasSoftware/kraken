@@ -1113,3 +1113,236 @@ fn automate_runs_the_flow_with_bulk_edits_and_never_accepts_for_the_person() {
     let entries = r.history_for("rename");
     assert!(entries[0].by_agent);
 }
+
+// ------------------------------------------------------------------ the shell tool
+
+fn shell_rig(command: &str) -> Option<Rig> {
+    if !kraken_assist::ShellHost::available() {
+        eprintln!("skipped: this host cannot confine");
+        return None;
+    }
+    let mut r = rig(vec![
+        tool_call("s1", "shell", json!({ "command": command })),
+        say("Done."),
+    ]);
+    r.vm.assist.shell_config_override = Some(kraken_host::ShellConfig::default());
+    Some(r)
+}
+
+fn permission_card(r: &Rig) -> Option<PermissionCard> {
+    r.vm.assist.items.iter().find_map(|i| match i {
+        ChatItem::Permission(c) => Some(c.clone()),
+        _ => None,
+    })
+}
+
+fn project_dir(r: &Rig) -> std::path::PathBuf {
+    r.vm.project
+        .as_ref()
+        .expect("project")
+        .project_dir
+        .clone()
+        .into()
+}
+
+#[test]
+fn a_harmless_shell_command_runs_without_a_card() {
+    let Some(mut r) = shell_rig("echo '2^64-1' | bc") else {
+        return;
+    };
+    r.vm.assist_send("What is 2^64-1?");
+    r.settle();
+    assert!(permission_card(&r).is_none());
+    let chip = r
+        .tools()
+        .into_iter()
+        .find(|c| c.name == "shell")
+        .expect("chip");
+    assert!(
+        chip.summary
+            .as_deref()
+            .is_some_and(|s| s.contains("18446744073709551615")),
+        "{chip:?}"
+    );
+    assert!(!chip.is_error);
+}
+
+#[test]
+fn an_unknown_shell_command_asks_with_the_exact_text_and_a_reason() {
+    let Some(mut r) = shell_rig("ls -la") else {
+        return;
+    };
+    r.vm.assist_send("List your scratch directory");
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.assist
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::Permission(_)))
+    }));
+    let card = permission_card(&r).expect("card");
+    assert_eq!(card.title, "shell");
+    assert_eq!(card.command.as_deref(), Some("ls -la"));
+    assert!(
+        card.ask_reason
+            .as_deref()
+            .is_some_and(|w| w.contains("`ls`")),
+        "{card:?}"
+    );
+    assert_eq!(card.allow_program.as_deref(), Some("ls"));
+    assert_eq!(card.state, PermissionState::Waiting);
+    // Nothing ran yet.
+    assert!(r.tools().iter().all(|c| c.summary.is_none()));
+    r.vm.assist_answer_permission(&card.id, true);
+    r.settle();
+    let chip = r
+        .tools()
+        .into_iter()
+        .find(|c| c.name == "shell")
+        .expect("chip");
+    assert!(!chip.is_error, "{chip:?}");
+    assert!(!project_dir(&r).join("assistant-shell.toml").exists());
+}
+
+#[test]
+fn denying_the_card_refuses_the_command() {
+    let Some(mut r) = shell_rig("ls") else {
+        return;
+    };
+    r.vm.assist_send("List");
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.assist
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::Permission(_)))
+    }));
+    let card = permission_card(&r).expect("card");
+    r.vm.assist_answer_permission(&card.id, false);
+    r.settle();
+    assert!(r.tools().is_empty(), "a denied command never started");
+    assert!(
+        r.vm.assist
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::Permission(c) if c.state == PermissionState::Denied))
+    );
+}
+
+#[test]
+fn always_allow_approves_and_remembers_the_program_for_the_project() {
+    let Some(mut r) = shell_rig("ls -la") else {
+        return;
+    };
+    r.vm.assist_send("List");
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.assist
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::Permission(_)))
+    }));
+    let card = permission_card(&r).expect("card");
+    r.vm.assist_always_allow_shell(&card.id);
+    r.settle();
+    let chip = r
+        .tools()
+        .into_iter()
+        .find(|c| c.name == "shell")
+        .expect("chip");
+    assert!(!chip.is_error, "{chip:?}");
+    let file = std::fs::read_to_string(project_dir(&r).join("assistant-shell.toml")).expect("file");
+    assert!(file.contains("allow = [\"ls\"]"), "{file}");
+    // The next ls runs without a card.
+    let (p, badge) = scripted_provider(
+        vec![
+            tool_call("s2", "shell", json!({"command": "ls"})),
+            say("Again."),
+        ],
+        "test-model",
+    );
+    r.vm.assist.set_provider(p, badge);
+    r.vm.assist.items.clear();
+    r.vm.assist_send("List again");
+    r.settle();
+    assert!(permission_card(&r).is_none());
+}
+
+#[test]
+fn a_command_that_cannot_be_remembered_has_no_always_button_and_is_still_approved_once() {
+    let Some(mut r) = shell_rig("echo a; ls") else {
+        return;
+    };
+    r.vm.assist_send("Two things");
+    assert!(r.vm.block_until(WAIT, |vm| {
+        vm.assist
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::Permission(_)))
+    }));
+    let card = permission_card(&r).expect("card");
+    assert_eq!(card.command.as_deref(), Some("echo a; ls"));
+    assert!(
+        card.ask_reason
+            .as_deref()
+            .is_some_and(|w| w.contains("`;`")),
+        "{card:?}"
+    );
+    assert_eq!(card.allow_program, None);
+    r.vm.assist_always_allow_shell(&card.id);
+    r.settle();
+    assert!(!project_dir(&r).join("assistant-shell.toml").exists());
+    let chip = r
+        .tools()
+        .into_iter()
+        .find(|c| c.name == "shell")
+        .expect("chip");
+    assert!(!chip.is_error, "{chip:?}");
+}
+
+#[test]
+fn a_refused_shell_command_fails_with_the_reason_and_no_card() {
+    let Some(mut r) = shell_rig("./a.out") else {
+        return;
+    };
+    r.vm.assist_send("Run it");
+    r.settle();
+    assert!(permission_card(&r).is_none());
+    let chip = r
+        .tools()
+        .into_iter()
+        .find(|c| c.name == "shell")
+        .expect("chip");
+    assert!(chip.is_error, "{chip:?}");
+    assert!(
+        chip.summary
+            .as_deref()
+            .is_some_and(|s| s.contains("emulate_run")),
+        "{chip:?}"
+    );
+}
+
+#[test]
+fn the_shell_tool_is_one_short_entry_in_low_context_mode() {
+    if !kraken_assist::ShellHost::available() {
+        return;
+    }
+    let host = kraken_assist::ShellHost::new(
+        Arc::new(kraken_assist::RegistryToolHost::new(
+            Arc::new(kraken_registry::Registry::standard()),
+            Arc::new(VmCommands::new(Arc::new(FakeBackend::new()))),
+            kraken_assist::HostOptions::default(),
+        )),
+        Arc::new(kraken_assist::ShellSession::new()),
+        kraken_host::ShellConfig::default(),
+        None,
+        None,
+    );
+    let low = kraken_agent::LowContextHost::new(Arc::new(host));
+    use kraken_agent::ToolHost;
+    let tools = low.tools();
+    let shell = tools.iter().find(|t| t.name == "shell").expect("listed");
+    assert!(
+        shell.description.chars().count() <= 111,
+        "{}",
+        shell.description
+    );
+    assert!(!shell.description.contains('\n'));
+}

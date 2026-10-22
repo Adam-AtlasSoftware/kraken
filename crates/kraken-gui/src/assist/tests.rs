@@ -429,3 +429,67 @@ fn the_settings_window_has_an_ai_section_that_loads_the_saved_provider() {
     assert_eq!(h.app.settings().ai.draft().kind, ProviderKind::LmStudio);
     assert_eq!(h.app.settings().ai.draft().model, "my-model");
 }
+
+#[test]
+fn a_shell_approval_card_shows_the_command_and_always_allow_writes_the_project_file() {
+    if !kraken_assist::ShellHost::available() {
+        return;
+    }
+    let mut h = Harness::new(Services::offline());
+    h.provide(vec![
+        tool_call(
+            "s1",
+            "shell",
+            json!({"command": "stat /dev/null | head -2"}),
+        ),
+        say("Done."),
+    ]);
+    h.app
+        .view_model_mut()
+        .expect("vm")
+        .assist_send("Stat the null device");
+    h.run_until("the shell card", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.assist.items.iter().any(|i| {
+                matches!(i, ChatItem::Permission(c)
+                    if c.state == kraken_viewmodel::assist::PermissionState::Waiting)
+            })
+        })
+    });
+    for _ in 0..3 {
+        h.step();
+    }
+    let (id, card) = {
+        let vm = h.app.view_model().expect("vm");
+        vm.assist
+            .items
+            .iter()
+            .find_map(|i| match i {
+                ChatItem::Permission(c) => Some((c.id.clone(), c.clone())),
+                _ => None,
+            })
+            .expect("card")
+    };
+    assert_eq!(card.command.as_deref(), Some("stat /dev/null | head -2"));
+    assert!(card.ask_reason.is_some());
+    assert_eq!(card.allow_program.as_deref(), Some("stat"));
+    let dir = std::path::PathBuf::from(
+        h.app
+            .view_model()
+            .expect("vm")
+            .project
+            .as_ref()
+            .expect("project")
+            .project_dir
+            .clone(),
+    );
+    let _ = std::fs::remove_file(dir.join("assistant-shell.toml"));
+    h.app
+        .view_model_mut()
+        .expect("vm")
+        .assist_always_allow_shell(&id);
+    h.settle();
+    let text = std::fs::read_to_string(dir.join("assistant-shell.toml")).expect("file");
+    assert!(text.contains("\"stat\""), "{text}");
+    let _ = std::fs::remove_file(dir.join("assistant-shell.toml"));
+}

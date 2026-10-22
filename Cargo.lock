@@ -2703,6 +2703,7 @@ dependencies = [
  "futures-util",
  "kraken-acp",
  "kraken-agent",
+ "kraken-confine",
  "kraken-engine",
  "kraken-host",
  "kraken-ipc",
@@ -2717,6 +2718,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]

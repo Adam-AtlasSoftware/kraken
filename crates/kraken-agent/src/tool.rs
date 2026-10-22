@@ -17,6 +17,17 @@ pub enum Permission {
     Dangerous,
 }
 
+/// What the host decides about one call, before it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    /// Run it.
+    Allow,
+    /// Ask the person first.
+    Ask,
+    /// Refuse it; the reason goes to the model as the tool's error.
+    Deny(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
@@ -48,5 +59,14 @@ pub enum ToolError {
 #[async_trait]
 pub trait ToolHost: Send + Sync {
     fn tools(&self) -> Vec<ToolSpec>;
+    /// Whether this call runs, needs approval, or is refused. The default follows the tool's
+    /// [`Permission`]: `Safe` and `Mutating` run, `Dangerous` asks. A host that can tell a
+    /// harmless call from a risky one of the same tool overrides it. Wrappers forward it.
+    fn decide(&self, name: &str, _args: &Value) -> Decision {
+        match self.tools().iter().find(|t| t.name == name) {
+            Some(t) if t.permission == Permission::Dangerous => Decision::Ask,
+            _ => Decision::Allow,
+        }
+    }
     async fn call(&self, name: &str, args: Value, ctx: &ToolCtx) -> Result<Value, ToolError>;
 }
