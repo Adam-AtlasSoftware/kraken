@@ -70,10 +70,10 @@ fn job(id: &str, command: &str, status: JobState) -> JobInfo {
 }
 
 fn done(id: &str, command: &str, result: Value) -> BackendEvent {
-    BackendEvent::Job(JobInfo {
+    BackendEvent::Job(Box::new(JobInfo {
         result: Some(result),
         ..job(id, command, JobState::Succeeded)
-    })
+    }))
 }
 
 fn base() -> FakeBackend {
@@ -247,23 +247,24 @@ fn a_rewrite_job_shows_progress_then_the_verified_result() {
     assert_eq!(call["mode"], "incremental");
     assert_eq!(r.vm.rewrite.jobs[0].job_id.as_deref(), Some("job-7"));
 
-    r.backend.emit(BackendEvent::Job(JobInfo {
+    r.backend.emit(BackendEvent::Job(Box::new(JobInfo {
         progress: Some(JobProgress {
             phase: "Testing".into(),
             done: 3,
             total: 4,
             message: "Running both versions".into(),
+            ..Default::default()
         }),
         ..job("job-7", "rewrite_function", JobState::Running)
-    }));
+    })));
     r.until("progress", |vm| vm.rewrite.jobs[0].progress.is_some());
     assert_eq!(r.vm.rewrite.jobs[0].fraction(), Some(0.75));
     // Another command's job is none of the tab's business.
-    r.backend.emit(BackendEvent::Job(job(
+    r.backend.emit(BackendEvent::Job(Box::new(job(
         "job-8",
         "analyze",
         JobState::Running,
-    )));
+    ))));
 
     let before = r.backend.calls_to("rewrite_status").len();
     r.backend.emit(done(
@@ -682,13 +683,13 @@ fn another_failure_is_a_message_and_a_failed_job_says_why() {
     r.vm.rewrite_run(0x401240, RewriteMode::Spec);
     r.idle();
     assert_eq!(r.backend.calls_to("rewrite_function")[0]["mode"], "spec");
-    r.backend.emit(BackendEvent::Job(JobInfo {
+    r.backend.emit(BackendEvent::Job(Box::new(JobInfo {
         error: Some(ProtoError::new(
             ErrorCode::InvalidArgument,
             "floating point parameters are not supported yet",
         )),
         ..job("job-2", "rewrite_function", JobState::Failed)
-    }));
+    })));
     r.until("failure", |vm| !vm.rewrite.jobs[0].running());
     let d = r.vm.rewrite.details.get(&0x401240).expect("detail");
     assert_eq!(
@@ -970,13 +971,13 @@ fn a_failed_run_says_why_and_a_missing_pipeline_is_reported_once() {
     r.vm.rewrite.availability = Availability::Unknown;
     r.vm.rewrite_program_run();
     r.idle();
-    r.backend.emit(BackendEvent::Job(JobInfo {
+    r.backend.emit(BackendEvent::Job(Box::new(JobInfo {
         error: Some(ProtoError::new(
             ErrorCode::InvalidArgument,
             "the binary changed",
         )),
         ..job("job-f", "rewrite_program", JobState::Failed)
-    }));
+    })));
     r.until("the failure", |vm| !vm.rewrite_program_running());
     assert!(r.vm.rewrite.program.error.is_some());
     assert_eq!(r.vm.rewrite.jobs[0].state, JobState::Failed);
@@ -1196,11 +1197,11 @@ fn stopping_a_bulk_run_keeps_the_rest_from_starting() {
     assert!(!r.vm.rewrite.bulk.active());
     r.idle();
     assert_eq!(r.backend.calls_to("job_cancel")[0]["job_id"], "job-1");
-    r.backend.emit(BackendEvent::Job(job(
+    r.backend.emit(BackendEvent::Job(Box::new(job(
         "job-1",
         "rewrite_function",
         JobState::Cancelled,
-    )));
+    ))));
     r.until("the job to end", |vm| !vm.rewrite.busy());
     assert_eq!(r.backend.calls_to("rewrite_function").len(), 1);
 }

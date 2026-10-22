@@ -177,6 +177,9 @@ impl NativeEngine {
 }
 
 impl Engine for NativeEngine {
+    fn process_id(&self) -> Option<u32> {
+        self.worker_pid()
+    }
     fn capabilities(&self) -> EngineCaps {
         route!(self, l => l.capabilities(), _w => {
             InProcessEngine::new(self.config.clone()).capabilities()

@@ -40,7 +40,7 @@ mod inprocess;
 pub use approval::ApprovalBroker;
 pub use backend::{
     ApprovalPrompt, Approver, Backend, BackendEvent, CallAs, ChangeInfo, CommandInfo, CommandKind,
-    JobInfo, JobProgress, JobState, Permission,
+    EngineActivity, JobInfo, JobProgress, JobState, JobStep, Permission,
 };
 #[cfg(feature = "daemon")]
 pub use daemon::{

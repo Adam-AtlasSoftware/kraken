@@ -819,7 +819,7 @@ impl ViewModel {
                     self.ai.wake = true;
                 }
                 self.rewrite_on_job(&info);
-                self.on_job(info);
+                self.on_job(*info);
             }
             BackendEvent::ProjectChanged => self.refresh_after_edit(),
             BackendEvent::EntryApplied(change) => {

@@ -32,5 +32,5 @@ pub use traits::{
 };
 pub use types::{
     AnalysisSummary, AnalyzeRequest, DisasmRequest, EngineRejected, LoaderSpec, ProgramInfo,
-    Progress, Stage, StringsRequest, Watermark, XrefRequest, type_def_name,
+    Progress, Stage, Step, StringsRequest, Watermark, XrefRequest, type_def_name,
 };

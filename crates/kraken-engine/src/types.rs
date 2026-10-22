@@ -66,6 +66,17 @@ impl Stage {
     }
 }
 
+/// What the engine is doing inside a stage: the analyzer (or sub-step) and its own count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Step {
+    /// Its name, as the engine calls it (engine text).
+    pub name: String,
+    /// Units done; 0 with `total` 0 when the step gives no count.
+    pub done: u64,
+    /// Units in all; 0 when unknown.
+    pub total: u64,
+}
+
 /// One progress event of an analysis job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Progress {
@@ -77,6 +88,9 @@ pub struct Progress {
     pub total: u64,
     /// Human-readable status.
     pub message: String,
+    /// The step within the stage, when the engine tells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<Step>,
 }
 
 /// Parameters of [`Analyzer::analyze`](crate::Analyzer::analyze).

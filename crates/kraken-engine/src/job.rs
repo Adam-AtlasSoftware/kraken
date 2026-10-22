@@ -88,6 +88,7 @@ mod tests {
                 done: 1,
                 total: 1,
                 message: "x".into(),
+                step: None,
             });
             Ok(AnalysisSummary {
                 stages_completed: vec![Stage::Load],

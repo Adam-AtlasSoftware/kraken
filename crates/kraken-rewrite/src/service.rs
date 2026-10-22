@@ -274,6 +274,7 @@ pub(crate) fn progress(job: &JobReporter, phase: &str, done: u64, total: u64, me
         done,
         total,
         message: kraken_proto::sanitize(message),
+        ..Default::default()
     });
 }
 

@@ -694,6 +694,7 @@ impl RewriteBackend for DemoRewrite {
                 done: i as u64,
                 total: phases.len() as u64,
                 message: (*message).into(),
+                ..Default::default()
             });
             tokio::time::sleep(STEP).await;
         }
@@ -772,6 +773,7 @@ impl RewriteBackend for DemoRewrite {
             done: 0,
             total: 1,
             message: "Asking the model for a cited spec".into(),
+            ..Default::default()
         });
         tokio::time::sleep(STEP).await;
         let mut st = self.lock();
@@ -816,6 +818,7 @@ impl RewriteBackend for DemoRewrite {
                 done: i as u64,
                 total: phases.len() as u64,
                 message: (*message).into(),
+                ..Default::default()
             });
             tokio::time::sleep(STEP).await;
         }
@@ -867,6 +870,7 @@ impl RewriteBackend for DemoRewrite {
                 done: i as u64,
                 total,
                 message: format!("cargo {name} in the sandbox"),
+                ..Default::default()
             });
             tokio::time::sleep(STEP).await;
             out.push(json!({
@@ -932,6 +936,7 @@ impl RewriteBackend for DemoRewrite {
             done: 0,
             total: 2,
             message: "Writing the workspace".into(),
+            ..Default::default()
         });
         tokio::time::sleep(STEP).await;
         write_marker(&request.dir, "manifest.json", "kraken-rewrite");
@@ -975,6 +980,7 @@ impl kraken_registry::commands::SourcePatchBackend for DemoSourcePatch {
             done: 1,
             total: 3,
             message: "planning the patch (demo)".into(),
+            ..Default::default()
         });
         tokio::time::sleep(STEP).await;
         let page = Disassemble

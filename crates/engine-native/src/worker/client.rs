@@ -678,6 +678,11 @@ fn forward(tx: &ProgressSender, p: WireProgress) {
         done: p.done,
         total: p.total,
         message: p.message,
+        step: p.step.map(|s| kraken_engine::Step {
+            name: s.name,
+            done: s.done,
+            total: s.total,
+        }),
     });
 }
 

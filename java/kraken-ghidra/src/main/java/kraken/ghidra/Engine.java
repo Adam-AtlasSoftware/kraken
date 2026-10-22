@@ -86,8 +86,11 @@ final class Engine {
     private static final String STAGES_DONE = "stages_done";
 
     interface Progress {
-        void emit(String jobId, String stage, long done, long total, String message);
+        void emit(String jobId, String stage, long done, long total, String message, Step step);
     }
+
+    /** What Ghidra is doing inside a stage: the analyzer and its own count, when it gives one. */
+    record Step(String name, long done, long total) {}
 
     private volatile GhidraProject project;
     private volatile Program program;
@@ -207,24 +210,119 @@ final class Engine {
 
     // ---- analysis -----------------------------------------------------------------------
 
-    /** Cancel-aware monitor that forwards message changes as progress notifications. */
+    /**
+     * Cancel-aware monitor that forwards what the analyzers report (the running analyzer, its
+     * message and its count) as progress notifications, at most four times a second and at once
+     * when the analyzer changes.
+     */
     private static final class JobMonitor extends TaskMonitorAdapter {
         private final Runnable onChange;
         private volatile long lastEmit;
+        private volatile AutoAnalysisManager manager;
+        private volatile String message;
+        private volatile long progress;
+        private volatile long maximum;
+        private volatile String lastAnalyzer;
+        /** The analyzer the count belongs to; a count of another analyzer is not shown. */
+        private volatile String countsFor;
 
         JobMonitor(Runnable onChange) {
             super(true);
             this.onChange = onChange;
         }
 
-        @Override
-        public void setMessage(String message) {
-            super.setMessage(message);
+        void watch(AutoAnalysisManager mgr) {
+            this.manager = mgr;
+        }
+
+        private void changed() {
+            String analyzer = analyzer();
+            boolean newAnalyzer = analyzer != null && !analyzer.equals(lastAnalyzer);
             long now = System.nanoTime();
-            if (now - lastEmit > 200_000_000L) {
+            if (newAnalyzer || now - lastEmit > 250_000_000L) {
+                if (newAnalyzer) {
+                    lastAnalyzer = analyzer;
+                }
                 lastEmit = now;
                 onChange.run();
             }
+        }
+
+        @Override
+        public void setMessage(String m) {
+            super.setMessage(m);
+            message = m;
+            changed();
+        }
+
+        @Override
+        public void initialize(long max) {
+            countsFor = analyzer();
+            maximum = max;
+            progress = 0;
+            changed();
+        }
+
+        @Override
+        public void setMaximum(long max) {
+            countsFor = analyzer();
+            maximum = max;
+            changed();
+        }
+
+        @Override
+        public void setProgress(long value) {
+            countsFor = analyzer();
+            progress = value;
+            changed();
+        }
+
+        @Override
+        public void incrementProgress(long by) {
+            countsFor = analyzer();
+            progress += by;
+            changed();
+        }
+
+        /** The analyzer Ghidra is running: its manager keeps it private, so it is read by reflection. */
+        String analyzer() {
+            AutoAnalysisManager m = manager;
+            if (m == null) {
+                return null;
+            }
+            try {
+                java.lang.reflect.Field f = AutoAnalysisManager.class.getDeclaredField("activeTask");
+                f.setAccessible(true);
+                Object wrapper = f.get(m);
+                if (wrapper == null) {
+                    return null;
+                }
+                java.lang.reflect.Field t = wrapper.getClass().getDeclaredField("task");
+                t.setAccessible(true);
+                Object task = t.get(wrapper);
+                return task instanceof ghidra.framework.cmd.BackgroundCommand<?> c ? c.getName() : null;
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                return null;
+            }
+        }
+
+        /** The text for people: the analyzer, then its own message when it says more. */
+        String describe() {
+            String a = analyzer();
+            String m = message == null ? "" : message.strip();
+            if (a == null) {
+                return m;
+            }
+            return m.isEmpty() || m.equals(a) ? a : a + ": " + m;
+        }
+
+        Step step() {
+            String a = analyzer();
+            if (a == null) {
+                return null;
+            }
+            boolean mine = a.equals(countsFor);
+            return new Step(a, mine ? progress : 0, mine ? maximum : 0);
         }
     }
 
@@ -252,13 +350,17 @@ final class Engine {
         int[] index = {0};
         JobMonitor monitor =
             new JobMonitor(
-                () -> progress.emit(jobId, current[0], index[0], todo.size(), messageOf(jobs.get(jobId))));
+                () -> {
+                    JobMonitor m = jobs.get(jobId);
+                    progress.emit(
+                        jobId, current[0], index[0], todo.size(), messageOf(m), m == null ? null : m.step());
+                });
         jobs.put(jobId, monitor);
         List<String> completed = new ArrayList<>();
         try {
             for (String stage : todo) {
                 current[0] = stage;
-                progress.emit(jobId, stage, index[0], todo.size(), "starting stage " + stage);
+                progress.emit(jobId, stage, index[0], todo.size(), "starting stage " + stage, null);
                 long t0 = System.nanoTime();
                 runStage(p, stage, monitor);
                 boolean cancelled = monitor.isCancelled();
@@ -277,7 +379,7 @@ final class Engine {
                     throw new KrakenError("cancelled", "analysis cancelled during stage " + stage, d);
                 }
                 index[0]++;
-                progress.emit(jobId, stage, index[0], todo.size(), "finished stage " + stage);
+                progress.emit(jobId, stage, index[0], todo.size(), "finished stage " + stage, null);
             }
         } finally {
             jobs.remove(jobId);
@@ -291,7 +393,7 @@ final class Engine {
     }
 
     private static String messageOf(JobMonitor m) {
-        return m == null ? "" : String.valueOf(m.getMessage());
+        return m == null ? "" : m.describe();
     }
 
     private static JsonArray stringArray(List<String> l) {
@@ -318,6 +420,7 @@ final class Engine {
             }
             mgr.initializeOptions();
             mgr.reAnalyzeAll(null);
+            monitor.watch(mgr);
             mgr.startAnalysis(monitor);
             System.err.println("kraken-ghidra: analysis task times:\n" + mgr.getTaskTimesString());
         } finally {

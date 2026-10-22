@@ -71,6 +71,7 @@ fn progress(tx: &ProgressSender, stage: Stage, done: u64, total: u64, message: S
         done,
         total,
         message,
+        step: None,
     });
 }
 

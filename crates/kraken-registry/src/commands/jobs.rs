@@ -140,6 +140,11 @@ async fn run_analysis(
     }
 }
 
+/// How often a running analysis reports, even when the engine says nothing.
+pub const ANALYSIS_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Processor use below which the engine counts as quiet.
+const QUIET_CPU_PERCENT: u32 = 3;
+
 async fn analyse(
     project: &crate::session::Project,
     reporter: &crate::jobs::JobReporter,
@@ -149,12 +154,56 @@ async fn analyse(
     let mut job = analyzer
         .analyze(AnalyzeRequest::default(), reporter.cancel_token())
         .await?;
-    while let Some(p) = job.next_progress().await {
+    let started = std::time::Instant::now();
+    let mut sampler = engine.process_id().map(crate::activity::CpuSampler::new);
+    let mut cpu: Option<u32> = None;
+    let mut last_sign = started;
+    let mut last = JobProgress {
+        phase: "load".into(),
+        message: "starting the analysis".into(),
+        ..Default::default()
+    };
+    let mut tick = tokio::time::interval(ANALYSIS_HEARTBEAT);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            p = job.next_progress() => {
+                let Some(p) = p else { break };
+                let next = JobProgress {
+                    phase: p.stage.as_str().to_string(),
+                    done: p.done,
+                    total: p.total,
+                    message: sanitize(&p.message),
+                    step: p.step.map(|s| crate::jobs::JobStep {
+                        name: sanitize(&s.name),
+                        done: s.done,
+                        total: s.total,
+                    }),
+                    ..Default::default()
+                };
+                if (&next.phase, next.done, &next.message, &next.step)
+                    != (&last.phase, last.done, &last.message, &last.step)
+                {
+                    last_sign = std::time::Instant::now();
+                }
+                last = next;
+            }
+            _ = tick.tick() => {
+                if let Some(s) = sampler.as_mut() {
+                    cpu = s.sample();
+                    if cpu.is_some_and(|c| c >= QUIET_CPU_PERCENT) {
+                        last_sign = std::time::Instant::now();
+                    }
+                }
+            }
+        }
         reporter.progress(JobProgress {
-            phase: p.stage.as_str().to_string(),
-            done: p.done,
-            total: p.total,
-            message: sanitize(&p.message),
+            elapsed_ms: Some(started.elapsed().as_millis() as u64),
+            activity: cpu.map(|c| crate::jobs::EngineActivity {
+                cpu_percent: c,
+                quiet_secs: last_sign.elapsed().as_secs(),
+            }),
+            ..last.clone()
         });
     }
     job.wait().await

@@ -639,7 +639,7 @@ pub fn map_event(v: &Value, project_key: Option<&Path>) -> Option<BackendEvent> 
     Some(match str_field(v, "kind")? {
         event_kind::ENTRY_APPLIED => BackendEvent::EntryApplied(change(v)),
         event_kind::PROPOSAL_CREATED => BackendEvent::ProposalCreated(change(v)),
-        event_kind::JOB_PROGRESS => BackendEvent::Job(JobInfo {
+        event_kind::JOB_PROGRESS => BackendEvent::Job(Box::new(JobInfo {
             job_id: str_field(v, "job_id")?.to_string(),
             command: str_field(v, "command").unwrap_or_default().to_string(),
             status: JobState::Running,
@@ -648,11 +648,12 @@ pub fn map_event(v: &Value, project_key: Option<&Path>) -> Option<BackendEvent> 
                 done: u64_of("done"),
                 total: u64_of("total"),
                 message: str_field(v, "message").unwrap_or_default().to_string(),
+                ..Default::default()
             }),
             result: None,
             error: None,
-        }),
-        event_kind::JOB_DONE => BackendEvent::Job(JobInfo {
+        })),
+        event_kind::JOB_DONE => BackendEvent::Job(Box::new(JobInfo {
             job_id: str_field(v, "job_id")?.to_string(),
             command: str_field(v, "command").unwrap_or_default().to_string(),
             status: job_state(str_field(v, "status").unwrap_or("succeeded")),
@@ -661,7 +662,7 @@ pub fn map_event(v: &Value, project_key: Option<&Path>) -> Option<BackendEvent> 
             error: v
                 .get("error")
                 .and_then(|e| serde_json::from_value::<ProtoError>(e.clone()).ok()),
-        }),
+        })),
         event_kind::SIDECAR_EXITED => BackendEvent::SidecarExited {
             restart_failed: v.get("restart_failed").is_some(),
         },

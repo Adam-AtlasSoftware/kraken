@@ -253,13 +253,21 @@ final class Dispatcher {
             caps);
     }
 
-    private void progress(String jobId, String stage, long done, long total, String message) {
+    private void progress(
+            String jobId, String stage, long done, long total, String message, Engine.Step step) {
         JsonObject p = new JsonObject();
         p.addProperty("job_id", jobId);
         p.addProperty("stage", stage);
         p.addProperty("done", done);
         p.addProperty("total", total);
-        p.addProperty("message", message);
+        p.addProperty("message", message == null ? "" : message);
+        if (step != null) {
+            JsonObject st = new JsonObject();
+            st.addProperty("name", step.name());
+            st.addProperty("done", step.done());
+            st.addProperty("total", step.total());
+            p.add("step", st);
+        }
         JsonObject n = new JsonObject();
         n.addProperty("jsonrpc", "2.0");
         n.addProperty("method", "progress");

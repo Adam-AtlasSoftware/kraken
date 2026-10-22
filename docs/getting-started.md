@@ -75,7 +75,7 @@ kraken analyze
 kraken list-functions --limit 20
 ```
 
-`project-create` makes the project folder and loads the binary. `analyze` finds the functions and decompiles each one once; with the native engine this takes a second or two for a small program (with Ghidra, about a minute) and prints progress. `list-functions` shows a table of addresses, sizes and names.
+`project-create` makes the project folder and loads the binary. `analyze` finds the functions and decompiles each one once; with the native engine this takes a second or two for a small program (with Ghidra, about a minute) and prints progress: the stage, the step the engine is on with its count, and, while nothing changes, a `still running` line every 30 seconds with the engine's CPU use. `job-status` reports the same in `progress` (`step`, `elapsed_ms`, `activity`). `list-functions` shows a table of addresses, sizes and names.
 
 Look at one function as C-like code. Use an address from your own table (`0x1189` below is only an example):
 
@@ -121,7 +121,7 @@ Everything above also works in the window. Start it with `kraken-gui`.
 ![The welcome screen with the menu bar, the demo, the import box and the project box](images/tutorial/welcome.png)
 
 1. **Open a program.** Choose **File > Open program** (`Ctrl+O`), type or browse to a program, or drop an executable or library on the window. KRAKEN looks at the file first. The import dialog shows what it found (the format, the processor and a recommended engine) and says why when something is not possible. Press **Import**. No program at hand? Press **Open demo project**.
-2. **Wait for the analysis.** The status bar shows how far it is, and you can read while it runs. **Analysis > Cancel analysis** stops it.
+2. **Wait for the analysis.** The status bar shows the stage, the step the engine is on (with Ghidra, the analyzer running and its own count, such as `GCC Exception Handlers  8,818 of 10,253`), how long it has run and how busy the engine is (`engine busy 100% CPU`). Hover over the bar for the list of stages. Some steps of a large C++ program run for minutes; if the engine uses no processor time and reports nothing for a minute, the status bar says `no engine activity for …`, and the run may be stuck. You can read while it runs. **Analysis > Cancel analysis** stops it.
 3. **Find your way.** **Navigate > Go to main** opens the program's `main`. Press `G` to go to any address or name, and `Ctrl+Shift+F` to search names, strings, bytes and instructions.
 4. **Read and rename.** The Decompiler shows the function as C-like code. Click a name, press `N` and type a better one. Right-click for the rest: change type, comment, show references, bookmark, ask the assistant. `Ctrl+Z` undoes.
 5. **Ask for help.** Press **F1** for the help window. It has the whole flow in order, with a button for each step, one page for every panel, the keyboard shortcuts and a glossary. **Help > Take the tour** shows the main areas of the window in a minute. Every button and menu item also says what it does when you hover it.

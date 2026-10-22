@@ -458,6 +458,11 @@ fn forward_progress(tx: &ProgressSender, p: WireProgress) {
             done: p.done.min(p.total),
             total: p.total,
             message: p.message,
+            step: p.step.map(|s| kraken_engine::Step {
+                name: s.name,
+                done: s.done,
+                total: s.total,
+            }),
         });
     }
 }
@@ -486,6 +491,7 @@ async fn run_analysis(
             done: 1,
             total: 1,
             message: "binary loaded".into(),
+            step: None,
         });
     }
     // The sidecar skips stages that are already complete and says nothing about them; report
@@ -503,6 +509,7 @@ async fn run_analysis(
         done: 1,
         total: 1,
         message: "already complete".into(),
+        step: None,
     };
     let leading = wanted.iter().take_while(|s| already.contains(s)).count();
     for stage in &wanted[..leading] {
@@ -883,6 +890,10 @@ impl SymbolLister for GhidraEngine {
 }
 
 impl Engine for GhidraEngine {
+    fn process_id(&self) -> Option<u32> {
+        let d = self.diagnostics();
+        (d.state == "running").then_some(d.pid).flatten()
+    }
     fn capabilities(&self) -> EngineCaps {
         EngineCaps::new(
             format!(
