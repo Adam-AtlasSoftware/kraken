@@ -1,5 +1,5 @@
 {
-  // Ghidra + JDK for development live in ~/.cache/kraken-dev (see plans/dev-env.sh or run
+  // Ghidra + JDK for development live in ~/.cache/kraken-dev (see scripts/dev-env.sh or run
   // "kraken: setup (download Ghidra + JDK)", which installs them under ~/.local/share/kraken).
   "version": "2.0.0",
   "options": {

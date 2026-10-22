@@ -339,8 +339,8 @@ had less free video memory than it has today:
 | Helper cache | 45.8 | 707 | 637 | 625 |
 | Layer split | — | — | — | — |
 
-The machine was a Ryzen 9 5900XT with 62 GB RAM, RTX 3070 Ti (8 GB) as the main card and RTX 2060
-(6 GB) as the second card, running Swift 1.5 IQ2_XS. Layer split did not start because of the 6 GB
+The machine was a desktop with a 16-core CPU and 64 GB RAM, an 8 GB NVIDIA card as the main card and
+a 6 GB one as the second card, running Swift 1.5 IQ2_XS. Layer split did not start because of the 6 GB
 limit on the second card.
 
 Later, with the desktop drawn by the second card and more video memory free on the main card, one card
