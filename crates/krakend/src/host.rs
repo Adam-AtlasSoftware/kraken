@@ -486,6 +486,13 @@ impl SessionHost {
         }
     }
 
+    /// True when the session of `key` has a project attached.
+    pub fn has_project(&self, key: &Path) -> bool {
+        lock(&self.inner.sessions)
+            .get(key)
+            .is_some_and(|e| e.session.project().is_ok())
+    }
+
     /// Stops accepting calls and closes every session and sidecar.
     pub async fn close_all(&self) {
         self.inner.stopping.store(true, Ordering::SeqCst);

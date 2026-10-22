@@ -1014,3 +1014,51 @@ async fn an_open_reports_progress_and_job_cancel_stops_it_cleanly() {
     r.create(&opener, "slow").await;
     r.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn recreating_a_project_in_the_same_folder_stops_the_old_engine() {
+    let r = rig();
+    let c = r.client(ClientKind::Cli).await;
+    let dir = r.create(&c, "again").await;
+    let started = call(&c, &dir, "analyze", json!({})).await.unwrap();
+    call(&c, &dir, "job_cancel", json!({"job_id": started["job_id"]}))
+        .await
+        .unwrap();
+    // The person deletes the folder and makes the project again at the same path.
+    std::fs::remove_dir_all(&dir).expect("delete the project");
+    r.create(&c, "again").await;
+    let st = c.status().await.unwrap();
+    assert_eq!(st["sessions"].as_array().unwrap().len(), 1, "{st:#}");
+    let engines = st["engines"].as_array().unwrap();
+    let running: Vec<&Value> = engines
+        .iter()
+        .filter(|e| e["diagnostics"]["state"] == "running")
+        .collect();
+    assert_eq!(running.len(), 1, "one engine per project: {st:#}");
+    r.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_create_over_an_open_project_leaves_it_open() {
+    let r = rig();
+    let c = r.client(ClientKind::Cli).await;
+    let dir = r.create(&c, "kept").await;
+    let again = call(
+        &c,
+        &dir,
+        "project_create",
+        json!({"binary": r.binary, "project_dir": dir}),
+    )
+    .await
+    .expect_err("the folder holds a project");
+    assert!(
+        again.message.contains("already holds a project"),
+        "{again:?}"
+    );
+    // Still open and usable.
+    let list = call(&c, &dir, "list_functions", json!({})).await.unwrap();
+    assert!(list["items"].is_array());
+    let st = c.status().await.unwrap();
+    assert_eq!(st["sessions"][0]["opened"], true, "{st:#}");
+    r.stop().await;
+}

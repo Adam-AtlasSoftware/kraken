@@ -406,6 +406,15 @@ impl DaemonHandler {
         } else {
             self.grant(&key);
         }
+        // A project made again in a folder whose session still holds the old one (the folder was
+        // deleted and recreated): close that session first, so its engine does not keep running
+        // next to the new project's.
+        if p.command == "project_create"
+            && self.host.has_project(&key)
+            && !dir.join(kraken_registry::session::META_FILE).exists()
+        {
+            self.host.close_project(&key).await;
+        }
         let lease = self.host.acquire(&key, &dir).await?;
         let queued = matches!(spec.kind, CommandKind::Mutation | CommandKind::Job)
             && spec.name != "job_cancel";
