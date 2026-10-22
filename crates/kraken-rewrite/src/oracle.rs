@@ -435,6 +435,13 @@ impl FunctionOracle {
         self.stdout.clear();
         self.stderr.clear();
         self.callbacks.clear();
+        // What the last call allocated is cleared, so no case sees another's heap.
+        let used = self.heap_next - self.layout.heap_base;
+        if used > 0 {
+            self.m
+                .write_mem(self.layout.heap_base, &vec![0u8; used as usize])
+                .map_err(from_emu)?;
+        }
         self.heap_next = self.layout.heap_base;
         self.blocks.clear();
         self.objects.clear();
@@ -1022,6 +1029,12 @@ impl FunctionOracle {
                 let n = self.stub_arg(0).saturating_mul(self.stub_arg(1));
                 let p = self.allocate(n);
                 if p != 0 {
+                    // The bump heap is reused from call to call: zero the block as C does.
+                    if self.m.write_mem(p, &vec![0u8; n as usize]).is_err() {
+                        return Some(Termination::Fault {
+                            detail: format!("calloc block {p:#x} unwritable"),
+                        });
+                    }
                     self.blocks.push((p, n as usize));
                 }
                 p
