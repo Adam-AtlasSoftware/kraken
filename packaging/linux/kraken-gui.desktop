@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=KRAKEN
+GenericName=Reverse-engineering workbench
+Comment=Take programs apart: decompile, rename, patch and rewrite them, with an AI assistant
+Exec=kraken-gui %F
+Icon=kraken-gui
+Terminal=false
+Categories=Development;Debugger;
+Keywords=reverse engineering;decompiler;disassembler;ghidra;binary;patch;
+StartupWMClass=kraken-gui
