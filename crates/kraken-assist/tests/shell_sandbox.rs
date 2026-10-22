@@ -1,5 +1,6 @@
 //! The shell tool in its sandbox. Skipped where the host cannot confine (Landlock ABI 4 and
 //! network isolation).
+#![cfg(target_os = "linux")]
 
 use std::path::PathBuf;
 use std::sync::Arc;
