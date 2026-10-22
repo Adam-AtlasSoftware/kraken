@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16303a"/>
+      <stop offset="1" stop-color="#0b1a20"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <g fill="none" stroke="#3fd0b0" stroke-linecap="round" stroke-width="22">
+    <!-- the stem of the K -->
+    <path d="M86 58 V198"/>
+    <!-- upper arm: a tentacle reaching up and curling back -->
+    <path d="M94 128 C130 110 150 84 160 62 C166 48 184 46 188 60 C191 70 182 78 174 74"/>
+    <!-- lower arm: a tentacle sweeping down and curling -->
+    <path d="M100 136 C132 150 150 176 164 198 C172 210 192 206 192 192 C192 182 182 178 176 184"/>
+  </g>
+  <!-- suckers along the arms -->
+  <g fill="#0f242c">
+    <circle cx="130" cy="103" r="4.5"/>
+    <circle cx="148" cy="83" r="4"/>
+    <circle cx="132" cy="158" r="4.5"/>
+    <circle cx="150" cy="178" r="4"/>
+  </g>
+</svg>

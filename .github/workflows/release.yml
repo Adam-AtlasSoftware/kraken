@@ -211,10 +211,21 @@ jobs:
           KRAKEN_DOCS_DIR: dist-assets/docs
         run: scripts/package.sh "$TARGET" "$VERSION" out
 
+      # The same Linux archive as an AppImage (appimagetool and its runtime are pinned and
+      # SHA-256 checked by the script).
+      - name: AppImage
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: scripts/appimage.sh "out/kraken-$VERSION-$TARGET.tar.gz" out
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: out/kraken-*
+          subject-path: |
+            out/kraken-*
+            out/KRAKEN-*.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
@@ -222,6 +233,7 @@ jobs:
           path: |
             out/kraken-*.tar.gz
             out/kraken-*.zip
+            out/KRAKEN-*.AppImage
             out/*.sha256
           if-no-files-found: error
 
@@ -245,12 +257,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          find parts -maxdepth 1 -type f \( -name 'kraken-*.tar.gz' -o -name 'kraken-*.zip' \) -exec cp {} release/ \;
+          find parts -maxdepth 1 -type f \( -name 'kraken-*.tar.gz' -o -name 'kraken-*.zip' -o -name 'KRAKEN-*.AppImage' \) -exec cp {} release/ \;
           ls release
           # Linux is the supported platform: never publish a release without it.
           ls release/kraken-*-x86_64-unknown-linux-gnu.tar.gz
           cd release
-          sha256sum kraken-* > SHA256SUMS
+          sha256sum kraken-* KRAKEN-*.AppImage > SHA256SUMS
           cat SHA256SUMS
 
       - name: Attest SHA256SUMS

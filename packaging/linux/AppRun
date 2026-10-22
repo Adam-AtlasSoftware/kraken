@@ -1,0 +1,14 @@
+#!/bin/sh
+# KRAKEN AppImage entry point. With no arguments (or file arguments) it starts the app; the
+# first argument `kraken`, `krakend` or `kraken-gui` runs that program instead:
+#   ./KRAKEN.AppImage kraken analyze --project ~/kraken-projects/calc
+here=$(dirname "$(readlink -f "$0")")
+export PATH="$here/usr/bin:$PATH"
+case "${1:-}" in
+  kraken | krakend | kraken-gui)
+    prog=$1
+    shift
+    exec "$here/usr/bin/$prog" "$@"
+    ;;
+esac
+exec "$here/usr/bin/kraken-gui" "$@"

@@ -223,8 +223,9 @@ pub struct KrakenConfig {
     pub dotnet_root: Option<PathBuf>,
     /// `kraken-dotnet.dll`, the .NET engine's sidecar (default: the provisioned copy).
     pub dotnet_ext: Option<PathBuf>,
-    /// Engine for new projects of native code when none is asked for: `ghidra` (the default),
-    /// `native` or `auto` (native when its library and compiled `.sla` files are installed).
+    /// Engine for new projects of native code when none is asked for: `auto` (the default:
+    /// native when its library and compiled `.sla` files are installed and it opens the file,
+    /// else Ghidra), `ghidra` or `native`.
     pub engine: Option<EngineChoice>,
     /// Directory laid out like a Ghidra install holding the compiled Sleigh files for the native
     /// engine (default: `KRAKEN_NATIVE_SPECS`, then the tree `kraken setup --native` builds).

@@ -425,7 +425,7 @@ impl HostEngineFactory {
     /// A factory using `cfg` for the engines.
     pub fn new(cfg: KrakenConfig) -> Self {
         HostEngineFactory {
-            default_choice: cfg.engine.unwrap_or_default(),
+            default_choice: cfg.engine.unwrap_or(EngineChoice::Auto),
             ghidra: GhidraEngineFactory::new(cfg.clone()),
             dotnet: DotnetEngineFactory::new(cfg.clone()),
             native: NativeEngineFactory::new(cfg),
@@ -729,8 +729,16 @@ mod tests {
         let fit = crate::native::binary_fit(&elf);
         assert!(fit.is_ok());
 
+        // nothing configured: auto, so a ready native engine opens it
         let none = HostEngineFactory::new(without_dotnet());
         let s = none.select_with(&elf, None, &probe, &fit).unwrap();
+        assert_eq!((s.kind, s.choice), (EngineKind::Native, EngineChoice::Auto));
+
+        let ghidra = HostEngineFactory::new(KrakenConfig {
+            engine: Some(EngineChoice::Ghidra),
+            ..without_dotnet()
+        });
+        let s = ghidra.select_with(&elf, None, &probe, &fit).unwrap();
         assert_eq!(
             (s.kind, s.choice),
             (EngineKind::Ghidra, EngineChoice::Ghidra)

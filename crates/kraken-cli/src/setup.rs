@@ -375,14 +375,9 @@ pub(crate) async fn run_setup_native(
 
 /// Runs `cargo xtask <task>` in `root`, its output going to stderr.
 async fn run_xtask(root: &std::path::Path, task: &'static str) -> Result<(), String> {
-    use std::os::fd::AsFd;
     let dir = root.to_path_buf();
     let status = tokio::task::spawn_blocking(move || {
-        let to_err = std::io::stderr()
-            .as_fd()
-            .try_clone_to_owned()
-            .map(std::process::Stdio::from)
-            .unwrap_or_else(|_| std::process::Stdio::null());
+        let to_err = std::process::Stdio::from(std::io::stderr());
         std::process::Command::new("cargo")
             .args(["xtask", task])
             .current_dir(dir)
