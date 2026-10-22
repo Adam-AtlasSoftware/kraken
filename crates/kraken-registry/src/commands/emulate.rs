@@ -208,7 +208,8 @@ fn sysroot_for(arch: Arch) -> Option<PathBuf> {
         Arch::Arm => "arm32",
         Arch::Aarch64 => "aarch64",
         Arch::Riscv64 => "riscv64",
-        Arch::X86_64 | Arch::Riscv32 => return None,
+        Arch::X86_64 => "x86_64",
+        Arch::Riscv32 => return None,
     };
     let root = match std::env::var_os("KRAKEN_EMU_SYSROOTS").filter(|v| !v.is_empty()) {
         Some(p) => PathBuf::from(p),
@@ -235,6 +236,14 @@ fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
                  `kraken setup --native`, or set KRAKEN_NATIVE_SPECS to a tree that holds \
                  Ghidra/Processors ({e})"
             ),
+        ),
+        EmuError::NeedsSysroot {
+            arch: Arch::X86_64, ..
+        } => problem(
+            ErrorCode::Unsupported,
+            "a dynamically linked x86-64 program needs a sysroot: run `cargo xtask \
+             emu-sysroots` (needs docker or podman and the debian:trixie-slim image) or set \
+             KRAKEN_EMU_SYSROOTS",
         ),
         EmuError::NeedsSysroot { .. } => problem(ErrorCode::Unsupported, e.to_string()),
         EmuError::Unsupported(m) => problem(ErrorCode::Unsupported, m),
@@ -327,6 +336,7 @@ fn present(o: ProgramOutcome, mut notes: Vec<String>) -> EmulateRunOut {
         }
     };
     notes.insert(0, format!("architecture {}", o.arch.name()));
+    notes.extend(o.notes.iter().cloned());
     if !o.unknown_syscalls.is_empty() {
         let nums: Vec<String> = o.unknown_syscalls.iter().map(u64::to_string).collect();
         notes.push(format!(

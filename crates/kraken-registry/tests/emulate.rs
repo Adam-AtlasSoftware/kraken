@@ -102,3 +102,39 @@ async fn a_corpus_program_runs_under_emulation() {
     assert_eq!(small["exit"]["kind"], "step_limit", "{small}");
     assert_eq!(small["exit"]["value"], json!(null));
 }
+
+/// A real dynamically linked x86-64 program (`KRAKEN_EMU_TEST_BINARY`) with the x86_64 sysroot
+/// of `cargo xtask emu-sysroots`: it must prompt and run to the end on two inputs.
+#[tokio::test]
+#[ignore = "needs KRAKEN_EMU_TEST_BINARY=<x86-64 program>, the x86_64 sysroot and the SLEIGH tree"]
+async fn a_real_dynamic_x86_64_program_runs_with_the_sysroot() {
+    let Some(binary) = std::env::var_os("KRAKEN_EMU_TEST_BINARY")
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+    else {
+        eprintln!("KRAKEN_EMU_TEST_BINARY is not set to a file: skipped");
+        return;
+    };
+    let env = Setup::new(tiny()).start().await;
+    std::fs::copy(&binary, &env.binary).expect("copy the program");
+    // SAFETY: set before any other thread reads it; this test is the only one in the binary
+    // that touches the variable.
+    unsafe { std::env::set_var("KRAKEN_EMU_RUN", runner()) };
+    for stdin in ["hunter2\n".to_string(), format!("{}\n", "A".repeat(32))] {
+        let out = env
+            .ok(
+                &user(),
+                "emulate_run",
+                json!({"stdin": stdin, "max_steps": 200_000_000u64, "timeout_seconds": 120}),
+            )
+            .await;
+        println!("stdin {stdin:?}\n{out:#}");
+        println!(
+            "stdout: {}\nstderr: {}\nexit: {}\nsteps: {}",
+            out["stdout"]["value"], out["stderr"]["value"], out["exit"], out["steps"]
+        );
+        assert_eq!(out["exit"]["kind"], "code", "{out}");
+        let stdout = out["stdout"]["value"].as_str().expect("stdout");
+        assert!(stdout.contains("password>"), "{out}");
+    }
+}

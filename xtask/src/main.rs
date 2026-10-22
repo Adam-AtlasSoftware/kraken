@@ -32,10 +32,13 @@ Commands:
                c++/cc) and compile the x86, AArch64, ARM and RISC-V specifications into
                ~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, so the native engine needs no
                Ghidra install.
-  emu-sysroots Extract the armhf, arm64 and riscv64 glibc sysroots (loader and shared libraries)
-               from the corpus cross image (kraken-corpus-builder:cross, see corpus/build.sh) into
-               ~/.cache/kraken-dev/emu-sysroots/<set>, so kraken-emu runs the dynamic corpus
-               binaries. KRAKEN_CORPUS_IMAGE and KRAKEN_EMU_SYSROOTS override the image and place.
+  emu-sysroots Extract the armhf, arm64, riscv64, i386 and x86-64 glibc sysroots (loader and
+               shared libraries) into ~/.cache/kraken-dev/emu-sysroots/<set>, so kraken-emu runs
+               dynamic programs. The first ones come from the corpus images (see corpus/build.sh;
+               KRAKEN_CORPUS_IMAGE, KRAKEN_CORPUS_NATIVE_IMAGE); `x86_64` comes from the local
+               debian:trixie-slim image (KRAKEN_EMU_X86_64_IMAGE), a baseline glibc, not the
+               host's. Sets whose image is missing are skipped. KRAKEN_EMU_SYSROOTS overrides
+               the place. Needs docker.
   bench        Run the performance benchmarks in release mode and print their tables.
                `cargo xtask bench [engine|daemon|gui|widgets|all] [binary...]`: with no suite, the
                engine one. The binaries (default: the system's libpython, cargo and libQt6Widgets)

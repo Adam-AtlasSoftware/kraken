@@ -1,9 +1,11 @@
 //! `cargo xtask emu-sysroots`: extract the Debian sysroots (the dynamic loader and shared
-//! libraries of armhf, arm64, riscv64 and i386 glibc) from the corpus build images, so kraken-emu
-//! can run the dynamically linked corpus binaries. The images are the ones `corpus/build.sh`
-//! builds (`kraken-corpus-builder:cross` for the ARM and RISC-V sets, `kraken-corpus-builder:local`
+//! libraries of armhf, arm64, riscv64, i386 and x86-64 glibc) so kraken-emu can run dynamically
+//! linked programs. The first four come from the corpus build images `corpus/build.sh` builds
+//! (`kraken-corpus-builder:cross` for the ARM and RISC-V sets, `kraken-corpus-builder:local`
 //! with gcc-multilib for `elf32`; `KRAKEN_CORPUS_IMAGE` and `KRAKEN_CORPUS_NATIVE_IMAGE` override
-//! them). The sysroots go to `~/.cache/kraken-dev/emu-sysroots/<set>` (override the parent with
+//! them). The `x86_64` set comes from a plain Debian image (`debian:trixie-slim`, override
+//! `KRAKEN_EMU_X86_64_IMAGE`): its glibc is built for baseline x86-64, which is what the
+//! emulated CPU is; the libraries of the host (often x86-64-v3 with AVX2) cannot be used. The sysroots go to `~/.cache/kraken-dev/emu-sysroots/<set>` (override the parent with
 //! `KRAKEN_EMU_SYSROOTS`). Only shared objects are kept (static archives and objects are dropped).
 
 use std::path::{Path, PathBuf};
@@ -13,12 +15,20 @@ use crate::Result;
 
 const CROSS_IMAGE: &str = "kraken-corpus-builder:cross";
 const NATIVE_IMAGE: &str = "kraken-corpus-builder:local";
+const DEBIAN_IMAGE: &str = "debian:trixie-slim";
 
-/// One sysroot: the corpus set, whether it comes from the cross image, the directory copied out
+#[derive(PartialEq, Clone, Copy)]
+enum Source {
+    Cross,
+    Native,
+    Debian,
+}
+
+/// One sysroot: the set, which image it comes from, the directory copied out
 /// of the image and where it goes in the sysroot, and relative links to create.
 struct Sysroot {
     set: &'static str,
-    cross: bool,
+    from: Source,
     src: &'static str,
     dest: &'static str,
     links: &'static [(&'static str, &'static str)],
@@ -27,21 +37,21 @@ struct Sysroot {
 const SYSROOTS: &[Sysroot] = &[
     Sysroot {
         set: "arm32",
-        cross: true,
+        from: Source::Cross,
         src: "/usr/arm-linux-gnueabihf/lib",
         dest: "lib",
         links: &[],
     },
     Sysroot {
         set: "aarch64",
-        cross: true,
+        from: Source::Cross,
         src: "/usr/aarch64-linux-gnu/lib",
         dest: "lib",
         links: &[],
     },
     Sysroot {
         set: "riscv64",
-        cross: true,
+        from: Source::Cross,
         src: "/usr/riscv64-linux-gnu/lib",
         dest: "lib",
         links: &[],
@@ -49,12 +59,26 @@ const SYSROOTS: &[Sysroot] = &[
     // gcc-multilib's i386 glibc lives in /usr/lib32; the loader is /lib/ld-linux.so.2.
     Sysroot {
         set: "elf32",
-        cross: false,
+        from: Source::Native,
         src: "/usr/lib32",
         dest: "usr/lib32",
         links: &[
             ("lib32", "usr/lib32"),
             ("lib/ld-linux.so.2", "../usr/lib32/ld-linux.so.2"),
+        ],
+    },
+    // Debian's multiarch glibc, libstdc++ and libgcc_s; the loader is found through /lib64.
+    Sysroot {
+        set: "x86_64",
+        from: Source::Debian,
+        src: "/usr/lib/x86_64-linux-gnu",
+        dest: "usr/lib/x86_64-linux-gnu",
+        links: &[
+            ("lib", "usr/lib"),
+            (
+                "lib64/ld-linux-x86-64.so.2",
+                "../usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+            ),
         ],
     },
 ];
@@ -160,10 +184,17 @@ pub fn emu_sysroots() -> Result<()> {
         std::env::var("KRAKEN_CORPUS_NATIVE_IMAGE").unwrap_or_else(|_| NATIVE_IMAGE.to_string());
     let out = out_dir()?;
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let debian =
+        std::env::var("KRAKEN_EMU_X86_64_IMAGE").unwrap_or_else(|_| DEBIAN_IMAGE.to_string());
     let mut done = 0;
-    for (image, is_cross, how) in [
-        (&cross, true, "corpus/build.sh arm32"),
-        (&native, false, "corpus/build.sh elf32"),
+    for (image, source, how) in [
+        (&cross, Source::Cross, "corpus/build.sh arm32".to_string()),
+        (&native, Source::Native, "corpus/build.sh elf32".to_string()),
+        (
+            &debian,
+            Source::Debian,
+            format!("docker pull {DEBIAN_IMAGE}"),
+        ),
     ] {
         if !image_present(image) {
             eprintln!(
@@ -171,14 +202,15 @@ pub fn emu_sysroots() -> Result<()> {
             );
             continue;
         }
-        let roots: Vec<&Sysroot> = SYSROOTS.iter().filter(|r| r.cross == is_cross).collect();
+        let roots: Vec<&Sysroot> = SYSROOTS.iter().filter(|r| r.from == source).collect();
         extract(image, &roots, &out)?;
         done += roots.len();
     }
     if done == 0 {
         return Err(
-            "no corpus image present; build them with `corpus/build.sh arm32 elf32`, or set \
-             KRAKEN_CORPUS_IMAGE / KRAKEN_CORPUS_NATIVE_IMAGE"
+            "no image present; build the corpus ones with `corpus/build.sh arm32 elf32`, pull \
+             debian:trixie-slim, or set KRAKEN_CORPUS_IMAGE / KRAKEN_CORPUS_NATIVE_IMAGE / \
+             KRAKEN_EMU_X86_64_IMAGE"
                 .into(),
         );
     }
