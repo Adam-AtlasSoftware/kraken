@@ -34,7 +34,7 @@ pub use provider::replay::{
     Cassette, CassetteEntry, Fingerprint, RecordingProvider, ReplayProvider,
 };
 pub use thinking::{Effort, ThinkingConfig};
-pub use tool::{Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
+pub use tool::{Decision, Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
 pub use types::{
     ChatRequest, ChatStream, Completion, FinishReason, Message, ProviderInfo, StreamAssembler,
     StreamEvent, ToolCall, Usage,

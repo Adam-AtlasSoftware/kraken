@@ -319,6 +319,97 @@ the same over MCP, in the CLI and for the built-in assistant):
 None of them changes the project; a GUI that is not open simply ignores them. The GUI publishes
 its state to the daemon the same way it publishes the selection (`kraken://gui/selection`).
 
+## The shell and the emulator
+
+The chat can run a small shell command for you, for the helper work a model gets wrong when it does
+it in its head: arithmetic, bit twiddling, hashes, hex and base64, sorting and counting. It is one
+tool, `shell`, with a description of about 70 tokens, so it costs a small model almost no context.
+Low context mode lists it as one short line like the others. It exists only in the interactive chat
+(the GUI Assistant tab), not in explain, overview, auto-name or `kraken eval`, and not for terminal
+agents, which have their own tools. It is left out on a computer that cannot confine it (Landlock
+ABI 4 or newer and network isolation, the same requirement as the rewrite pipeline).
+
+```
+shell {"command": "echo '2^64-1' | bc"}
+shell {"command": "python3 -c 'print(0x9e3779b9*3 % 2**32)'", "timeout_seconds": 20}
+```
+
+The result has `exit` (the exit code, or `null` when the command was killed), `output` (standard
+output then standard error, marked untrusted because a command can print what a file contains; cut
+at 4000 characters with a note), and `timed_out`. A command gets 10 seconds by default and at most 60.
+
+### What the sandbox guarantees
+
+Whatever the command is and whoever approved it, it runs `bash --norc --noprofile -c` (`sh -c` where
+there is no bash) in a sandbox:
+
+- **No network.** Sockets, TCP and UDP, do not work.
+- **Your files are not readable.** Only the system's programs and libraries, the analysed program
+  and the project's `exports` folder (read-only), and a scratch folder. Your home directory, your
+  KRAKEN configuration and the project's database are out of reach.
+- **One writable place:** a scratch folder, private to this chat. It is kept between commands (write
+  a file in one, read it in the next) and deleted when you clear the chat or close the window.
+  Nothing written there, or placed there, can be executed.
+- **Limits:** 2 GiB of memory, 30 seconds of CPU time, files up to 64 MiB, and a cap on how many
+  processes it can start that allows pipelines and stops a fork bomb. The environment holds only
+  `PATH` and `LANG=C`. At the deadline the command and everything it started is killed.
+
+### Running the analysed program
+
+The shell never runs the analysed program, and a command that names a program by path (`./a.out`,
+`/home/...`, the scratch folder) is refused with "The analysed program is run with emulate_run, not
+the shell." `emulate_run` runs it in the emulator instead (see [Running the program in the
+emulator](emulation.md)): deterministic, with no access to your computer.
+
+### Three outcomes
+
+The sandbox is the security boundary; the rules below only decide when you are asked.
+
+- **Runs at once:** a plain pipeline (`a | b | c`) of known harmless programs: `bc dc expr printf
+  echo seq date true false test wc head tail sort uniq cut tr paste fold rev tac nl grep egrep fgrep
+  sed diff cmp comm xxd od hexdump base64 basenc md5sum sha1sum sha224sum sha256sum sha384sum
+  sha512sum cksum b2sum strings file readelf objdump nm c++filt size`, and `python3` as `python3 -c
+  CODE` or `python3 -`. A few options that write files or run programs turn it into a question
+  (`sort -o`, `grep --pre`, `sed` with `w`, `e`, `r` or `-i`, `dc` with `!`, `uniq` or `xxd` with
+  an output file).
+- **Asks you:** anything else: an unknown program (`ls`, `cat`, `awk`, `python3 script.py`),
+  and any line with more than a pipeline: `;`, `&`, `&&`, `||`, `>`, `<`, here-documents, line
+  breaks, backticks, `$(...)`, `$VARIABLE`, parentheses or braces. The card shows the exact command
+  and the reason it asks.
+- **Refused:** `sudo su doas ssh scp sftp curl wget nc ncat telnet ftp pip pip3 npm npx cargo apt
+  apt-get dnf yum pacman mount umount kill pkill killall reboot shutdown poweroff systemctl service
+  docker podman nsenter chroot`, also behind `env`, `xargs`, `timeout` and similar, inside a
+  pipeline or after a `;`, and any program given by a path that is not a system program. There is
+  no card; the model is told why. Nothing you add to a settings file lifts this.
+
+### Your own lists
+
+Two files, with the same keys. Each entry is a command prefix compared word by word: `"objdump"`
+matches every `objdump ...`, `"git log"` matches `git log -3` but not `git push`.
+
+```toml
+# <project folder>/assistant-shell.toml   (this project)
+# [assistant_shell] in ~/.config/kraken/config.toml   (every project; same keys)
+allow = ["cat", "ls", "git log"]   # run without asking
+ask   = ["python3"]                # always ask, even though the built-in list allows it
+deny  = ["rm", "git push"]         # refuse, with no card
+```
+
+Order: the built-in rules, then `config.toml`, then the project file. A `deny` entry always wins.
+An `allow` entry adds to the built-in list but cannot lift a refusal above or make a line with
+`;`, `>`, `$(...)` and the like run without asking: such entries are ignored, and the reason is
+shown as a warning. An `ask` entry makes a program ask. The files are read at each command, so an
+edit applies at once.
+
+### Approving
+
+The approval card shows the exact command in a monospace box (never shortened) and why it asks.
+**Approve** runs it once. **Deny** refuses it. **Always allow `<program>` in this project** approves
+it and adds the program (for example `objdump`) to `allow` in the project's `assistant-shell.toml`,
+creating the file with a short header comment if it is not there; existing content is kept. The
+button is off when no project is open or the command has no single program to allow (a line with
+`;` or `>`), and for a refused command there is no card at all.
+
 ## Choose a model for each feature
 
 The assistant and the rewrite pipeline each pick their own backend, and either can be a model API

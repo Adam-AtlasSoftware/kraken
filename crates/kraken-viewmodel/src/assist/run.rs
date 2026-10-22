@@ -7,8 +7,8 @@ use kraken_agent::{
 };
 use kraken_assist::{
     ASSISTANT_ID, AcpBackend, ApiBackend, AssistBackend, Assistant, AutoNameOptions, AutomateGoal,
-    HostOptions, Purpose, RegistryToolHost, RunSpec, SelectionKind, Task, TaskKind, TaskOutput,
-    TaskResult,
+    HostOptions, Purpose, RegistryToolHost, RunSpec, SelectionKind, ShellHost, Task, TaskKind,
+    TaskOutput, TaskResult,
 };
 use kraken_host::backend::CommandBackend;
 use kraken_proto::{Hex64, ProtoError, sanitize};
@@ -356,6 +356,89 @@ impl ViewModel {
         )))
     }
 
+    /// For the `shell` tool: the command to show, why it asks, and the program that could be
+    /// allowed for the project.
+    fn shell_card_parts(
+        &self,
+        tool: &str,
+        arguments: &Value,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        if tool != kraken_assist::SHELL_TOOL {
+            return (None, None, None);
+        }
+        let Some(command) = arguments.get("command").and_then(Value::as_str) else {
+            return (None, None, None);
+        };
+        let dir = self.shell_project_dir();
+        let review =
+            kraken_assist::review_shell_command(&self.shell_settings(), dir.as_deref(), command);
+        let reason = match review.verdict {
+            kraken_assist::shell::Verdict::Ask(why) => Some(sanitize(&why)),
+            _ => None,
+        };
+        let program = dir.and(review.program).map(|p| sanitize(&p));
+        (Some(sanitize(command)), reason, program)
+    }
+
+    /// The global `[assistant_shell]` table.
+    fn shell_settings(&self) -> kraken_host::ShellConfig {
+        #[cfg(test)]
+        if let Some(c) = &self.assist.shell_config_override {
+            return c.clone();
+        }
+        kraken_host::KrakenConfig::load()
+            .map(|c| c.assistant_shell)
+            .unwrap_or_default()
+    }
+
+    /// The open project's directory, where `assistant-shell.toml` lives.
+    fn shell_project_dir(&self) -> Option<std::path::PathBuf> {
+        self.project
+            .as_ref()
+            .filter(|p| !p.project_dir.is_empty())
+            .map(|p| p.project_dir.clone().into())
+    }
+
+    /// Approves a `shell` command and remembers its program for this project (the
+    /// "Always allow in this project" button). If the entry cannot be saved the command is
+    /// approved once and the problem is shown.
+    pub fn assist_always_allow_shell(&mut self, id: &str) {
+        let dir = self.shell_project_dir();
+        self.assist_always_allow_shell_in(id, dir.as_deref());
+    }
+
+    /// [`assist_always_allow_shell`](Self::assist_always_allow_shell) for the project directory
+    /// `dir`.
+    pub fn assist_always_allow_shell_in(&mut self, id: &str, dir: Option<&std::path::Path>) {
+        let program = self.assist.items.iter().find_map(|i| match i {
+            ChatItem::Permission(c) if c.id == id && c.state == PermissionState::Waiting => {
+                Some(c.allow_program.clone())
+            }
+            _ => None,
+        });
+        let Some(program) = program else {
+            return;
+        };
+        let saved = match (&program, dir) {
+            (Some(prog), Some(dir)) => {
+                kraken_assist::add_project_allow(dir, prog).map_err(|e| e.to_string())
+            }
+            _ => Err("there is nothing to remember for this command".to_string()),
+        };
+        match (saved, program) {
+            (Ok(_), Some(prog)) => self.toast(
+                crate::ToastLevel::Info,
+                format!("`{prog}` runs without asking in this project from now on (assistant-shell.toml)."),
+            ),
+            (Err(e), _) => self.toast(
+                crate::ToastLevel::Error,
+                format!("Could not remember that: {e}. Approved once."),
+            ),
+            (Ok(_), None) => {}
+        }
+        self.assist_answer_permission(id, true);
+    }
+
     /// Where answers to a terminal agent's permission requests go.
     fn assist_set_approvals(&mut self, seq: u64, handle: ApprovalHandle) {
         if let Some(run) = self.assist.run.as_mut().filter(|r| r.seq == seq) {
@@ -495,7 +578,7 @@ impl ViewModel {
         };
         let run_id = self.assist.run_ids.next_id();
         let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
-        let host = Arc::new(RegistryToolHost::new(
+        let registry_host = Arc::new(RegistryToolHost::new(
             self.assist.registry.clone(),
             backend,
             HostOptions {
@@ -504,6 +587,13 @@ impl ViewModel {
                 max_writes: Some(MAX_WRITES),
                 ..HostOptions::default()
             },
+        ));
+        let host = Arc::new(ShellHost::new(
+            registry_host,
+            self.assist.shell_session.clone(),
+            self.shell_settings(),
+            self.shell_project_dir(),
+            self.project.as_ref().map(|p| p.binary_path.clone().into()),
         ));
         let mut system_extra = ASSISTANT_CHAT_PROMPT.to_string();
         if let Some(cur) = &self.current {
@@ -727,6 +817,7 @@ impl ViewModel {
         }
         self.assist.items.clear();
         self.assist.history.clear();
+        self.assist.shell_session = Arc::new(kraken_assist::ShellSession::new());
     }
 
     /// Called when analysis finishes: offers the overview once per project.
@@ -900,6 +991,7 @@ impl ViewModel {
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(Value::as_str).map(sanitize).collect())
                     .unwrap_or_default();
+                let (command, ask_reason, allow_program) = self.shell_card_parts(&name, &arguments);
                 end_stream(&mut self.assist.items);
                 self.assist.items.push(ChatItem::Permission(PermissionCard {
                     id,
@@ -907,6 +999,9 @@ impl ViewModel {
                     kind: text("kind"),
                     input: text("input"),
                     paths,
+                    command,
+                    ask_reason,
+                    allow_program,
                     state: PermissionState::Waiting,
                 }));
             }

@@ -26,6 +26,7 @@ struct Acts {
     decide: Vec<(String, bool)>,
     answer: Vec<(String, bool)>,
     always: Vec<String>,
+    always_shell: Vec<String>,
     rename: Option<(u64, String)>,
 }
 
@@ -88,6 +89,9 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     }
     for id in acts.always {
         vm.assist_always_allow(&id);
+    }
+    for id in acts.always_shell {
+        vm.assist_always_allow_shell(&id);
     }
     for (id, allow) in acts.answer {
         vm.assist_answer_permission(&id, allow);
@@ -622,10 +626,16 @@ fn permission_card(
         };
         ui.horizontal_wrapped(|ui| {
             chip(ui, word, color);
-            ui.add(
-                egui::Label::new(RichText::new(&c.title).size(12.5).color(p.text_dim)).truncate(),
-            );
+            let what = match &c.command {
+                Some(command) => format!("{}: {command}", c.title),
+                None => c.title.clone(),
+            };
+            ui.add(egui::Label::new(RichText::new(what).size(12.5).color(p.text_dim)).truncate());
         });
+        return;
+    }
+    if let Some(command) = &c.command {
+        shell_card(ui, p, s, c, command, acts);
         return;
     }
     Frame::new()
@@ -688,6 +698,100 @@ fn permission_card(
                 if ui
                     .button("Deny")
                     .on_hover_text("Refuse. The agent cannot do this")
+                    .clicked()
+                {
+                    acts.answer.push((c.id.clone(), false));
+                }
+            });
+        });
+}
+
+/// The assistant's `shell` tool asking: the exact command, why, and the buttons.
+fn shell_card(
+    ui: &mut Ui,
+    p: &Palette,
+    s: &style::Status,
+    c: &PermissionCard,
+    command: &str,
+    acts: &mut Acts,
+) {
+    Frame::new()
+        .fill(p.surface)
+        .stroke(Stroke::new(1.0, s.warning.gamma_multiply(0.7)))
+        .corner_radius(8)
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                chip(ui, "wants to run a command", s.warning);
+                ui.label(
+                    RichText::new("in a sandbox: no network, nothing of yours is changed")
+                        .size(11.5)
+                        .color(p.text_dim),
+                );
+            });
+            ui.add_space(4.0);
+            Frame::new()
+                .fill(p.bg)
+                .corner_radius(4)
+                .inner_margin(Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(command)
+                                .monospace()
+                                .size(12.5)
+                                .color(p.text_strong),
+                        )
+                        .wrap(),
+                    );
+                });
+            if let Some(why) = &c.ask_reason {
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("Asking because: {why}"))
+                            .size(12.0)
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+            }
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                if style::primary_button(ui, "Approve")
+                    .on_hover_text("Run this command once. Ask again next time")
+                    .clicked()
+                {
+                    acts.answer.push((c.id.clone(), true));
+                }
+                let (label, hint) = match &c.allow_program {
+                    Some(prog) => (
+                        format!("Always allow `{prog}` in this project"),
+                        format!(
+                            "Run this command and let `{prog}` run without asking in this \
+                             project. Saved in assistant-shell.toml in the project folder"
+                        ),
+                    ),
+                    None => (
+                        "Always allow in this project".to_string(),
+                        "Not available: this command has no single program to allow, or no \
+                         project is open"
+                            .to_string(),
+                    ),
+                };
+                if ui
+                    .add_enabled(c.allow_program.is_some(), egui::Button::new(label))
+                    .on_hover_text(hint)
+                    .on_disabled_hover_text("Not available for this command")
+                    .clicked()
+                {
+                    acts.always_shell.push(c.id.clone());
+                }
+                if ui
+                    .button("Deny")
+                    .on_hover_text("Refuse. The assistant is told it was not allowed")
                     .clicked()
                 {
                     acts.answer.push((c.id.clone(), false));

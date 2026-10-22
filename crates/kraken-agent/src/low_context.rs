@@ -19,7 +19,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::tool::{Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
+use crate::tool::{Decision, Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
 
 /// The name of the tool that returns the full description and parameters of other tools.
 pub const TOOL_HELP: &str = "tool_help";
@@ -205,6 +205,13 @@ impl ToolHost for LowContextHost {
             .collect();
         specs.push(Self::help_spec());
         specs
+    }
+
+    fn decide(&self, name: &str, args: &Value) -> Decision {
+        if name == TOOL_HELP {
+            return Decision::Allow;
+        }
+        self.inner.decide(name, args)
     }
 
     async fn call(&self, name: &str, args: Value, ctx: &ToolCtx) -> Result<Value, ToolError> {

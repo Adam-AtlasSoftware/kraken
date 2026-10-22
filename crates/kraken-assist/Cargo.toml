@@ -11,6 +11,7 @@ publish = false
 async-trait = "0.1.89"
 futures-util = "0.3"
 kraken-acp = { path = "../kraken-acp", version = "0.0.0" }
+kraken-confine = { path = "../kraken-confine", version = "0.0.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-host = { path = "../kraken-host", version = "0.0.0" }
 kraken-ipc = { path = "../kraken-ipc", version = "0.0.0" }
@@ -24,6 +25,7 @@ thiserror.workspace = true
 tokio = { version = "1.47", features = ["rt", "sync", "time", "macros"] }
 tokio-util = { version = "0.7.16", default-features = false }
 toml = "0.8"
+toml_edit = "0.22"
 
 [dev-dependencies]
 engine-fake = { path = "../engine-fake", version = "0.0.0" }

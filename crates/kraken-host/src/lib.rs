@@ -28,7 +28,9 @@ pub mod provision;
 pub mod strata_setup;
 
 pub use author::{RunIdGen, agent_id_from_client, user_id};
-pub use config::{ConfigError, DaemonSettings, KrakenConfig, LocalServingSettings, TitlebarMode};
+pub use config::{
+    ConfigError, DaemonSettings, KrakenConfig, LocalServingSettings, ShellConfig, TitlebarMode,
+};
 pub use convention::finalize_output;
 pub use factory::{
     DotnetEngineFactory, EngineDiagnostics, EngineEvent, FactoryEvent, GhidraEngineFactory,

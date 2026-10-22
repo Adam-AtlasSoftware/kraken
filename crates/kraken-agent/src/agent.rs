@@ -16,7 +16,7 @@ use crate::compact;
 use crate::error::AgentError;
 use crate::provider::ChatProvider;
 use crate::safety::{summarize, system_prompt, wrap_tool_error, wrap_tool_result};
-use crate::tool::{Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
+use crate::tool::{Decision, ToolCtx, ToolError, ToolHost, ToolSpec};
 use crate::types::{
     ChatRequest, FinishReason, Message, StreamAssembler, StreamEvent, ToolCall, Usage,
 };
@@ -455,11 +455,11 @@ impl Loop {
         messages: &mut Vec<Message>,
     ) -> Flow {
         let name = sanitize(&call.name);
-        let Some(spec) = specs.get(call.name.as_str()) else {
+        if !specs.contains_key(call.name.as_str()) {
             self.finish_call(messages, call, Err(format!("unknown tool `{name}`")))
                 .await;
             return Flow::Continue;
-        };
+        }
         if !call.arguments.is_object() {
             self.finish_call(
                 messages,
@@ -469,7 +469,19 @@ impl Loop {
             .await;
             return Flow::Continue;
         }
-        if spec.permission == Permission::Dangerous {
+        let decision = self.host.decide(&call.name, &call.arguments);
+        if let Decision::Deny(reason) = decision {
+            // Shown as a call that failed, so the person sees what was refused and why.
+            self.emit(AgentEvent::ToolCallStarted {
+                id: call.id.clone(),
+                name: name.clone(),
+                arguments: sanitize_value(&call.arguments),
+            })
+            .await;
+            self.finish_call(messages, call, Err(reason)).await;
+            return Flow::Continue;
+        }
+        if decision == Decision::Ask {
             self.emit(AgentEvent::ApprovalRequired {
                 id: call.id.clone(),
                 name: name.clone(),

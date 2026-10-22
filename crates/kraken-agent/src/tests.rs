@@ -695,3 +695,116 @@ async fn context_window_error_with_nothing_to_elide_fails() {
     assert_eq!(done(&events).0, StopReason::Error);
     assert_eq!(provider.seen.lock().unwrap().len(), 1);
 }
+
+/// One dangerous tool whose decision depends on the arguments.
+struct PerCallHost {
+    inner: Arc<FakeHost>,
+}
+
+#[async_trait]
+impl ToolHost for PerCallHost {
+    fn tools(&self) -> Vec<ToolSpec> {
+        self.inner.tools()
+    }
+
+    fn decide(&self, name: &str, args: &Value) -> Decision {
+        match (name, args["mode"].as_str()) {
+            ("wipe_project", Some("allow")) => Decision::Allow,
+            ("wipe_project", Some("deny")) => Decision::Deny("not on this project".into()),
+            ("read_strings", Some("ask")) => Decision::Ask,
+            _ => self.inner.decide(name, args),
+        }
+    }
+
+    async fn call(&self, name: &str, args: Value, ctx: &ToolCtx) -> Result<Value, ToolError> {
+        self.inner.call(name, args, ctx).await
+    }
+}
+
+#[test]
+fn the_default_decision_follows_the_permission() {
+    let host = FakeHost::new();
+    let a = json!({});
+    assert_eq!(host.decide("read_strings", &a), Decision::Allow);
+    assert_eq!(host.decide("rename", &a), Decision::Allow);
+    assert_eq!(host.decide("wipe_project", &a), Decision::Ask);
+    let wrapped = LowContextHost::new(host);
+    assert_eq!(wrapped.decide("wipe_project", &a), Decision::Ask);
+    assert_eq!(wrapped.decide("rename", &a), Decision::Allow);
+    assert_eq!(wrapped.decide(TOOL_HELP, &a), Decision::Allow);
+}
+
+#[tokio::test]
+async fn a_host_can_allow_a_dangerous_call_without_asking() {
+    let fake = FakeHost::new();
+    let host = Arc::new(PerCallHost {
+        inner: fake.clone(),
+    });
+    let provider = capture(ReplayProvider::scripted(vec![
+        call_events("d1", "wipe_project", r#"{"mode":"allow"}"#, 10),
+        text_events("ok"),
+    ]));
+    let run = Agent::run_goal("x", host, provider, AgentConfig::default());
+    let seen = collect(run).await;
+    assert_eq!(fake.called(), ["wipe_project"]);
+    assert!(
+        !seen
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ApprovalRequired { .. }))
+    );
+}
+
+#[tokio::test]
+async fn a_denied_call_fails_with_the_reason_and_no_card() {
+    let fake = FakeHost::new();
+    let host = Arc::new(PerCallHost {
+        inner: fake.clone(),
+    });
+    let provider = capture(ReplayProvider::scripted(vec![
+        call_events("d1", "wipe_project", r#"{"mode":"deny"}"#, 10),
+        text_events("ok"),
+    ]));
+    let run = Agent::run_goal("x", host, provider.clone(), AgentConfig::default());
+    let seen = collect(run).await;
+    assert!(fake.called().is_empty());
+    assert!(
+        !seen
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ApprovalRequired { .. }))
+    );
+    assert!(seen.iter().any(|e| matches!(
+        e,
+        AgentEvent::ToolCallFinished { is_error: true, summary, .. } if summary.contains("not on this project")
+    )));
+    assert!(
+        seen.iter()
+            .any(|e| matches!(e, AgentEvent::ToolCallStarted { .. })),
+        "the refused call is shown"
+    );
+    let reqs = provider.requests.lock().unwrap();
+    let last = format!("{:?}", reqs[1].messages.last());
+    assert!(last.contains("not on this project"));
+}
+
+#[tokio::test]
+async fn a_safe_tool_can_be_made_to_ask() {
+    let fake = FakeHost::new();
+    let host = Arc::new(PerCallHost {
+        inner: fake.clone(),
+    });
+    let provider = capture(ReplayProvider::scripted(vec![
+        call_events("d1", "read_strings", r#"{"mode":"ask"}"#, 10),
+        text_events("ok"),
+    ]));
+    let mut run = Agent::run_goal("x", host, provider, AgentConfig::default());
+    let mut asked = false;
+    while let Some(ev) = run.next().await {
+        if let AgentEvent::ApprovalRequired { id, .. } = &ev {
+            asked = true;
+            assert!(fake.called().is_empty());
+            run.approvals().decide(id, ApprovalDecision::Approve);
+        }
+    }
+    assert!(asked);
+    assert_eq!(fake.called(), ["read_strings"]);
+}

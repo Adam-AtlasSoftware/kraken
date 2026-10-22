@@ -30,6 +30,7 @@ pub mod output;
 pub mod permissions;
 pub mod pricing;
 pub mod provider;
+pub mod shell;
 pub mod tasks;
 
 pub use acp::{
@@ -61,6 +62,10 @@ pub use pricing::{DEFAULT_PRICES, Price, Pricing};
 pub use provider::{
     SAMPLES, build_provider, load_provider_config, load_rewrite_config, no_provider_message,
     provider_config_path, sample_config, text_backend, text_backend_from_config,
+};
+pub use shell::{
+    PolicyFileError, SHELL_TOOL, ShellHost, ShellReview, ShellSession, add_project_allow,
+    review as review_shell_command,
 };
 pub use tasks::{
     AUTOMATE_JOB_TIMEOUT, AUTOMATE_REWRITE_UNLOCK, AutoNameOptions, AutomateGoal, Budget,

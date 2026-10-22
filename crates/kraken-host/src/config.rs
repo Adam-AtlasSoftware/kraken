@@ -141,6 +141,29 @@ impl Default for LocalServingSettings {
     }
 }
 
+/// The `[assistant_shell]` table (and the project's `assistant-shell.toml`, same keys): which
+/// shell commands the assistant may run without asking (`allow`), must ask for (`ask`) or may
+/// never run (`deny`). Each entry is a command prefix compared word by word with the command,
+/// such as `"objdump"` or `"git log"`. The sandbox is the security boundary; these lists only
+/// decide when to ask. `kraken-assist` applies them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ShellConfig {
+    /// Commands that run without asking (added to the built-in set).
+    pub allow: Vec<String>,
+    /// Commands that always ask, even when the built-in set allows them.
+    pub ask: Vec<String>,
+    /// Commands that are refused. A deny entry always wins.
+    pub deny: Vec<String>,
+}
+
+impl ShellConfig {
+    /// True when no list has an entry.
+    pub fn is_empty(&self) -> bool {
+        self.allow.is_empty() && self.ask.is_empty() && self.deny.is_empty()
+    }
+}
+
 /// User configuration. Unset fields fall back to the environment (`KRAKEN_GHIDRA_HOME`, ...) and
 /// then to the engine's defaults.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +206,9 @@ pub struct KrakenConfig {
     /// How local models are kept running and shown.
     #[serde(skip_serializing_if = "is_default_serving")]
     pub local_serving: LocalServingSettings,
+    /// The `[assistant_shell]` table: the assistant's shell tool.
+    #[serde(skip_serializing_if = "ShellConfig::is_empty")]
+    pub assistant_shell: ShellConfig,
     /// The `[provider]` table (chat model for the assistant). Kept opaque here and parsed by
     /// `kraken-assist` (`kraken_agent::ProviderConfig`); present so the file still loads.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -608,6 +634,26 @@ mod tests {
         assert_eq!(back.provider.as_ref().unwrap()["kind"], "anthropic");
         assert_eq!(back.pricing.as_ref().unwrap()["foo"], 1);
         assert_eq!(back.local_serving.grace().as_secs(), 30);
+    }
+
+    #[test]
+    fn assistant_shell_round_trips_and_is_not_written_when_empty() {
+        let c = KrakenConfig::from_toml(
+            "[assistant_shell]\nallow = [\"objdump\", \"git log\"]\ndeny = [\"rm\"]\n",
+        )
+        .unwrap();
+        assert_eq!(c.assistant_shell.allow, ["objdump", "git log"]);
+        assert_eq!(c.assistant_shell.deny, ["rm"]);
+        assert!(c.assistant_shell.ask.is_empty());
+        let back = KrakenConfig::from_toml(&c.to_toml().unwrap()).unwrap();
+        assert_eq!(back, c);
+        assert!(
+            !KrakenConfig::default()
+                .to_toml()
+                .unwrap()
+                .contains("assistant_shell")
+        );
+        assert!(KrakenConfig::from_toml("[assistant_shell]\nbogus = 1\n").is_err());
     }
 
     #[test]
