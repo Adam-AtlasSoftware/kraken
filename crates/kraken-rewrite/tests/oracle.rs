@@ -232,6 +232,27 @@ fn strncpy_is_modelled_as_c_does() {
         .expect("call");
     assert_eq!(r.termination, Termination::Returned, "{r:?}");
     let d = r.ret_object.expect("described");
+    // calloc zeroes, and no case sees an earlier case's heap: `next` (the last 8 bytes) is null
+    // in a second call too.
+    assert!(d.ends_with("0000000000000000"), "{d}");
+    let again = o
+        .call(
+            entry,
+            &sig,
+            &[
+                int(8),
+                buf(b"x\0".to_vec()),
+                int(1),
+                int(2),
+                Arg::Double {
+                    bits: 2.5f64.to_bits(),
+                },
+            ],
+        )
+        .expect("call")
+        .ret_object
+        .expect("described");
+    assert!(again.ends_with("0000000000000000"), "{again}");
     // Block 0 of 0x30 bytes: id 7, then 15 copied bytes and the zero the calloc left.
     assert!(d.starts_with("a0+0:48:07000000"), "{d}");
     assert!(
