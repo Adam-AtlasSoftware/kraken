@@ -26,8 +26,10 @@ analysis engine, carry no undo entry and never alter the program you are analysi
 - `patch_list` — every patch with its original and replacement bytes, note and who set it.
 - `patch_export` — write a copy of the binary with every patch applied.
 
-Setting a patch and exporting one are **dangerous** operations: they ask for approval every time
-(ADR 0005), whether the caller is you or an agent.
+Recording and removing patches are ordinary reversible edits to the overlay — nothing is written
+to disk and nothing runs — so they do not ask for approval. Producing a patched binary with
+`patch_export` is the **dangerous** step and asks every time (ADR 0005), whether the caller is you
+or an agent.
 
 ## Exporting a patched binary
 

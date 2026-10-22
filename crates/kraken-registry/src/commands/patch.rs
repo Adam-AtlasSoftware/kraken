@@ -135,14 +135,15 @@ impl Command for PatchSet {
             "patch_set",
             "Record a byte patch: replacement bytes at an address, with the originals kept",
             CommandKind::Mutation,
-            Permission::Dangerous,
+            Permission::Mutating,
         )
         .doc(
             "Records replacement bytes at an address. The bytes there now are read and kept as \
              the originals, so the patch can be checked and undone. Setting a patch changes \
-             nothing on disk; `patch_export` writes the patched bytes into a copy of the binary, \
-             and `emulate_run {\"patched\": true}` runs a patched copy. A patch where one exists \
-             replaces it. Always asks for approval.\n\
+             nothing on disk and does not run anything: it is a reversible overlay entry. \
+             `patch_export` (which writes a patched binary) is the step that asks for approval; \
+             `emulate_run {\"patched\": true}` runs a patched copy in the sandbox to check it. A \
+             patch where one exists replaces it.\n\
              Example: patch_set {\"address\": \"0x401136\", \"bytes\": \"9090\", \"note\": \"skip the check\"}",
         )
         .details(
