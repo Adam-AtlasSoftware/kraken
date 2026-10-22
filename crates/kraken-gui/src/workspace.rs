@@ -31,6 +31,7 @@ pub enum Tab {
     Rewrite,
     Search,
     Bookmarks,
+    Patches,
     AiActivity,
 }
 
@@ -55,11 +56,12 @@ impl Tab {
             Tab::Rewrite => "rewrite",
             Tab::Search => "search",
             Tab::Bookmarks => "bookmarks",
+            Tab::Patches => "patches",
             Tab::AiActivity => "ai_activity",
         }
     }
 
-    pub const ALL: [Tab; 15] = [
+    pub const ALL: [Tab; 16] = [
         Tab::Functions,
         Tab::Decompiler,
         Tab::Hex,
@@ -74,6 +76,7 @@ impl Tab {
         Tab::Rewrite,
         Tab::Search,
         Tab::Bookmarks,
+        Tab::Patches,
         Tab::AiActivity,
     ];
 
@@ -93,6 +96,7 @@ impl Tab {
             Tab::Rewrite => "Rewrite",
             Tab::Search => "Search",
             Tab::Bookmarks => "Bookmarks",
+            Tab::Patches => "Patches",
             Tab::AiActivity => "AI Activity",
         }
     }
@@ -203,6 +207,7 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
         state.bring_to_front = Some(match t {
             NavTab::Search => Tab::Search,
             NavTab::Bookmarks => Tab::Bookmarks,
+            NavTab::Patches => Tab::Patches,
             NavTab::History => Tab::History,
             NavTab::Rewrite => Tab::Rewrite,
         });
@@ -210,7 +215,10 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
     if let Some(tab) = state.bring_to_front.take() {
         // A layout without the tab (a screenshot scene) gets it in the focused pane.
         if dock.find_tab(&tab).is_none()
-            && matches!(tab, Tab::Search | Tab::Bookmarks | Tab::AiActivity)
+            && matches!(
+                tab,
+                Tab::Search | Tab::Bookmarks | Tab::Patches | Tab::AiActivity
+            )
         {
             dock.push_to_focused_leaf(tab);
         }
@@ -310,6 +318,7 @@ impl TabViewer for Viewer<'_> {
             ),
             Tab::Search => panels::search::show(ui, self.vm, &mut self.ui.panels),
             Tab::Bookmarks => panels::bookmarks::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Patches => panels::patches::show(ui, self.vm),
             Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
         }
     }

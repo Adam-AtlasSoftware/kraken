@@ -95,6 +95,16 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
             };
             if sel.is_some()
                 && ui
+                    .button("Patch selection")
+                    .on_hover_text(
+                        "Replace the selected bytes. Nothing on disk changes until you export",
+                    )
+                    .clicked()
+            {
+                vm.begin_patch_bytes();
+            }
+            if sel.is_some()
+                && ui
                     .button("Who refers here  (X)")
                     .on_hover_text("List everything that points at the selected byte")
                     .clicked()
@@ -134,15 +144,27 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
         .take_scroll()
         .filter(|a| window.contains(a))
         .map(|a| a - window.start);
+    let clip = |h: Range<u64>, c: egui::Color32| {
+        let (a, b) = (h.start.max(window.start), h.end.min(window.end));
+        (a < b).then(|| (a - window.start..b - window.start, c))
+    };
+    // Staged patches show over the bytes they replace (the view shows the bytes on disk).
+    vm.ensure_patches();
+    let patched = s.warning.gamma_multiply(0.55);
+    // Later ranges paint over earlier ones: patches over the function highlight.
     let highlight: Vec<(Range<u64>, egui::Color32)> = vm
         .views
         .hex
         .highlight
         .iter()
-        .filter_map(|h| {
-            let (a, b) = (h.start.max(window.start), h.end.min(window.end));
-            (a < b).then(|| (a - window.start..b - window.start, p.highlight))
-        })
+        .filter_map(|h| clip(h.clone(), p.highlight))
+        .chain(
+            vm.tools
+                .patches
+                .items
+                .iter()
+                .filter_map(|it| clip(it.range(), patched)),
+        )
         .collect();
     let src = CacheSource {
         cache: &vm.views.bytes,

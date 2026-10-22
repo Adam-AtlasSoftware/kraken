@@ -39,7 +39,7 @@ pub struct MenuEnv<'a> {
 }
 
 /// The tabs the View menu lists, in menu order.
-pub const VIEW_TABS: [Tab; 15] = [
+pub const VIEW_TABS: [Tab; 16] = [
     Tab::Functions,
     Tab::Decompiler,
     Tab::Listing,
@@ -50,6 +50,7 @@ pub const VIEW_TABS: [Tab; 15] = [
     Tab::Symbols,
     Tab::Search,
     Tab::Bookmarks,
+    Tab::Patches,
     Tab::History,
     Tab::Proposals,
     Tab::Assistant,
@@ -88,6 +89,9 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::ShowReferences
             | AppAction::AddBookmark
             | AppAction::ShowBookmarks
+            | AppAction::PatchHere
+            | AppAction::ShowPatches
+            | AppAction::ExportPatched
             | AppAction::CreateFunctionHere
             | AppAction::DeleteFunction
             | AppAction::ShowAiActivity
@@ -301,6 +305,14 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             })
             .response
             .on_hover_text("Turn the program into Rust");
+            ui.menu_button("Patch", |ui| {
+                item(ui, AppAction::PatchHere, env, &mut out);
+                item(ui, AppAction::ShowPatches, env, &mut out);
+                ui.separator();
+                item(ui, AppAction::ExportPatched, env, &mut out);
+            })
+            .response
+            .on_hover_text("Change the program's bytes and write a patched copy");
             ui.menu_button("AI", |ui| {
                 item(ui, AppAction::ExplainProgram, env, &mut out);
                 item(ui, AppAction::Automate, env, &mut out);

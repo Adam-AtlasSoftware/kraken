@@ -7,6 +7,7 @@ pub mod dialogs;
 pub mod graph;
 pub mod hex;
 pub mod listing;
+pub mod patches;
 pub mod search;
 pub mod strings;
 pub mod symbols;

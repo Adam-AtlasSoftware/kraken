@@ -45,7 +45,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, History, Proposals, Assistant, Rewrite, AI Activity. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, History, Proposals, Assistant, Rewrite, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -114,6 +114,14 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Keyboard shortcuts | List every keyboard shortcut | `Ctrl+/` |
 | User guide | Open the KRAKEN documentation in your browser |  |
+
+### Patch
+
+| Item | What it does | Shortcut |
+|---|---|---|
+| Patch bytes here... | Replace the bytes of the selected instruction or Hex selection; nothing on disk changes until you export |  |
+| Show patches | See every staged byte patch, run them and export |  |
+| Export patched binary... | Write a copy of the program with every patch applied; the original is untouched |  |
 
 ## Panels
 
@@ -260,6 +268,19 @@ How to use it:
 - Remove one you no longer need. The program itself is not changed.
 
 Shortcuts here: `Ctrl+D` bookmark the address at the cursor.
+
+### Patches
+
+Byte patches staged on the program, run them in the emulator and export a patched copy.
+
+A patch replaces bytes at an address, for example to skip a check. Staging one changes nothing on disk: it is kept in the project, with the bytes that were there, so it can be removed. Run the program with the patches in the sandboxed emulator next to the original to see what changed, then export a patched copy of the binary. Export always asks first; the original file is never touched.
+
+How to use it:
+
+- In the Listing, click an instruction and press Patch bytes; in the Hex view, select bytes and press Patch selection.
+- Type the new bytes as hex. A shorter patch on x86 can be filled with nop (90).
+- Press Run original vs patched to compare them in the emulator.
+- Press Export patched binary to write the copy.
 
 ### History
 

@@ -188,3 +188,56 @@ fn screenshot_a_project_from_the_environment() {
     let name = std::env::var("KRAKEN_SHOT_NAME").unwrap_or_else(|_| "project.png".into());
     save(&mut k, &name);
 }
+
+/// Main's first instruction selected in the Listing.
+fn select_first_instruction(k: &mut Kit) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        k.h.run_steps(1);
+        let vm = k.h.state_mut().view_model_mut().expect("vm");
+        vm.ensure_listing();
+        if vm.views.listing.loaded && !vm.views.listing.rows.is_empty() {
+            vm.select_listing_row(0);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no listing");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+#[ignore = "writes PNG files and needs a GPU; run by hand"]
+fn screenshot_the_patch_dialog_and_the_patches_tab() {
+    let mut k = kit_with(true, true);
+    ready_demo(&mut k);
+    select_first_instruction(&mut k);
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().dispatch(AppAction::PatchHere, &ctx);
+    k.h.run_steps(2);
+    let vm = k.h.state_mut().view_model_mut().expect("vm");
+    let len = vm
+        .tools
+        .patch_dialog
+        .as_ref()
+        .and_then(|d| d.original.as_ref())
+        .map_or(1, Vec::len);
+    vm.set_patch_input(if len > 2 { "31 c0" } else { "90" });
+    vm.set_patch_note("return 0 instead");
+    save(&mut k, "patch-dialog.png");
+
+    let vm = k.h.state_mut().view_model_mut().expect("vm");
+    vm.pad_patch_with_nops();
+    vm.submit_patch();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        k.h.run_steps(1);
+        let vm = k.h.state_mut().view_model_mut().expect("vm");
+        if vm.tools.patch_dialog.is_none() && !vm.tools.patches.items.is_empty() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "not staged");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    k.h.state_mut().dispatch(AppAction::ShowPatches, &ctx);
+    save(&mut k, "patches.png");
+}

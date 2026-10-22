@@ -1849,6 +1849,9 @@ impl ViewModel {
                 | AppAction::ShowReferences
                 | AppAction::AddBookmark
                 | AppAction::ShowBookmarks
+                | AppAction::PatchHere
+                | AppAction::ShowPatches
+                | AppAction::ExportPatched
                 | AppAction::CreateFunctionHere
                 | AppAction::DeleteFunction
         );
@@ -1909,6 +1912,16 @@ impl ViewModel {
             AppAction::ShowReferences => self.references_to_cursor(),
             AppAction::AddBookmark => self.begin_bookmark_here(),
             AppAction::ShowBookmarks => self.show_bookmarks(),
+            AppAction::PatchHere => {
+                if self.views.listing.selected_row().is_none() && self.views.hex.selection.is_some()
+                {
+                    self.begin_patch_bytes();
+                } else {
+                    self.begin_patch_instruction();
+                }
+            }
+            AppAction::ShowPatches => self.show_patches(),
+            AppAction::ExportPatched => self.begin_patch_export(),
             AppAction::CreateFunctionHere => self.begin_create_function_here(),
             AppAction::DeleteFunction => self.begin_delete_current(),
         }

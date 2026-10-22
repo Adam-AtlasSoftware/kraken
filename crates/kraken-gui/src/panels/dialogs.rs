@@ -4,7 +4,7 @@
 use egui::{Align2, Id, Key, Margin, Modifiers, RichText, vec2};
 use kraken_gui_widgets::{KrakenTheme, Palette};
 use kraken_viewmodel::navtools::{
-    FieldKind, FunctionDialogKind, ResultSegment, TypeMode, result_lines,
+    FieldKind, FunctionDialogKind, PatchOrigin, ResultSegment, TypeMode, result_lines, spaced_hex,
 };
 use kraken_viewmodel::{Permission, ViewModel, humanize_command};
 
@@ -14,6 +14,8 @@ use crate::style::{self, Status, medium};
 pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     goto_dialog(ctx, vm);
     bookmark_dialog(ctx, vm);
+    patch_dialog(ctx, vm);
+    export_dialog(ctx, vm);
     type_dialog(ctx, vm);
     function_dialog(ctx, vm);
     command_form(ctx, vm);
@@ -248,6 +250,211 @@ fn bookmark_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.cancel_bookmark();
     } else if save || enter {
         vm.submit_bookmark();
+    }
+}
+
+// ---------------------------------------------------------------- byte patch
+
+fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.patch_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut input = d.input.clone();
+    let mut note = d.note.clone();
+    let (mut save, mut cancel, mut pad) = (false, false, false);
+    let title = if d.existing {
+        "Edit byte patch"
+    } else {
+        "Patch bytes"
+    };
+    let fname = vm.functions.containing(d.address).map(|f| f.name.clone());
+    window(title, "kraken_patch", 520.0).show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Address").size(12.0).color(p.text_dim));
+            ui.label(
+                RichText::new(format!("{:#x}", d.address))
+                    .monospace()
+                    .color(p.address),
+            );
+            if let Some(n) = &fname {
+                ui.label(
+                    RichText::new(format!("in {n}"))
+                        .monospace()
+                        .color(p.text_strong),
+                );
+            }
+        });
+        if let PatchOrigin::Instruction(text) = &d.origin {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Instruction").size(12.0).color(p.text_dim));
+                ui.label(RichText::new(text).monospace().color(p.text));
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Bytes now").size(12.0).color(p.text_dim));
+            match &d.original {
+                Some(o) => ui.label(RichText::new(spaced_hex(o)).monospace().color(s.danger)),
+                None => ui.label(
+                    RichText::new("read when the patch is staged")
+                        .italics()
+                        .color(p.text_dim),
+                ),
+            };
+        });
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("New bytes (hex)")
+                .size(12.0)
+                .color(p.text_dim),
+        );
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut input)
+                    .id(Id::new("kraken_patch_input"))
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("90 90, eb 10, b8 07 00 00 00")
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text(
+                "The bytes to put here, as hex. Spaces are ignored. An assembler for typing \
+                 instructions is not built in yet",
+            );
+        if !r.has_focus()
+            && !d.submitting
+            && !ui.memory(|m| m.has_focus(Id::new("kraken_patch_note")))
+        {
+            r.request_focus();
+        }
+        if let Some(n) = d.length_note() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(n).size(12.0).color(s.warning));
+                if d.x86
+                    && d.parsed()
+                        .ok()
+                        .zip(d.original.as_ref())
+                        .is_some_and(|(new, old)| new.len() < old.len())
+                    && ui
+                        .small_button("Fill with nop")
+                        .on_hover_text("Pad with 90 (x86 nop) to the original length")
+                        .clicked()
+                {
+                    pad = true;
+                }
+            });
+        }
+        ui.add(
+            egui::TextEdit::singleline(&mut note)
+                .id(Id::new("kraken_patch_note"))
+                .hint_text("Why, e.g. skip the licence check (optional)")
+                .desired_width(f32::INFINITY),
+        )
+        .on_hover_text("A note kept with the patch");
+        match &d.error {
+            Some(e) => ui.label(RichText::new(e).color(s.danger)),
+            None => ui.label(
+                RichText::new(
+                    "Staging keeps the patch in the project with the bytes that were there. \
+                     Nothing on disk changes until you export a patched copy.",
+                )
+                .size(12.0)
+                .color(p.text_dim),
+            ),
+        };
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Stage patch",
+            "Keep this patch in the project (Enter)",
+            d.check(),
+            d.submitting,
+            &mut save,
+            &mut cancel,
+        );
+    });
+    if input != d.input {
+        vm.set_patch_input(input);
+    }
+    if note != d.note {
+        vm.set_patch_note(note);
+    }
+    if pad {
+        vm.pad_patch_with_nops();
+    }
+    if esc || cancel {
+        vm.cancel_patch();
+    } else if save || enter {
+        vm.submit_patch();
+    }
+}
+
+fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.export_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut path = d.output_path.clone();
+    let mut overwrite = d.overwrite;
+    let (mut save, mut cancel) = (false, false);
+    let n = vm.tools.patches.items.len();
+    window("Export patched binary", "kraken_patch_export", 520.0).show(ctx, |ui| {
+        ui.label(
+            RichText::new(format!(
+                "Writes a copy of the program with {} applied. Each address is mapped to its \
+                 place in the file and the original bytes are checked first; if anything does \
+                 not line up nothing is written. The original file is never touched.",
+                match n {
+                    0 => "no patches (an exact copy)".to_string(),
+                    1 => "1 patch".to_string(),
+                    n => format!("{n} patches"),
+                }
+            ))
+            .color(p.text_dim),
+        );
+        ui.label(RichText::new("Write to").size(12.0).color(p.text_dim));
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut path)
+                    .id(Id::new("kraken_patch_export_path"))
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text("A file path; a relative one is placed in the project folder");
+        if !r.has_focus() && !d.submitting {
+            r.request_focus();
+        }
+        ui.checkbox(&mut overwrite, "Replace the file if it exists")
+            .on_hover_text("Without this, an existing file at that path is left alone");
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(s.danger));
+        }
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Write patched binary",
+            "Write the copy (Enter). You are asked to confirm first",
+            if path.trim().is_empty() {
+                Err("Choose where to write it".into())
+            } else {
+                Ok(())
+            },
+            d.submitting,
+            &mut save,
+            &mut cancel,
+        );
+    });
+    if path != d.output_path {
+        vm.set_export_path(path);
+    }
+    if overwrite != d.overwrite {
+        vm.set_export_overwrite(overwrite);
+    }
+    if esc || cancel {
+        vm.cancel_patch_export();
+    } else if save || enter {
+        vm.submit_patch_export();
     }
 }
 
