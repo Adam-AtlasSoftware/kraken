@@ -15,6 +15,7 @@
 - [Local models on this computer](local-models.md)
 - [.NET assemblies](dotnet.md)
 - [The native engine](native-engine.md)
+- [Running the program in the emulator](emulation.md)
 - [Performance](performance.md)
 - [Scripting with the CLI](cli.md)
 - [Scripting with Python](python.md)

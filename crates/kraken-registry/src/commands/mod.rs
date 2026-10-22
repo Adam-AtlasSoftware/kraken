@@ -11,6 +11,7 @@ mod bookmarks;
 mod bulk;
 mod data;
 mod edit;
+mod emulate;
 mod gui_navigate;
 mod help;
 mod history;
@@ -50,6 +51,10 @@ pub use edit::{
     ProposalIdArgs, ProposalReject, RenameSymbol, RenameSymbolArgs, SetCallingConvention,
     SetCallingConventionArgs, SetComment, SetCommentArgs, SetFunctionBounds, SetFunctionBoundsArgs,
     SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
+};
+pub use emulate::{
+    DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateExit, EmulateExitKind, EmulateRun,
+    EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
 pub use help::{
@@ -247,4 +252,6 @@ pub fn register_all(r: &mut Registry) {
     // Card COST: what AI work costs and what runs.
     r.register(AiUsage);
     r.register(AiJobs);
+    // Card EMULATE: run the analysed program in the emulator.
+    r.register(EmulateRun);
 }

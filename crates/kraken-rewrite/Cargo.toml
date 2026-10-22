@@ -14,6 +14,7 @@ cpp_demangle = "0.5.1"
 futures-util = "0.3"
 # The emulator: icicle-emu (pinned by commit in kraken-emu; see deny.toml [sources] and
 # spikes/rewrite-loop/NOTES.md) behind KRAKEN's architecture layer.
+kraken-confine = { path = "../kraken-confine", version = "0.0.0" }
 kraken-emu = { path = "../kraken-emu", version = "0.0.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.0.0" }
 kraken-assist = { path = "../kraken-assist", version = "0.0.0" }

@@ -2752,6 +2752,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-confine"
+version = "0.0.0"
+dependencies = [
+ "landlock",
+ "libc",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "kraken-e2e"
 version = "0.0.0"
 dependencies = [
@@ -3029,10 +3039,12 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "engine-fake",
+ "kraken-emu",
  "kraken-engine",
  "kraken-infer",
  "kraken-model",
  "kraken-proto",
+ "kraken-sidecar",
  "object 0.39.1",
  "schemars 1.2.3",
  "serde",
@@ -3054,6 +3066,7 @@ dependencies = [
  "kraken-acp",
  "kraken-agent",
  "kraken-assist",
+ "kraken-confine",
  "kraken-emu",
  "kraken-engine",
  "kraken-host",
