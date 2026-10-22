@@ -41,7 +41,7 @@ Where `cpp_shapes` sizes differ from the truth, the cause is exception landing p
 
 - **Ghidra exceptions bypass cxx.** `LowlevelError` and `DecoderError` do not derive from `std::exception`. Every shim entry point runs through `guarded()`, which rethrows them as `std::runtime_error`, so `cxx` turns them into `Err`.
 - **Shared translators.** `SleighArchitecture` keeps one `Sleigh` per language in a static map and re-points it at the newest architecture's load image and context. Two sessions for the same language would fight over it. `KrakenArchitecture::buildTranslator` creates a private `Sleigh` instead. `Session::Impl` declares it before the architecture so it is destroyed last. Address spaces are refcounted, so the ownership is otherwise clean. The `two_sessions_coexist` test covers this.
-- **Global state.** Capability registries, the language list and static caches are process-wide. Every FFI call takes one lock in `engine-native-sys`. That costs nothing now and removes a class of bugs.
+- **Global state.** Capability registries, the language list and static caches are process-wide. Every FFI call takes one lock in `engine-native-sys`. That costs nothing now and removes a class of bugs. (Later the lock became a read/write lock: see "Several sessions at once" at the end.)
 - **Static capability registration.** Decompiler capabilities register themselves from static constructors. The archive is linked with `+whole-archive` (through `cc`'s `link_lib_modifier`, because emitting our own `rustc-link-lib` conflicts with `cc`'s). For the same reason the source list leaves out anything with external dependencies (BFD, the console).
 - **Pretty printer internals.** `EmitPrettyPrint` keeps its low-level emitter private. `KrakenPrintC` subclasses `PrintC` and replaces the protected `emit` with `TokenEmit`, which writes text directly and records spans. Lines are not wrapped at 100 columns; editors can wrap. `tagLine` must call `emitPending()`, or `if`/`else` braces go missing.
 - **Call targets after heritage.** Input 0 of a `CALL` op points into the `fspec` space by then, not `ram`. `FuncCallSpecs::getFspecFromConst` gives the callee's entry address.
@@ -199,3 +199,67 @@ KRAKEN_AGREEMENT_SET=corpus/pe cargo test -p engine-native --test agreement agre
 - **Ghidra's PE names are not one rule.** On x86 it strips `_`/`@n` from static C symbols but not from library or global ones (`_main`, `_printf`, `_DllMain@12` stay; `_mainCRTStartup`, an entry, does not); on x86-64 its TLS label beats the symbol; some functions with both a symbol and a `.text` section symbol at their address are called `.text` (x86-64 only, with no rule visible from outside). The first two are copied, the last is not.
 - **x87 instructions refer to themselves.** Sleigh sets the FPU instruction pointer to `inst_start`, an address-sized constant; it is not a reference.
 - **mingw puts a `nop` after a call that never returns** (so the return address stays inside the unwind range). The body ends at the call, as Ghidra's does; the compiler's DWARF size counts the `nop`.
+
+## Several sessions at once: the analysis job and the shared lock
+
+Code: `Journal`, `Origin`, `Session::fork` and the lock in `crates/engine-native-sys/src/lib.rs`,
+`DiscoveredGlobals` in the shim, the expensive stage in `crates/engine-native/src/analyze.rs`.
+
+```sh
+cargo test -p engine-native --lib analyze          # a fork decompiles like its session; 1 vs 4 lanes
+cargo test -p engine-native --test parallel        # discovery lanes; analysis lanes through the worker
+KRAKEN_BENCH_BINS=/usr/lib/libQt6Core.so.6 KRAKEN_BENCH_ANALYZE=1 KRAKEN_BENCH_IN_PROCESS=1 \
+  cargo xtask bench engine                         # the timings below
+```
+
+- **Profile.** On `libQt6Core.so.6.11.2` (7.2 MB, 14 455 functions) the first open takes about 31 s
+  on an idle machine (5 CPU-seconds per second on 6 sessions: discovery is already parallel), the
+  types and signatures 1 s, strings 0.1 s. The analysis job then took 3 062 s, 99.9 % of it in its
+  expensive stage, one decompile after another on one core (wall time = CPU time). A CPU profile
+  (gperftools, all threads) is all decompiler: the red-black trees of `VarnodeBank` and the
+  `HighEdge` cache, `Heritage::renameRecurse`, the dead-code and rule pools, and about 8 % in the
+  allocator. Demangling, string scanning and building the references take well under a second, so
+  only the decompiles were worth spreading out.
+- **Forks.** Every decompile depends on the session's whole state (function names, types,
+  prototypes, conventions, noreturn marks), which build, mutation and replay put there through many
+  paths. Instead of repeating those paths, `Session` keeps a journal of its edits; `Session::fork`
+  (or `from_origin` and `replay`) gives a new session over the same image with the same edits. The
+  journal also records the functions a decompile or switch analysis creates at an unknown address
+  (`EnsureFunction`), since those exist only in the session that ran them. User comments are not
+  journaled: they are set before each decompile anyway. The analysis job builds one fork per lane
+  (`discovery_threads`, the same default as discovery: up to 6), hands out functions in address order,
+  and before each function replays what was edited since (`Program::epoch` changed); the program's
+  own session stays free for the GUI's decompiles, which no longer wait for the job.
+- **Trap: a decompile left state behind.** `ActionMapGlobals` adds every global variable it
+  discovers to the global scope with the type this function uses it as, and the next decompile of
+  any function then reads it with that type: `(*pcRam00103fe0)()` or `(*lRam00103fe0)()` depending
+  on what was decompiled before. A fork (and the program's session after another order of GUI
+  clicks) disagreed. Ghidra's Java side does not save these symbols, so the shim now removes the
+  global symbols a decompile added once it ends (`DiscoveredGlobals`, by the scope's symbol id
+  counter), after clearing its analysis. Each decompile now depends only on the edits; the
+  agreement, decompiler and mutation tests pass unchanged. The switch analysis of discovery (the
+  `jumptable` action group) never maps globals.
+- **The lock.** It is a read/write lock. Exclusive: `start`, `has_language`, creating and
+  dropping a session (spec file scan statics; `PrintC::adjustTypeOperators` writes `PrintC`'s
+  static operator tokens), `declare_type` and `set_prototype` (the C parser in `grammar.cc` is one
+  global object). Shared: `decode`, `lift`, `jump_tables`, `decompile`, `add_function`,
+  `ensure_function`, `set_noreturn`, `remove_function`, `set_convention`, `set_comments`, which
+  touch only their own session. Searched for the rest: the other non-const statics of the
+  decompiler sources are the capability singletons (set at start), `Symbol::ID_BASE` (read only),
+  and the lexers and parsers of the console, the XML reader and the SLEIGH compiler, which the
+  shim does not call after setup.
+- **ThreadSanitizer.** Stable 1.99 with `RUSTC_BOOTSTRAP=1`, `-Zsanitizer=thread -Zbuild-std`
+  (the rust-src of the same version, through `__CARGO_TESTS_ONLY_SRC_ROOT`), the Ghidra sources,
+  zlib and the shim compiled with `-fsanitize=thread`, linked with mold (GNU ld trips over the
+  order of the static archives). Run on `tests/parallel.rs` (discovery on 4 sessions: `decode`,
+  `jump_tables`, `add_function` and `set_noreturn` side by side, 9 binaries with and without
+  symbols, 129 s) and on `analyze::tests` (4 forks decompiling side by side and the fork test, 6
+  binaries, 1 321 s): **no report**. A deliberate C++ race linked the same way is reported, so the
+  setup does see races in the C++ code. Helgrind and DRD were not used: they do not see the
+  futex-based `std::sync::RwLock`.
+- **Determinism.** `analyze::tests::a_fork_decompiles_like_its_session` decompiles every function
+  of six binaries (switches, C++, static libc, i386 PIC, PE x64 and x86) on the session and, in
+  reverse order, on a fork, and compares the text; then renames a function on the session,
+  replays the journal on the fork and compares again. `lanes_do_not_change_the_signatures` and
+  `tests/parallel.rs::analysis_lanes_do_not_change_the_signatures` compare the signatures of one
+  session and four (the latter through the worker).

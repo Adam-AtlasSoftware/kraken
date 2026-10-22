@@ -780,6 +780,52 @@ void breakEverywhere(ghidra::Action *act) {
   }
 }
 
+struct ScopePeek : ghidra::ScopeInternal {
+  using ghidra::ScopeInternal::nametree;
+  using ghidra::ScopeInternal::nextUniqueId;
+};
+
+// The global variables a decompile discovers (ActionMapGlobals adds them to the global scope,
+// with the type this function uses them as) are removed again when the decompile ends, after
+// its analysis is cleared. Kept, they would carry their type into the next decompiles, whose
+// output then depended on what was decompiled before (`pcRam00103fe0` or `lRam00103fe0`); in
+// Ghidra they are not saved either. Every decompile thus starts from the session's edits alone,
+// which is what lets another session with the same edits give the same answers.
+class DiscoveredGlobals {
+  ghidra::Architecture *arch;
+  Funcdata *fd;
+  ghidra::ScopeInternal *scope;
+  ghidra::uint8 mark = 0;
+
+public:
+  DiscoveredGlobals(ghidra::Architecture *a, Funcdata *f)
+      : arch(a), fd(f),
+        scope(dynamic_cast<ghidra::ScopeInternal *>(a->symboltab->getGlobalScope())) {
+    if (scope != nullptr)
+      mark = scope->*(&ScopePeek::nextUniqueId);
+  }
+  DiscoveredGlobals(const DiscoveredGlobals &) = delete;
+  DiscoveredGlobals &operator=(const DiscoveredGlobals &) = delete;
+  ~DiscoveredGlobals() {
+    if (scope == nullptr || scope->*(&ScopePeek::nextUniqueId) == mark)
+      return;
+    try {
+      // the analysis refers to the symbols until it is cleared
+      if (fd->isProcStarted())
+        arch->clearAnalysis(fd);
+      // the low 40 bits of a symbol id are the scope's counter when it was added
+      std::vector<Symbol *> added;
+      for (Symbol *s : scope->*(&ScopePeek::nametree))
+        if ((s->getId() & 0xffffffffffULL) >= mark)
+          added.push_back(s);
+      for (Symbol *s : added)
+        scope->removeSymbol(s);
+    } catch (...) {
+      // a symbol that cannot be removed stays; the next decompile still works
+    }
+  }
+};
+
 Funcdata *functionAt(ghidra::Architecture *a, uint64_t addr) {
   Address at(a->getDefaultCodeSpace(), addr);
   ghidra::Scope *global = a->symboltab->getGlobalScope();
@@ -793,6 +839,10 @@ Funcdata *functionAt(ghidra::Architecture *a, uint64_t addr) {
 }
 
 } // namespace
+
+void Session::ensure_function(uint64_t addr) {
+  guarded("ensure_function", [&]() { functionAt(impl->arch.get(), addr); });
+}
 
 rust::Vec<JumpEdgeOut> Session::jump_tables(uint64_t addr) {
   const auto began = std::chrono::steady_clock::now();
@@ -828,7 +878,8 @@ rust::Vec<JumpEdgeOut> Session::jump_tables(uint64_t addr) {
 }
 
 DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
-  return guarded("decompile", [&]() {
+  const auto began = std::chrono::steady_clock::now();
+  DecompOut result = guarded("decompile", [&]() {
     ghidra::Architecture *a = impl->arch.get();
     Funcdata *fd = functionAt(a, addr);
     if (fd->isProcStarted())
@@ -844,6 +895,7 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     CallbackLoadImage *img = static_cast<CallbackLoadImage *>(a->loader);
+    DiscoveredGlobals discovered(a, fd);
     act->reset(*fd);
     while (act->perform(*fd) < 0) {
       if (img->interrupted())
@@ -878,6 +930,15 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
     a->clearAnalysis(fd);
     return out;
   });
+#ifdef __GLIBC__
+  // as in jump_tables: a big decompile frees gigabytes into its thread's arena, and with several
+  // sessions decompiling at once (the analysis job) every arena would keep its high-water mark
+  // (Qt Widgets grew to 25 GB). Only after the big ones: the trim locks every arena in turn, and
+  // after every decompile over 200 ms it made the analysis of Qt Core a quarter slower.
+  if (std::chrono::steady_clock::now() - began > std::chrono::seconds(2))
+    malloc_trim(0);
+#endif
+  return result;
 }
 
 void Session::declare_type(rust::Str decl) {

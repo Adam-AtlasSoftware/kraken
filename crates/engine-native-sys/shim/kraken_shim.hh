@@ -38,6 +38,9 @@ public:
 
   // Adds (or renames) a function symbol in the global scope.
   void add_function(uint64_t addr, rust::Str name);
+  // Creates the function at `addr` with its default name when there is none (as a decompile or
+  // a switch analysis of an unknown address does).
+  void ensure_function(uint64_t addr);
   // Decodes up to `max` instructions starting at `addr`, stopping early at undecodable bytes.
   rust::Vec<InsnOut> decode(uint64_t addr, uint32_t max);
   // Raw p-code of the instructions in [start, end).

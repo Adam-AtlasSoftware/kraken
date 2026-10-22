@@ -131,6 +131,13 @@ needs memory: expect a peak of several GB, and more with more threads. A session
 others when less than 3 GB of memory is available. While the first open runs, the worker reports
 how many functions it has found; it is only stopped when that report stops for ten minutes.
 
+The analysis job (which decompiles every function once to fill in the signatures) uses the same
+number of sessions: each is a copy of the program's decompiler session, set up from its record of
+names, types, prototypes and marks, so every function decompiles exactly as it would alone, and the
+signatures do not depend on the number of sessions. A decompile asked for while the job runs does
+not wait for it. On Qt Core (14 455 functions) the job takes about a sixth of the time it took on
+one session.
+
 `docs/performance.md` has measurements, and `cargo xtask bench` reproduces them.
 
 `native_in_process = true` in `config.toml` (or `KRAKEN_NATIVE_IN_PROCESS=1`) runs the decompiler

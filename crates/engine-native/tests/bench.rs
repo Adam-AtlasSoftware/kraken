@@ -13,15 +13,18 @@
 //! engines' state directories in (so a second run starts from the saved analysis).
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
 use kraken_engine::{
     AnalyzeRequest, Analyzer, CancellationToken, Decompiler, DisasmRequest, Disassembler,
-    FlowGraph, FunctionLister, Loader, LoaderSpec, StringLister, StringsRequest, SymbolLister,
-    XrefProvider, XrefRequest,
+    FlowGraph, FunctionLister, Loader, LoaderSpec, OpenReporter, StringLister, StringsRequest,
+    SymbolLister, XrefProvider, XrefRequest,
 };
-use kraken_proto::{DisasmScope, Hex64, Locator, PageRequest, XrefDirection};
+use kraken_proto::{
+    DisasmScope, Hex64, Locator, OpenStage, OpenUpdate, PageRequest, XrefDirection,
+};
 
 fn default_bins() -> Vec<PathBuf> {
     // python3 itself is a small launcher: its library is the program
@@ -171,9 +174,18 @@ async fn bench_large_binaries() {
         let mut t = Table::default();
 
         eprintln!("{name}: opening");
+        // the time of each stage of the open, from its progress reports
+        let stages: Arc<Mutex<Vec<(OpenStage, Instant)>>> = Arc::default();
+        let seen = stages.clone();
+        let reporter: OpenReporter = Arc::new(move |u: OpenUpdate| {
+            let mut v = seen.lock().unwrap_or_else(|p| p.into_inner());
+            if v.last().is_none_or(|(s, _)| *s != u.stage) {
+                v.push((u.stage, Instant::now()));
+            }
+        });
         let st = Instant::now();
         let info = e
-            .open_binary(Path::new(&dst), &LoaderSpec::default(), &cancel)
+            .open_binary_reporting(Path::new(&dst), &LoaderSpec::default(), &cancel, reporter)
             .await;
         let open = st.elapsed();
         if let Err(err) = info {
@@ -183,6 +195,15 @@ async fn bench_large_binaries() {
         let mut s = Samples::default();
         s.push(open);
         t.row("open_binary (load + discovery)", &s, open);
+        let marks = stages.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let end = st + open;
+        for (i, (stage, at)) in marks.iter().enumerate() {
+            let until = marks.get(i + 1).map_or(end, |(_, t)| *t);
+            let d = until.saturating_duration_since(*at);
+            let mut s = Samples::default();
+            s.push(d);
+            t.row(&format!("open stage {}", stage.as_str()), &s, d);
+        }
         let pid = e.worker_pid().unwrap_or(std::process::id());
         let after_open = format!(
             "RSS after open: {:.0} MB (peak {:.0} MB)",

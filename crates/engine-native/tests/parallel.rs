@@ -121,3 +121,84 @@ fn lanes_and_the_cache_do_not_change_what_is_found() {
         }
     }
 }
+
+/// The analysis job decompiles on several sessions at once (forks of the program's session):
+/// with one session or four it fills in exactly the same signatures, through the worker as a
+/// project runs it.
+#[tokio::test(flavor = "multi_thread")]
+async fn analysis_lanes_do_not_change_the_signatures() {
+    use kraken_engine::{AnalyzeRequest, Analyzer, FunctionLister, Loader, LoaderSpec};
+    use kraken_proto::PageRequest;
+
+    let Some(mut config) = NativeConfig::discover() else {
+        eprintln!("skipped: no Sleigh spec tree");
+        return;
+    };
+    if !NativeEngine::is_usable(&config) {
+        eprintln!("skipped: engine-native-sys was built without the decompiler sources");
+        return;
+    }
+    config.isolation = engine_native::Isolation::Worker(
+        engine_native::WorkerOptions::with_program(env!("CARGO_BIN_EXE_kraken-native-worker")),
+    );
+    // static C library code: enough functions for the job to use several sessions
+    for name in ["bin/static_strops-O2", "bin/cpp_shapes-O2"] {
+        let mut runs = Vec::new();
+        for threads in [1, 4] {
+            let mut c = config.clone();
+            c.discovery_threads = Some(threads);
+            let e = NativeEngine::new(c);
+            let cancel = CancellationToken::new();
+            e.open_binary(
+                &root().join("corpus").join(name),
+                &LoaderSpec::default(),
+                &cancel,
+            )
+            .await
+            .expect("open");
+            let mut job = e
+                .analyze(AnalyzeRequest::default(), cancel.clone())
+                .await
+                .expect("analyze");
+            let mut last = None;
+            while let Some(p) = job.next_progress().await {
+                assert!(p.done <= p.total, "{name}: {p:?}");
+                last = Some(p.message);
+            }
+            job.wait().await.expect("analysis");
+            let mut fns = Vec::new();
+            let mut cursor = None;
+            loop {
+                let page = e
+                    .list_functions(
+                        &PageRequest {
+                            cursor,
+                            limit: Some(500),
+                        },
+                        &cancel,
+                    )
+                    .await
+                    .expect("list");
+                fns.extend(
+                    page.items
+                        .into_iter()
+                        .map(|f| (f.locator, f.name, f.signature)),
+                );
+                match page.next_cursor {
+                    Some(c) => cursor = Some(c),
+                    None => break,
+                }
+            }
+            runs.push((fns, last));
+        }
+        assert!(
+            runs[0].0.len() >= 32,
+            "{name}: big enough for several sessions"
+        );
+        assert!(
+            runs[0].0.iter().all(|f| f.2.is_some()),
+            "{name}: every function has a signature"
+        );
+        assert_eq!(runs[0], runs[1], "{name}");
+    }
+}
