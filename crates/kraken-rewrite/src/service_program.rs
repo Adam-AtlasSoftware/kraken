@@ -929,7 +929,7 @@ impl RewriteService {
         }
         let mut budget = self.cfg.budget.clone();
         budget.max_tokens = Some(budget.max_tokens.unwrap_or(0).max(PROGRAM_MAX_TOKENS));
-        let task = RewriteTask {
+        let mut task = RewriteTask {
             function: f.clone(),
             callees: inline.clone(),
             signature: signature.clone(),
@@ -939,6 +939,8 @@ impl RewriteService {
             repairs: seeded,
             budget,
         };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        crate::service::add_layouts(pc.lift.session(), &mut task, &cancel).await;
         let work = Work {
             function: f.clone(),
             signature,

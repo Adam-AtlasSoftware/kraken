@@ -66,6 +66,11 @@ impl<'a> Lift<'a> {
         Lift { s, ctx }
     }
 
+    /// The session read through.
+    pub fn session(&self) -> &'a Session {
+        self.s
+    }
+
     /// SHA-256 of the analysed binary and its image base.
     pub fn program(&self) -> Result<(String, u64), RewriteError> {
         let p = self.s.project().map_err(cmd)?.program();
