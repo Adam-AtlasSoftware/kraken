@@ -21,6 +21,7 @@ const EXPECTED: &[&str] = &[
     "decompile",
     "delete_function",
     "disassemble",
+    "emulate_run",
     "exports",
     "get_function",
     "gui_navigate",

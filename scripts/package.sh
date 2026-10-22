@@ -72,6 +72,11 @@ elif [ "${KRAKEN_REQUIRE_NATIVE:-0}" = 1 ]; then
   exit 1
 fi
 
+# The emulator's sandbox child (`emulate_run`); optional like the native worker.
+if [ -f "$bins_dir/kraken-emu-run$exe" ]; then
+  worker="$worker kraken-emu-run"
+fi
+
 name="kraken-$version-$target"
 mkdir -p "$out_dir"
 out_dir=$(cd "$out_dir" && pwd)

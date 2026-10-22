@@ -1,0 +1,18 @@
+[package]
+name = "kraken-confine"
+description = "Confinement of child processes that run untrusted code: Landlock read-only view, no network, scrubbed environment, resource limits, captured runs with a deadline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+tempfile = "3"
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
