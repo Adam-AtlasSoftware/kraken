@@ -381,6 +381,8 @@ pub struct AssistState {
     pub items: Vec<ChatItem>,
     /// Tokens used since the window opened.
     pub usage: Usage,
+    /// The prompt size of the most recent model call: how full the model's context is.
+    pub last_input_tokens: u64,
     /// The first-overview banner.
     pub overview_offer: OverviewOffer,
     /// The auto-name flow.
@@ -398,6 +400,11 @@ pub struct AssistState {
     pub(crate) run_ids: RunIdGen,
     pub(crate) seq: u64,
     pub(crate) offered_once: bool,
+    /// Automatic continuations used for the question in progress.
+    pub(crate) auto_continues: u32,
+    /// Replaces `[ai_limits] auto_continue` in tests.
+    #[cfg(test)]
+    pub(crate) auto_continue_override: Option<u32>,
 }
 
 impl Default for AssistState {
@@ -407,6 +414,7 @@ impl Default for AssistState {
             agent_env: None,
             items: Vec::new(),
             usage: Usage::default(),
+            last_input_tokens: 0,
             overview_offer: OverviewOffer::Hidden,
             autoname: AutoNameState::Idle,
             learn_mode: false,
@@ -419,6 +427,9 @@ impl Default for AssistState {
             run_ids: RunIdGen::new(),
             seq: 0,
             offered_once: false,
+            auto_continues: 0,
+            #[cfg(test)]
+            auto_continue_override: None,
         }
     }
 }
@@ -438,6 +449,14 @@ impl AssistState {
             badge,
             engine: None,
         });
+    }
+
+    /// The context window of the model API in use, when it is known.
+    pub fn context_window(&self) -> Option<u32> {
+        match &self.backend.as_ref()?.choice {
+            BackendChoice::Api(p) => p.info().context_window,
+            BackendChoice::Agent(_) => None,
+        }
     }
 
     /// Forgets the backend (settings cleared).
@@ -488,6 +507,8 @@ impl AssistState {
         self.close_engine();
         self.items.clear();
         self.history.clear();
+        self.last_input_tokens = 0;
+        self.auto_continues = 0;
         self.overview_offer = OverviewOffer::Hidden;
         self.autoname = AutoNameState::Idle;
         self.offered_once = false;

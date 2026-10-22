@@ -499,6 +499,8 @@ pub struct LimitsForm {
     pub skip_under: String,
     /// Low context mode.
     pub low_context: bool,
+    /// Automatic continuations for local models; empty means the default.
+    pub auto_continue: String,
     loaded: bool,
     status: Option<Result<String, String>>,
 }
@@ -516,6 +518,7 @@ impl LimitsForm {
             daily: text_of(l.daily_budget),
             skip_under: text_of(l.skip_confirm_under),
             low_context: l.low_context_mode,
+            auto_continue: text_of(l.auto_continue),
             loaded: true,
             status: None,
         }
@@ -542,12 +545,20 @@ impl LimitsForm {
                 "Most calls per run must be a whole number above 0, or empty.".to_string()
             })?),
         };
+        let auto_continue = match self.auto_continue.trim() {
+            "" => None,
+            t => Some(t.parse::<u32>().ok().filter(|n| *n <= 100).ok_or_else(|| {
+                "Keep going automatically must be a whole number from 0 to 100, or empty."
+                    .to_string()
+            })?),
+        };
         Ok(AiLimits {
             max_calls_per_run: calls,
             max_cost_per_run: num(&self.max_cost, "Most cost per run")?,
             daily_budget: num(&self.daily, "The daily budget")?,
             skip_confirm_under: num(&self.skip_under, "The ask-first threshold")?,
             low_context_mode: self.low_context,
+            auto_continue,
         })
     }
 
@@ -589,6 +600,10 @@ impl LimitsForm {
                 ui.label("Do not ask below ($)");
                 ui.add(egui::TextEdit::singleline(&mut self.skip_under).hint_text("always ask").desired_width(120.0))
                     .on_hover_text("AI work estimated below this starts without the question. Free local models never ask");
+                ui.end_row();
+                ui.label("Keep going automatically (local models)");
+                ui.add(egui::TextEdit::singleline(&mut self.auto_continue).hint_text("5").desired_width(120.0))
+                    .on_hover_text("When a local model reaches its limit for one question, the chat goes on by itself this many times. 0 asks each time. Paid models always ask");
                 ui.end_row();
             });
         ui.checkbox(&mut self.low_context, "Low context mode")
@@ -727,6 +742,19 @@ mod tests {
         let on = f.limits().unwrap();
         assert!(on.low_context_mode);
         assert!(LimitsForm::from_limits(&on).low_context);
+    }
+
+    #[test]
+    fn keep_going_automatically_is_a_small_number_or_empty() {
+        let mut f = LimitsForm::from_limits(&AiLimits::default());
+        assert_eq!(f.limits().unwrap().auto_continue, None);
+        f.auto_continue = "0".into();
+        assert_eq!(f.limits().unwrap().auto_continue, Some(0));
+        f.auto_continue = "many".into();
+        assert!(f.limits().is_err());
+        f.auto_continue = "7".into();
+        let l = f.limits().unwrap();
+        assert_eq!(LimitsForm::from_limits(&l).auto_continue, "7");
     }
 
     #[test]

@@ -715,6 +715,7 @@ person has accepted, so tell the person how many it wrote.";
             system_extra: Some(self.system_extra.clone()),
             max_tokens: self.budget.max_tokens,
             temperature: self.budget.temperature,
+            max_continuations: AgentConfig::default().max_continuations,
         }
     }
 }

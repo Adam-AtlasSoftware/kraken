@@ -365,7 +365,10 @@ impl Transcript {
                     stop: stop_name(*stop).to_string(),
                 });
             }
-            AgentEvent::ApprovalRequired { .. } | AgentEvent::ProposalCreated { .. } => {}
+            AgentEvent::ApprovalRequired { .. }
+            | AgentEvent::ProposalCreated { .. }
+            | AgentEvent::StepUsage { .. }
+            | AgentEvent::Compacted { .. } => {}
         }
     }
 

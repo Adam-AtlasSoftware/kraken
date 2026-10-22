@@ -297,6 +297,101 @@ fn stop_cancels_a_run_that_is_waiting_for_the_model() {
     assert!(!r.vm.assist.busy());
 }
 
+fn endless_tool_calls(then: Option<Vec<StreamEvent>>) -> Vec<Vec<StreamEvent>> {
+    // One question allows 12 model steps.
+    let mut script: Vec<_> = (0..12)
+        .map(|i| {
+            tool_call(
+                &format!("c{i}"),
+                "get_function",
+                json!({"address": "0x401340"}),
+            )
+        })
+        .collect();
+    script.extend(then);
+    script
+}
+
+fn notices(r: &Rig) -> Vec<String> {
+    r.vm.assist
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            ChatItem::Notice(n) => Some(n.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_local_model_goes_on_by_itself_after_the_limit_and_the_note_is_not_a_user_bubble() {
+    let mut r = rig(endless_tool_calls(Some(say("All done."))));
+    r.vm.assist.auto_continue_override = Some(5);
+    r.vm.assist_send("Explain everything");
+    r.settle();
+    assert!(notices(&r).contains(&"Continuing automatically (1 of 5)...".to_string()));
+    let users: Vec<_> =
+        r.vm.assist
+            .items
+            .iter()
+            .filter(|i| matches!(i, ChatItem::User(_)))
+            .collect();
+    assert_eq!(users.len(), 1, "{:?}", r.vm.assist.items);
+    assert!(matches!(
+        r.vm.assist.items.last(),
+        Some(ChatItem::Assistant { text, .. }) if text.contains("All done")
+    ));
+    // Question, what it said at the limit, the hidden prompt, the answer.
+    assert_eq!(r.vm.assist.history.len(), 4);
+    assert!(r.vm.assist.last_input_tokens > 0);
+}
+
+#[test]
+fn automatic_continuation_stops_at_the_setting_and_then_says_so() {
+    let mut r = rig(endless_tool_calls(None));
+    r.vm.assist.auto_continue_override = Some(2);
+    r.vm.assist_send("Explain everything");
+    r.settle();
+    let n = notices(&r);
+    assert!(
+        n.contains(&"Continuing automatically (2 of 2)...".to_string()),
+        "{n:?}"
+    );
+    assert!(!n.iter().any(|t| t.contains("3 of 2")));
+    assert!(
+        n.last()
+            .is_some_and(|t| t.contains("went on by itself 2 times")),
+        "{n:?}"
+    );
+}
+
+#[test]
+fn zero_and_paid_models_ask_each_time() {
+    let mut r = rig(endless_tool_calls(None));
+    r.vm.assist.auto_continue_override = Some(0);
+    r.vm.assist_send("Explain everything");
+    r.settle();
+    let n = notices(&r);
+    assert!(!n.iter().any(|t| t.starts_with("Continuing automatically")));
+    assert!(
+        n.last()
+            .is_some_and(|t| t.contains("Ask again to continue"))
+    );
+
+    let mut r = project_rig();
+    let (p, mut badge) = scripted_provider(endless_tool_calls(None), "paid");
+    badge.local = false;
+    r.vm.assist.set_provider(p, badge);
+    r.vm.assist.auto_continue_override = Some(5);
+    r.vm.assist_send("Explain everything");
+    r.settle();
+    assert!(
+        !notices(&r)
+            .iter()
+            .any(|t| t.starts_with("Continuing automatically"))
+    );
+}
+
 struct Broken;
 
 #[async_trait]

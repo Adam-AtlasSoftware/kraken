@@ -10,6 +10,7 @@
 //! across two chunks can leave its tail visible. The final history copy is sanitised whole.
 
 pub mod agent;
+pub mod compact;
 pub mod config;
 pub mod error;
 pub mod low_context;

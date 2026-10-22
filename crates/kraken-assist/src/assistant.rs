@@ -235,6 +235,7 @@ impl Assistant {
                     });
                 }
                 AgentEvent::ProposalCreated { proposal, .. } => proposals.push(proposal),
+                AgentEvent::StepUsage { .. } | AgentEvent::Compacted { .. } => {}
                 AgentEvent::Error { message } => error = Some(message),
                 AgentEvent::Done { usage, stop, .. } => {
                     done = Some((stop, usage));
