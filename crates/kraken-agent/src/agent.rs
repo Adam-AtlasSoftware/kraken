@@ -12,11 +12,14 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::compact;
 use crate::error::AgentError;
 use crate::provider::ChatProvider;
 use crate::safety::{summarize, system_prompt, wrap_tool_error, wrap_tool_result};
 use crate::tool::{Permission, ToolCtx, ToolError, ToolHost, ToolSpec};
-use crate::types::{ChatRequest, Message, StreamAssembler, StreamEvent, ToolCall, Usage};
+use crate::types::{
+    ChatRequest, FinishReason, Message, StreamAssembler, StreamEvent, ToolCall, Usage,
+};
 
 const SUMMARY_CHARS: usize = 200;
 
@@ -33,6 +36,8 @@ pub struct AgentConfig {
     pub system_extra: Option<String>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    /// How many times a reply cut off by the length limit is continued in one run.
+    pub max_continuations: usize,
 }
 
 impl Default for AgentConfig {
@@ -45,9 +50,13 @@ impl Default for AgentConfig {
             system_extra: None,
             max_tokens: None,
             temperature: None,
+            max_continuations: 8,
         }
     }
 }
+
+/// Text of the synthetic message that follows a reply cut off by the length limit.
+pub const CONTINUE_PROMPT: &str = "Continue exactly where you stopped.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -90,6 +99,15 @@ pub enum AgentEvent {
         tool: String,
         call_id: String,
         proposal: Value,
+    },
+    /// What one model call reported. `usage.input_tokens` is the size of the prompt that call
+    /// was sent, which is how full the context is.
+    StepUsage {
+        usage: Usage,
+    },
+    /// Older tool results were left out of the conversation to make room in the window.
+    Compacted {
+        elided: usize,
     },
     Error {
         message: String,
@@ -284,6 +302,18 @@ impl Loop {
         let supports_tools = self.provider.info().supports_tools;
         let mut steps = 0usize;
         let mut tool_calls_made = 0usize;
+        let mut continuations = 0usize;
+        let window = self.provider.info().context_window;
+        let reserve = u64::from(self.config.max_tokens.unwrap_or(2000)) + 1024;
+        let fixed_bytes = system.len()
+            + specs
+                .iter()
+                .map(|s| s.description.len() + s.input_schema.to_string().len() + s.name.len())
+                .sum::<usize>();
+        // The prompt size the provider reported for the last request, and how many bytes of
+        // messages that request carried.
+        let mut reported = 0u64;
+        let mut reported_bytes = 0usize;
 
         loop {
             if self.cancel.is_cancelled() {
@@ -311,23 +341,53 @@ impl Loop {
             }
             steps += 1;
 
-            let req = ChatRequest {
-                system: system.clone(),
-                messages: messages.clone(),
-                tools: if supports_tools {
-                    specs.clone()
+            if let Some(w) = window {
+                let now = compact::total_bytes(messages);
+                let estimate = if reported > 0 {
+                    reported + compact::estimate_tokens(now.saturating_sub(reported_bytes))
                 } else {
-                    vec![]
-                },
-                max_tokens: self.config.max_tokens,
-                temperature: self.config.temperature,
-            };
-            let mut stream = match self.provider.complete(req, self.cancel.clone()).await {
-                Ok(s) => s,
-                Err(AgentError::Cancelled) => {
-                    return (StopReason::Cancelled, "Run cancelled.".into());
+                    compact::estimate_tokens(now + fixed_bytes)
+                };
+                if compact::needs_room(estimate, reserve, w) {
+                    let (elided, after) =
+                        compact::elide_oldest(messages, estimate, w, compact::KEEP_RECENT);
+                    if elided > 0 {
+                        reported = after;
+                        reported_bytes = compact::total_bytes(messages);
+                        self.emit(AgentEvent::Compacted { elided }).await;
+                    }
                 }
-                Err(e) => return (StopReason::Error, sanitize(&e.to_string())),
+            }
+            let mut retried = false;
+            let mut stream = loop {
+                let req = ChatRequest {
+                    system: system.clone(),
+                    messages: messages.clone(),
+                    tools: if supports_tools {
+                        specs.clone()
+                    } else {
+                        vec![]
+                    },
+                    max_tokens: self.config.max_tokens,
+                    temperature: self.config.temperature,
+                };
+                match self.provider.complete(req, self.cancel.clone()).await {
+                    Ok(s) => break s,
+                    Err(AgentError::Cancelled) => {
+                        return (StopReason::Cancelled, "Run cancelled.".into());
+                    }
+                    Err(e) if !retried && compact::is_context_overflow(&e.to_string()) => {
+                        retried = true;
+                        let elided =
+                            compact::elide_all_but(messages, compact::KEEP_RECENT_EMERGENCY);
+                        if elided == 0 {
+                            return (StopReason::Error, sanitize(&e.to_string()));
+                        }
+                        reported = 0;
+                        self.emit(AgentEvent::Compacted { elided }).await;
+                    }
+                    Err(e) => return (StopReason::Error, sanitize(&e.to_string())),
+                }
             };
             let mut asm = StreamAssembler::default();
             while let Some(item) = stream.next().await {
@@ -349,12 +409,24 @@ impl Loop {
             }
             let done = asm.finish();
             usage.add(done.usage);
+            if done.usage.input_tokens > 0 {
+                reported = done.usage.input_tokens;
+                reported_bytes = compact::total_bytes(messages);
+            }
+            self.emit(AgentEvent::StepUsage { usage: done.usage }).await;
             messages.push(Message::Assistant {
                 content: sanitize(&done.text),
                 tool_calls: done.tool_calls.clone(),
             });
 
             if done.tool_calls.is_empty() {
+                if done.finish == Some(FinishReason::Length)
+                    && continuations < self.config.max_continuations
+                {
+                    continuations += 1;
+                    messages.push(Message::user(CONTINUE_PROMPT));
+                    continue;
+                }
                 return (StopReason::Completed, "Finished.".into());
             }
             if tool_calls_made + done.tool_calls.len() > self.config.max_tool_calls {

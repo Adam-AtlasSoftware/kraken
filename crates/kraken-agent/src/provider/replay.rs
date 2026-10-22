@@ -172,7 +172,7 @@ pub struct ReplayProvider {
 }
 
 impl ReplayProvider {
-    fn default_info() -> ProviderInfo {
+    pub(crate) fn default_info() -> ProviderInfo {
         ProviderInfo {
             id: "replay".into(),
             model: "cassette".into(),

@@ -247,6 +247,7 @@ max_cost_per_run = 5.0     # ... or once its estimated cost reaches this (US dol
 daily_budget = 10.0        # no new AI work once today's estimated total reaches this
 skip_confirm_under = 0.10  # start without asking when the estimate stays below this
 low_context_mode = true    # tell the model about tools by name; it asks for the details
+auto_continue = 5          # local models: go on by itself this many times (0 asks each time)
 ```
 
 A run that reaches a limit stops with a message saying which, and keeps what it finished (every translation attempt is stored as it is made). The daily budget refuses new AI work until the next day (midnight UTC), or until you raise it. Changes apply to the next model call, also in a running daemon.
@@ -273,6 +274,31 @@ it.
 
 Permissions and approvals are the same as without the mode: the tools are the same, only their
 descriptions are fetched on demand. The trade is one extra model call the first time a tool is used.
+
+### Long answers and long sessions
+
+These apply to the assistant's chat when it talks to a model over an API.
+
+- **Long answers.** A reply is written in pieces of at most 2,000 tokens. When the model is cut
+  off in the middle of a sentence, KRAKEN asks it to go on where it stopped, up to 8 times in one
+  question, and the pieces read as one answer. You do not need to type "continue".
+- **The limit for one question.** One question may use 12 model steps and 30 tool calls. A local
+  model (free, on your computer or on a server you run) that reaches this goes on by itself with
+  the note "Continuing automatically (1 of 5)...", up to `auto_continue` times; the default is 5
+  and 0 asks each time. Set it in **Settings > AI** under *Keep going automatically (local
+  models)*, or as `auto_continue` in `[ai_limits]`. Pressing **Stop** ends it at once. A paid model
+  never goes on by itself: it stops with a note and you ask again.
+- **The numbers under the chat box.** Each step sends the whole conversation to the model again,
+  so *sent in total* adds up every request and is not the size of the conversation. *Context 41K of
+  64K* is how full the model's window was on its latest request. It is shown when the window is
+  known (for models KRAKEN serves, it is the window you chose). *Written* is what the model wrote.
+  Cloud services bill by sent and written; local models are free.
+- **When the window fills.** Before each request KRAKEN estimates the prompt. When it would fill
+  more than 85% of the window, the oldest tool results are replaced by their first 120 characters
+  and a note, newest four kept, until the prompt is under 60%. Your questions and the assistant's
+  own words stay. The chat says "Made room in the conversation: left out 3 earlier tool results."
+  and the model can call a tool again if it needs a result. If the server still answers that the
+  request exceeds the context window, KRAKEN keeps only the newest two results and asks once more.
 
 ## The assistant knows KRAKEN and can drive the window
 

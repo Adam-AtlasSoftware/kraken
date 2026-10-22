@@ -350,32 +350,69 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
     let agent = badge.as_ref().is_some_and(|b| b.terminal_agent);
     let line = if agent {
         format!("{model}  \u{00b7}  terminal agents do not report token use")
-    } else if u.total() > 0 {
-        format!(
-            "{model}  \u{00b7}  {} tokens used ({} in, {} out)",
-            fmt_count(u.total()),
-            fmt_count(u.input_tokens),
-            fmt_count(u.output_tokens)
-        )
     } else {
-        format!("{model}  \u{00b7}  no tokens used yet")
+        footer_line(
+            &model,
+            u,
+            vm.assist.last_input_tokens,
+            vm.assist.context_window(),
+        )
     };
     ui.label(RichText::new(line).size(11.0).color(p.text_dim))
-        .on_hover_text(
-            "Tokens are the pieces of text the model reads and writes. Cloud services bill by them; local models are free.",
-        );
+        .on_hover_text(FOOTER_HINT);
 }
 
-fn fmt_count(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
+const FOOTER_HINT: &str = "Tokens are the pieces of text the model reads and writes. \
+Every step of an answer sends the whole conversation again, so \"sent in total\" adds up the \
+size of every request and is not the size of the conversation. \"Context\" is how full the \
+model's window is right now; when it fills, KRAKEN leaves out older tool results. Cloud \
+services bill by the tokens sent and written; local models are free.";
+
+/// The line under the chat box: model, how full the context is, tokens sent and written.
+fn footer_line(
+    model: &str,
+    u: kraken_agent::Usage,
+    last_input: u64,
+    window: Option<u32>,
+) -> String {
+    if u.total() == 0 {
+        return format!("{model}  \u{00b7}  no tokens used yet");
     }
-    out.chars().rev().collect()
+    let mut line = format!("{model}  \u{00b7}  ");
+    if let Some(w) = window.filter(|w| *w > 0)
+        && last_input > 0
+    {
+        line.push_str(&format!(
+            "context {} of {}  \u{00b7}  ",
+            fmt_context(last_input),
+            fmt_context(u64::from(w))
+        ));
+    }
+    line.push_str(&format!(
+        "{} sent in total  \u{00b7}  {} written",
+        fmt_short(u.input_tokens),
+        fmt_short(u.output_tokens)
+    ));
+    line
+}
+
+/// 41K, 6.8K, 1.2M: thousands as people say them.
+fn fmt_short(n: u64) -> String {
+    match n {
+        0..=999 => n.to_string(),
+        1_000..=9_999 => format!("{:.1}K", n as f64 / 1000.0),
+        10_000..=999_999 => format!("{}K", (n + 500) / 1000),
+        _ => format!("{:.1}M", n as f64 / 1_000_000.0),
+    }
+}
+
+/// Window sizes are powers of two (65536 is "64K"), so context figures count in 1024s.
+fn fmt_context(n: u64) -> String {
+    if n < 1024 {
+        n.to_string()
+    } else {
+        format!("{}K", (n + 512) / 1024)
+    }
 }
 
 fn progress(ui: &mut Ui, vm: &ViewModel, p: &Palette) {
@@ -888,5 +925,31 @@ pub fn confidence_color(c: kraken_viewmodel::assist::Confidence, dark: bool) -> 
         kraken_viewmodel::assist::Confidence::High => s.success,
         kraken_viewmodel::assist::Confidence::Medium => s.info,
         kraken_viewmodel::assist::Confidence::Low => s.warning,
+    }
+}
+
+#[cfg(test)]
+mod footer_tests {
+    use super::*;
+    use kraken_agent::Usage;
+
+    #[test]
+    fn the_footer_separates_context_from_the_running_total() {
+        let u = Usage {
+            input_tokens: 481_630,
+            output_tokens: 6_771,
+        };
+        assert_eq!(
+            footer_line("qwen", u, 41_000, Some(65_536)),
+            "qwen  \u{00b7}  context 40K of 64K  \u{00b7}  482K sent in total  \u{00b7}  6.8K written"
+        );
+        assert_eq!(
+            footer_line("gpt", u, 41_000, None),
+            "gpt  \u{00b7}  482K sent in total  \u{00b7}  6.8K written"
+        );
+        assert_eq!(
+            footer_line("gpt", Usage::default(), 0, Some(8192)),
+            "gpt  \u{00b7}  no tokens used yet"
+        );
     }
 }

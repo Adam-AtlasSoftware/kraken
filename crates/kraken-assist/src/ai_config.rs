@@ -8,6 +8,7 @@
 //! max_cost_per_run = 5.0      # ... or once its estimated cost reaches this many US dollars
 //! daily_budget = 10.0         # no new AI work once today's estimated total reaches this
 //! skip_confirm_under = 0.10   # do not ask before runs estimated below this
+//! auto_continue = 5           # local models only; 0 asks each time
 //! low_context_mode = true     # send tools to the model by name; it asks for the details
 //! ```
 
@@ -45,9 +46,22 @@ pub struct AiLimits {
     /// context window.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub low_context_mode: bool,
+    /// How many times the chat goes on by itself after a local (free) model reaches its limit
+    /// for one question. Unset means 5, 0 means ask each time. Paid models never go on by
+    /// themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_continue: Option<u32>,
 }
 
+/// What `auto_continue` is when the table does not set it.
+pub const DEFAULT_AUTO_CONTINUE: u32 = 5;
+
 impl AiLimits {
+    /// Automatic continuations a local model gets per question.
+    pub fn auto_continue_limit(&self) -> u32 {
+        self.auto_continue.unwrap_or(DEFAULT_AUTO_CONTINUE)
+    }
+
     /// The `[ai_limits]` table of a whole `config.toml`; the defaults when it is missing.
     pub fn from_config_text(text: &str) -> Result<Self, String> {
         let table: toml::Table = text.parse().map_err(|e| format!("{e}"))?;

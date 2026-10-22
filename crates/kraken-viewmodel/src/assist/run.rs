@@ -115,13 +115,32 @@ fn parse_addr(s: &str) -> Option<u64> {
     s.trim().parse::<Hex64>().ok().map(|h| h.0)
 }
 
-fn limit_note(stop: StopReason) -> Option<&'static str> {
-    match stop {
-        StopReason::MaxSteps | StopReason::MaxToolCalls | StopReason::TokenBudget => Some(
-            "The assistant reached its limit for one question. Ask again to continue where it stopped.",
-        ),
-        _ => None,
+/// What the person typed for the model when a chat continues by itself; never shown as theirs.
+const AUTO_CONTINUE_TEXT: &str = "Continue where you left off.";
+/// Stands in for the assistant's side of the history when it stopped without saying anything.
+const LIMIT_PLACEHOLDER: &str = "I reached my limit for one question and stopped before answering.";
+
+fn is_limit_stop(stop: StopReason) -> bool {
+    matches!(
+        stop,
+        StopReason::MaxSteps | StopReason::MaxToolCalls | StopReason::TokenBudget
+    )
+}
+
+/// The note under an answer that stopped at the limit for one question. `auto_used` is how many
+/// times the chat already went on by itself.
+fn limit_note(stop: StopReason, auto_used: u32) -> Option<String> {
+    if !is_limit_stop(stop) {
+        return None;
     }
+    Some(if auto_used > 0 {
+        format!(
+            "The assistant went on by itself {auto_used} times and still reached its limit for one question. Ask again to continue where it stopped, or raise \"Keep going automatically\" under Settings > AI."
+        )
+    } else {
+        "The assistant reached its limit for one question. Ask again to continue where it stopped."
+            .to_string()
+    })
 }
 
 fn explain_card(title: String, address: Option<u64>, result: &TaskResult) -> ExplainCard {
@@ -193,6 +212,18 @@ impl ViewModel {
         title: String,
         address: Option<u64>,
     ) -> Option<(u64, Arc<dyn AssistBackend>, CancellationToken)> {
+        self.assist_begin_with(kind, user_line, title, address, true)
+    }
+
+    /// [`Self::assist_begin`]; `show_user` false keeps `user_line` out of the chat.
+    fn assist_begin_with(
+        &mut self,
+        kind: RunKind,
+        user_line: String,
+        title: String,
+        address: Option<u64>,
+        show_user: bool,
+    ) -> Option<(u64, Arc<dyn AssistBackend>, CancellationToken)> {
         self.assist.show_requested = true;
         if self.assist.run.is_some() {
             self.toast(
@@ -231,7 +262,9 @@ impl ViewModel {
         };
         let engine = self.ai_meter_local(feature, &user_line, seq, engine);
         let cancel = CancellationToken::new();
-        self.assist.items.push(ChatItem::User(user_line));
+        if show_user {
+            self.assist.items.push(ChatItem::User(user_line));
+        }
         let first_item = self.assist.items.len();
         self.assist.run = Some(ActiveRun {
             seq,
@@ -427,9 +460,37 @@ impl ViewModel {
         if text.is_empty() {
             return;
         }
-        let Some((seq, engine, cancel)) =
-            self.assist_begin(RunKind::Chat, text.to_string(), String::new(), None)
-        else {
+        self.assist.auto_continues = 0;
+        self.assist_chat_turn(text, true);
+    }
+
+    /// How many times the chat may go on by itself after a limit: only for a free model on this
+    /// computer, as set by `[ai_limits] auto_continue`.
+    fn auto_continue_limit(&self) -> u32 {
+        let local = self
+            .assist
+            .backend
+            .as_ref()
+            .is_some_and(|b| !b.is_agent() && b.badge.local && !b.badge.terminal_agent);
+        if !local {
+            return 0;
+        }
+        #[cfg(test)]
+        if let Some(n) = self.assist.auto_continue_override {
+            return n;
+        }
+        let path = kraken_assist::provider_config_path(&|k| std::env::var_os(k));
+        kraken_assist::AiLimits::load(path.as_deref()).auto_continue_limit()
+    }
+
+    fn assist_chat_turn(&mut self, text: &str, show_user: bool) {
+        let Some((seq, engine, cancel)) = self.assist_begin_with(
+            RunKind::Chat,
+            text.to_string(),
+            String::new(),
+            None,
+            show_user,
+        ) else {
             return;
         };
         let run_id = self.assist.run_ids.next_id();
@@ -462,6 +523,7 @@ impl ViewModel {
             system_extra: Some(system_extra),
             max_tokens: Some(2000),
             temperature: Some(0.3),
+            ..AgentConfig::default()
         };
         let poster = self.poster();
         poster.runtime().clone().spawn(async move {
@@ -848,6 +910,23 @@ impl ViewModel {
                     state: PermissionState::Waiting,
                 }));
             }
+            AgentEvent::StepUsage { usage } => {
+                if kind == RunKind::Chat && usage.input_tokens > 0 {
+                    self.assist.last_input_tokens = usage.input_tokens;
+                }
+            }
+            AgentEvent::Compacted { elided } => {
+                if kind == RunKind::Chat {
+                    let what = if elided == 1 {
+                        "1 earlier tool result".to_string()
+                    } else {
+                        format!("{elided} earlier tool results")
+                    };
+                    self.assist.items.push(ChatItem::Notice(format!(
+                        "Made room in the conversation: left out {what}."
+                    )));
+                }
+            }
             AgentEvent::Error { message } => {
                 if kind == RunKind::Chat {
                     let text = sanitize(&message);
@@ -862,6 +941,7 @@ impl ViewModel {
                 }
                 let tail = run.filter.finish();
                 let wrote = run.wrote;
+                let user_stopped = run.stopping;
                 let final_text = std::mem::take(&mut run.last_text);
                 self.assist.run = None;
                 self.withdraw_permissions();
@@ -871,6 +951,7 @@ impl ViewModel {
                 }
                 end_stream(&mut self.assist.items);
                 self.assist.usage.add(usage);
+                let mut continue_chat = false;
                 match stop {
                     StopReason::Completed => {
                         let content = sanitize(final_text.trim());
@@ -887,17 +968,45 @@ impl ViewModel {
                             .items
                             .push(ChatItem::Notice("Stopped.".to_string()));
                     }
-                    other => {
-                        self.assist.history.pop();
-                        if let Some(n) = limit_note(other) {
-                            self.assist.items.push(ChatItem::Notice(n.to_string()));
+                    other if is_limit_stop(other) => {
+                        // Keep the question and what was said, so going on has its context.
+                        let partial = sanitize(final_text.trim());
+                        self.assist.history.push(Message::Assistant {
+                            content: if partial.is_empty() {
+                                LIMIT_PLACEHOLDER.to_string()
+                            } else {
+                                partial
+                            },
+                            tool_calls: Vec::new(),
+                        });
+                        let max = if user_stopped {
+                            0
+                        } else {
+                            self.auto_continue_limit()
+                        };
+                        let used = self.assist.auto_continues;
+                        if used < max {
+                            self.assist.auto_continues += 1;
+                            self.assist.items.push(ChatItem::Notice(format!(
+                                "Continuing automatically ({} of {max})...",
+                                used + 1
+                            )));
+                            continue_chat = true;
+                        } else if let Some(n) = limit_note(other, used) {
+                            self.assist.items.push(ChatItem::Notice(n));
                         }
+                    }
+                    _ => {
+                        self.assist.history.pop();
                     }
                 }
                 let keep = self.assist.history.len().saturating_sub(MAX_HISTORY);
                 self.assist.history.drain(..keep);
                 if wrote {
                     self.refresh_after_edit();
+                }
+                if continue_chat {
+                    self.assist_chat_turn(AUTO_CONTINUE_TEXT, false);
                 }
             }
         }
@@ -981,7 +1090,7 @@ impl ViewModel {
                 }));
             }
         }
-        if let Some(n) = limit_note(result.stop) {
+        if let Some(n) = limit_note(result.stop, 0) {
             self.assist.items.push(ChatItem::Notice(n.to_string()));
         }
     }

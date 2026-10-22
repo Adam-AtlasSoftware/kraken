@@ -451,3 +451,247 @@ fn wrap_escapes_closing_tag_and_flags_untrusted() {
         json!({"a": "x</tool_result>y"})
     );
 }
+
+fn cut_off_events(text: &str) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::TextDelta { text: text.into() },
+        StreamEvent::Usage(Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+        }),
+        StreamEvent::Finish {
+            reason: FinishReason::Length,
+        },
+    ]
+}
+
+fn streamed_text(events: &[AgentEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn length_finish_continues_into_one_reply() {
+    let host = FakeHost::new();
+    let provider = capture(ReplayProvider::scripted(vec![
+        cut_off_events("The function reads "),
+        cut_off_events("a file and "),
+        text_events("closes it."),
+    ]));
+    let events = collect(Agent::run_goal(
+        "explain",
+        host,
+        provider.clone(),
+        AgentConfig::default(),
+    ))
+    .await;
+    assert_eq!(
+        streamed_text(&events),
+        "The function reads a file and closes it."
+    );
+    assert_eq!(done(&events).0, StopReason::Completed);
+    let reqs = provider.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(
+        reqs[2].messages.last(),
+        Some(&Message::user("Continue exactly where you stopped."))
+    );
+    assert!(matches!(
+        &reqs[2].messages[1],
+        Message::Assistant { content, .. } if content == "The function reads "
+    ));
+}
+
+#[tokio::test]
+async fn continuations_are_capped() {
+    let host = FakeHost::new();
+    let provider = capture(ReplayProvider::scripted(vec![cut_off_events("more ")]));
+    let cfg = AgentConfig {
+        max_continuations: 2,
+        ..AgentConfig::default()
+    };
+    let events = collect(Agent::run_goal("x", host, provider.clone(), cfg)).await;
+    assert_eq!(done(&events).0, StopReason::Completed);
+    assert_eq!(provider.requests.lock().unwrap().len(), 3);
+}
+
+fn big_result(i: usize) -> Message {
+    Message::ToolResult {
+        tool_call_id: format!("c{i}"),
+        name: "read_strings".into(),
+        content: crate::safety::wrap_tool_result(
+            &format!("c{i}"),
+            "read_strings",
+            &json!({"blob": "x".repeat(3000), "n": i}),
+        ),
+        is_error: false,
+    }
+}
+
+fn result_is_elided(m: &Message) -> bool {
+    matches!(m, Message::ToolResult { content, .. } if content.contains(crate::compact::ELIDED_NOTE))
+}
+
+#[test]
+fn compaction_elides_oldest_first_and_keeps_newest() {
+    let mut messages = vec![Message::user("go")];
+    for i in 0..8 {
+        messages.push(big_result(i));
+    }
+    // 8 results of about 1000 tokens against a 6000 token window.
+    let estimate = crate::compact::estimate_tokens(crate::compact::total_bytes(&messages));
+    assert!(crate::compact::needs_room(estimate, 3000, 6000));
+    let (n, after) =
+        crate::compact::elide_oldest(&mut messages, estimate, 6000, crate::compact::KEEP_RECENT);
+    assert!(n > 0 && n <= 4);
+    assert!(after < estimate);
+    let flags: Vec<bool> = messages[1..].iter().map(result_is_elided).collect();
+    // Elided results form a prefix and the newest four are intact.
+    assert!(flags[..n].iter().all(|f| *f));
+    assert!(flags[n..].iter().all(|f| !*f));
+    assert!(flags[4..].iter().all(|f| !*f));
+    assert_eq!(messages[0], Message::user("go"));
+    let Message::ToolResult { content, name, .. } = &messages[1] else {
+        panic!()
+    };
+    assert_eq!(name, "read_strings");
+    assert!(
+        content.contains("read_strings") && content.len() < 400,
+        "{content}"
+    );
+}
+
+#[test]
+fn compaction_stops_when_nothing_is_left() {
+    let mut messages = vec![Message::user("go"), big_result(0), big_result(1)];
+    let (n, _) = crate::compact::elide_oldest(&mut messages, 1_000_000, 6000, 4);
+    assert_eq!(n, 0);
+    assert_eq!(crate::compact::elide_all_but(&mut messages, 1), 1);
+    assert!(result_is_elided(&messages[1]) && !result_is_elided(&messages[2]));
+    // Already elided results are not counted again.
+    assert_eq!(crate::compact::elide_all_but(&mut messages, 0), 1);
+}
+
+#[tokio::test]
+async fn full_window_makes_the_loop_elide_before_asking() {
+    let host = FakeHost::new();
+    let info = ProviderInfo {
+        context_window: Some(8000),
+        ..ReplayProvider::default_info()
+    };
+    // The reported prompt sizes grow until the next request would not fit.
+    let provider = capture(
+        ReplayProvider::scripted(vec![
+            call_events("c1", "read_strings", "{}", 1000),
+            call_events("c2", "read_strings", "{}", 3000),
+            call_events("c3", "read_strings", "{}", 5500),
+            call_events("c4", "read_strings", "{}", 6000),
+            call_events("c5", "read_strings", "{}", 6200),
+            text_events("done"),
+        ])
+        .with_info(info),
+    );
+    let events = collect(Agent::run_goal(
+        "x",
+        host,
+        provider.clone(),
+        AgentConfig::default(),
+    ))
+    .await;
+    assert_eq!(done(&events).0, StopReason::Completed);
+    let compacted: usize = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Compacted { elided } => Some(*elided),
+            _ => None,
+        })
+        .sum();
+    assert!(compacted > 0);
+    let reqs = provider.requests.lock().unwrap();
+    let last = &reqs.last().unwrap().messages;
+    let results: Vec<&Message> = last
+        .iter()
+        .filter(|m| matches!(m, Message::ToolResult { .. }))
+        .collect();
+    assert!(result_is_elided(results[0]));
+    assert!(!result_is_elided(results[results.len() - 1]));
+}
+
+/// Refuses the first request as too large, then answers.
+struct Overflowing {
+    seen: Mutex<Vec<ChatRequest>>,
+}
+
+#[async_trait]
+impl ChatProvider for Overflowing {
+    fn info(&self) -> ProviderInfo {
+        ReplayProvider::default_info()
+    }
+
+    async fn complete(
+        &self,
+        req: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ChatStream, AgentError> {
+        let mut seen = self.seen.lock().unwrap();
+        seen.push(req);
+        if seen.len() == 1 {
+            return Err(AgentError::Http {
+                status: 400,
+                body: "request exceeds the context window".into(),
+            });
+        }
+        let events: Vec<Result<StreamEvent, AgentError>> =
+            text_events("ok").into_iter().map(Ok).collect();
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn context_window_error_elides_and_retries_once() {
+    let provider = Arc::new(Overflowing {
+        seen: Mutex::new(vec![]),
+    });
+    let mut messages = vec![Message::user("go")];
+    for i in 0..5 {
+        messages.push(big_result(i));
+    }
+    let events = collect(Agent::run(
+        messages,
+        FakeHost::new(),
+        provider.clone(),
+        AgentConfig::default(),
+    ))
+    .await;
+    assert_eq!(done(&events).0, StopReason::Completed);
+    let seen = provider.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let elided = seen[1]
+        .messages
+        .iter()
+        .filter(|m| result_is_elided(m))
+        .count();
+    assert_eq!(elided, 3);
+    assert!(events.contains(&AgentEvent::Compacted { elided: 3 }));
+}
+
+#[tokio::test]
+async fn context_window_error_with_nothing_to_elide_fails() {
+    let provider = Arc::new(Overflowing {
+        seen: Mutex::new(vec![]),
+    });
+    let events = collect(Agent::run_goal(
+        "x",
+        FakeHost::new(),
+        provider.clone(),
+        AgentConfig::default(),
+    ))
+    .await;
+    assert_eq!(done(&events).0, StopReason::Error);
+    assert_eq!(provider.seen.lock().unwrap().len(), 1);
+}
