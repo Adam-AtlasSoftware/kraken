@@ -604,6 +604,7 @@ impl ViewModel {
         };
         let run_id = self.assist.run_ids.next_id();
         let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
+        let danger = self.assist_danger_mode();
         let registry_host = Arc::new(RegistryToolHost::new(
             self.assist.registry.clone(),
             backend,
@@ -611,6 +612,7 @@ impl ViewModel {
                 agent_id: ASSISTANT_ID.to_string(),
                 surface: Surface::Gui,
                 max_writes: Some(MAX_WRITES),
+                danger,
                 ..HostOptions::default()
             },
         ));

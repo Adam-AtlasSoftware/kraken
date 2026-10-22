@@ -212,6 +212,9 @@ pub struct CallAs {
     pub id: String,
     /// Agent run the call belongs to.
     pub run_id: Option<String>,
+    /// The caller already has the person's (or the danger mode's) yes for a dangerous command;
+    /// false means a dangerous command is refused.
+    pub approved: bool,
 }
 
 /// Runs KRAKEN commands for the GUI.
