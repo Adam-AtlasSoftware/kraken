@@ -182,10 +182,20 @@ case ":$PATH:" in
   *":$prefix/bin:"*) ;;
   *) echo "Add $prefix/bin to your PATH, for example:  export PATH=\"$prefix/bin:\$PATH\"" ;;
 esac
-cat <<'EOF'
+if [ -d "$prefix/share/kraken/native-sla" ]; then
+  cat <<'EOF'
+
+Ready: the native engine is included, no Java needed.
+  kraken-gui        start the app
+  kraken --help     see the commands
+  kraken setup      optional: the Ghidra engine (Mach-O, more processors), with its own JDK
+EOF
+else
+  cat <<'EOF'
 
 Next steps:
   kraken setup      downloads the pinned Ghidra and a JDK (checksum-verified, no root needed)
   kraken --help     see the commands
   kraken-gui        start the GUI
 EOF
+fi
