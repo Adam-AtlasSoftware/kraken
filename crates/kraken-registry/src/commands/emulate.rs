@@ -155,8 +155,9 @@ impl Command for EmulateRun {
              (`kraken-emu-run`) that can read the program and the SLEIGH specs and write one \
              private directory that is removed afterwards. A statically linked program runs as \
              is; a dynamically linked one needs a sysroot with its loader and libraries \
-             (`cargo xtask emu-sysroots`, or `KRAKEN_EMU_SYSROOTS`), not the libraries of this \
-             computer. Needs the SLEIGH specs (`kraken setup --native`, or `KRAKEN_NATIVE_SPECS`). \
+             (`cargo xtask emu-sysroots`, or `KRAKEN_EMU_SYSROOTS`); without one, an x86 or \
+             x86-64 program gets private copies of this computer's loader and of the libraries \
+             it names, and sees nothing else of this computer. Needs the SLEIGH specs (`kraken setup --native`, or `KRAKEN_NATIVE_SPECS`). \
              `kind: unsupported` means the program used an instruction the emulator cannot \
              execute.",
         )
@@ -233,8 +234,19 @@ fn problem(code: ErrorCode, msg: impl Into<String>) -> ProtoError {
     ProtoError::new(code, msg)
 }
 
-/// The directory of the sysroot extracted by `cargo xtask emu-sysroots` for `arch`, if present.
-fn sysroot_for(arch: Arch) -> Option<PathBuf> {
+/// Where a dynamically linked program's loader and libraries come from.
+enum Sysroot {
+    /// A sysroot extracted by `cargo xtask emu-sysroots` (or `KRAKEN_EMU_SYSROOTS`).
+    Extracted(PathBuf),
+    /// Copies of this computer's own loader and the libraries the program needs, made for the run.
+    Host,
+}
+
+/// The sysroot for `arch`: the extracted one if present, else this computer's libraries when the
+/// program is built for the host (an x86-64 Linux host runs x86-64 programs, and 32-bit x86 ones
+/// with multilib installed), so a release install emulates dynamic programs without building
+/// sysroots first.
+fn sysroot_for(arch: Arch) -> Option<Sysroot> {
     let set = match arch {
         Arch::X86 => "elf32",
         Arch::Arm => "arm32",
@@ -244,29 +256,29 @@ fn sysroot_for(arch: Arch) -> Option<PathBuf> {
         Arch::Riscv32 => return None,
     };
     let root = match std::env::var_os("KRAKEN_EMU_SYSROOTS").filter(|v| !v.is_empty()) {
-        Some(p) => PathBuf::from(p),
-        None => PathBuf::from(std::env::var_os("HOME")?).join(".cache/kraken-dev/emu-sysroots"),
+        Some(p) => Some(PathBuf::from(p)),
+        None => std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join(".cache/kraken-dev/emu-sysroots")),
     };
-    let dir = root.join(set);
-    if dir.join("lib").is_dir() {
-        return Some(dir);
+    if let Some(dir) = root.map(|r| r.join(set))
+        && dir.join("lib").is_dir()
+    {
+        return Some(Sysroot::Extracted(dir));
     }
-    host_sysroot(arch)
+    host_libraries(arch).then_some(Sysroot::Host)
 }
 
-/// The host's own libraries, when the program is built for the host: an x86-64 Linux host runs
-/// x86-64 programs (and 32-bit x86 ones with multilib installed) against its own loader and libc,
-/// so a release install emulates dynamic programs without building sysroots first.
-fn host_sysroot(arch: Arch) -> Option<PathBuf> {
+/// Whether this computer has a loader for programs of `arch`.
+fn host_libraries(arch: Arch) -> bool {
     if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        return None;
+        return false;
     }
     let loader = match arch {
         Arch::X86_64 => "/lib64/ld-linux-x86-64.so.2",
         Arch::X86 => "/lib/ld-linux.so.2",
-        _ => return None,
+        _ => return false,
     };
-    Path::new(loader).exists().then(|| PathBuf::from("/"))
+    Path::new(loader).exists()
 }
 
 fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
@@ -372,24 +384,53 @@ fn emulate(
     spec.workdir = Some(work.path().to_path_buf());
 
     let run = |spec: &RunSpec| run_program_confined(spec, &runner, ConfinementOptions::default());
+    // Holds the private copy of this computer's libraries until the run is over.
+    let mut _host_libs = None;
     let result = match run(&spec) {
-        Err(EmuError::NeedsSysroot { arch, .. }) if sysroot_for(arch).is_some() => {
-            spec.sysroot = sysroot_for(arch);
-            if let Some(s) = &spec.sysroot {
-                if s == Path::new("/") {
-                    notes.push(
-                        "dynamic program: libraries of this computer. If emulation stops at an \
-                         unsupported vector instruction, this system's libraries are built for \
-                         newer CPUs (some distributions build for x86-64-v3); in a source checkout \
-                         `cargo xtask emu-sysroots` extracts portable ones"
-                            .into(),
-                    );
-                } else {
+        Err(EmuError::NeedsSysroot { arch, interp, .. }) if sysroot_for(arch).is_some() => {
+            match sysroot_for(arch) {
+                Some(Sysroot::Extracted(dir)) => {
                     notes.push(format!(
                         "dynamic program: libraries from the sysroot {}",
-                        s.display()
+                        dir.display()
                     ));
+                    spec.sysroot = Some(dir);
                 }
+                Some(Sysroot::Host) => {
+                    let dir = tempfile::Builder::new()
+                        .prefix("kraken-emulate-libs-")
+                        .tempdir()
+                        .map_err(|e| {
+                            problem(ErrorCode::Internal, format!("private sysroot: {e}"))
+                        })?;
+                    let libs =
+                        kraken_emu::hostlibs::private_sysroot(&program, &interp, arch, dir.path())
+                            .map_err(|e| emulation_error(e, binary))?;
+                    notes.push(format!(
+                        "dynamic program: its loader and {} librar{} were copied from this \
+                         computer into a private sysroot; nothing else of this computer is \
+                         visible, so libraries opened by name at run time (dlopen, NSS, gconv) \
+                         are absent. If emulation stops at an unsupported vector instruction, \
+                         this system's libraries are built for newer CPUs (some distributions \
+                         build for x86-64-v3); in a source checkout `cargo xtask emu-sysroots` \
+                         extracts portable ones",
+                        libs.libraries.len(),
+                        if libs.libraries.len() == 1 {
+                            "y"
+                        } else {
+                            "ies"
+                        }
+                    ));
+                    if !libs.missing.is_empty() {
+                        notes.push(format!(
+                            "libraries the program needs that this computer lacks: {}",
+                            libs.missing.join(", ")
+                        ));
+                    }
+                    spec.sysroot = Some(dir.path().to_path_buf());
+                    _host_libs = Some(dir);
+                }
+                None => {}
             }
             run(&spec)
         }

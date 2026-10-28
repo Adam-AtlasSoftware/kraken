@@ -28,6 +28,7 @@ pub mod call;
 #[cfg(unix)]
 pub mod confined;
 pub mod error;
+pub mod hostlibs;
 pub mod linux;
 pub mod loader;
 pub mod machine;

@@ -37,14 +37,22 @@ one private directory.
 ## Dynamic programs
 
 A statically linked program runs as it is. A dynamically linked program needs its loader and C
-library. The emulator does **not** use the libraries of this computer: it reads them from a sysroot,
-`~/.cache/kraken-dev/emu-sysroots/<set>` (or `$KRAKEN_EMU_SYSROOTS/<set>`), which
-`cargo xtask emu-sysroots` extracts for 32-bit x86, x86-64, ARM, AArch64 and RISC-V 64. The
-corpus sets come from the corpus build images; the `x86_64` set comes from the local
-`debian:trixie-slim` image (`KRAKEN_EMU_X86_64_IMAGE` picks another; needs docker). Without a
-sysroot the command says so and names this fix.
+library. The emulator reads them from a sysroot, `~/.cache/kraken-dev/emu-sysroots/<set>` (or
+`$KRAKEN_EMU_SYSROOTS/<set>`), which `cargo xtask emu-sysroots` extracts for 32-bit x86, x86-64,
+ARM, AArch64 and RISC-V 64. The corpus sets come from the corpus build images; the `x86_64` set
+comes from the local `debian:trixie-slim` image (`KRAKEN_EMU_X86_64_IMAGE` picks another; needs
+docker).
 
-Why not the libraries of this computer: many distributions build glibc for x86-64-v3, with AVX2
+Without such a sysroot, an x86-64 program (or a 32-bit x86 one, with multilib installed) on an
+x86-64 Linux computer uses this computer's own libraries, so a release install runs dynamic
+programs without building anything. KRAKEN does not show the guest this computer's file system:
+it copies the program's loader and the shared libraries the program names (and the ones those
+name) into a private directory for the run, and that directory is the guest's `/`. Nothing else
+of this computer is visible, so libraries a program opens by name at run time (`dlopen`, NSS
+modules, gconv) are absent; the run's `notes` say how many libraries were copied and which were
+not found. For other architectures without a sysroot the command says so and names the fix.
+
+Why a portable sysroot can still be needed on x86-64: many distributions build glibc for x86-64-v3, with AVX2
 instructions inside, and the emulated CPU implements no VEX/AVX instructions (a program that
 executes one stops with `kind: unsupported`). Debian's glibc is built for baseline x86-64.
 
