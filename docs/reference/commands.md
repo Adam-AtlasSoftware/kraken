@@ -29,11 +29,16 @@ logged; **dangerous** commands always ask for approval first.
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
 | [`disassemble`](#disassemble) | query | safe | Disassemble from an address or a whole function, one page at a time |
 | [`emulate_run`](#emulate_run) | query | safe | Run the program in the emulator with the given stdin and arguments; returns exit status and output |
+| [`emulator_run`](#emulator_run) | query | dangerous | Run the project's binary (original or patched), or any file, in an installed emulator |
 | [`exports`](#exports) | query | safe | List exported symbols and entry points |
 | [`get_function`](#get_function) | query | safe | Show a function with its comments and entity versions |
 | [`gui_navigate`](#gui_navigate) | query | safe | Show an address in the person's GUI |
 | [`history`](#history) | query | safe | Show the edit log, newest first |
 | [`imports`](#imports) | query | safe | List imported symbols (functions and data from other libraries) |
+| [`integration_install`](#integration_install) | query | mutating | Download upstream's release of an emulator or tool and install it under KRAKEN's data directory |
+| [`integration_remove`](#integration_remove) | query | dangerous | Delete KRAKEN's installed copy of an emulator or tool and forget a chosen path |
+| [`integration_use_path`](#integration_use_path) | query | mutating | Use an emulator or tool you already have, at a path you choose |
+| [`integrations_list`](#integrations_list) | query | safe | List the emulators and tools KRAKEN can use, with what is installed |
 | [`job_await`](#job_await) | query | safe | Wait for a job to finish or a timeout to pass |
 | [`job_cancel`](#job_cancel) | mutation | mutating | Request cancellation of a running job |
 | [`job_status`](#job_status) | query | safe | Show a job's status, progress and result |
@@ -3088,6 +3093,136 @@ Whole-program emulation of the executable the project was made from, on KRAKEN's
 
 </details>
 
+## emulator_run
+
+Run the project's binary (original or patched), or any file, in an installed emulator
+
+```sh
+kraken emulator-run --id <string> [options]
+```
+
+- Kind: query
+- Permission: dangerous
+
+Hands the project's original executable, a copy with its byte patches, or any file you name to the emulator `id` through its manifest's argv template, and starts it. Unlike `emulate_run` this is the real emulator on this computer, not KRAKEN's confined interpreter: an emulator or compatibility layer such as Wine or QEMU user mode runs the program with this computer's resources, so it always asks first. A windowed emulator keeps running (the result has its pid and log); a command-line one is waited for. `debug: true` adds the emulator's GDB stub flags and returns its address.
+
+Example: `emulator_run {"id": "xemu", "target": "patched"}`
+
+The patched copy and the log are in a private directory under the system temporary directory, named in `log`; KRAKEN does not delete it, so the emulator can keep using it. The emulator is not confined: its own save data and settings live where it keeps them. Register or list emulators with `integrations_list`; add your own as a manifest in `<config dir>/emulators.d/`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `id` | `--id` | string | yes | Catalogue id of the emulator (see `integrations_list`). |
+| `args` | `--args` | json | no | Extra arguments appended to the emulator's command line (at most 32). |
+| `debug` | `--debug` | boolean | no | Start the emulator's GDB stub and wait for a debugger (only for emulators that have one). |
+| `file` | `--file` | string | no | The file for `target: file`; absolute. |
+| `target` | `--target` | one of `original`, `patched`, `file` | no | What to run: `original` (default), `patched` or `file`. |
+| `wait_seconds` | `--wait-seconds` | integer | no | For a program that runs and exits: seconds to wait for it (default 20, at most 120). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `emulator_run`.",
+  "properties": {
+    "command": {
+      "description": "The command line that ran.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "emulator": {
+      "description": "Emulator name.",
+      "type": "string"
+    },
+    "exit_code": {
+      "description": "Exit code of a program that ended.",
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "exited": {
+      "description": "True when the process had ended when the command returned.",
+      "type": "boolean"
+    },
+    "file": {
+      "description": "The file handed to the emulator.",
+      "type": "string"
+    },
+    "gdb": {
+      "description": "`127.0.0.1:<port>` of the GDB stub when `debug` was set.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "log": {
+      "description": "Where the output is logged.",
+      "type": "string"
+    },
+    "notes": {
+      "description": "Facts about the run.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "output": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The first 4000 characters of output (program data, so untrusted)."
+    },
+    "pid": {
+      "description": "Process id; a windowed emulator keeps running after the command returns.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "timed_out": {
+      "description": "True when the wait ran out and the process was stopped.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "emulator",
+    "command",
+    "file",
+    "pid",
+    "exited",
+    "timed_out",
+    "log",
+    "output",
+    "notes"
+  ],
+  "title": "EmulatorRunOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## exports
 
 List exported symbols and entry points
@@ -4046,6 +4181,821 @@ Example: `imports {"limit": 50}`
     "items"
   ],
   "title": "Page",
+  "type": "object"
+}
+```
+
+</details>
+
+## integration_install
+
+Download upstream's release of an emulator or tool and install it under KRAKEN's data directory
+
+```sh
+kraken integration-install --id <string> [options]
+```
+
+- Kind: query
+- Permission: mutating
+
+Fetches the pinned upstream release of the catalogue entry `id` over HTTPS, checks its SHA-256 and unpacks it under KRAKEN's data directory. `accept_licence` must be true: read `notice` and `license` of `integrations_list` first. Agents and MCP callers are asked first, and an entry that embeds key material is never installed on an agent's say-so. KRAKEN never ships the program, keys, firmware or games.
+
+Example: `integration_install {"id": "mgba", "accept_licence": true}`
+
+Only catalogue ids are accepted, never a URL. The download resumes from a partial file, the hash is checked before anything is unpacked, and an archive that holds an unsafe path is refused. Progress is in the `progress` field of `integrations_list`. Files go to `<data dir>/integrations/<id>/<version>/`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `id` | `--id` | string | yes | Catalogue id (see `integrations_list`). |
+| `accept_licence` | `--accept-licence` | boolean | no | Say you read the licence and notice of the entry (default false: the install is refused until it is true). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "InstallProgress": {
+      "description": "Progress of a running install.",
+      "properties": {
+        "done": {
+          "description": "Bytes received so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "description": "`downloading`, `verifying` or `extracting`.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Bytes expected, 0 when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase",
+        "done",
+        "total"
+      ],
+      "type": "object"
+    },
+    "IntegrationSource": {
+      "description": "Where a usable copy of the tool comes from.",
+      "oneOf": [
+        {
+          "const": "downloaded",
+          "description": "Downloaded by KRAKEN from the upstream's release.",
+          "type": "string"
+        },
+        {
+          "const": "system",
+          "description": "Found on this computer (on `PATH` or in a well-known place).",
+          "type": "string"
+        },
+        {
+          "const": "user_path",
+          "description": "A path the person chose.",
+          "type": "string"
+        }
+      ]
+    },
+    "IntegrationStatus": {
+      "description": "How far along an entry is.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "Usable now.",
+          "type": "string"
+        },
+        {
+          "const": "not_installed",
+          "description": "Not on this computer; `Install` downloads upstream's release.",
+          "type": "string"
+        },
+        {
+          "const": "manual_only",
+          "description": "Not on this computer and upstream publishes no build KRAKEN can download for this\nplatform: install it yourself, then `integration_use_path`.",
+          "type": "string"
+        },
+        {
+          "const": "installing",
+          "description": "A download is running; see `progress`.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One catalogue entry, as shown.",
+  "properties": {
+    "argv": {
+      "description": "What the `Run` action executes: the argv template, with `{exe}` the program.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "contains_key_material": {
+      "description": "True for a download that embeds key material (never installed on an agent's say-so).",
+      "type": "boolean"
+    },
+    "debuggable": {
+      "description": "True when the emulator offers a GDB stub for `emulator_run --debug`.",
+      "type": "boolean"
+    },
+    "disk_bytes": {
+      "description": "Bytes KRAKEN's copy uses on disk.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "download_bytes": {
+      "description": "Bytes `Install` downloads.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "formats": {
+      "description": "File extensions it opens, lower case without the dot.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "homepage": {
+      "description": "Upstream web page.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Stable id (`xemu`, `pcsx2`, or the id of a user manifest).",
+      "type": "string"
+    },
+    "kind": {
+      "description": "`emulator`, `compat_layer` or `tool`.",
+      "type": "string"
+    },
+    "license": {
+      "description": "SPDX identifier of the licence (`GPL-2.0-or-later`, `Proprietary`, `Non-commercial`, ...).",
+      "type": "string"
+    },
+    "name": {
+      "description": "Display name.",
+      "type": "string"
+    },
+    "notice": {
+      "description": "What to read before installing: licence terms, anything embedded in the download.",
+      "type": "string"
+    },
+    "path": {
+      "description": "The program that runs.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pinned_version": {
+      "description": "The release `Install` would download.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "platforms": {
+      "description": "Systems or program kinds it runs (`Original Xbox`, `Windows programs`, ...).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InstallProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Running install, when there is one."
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntegrationSource"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Where the usable copy comes from, when there is one."
+    },
+    "status": {
+      "$ref": "#/$defs/IntegrationStatus",
+      "description": "Current state."
+    },
+    "summary": {
+      "description": "One line on what it is.",
+      "type": "string"
+    },
+    "user_supplied": {
+      "description": "True when a manifest from the user's config directory defined it (\"user-supplied, not\nreviewed\").",
+      "type": "boolean"
+    },
+    "version": {
+      "description": "Version of the usable copy (installed release, or what the copy reported).",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "kind",
+    "summary",
+    "homepage",
+    "platforms",
+    "formats",
+    "status",
+    "download_bytes",
+    "disk_bytes",
+    "license",
+    "notice",
+    "contains_key_material",
+    "user_supplied",
+    "debuggable",
+    "argv"
+  ],
+  "title": "IntegrationView",
+  "type": "object"
+}
+```
+
+</details>
+
+## integration_remove
+
+Delete KRAKEN's installed copy of an emulator or tool and forget a chosen path
+
+```sh
+kraken integration-remove --id <string>
+```
+
+- Kind: query
+- Permission: dangerous
+
+Deletes the files KRAKEN installed for `id` (only what its receipt lists) and drops a path chosen with `integration_use_path`. A copy on your system is never touched. Asks first.
+
+Example: `integration_remove {"id": "mgba"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `id` | `--id` | string | yes | Catalogue id. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `integration_remove`.",
+  "properties": {
+    "freed_bytes": {
+      "description": "Bytes freed.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "id": {
+      "description": "Entry id.",
+      "type": "string"
+    },
+    "note": {
+      "description": "What was removed or forgotten.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "freed_bytes",
+    "note"
+  ],
+  "title": "IntegrationRemoveOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## integration_use_path
+
+Use an emulator or tool you already have, at a path you choose
+
+```sh
+kraken integration-use-path --id <string> --path <string>
+```
+
+- Kind: query
+- Permission: mutating
+
+Points the entry `id` at an existing program (an AppImage, a binary, a wrapper script). It must be an executable file. Nothing is downloaded or copied. Agents and MCP callers are asked first, because the program is what `emulator_run` runs.
+
+Example: `integration_use_path {"id": "pcsx2", "path": "/opt/pcsx2/pcsx2-qt"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `id` | `--id` | string | yes | Catalogue id. |
+| `path` | `--path` | string | yes | Absolute path of the program to use. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "InstallProgress": {
+      "description": "Progress of a running install.",
+      "properties": {
+        "done": {
+          "description": "Bytes received so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "description": "`downloading`, `verifying` or `extracting`.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Bytes expected, 0 when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase",
+        "done",
+        "total"
+      ],
+      "type": "object"
+    },
+    "IntegrationSource": {
+      "description": "Where a usable copy of the tool comes from.",
+      "oneOf": [
+        {
+          "const": "downloaded",
+          "description": "Downloaded by KRAKEN from the upstream's release.",
+          "type": "string"
+        },
+        {
+          "const": "system",
+          "description": "Found on this computer (on `PATH` or in a well-known place).",
+          "type": "string"
+        },
+        {
+          "const": "user_path",
+          "description": "A path the person chose.",
+          "type": "string"
+        }
+      ]
+    },
+    "IntegrationStatus": {
+      "description": "How far along an entry is.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "Usable now.",
+          "type": "string"
+        },
+        {
+          "const": "not_installed",
+          "description": "Not on this computer; `Install` downloads upstream's release.",
+          "type": "string"
+        },
+        {
+          "const": "manual_only",
+          "description": "Not on this computer and upstream publishes no build KRAKEN can download for this\nplatform: install it yourself, then `integration_use_path`.",
+          "type": "string"
+        },
+        {
+          "const": "installing",
+          "description": "A download is running; see `progress`.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One catalogue entry, as shown.",
+  "properties": {
+    "argv": {
+      "description": "What the `Run` action executes: the argv template, with `{exe}` the program.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "contains_key_material": {
+      "description": "True for a download that embeds key material (never installed on an agent's say-so).",
+      "type": "boolean"
+    },
+    "debuggable": {
+      "description": "True when the emulator offers a GDB stub for `emulator_run --debug`.",
+      "type": "boolean"
+    },
+    "disk_bytes": {
+      "description": "Bytes KRAKEN's copy uses on disk.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "download_bytes": {
+      "description": "Bytes `Install` downloads.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "formats": {
+      "description": "File extensions it opens, lower case without the dot.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "homepage": {
+      "description": "Upstream web page.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Stable id (`xemu`, `pcsx2`, or the id of a user manifest).",
+      "type": "string"
+    },
+    "kind": {
+      "description": "`emulator`, `compat_layer` or `tool`.",
+      "type": "string"
+    },
+    "license": {
+      "description": "SPDX identifier of the licence (`GPL-2.0-or-later`, `Proprietary`, `Non-commercial`, ...).",
+      "type": "string"
+    },
+    "name": {
+      "description": "Display name.",
+      "type": "string"
+    },
+    "notice": {
+      "description": "What to read before installing: licence terms, anything embedded in the download.",
+      "type": "string"
+    },
+    "path": {
+      "description": "The program that runs.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pinned_version": {
+      "description": "The release `Install` would download.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "platforms": {
+      "description": "Systems or program kinds it runs (`Original Xbox`, `Windows programs`, ...).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InstallProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Running install, when there is one."
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntegrationSource"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Where the usable copy comes from, when there is one."
+    },
+    "status": {
+      "$ref": "#/$defs/IntegrationStatus",
+      "description": "Current state."
+    },
+    "summary": {
+      "description": "One line on what it is.",
+      "type": "string"
+    },
+    "user_supplied": {
+      "description": "True when a manifest from the user's config directory defined it (\"user-supplied, not\nreviewed\").",
+      "type": "boolean"
+    },
+    "version": {
+      "description": "Version of the usable copy (installed release, or what the copy reported).",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "kind",
+    "summary",
+    "homepage",
+    "platforms",
+    "formats",
+    "status",
+    "download_bytes",
+    "disk_bytes",
+    "license",
+    "notice",
+    "contains_key_material",
+    "user_supplied",
+    "debuggable",
+    "argv"
+  ],
+  "title": "IntegrationView",
+  "type": "object"
+}
+```
+
+</details>
+
+## integrations_list
+
+List the emulators and tools KRAKEN can use, with what is installed
+
+```sh
+kraken integrations-list
+```
+
+- Kind: query
+- Permission: safe
+
+Every catalogue entry (xemu, xenia-canary, shadPS4, RPCS3, PCSX2, PPSSPP, Dolphin, DuckStation, mGBA, melonDS, Ryubing, Cemu, QEMU, Wine and the manifests in your config directory) with its `status` (ready, not_installed, manual_only, installing), where the usable copy comes from, its version, the licence and the notice to read before installing. Nothing is bundled with KRAKEN; `integration_install` downloads upstream's own release.
+
+Example: `integrations_list {}`
+
+Detection looks at a path the person chose, then KRAKEN's own installs, then `PATH` and well-known places (`~/Applications`, `~/.local/bin`, Flatpak exports). Custom emulators are TOML manifests in `<config dir>/emulators.d/`; see `docs/integrations.md`.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "InstallProgress": {
+      "description": "Progress of a running install.",
+      "properties": {
+        "done": {
+          "description": "Bytes received so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "description": "`downloading`, `verifying` or `extracting`.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Bytes expected, 0 when unknown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase",
+        "done",
+        "total"
+      ],
+      "type": "object"
+    },
+    "IntegrationSource": {
+      "description": "Where a usable copy of the tool comes from.",
+      "oneOf": [
+        {
+          "const": "downloaded",
+          "description": "Downloaded by KRAKEN from the upstream's release.",
+          "type": "string"
+        },
+        {
+          "const": "system",
+          "description": "Found on this computer (on `PATH` or in a well-known place).",
+          "type": "string"
+        },
+        {
+          "const": "user_path",
+          "description": "A path the person chose.",
+          "type": "string"
+        }
+      ]
+    },
+    "IntegrationStatus": {
+      "description": "How far along an entry is.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "Usable now.",
+          "type": "string"
+        },
+        {
+          "const": "not_installed",
+          "description": "Not on this computer; `Install` downloads upstream's release.",
+          "type": "string"
+        },
+        {
+          "const": "manual_only",
+          "description": "Not on this computer and upstream publishes no build KRAKEN can download for this\nplatform: install it yourself, then `integration_use_path`.",
+          "type": "string"
+        },
+        {
+          "const": "installing",
+          "description": "A download is running; see `progress`.",
+          "type": "string"
+        }
+      ]
+    },
+    "IntegrationView": {
+      "description": "One catalogue entry, as shown.",
+      "properties": {
+        "argv": {
+          "description": "What the `Run` action executes: the argv template, with `{exe}` the program.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "contains_key_material": {
+          "description": "True for a download that embeds key material (never installed on an agent's say-so).",
+          "type": "boolean"
+        },
+        "debuggable": {
+          "description": "True when the emulator offers a GDB stub for `emulator_run --debug`.",
+          "type": "boolean"
+        },
+        "disk_bytes": {
+          "description": "Bytes KRAKEN's copy uses on disk.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "download_bytes": {
+          "description": "Bytes `Install` downloads.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "formats": {
+          "description": "File extensions it opens, lower case without the dot.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "homepage": {
+          "description": "Upstream web page.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable id (`xemu`, `pcsx2`, or the id of a user manifest).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`emulator`, `compat_layer` or `tool`.",
+          "type": "string"
+        },
+        "license": {
+          "description": "SPDX identifier of the licence (`GPL-2.0-or-later`, `Proprietary`, `Non-commercial`, ...).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name.",
+          "type": "string"
+        },
+        "notice": {
+          "description": "What to read before installing: licence terms, anything embedded in the download.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The program that runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinned_version": {
+          "description": "The release `Install` would download.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platforms": {
+          "description": "Systems or program kinds it runs (`Original Xbox`, `Windows programs`, ...).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Running install, when there is one."
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntegrationSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the usable copy comes from, when there is one."
+        },
+        "status": {
+          "$ref": "#/$defs/IntegrationStatus",
+          "description": "Current state."
+        },
+        "summary": {
+          "description": "One line on what it is.",
+          "type": "string"
+        },
+        "user_supplied": {
+          "description": "True when a manifest from the user's config directory defined it (\"user-supplied, not\nreviewed\").",
+          "type": "boolean"
+        },
+        "version": {
+          "description": "Version of the usable copy (installed release, or what the copy reported).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "summary",
+        "homepage",
+        "platforms",
+        "formats",
+        "status",
+        "download_bytes",
+        "disk_bytes",
+        "license",
+        "notice",
+        "contains_key_material",
+        "user_supplied",
+        "debuggable",
+        "argv"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `integrations_list`.",
+  "properties": {
+    "integrations": {
+      "description": "Entries in catalogue order.",
+      "items": {
+        "$ref": "#/$defs/IntegrationView"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "integrations"
+  ],
+  "title": "IntegrationsListOut",
   "type": "object"
 }
 ```

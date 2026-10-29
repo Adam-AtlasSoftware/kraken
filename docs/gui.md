@@ -122,6 +122,13 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Patch bytes here... | Replace the bytes of the selected instruction or Hex selection; nothing on disk changes until you export |  |
 | Show patches | See every staged byte patch, run them and export |  |
 | Export patched binary... | Write a copy of the program with every patch applied; the original is untouched |  |
+| Run in emulator... | Open the program, or a copy with your patches, in an installed emulator |  |
+
+### Tools
+
+| Item | What it does | Shortcut |
+|---|---|---|
+| Emulators and tools... | Install, find or remove the emulators KRAKEN can run programs in; nothing is bundled |  |
 
 ## Panels
 

@@ -406,7 +406,13 @@ impl Inner {
 fn about_this_computer(command: &str) -> bool {
     matches!(
         command,
-        "local_model_recommend" | "local_model_setup" | "local_model_devices"
+        "local_model_recommend"
+            | "local_model_setup"
+            | "local_model_devices"
+            | "integrations_list"
+            | "integration_install"
+            | "integration_use_path"
+            | "integration_remove"
     )
 }
 

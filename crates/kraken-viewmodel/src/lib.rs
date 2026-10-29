@@ -18,6 +18,7 @@ mod errors;
 mod fuzzy;
 pub mod history;
 pub mod infer;
+pub mod integrations;
 mod loading;
 mod nav;
 pub mod navtools;

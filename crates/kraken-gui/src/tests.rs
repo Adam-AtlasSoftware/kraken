@@ -930,6 +930,7 @@ mod audit;
 #[cfg(unix)]
 mod bench;
 mod help;
+mod integrations;
 mod loading;
 mod local_models;
 mod patches;

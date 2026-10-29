@@ -322,6 +322,11 @@ fn number_arg(s: &str) -> String {
 }
 
 impl ViewModel {
+    /// The backend the commands run on.
+    pub fn backend_handle(&self) -> Arc<dyn Backend> {
+        self.backend.clone()
+    }
+
     /// The runtime the calls run on, for dialogs the window opens (a folder chooser).
     pub fn runtime_handle(&self) -> Handle {
         self.rt.clone()
@@ -1953,6 +1958,8 @@ impl ViewModel {
             AppAction::Automate => return Some(UiRequest::OpenAutomate),
             AppAction::AskAboutKraken => return Some(UiRequest::AskAboutKraken),
             AppAction::SetUpLocalModel => return Some(UiRequest::SetUpLocalModel),
+            AppAction::ShowIntegrations => return Some(UiRequest::ShowIntegrations),
+            AppAction::RunInEmulator => return Some(UiRequest::RunInEmulator),
             AppAction::LocalSetupNext => {
                 return Some(UiRequest::LocalSetup(crate::SetupButton::Next));
             }

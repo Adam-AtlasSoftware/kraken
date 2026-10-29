@@ -94,6 +94,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::PatchHere
             | AppAction::ShowPatches
             | AppAction::ExportPatched
+            | AppAction::RunInEmulator
             | AppAction::CreateFunctionHere
             | AppAction::DeleteFunction
             | AppAction::ShowAiActivity
@@ -312,6 +313,8 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
                 item(ui, AppAction::ShowPatches, env, &mut out);
                 ui.separator();
                 item(ui, AppAction::ExportPatched, env, &mut out);
+                ui.separator();
+                item(ui, AppAction::RunInEmulator, env, &mut out);
             })
             .response
             .on_hover_text("Change the program's bytes and write a patched copy");
@@ -333,6 +336,11 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             .response
             .on_hover_text("Ask the assistant about the program, or let it do the work");
         }
+        ui.menu_button("Tools", |ui| {
+            item(ui, AppAction::ShowIntegrations, env, &mut out);
+        })
+        .response
+        .on_hover_text("Install or find the emulators and tools KRAKEN can use");
         ui.menu_button("Help", |ui| help_menu(ui, env, &mut out))
             .response
             .on_hover_text("Help pages, the tour, shortcuts, learn mode and the user guide");

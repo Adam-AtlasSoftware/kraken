@@ -44,6 +44,8 @@ pub struct Services {
     pub serving: Option<Arc<dyn kraken_host::infer::ServingApi>>,
     /// A fixed probe for the guided model setup (tests, screenshots); `None` asks the daemon.
     pub setup_probe: Option<Arc<dyn kraken_viewmodel::infer::SetupProbe>>,
+    /// A scripted backend for the Integrations window (tests); else the daemon is used.
+    pub integrations_backend: Option<Arc<dyn kraken_viewmodel::Backend>>,
 }
 
 impl Services {
@@ -71,6 +73,7 @@ impl Services {
             ai_daily: kraken_model::DailyLedger::standard(),
             serving: None,
             setup_probe: None,
+            integrations_backend: None,
         }
     }
 
@@ -96,6 +99,7 @@ impl Services {
             ai_daily: None,
             serving: None,
             setup_probe: None,
+            integrations_backend: None,
         }
     }
 

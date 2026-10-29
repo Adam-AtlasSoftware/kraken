@@ -96,6 +96,10 @@ pub enum AppAction {
     AskAboutKraken,
     /// Open the guided setup of a model that runs on this computer.
     SetUpLocalModel,
+    /// Open the Integrations window: emulators and tools to install or point at.
+    ShowIntegrations,
+    /// Run the program, or a patched copy, in an installed emulator.
+    RunInEmulator,
     /// In that setup: go on to the next step (the last one starts the download).
     LocalSetupNext,
     /// In that setup: go back one step.
@@ -106,7 +110,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 45] = [
+    pub const ALL: [AppAction; 47] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -152,6 +156,8 @@ impl AppAction {
         AppAction::ShowAiActivity,
         AppAction::AskAboutKraken,
         AppAction::SetUpLocalModel,
+        AppAction::ShowIntegrations,
+        AppAction::RunInEmulator,
     ];
 
     /// The buttons of the guided setup, for agents driving it through `ui_action`. They are
@@ -240,6 +246,8 @@ impl AppAction {
             AppAction::ShowAiActivity => "Show AI activity",
             AppAction::AskAboutKraken => "Ask the assistant about KRAKEN",
             AppAction::SetUpLocalModel => "Set up a model on this computer...",
+            AppAction::ShowIntegrations => "Emulators and tools...",
+            AppAction::RunInEmulator => "Run in emulator...",
             AppAction::LocalSetupNext => "Model setup: next step",
             AppAction::LocalSetupBack => "Model setup: previous step",
             AppAction::LocalSetupCancel => "Model setup: cancel",
@@ -310,6 +318,12 @@ impl AppAction {
             }
             AppAction::SetUpLocalModel => {
                 "Check this computer, pick a model that fits and download it"
+            }
+            AppAction::ShowIntegrations => {
+                "Install, find or remove the emulators KRAKEN can run programs in; nothing is bundled"
+            }
+            AppAction::RunInEmulator => {
+                "Open the program, or a copy with your patches, in an installed emulator"
             }
             AppAction::LocalSetupNext => "Go to the next step of the model setup",
             AppAction::LocalSetupBack => "Go back one step in the model setup",
@@ -493,6 +507,10 @@ pub enum UiRequest {
     AskAboutKraken,
     /// Open the guided setup of a local model.
     SetUpLocalModel,
+    /// Show the Integrations window.
+    ShowIntegrations,
+    /// Open the run-in-emulator dialog.
+    RunInEmulator,
     /// Press a button of that setup.
     LocalSetup(SetupButton),
 }

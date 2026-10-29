@@ -11,6 +11,7 @@ mod help;
 mod history;
 mod import;
 mod infer;
+mod integrations;
 mod loading;
 mod menu;
 mod model_chip;

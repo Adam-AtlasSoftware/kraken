@@ -286,7 +286,7 @@ fn the_memory_question_from_a_chip_shows_with_settings_closed() {
 #[test]
 fn narrow_windows_keep_only_names_and_dots() {
     let models = [("a", "Alpha"), ("b", "Bravo"), ("c", "Charlie")];
-    let mut r = rig(TitlebarMode::Custom, &models, [1500.0, 700.0], "");
+    let mut r = rig(TitlebarMode::Custom, &models, [1600.0, 700.0], "");
     r.until("loaded", |k| k.h.query_by_label("Alpha").is_some());
     for (id, _) in models {
         r.ready(id);

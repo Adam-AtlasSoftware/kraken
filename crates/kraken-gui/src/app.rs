@@ -54,6 +54,13 @@ enum ShotStage {
 }
 
 /// The connection to `krakend`, made when a real project is first needed.
+/// What the person asked of the integrations hub before it could be made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntegrationsWant {
+    Window,
+    Run,
+}
+
 enum Slot {
     Idle,
     Connecting(Receiver<Result<Arc<DaemonClientBackend>, String>>),
@@ -133,6 +140,10 @@ pub struct KrakenApp {
     local_setup_wanted: bool,
     /// Why the setup cannot start.
     local_setup_error: Option<String>,
+    /// The Integrations window and the run dialog, once there is a backend to talk to.
+    integrations: Option<kraken_viewmodel::integrations::IntegrationsHub>,
+    /// What the person asked for before the hub existed: the window or the run dialog.
+    integrations_want: Option<IntegrationsWant>,
     prefs: Prefs,
     /// The open project is the demo (not worth remembering).
     is_demo: bool,
@@ -221,6 +232,8 @@ impl KrakenApp {
             local_setup: None,
             local_setup_wanted: false,
             local_setup_error: None,
+            integrations: None,
+            integrations_want: None,
             prefs,
             is_demo: false,
             recorded: false,
@@ -934,6 +947,7 @@ impl KrakenApp {
             AppAction::OpenDemo => Some(UiRequest::OpenDemo),
             AppAction::OpenSettings => Some(UiRequest::OpenSettings),
             AppAction::SetUpLocalModel => Some(UiRequest::SetUpLocalModel),
+            AppAction::ShowIntegrations => Some(UiRequest::ShowIntegrations),
             AppAction::LocalSetupNext => Some(UiRequest::LocalSetup(SetupButton::Next)),
             AppAction::LocalSetupBack => Some(UiRequest::LocalSetup(SetupButton::Back)),
             AppAction::LocalSetupCancel => Some(UiRequest::LocalSetup(SetupButton::Cancel)),
@@ -968,6 +982,8 @@ impl KrakenApp {
             UiRequest::OpenDemo => self.request(Pending::Open(Choice::Demo), ctx),
             UiRequest::OpenSettings => self.settings.show_window(),
             UiRequest::SetUpLocalModel => self.open_local_setup(ctx),
+            UiRequest::ShowIntegrations => self.want_integrations(IntegrationsWant::Window, ctx),
+            UiRequest::RunInEmulator => self.want_integrations(IntegrationsWant::Run, ctx),
             UiRequest::LocalSetup(button) => {
                 let refused = match self.local_setup.as_mut() {
                     None => Some("The model setup is not open.".to_string()),
@@ -1295,6 +1311,7 @@ impl KrakenApp {
         }
         self.keep_local_models_served(ctx);
         self.local_setup_window(ctx);
+        self.integrations_windows(ctx);
         if self.settings.ai.take_policy_dirty()
             && let Some(vm) = self.vm.as_mut()
         {
@@ -1368,6 +1385,74 @@ impl KrakenApp {
 
     /// Asks for the guided setup of a local model: it opens as soon as the service that runs
     /// models is reachable.
+    /// Remembers what was asked and, when there is no backend yet, starts connecting to one.
+    fn want_integrations(&mut self, what: IntegrationsWant, ctx: &egui::Context) {
+        self.integrations_want = Some(what);
+        if self.integrations_backend().is_some() {
+            return;
+        }
+        if self.services.mode == Mode::NoDaemon
+            && let Err(e) = self.ensure_private_daemon()
+        {
+            self.integrations_want = None;
+            self.problem(e);
+            return;
+        }
+        if let Slot::Failed(_) = self.slot {
+            self.slot = Slot::Idle;
+        }
+        self.connect_daemon(ctx);
+    }
+
+    fn integrations_backend(&self) -> Option<Arc<dyn kraken_viewmodel::Backend>> {
+        if let Some(b) = &self.services.integrations_backend {
+            return Some(b.clone());
+        }
+        if let Some(vm) = &self.vm {
+            return Some(vm.backend_handle());
+        }
+        match &self.slot {
+            Slot::Ready(b) => Some(b.clone() as Arc<dyn kraken_viewmodel::Backend>),
+            _ => None,
+        }
+    }
+
+    /// Draws the Integrations window and the run dialog; makes the hub on first use.
+    fn integrations_windows(&mut self, ctx: &egui::Context) {
+        if self.integrations.is_none() && self.integrations_want.is_some() {
+            match self.integrations_backend() {
+                Some(backend) => {
+                    let c = ctx.clone();
+                    self.integrations = Some(kraken_viewmodel::integrations::IntegrationsHub::new(
+                        backend,
+                        self.rt.handle().clone(),
+                        Arc::new(move || c.request_repaint()),
+                    ));
+                }
+                None => {
+                    if let Slot::Failed(e) = &self.slot {
+                        let msg = format!(
+                            "KRAKEN cannot reach krakend, which installs and runs emulators: {e}"
+                        );
+                        self.integrations_want = None;
+                        self.problem(msg);
+                    }
+                    return;
+                }
+            }
+        }
+        let Some(hub) = self.integrations.clone() else {
+            return;
+        };
+        match self.integrations_want.take() {
+            Some(IntegrationsWant::Window) => hub.open(),
+            Some(IntegrationsWant::Run) => hub.run_dialog_open(),
+            None => {}
+        }
+        crate::integrations::show(ctx, &hub);
+        crate::integrations::run_dialog(ctx, &hub);
+    }
+
     fn open_local_setup(&mut self, ctx: &egui::Context) {
         if self.local_setup.is_some() {
             return;
