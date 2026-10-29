@@ -49,10 +49,15 @@ logged; **dangerous** commands always ask for approval first.
 | [`local_model_status`](#local_model_status) | query | safe | Show one local model's state, memory, speed and recent log |
 | [`local_model_stop`](#local_model_stop) | query | mutating | Stop a local model now, whoever is using it |
 | [`memory_map`](#memory_map) | query | safe | List the memory blocks (segments and sections) with permissions |
+| [`patch_branch`](#patch_branch) | mutation | mutating | Invert, always take or never take a conditional branch |
+| [`patch_constant`](#patch_constant) | mutation | mutating | Change the constant (immediate) an instruction uses |
 | [`patch_export`](#patch_export) | query | dangerous | Write a copy of the binary with every byte patch applied |
+| [`patch_fill`](#patch_fill) | mutation | mutating | Fill a range of bytes with a repeated pattern |
 | [`patch_from_source`](#patch_from_source) | job | safe | Plan a byte patch from an edit of a function's decompiled C (experimental, job) |
 | [`patch_list`](#patch_list) | query | safe | List byte patches ordered by address, one page at a time |
+| [`patch_nop`](#patch_nop) | mutation | mutating | Patch instructions out with NOPs in the processor's own encoding |
 | [`patch_remove`](#patch_remove) | mutation | mutating | Remove the byte patch at an address |
+| [`patch_return`](#patch_return) | mutation | mutating | Make a function return a constant right away |
 | [`patch_set`](#patch_set) | mutation | mutating | Record a byte patch: replacement bytes at an address, with the originals kept |
 | [`project_close`](#project_close) | mutation | mutating | Close the current project and stop its engine |
 | [`project_create`](#project_create) | mutation | mutating | Create a project for a binary and make it the current project |
@@ -8299,6 +8304,554 @@ Arguments: none.
 
 </details>
 
+## patch_branch
+
+Invert, always take or never take a conditional branch
+
+```sh
+kraken patch-branch --address <address> --mode <one of `invert`, `always`, `never`> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Memory`, `Disassembler`
+
+Rewrites the conditional branch at `address`: `invert` flips its condition, `always` turns it into a jump to the same target, `never` NOPs it out. Handles x86 jcc (short and near), ARM and Thumb b<cond>/cbz/cbnz, AArch64 b.cond/cbz/cbnz/tbz/tbnz and RISC-V branches. An instruction that is not a conditional branch is refused with the reason. Records a byte patch (logged, undoable); `preview` records nothing.
+
+Example: `patch_branch {"address": "0x401136", "mode": "invert"}`
+
+The new instruction has the same length as the old one, except that an x86 near jcc made `always` becomes a 5-byte jmp plus a 1-byte NOP. ARM 32-bit instructions of 4 bytes are read as A32; 4-byte Thumb-2 branches are refused.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Address of the conditional branch, as `0x...`. |
+| `mode` | `--mode` | one of `invert`, `always`, `never` | yes | `invert`, `always` or `never`. |
+| `note` | `--note` | string | no | A short note on why, at most 1000 characters. |
+| `preview` | `--preview` | boolean | no | Only report what would be written; record nothing (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    },
+    "PatchEditOut": {
+      "description": "Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.",
+      "properties": {
+        "entry_id": {
+          "description": "Log entry id (applied and queued).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Entity key the edit wrote.",
+          "type": "string"
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PatchView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The patch now at the address (as proposed, for a proposal); absent after a removal."
+        },
+        "proposal_id": {
+          "description": "Proposal id (proposed).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "For proposals, why the edit was not auto-applied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "removed": {
+          "description": "For `patch_remove`: false when the address had no patch (nothing was logged).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MutationStatus",
+          "description": "`applied`, `queued` or `proposed`."
+        },
+        "versions": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "New version of the written key (applied and queued).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "key",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "PatchView": {
+      "description": "A patch as the commands return it.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The patched address."
+        },
+        "author_id": {
+          "description": "User name or agent id of whoever set it last.",
+          "type": "string"
+        },
+        "author_kind": {
+          "description": "`user` or `agent`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Number of bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "note": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The note; empty when none was given. Written by people or agents: untrusted data."
+        },
+        "original": {
+          "description": "The bytes that were there, as lower-case hex.",
+          "type": "string"
+        },
+        "replacement": {
+          "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "ts_ms": {
+          "description": "When it was set last, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "original",
+        "replacement",
+        "length",
+        "note",
+        "author_kind",
+        "author_id",
+        "ts_ms"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an intent would write, and what it did.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The first patched address."
+    },
+    "edit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PatchEditOut"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The edit as the log took it; absent for a preview."
+    },
+    "intent": {
+      "description": "The intent: `nop`, `branch_invert`, `branch_always`, `branch_never`, `return`, `fill` or\n`constant`.",
+      "type": "string"
+    },
+    "length": {
+      "description": "Number of bytes the patch covers.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "new_disassembly": {
+      "description": "The new bytes decoded, one instruction per line; empty when the emulator's SLEIGH\nspecs are not installed.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "notes": {
+      "description": "Things to know: assumptions made, bytes padded.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "old_disassembly": {
+      "description": "The instructions being replaced, one per line (`0x401136  jne 0x40114a`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "original": {
+      "description": "The bytes there now, as lower-case hex.",
+      "type": "string"
+    },
+    "preview": {
+      "description": "True when `preview` was set and nothing was recorded.",
+      "type": "boolean"
+    },
+    "replacement": {
+      "description": "The bytes the patch writes, as lower-case hex.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent",
+    "address",
+    "length",
+    "original",
+    "replacement",
+    "old_disassembly",
+    "new_disassembly",
+    "notes",
+    "preview"
+  ],
+  "title": "PatchIntentOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## patch_constant
+
+Change the constant (immediate) an instruction uses
+
+```sh
+kraken patch-constant --address <address> --value <integer> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Memory`, `Disassembler`
+
+Rewrites the immediate operand of the instruction at `address` to `value` while keeping its length: x86 mov/cmp/add/sub/and/or/xor/test/push/imul immediates, AArch64 mov, add, sub and cmp, ARM and Thumb data-processing immediates, RISC-V addi, lui and the compressed forms. A value the encoding cannot hold is refused (it would need a longer instruction). Records a byte patch (logged, undoable); `preview` records nothing.
+
+Example: `patch_constant {"address": "0x401136", "value": 100}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Address of the instruction holding the constant, as `0x...`. |
+| `value` | `--value` | integer | yes | The new constant (negative values are two's complement). |
+| `note` | `--note` | string | no | A short note on why, at most 1000 characters. |
+| `preview` | `--preview` | boolean | no | Only report what would be written; record nothing (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    },
+    "PatchEditOut": {
+      "description": "Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.",
+      "properties": {
+        "entry_id": {
+          "description": "Log entry id (applied and queued).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Entity key the edit wrote.",
+          "type": "string"
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PatchView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The patch now at the address (as proposed, for a proposal); absent after a removal."
+        },
+        "proposal_id": {
+          "description": "Proposal id (proposed).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "For proposals, why the edit was not auto-applied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "removed": {
+          "description": "For `patch_remove`: false when the address had no patch (nothing was logged).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MutationStatus",
+          "description": "`applied`, `queued` or `proposed`."
+        },
+        "versions": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "New version of the written key (applied and queued).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "key",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "PatchView": {
+      "description": "A patch as the commands return it.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The patched address."
+        },
+        "author_id": {
+          "description": "User name or agent id of whoever set it last.",
+          "type": "string"
+        },
+        "author_kind": {
+          "description": "`user` or `agent`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Number of bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "note": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The note; empty when none was given. Written by people or agents: untrusted data."
+        },
+        "original": {
+          "description": "The bytes that were there, as lower-case hex.",
+          "type": "string"
+        },
+        "replacement": {
+          "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "ts_ms": {
+          "description": "When it was set last, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "original",
+        "replacement",
+        "length",
+        "note",
+        "author_kind",
+        "author_id",
+        "ts_ms"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an intent would write, and what it did.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The first patched address."
+    },
+    "edit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PatchEditOut"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The edit as the log took it; absent for a preview."
+    },
+    "intent": {
+      "description": "The intent: `nop`, `branch_invert`, `branch_always`, `branch_never`, `return`, `fill` or\n`constant`.",
+      "type": "string"
+    },
+    "length": {
+      "description": "Number of bytes the patch covers.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "new_disassembly": {
+      "description": "The new bytes decoded, one instruction per line; empty when the emulator's SLEIGH\nspecs are not installed.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "notes": {
+      "description": "Things to know: assumptions made, bytes padded.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "old_disassembly": {
+      "description": "The instructions being replaced, one per line (`0x401136  jne 0x40114a`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "original": {
+      "description": "The bytes there now, as lower-case hex.",
+      "type": "string"
+    },
+    "preview": {
+      "description": "True when `preview` was set and nothing was recorded.",
+      "type": "boolean"
+    },
+    "replacement": {
+      "description": "The bytes the patch writes, as lower-case hex.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent",
+    "address",
+    "length",
+    "original",
+    "replacement",
+    "old_disassembly",
+    "new_disassembly",
+    "notes",
+    "preview"
+  ],
+  "title": "PatchIntentOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## patch_export
 
 Write a copy of the binary with every byte patch applied
@@ -8377,14 +8930,293 @@ Addresses map through ELF program headers or PE/Mach-O sections. The file's own 
     "output_path": {
       "description": "Absolute path of the file written.",
       "type": "string"
+    },
+    "sha256": {
+      "description": "SHA-256 of the written file, lower-case hex.",
+      "type": "string"
     }
   },
   "required": [
     "output_path",
     "applied",
-    "bytes_written"
+    "bytes_written",
+    "sha256"
   ],
   "title": "PatchExportOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## patch_fill
+
+Fill a range of bytes with a repeated pattern
+
+```sh
+kraken patch-fill --address <address> --length <integer> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Memory`
+
+Overwrites `length` bytes at `address` with `pattern` repeated (cut to length), for example `cc` to trap or `00` to blank data. Records a byte patch (logged, undoable); `preview` records nothing. For NOPs that suit the processor use `patch_nop`.
+
+Example: `patch_fill {"address": "0x402000", "length": 16, "pattern": "cc"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | First address to fill, as `0x...`. |
+| `length` | `--length` | integer | yes | Number of bytes to fill, 1 to 4096. |
+| `note` | `--note` | string | no | A short note on why, at most 1000 characters. |
+| `pattern` | `--pattern` | string | no | Hex bytes repeated to fill the range, such as `cc` or `0000` (default `00`). |
+| `preview` | `--preview` | boolean | no | Only report what would be written; record nothing (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    },
+    "PatchEditOut": {
+      "description": "Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.",
+      "properties": {
+        "entry_id": {
+          "description": "Log entry id (applied and queued).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Entity key the edit wrote.",
+          "type": "string"
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PatchView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The patch now at the address (as proposed, for a proposal); absent after a removal."
+        },
+        "proposal_id": {
+          "description": "Proposal id (proposed).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "For proposals, why the edit was not auto-applied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "removed": {
+          "description": "For `patch_remove`: false when the address had no patch (nothing was logged).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MutationStatus",
+          "description": "`applied`, `queued` or `proposed`."
+        },
+        "versions": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "New version of the written key (applied and queued).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "key",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "PatchView": {
+      "description": "A patch as the commands return it.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The patched address."
+        },
+        "author_id": {
+          "description": "User name or agent id of whoever set it last.",
+          "type": "string"
+        },
+        "author_kind": {
+          "description": "`user` or `agent`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Number of bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "note": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The note; empty when none was given. Written by people or agents: untrusted data."
+        },
+        "original": {
+          "description": "The bytes that were there, as lower-case hex.",
+          "type": "string"
+        },
+        "replacement": {
+          "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "ts_ms": {
+          "description": "When it was set last, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "original",
+        "replacement",
+        "length",
+        "note",
+        "author_kind",
+        "author_id",
+        "ts_ms"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an intent would write, and what it did.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The first patched address."
+    },
+    "edit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PatchEditOut"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The edit as the log took it; absent for a preview."
+    },
+    "intent": {
+      "description": "The intent: `nop`, `branch_invert`, `branch_always`, `branch_never`, `return`, `fill` or\n`constant`.",
+      "type": "string"
+    },
+    "length": {
+      "description": "Number of bytes the patch covers.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "new_disassembly": {
+      "description": "The new bytes decoded, one instruction per line; empty when the emulator's SLEIGH\nspecs are not installed.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "notes": {
+      "description": "Things to know: assumptions made, bytes padded.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "old_disassembly": {
+      "description": "The instructions being replaced, one per line (`0x401136  jne 0x40114a`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "original": {
+      "description": "The bytes there now, as lower-case hex.",
+      "type": "string"
+    },
+    "preview": {
+      "description": "True when `preview` was set and nothing was recorded.",
+      "type": "boolean"
+    },
+    "replacement": {
+      "description": "The bytes the patch writes, as lower-case hex.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent",
+    "address",
+    "length",
+    "original",
+    "replacement",
+    "old_disassembly",
+    "new_disassembly",
+    "notes",
+    "preview"
+  ],
+  "title": "PatchIntentOut",
   "type": "object"
 }
 ```
@@ -8568,6 +9400,282 @@ Example: `patch_list {"limit": 50}`
     "items"
   ],
   "title": "Page",
+  "type": "object"
+}
+```
+
+</details>
+
+## patch_nop
+
+Patch instructions out with NOPs in the processor's own encoding
+
+```sh
+kraken patch-nop --address <address> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Memory`, `Disassembler`
+
+Replaces one instruction (or `count` instructions, or `length` bytes) with NOPs: x86 gets the multi-byte forms, ARM, Thumb, AArch64 and RISC-V their own. Records a byte patch like `patch_set` (logged, undoable; nothing on disk changes until `patch_export`). `preview` shows the old and new disassembly without recording.
+
+Example: `patch_nop {"address": "0x401136", "count": 2, "preview": true}`
+
+The range always covers whole instructions. A range that overlaps another patch is refused. The new disassembly is decoded with the emulator's SLEIGH specs and is empty when those are not installed.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Address of the first instruction, as `0x...`. |
+| `count` | `--count` | integer | no | How many instructions to NOP (default 1, at most 256). |
+| `length` | `--length` | integer | no | Alternatively the number of bytes to cover; it must end on an instruction boundary. |
+| `note` | `--note` | string | no | A short note on why, at most 1000 characters. |
+| `preview` | `--preview` | boolean | no | Only report what would be written; record nothing (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    },
+    "PatchEditOut": {
+      "description": "Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.",
+      "properties": {
+        "entry_id": {
+          "description": "Log entry id (applied and queued).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Entity key the edit wrote.",
+          "type": "string"
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PatchView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The patch now at the address (as proposed, for a proposal); absent after a removal."
+        },
+        "proposal_id": {
+          "description": "Proposal id (proposed).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "For proposals, why the edit was not auto-applied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "removed": {
+          "description": "For `patch_remove`: false when the address had no patch (nothing was logged).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MutationStatus",
+          "description": "`applied`, `queued` or `proposed`."
+        },
+        "versions": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "New version of the written key (applied and queued).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "key",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "PatchView": {
+      "description": "A patch as the commands return it.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The patched address."
+        },
+        "author_id": {
+          "description": "User name or agent id of whoever set it last.",
+          "type": "string"
+        },
+        "author_kind": {
+          "description": "`user` or `agent`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Number of bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "note": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The note; empty when none was given. Written by people or agents: untrusted data."
+        },
+        "original": {
+          "description": "The bytes that were there, as lower-case hex.",
+          "type": "string"
+        },
+        "replacement": {
+          "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "ts_ms": {
+          "description": "When it was set last, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "original",
+        "replacement",
+        "length",
+        "note",
+        "author_kind",
+        "author_id",
+        "ts_ms"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an intent would write, and what it did.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The first patched address."
+    },
+    "edit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PatchEditOut"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The edit as the log took it; absent for a preview."
+    },
+    "intent": {
+      "description": "The intent: `nop`, `branch_invert`, `branch_always`, `branch_never`, `return`, `fill` or\n`constant`.",
+      "type": "string"
+    },
+    "length": {
+      "description": "Number of bytes the patch covers.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "new_disassembly": {
+      "description": "The new bytes decoded, one instruction per line; empty when the emulator's SLEIGH\nspecs are not installed.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "notes": {
+      "description": "Things to know: assumptions made, bytes padded.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "old_disassembly": {
+      "description": "The instructions being replaced, one per line (`0x401136  jne 0x40114a`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "original": {
+      "description": "The bytes there now, as lower-case hex.",
+      "type": "string"
+    },
+    "preview": {
+      "description": "True when `preview` was set and nothing was recorded.",
+      "type": "boolean"
+    },
+    "replacement": {
+      "description": "The bytes the patch writes, as lower-case hex.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent",
+    "address",
+    "length",
+    "original",
+    "replacement",
+    "old_disassembly",
+    "new_disassembly",
+    "notes",
+    "preview"
+  ],
+  "title": "PatchIntentOut",
   "type": "object"
 }
 ```
@@ -8762,6 +9870,281 @@ Example: `patch_remove {"address": "0x401136"}`
     "versions"
   ],
   "title": "PatchEditOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## patch_return
+
+Make a function return a constant right away
+
+```sh
+kraken patch-return --address <address> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Memory`, `Disassembler`
+
+Overwrites the start of the function at `address` with code that puts `value` in the return register and returns, padding what is left of the covered instructions with NOPs. Uses the platform's C convention (x86, x86-64 System V and Windows, ARM, AArch64, RISC-V). Records a byte patch (logged, undoable); `preview` records nothing.
+
+Example: `patch_return {"address": "0x401136", "value": 1}`
+
+A 32-bit x86 function that pops its own arguments (stdcall) needs `ret N`; this writes a plain `ret`, so use `patch_set` for those. The patch must fit in the function's first instructions: it covers whole instructions only.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Address of the function's entry, as `0x...`. |
+| `note` | `--note` | string | no | A short note on why, at most 1000 characters. |
+| `preview` | `--preview` | boolean | no | Only report what would be written; record nothing (default false). |
+| `value` | `--value` | integer | no | The value the function returns (default 0); negative values are two's complement. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    },
+    "PatchEditOut": {
+      "description": "Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.",
+      "properties": {
+        "entry_id": {
+          "description": "Log entry id (applied and queued).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Entity key the edit wrote.",
+          "type": "string"
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PatchView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The patch now at the address (as proposed, for a proposal); absent after a removal."
+        },
+        "proposal_id": {
+          "description": "Proposal id (proposed).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "For proposals, why the edit was not auto-applied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "removed": {
+          "description": "For `patch_remove`: false when the address had no patch (nothing was logged).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MutationStatus",
+          "description": "`applied`, `queued` or `proposed`."
+        },
+        "versions": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "New version of the written key (applied and queued).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "key",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "PatchView": {
+      "description": "A patch as the commands return it.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The patched address."
+        },
+        "author_id": {
+          "description": "User name or agent id of whoever set it last.",
+          "type": "string"
+        },
+        "author_kind": {
+          "description": "`user` or `agent`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Number of bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "note": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The note; empty when none was given. Written by people or agents: untrusted data."
+        },
+        "original": {
+          "description": "The bytes that were there, as lower-case hex.",
+          "type": "string"
+        },
+        "replacement": {
+          "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "ts_ms": {
+          "description": "When it was set last, milliseconds since the Unix epoch.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "original",
+        "replacement",
+        "length",
+        "note",
+        "author_kind",
+        "author_id",
+        "ts_ms"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an intent would write, and what it did.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The first patched address."
+    },
+    "edit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PatchEditOut"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The edit as the log took it; absent for a preview."
+    },
+    "intent": {
+      "description": "The intent: `nop`, `branch_invert`, `branch_always`, `branch_never`, `return`, `fill` or\n`constant`.",
+      "type": "string"
+    },
+    "length": {
+      "description": "Number of bytes the patch covers.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "new_disassembly": {
+      "description": "The new bytes decoded, one instruction per line; empty when the emulator's SLEIGH\nspecs are not installed.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "notes": {
+      "description": "Things to know: assumptions made, bytes padded.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "old_disassembly": {
+      "description": "The instructions being replaced, one per line (`0x401136  jne 0x40114a`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "original": {
+      "description": "The bytes there now, as lower-case hex.",
+      "type": "string"
+    },
+    "preview": {
+      "description": "True when `preview` was set and nothing was recorded.",
+      "type": "boolean"
+    },
+    "replacement": {
+      "description": "The bytes the patch writes, as lower-case hex.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent",
+    "address",
+    "length",
+    "original",
+    "replacement",
+    "old_disassembly",
+    "new_disassembly",
+    "notes",
+    "preview"
+  ],
+  "title": "PatchIntentOut",
   "type": "object"
 }
 ```

@@ -53,8 +53,11 @@ pub fn classify(op: &LogOp, state: &AnnotationState) -> Classification {
             current.is_none() && matches!(old, None | Some(CodeData::Undefined))
         }
         // A new patch only adds to the overlay: nothing on disk changes, and exporting a patched
-        // binary always asks. Replacing or removing a patch overwrites someone's work.
-        LogOp::SetPatch { old, new, .. } => new.is_some() && old.is_none() && current.is_none(),
+        // binary always asks. Replacing or removing a patch overwrites someone's work, and so
+        // does a patch that lands on bytes another patch already covers.
+        LogOp::SetPatch { old, new, .. } => {
+            new.is_some() && old.is_none() && current.is_none() && !overlaps_a_patch(op, state)
+        }
         LogOp::CreateFunction { .. }
         | LogOp::DeleteFunction { .. }
         | LogOp::SetFunctionBounds { .. } => false,
@@ -63,5 +66,96 @@ pub fn classify(op: &LogOp, state: &AnnotationState) -> Classification {
         Classification::Additive
     } else {
         Classification::Overwrite
+    }
+}
+
+/// Whether the patch `op` sets covers bytes that another patch in `state` (at a different
+/// address) already covers.
+fn overlaps_a_patch(op: &LogOp, state: &AnnotationState) -> bool {
+    let LogOp::SetPatch {
+        anchor,
+        new: Some(new),
+        ..
+    } = op
+    else {
+        return false;
+    };
+    let Ok(own) = crate::keys::anchor_key(anchor) else {
+        return false;
+    };
+    let Some(start) = key_address(&own) else {
+        return false;
+    };
+    let end = start.saturating_add((new.replacement.len() / 2) as u64);
+    state.iter().any(|(key, value)| {
+        let StateValue::Patch { replacement, .. } = value else {
+            return false;
+        };
+        let Some(base) = key.strip_suffix(":patch") else {
+            return false;
+        };
+        let Some(other) = key_address(base) else {
+            return false;
+        };
+        let other_end = other.saturating_add((replacement.len() / 2) as u64);
+        other != start && other < end && other_end > start
+    })
+}
+
+/// The address in an anchor key such as `native:ram:0x401000`.
+fn key_address(key: &str) -> Option<u64> {
+    let hex = key.rsplit(':').next()?.strip_prefix("0x")?;
+    u64::from_str_radix(hex, 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kraken_proto::{Anchor, Hex64, PatchBytes};
+
+    fn set(at: u64, bytes: &str) -> LogOp {
+        LogOp::SetPatch {
+            anchor: Anchor::Native {
+                space: "ram".into(),
+                offset: Hex64(at),
+                fn_entry: Hex64(at),
+                fn_hash: String::new(),
+            },
+            original: "00".repeat(bytes.len() / 2),
+            old: None,
+            new: Some(PatchBytes {
+                replacement: bytes.into(),
+                note: String::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_patch_over_another_patch_is_not_additive() {
+        let mut state = AnnotationState::new();
+        assert_eq!(
+            classify(&set(0x1000, "9090"), &state),
+            Classification::Additive
+        );
+        state.insert(
+            op_key(&set(0x1000, "")).expect("key"),
+            StateValue::Patch {
+                original: "00000000".into(),
+                replacement: "90909090".into(),
+                note: String::new(),
+            },
+        );
+        assert_eq!(
+            classify(&set(0x1002, "9090"), &state),
+            Classification::Overwrite
+        );
+        assert_eq!(
+            classify(&set(0x1004, "9090"), &state),
+            Classification::Additive
+        );
+        assert_eq!(
+            classify(&set(0xffe, "9090"), &state),
+            Classification::Additive
+        );
     }
 }

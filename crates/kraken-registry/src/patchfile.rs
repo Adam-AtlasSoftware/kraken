@@ -154,6 +154,36 @@ pub fn patch_file_bytes(
     patch_file_bytes_at(image, patches, None)
 }
 
+/// Reads the project's `binary` and applies the project's byte patches for a program the engine
+/// loaded at `engine_base`. The one path both `patch_export` and the patched emulator copy use:
+/// errors are already protocol errors (`not_found` for an unreadable binary, `unsupported` for a
+/// file that is not an object, `invalid_argument` for a patch that does not line up).
+pub fn apply_project_patches(
+    binary: &std::path::Path,
+    patches: &[kraken_model::Patch],
+    engine_base: u64,
+) -> Result<(Vec<u8>, Vec<AppliedPatch>), kraken_proto::ProtoError> {
+    use kraken_proto::{ErrorCode, ProtoError};
+    let image = std::fs::read(binary).map_err(|e| {
+        ProtoError::new(
+            ErrorCode::NotFound,
+            format!("cannot read the project's binary {}: {e}", binary.display()),
+        )
+    })?;
+    let file_patches: Vec<FilePatch> = patches
+        .iter()
+        .map(|p| FilePatch {
+            address: p.address,
+            original: p.original.clone(),
+            replacement: p.replacement.clone(),
+        })
+        .collect();
+    patch_file_bytes_at(&image, &file_patches, Some(engine_base)).map_err(|e| match e {
+        PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
+        PatchError::NoMapping(_) => ProtoError::new(ErrorCode::InvalidArgument, e.to_string()),
+    })
+}
+
 /// [`patch_file_bytes`] for a program the engine reports loaded at `engine_base` (its image
 /// base): the shift from the file's lowest loaded address to it is tried first.
 pub fn patch_file_bytes_at(

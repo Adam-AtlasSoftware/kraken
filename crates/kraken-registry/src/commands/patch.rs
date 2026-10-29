@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
+use crate::patchfile::apply_project_patches;
 use crate::session::{Session, blocking};
 use crate::views::MutationOutput;
 
@@ -44,7 +44,7 @@ fn invalid(msg: impl Into<String>) -> ProtoError {
 
 /// Parses a run of hex bytes, ignoring spaces and an optional `0x`/`0X` prefix. The result has at
 /// least one byte and at most [`MAX_PATCH_BYTES`].
-fn parse_hex(s: &str) -> Result<Vec<u8>, ProtoError> {
+pub(crate) fn parse_hex(s: &str) -> Result<Vec<u8>, ProtoError> {
     let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     let cleaned = cleaned
         .strip_prefix("0x")
@@ -192,44 +192,78 @@ impl Command for PatchSet {
                 "note is longer than {MAX_PATCH_NOTE} characters"
             )));
         }
-        let project = s.project()?;
-        let address = args.address.0;
-        let old = project.with_store(move |st| st.patch_get(address)).await?;
-        // The originals cover the old patch too, so undoing a replacement restores it whole.
-        let len = replacement
-            .len()
-            .max(old.as_ref().map_or(0, |p| p.replacement.len()));
-        let original = read_original(&project, ctx, args.address, len).await?;
-        let new = PatchBytes {
-            replacement: hex_bytes(&replacement),
-            note: note.clone(),
-        };
-        let resolved = crate::mutate::anchor_for(&project, ctx, args.address).await?;
-        let op = LogOp::SetPatch {
-            anchor: resolved.anchor,
-            original: hex_bytes(&original),
-            old: old.as_ref().map(patch_bytes),
-            new: Some(new),
-        };
-        let edit = crate::mutate::submit(s, ctx, op, None).await?;
-        let patch = Patch {
-            address,
-            original: original[..replacement.len()].to_vec(),
-            replacement,
-            note,
-            author: ctx.author.clone(),
-            ts_ms: 0,
-        };
-        let patch = match project.with_store(move |st| st.patch_get(address)).await? {
-            Some(stored) if edit.entry_id.is_some() => stored,
-            _ => patch,
-        };
-        Ok(PatchEditOut {
-            edit,
-            patch: Some(PatchView::from(&patch)),
-            removed: None,
-        })
+        set_patch(s, ctx, args.address, replacement, note).await
     }
+}
+
+/// Records `replacement` at `address` as a patch: the one path `patch_set` and the patch intents
+/// share. A patch that overlaps another one (starting at a different address) is refused, so two
+/// patches never silently cover the same bytes; the same address replaces the patch there.
+pub(crate) async fn set_patch(
+    s: &Session,
+    ctx: &CallContext,
+    address: Hex64,
+    replacement: Vec<u8>,
+    note: String,
+) -> Result<PatchEditOut, ProtoError> {
+    let project = s.project()?;
+    let start = address.0;
+    let end = start.saturating_add(replacement.len() as u64);
+    let all = project.with_store(|st| st.all_patches()).await?;
+    if let Some(other) = all.iter().find(|p| {
+        p.address != start
+            && p.address < end
+            && p.address.saturating_add(p.replacement.len() as u64) > start
+    }) {
+        return Err(invalid(format!(
+            "a patch of {} byte{} at {:#x} overlaps {:#x}..{:#x}; remove it first (patch_remove) \
+             or patch outside it",
+            other.replacement.len(),
+            if other.replacement.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            other.address,
+            start,
+            end
+        )));
+    }
+    let old = all.iter().find(|p| p.address == start).cloned();
+    // The originals cover the old patch too, so undoing a replacement restores it whole.
+    let len = replacement
+        .len()
+        .max(old.as_ref().map_or(0, |p| p.replacement.len()));
+    let original = read_original(&project, ctx, address, len).await?;
+    let new = PatchBytes {
+        replacement: hex_bytes(&replacement),
+        note: note.clone(),
+    };
+    let resolved = crate::mutate::anchor_for(&project, ctx, address).await?;
+    let op = LogOp::SetPatch {
+        anchor: resolved.anchor,
+        original: hex_bytes(&original),
+        old: old.as_ref().map(patch_bytes),
+        new: Some(new),
+    };
+    let edit = crate::mutate::submit(s, ctx, op, None).await?;
+    let patch = Patch {
+        address: start,
+        original: original[..replacement.len()].to_vec(),
+        replacement,
+        note,
+        author: ctx.author.clone(),
+        ts_ms: 0,
+    };
+    let patch = match project.with_store(move |st| st.patch_get(start)).await? {
+        Some(stored) if edit.entry_id.is_some() => stored,
+        _ => patch,
+    };
+    Ok(PatchEditOut {
+        edit,
+        patch: Some(PatchView::from(&patch)),
+        removed: None,
+    })
 }
 
 fn patch_bytes(p: &Patch) -> PatchBytes {
@@ -241,7 +275,7 @@ fn patch_bytes(p: &Patch) -> PatchBytes {
 
 /// The program's own bytes at `address`: the engine never holds patches, so these are the
 /// unpatched bytes. All of them must be mapped and initialized.
-async fn read_original(
+pub(crate) async fn read_original(
     project: &crate::session::Project,
     ctx: &CallContext,
     address: Hex64,
@@ -429,6 +463,8 @@ pub struct PatchExportOut {
     pub applied: Vec<AppliedPatchView>,
     /// Size of the written file in bytes.
     pub bytes_written: u64,
+    /// SHA-256 of the written file, lower-case hex.
+    pub sha256: String,
 }
 
 /// Writes a patched copy of the binary.
@@ -506,25 +542,7 @@ fn export(
             ),
         ));
     }
-    let image = fs::read(binary).map_err(|e| {
-        ProtoError::new(
-            ErrorCode::NotFound,
-            format!("cannot read the project's binary {}: {e}", binary.display()),
-        )
-    })?;
-    let file_patches: Vec<FilePatch> = patches
-        .iter()
-        .map(|p| FilePatch {
-            address: p.address,
-            original: p.original.clone(),
-            replacement: p.replacement.clone(),
-        })
-        .collect();
-    let (patched, applied) = patch_file_bytes_at(&image, &file_patches, Some(engine_base))
-        .map_err(|e| match e {
-            PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
-            PatchError::NoMapping(_) => ProtoError::new(ErrorCode::InvalidArgument, e.to_string()),
-        })?;
+    let (patched, applied) = apply_project_patches(binary, patches, engine_base)?;
     fs::write(out, &patched).map_err(|e| {
         ProtoError::new(
             ErrorCode::Internal,
@@ -543,7 +561,13 @@ fn export(
             })
             .collect(),
         bytes_written: patched.len() as u64,
+        sha256: sha256_hex(&patched),
     })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex_bytes(&Sha256::digest(bytes))
 }
 
 /// Gives the output the same permission bits as the source so a patched executable stays runnable.

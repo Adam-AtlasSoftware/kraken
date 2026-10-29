@@ -19,6 +19,7 @@ mod infer;
 mod jobs;
 mod local_model;
 mod patch;
+mod patch_intent;
 mod patch_source;
 mod probe;
 mod project;
@@ -87,6 +88,10 @@ pub use patch::{
     MAX_PATCH_BYTES, MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchEditOut, PatchExport, PatchExportArgs,
     PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs, PatchSet, PatchSetArgs,
     PatchView,
+};
+pub use patch_intent::{
+    BranchChange, PatchBranch, PatchBranchArgs, PatchConstant, PatchConstantArgs, PatchFill,
+    PatchFillArgs, PatchIntentOut, PatchNop, PatchNopArgs, PatchReturn, PatchReturnArgs,
 };
 pub use patch_source::{
     DEFAULT_SOURCE_PATCH_ATTEMPTS, MAX_SOURCE_BYTES, MAX_SOURCE_PATCH_ATTEMPTS, PatchFromSource,
@@ -275,6 +280,11 @@ pub fn register_all(r: &mut Registry) {
     r.register(Assemble);
     r.register(PatchFromSource);
     r.register(PatchRemove);
+    r.register(PatchNop);
+    r.register(PatchBranch);
+    r.register(PatchReturn);
+    r.register(PatchFill);
+    r.register(PatchConstant);
     r.register(PatchList);
     r.register(PatchExport);
     // Card COST: what AI work costs and what runs.

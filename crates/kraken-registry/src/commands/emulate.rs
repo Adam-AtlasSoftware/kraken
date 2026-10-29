@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
+use crate::patchfile::apply_project_patches;
 use crate::session::{Session, blocking};
 
 // The sandboxed runner is Unix-only: elsewhere no runner is found and `emulate_run` says so.
@@ -453,25 +453,7 @@ fn build_patched_copy(
     work_dir: &Path,
     engine_base: u64,
 ) -> Result<PathBuf, ProtoError> {
-    let image = std::fs::read(binary).map_err(|e| {
-        problem(
-            ErrorCode::NotFound,
-            format!("cannot read the project's binary {}: {e}", binary.display()),
-        )
-    })?;
-    let file_patches: Vec<FilePatch> = patches
-        .iter()
-        .map(|p| FilePatch {
-            address: p.address,
-            original: p.original.clone(),
-            replacement: p.replacement.clone(),
-        })
-        .collect();
-    let (patched, _) =
-        patch_file_bytes_at(&image, &file_patches, Some(engine_base)).map_err(|e| match e {
-            PatchError::NotAnObject(_) => problem(ErrorCode::Unsupported, e.to_string()),
-            PatchError::NoMapping(_) => problem(ErrorCode::InvalidArgument, e.to_string()),
-        })?;
+    let (patched, _) = apply_project_patches(binary, patches, engine_base)?;
     let out = work_dir.join("program");
     std::fs::write(&out, &patched).map_err(|e| {
         problem(
