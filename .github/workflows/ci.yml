@@ -214,7 +214,7 @@ jobs:
         run: |
           cargo test -p engine-native-sys -p engine-native --features engine-native-sys/require-native 2>&1 | tee native-output.log
           test ${PIPESTATUS[0]} -eq 0
-          cargo test -p kraken-e2e --test exit_criterion_native --features engine-native-sys/require-native 2>&1 | tee -a native-output.log
+          cargo test -p kraken-e2e --test exit_criterion_native 2>&1 | tee -a native-output.log
           exit ${PIPESTATUS[0]}
 
       - name: Agreement with Ghidra over the set
