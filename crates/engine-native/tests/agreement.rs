@@ -159,13 +159,43 @@ async fn compare_in(set: &str, binary: &str, c: NativeConfig) -> Report {
         }
     }
 
+    // the PE fixtures hold the first functions only: count ours up to the last recorded entry
+    let last = fx["functions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| hex(&f["summary"]["locator"]["offset"]))
+        .max()
+        .unwrap_or(0);
+    let recorded: BTreeSet<u64> = fx["functions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| hex(&f["summary"]["locator"]["offset"]))
+        .collect();
+    r.functions.ours = ours.keys().filter(|a| **a <= last).count();
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for a in ours.keys().filter(|a| **a <= last && !recorded.contains(a)) {
+            eprintln!(
+                "  {binary} EXTRA function at {a:#x}: native {:?}",
+                ours[a].name
+            );
+        }
+    }
     for f in fx["functions"].as_array().into_iter().flatten() {
         let s = &f["summary"];
         let entry = hex(&s["locator"]["offset"]);
         let theirs: BTreeSet<u64> = [entry].into();
         let mine: BTreeSet<u64> = ours.keys().copied().filter(|a| *a == entry).collect();
-        r.functions.add(&theirs, &mine);
+        r.functions.theirs += theirs.len();
+        r.functions.common += theirs.intersection(&mine).count();
         let Some(mine) = ours.get(&entry) else {
+            if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+                eprintln!(
+                    "  {binary} MISSED function at {entry:#x}: Ghidra {:?}",
+                    s["name"].as_str().unwrap_or("")
+                );
+            }
             continue;
         };
         let their_name = s["name"].as_str().unwrap_or("").to_string();
@@ -731,4 +761,32 @@ async fn agreement_over_the_corpus() {
         );
     }
     print("all fixtures", &total);
+}
+
+/// Stripped x86 and x86-64 images: the functions Ghidra finds without symbols, including the
+/// ones only reached by a tail call or found after a return and padding (`register_tm_clones`,
+/// which `frame_dummy` jumps to).
+#[tokio::test(flavor = "multi_thread")]
+async fn finds_the_functions_ghidra_finds_in_stripped_binaries() {
+    for (set, binary) in [
+        ("corpus", "stripped_calc-O0-stripped"),
+        ("corpus", "stripped_calc-O2-stripped"),
+        ("corpus", "switch_vm-O2-stripped"),
+        ("corpus", "pie_list-O0-stripped"),
+        ("corpus", "static_strops-O0-stripped"),
+        ("corpus", "static_strops-O2-stripped"),
+        ("corpus/elf32", "pie_list-i386-O2-stripped"),
+        ("corpus/elf32", "switch_vm-i386-O0-stripped"),
+        ("corpus/pe", "win_tls-x64-O2-stripped.exe"),
+    ] {
+        let Some(c) = config() else { return };
+        let r = compare_in(set, binary, c).await;
+        print(binary, &r);
+        assert_eq!(
+            r.functions.recall(),
+            1.0,
+            "{binary}: functions {}",
+            r.functions
+        );
+    }
 }

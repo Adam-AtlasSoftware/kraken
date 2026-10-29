@@ -39,7 +39,7 @@ new projects.
 | Rename, comments, prototypes, function create/delete | Yes, undoable | Yes, undoable |
 | Prototypes (`set-type`), calling conventions | Yes | Yes |
 | Debug-info (DWARF) types, C++ and Rust name demangling | Yes (types and prototypes; not variables) | Yes |
-| Function discovery on stripped code | Finds every function the symbol table lists; on a stripped program it can miss a small helper that is reached only by a jump from other code (`stripped_calc` has one, `FUN_001011c0`); Ghidra also lists its imported symbols as functions, so counts differ (14 and 22 for `stripped_calc`) | The reference |
+| Function discovery on stripped code | Finds the functions Ghidra finds on the stripped x86 and x86-64 corpus (every one of the 432 ELF, 95 ELF32 and 160 PE recorded entries): besides calls and pointers, a function that starts with a jump is a thunk whose target is a function, and a start that follows a body's end past alignment padding at a 16-byte boundary is one (gcc's `register_tm_clones`) unless the body before it jumps to it or switches to it; Ghidra also lists its imported symbols as functions, so counts differ | The reference |
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
 | Runs where | Linux | Linux; macOS and Windows experimental |
 

@@ -283,6 +283,14 @@ fn walk(
     if let Some(pads) = loaded.landing_pads.get(&entry) {
         work.extend(pads.iter().copied());
     }
+    // x86: a function that starts (past `endbr`) with a jump is a thunk, its target a function
+    // (gcc's `frame_dummy` jumping to `register_tm_clones`)
+    let thunk_pc = match lane.instruction(entry)? {
+        Some(i) if i.mnemonic.to_ascii_lowercase().starts_with("endbr") => {
+            entry + u64::from(i.length)
+        }
+        _ => entry,
+    };
     let mut calls = Vec::new();
     let mut consts = Vec::new();
     let mut tail_calls = Vec::new();
@@ -377,7 +385,11 @@ fn walk(
                     if let Some(&t) = insn.targets.first() {
                         // a jump to another function's entry is a tail call; so is the jump
                         // a RISC function starts with (a thunk, such as ARM's `frame_dummy`)
-                        let thunk = propagate && pc == entry && t != entry;
+                        let thunk = (propagate && pc == entry && t != entry)
+                            || (loaded.language.id.starts_with("x86")
+                                && pc == thunk_pc
+                                && t != entry
+                                && loaded.is_code(t));
                         let far = propagate && crosses(env.names, entry, pc, t);
                         if t != entry && (env.names.contains_key(&t) || thunk || far) {
                             calls.push(t);
@@ -846,6 +858,62 @@ impl Walker<'_> {
         Ok(Some((functions, flow)))
     }
 
+    /// x86: starts of functions that follow the end of a body past alignment padding at a
+    /// 16-byte boundary, as Ghidra's function-start patterns after a return find them (gcc's
+    /// `register_tm_clones`, which `frame_dummy` jumps to, sits in the body that jump leads
+    /// into). A start the same function that ends before it jumps to is a loop head or a cold
+    /// block, not a function.
+    fn after_return_starts(
+        &mut self,
+        functions: &BTreeMap<u64, Func>,
+    ) -> NativeResult<BTreeSet<u64>> {
+        let loaded = self.loaded;
+        // candidate start and the entry of the function that ends before it
+        let mut cands: BTreeMap<u64, u64> = BTreeMap::new();
+        for f in functions.values() {
+            for &(_, end) in &f.ranges {
+                let a = self.lanes[0].skip_padding(end)?;
+                if a == end
+                    || a % 16 != 0
+                    || !loaded.is_code(a)
+                    || loaded.in_plt(a)
+                    || f.contains(a)
+                    || functions.contains_key(&a)
+                    || self.names.contains_key(&a)
+                    || self.lanes[0].instruction(a)?.is_none()
+                {
+                    continue;
+                }
+                cands.insert(a, f.entry);
+            }
+        }
+        if cands.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        // switch cases, conditional jump targets and jumps from the function before it
+        // (loop heads, cold blocks) are not function starts
+        for f in functions.values() {
+            for t in f.switches.values().flatten() {
+                cands.remove(t);
+            }
+            for &i in f.insns.iter() {
+                let Some(insn) = self.lanes[0].instruction(i)? else {
+                    continue;
+                };
+                let (flow, targets) = (insn.flow, insn.targets.clone());
+                for t in targets {
+                    if let Some(&before) = cands.get(&t)
+                        && (flow == Flow::ConditionalJump
+                            || (flow == Flow::Jump && before == f.entry))
+                    {
+                        cands.remove(&t);
+                    }
+                }
+            }
+        }
+        Ok(cands.into_keys().collect())
+    }
+
     /// Function starts in the gaps between the bodies (`covered`): the first instruction past
     /// padding and literal-pool words (the words the code reads) whose straight-line run ends in
     /// a return or a jump before the gap does. `tried` holds the starts already judged.
@@ -1220,6 +1288,8 @@ pub fn discover(
                 .copied()
                 .filter(|a| !w.names.contains_key(a))
                 .collect()
+        } else if loaded.language.id.starts_with("x86") && added.is_empty() {
+            w.after_return_starts(&functions)?
         } else {
             BTreeSet::new()
         };
@@ -1268,6 +1338,9 @@ pub fn discover(
         }
         for a in inner {
             w.names.insert(a, default_name(a));
+            if loaded.language.id.starts_with("x86") {
+                seeds.push(a);
+            }
         }
         w.gaps |= gaps_next;
         for a in added {
