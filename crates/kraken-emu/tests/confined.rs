@@ -39,3 +39,59 @@ fn a_program_runs_in_the_confined_runner() {
         want_stdout("riscv32", "switch_vm")
     );
 }
+
+#[test]
+#[ignore = "needs Ghidra processor sources for the SLEIGH specs and Landlock"]
+fn a_debug_session_steps_in_the_confined_runner() {
+    use kraken_emu::SessionStop;
+    use kraken_emu::confined::{DebugChild, DebugReply, DebugRequest};
+    let _ = specs(kraken_emu::Arch::Riscv32);
+    let work = tempfile::tempdir().expect("tmp");
+    let mut spec = RunSpec::new(bin("riscv32", "switch_vm-riscv32-O2"));
+    spec.workdir = Some(work.path().to_path_buf());
+    let runner = std::path::PathBuf::from(env!("CARGO_BIN_EXE_kraken-emu-run"));
+    let mut child =
+        DebugChild::start(&spec, &runner, ConfinementOptions::default()).expect("start");
+    assert!(child.report().is_confined(), "{}", child.report());
+    let entry = child.initial.pc;
+    let DebugReply::Stop { stop, state } = child
+        .request(&DebugRequest::Step {
+            n: 3,
+            wall_ms: 5000,
+        })
+        .expect("step")
+    else {
+        panic!("not a stop");
+    };
+    assert_eq!(stop, SessionStop::Stepped);
+    assert_eq!(state.icount, child.initial.icount + 3);
+    assert_ne!(state.pc, entry);
+    let DebugReply::Registers { regs } = child.request(&DebugRequest::Registers).expect("regs")
+    else {
+        panic!("not registers");
+    };
+    assert!(!regs.is_empty());
+    let DebugReply::Stop { stop, .. } = child
+        .request(&DebugRequest::Run {
+            budget: 200_000_000,
+            wall_ms: 20_000,
+        })
+        .expect("run")
+    else {
+        panic!("not a stop");
+    };
+    assert!(matches!(stop, SessionStop::Exited { .. }), "{stop:?}");
+    let DebugReply::Output { stdout, .. } = child
+        .request(&DebugRequest::Output {
+            out_from: 0,
+            err_from: 0,
+        })
+        .expect("output")
+    else {
+        panic!("not output");
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        want_stdout("riscv32", "switch_vm")
+    );
+}

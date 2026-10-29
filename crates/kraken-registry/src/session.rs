@@ -851,6 +851,7 @@ pub struct Session {
     rewrite: Option<Arc<dyn RewriteBackend>>,
     source_patch: Option<Arc<dyn crate::commands::SourcePatchBackend>>,
     local_models: Option<Arc<dyn crate::commands::LocalModelBackend>>,
+    debug: crate::commands::DebugTable,
     serving: Option<Arc<dyn crate::commands::ServingBackend>>,
     integrations: Option<Arc<dyn crate::commands::IntegrationsBackend>>,
 }
@@ -873,6 +874,7 @@ impl Session {
             rewrite: None,
             source_patch: None,
             local_models: None,
+            debug: crate::commands::DebugTable::default(),
             serving: None,
             integrations: None,
         }
@@ -1024,6 +1026,11 @@ impl Session {
         Ok(self.project()?.engine())
     }
 
+    /// The debug sessions of this session (`debug_*` commands).
+    pub fn debug(&self) -> &crate::commands::DebugTable {
+        &self.debug
+    }
+
     /// Detaches the current project: cancels its jobs, saves the engine's own state and drops
     /// it. Returns the directory of the project that was open, if any.
     pub async fn close_project(&self) -> Option<PathBuf> {
@@ -1033,12 +1040,14 @@ impl Session {
             .unwrap_or_else(PoisonError::into_inner)
             .take()?;
         self.jobs.cancel_all();
+        self.debug.clear();
         let _ = project.save(&CancellationToken::new()).await;
         Some(project.dir().to_path_buf())
     }
 
     fn attach(&self, project: Arc<Project>) {
         self.jobs.cancel_all();
+        self.debug.clear();
         *self.project.write().unwrap_or_else(PoisonError::into_inner) = Some(project);
     }
 

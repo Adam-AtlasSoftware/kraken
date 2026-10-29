@@ -21,7 +21,9 @@ use kraken_sidecar::{ConfinementOptions, ConfinementReport, LogSink, SpawnSpec};
 use crate::arch::Arch;
 use crate::error::EmuError;
 use crate::linux::{ProgramOutcome, RunSpec};
+use crate::session::{Insn, Session, SessionStop, Target};
 use crate::specs::SpecRoots;
+use serde::{Deserialize, Serialize};
 
 /// The runner's file name.
 pub const RUNNER: &str = "kraken-emu-run";
@@ -64,14 +66,13 @@ pub fn find_runner() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Runs `spec` in the confined runner. `spec.workdir` must be set (it becomes the child's only
-/// writable directory); the SLEIGH spec root is resolved here and passed on, since the child
-/// sees no environment.
-pub fn run_program_confined(
+/// What the parent works out before starting a runner: the spec the child gets (spec root
+/// resolved) and the spawn description.
+fn prepare(
     spec: &RunSpec,
     runner: &Path,
     options: ConfinementOptions,
-) -> Result<(ProgramOutcome, ConfinementReport), EmuError> {
+) -> Result<(RunSpec, SpawnSpec), EmuError> {
     let workdir = spec
         .workdir
         .clone()
@@ -130,6 +131,18 @@ pub fn run_program_confined(
         read_write: vec![workdir],
         options,
     };
+    Ok((child_spec, sp))
+}
+
+/// Runs `spec` in the confined runner. `spec.workdir` must be set (it becomes the child's only
+/// writable directory); the SLEIGH spec root is resolved here and passed on, since the child
+/// sees no environment.
+pub fn run_program_confined(
+    spec: &RunSpec,
+    runner: &Path,
+    options: ConfinementOptions,
+) -> Result<(ProgramOutcome, ConfinementReport), EmuError> {
+    let (child_spec, sp) = prepare(spec, runner, options)?;
     let log = LogSink::with_capacity(200);
     let (sandbox, mut sock) = kraken_sidecar::sandbox::Sandbox::spawn(sp, &log)
         .map_err(|e| EmuError::Io(format!("starting {RUNNER}: {e}")))?;
@@ -154,12 +167,328 @@ pub fn run_program_confined(
     result.map(|o| (o, report)).map_err(EmuError::Emulator)
 }
 
+/// A request to a debugging runner ([`DebugChild`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum DebugRequest {
+    /// Execute `n` instructions.
+    Step { n: u64, wall_ms: u64 },
+    /// One instruction, a call run to its return.
+    StepOver { budget: u64, wall_ms: u64 },
+    /// Run to a breakpoint, the end or the budget.
+    Run { budget: u64, wall_ms: u64 },
+    /// Run to an address.
+    RunTo {
+        addr: u64,
+        budget: u64,
+        wall_ms: u64,
+    },
+    /// Run until the current function returns.
+    Finish { budget: u64, wall_ms: u64 },
+    /// Add a breakpoint.
+    AddBreakpoint { addr: u64 },
+    /// Remove a breakpoint.
+    RemoveBreakpoint { addr: u64 },
+    /// Registers, in display order.
+    Registers,
+    /// Write a register.
+    WriteReg { name: String, value: u64 },
+    /// Read guest memory.
+    ReadMemory { addr: u64, len: usize },
+    /// Disassemble `count` instructions from `addr` (default: the program counter).
+    Disasm { addr: Option<u64>, count: usize },
+    /// Pc, instruction count, output sizes.
+    State,
+    /// Standard output and error so far, from the given offsets.
+    Output { out_from: usize, err_from: usize },
+    /// A function symbol's address.
+    Symbol { name: String },
+}
+
+/// The state of a debugging runner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DebugState {
+    /// Program counter.
+    pub pc: u64,
+    /// Instructions executed.
+    pub icount: u64,
+    /// The main image's load bias.
+    pub main_bias: u64,
+    /// Architecture name.
+    pub arch: String,
+    /// Breakpoints.
+    pub breakpoints: Vec<u64>,
+    /// Bytes of standard output so far.
+    pub stdout_len: usize,
+    /// Bytes of standard error so far.
+    pub stderr_len: usize,
+}
+
+/// The answer to a [`DebugRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DebugReply {
+    /// A run ended.
+    Stop {
+        /// Why.
+        stop: SessionStop,
+        /// The state after it.
+        state: DebugState,
+    },
+    /// Done, nothing to return.
+    Done,
+    /// Whether a breakpoint changed.
+    Changed { changed: bool },
+    /// Registers.
+    Registers { regs: Vec<(String, u64)> },
+    /// Memory bytes.
+    Bytes { bytes: Vec<u8> },
+    /// Instructions.
+    Insns { insns: Vec<Insn> },
+    /// State.
+    State { state: DebugState },
+    /// Output from the offsets.
+    Output { stdout: Vec<u8>, stderr: Vec<u8> },
+    /// A symbol.
+    Symbol { addr: Option<u64> },
+}
+
+/// Longest wall-clock limit of one run request the child honours.
+const MAX_WALL_MS: u64 = 600_000;
+
+fn debug_state(s: &Session) -> Result<DebugState, EmuError> {
+    let (out, err) = s.output()?;
+    Ok(DebugState {
+        pc: s.pc()?,
+        icount: s.icount()?,
+        main_bias: s.main_bias()?,
+        arch: s.arch().name().to_string(),
+        breakpoints: s.breakpoints()?,
+        stdout_len: out.len(),
+        stderr_len: err.len(),
+    })
+}
+
+/// Runs `f` with a watchdog that interrupts the session after `wall_ms`.
+fn with_deadline(
+    s: &Session,
+    wall_ms: u64,
+    f: impl FnOnce() -> Result<SessionStop, EmuError>,
+) -> Result<DebugReply, EmuError> {
+    let int = s.interrupter();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let wall = Duration::from_millis(wall_ms.clamp(1, MAX_WALL_MS));
+    let dog = std::thread::spawn(move || {
+        if done_rx.recv_timeout(wall) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+            int.interrupt();
+        }
+    });
+    let stop = f();
+    drop(done_tx);
+    let _ = dog.join();
+    let stop = stop?;
+    Ok(DebugReply::Stop {
+        stop,
+        state: debug_state(s)?,
+    })
+}
+
+fn handle(s: &Session, req: DebugRequest) -> Result<DebugReply, EmuError> {
+    Ok(match req {
+        DebugRequest::Step { n, wall_ms } => with_deadline(s, wall_ms, || s.step(n))?,
+        DebugRequest::StepOver { budget, wall_ms } => {
+            with_deadline(s, wall_ms, || s.step_over(budget))?
+        }
+        DebugRequest::Run { budget, wall_ms } => with_deadline(s, wall_ms, || s.run(budget))?,
+        DebugRequest::RunTo {
+            addr,
+            budget,
+            wall_ms,
+        } => with_deadline(s, wall_ms, || s.run_to(addr, budget))?,
+        DebugRequest::Finish { budget, wall_ms } => with_deadline(s, wall_ms, || s.finish(budget))?,
+        DebugRequest::AddBreakpoint { addr } => DebugReply::Changed {
+            changed: s.add_breakpoint(addr)?,
+        },
+        DebugRequest::RemoveBreakpoint { addr } => DebugReply::Changed {
+            changed: s.remove_breakpoint(addr)?,
+        },
+        DebugRequest::Registers => DebugReply::Registers {
+            regs: s.registers()?,
+        },
+        DebugRequest::WriteReg { name, value } => {
+            s.write_reg(&name, value)?;
+            DebugReply::Done
+        }
+        DebugRequest::ReadMemory { addr, len } => DebugReply::Bytes {
+            bytes: s.read_memory(addr, len)?,
+        },
+        DebugRequest::Disasm { addr, count } => DebugReply::Insns {
+            insns: s.disasm(addr, count)?,
+        },
+        DebugRequest::State => DebugReply::State {
+            state: debug_state(s)?,
+        },
+        DebugRequest::Output { out_from, err_from } => {
+            let (o, e) = s.output()?;
+            DebugReply::Output {
+                stdout: o.get(out_from..).unwrap_or_default().to_vec(),
+                stderr: e.get(err_from..).unwrap_or_default().to_vec(),
+            }
+        }
+        DebugRequest::Symbol { name } => DebugReply::Symbol {
+            addr: s.symbol(&name)?,
+        },
+    })
+}
+
+/// The first message that puts the runner into session mode.
+#[derive(Serialize, Deserialize)]
+struct DebugHello {
+    mode: String,
+    spec: RunSpec,
+}
+
+/// A debugging session in a confined `kraken-emu-run`: the program is loaded and stopped before
+/// its first instruction, and every request is answered over the child's socket. Dropping it
+/// ends the child.
+pub struct DebugChild {
+    sandbox: Option<kraken_sidecar::sandbox::Sandbox>,
+    sock: UnixStream,
+    log: LogSink,
+    report: ConfinementReport,
+    /// The state right after loading.
+    pub initial: DebugState,
+}
+
+impl std::fmt::Debug for DebugChild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DebugChild").finish_non_exhaustive()
+    }
+}
+
+impl DebugChild {
+    /// Starts the runner on `spec` (`workdir` set, a sysroot when the program is dynamic;
+    /// `EmuError::NeedsSysroot` says so otherwise).
+    pub fn start(
+        spec: &RunSpec,
+        runner: &Path,
+        options: ConfinementOptions,
+    ) -> Result<DebugChild, EmuError> {
+        let (child_spec, sp) = prepare(spec, runner, options)?;
+        let log = LogSink::with_capacity(200);
+        let (sandbox, mut sock) = kraken_sidecar::sandbox::Sandbox::spawn(sp, &log)
+            .map_err(|e| EmuError::Io(format!("starting {RUNNER}: {e}")))?;
+        let report = sandbox.report().clone();
+        let hello = DebugHello {
+            mode: "debug".into(),
+            spec: child_spec,
+        };
+        let body = serde_json::to_vec(&hello).map_err(|e| EmuError::Io(e.to_string()))?;
+        write_message(&mut sock, &body).map_err(|e| EmuError::Io(format!("to {RUNNER}: {e}")))?;
+        sock.set_read_timeout(Some(Duration::from_secs(60)))
+            .map_err(|e| EmuError::Io(e.to_string()))?;
+        let mut child = DebugChild {
+            sandbox: Some(sandbox),
+            sock,
+            log,
+            report,
+            initial: DebugState {
+                pc: 0,
+                icount: 0,
+                main_bias: 0,
+                arch: String::new(),
+                breakpoints: Vec::new(),
+                stdout_len: 0,
+                stderr_len: 0,
+            },
+        };
+        match child.read_reply()? {
+            DebugReply::State { state } => child.initial = state,
+            _ => return Err(EmuError::Io(format!("{RUNNER}: unexpected first reply"))),
+        }
+        Ok(child)
+    }
+
+    /// How the child is confined.
+    pub fn report(&self) -> &ConfinementReport {
+        &self.report
+    }
+
+    fn read_reply(&mut self) -> Result<DebugReply, EmuError> {
+        let bytes = read_message(&mut self.sock).map_err(|e| {
+            EmuError::Io(format!(
+                "no answer from {RUNNER} ({e}); its log: {}",
+                self.log.tail(20).join(" | ")
+            ))
+        })?;
+        let r: Result<DebugReply, String> = serde_json::from_slice(&bytes)
+            .map_err(|e| EmuError::Io(format!("{RUNNER} reply: {e}")))?;
+        r.map_err(EmuError::Emulator)
+    }
+
+    /// One request and its answer. A child that does not answer within the request's wall-clock
+    /// limit plus a grace period is killed (the session is then over).
+    pub fn request(&mut self, req: &DebugRequest) -> Result<DebugReply, EmuError> {
+        let wall = match req {
+            DebugRequest::Step { wall_ms, .. }
+            | DebugRequest::StepOver { wall_ms, .. }
+            | DebugRequest::Run { wall_ms, .. }
+            | DebugRequest::RunTo { wall_ms, .. }
+            | DebugRequest::Finish { wall_ms, .. } => *wall_ms,
+            _ => 0,
+        };
+        if self.sandbox.is_none() {
+            return Err(EmuError::Io("the emulator child has ended".into()));
+        }
+        let body = serde_json::to_vec(req).map_err(|e| EmuError::Io(e.to_string()))?;
+        write_message(&mut self.sock, &body)
+            .map_err(|e| EmuError::Io(format!("to {RUNNER}: {e}")))?;
+        let limit = Duration::from_millis(wall.min(MAX_WALL_MS)) + Duration::from_secs(20);
+        self.sock
+            .set_read_timeout(Some(limit))
+            .map_err(|e| EmuError::Io(e.to_string()))?;
+        let r = self.read_reply();
+        if matches!(r, Err(EmuError::Io(_))) {
+            self.sandbox.take();
+        }
+        r
+    }
+}
+
 /// The runner's side: read the request from the socket on fd 0, run, answer.
 pub fn serve(sock: &mut UnixStream) -> Result<(), String> {
     let req = read_message(sock).map_err(|e| format!("request: {e}"))?;
+    if let Ok(hello) = serde_json::from_slice::<DebugHello>(&req)
+        && hello.mode == "debug"
+    {
+        return serve_debug(sock, hello.spec);
+    }
     let spec: RunSpec = serde_json::from_slice(&req).map_err(|e| format!("request: {e}"))?;
     let result: Result<ProgramOutcome, String> =
         crate::linux::run_program(&spec).map_err(|e| e.to_string());
     let body = serde_json::to_vec(&result).map_err(|e| e.to_string())?;
     write_message(sock, &body).map_err(|e| format!("reply: {e}"))
+}
+
+fn reply(sock: &mut UnixStream, r: Result<DebugReply, String>) -> Result<(), String> {
+    let body = serde_json::to_vec(&r).map_err(|e| e.to_string())?;
+    write_message(sock, &body).map_err(|e| format!("reply: {e}"))
+}
+
+fn serve_debug(sock: &mut UnixStream, spec: RunSpec) -> Result<(), String> {
+    let session = match Session::new(Target::Program(spec)) {
+        Ok(s) => s,
+        Err(e) => return reply(sock, Err(e.to_string())),
+    };
+    let first = debug_state(&session).map(|state| DebugReply::State { state });
+    reply(sock, first.map_err(|e| e.to_string()))?;
+    loop {
+        let Ok(req) = read_message(sock) else {
+            return Ok(());
+        };
+        let r = serde_json::from_slice::<DebugRequest>(&req)
+            .map_err(|e| format!("request: {e}"))
+            .and_then(|req| handle(&session, req).map_err(|e| e.to_string()));
+        reply(sock, r)?;
+    }
 }

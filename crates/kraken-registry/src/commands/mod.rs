@@ -10,6 +10,8 @@ mod ai;
 mod bookmarks;
 mod bulk;
 mod data;
+#[cfg(unix)]
+mod debug;
 mod edit;
 mod emulate;
 mod gui_navigate;
@@ -51,6 +53,15 @@ pub use data::{
     CallGraphArgs, Callees, Callers, CfgArgs, CfgCommand, CfgOut, Disassemble, DisassembleArgs,
     Exports, Imports, MemoryMap, MemoryMapOut, ReadBytes, ReadBytesArgs, ReadBytesOut, Strings,
     StringsArgs, SymbolsArgs, Xrefs, XrefsArgs,
+};
+#[cfg(unix)]
+pub use debug::{
+    DebugBreakArgs, DebugBreakList, DebugBreakOut, DebugBreakRemove, DebugBreakSet, DebugContinue,
+    DebugDisasm, DebugDisasmArgs, DebugDisasmOut, DebugInsn, DebugMemOut, DebugMemRead,
+    DebugMemReadArgs, DebugRegister, DebugRegs, DebugRegsOut, DebugRunArgs, DebugRunTo,
+    DebugRunToArgs, DebugSessionArgs, DebugSessions, DebugSessionsOut, DebugStart, DebugStartArgs,
+    DebugStartOut, DebugStateCommand, DebugStateOut, DebugStep, DebugStepArgs, DebugStepOut,
+    DebugStepOver, DebugStop, DebugStopOut, DebugStopSession, DebugStopSessionOut, DebugTable,
 };
 pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
@@ -308,4 +319,34 @@ pub fn register_all(r: &mut Registry) {
     // Card EMULATE: run the analysed program in the emulator.
     r.register(EmulateRun);
     r.register(EmulateCompare);
+    // Card EM-05: step the program in the emulator.
+    #[cfg(unix)]
+    {
+        r.register(DebugStart);
+        r.register(DebugStep);
+        r.register(DebugStepOver);
+        r.register(DebugStepOut);
+        r.register(DebugContinue);
+        r.register(DebugRunTo);
+        r.register(DebugBreakSet);
+        r.register(DebugBreakRemove);
+        r.register(DebugBreakList);
+        r.register(DebugRegs);
+        r.register(DebugMemRead);
+        r.register(DebugDisasm);
+        r.register(DebugStateCommand);
+        r.register(DebugSessions);
+        r.register(DebugStopSession);
+    }
+}
+
+/// Debug sessions need the Unix sandbox; elsewhere the table is empty and there are no commands.
+#[cfg(not(unix))]
+#[derive(Clone, Default, Debug)]
+pub struct DebugTable;
+
+#[cfg(not(unix))]
+impl DebugTable {
+    /// Nothing to end.
+    pub fn clear(&self) {}
 }

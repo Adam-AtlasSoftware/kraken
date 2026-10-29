@@ -25,6 +25,21 @@ logged; **dangerous** commands always ask for approval first.
 | [`callers`](#callers) | query | safe | List the call sites that call a function |
 | [`cfg`](#cfg) | query | safe | Show a function's basic blocks and control-flow edges |
 | [`create_function`](#create_function) | mutation | mutating | Create a function at an address |
+| [`debug_break_list`](#debug_break_list) | query | safe | List the breakpoints of a debug session |
+| [`debug_break_remove`](#debug_break_remove) | query | safe | Remove a breakpoint of the debugged program |
+| [`debug_break_set`](#debug_break_set) | query | safe | Set a breakpoint in the debugged program at an address or function |
+| [`debug_continue`](#debug_continue) | query | safe | Run the debugged program to the next breakpoint or its end |
+| [`debug_disasm`](#debug_disasm) | query | safe | Disassemble the debugged program's memory from the program counter or an address |
+| [`debug_mem_read`](#debug_mem_read) | query | safe | Read bytes of the debugged program's memory |
+| [`debug_regs`](#debug_regs) | query | safe | Read the registers of the debugged program |
+| [`debug_run_to`](#debug_run_to) | query | safe | Run the debugged program to an address or function, ignoring no breakpoints |
+| [`debug_sessions`](#debug_sessions) | query | safe | List the open debug sessions of the project |
+| [`debug_start`](#debug_start) | query | safe | Start a debugger session on the program in the emulator, stopped before its first instruction |
+| [`debug_state`](#debug_state) | query | safe | Report where a debug session is: pc, last stop, breakpoints and the program's output so far |
+| [`debug_step`](#debug_step) | query | safe | Execute one instruction (or `count`) of the debugged program, entering calls |
+| [`debug_step_out`](#debug_step_out) | query | safe | Run the debugged program until the current function returns |
+| [`debug_step_over`](#debug_step_over) | query | safe | Execute one instruction of the debugged program, running a call to its return |
+| [`debug_stop`](#debug_stop) | query | safe | End a debug session and its emulator child |
 | [`decompile`](#decompile) | query | safe | Decompile a function to C-like source |
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
 | [`disassemble`](#disassemble) | query | safe | Disassemble from an address or a whole function, one page at a time |
@@ -2279,6 +2294,1930 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
     "versions"
   ],
   "title": "MutationOutput",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_break_list
+
+List the breakpoints of a debug session
+
+```sh
+kraken debug-break-list --session <integer>
+```
+
+- Kind: query
+- Permission: safe
+
+Lists the session's breakpoints as listing addresses.
+
+Example: `debug_break_list {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The breakpoints of a session.",
+  "properties": {
+    "breakpoints": {
+      "description": "Every breakpoint (listing addresses).",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "changed": {
+      "description": "Whether the set changed.",
+      "type": "boolean"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "changed",
+    "breakpoints"
+  ],
+  "title": "DebugBreakOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_break_remove
+
+Remove a breakpoint of the debugged program
+
+```sh
+kraken debug-break-remove --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Removes the breakpoint at `address` or `symbol`; `changed` says whether there was one.
+
+Example: `debug_break_remove {"session": 1, "address": "0x401136"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `address` | `--address` | json | no | Listing address (give this or `symbol`). |
+| `symbol` | `--symbol` | string | no | A function symbol of the program (give this or `address`). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The breakpoints of a session.",
+  "properties": {
+    "breakpoints": {
+      "description": "Every breakpoint (listing addresses).",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "changed": {
+      "description": "Whether the set changed.",
+      "type": "boolean"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "changed",
+    "breakpoints"
+  ],
+  "title": "DebugBreakOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_break_set
+
+Set a breakpoint in the debugged program at an address or function
+
+```sh
+kraken debug-break-set --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Sets a breakpoint at a listing `address` or at the function `symbol`; `debug_continue` stops there. Returns all breakpoints. Breakpoints belong to the session, not the project.
+
+Example: `debug_break_set {"session": 1, "address": "0x401136"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `address` | `--address` | json | no | Listing address (give this or `symbol`). |
+| `symbol` | `--symbol` | string | no | A function symbol of the program (give this or `address`). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The breakpoints of a session.",
+  "properties": {
+    "breakpoints": {
+      "description": "Every breakpoint (listing addresses).",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "changed": {
+      "description": "Whether the set changed.",
+      "type": "boolean"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "changed",
+    "breakpoints"
+  ],
+  "title": "DebugBreakOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_continue
+
+Run the debugged program to the next breakpoint or its end
+
+```sh
+kraken debug-continue --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Runs until a breakpoint, a fault, the program's end, the instruction budget or the wall-clock limit. Standard output written meanwhile comes back in `stdout_new`.
+
+Example: `debug_continue {"session": 1, "timeout_seconds": 30}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget (default 100000000, at most 1000000000). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 10, at most 120); the program stops with kind `interrupted` and the session stays usable. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_disasm
+
+Disassemble the debugged program's memory from the program counter or an address
+
+```sh
+kraken debug-disasm --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Disassembles `count` instructions (default 20) from `address` or the program counter, from the bytes in the emulator's memory (so decrypted or patched code shows as it runs). `is_pc` marks the current instruction.
+
+Example: `debug_disasm {"session": 1, "count": 8}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `address` | `--address` | json | no | Where to start, as a listing address (default: the program counter). |
+| `count` | `--count` | integer | no | Instructions to return (default 20, at most 200). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugInsn": {
+      "description": "One disassembled instruction.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Listing address."
+        },
+        "bytes": {
+          "description": "Raw bytes, lowercase hex.",
+          "type": "string"
+        },
+        "is_pc": {
+          "description": "True for the instruction the program counter is on.",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "Disassembly.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "bytes",
+        "text",
+        "is_pc"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_disasm`.",
+  "properties": {
+    "instructions": {
+      "description": "The instructions.",
+      "items": {
+        "$ref": "#/$defs/DebugInsn"
+      },
+      "type": "array"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "instructions"
+  ],
+  "title": "DebugDisasmOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_mem_read
+
+Read bytes of the debugged program's memory
+
+```sh
+kraken debug-mem-read --address <address> --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Reads up to 4096 bytes at a listing address (or, with `emulator_address`, at a pointer taken from a register such as the stack pointer). Fails for unmapped memory.
+
+Example: `debug_mem_read {"session": 1, "address": "0x7ffffff0", "emulator_address": true, "length": 32}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Where to read. |
+| `session` | `--session` | integer | yes | The session. |
+| `emulator_address` | `--emulator-address` | boolean | no | Treat `address` as an emulator address (a stack or heap pointer from a register) instead of a listing address (default false). |
+| `length` | `--length` | integer | no | Bytes to read (default 64, at most 4096). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_mem_read`.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The address read, as given."
+    },
+    "ascii": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The bytes as text, `.` for the unprintable. Program data, so untrusted."
+    },
+    "hex": {
+      "description": "The bytes, lowercase hex.",
+      "type": "string"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "address",
+    "hex",
+    "ascii"
+  ],
+  "title": "DebugMemOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_regs
+
+Read the registers of the debugged program
+
+```sh
+kraken debug-regs --session <integer>
+```
+
+- Kind: query
+- Permission: safe
+
+The general purpose registers (names as in the architecture's SLEIGH spec) and the program counter. Values are the emulator's; for a position-independent program add nothing, they are real emulator addresses (listing address = value - `address_delta` from `debug_start`).
+
+Example: `debug_regs {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugRegister": {
+      "description": "One register.",
+      "properties": {
+        "name": {
+          "description": "Register name.",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Its value (the emulator's own, not translated to listing addresses)."
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_regs`.",
+  "properties": {
+    "pc": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The program counter as a listing address."
+    },
+    "registers": {
+      "description": "General purpose registers in display order.",
+      "items": {
+        "$ref": "#/$defs/DebugRegister"
+      },
+      "type": "array"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "pc",
+    "registers"
+  ],
+  "title": "DebugRegsOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_run_to
+
+Run the debugged program to an address or function, ignoring no breakpoints
+
+```sh
+kraken debug-run-to --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Runs until the program counter reaches `address` or the function `symbol` (stops at other breakpoints on the way).
+
+Example: `debug_run_to {"session": 1, "symbol": "main"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `address` | `--address` | json | no | Listing address to run to (give this or `symbol`). |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget (default 100000000). |
+| `symbol` | `--symbol` | string | no | A function symbol of the program, such as `main` (give this or `address`). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 10). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_sessions
+
+List the open debug sessions of the project
+
+```sh
+kraken debug-sessions
+```
+
+- Kind: query
+- Permission: safe
+
+Every open debug session with the state `debug_state` gives. Use it to find a session again after a reconnect.
+
+Example: `debug_sessions {}`
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStateOut": {
+      "description": "Result of `debug_state`.",
+      "properties": {
+        "address_delta": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Emulator address minus listing address."
+        },
+        "arch": {
+          "description": "The architecture.",
+          "type": "string"
+        },
+        "breakpoints": {
+          "description": "Breakpoints (listing addresses).",
+          "items": {
+            "$ref": "#/$defs/Hex64"
+          },
+          "type": "array"
+        },
+        "finished": {
+          "description": "True when the program has ended.",
+          "type": "boolean"
+        },
+        "instructions": {
+          "description": "Instructions executed so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugStop"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the last run command stopped (absent before the first)."
+        },
+        "patched": {
+          "description": "True when a patched copy runs.",
+          "type": "boolean"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The program counter as a listing address."
+        },
+        "program": {
+          "description": "File name of the program being debugged.",
+          "type": "string"
+        },
+        "session": {
+          "description": "The session.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stderr": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "All standard error so far (last 4000 characters). Untrusted."
+        },
+        "stdout": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "All standard output so far (last 4000 characters). Untrusted."
+        }
+      },
+      "required": [
+        "session",
+        "program",
+        "patched",
+        "arch",
+        "pc",
+        "address_delta",
+        "instructions",
+        "finished",
+        "breakpoints",
+        "stdout",
+        "stderr"
+      ],
+      "type": "object"
+    },
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_sessions`.",
+  "properties": {
+    "sessions": {
+      "description": "The open sessions, oldest first.",
+      "items": {
+        "$ref": "#/$defs/DebugStateOut"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "sessions"
+  ],
+  "title": "DebugSessionsOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_start
+
+Start a debugger session on the program in the emulator, stopped before its first instruction
+
+```sh
+kraken debug-start [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Loads the project's executable (or, with `patched`, a copy with its byte patches applied) into the emulator and stops before the first instruction. Returns the `session` id the other `debug_*` commands take. Linux ELF programs only (x86, x86-64, ARM, AArch64, RISC-V). At most 4 sessions; idle ones close after 30 minutes.
+
+Example: `debug_start {"argv": ["-v"], "stdin": "hello\n"}`
+
+The guest is interpreted in a sandboxed child process (`kraken-emu-run`) that can read the program and the SLEIGH specs and write one private directory; time and randomness are fixed, there is no network, and nothing in the project changes. A dynamically linked program needs a sysroot or this computer's libraries, as for `emulate_run`. Next: `debug_break_set`, `debug_run_to` (for example `{"symbol": "main"}`), `debug_step`, `debug_regs`, `debug_mem_read`. End it with `debug_stop`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `argv` | `--argv` | json | no | Command-line arguments after `argv[0]` (at most 64, each at most 4096 bytes). |
+| `patched` | `--patched` | boolean | no | Debug a copy with the project's byte patches applied, instead of the original (default false). |
+| `stdin` | `--stdin` | string | no | Text for the program's standard input (default empty; at most 1 MiB). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_start`.",
+  "properties": {
+    "address_delta": {
+      "$ref": "#/$defs/Hex64",
+      "description": "Emulator address minus listing address (0 unless the program is position independent)."
+    },
+    "arch": {
+      "description": "The architecture.",
+      "type": "string"
+    },
+    "notes": {
+      "description": "Facts about the session.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "pc": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The first instruction (listing address)."
+    },
+    "session": {
+      "description": "The id every other `debug_*` command takes.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "arch",
+    "pc",
+    "address_delta",
+    "notes"
+  ],
+  "title": "DebugStartOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_state
+
+Report where a debug session is: pc, last stop, breakpoints and the program's output so far
+
+```sh
+kraken debug-state --session <integer>
+```
+
+- Kind: query
+- Permission: safe
+
+The program counter (listing address), instruction count, how the last run command stopped, the breakpoints and the standard output and error written so far (last 4000 characters each, untrusted program data).
+
+Example: `debug_state {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_state`.",
+  "properties": {
+    "address_delta": {
+      "$ref": "#/$defs/Hex64",
+      "description": "Emulator address minus listing address."
+    },
+    "arch": {
+      "description": "The architecture.",
+      "type": "string"
+    },
+    "breakpoints": {
+      "description": "Breakpoints (listing addresses).",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "finished": {
+      "description": "True when the program has ended.",
+      "type": "boolean"
+    },
+    "instructions": {
+      "description": "Instructions executed so far.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "last_stop": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DebugStop"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "How the last run command stopped (absent before the first)."
+    },
+    "patched": {
+      "description": "True when a patched copy runs.",
+      "type": "boolean"
+    },
+    "pc": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The program counter as a listing address."
+    },
+    "program": {
+      "description": "File name of the program being debugged.",
+      "type": "string"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "All standard error so far (last 4000 characters). Untrusted."
+    },
+    "stdout": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "All standard output so far (last 4000 characters). Untrusted."
+    }
+  },
+  "required": [
+    "session",
+    "program",
+    "patched",
+    "arch",
+    "pc",
+    "address_delta",
+    "instructions",
+    "finished",
+    "breakpoints",
+    "stdout",
+    "stderr"
+  ],
+  "title": "DebugStateOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_step
+
+Execute one instruction (or `count`) of the debugged program, entering calls
+
+```sh
+kraken debug-step --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Executes `count` instructions (default 1) and reports where the program stopped. A call is entered. Stops early at a breakpoint, a fault or the program's end.
+
+Example: `debug_step {"session": 1, "count": 5}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `count` | `--count` | integer | no | Instructions to execute (default 1, at most 1000000). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_step_out
+
+Run the debugged program until the current function returns
+
+```sh
+kraken debug-step-out --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Runs until the function the program is in returns to its caller (or a breakpoint, a fault or the end stops it first).
+
+Example: `debug_step_out {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget (default 100000000, at most 1000000000). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 10, at most 120); the program stops with kind `interrupted` and the session stays usable. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_step_over
+
+Execute one instruction of the debugged program, running a call to its return
+
+```sh
+kraken debug-step-over --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Executes one instruction; if it is a call, the callee runs to its return first (a breakpoint inside it still stops the run).
+
+Example: `debug_step_over {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget (default 100000000, at most 1000000000). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 10, at most 120); the program stops with kind `interrupted` and the session stays usable. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_stop
+
+End a debug session and its emulator child
+
+```sh
+kraken debug-stop --session <integer>
+```
+
+- Kind: query
+- Permission: safe
+
+Ends the session, stops the child process and removes its private directory. Ending one that is already gone is not an error.
+
+Example: `debug_stop {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_stop`.",
+  "properties": {
+    "ended": {
+      "description": "True when it was open.",
+      "type": "boolean"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session",
+    "ended"
+  ],
+  "title": "DebugStopSessionOut",
   "type": "object"
 }
 ```

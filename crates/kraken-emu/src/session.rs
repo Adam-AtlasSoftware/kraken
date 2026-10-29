@@ -8,7 +8,8 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use object::{Object, ObjectSymbol};
@@ -67,6 +68,8 @@ pub enum SessionStop {
     Import { name: String },
     /// The budget ran out first.
     Budget,
+    /// [`Interrupter::interrupt`] stopped the run (the session stays usable).
+    Interrupted,
     /// The guest faulted (it stays stopped at the faulting instruction).
     Fault { detail: String, pc: u64 },
 }
@@ -115,6 +118,19 @@ pub struct Session {
     tx: Option<mpsc::Sender<Job>>,
     thread: Option<std::thread::JoinHandle<()>>,
     arch: Arch,
+    interrupt: Arc<AtomicBool>,
+}
+
+/// Stops a run in progress from another thread (a wall-clock limit, a Pause button). Cheap to
+/// clone; the run ends with [`SessionStop::Interrupted`] and the session can go on.
+#[derive(Debug, Clone)]
+pub struct Interrupter(Arc<AtomicBool>);
+
+impl Interrupter {
+    /// Asks the running session to stop at the next instruction boundary.
+    pub fn interrupt(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 impl std::fmt::Debug for Session {
@@ -291,7 +307,8 @@ impl Inner {
                         _ => SessionStop::Fault { detail, pc },
                     };
                 }
-                Stop::Halt | Stop::Interrupted => {
+                Stop::Interrupted => break SessionStop::Interrupted,
+                Stop::Halt => {
                     break SessionStop::Fault {
                         detail: "stopped".into(),
                         pc: self.m().pc(),
@@ -382,14 +399,15 @@ impl Session {
     /// Starts a session on its own thread.
     pub fn new(target: Target) -> Result<Session, EmuError> {
         let (tx, rx) = mpsc::channel::<Job>();
-        let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<Arch, EmuError>>(1);
+        let (ready_tx, ready_rx) =
+            mpsc::sync_channel::<Result<(Arch, Arc<AtomicBool>), EmuError>>(1);
         let thread = std::thread::Builder::new()
             .name("kraken-emu-session".into())
             .stack_size(16 << 20)
             .spawn(move || {
                 let mut inner = match Inner::build(target) {
-                    Ok((inner, arch)) => {
-                        let _ = ready_tx.send(Ok(arch));
+                    Ok((mut inner, arch)) => {
+                        let _ = ready_tx.send(Ok((arch, inner.m().interrupt_handle())));
                         inner
                     }
                     Err(e) => {
@@ -402,13 +420,14 @@ impl Session {
                 }
             })
             .map_err(|e| EmuError::Io(format!("starting the session thread: {e}")))?;
-        let arch = ready_rx
+        let (arch, interrupt) = ready_rx
             .recv()
             .map_err(|_| EmuError::Emulator(STOP.into()))??;
         Ok(Session {
             tx: Some(tx),
             thread: Some(thread),
             arch,
+            interrupt,
         })
     }
 
@@ -425,6 +444,11 @@ impl Session {
             }))
             .map_err(|_| EmuError::Emulator(STOP.into()))?;
         rrx.recv().map_err(|_| EmuError::Emulator(STOP.into()))
+    }
+
+    /// A handle that stops a run in progress from another thread.
+    pub fn interrupter(&self) -> Interrupter {
+        Interrupter(self.interrupt.clone())
     }
 
     /// The architecture.
@@ -570,6 +594,14 @@ impl Session {
                 at += len.max(1);
             }
             out
+        })
+    }
+
+    /// The load bias of the main program image (0 for a fixed-address executable).
+    pub fn main_bias(&self) -> Result<u64, EmuError> {
+        self.call(|i| match &i.kind {
+            Kind::Process(p) => p.main_bias(),
+            Kind::Function { fc, .. } => fc.image().map_or(0, |im| im.bias),
         })
     }
 

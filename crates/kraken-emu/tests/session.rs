@@ -145,3 +145,21 @@ fn a_function_session_steps_to_the_return() {
         other => panic!("expected a return, got {other:?}"),
     }
 }
+
+#[test]
+#[ignore = "needs Ghidra processor sources for the SLEIGH specs"]
+fn an_interrupt_stops_a_run_and_the_session_goes_on() {
+    let _ = specs(kraken_emu::Arch::Riscv32);
+    let s = Session::new(Target::Program(RunSpec::new(bin(
+        "riscv32",
+        "switch_vm-riscv32-O2",
+    ))))
+    .expect("session");
+    s.interrupter().interrupt();
+    let stop = s.run(1_000_000_000).expect("run");
+    assert_eq!(stop, SessionStop::Interrupted);
+    assert!(matches!(
+        s.run(1_000_000_000).expect("run on"),
+        SessionStop::Exited { .. }
+    ));
+}

@@ -256,7 +256,7 @@ struct Limits {
     seconds: u64,
 }
 
-fn invalid(msg: impl Into<String>) -> ProtoError {
+pub(super) fn invalid(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
 }
 
@@ -385,7 +385,7 @@ fn decode_hex(h: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn problem(code: ErrorCode, msg: impl Into<String>) -> ProtoError {
+pub(super) fn problem(code: ErrorCode, msg: impl Into<String>) -> ProtoError {
     ProtoError::new(code, msg)
 }
 
@@ -436,7 +436,7 @@ fn host_libraries(arch: Arch) -> bool {
     Path::new(loader).exists()
 }
 
-fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
+pub(super) fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
     match e {
         EmuError::Image(m) => problem(
             ErrorCode::Unsupported,
@@ -471,9 +471,9 @@ fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
 }
 
 /// The byte patches of a patched run and the image base the engine loaded the program at.
-struct Patched {
-    patches: Vec<kraken_model::Patch>,
-    engine_base: u64,
+pub(super) struct Patched {
+    pub(super) patches: Vec<kraken_model::Patch>,
+    pub(super) engine_base: u64,
 }
 
 /// What one run produced, before it is shown.
@@ -564,9 +564,28 @@ fn emulate(
     spec.workdir = Some(guest);
 
     let run = |spec: &RunSpec| run_program_confined(spec, &runner, ConfinementOptions::default());
-    // Holds the private copy of this computer's libraries until the run is over.
-    let mut _host_libs = None;
-    let result = match run(&spec) {
+    let ((outcome, report), _host_libs) =
+        with_sysroot(&mut spec, &program, binary, &mut notes, run)?;
+    if !report.is_confined() {
+        notes.push(format!(
+            "the emulator child ran with limited confinement: {report}"
+        ));
+    }
+    Ok(RawRun { outcome, notes })
+}
+
+/// Runs `run` on `spec`; a dynamically linked program that needs a sysroot gets one (an
+/// extracted one, or private copies of this computer's libraries) and `run` is called again. The
+/// returned directory holds those copies and must outlive whatever `run` started.
+pub(super) fn with_sysroot<T>(
+    spec: &mut RunSpec,
+    program: &Path,
+    binary: &Path,
+    notes: &mut Vec<String>,
+    run: impl Fn(&RunSpec) -> Result<T, EmuError>,
+) -> Result<(T, Option<tempfile::TempDir>), ProtoError> {
+    let mut host_libs = None;
+    let result = match run(spec) {
         Err(EmuError::NeedsSysroot { arch, interp, .. }) if sysroot_for(arch).is_some() => {
             match sysroot_for(arch) {
                 Some(Sysroot::Extracted(dir)) => {
@@ -584,7 +603,7 @@ fn emulate(
                             problem(ErrorCode::Internal, format!("private sysroot: {e}"))
                         })?;
                     let libs =
-                        kraken_emu::hostlibs::private_sysroot(&program, &interp, arch, dir.path())
+                        kraken_emu::hostlibs::private_sysroot(program, &interp, arch, dir.path())
                             .map_err(|e| emulation_error(e, binary))?;
                     notes.push(format!(
                         "dynamic program: its loader and {} librar{} were copied from this \
@@ -608,26 +627,21 @@ fn emulate(
                         ));
                     }
                     spec.sysroot = Some(dir.path().to_path_buf());
-                    _host_libs = Some(dir);
+                    host_libs = Some(dir);
                 }
                 None => {}
             }
-            run(&spec)
+            run(spec)
         }
         other => other,
     };
-    let (outcome, report) = result.map_err(|e| emulation_error(e, binary))?;
-    if !report.is_confined() {
-        notes.push(format!(
-            "the emulator child ran with limited confinement: {report}"
-        ));
-    }
-    Ok(RawRun { outcome, notes })
+    let value = result.map_err(|e| emulation_error(e, binary))?;
+    Ok((value, host_libs))
 }
 
 /// Writes a copy of `binary` with `patches` applied into `work_dir` and returns its path. The
 /// recorded original bytes are checked, so a patch that does not line up is reported, not written.
-fn build_patched_copy(
+pub(super) fn build_patched_copy(
     binary: &Path,
     patches: &[kraken_model::Patch],
     work_dir: &Path,
