@@ -1,11 +1,12 @@
 //! A guess at a function's System V ABI from the C-like signature KRAKEN shows
 //! (`int cmp_id(record * a, record * b)`), and generic test inputs for it.
 //!
-//! The guess is deliberately narrow: integers up to 64 bits, `double`, pointers to caller-owned
-//! buffers and function pointers in registers (six integer-class and eight floating-point
-//! parameters at most), and an integer, `double`, pointer or void result (a pointer result is
-//! compared by what it points at). Anything else (single-precision
-//! floating point, structs by value, varargs) is refused with a reason, so a
+//! The guess is deliberately narrow: integers up to 64 bits, `double` and `float`, pointers to
+//! caller-owned buffers and function pointers in registers (six integer-class and eight
+//! floating-point parameters at most), and an integer, `double`, `float`, pointer or void result.
+//! A pointer result is accepted, but a single function with one is only compiled, not compared
+//! (addresses differ between the emulator and the build). Anything else (structs by value,
+//! varargs) is refused with a reason, so a
 //! function outside what the oracle can check never gets a verdict that means nothing. Buffer
 //! sizes are unknown here, so the generic inputs mix raw random bytes with small pointer graphs; a
 //! curated input generator (see `targets`) tests structs far better.

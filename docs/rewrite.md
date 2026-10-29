@@ -14,7 +14,7 @@ Choose **Rewrite in Rust...** from the command palette (`Ctrl+K`), or press **Gu
 |---|---|
 | **Scope** | Choose what to rewrite: one function, the plan (every function, callees first) or the whole program. |
 | **Mode** | Choose **Translate the code** or **Write a spec, then reimplement**. |
-| **Check** | See whether everything is in place: the assistant, the sandbox, the analysis, and how many functions and requests to the assistant the job takes. |
+| **Check** | See whether everything is in place: the assistant, the sandbox, the analysis, how many functions and requests to the assistant the job takes, and what the host provides (the Rust toolchain, the spec files the emulator needs, and whether the program is a kind that can be rewritten). A row that is not in place says what to do, with a **Copy the fix** button for the command, and **Check again** looks once more after you fixed it. |
 | **Run** | Press **Start**. A progress bar shows the job, and **Cancel** stops it. When it ends the wizard moves on by itself. |
 | **Review** | See which functions matched the original. **Show** opens a function in the Rewrite tab. |
 | **Accept** | Accept what you trust. This step is yours: assistants cannot accept. |
@@ -46,13 +46,22 @@ KRAKEN runs the original function (in an emulator) and the Rust function on the 
 
 Verified means the Rust agreed on the cases tried. That is evidence, not proof. Open the functions that matter and read the Rust.
 
+Four controls in the detail view let you add to that evidence or overrule it:
+
+- **Replay cases** builds the stored Rust again in the sandbox and runs every stored case on it, with no model involved. It also measures **coverage**: how many basic blocks of the original function the cases run (for example "Coverage 4 of 6 blocks"). The blocks no case reaches are listed with their addresses; click one to read it in the Decompiler. Code that no case reaches is not checked at all.
+- **Add a test case** takes one value per parameter (a number, `"0x.."`, `{"hex": "00ff"}` or `{"text": "abc"}` for a buffer). KRAKEN runs the original on it for the expected result, keeps the case with the version and replays everything. A case that the Rust gets wrong fails the version, and an accepted version that fails is unaccepted.
+- **Reject** marks the newest version as wrong or unwanted although it passed. It stays in the history and is never exported.
+- **Unaccept** takes an acceptance back; the version goes back to verified.
+
+In the Spec view, **Edit the spec** lets you correct what the model wrote. KRAKEN checks that every fact cites an address, and stores the edit as the function's newest spec, which "Rewrite from the spec" then uses.
+
 ### 4. Accept
 
 Accepting marks one version of a function as the one to export. Accept a function in its detail view, or use **Accept all verified** in the Rewrite tab. That asks you to confirm and lists how many functions it will accept. Agents can translate and test, but accepting is reserved for you.
 
 ### 5. Export
 
-The export writes a Rust workspace with two crates: a library with the accepted functions, and a shim that exposes each one under its original name. You can link the shim in place of the original functions one at a time, and the functions you have not rewritten keep running from the original program. When an accepted function calls one you have not accepted, the export calls the original function by its name; the README lists these calls. Functions that use globals need to know where the original program's data is: call `kraken_attach_image` once first (the README says how). The folder must be empty or an earlier export. A folder inside the project needs no question; a folder outside it asks first.
+The export writes a Rust workspace with two crates: a library with the accepted functions, and a shim that exposes each one under its original name. You can link the shim in place of the original functions one at a time, and the functions you have not rewritten keep running from the original program. When an accepted function calls one you have not accepted, the export calls the original function by its name; the README lists these calls, and a section **Check these before relying on them** lists accepted functions with weak evidence: stale (the decompile changed since), only compiled, no case compared, or cases that leave blocks of the function unreached. Functions that use globals need to know where the original program's data is: call `kraken_attach_image` once first (the README says how). The folder must be empty or an earlier export. A folder inside the project needs no question; a folder outside it asks first.
 
 ### 6. Build and test
 
@@ -117,7 +126,10 @@ Everything above is a command, so an assistant connected through [MCP](mcp.md) o
 | `rewrite_spec` | Write a cited spec of a function or the program (a job). |
 | `rewrite_status`, `rewrite_unit` | Read the statuses, and the stored Rust, verdicts and versions of one function. |
 | `rewrite_program`, `rewrite_program_status` | Rewrite the whole program and compare it with the original (a job), and read the run. `inputs` takes test cases, `dir` the output folder and `verify_functions` the per-function check. |
-| `rewrite_accept` | Accept a verified version. People only. |
+| `rewrite_check` | Check what the host provides: sandbox, Rust toolchain, spec files, program kind. |
+| `rewrite_accept`, `rewrite_unaccept`, `rewrite_reject` | Accept a verified version, take the acceptance back, or reject a version. People only. |
+| `rewrite_verify`, `rewrite_add_case` | Replay every stored case of a version and measure coverage, or add a case of your own first (jobs; no model is called). Agents may run them. |
+| `rewrite_spec_edit` | Store an edited spec of a function. |
 | `rewrite_export` | Write the accepted functions as a workspace (a job). |
 | `rewrite_build` | Build and test an exported folder in the sandbox, and optionally run a program crate with `run_args` (a job). |
 
@@ -125,7 +137,8 @@ Jobs return a `job_id`; read progress and the result with `job_status` or `job_a
 
 ## If something does not work
 
-- **The buttons are off with a note about the sandbox.** Your computer cannot confine generated code. Use Linux 6.7 or newer, or a kernel with Landlock ABI 4.
+- **A row of the Check step says Stop or Note.** Each row says what is missing. No Rust toolchain: install Rust with rustup so that `rustc` and `cargo` are on `PATH`. No spec files: run `kraken setup --native` (or `cargo xtask native-sla` in a source checkout, or set `KRAKEN_NATIVE_SPECS`); without them a translation is only built, never compared with the program. The same rows are available as the `rewrite_check` command.
+- **The buttons are off with a note about the sandbox.** Your computer cannot confine generated code. Use Linux 6.7 or newer, or a kernel with Landlock ABI 4. A test or CI job that must have the sandbox can set `KRAKEN_REQUIRE_SANDBOX=1`: the sandboxed tests then fail instead of skipping on a host without it (`KRAKEN_REQUIRE_SPECS=1` does the same for the spec files).
 - **No assistant is set up.** Choose one in **Settings**, or name a provider in your KRAKEN config file. See [the assistant](assistant.md).
 - **Everything comes out translated, not verified.** The functions call library functions the test cannot imitate yet. Open one: its flags say which. The whole-program comparison still tells you whether the program behaves like the original.
 - **Many functions say "not checked on its own".** Their own test failed or could not run, often because they take a pointer to an object (a C++ `this`) that random test inputs cannot build. They are still in the program; the program comparison is what counts.

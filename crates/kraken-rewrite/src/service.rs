@@ -49,6 +49,9 @@ use crate::unit::{RewriteUnit, sha256_hex};
 #[path = "service_program.rs"]
 mod program_mode;
 
+#[path = "control.rs"]
+mod control;
+
 /// Default cap on functions a new whole-program plan examines.
 const DEFAULT_PLAN_FUNCTIONS: u32 = 2000;
 /// Largest cap a caller may ask for.
@@ -444,6 +447,8 @@ fn unit_version(unit: &RewriteUnit, created: u64, stale: Option<&String>) -> Uni
         attempt: unit.repair.as_ref().map_or(1, |r| r.attempt),
         repair_of: unit.repair.as_ref().and_then(|r| r.repair_of),
         reused_callees: reused_symbols(unit),
+        coverage: unit.coverage.as_ref().map(control::coverage_view),
+        user_cases: unit.user_cases,
     }
 }
 
@@ -1152,6 +1157,61 @@ impl RewriteBackend for RewriteService {
         self.accept_unit(s, ctx, args).await
     }
 
+    async fn reject(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteRejectArgs,
+    ) -> Result<kraken_registry::commands::UnitChangeOut, ProtoError> {
+        self.reject_unit(s, ctx, args).await
+    }
+
+    async fn unaccept(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteUnaccept,
+    ) -> Result<kraken_registry::commands::UnitChangeOut, ProtoError> {
+        self.unaccept_unit(s, ctx, args).await
+    }
+
+    async fn add_case(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteAddCaseArgs,
+        job: &JobReporter,
+    ) -> Result<kraken_registry::commands::RewriteVerifyResult, ProtoError> {
+        self.add_case_job(s, ctx, args, job).await
+    }
+
+    async fn verify(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteVerifyArgs,
+        job: &JobReporter,
+    ) -> Result<kraken_registry::commands::RewriteVerifyResult, ProtoError> {
+        self.verify_unit_job(s, ctx, args, job).await
+    }
+
+    async fn check(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+    ) -> Result<kraken_registry::commands::RewriteCheckOut, ProtoError> {
+        self.check_prereqs(s, ctx).await
+    }
+
+    async fn spec_edit(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteSpecEditArgs,
+    ) -> Result<RewriteSpecResult, ProtoError> {
+        self.spec_edit_unit(s, ctx, args).await
+    }
+
     async fn spec(
         &self,
         s: &Session,
@@ -1193,7 +1253,7 @@ impl RewriteBackend for RewriteService {
         let binary_name = file_name(&project.meta().binary_path);
         progress(job, "collect", 0, 3, "reading the accepted units");
         let sha2 = sha.clone();
-        let (units, plan, originals) = with_store(dir, move |st| {
+        let (units, plan, originals) = with_store(dir.clone(), move |st| {
             let units = st.accepted_units(&sha2)?;
             // Callees the accepted units were tested with that are not accepted themselves: the
             // export calls the original function for them.
@@ -1230,7 +1290,38 @@ impl RewriteBackend for RewriteService {
                 .map_or(0, |p| u32::try_from(p.entries.len()).unwrap_or(u32::MAX)),
             functions_total,
         };
+        // Is what each unit was made from still what the engine decompiles today?
+        let mut tracked: Vec<String> = units
+            .iter()
+            .flat_map(|u| {
+                std::iter::once(u.anchor.address.clone())
+                    .chain(u.callees.iter().map(|c| c.address.clone()))
+            })
+            .collect();
+        tracked.sort();
+        tracked.dedup();
+        let fresh = self.fresh_hashes(&lift, &tracked).await;
+        let sha4 = sha.clone();
+        let observed = with_store(dir, move |st| {
+            st.observe(&sha4, &fresh)?;
+            st.observed(&sha4)
+        })
+        .await?;
+        let mut caveats = BTreeMap::new();
+        for u in &units {
+            let stale = stale_reason(
+                &u.anchor.address,
+                &u.source_decompile_hash,
+                &u.callees,
+                &observed,
+            );
+            let why = crate::export::caveats_for(u, stale.as_deref());
+            if !why.is_empty() {
+                caveats.insert(u.anchor.address.clone(), why);
+            }
+        }
         let info = ExportInfo {
+            caveats,
             prefix: crate_prefix(request.name.as_deref().unwrap_or(&binary_name)),
             binary_name,
             program_sha256: sha,

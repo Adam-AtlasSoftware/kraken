@@ -91,15 +91,21 @@ logged; **dangerous** commands always ask for approval first.
 | [`rebuild`](#rebuild) | job | mutating | Recreate the engine project from the log and report drift (job) |
 | [`rename_symbol`](#rename_symbol) | mutation | mutating | Rename a function or label |
 | [`rewrite_accept`](#rewrite_accept) | mutation | mutating | Accept a verified rewrite unit for export (users only) |
+| [`rewrite_add_case`](#rewrite_add_case) | job | mutating | Add a test case to a rewrite unit and replay all its cases (job) |
 | [`rewrite_build`](#rewrite_build) | job | mutating | Build and test an exported Rust rewrite inside the sandbox (job) |
+| [`rewrite_check`](#rewrite_check) | query | safe | Check that this host can run the Rust rewrite workflow |
 | [`rewrite_export`](#rewrite_export) | job | mutating | Export accepted units as a Cargo workspace with an FFI shim (job) |
 | [`rewrite_function`](#rewrite_function) | job | mutating | Translate one function to Rust and verify it against the original (job) |
 | [`rewrite_plan`](#rewrite_plan) | query | safe | Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged |
 | [`rewrite_program`](#rewrite_program) | job | mutating | Rewrite a whole program to a standalone Rust crate and verify it against the original (job) |
 | [`rewrite_program_status`](#rewrite_program_status) | query | safe | Show a stored whole-program rewrite: functions, crate and the program-level verdict with per-case diffs |
+| [`rewrite_reject`](#rewrite_reject) | mutation | mutating | Reject a rewrite unit version so it is never exported (users only) |
 | [`rewrite_spec`](#rewrite_spec) | job | mutating | Write a cited behavioural spec of a function or the program (job) |
+| [`rewrite_spec_edit`](#rewrite_spec_edit) | mutation | mutating | Replace a function's behavioural spec with an edited one |
 | [`rewrite_status`](#rewrite_status) | query | safe | Show rewrite progress: counts per status and one row per function |
+| [`rewrite_unaccept`](#rewrite_unaccept) | mutation | mutating | Take back the acceptance of a rewrite unit (users only) |
 | [`rewrite_unit`](#rewrite_unit) | query | safe | Show the stored Rust versions of one function, with code, verdicts and its spec |
+| [`rewrite_verify`](#rewrite_verify) | job | mutating | Replay all stored cases of a rewrite unit and measure their coverage (job) |
 | [`search`](#search) | query | safe | Search names, strings, byte patterns or instruction text |
 | [`set_calling_convention`](#set_calling_convention) | mutation | mutating | Set a function's calling convention |
 | [`set_comment`](#set_comment) | mutation | mutating | Set or clear a comment at an address |
@@ -15446,6 +15452,52 @@ Moves a `verified` unit version to `accepted`; only accepted versions are export
 
 </details>
 
+## rewrite_add_case
+
+Add a test case to a rewrite unit and replay all its cases (job)
+
+```sh
+kraken rewrite-add-case --args <json> --unit <string> [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Adds an input you chose, runs the original under emulation to get its expected result, and replays every case of the version on the Rust code in the sandbox. A disagreement turns the version `failed` with the case as counterexample. Returns a `job_id`; no model is called.
+
+Example: `rewrite_add_case {"unit": "ru-12", "args": [0, {"text": "abc"}]}`
+
+The values are matched to the unit's parameters (see `args`). The case is stored with the version and marked as yours; the replay then covers the generated cases and yours. It needs the same host as `rewrite_function` (Linux with Landlock for the sandbox, the SLEIGH spec files for the emulator). It adds evidence only, so agents may use it; an accepted version that now disagrees is unaccepted and marked `failed`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `args` | `--args` | json | yes | One value per parameter: a number or "0x.." string for an integer, {"hex": "00ff"} or {"text": "abc"} for a buffer, a number for a double, "ascending" or "descending" for a function pointer. |
+| `unit` | `--unit` | string | yes | Unit id (`ru-...`). |
+| `note` | `--note` | string | no | A note kept with the case. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
 ## rewrite_build
 
 Build and test an exported Rust rewrite inside the sandbox (job)
@@ -15486,6 +15538,113 @@ The folder must hold the marker file KRAKEN writes (`manifest.json` from `rewrit
     "job_id"
   ],
   "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_check
+
+Check that this host can run the Rust rewrite workflow
+
+```sh
+kraken rewrite-check
+```
+
+- Kind: query
+- Permission: safe
+
+Lists what the rewrite needs and what is missing: the sandbox (Linux with Landlock), the Rust toolchain, the SLEIGH spec files the emulation oracle needs, and whether the program is a kind that can be rewritten. Each row has a level and, when something is wrong, a fix. Run it before `rewrite_function`.
+
+Example: `rewrite_check {}`
+
+Reads the host and the open program's header only; nothing is built or run. The rows are `sandbox`, `toolchain` (`rustc` and `cargo` resolve and report a version), `specs` (the SLEIGH files for the program's architecture can be found: `KRAKEN_NATIVE_SPECS`, the tree `cargo xtask native-sla` builds, a release's `share/kraken/native-sla`, or a Ghidra install; without them translations are only compiled, not compared) and `program` (Linux ELF for x86-64 today).
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Prereq": {
+      "description": "One prerequisite of the rewrite workflow.",
+      "properties": {
+        "detail": {
+          "description": "What was found.",
+          "type": "string"
+        },
+        "fix": {
+          "description": "What to do about it, for `warn` and `blocked`; a command to run when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "`sandbox`, `toolchain`, `specs` or `program`.",
+          "type": "string"
+        },
+        "level": {
+          "$ref": "#/$defs/PrereqLevel",
+          "description": "How it stands."
+        },
+        "title": {
+          "description": "Short name for a list.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "level",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "PrereqLevel": {
+      "description": "How a prerequisite stands.",
+      "oneOf": [
+        {
+          "const": "ok",
+          "description": "In place.",
+          "type": "string"
+        },
+        {
+          "const": "warn",
+          "description": "Works, with a limit worth knowing.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "The rewrite cannot run until this is fixed.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `rewrite_check`.",
+  "properties": {
+    "checks": {
+      "description": "The prerequisites, in the order to fix them.",
+      "items": {
+        "$ref": "#/$defs/Prereq"
+      },
+      "type": "array"
+    },
+    "ready": {
+      "description": "True when no check is `blocked`.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "checks",
+    "ready"
+  ],
+  "title": "RewriteCheckOut",
   "type": "object"
 }
 ```
@@ -16539,6 +16698,105 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
 
 </details>
 
+## rewrite_reject
+
+Reject a rewrite unit version so it is never exported (users only)
+
+```sh
+kraken rewrite-reject --unit <string> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+
+People only. Marks a version `failed` with your reason in its history, for a translation that passes the tests but is wrong or unwanted. The version stays in the history. An accepted version must be unaccepted first.
+
+Example: `rewrite_reject {"unit": "ru-12", "reason": "drops the error path"}`
+
+Sets the version's status to `failed` and records who rejected it and why in the unit's event list. It does not delete anything: a later `rewrite_function` run makes a new version. Refused for an accepted version (use `rewrite_unaccept`) and for one that already failed. Agents cannot reject.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `unit` | `--unit` | string | yes | Unit id (`ru-...`). |
+| `reason` | `--reason` | string | no | Why, kept in the unit's history. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "UnitStatus": {
+      "description": "Where a rewrite unit stands (ADR 0013).",
+      "oneOf": [
+        {
+          "const": "planned",
+          "description": "In the plan; nothing translated yet.",
+          "type": "string"
+        },
+        {
+          "const": "translated",
+          "description": "Rust code exists but no passing verdict does (not run, or inconclusive).",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "The differential test passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The differential test found a difference, or the code was refused or did not compile.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "A user accepted this verified version for export.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `rewrite_reject` and `rewrite_unaccept` did to a version.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "Function entry."
+    },
+    "status": {
+      "$ref": "#/$defs/UnitStatus",
+      "description": "The version's status now (`failed` after a reject, `verified` after an unaccept)."
+    },
+    "unit": {
+      "description": "The unit version.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Version number.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status",
+    "unit",
+    "address",
+    "version"
+  ],
+  "title": "UnitChangeOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## rewrite_spec
 
 Write a cited behavioural spec of a function or the program (job)
@@ -16581,6 +16839,144 @@ First half of spec-then-reimplement. The provider writes Markdown with the fixed
     "job_id"
   ],
   "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_spec_edit
+
+Replace a function's behavioural spec with an edited one
+
+```sh
+kraken rewrite-spec-edit --address <address> --markdown <string>
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Stores your edit of a function's spec as its newest spec; `rewrite_function` with `mode: spec` reimplements from it. The text is checked like a written spec: all sections in order, every fact cited, every citation an address of the function or its callees. The old spec stays in the history.
+
+Example: `rewrite_spec_edit {"address": "0x401136", "markdown": "## Purpose\n..."}`
+
+Get the current text from `rewrite_unit` (`spec.markdown`), change it and send it back whole. The edit is stored as a new spec by `user` / `edit` and is the one spec mode uses while the function's decompile and its callees' stay as they were. No model is called and nothing runs. It adds a spec and replaces none, so agents may use it.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | The function (any address inside it). |
+| `markdown` | `--markdown` | string | yes | The new spec: the same sections as a written one (Purpose, Inputs, Outputs, Side effects, Invariants, Open questions), every fact citing `[@0x...]`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "PlanScope": {
+      "description": "What a plan or a spec covers.",
+      "oneOf": [
+        {
+          "const": "function",
+          "description": "One function (with its callees for a plan).",
+          "type": "string"
+        },
+        {
+          "const": "all",
+          "description": "Every function of the program.",
+          "type": "string"
+        }
+      ]
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a finished `rewrite_spec` job (the `result` of `job_status`).",
+  "properties": {
+    "address": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Hex64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The function, for `scope: function`."
+    },
+    "citations": {
+      "description": "Every address the spec cites.",
+      "items": {
+        "$ref": "#/$defs/Hex64"
+      },
+      "type": "array"
+    },
+    "facts": {
+      "description": "Facts (cited bullets) in the spec.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "functions": {
+      "description": "Functions the spec was written from.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "markdown": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The spec (model-derived Markdown; citations are `[@0xADDR]`)."
+    },
+    "model": {
+      "description": "Model name.",
+      "type": "string"
+    },
+    "provider": {
+      "description": "Provider id.",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/PlanScope",
+      "description": "What it covers."
+    },
+    "spec": {
+      "description": "Id of the stored spec.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "spec",
+    "scope",
+    "functions",
+    "facts",
+    "citations",
+    "markdown",
+    "provider",
+    "model"
+  ],
+  "title": "RewriteSpecResult",
   "type": "object"
 }
 ```
@@ -16913,6 +17309,104 @@ Reads `rewrite.sqlite`. Rows follow the stored plan (run `rewrite_plan` first); 
 
 </details>
 
+## rewrite_unaccept
+
+Take back the acceptance of a rewrite unit (users only)
+
+```sh
+kraken rewrite-unaccept --unit <string>
+```
+
+- Kind: mutation
+- Permission: mutating
+
+People only. The accepted version goes back to `verified` and drops out of the next export; the function has no accepted version until you accept one again.
+
+Example: `rewrite_unaccept {"unit": "ru-12"}`
+
+Reverses `rewrite_accept`. Callers that reused the accepted unit as a callee notice at their next export, which refuses a unit whose reused callee is no longer accepted. Agents cannot unaccept.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `unit` | `--unit` | string | yes | Unit id (`ru-...`) of the accepted version. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "UnitStatus": {
+      "description": "Where a rewrite unit stands (ADR 0013).",
+      "oneOf": [
+        {
+          "const": "planned",
+          "description": "In the plan; nothing translated yet.",
+          "type": "string"
+        },
+        {
+          "const": "translated",
+          "description": "Rust code exists but no passing verdict does (not run, or inconclusive).",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "The differential test passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The differential test found a difference, or the code was refused or did not compile.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "A user accepted this verified version for export.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `rewrite_reject` and `rewrite_unaccept` did to a version.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "Function entry."
+    },
+    "status": {
+      "$ref": "#/$defs/UnitStatus",
+      "description": "The version's status now (`failed` after a reject, `verified` after an unaccept)."
+    },
+    "unit": {
+      "description": "The unit version.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Version number.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status",
+    "unit",
+    "address",
+    "version"
+  ],
+  "title": "UnitChangeOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## rewrite_unit
 
 Show the stored Rust versions of one function, with code, verdicts and its spec
@@ -16962,6 +17456,43 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
       "required": [
         "args",
         "differences"
+      ],
+      "type": "object"
+    },
+    "CoverageView": {
+      "description": "What the cases of a unit reach in the original function.",
+      "properties": {
+        "blocks": {
+          "description": "Basic blocks of the function.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cases": {
+          "description": "Cases replayed to find out.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hit": {
+          "description": "Blocks at least one case ran.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "missed": {
+          "description": "Start addresses of the blocks no case reached.",
+          "items": {
+            "$ref": "#/$defs/Hex64"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "blocks",
+        "hit",
+        "missed",
+        "cases"
       ],
       "type": "object"
     },
@@ -17091,6 +17622,17 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
           ],
           "description": "The smallest counterexample, for a failed verdict."
         },
+        "coverage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoverageView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the cases reach in the original, once `rewrite_verify` measured it."
+        },
         "created": {
           "description": "When the version was stored (seconds since the Unix epoch).",
           "format": "uint64",
@@ -17176,6 +17718,13 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
         "unit": {
           "description": "Id of this version (`ru-...`).",
           "type": "string"
+        },
+        "user_cases": {
+          "default": 0,
+          "description": "Cases a person added with `rewrite_add_case`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "verdict": {
           "description": "`pass`, `fail`, `rejected` or `inconclusive`.",
@@ -17267,6 +17816,50 @@ Reads `rewrite.sqlite`; nothing is generated or run. Give the function by `addre
     "versions"
   ],
   "title": "RewriteUnitOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_verify
+
+Replay all stored cases of a rewrite unit and measure their coverage (job)
+
+```sh
+kraken rewrite-verify --unit <string>
+```
+
+- Kind: job
+- Permission: mutating
+
+Rebuilds the stored Rust in the sandbox and replays every stored case, the generated ones and those added with `rewrite_add_case`, against the oracle's recorded results. Also measures which basic blocks of the original the cases run. A disagreement turns the version `failed`. Returns a `job_id`; no model is called.
+
+Example: `rewrite_verify {"unit": "ru-12"}`
+
+Use it after the emulator or the sandbox changed, or to see how much of the function the cases reach (`coverage` of the result: blocks, hit, and the start addresses of the missed blocks, which a case from `rewrite_add_case` can target). Coverage needs the SLEIGH spec files; without them the replay still runs and `coverage_note` says why there is none. The result is stored with the version.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `unit` | `--unit` | string | yes | Unit id (`ru-...`). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
   "type": "object"
 }
 ```

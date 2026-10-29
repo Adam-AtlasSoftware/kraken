@@ -22,6 +22,9 @@ pub use spec::{Inline, SpecBlock, citations, parse_spec};
 
 mod build;
 mod bulk;
+mod control;
+#[cfg(test)]
+mod control_tests;
 mod flow;
 mod highlight;
 mod program;
@@ -292,6 +295,55 @@ pub struct VersionItem {
     pub assumptions: Vec<String>,
     /// What the model said it could not translate.
     pub unsupported: Vec<String>,
+    /// What the cases reach in the original, once a replay measured it.
+    pub coverage: Option<CoverageItem>,
+    /// Cases a person added.
+    pub user_cases: u32,
+}
+
+/// What the test cases of a version reach in the original function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageItem {
+    /// Basic blocks of the function.
+    pub blocks: u32,
+    /// Blocks some case ran.
+    pub hit: u32,
+    /// Start addresses of the blocks no case reached.
+    pub missed: Vec<u64>,
+    /// Cases replayed to find out.
+    pub cases: u32,
+}
+
+impl CoverageItem {
+    /// "4 of 5 blocks".
+    pub fn line(&self) -> String {
+        format!(
+            "{} of {} block{}",
+            self.hit,
+            self.blocks,
+            if self.blocks == 1 { "" } else { "s" }
+        )
+    }
+
+    /// Every block ran.
+    pub fn complete(&self) -> bool {
+        self.missed.is_empty()
+    }
+}
+
+/// One prerequisite of the rewrite, from `rewrite_check`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrereqItem {
+    /// `sandbox`, `toolchain`, `specs` or `program`.
+    pub id: String,
+    /// Name in the list.
+    pub title: String,
+    /// How it stands.
+    pub level: CheckLevel,
+    /// What was found.
+    pub detail: String,
+    /// What to do about it.
+    pub fix: Option<String>,
 }
 
 impl VersionItem {
@@ -383,6 +435,11 @@ pub enum JobKind {
     Program,
     /// `rewrite_build`.
     Build,
+    /// `rewrite_verify` and `rewrite_add_case`: replaying the cases of a version.
+    Verify {
+        /// The function.
+        address: u64,
+    },
 }
 
 /// A job started from the tab.
@@ -615,6 +672,11 @@ pub struct RewriteState {
     pub build: BuildState,
     /// The step-by-step rewrite window.
     pub wizard: WizardState,
+    /// What the host and the program provide for the rewrite (`rewrite_check`); `None` until
+    /// the daemon answered.
+    pub prereqs: Option<Vec<PrereqItem>>,
+    /// The daemon is being asked.
+    pub prereqs_loading: bool,
     /// Bulk actions of the plan list: the functions still waiting to be translated.
     pub bulk: bulk::BulkState,
     /// The window should show the Program section of the Rewrite tab.
@@ -649,6 +711,8 @@ impl Default for RewriteState {
             program: ProgramState::default(),
             build: BuildState::default(),
             wizard: WizardState::default(),
+            prereqs: None,
+            prereqs_loading: false,
             bulk: bulk::BulkState::default(),
             show_program_request: false,
             generation: 0,

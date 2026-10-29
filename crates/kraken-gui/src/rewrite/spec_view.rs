@@ -81,6 +81,53 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, addr: u64, a
         .size(11.5)
         .color(p.text_dim),
     );
+    if !st.program_spec {
+        if let Some(text) = &mut st.editing_spec {
+            ui.label(
+                RichText::new("Edit the spec. Keep the sections and give every fact a citation like [@0x401136]; KRAKEN checks it when you save.")
+                    .size(11.5)
+                    .color(p.text_dim),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("kraken_rewrite_spec_edit_scroll")
+                .max_height((ui.available_height() - 40.0).max(120.0))
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(text)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(14)
+                            .id_salt(("kraken_rewrite_spec_text", addr)),
+                    );
+                });
+            let mut save = false;
+            let mut cancel = false;
+            ui.horizontal(|ui| {
+                save = ui
+                    .button("Save my edit")
+                    .on_hover_text("Store this text as the function's newest spec. \"Rewrite from the spec\" then uses it.")
+                    .clicked();
+                cancel = ui
+                    .button("Cancel")
+                    .on_hover_text("Leave the spec as it was.")
+                    .clicked();
+            });
+            if save {
+                acts.spec_edit = Some((addr, text.clone()));
+            }
+            if cancel {
+                st.editing_spec = None;
+            }
+            return;
+        }
+        if ui
+            .small_button("Edit the spec")
+            .on_hover_text("Change what the spec says, for example to fix a fact the model got wrong, before rewriting from it.")
+            .clicked()
+        {
+            st.editing_spec = Some(doc.markdown.clone());
+        }
+    }
     egui::ScrollArea::vertical()
         .id_salt("kraken_rewrite_spec_scroll")
         .auto_shrink([false, false])

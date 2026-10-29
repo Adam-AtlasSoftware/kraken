@@ -40,6 +40,7 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut A
         .show(ui, |ui| {
             title(ui, vm, &name, addr, status, acts);
             actions(ui, vm, d, addr, status, acts);
+            add_case(ui, vm, st, addr, acts);
             plan_notes(ui, vm, d, &p);
             if let Some(e) = &d.error {
                 let s = style::status(style::dark(ui));
@@ -47,7 +48,7 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut A
             }
             versions(ui, d, acts, &p);
             if let Some(v) = d.current() {
-                results(ui, v, &p);
+                results(ui, v, &p, acts);
             }
         });
     ui.add_space(2.0);
@@ -172,6 +173,43 @@ fn actions(
         {
             acts.accept = Some(addr);
         }
+        if vm.rewrite.accepted_version(addr).is_some()
+            && ui
+                .button("Unaccept")
+                .on_hover_text("Take the acceptance back. The version drops out of the next export and goes back to verified. Only you can do this.")
+                .clicked()
+        {
+            acts.unaccept = Some(addr);
+        }
+        let reject = vm.rewrite.rejectable_unit(addr).is_some();
+        let reject_tip = if reject {
+            "Mark the newest version as wrong or unwanted. It is never exported and stays in the history. Only you can do this."
+        } else {
+            "Only a verified or translated version that is not accepted can be rejected."
+        };
+        if ui
+            .add_enabled(reject, egui::Button::new("Reject"))
+            .on_hover_text(reject_tip)
+            .on_disabled_hover_text(reject_tip)
+            .clicked()
+        {
+            acts.reject = Some(addr);
+        }
+        let replay = vm.rewrite.replayable_unit(addr).is_some()
+            && vm.rewrite.can_run()
+            && !vm.rewrite.verifying(addr);
+        let replay_tip = "Run every stored test case again on the Rust in the sandbox and measure which parts of the original they reach. No model is called.";
+        if ui
+            .add_enabled(replay, egui::Button::new("Replay cases"))
+            .on_hover_text(replay_tip)
+            .on_disabled_hover_text(replay_tip)
+            .clicked()
+        {
+            acts.verify = Some(addr);
+        }
+        if vm.rewrite.verifying(addr) {
+            ui.spinner();
+        }
         if running {
             ui.spinner();
         }
@@ -271,7 +309,7 @@ pub(super) fn split_difference(s: &str) -> Option<(&str, &str, &str)> {
     Some((what, orig, rust))
 }
 
-fn results(ui: &mut Ui, v: &VersionItem, p: &Palette) {
+fn results(ui: &mut Ui, v: &VersionItem, p: &Palette, acts: &mut Acts) {
     let s = style::status(style::dark(ui));
     let (color, head) = match v.verdict.as_str() {
         "pass" => (s.success, "Passed"),
@@ -296,6 +334,7 @@ fn results(ui: &mut Ui, v: &VersionItem, p: &Palette) {
             if let Some(cx) = &v.counterexample {
                 counterexample(ui, cx, p);
             }
+            coverage(ui, v, p, acts);
             if !v.prototype.is_empty() {
                 ui.label(
                     RichText::new(&v.prototype)
@@ -333,6 +372,111 @@ fn results(ui: &mut Ui, v: &VersionItem, p: &Palette) {
             }
         });
     ui.add_space(4.0);
+}
+
+/// What the cases reach in the original, and where they do not.
+fn coverage(ui: &mut Ui, v: &VersionItem, p: &Palette, acts: &mut Acts) {
+    let s = style::status(style::dark(ui));
+    let Some(c) = &v.coverage else {
+        if v.user_cases > 0 {
+            ui.label(
+                RichText::new(format!("Includes {} case(s) you added.", v.user_cases))
+                    .size(11.5)
+                    .color(p.text_dim),
+            );
+        }
+        return;
+    };
+    ui.horizontal_wrapped(|ui| {
+        let color = if c.complete() { s.success } else { s.warning };
+        chip(ui, &format!("Coverage {}", c.line()), color).on_hover_text(
+            "How many basic blocks of the original function the test cases run. Code no case reaches is not checked at all.",
+        );
+        ui.label(
+            RichText::new(format!(
+                "{} case{} replayed{}.",
+                c.cases,
+                if c.cases == 1 { "" } else { "s" },
+                if v.user_cases > 0 {
+                    format!(", {} of them yours", v.user_cases)
+                } else {
+                    String::new()
+                }
+            ))
+            .size(11.5)
+            .color(p.text_dim),
+        );
+    });
+    if !c.missed.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Not reached:").size(11.5).color(p.text_dim));
+            for a in c.missed.iter().take(12) {
+                if ui
+                    .link(
+                        RichText::new(format!("{a:#x}"))
+                            .monospace()
+                            .size(11.5)
+                            .color(p.address),
+                    )
+                    .on_hover_text("No case runs the block at this address. Click to look at it in the Decompiler, then add a case that gets there.")
+                    .clicked()
+                {
+                    acts.goto = Some(*a);
+                }
+            }
+            if c.missed.len() > 12 {
+                ui.label(
+                    RichText::new(format!("and {} more", c.missed.len() - 12))
+                        .size(11.5)
+                        .color(p.text_dim),
+                );
+            }
+        });
+    }
+}
+
+/// The line where a person types a case of their own.
+fn add_case(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, addr: u64, acts: &mut Acts) {
+    if vm.rewrite.replayable_unit(addr).is_none() {
+        return;
+    }
+    let p = pal(ui);
+    let can = vm.rewrite.can_run() && !vm.rewrite.verifying(addr);
+    egui::CollapsingHeader::new(RichText::new("Add a test case").size(12.5))
+        .id_salt(("kraken_rewrite_add_case", addr))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "One value per parameter, separated by commas. A number or \"0x..\" for an integer, {\"hex\": \"00ff\"} or {\"text\": \"abc\"} for a buffer, a number for a double. KRAKEN runs the original on it and replays all cases on the Rust.",
+                )
+                .size(11.5)
+                .color(p.text_dim),
+            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut st.case_text)
+                        .hint_text("5, {\"text\": \"abc\"}")
+                        .desired_width((ui.available_width() - 130.0).max(120.0))
+                        .id_salt(("kraken_rewrite_case_text", addr)),
+                );
+                if ui
+                    .add_enabled(
+                        can && !st.case_text.trim().is_empty(),
+                        egui::Button::new("Add and replay"),
+                    )
+                    .on_hover_text("Run the original on this input to get the expected result, store the case with the version and replay every case on the Rust.")
+                    .on_disabled_hover_text("Type the values first. A replay may also be running, or the sandbox may be off.")
+                    .clicked()
+                {
+                    acts.add_case = Some((addr, st.case_text.clone()));
+                }
+            });
+            if let Some(e) = &st.case_error {
+                let s = style::status(style::dark(ui));
+                ui.label(RichText::new(e).size(12.0).color(s.danger));
+            }
+        });
 }
 
 fn counterexample(ui: &mut Ui, cx: &Counterexample, p: &Palette) {

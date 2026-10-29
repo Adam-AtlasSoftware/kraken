@@ -47,7 +47,7 @@ fn counterexample(w: CounterexampleWire) -> Counterexample {
     }
 }
 
-fn version(w: VersionWire) -> VersionItem {
+pub(super) fn version(w: VersionWire) -> VersionItem {
     VersionItem {
         unit: w.unit,
         version: w.version,
@@ -77,6 +77,13 @@ fn version(w: VersionWire) -> VersionItem {
         model: w.model,
         assumptions: w.assumptions.into_iter().map(|a| a.0).collect(),
         unsupported: w.unsupported.into_iter().map(|a| a.0).collect(),
+        coverage: w.coverage.map(|c| super::CoverageItem {
+            blocks: c.blocks,
+            hit: c.hit,
+            missed: c.missed.into_iter().map(|a| a.0).collect(),
+            cases: c.cases,
+        }),
+        user_cases: w.user_cases,
     }
 }
 
@@ -192,7 +199,7 @@ impl ViewModel {
 
     // ---------------------------------------------------------------- one function
 
-    fn rewrite_name(&self, address: u64) -> String {
+    pub(super) fn rewrite_name(&self, address: u64) -> String {
         self.rewrite
             .row(address)
             .map(|r| r.name.clone())
@@ -294,7 +301,7 @@ impl ViewModel {
 
     const NO_UNIT_QUERY: &'static str = "The generated Rust and the earlier versions of this function are kept in the project, but the running daemon cannot send them to this window yet. Results from rewrites started in this window are shown below.";
 
-    fn rewrite_load_unit(&mut self, address: u64) {
+    pub(super) fn rewrite_load_unit(&mut self, address: u64) {
         let offered = {
             let cmds = self.backend().commands();
             cmds.is_empty() || cmds.iter().any(|c| c.name == "rewrite_unit")
@@ -494,6 +501,19 @@ impl ViewModel {
                 self.rewrite.export.error = Some(why.clone());
             }
             JobKind::Spec { .. } => {}
+            JobKind::Verify { address } => {
+                let name = self.rewrite_name(address);
+                let d = self
+                    .rewrite
+                    .details
+                    .entry(address)
+                    .or_insert_with(|| UnitDetail {
+                        address,
+                        name,
+                        ..UnitDetail::default()
+                    });
+                d.error = Some(why.clone());
+            }
             JobKind::Program => {
                 if cannot_confine {
                     self.rewrite.availability = Availability::NoConfinement(why.clone());
@@ -521,6 +541,7 @@ impl ViewModel {
             JobKind::Export => self.rewrite_export_done(result),
             JobKind::Program => self.rewrite_program_done(result),
             JobKind::Build => self.rewrite_build_done(result),
+            JobKind::Verify { address } => self.rewrite_verify_done(address, result),
         };
         match outcome {
             Ok(text) => self.rewrite.jobs[idx].outcome = Some(text),

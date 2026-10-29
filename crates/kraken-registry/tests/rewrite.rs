@@ -1000,3 +1000,101 @@ async fn build_runs_as_a_job_with_the_resolved_directory_and_asks_agents_first()
         Some(&["-v".to_string(), "x y".to_string()][..])
     );
 }
+
+#[test]
+fn the_unit_controls_have_the_right_kinds() {
+    let r = Registry::standard();
+    for (name, kind, permission) in [
+        (
+            "rewrite_reject",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        ),
+        (
+            "rewrite_unaccept",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        ),
+        ("rewrite_add_case", CommandKind::Job, Permission::Mutating),
+        ("rewrite_verify", CommandKind::Job, Permission::Mutating),
+        (
+            "rewrite_spec_edit",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        ),
+        ("rewrite_check", CommandKind::Query, Permission::Safe),
+    ] {
+        let spec = r.get(name).unwrap_or_else(|| panic!("{name}")).spec();
+        assert_eq!((spec.kind, spec.permission), (kind, permission), "{name}");
+        assert!(spec.doc.contains("Example:"), "{name} needs an example");
+        assert!(!spec.details.is_empty(), "{name} needs details");
+    }
+}
+
+#[tokio::test]
+async fn deciding_about_a_unit_is_for_users_and_adding_evidence_is_open_to_agents() {
+    let r = rig(true).await;
+    let agent = CallContext::agent("bot", "run-1", Surface::Mcp);
+    for (cmd, args) in [
+        ("rewrite_reject", json!({"unit": "ru-1"})),
+        ("rewrite_unaccept", json!({"unit": "ru-1"})),
+    ] {
+        let e = r
+            .call(&agent, cmd, args)
+            .await
+            .expect_err("agents cannot decide about a unit");
+        assert_eq!(e.code, ErrorCode::RejectedHumanPriority, "{cmd}");
+    }
+    assert!(r.mock.calls().is_empty(), "refused before the backend");
+
+    // Evidence commands pass the gate; this backend implements none of them, so the answer is
+    // the backend's, not a refusal.
+    let e = r
+        .call(
+            &agent,
+            "rewrite_spec_edit",
+            json!({"address": "0x10", "markdown": "x"}),
+        )
+        .await
+        .expect_err("the mock has no spec editing");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    let e = r
+        .call(&agent, "rewrite_check", json!({}))
+        .await
+        .expect_err("the mock has no check");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    for (cmd, args) in [
+        ("rewrite_verify", json!({"unit": "ru-1"})),
+        ("rewrite_add_case", json!({"unit": "ru-1", "args": [1]})),
+    ] {
+        let started = r
+            .call(&agent, cmd, args)
+            .await
+            .expect("an agent may start the job");
+        assert!(started["job_id"].is_string(), "{cmd}");
+    }
+    let e = r
+        .call(
+            &agent,
+            "rewrite_add_case",
+            json!({"unit": "ru-1", "args": vec![0; 17]}),
+        )
+        .await
+        .expect_err("too many arguments");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+}
+
+#[tokio::test]
+async fn the_unit_jobs_need_the_sandbox() {
+    let r = rig(false).await;
+    for (cmd, args) in [
+        ("rewrite_verify", json!({"unit": "ru-1"})),
+        ("rewrite_add_case", json!({"unit": "ru-1", "args": [1]})),
+    ] {
+        let e = r
+            .call(&user(), cmd, args)
+            .await
+            .expect_err("no sandbox here");
+        assert_eq!(e.code, ErrorCode::Unsupported, "{cmd}");
+    }
+}

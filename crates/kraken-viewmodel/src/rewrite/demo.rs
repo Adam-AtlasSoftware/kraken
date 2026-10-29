@@ -13,11 +13,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::{
-    ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteBackend, RewriteBuildArgs,
-    RewriteBuildResult, RewriteExportResult, RewriteFunctionArgs, RewriteFunctionResult,
-    RewritePlanArgs, RewritePlanOut, RewriteProgramArgs, RewriteProgramResult,
-    RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteSpecArgs, RewriteSpecResult,
-    RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs, RewriteUnitOut,
+    ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteAddCaseArgs, RewriteBackend,
+    RewriteBuildArgs, RewriteBuildResult, RewriteCheckOut, RewriteExportResult,
+    RewriteFunctionArgs, RewriteFunctionResult, RewritePlanArgs, RewritePlanOut,
+    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
+    RewriteRejectArgs, RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut,
+    RewriteUnaccept, RewriteUnitArgs, RewriteUnitOut, RewriteVerifyArgs, RewriteVerifyResult,
+    UnitChangeOut,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 use serde::de::DeserializeOwned;
@@ -182,6 +184,10 @@ struct Inner {
     next_spec: u64,
     /// Stored whole-program runs, oldest first.
     program_runs: Vec<Value>,
+    /// Cases the person added, per unit.
+    user_cases: BTreeMap<String, u32>,
+    /// The coverage a replay measured, per unit.
+    coverage: BTreeMap<String, Value>,
 }
 
 /// The scripted pipeline. Clones share state.
@@ -659,6 +665,10 @@ impl RewriteBackend for DemoRewrite {
                         j["signature"] = j["rust_prototype"].clone();
                         j["oracle_kind"] = json!("demo script");
                         j["created"] = json!(0);
+                        if let Some(c) = st.coverage.get(&v.unit) {
+                            j["coverage"] = c.clone();
+                        }
+                        j["user_cases"] = json!(st.user_cases.get(&v.unit).copied().unwrap_or(0));
                         j
                     })
                     .collect()
@@ -759,6 +769,104 @@ impl RewriteBackend for DemoRewrite {
             "status": "accepted", "unit": args.unit, "address": format!("{addr:#x}"),
             "version": version, "replaced_version": replaced,
         }))
+    }
+
+    async fn reject(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteRejectArgs,
+    ) -> Result<UnitChangeOut, ProtoError> {
+        let mut st = self.lock();
+        let Some((addr, v)) = st
+            .versions
+            .iter_mut()
+            .find_map(|(a, vs)| vs.iter_mut().find(|v| v.unit == args.unit).map(|v| (*a, v)))
+        else {
+            return Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!("no rewrite unit `{}`", args.unit),
+            ));
+        };
+        if !matches!(v.status, "verified" | "translated") {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "unit `{}` is {}; it cannot be rejected",
+                    args.unit, v.status
+                ),
+            ));
+        }
+        v.status = "failed";
+        let version = v.version;
+        typed(json!({
+            "status": "failed", "unit": args.unit, "address": format!("{addr:#x}"),
+            "version": version,
+        }))
+    }
+
+    async fn unaccept(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteUnaccept,
+    ) -> Result<UnitChangeOut, ProtoError> {
+        let mut st = self.lock();
+        let found = st.versions.iter().find_map(|(a, vs)| {
+            vs.iter()
+                .find(|v| v.unit == args.unit)
+                .map(|v| (*a, v.version))
+        });
+        let Some((addr, version)) = found else {
+            return Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!("no rewrite unit `{}`", args.unit),
+            ));
+        };
+        if st.accepted.get(&addr) != Some(&version) {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!("unit `{}` is not accepted", args.unit),
+            ));
+        }
+        st.accepted.remove(&addr);
+        typed(json!({
+            "status": "verified", "unit": args.unit, "address": format!("{addr:#x}"),
+            "version": version,
+        }))
+    }
+
+    async fn verify(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteVerifyArgs,
+        job: &JobReporter,
+    ) -> Result<RewriteVerifyResult, ProtoError> {
+        self.replay(&args.unit, None, job).await
+    }
+
+    async fn add_case(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteAddCaseArgs,
+        job: &JobReporter,
+    ) -> Result<RewriteVerifyResult, ProtoError> {
+        self.replay(&args.unit, Some(args.args.len()), job).await
+    }
+
+    async fn check(&self, _s: &Session, _ctx: &CallContext) -> Result<RewriteCheckOut, ProtoError> {
+        typed(json!({"ready": true, "checks": [
+            {"id": "sandbox", "title": "Sandbox", "level": "ok",
+             "detail": "The demo runs a script; nothing is built or run."},
+            {"id": "toolchain", "title": "Rust toolchain", "level": "ok",
+             "detail": "The demo needs no compiler."},
+            {"id": "specs", "title": "Spec files", "level": "ok",
+             "detail": "The demo needs no emulator."},
+            {"id": "program", "title": "Program", "level": "ok",
+             "detail": "This is the demo program."},
+        ]}))
     }
 
     async fn spec(
@@ -1024,5 +1132,51 @@ impl kraken_registry::commands::SourcePatchBackend for DemoSourcePatch {
             attempts: 1,
             warnings: Vec::new(),
         })
+    }
+}
+
+impl DemoRewrite {
+    /// The scripted replay of a version's cases: a few blocks of the function stay unreached
+    /// until a case of the person's own is added.
+    async fn replay(
+        &self,
+        unit: &str,
+        added: Option<usize>,
+        job: &JobReporter,
+    ) -> Result<RewriteVerifyResult, ProtoError> {
+        job.progress(JobProgress {
+            phase: "Replaying".into(),
+            done: 1,
+            total: 3,
+            message: "Running the stored cases on the Rust".into(),
+            ..Default::default()
+        });
+        tokio::time::sleep(STEP).await;
+        let mut st = self.lock();
+        let found = st.versions.iter().find_map(|(a, vs)| {
+            vs.iter()
+                .find(|v| v.unit == unit)
+                .map(|v| (*a, version_json(*a, v, false)))
+        });
+        let Some((addr, mut j)) = found else {
+            return Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!("no rewrite unit `{unit}`"),
+            ));
+        };
+        if added.is_some() {
+            *st.user_cases.entry(unit.to_string()).or_default() += 1;
+        }
+        let yours = st.user_cases.get(unit).copied().unwrap_or(0);
+        let total = 6u32;
+        let hit = (4 + yours).min(total);
+        let missed: Vec<String> = (hit..total)
+            .map(|k| format!("{:#x}", addr + 0x10 * u64::from(k + 1)))
+            .collect();
+        let cov = json!({"blocks": total, "hit": hit, "missed": missed, "cases": j["cases_run"].as_u64().unwrap_or(0) + u64::from(yours)});
+        st.coverage.insert(unit.to_string(), cov.clone());
+        j["coverage"] = cov;
+        j["user_cases"] = json!(yours);
+        typed(j)
     }
 }

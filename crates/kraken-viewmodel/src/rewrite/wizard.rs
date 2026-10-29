@@ -170,6 +170,8 @@ pub struct Check {
     pub level: CheckLevel,
     /// What was found, and what to do about it.
     pub detail: String,
+    /// What to do, when there is one thing (a command or an action), apart from `detail`.
+    pub fix: Option<String>,
 }
 
 /// State of the wizard.
@@ -202,6 +204,9 @@ impl ViewModel {
             .or(self.rewrite.selected);
         self.rewrite_ensure_loaded();
         self.rewrite_program_ensure_loaded();
+        // The rows of the Check step: ask again each time, the person may have fixed something.
+        self.rewrite.prereqs = None;
+        self.rewrite_check_refresh();
         let w = &mut self.rewrite.wizard;
         w.open = true;
         w.step = WizardStep::Scope;
@@ -415,11 +420,13 @@ impl ViewModel {
                 title: "Assistant",
                 level: CheckLevel::Ok,
                 detail: format!("{}. {}", b.title(), b.privacy()),
+                fix: None,
             },
             None => Check {
                 title: "Assistant",
                 level: CheckLevel::Warn,
                 detail: "No assistant is set up in this window. The rewrite uses the provider named in your KRAKEN config file, and stops with a message when there is none. Choose one in Settings.".into(),
+                fix: None,
             },
         });
         out.push(match self.rewrite.blocked_note() {
@@ -427,11 +434,13 @@ impl ViewModel {
                 title: "Sandbox",
                 level: CheckLevel::Ok,
                 detail: "Generated code is built and run in a sandbox: no network, files read-only, limited time and memory.".into(),
+                fix: None,
             },
             Some(n) => Check {
                 title: "Sandbox",
                 level: CheckLevel::Blocked,
                 detail: n.to_string(),
+                fix: None,
             },
         });
         let analysed = self.analysis.phase == AnalysisPhase::Complete
@@ -445,18 +454,21 @@ impl ViewModel {
                     Some(n) => format!("Done. The program has {n} functions."),
                     None => "Done.".into(),
                 },
+                fix: None,
             }
         } else if self.analysis.running() {
             Check {
                 title: "Analysis",
                 level: CheckLevel::Blocked,
                 detail: "Analysis is still running. Wait for it to finish.".into(),
+                fix: None,
             }
         } else {
             Check {
                 title: "Analysis",
                 level: CheckLevel::Blocked,
                 detail: "The program has not been analyzed yet, so there are no functions to rewrite. Choose Analysis > Analyze program first.".into(),
+                fix: None,
             }
         });
         let (functions, calls) = self.rewrite_wizard_estimate();
@@ -465,6 +477,7 @@ impl ViewModel {
                 title: "Size of the job",
                 level: CheckLevel::Blocked,
                 detail: "No function is chosen. Go back to Scope and pick one.".into(),
+                fix: None,
             },
             (WizardScope::Plan, 0) => Check {
                 title: "Size of the job",
@@ -474,6 +487,7 @@ impl ViewModel {
                 } else {
                     "Every function in the plan has already been translated. Go to Review to see the results.".into()
                 },
+                fix: None,
             },
             _ => Check {
                 title: "Size of the job",
@@ -483,6 +497,7 @@ impl ViewModel {
                     if functions == 1 { "" } else { "s" },
                     if calls == 1 { "" } else { "s" },
                 ),
+                fix: None,
             },
         });
         out.push(match self.ai_estimate(&crate::ai::AiAction::WizardStart) {
@@ -499,13 +514,44 @@ impl ViewModel {
                     },
                     e.cost_text()
                 ),
+                fix: None,
             },
             None => Check {
                 title: "Model and cost",
                 level: CheckLevel::Warn,
                 detail: "No rewrite model is set up in your KRAKEN config file, so the cost cannot be estimated. Choose one under Settings > AI > Rewriting.".into(),
+                fix: None,
             },
         });
+        match &self.rewrite.prereqs {
+            Some(rows) => {
+                for r in rows.iter().filter(|r| r.id != "sandbox") {
+                    out.push(Check {
+                        title: match r.id.as_str() {
+                            "toolchain" => "Rust toolchain",
+                            "specs" => "Spec files",
+                            "program" => "Program",
+                            _ => "Requirement",
+                        },
+                        level: r.level,
+                        detail: match (&r.fix, r.level) {
+                            (Some(f), CheckLevel::Warn | CheckLevel::Blocked) => {
+                                format!("{} To fix it: {f}", r.detail)
+                            }
+                            _ => r.detail.clone(),
+                        },
+                        fix: r.fix.clone().filter(|_| r.level != CheckLevel::Ok),
+                    });
+                }
+            }
+            None if self.rewrite.prereqs_loading => out.push(Check {
+                title: "Requirements",
+                level: CheckLevel::Warn,
+                detail: "Checking the Rust toolchain, the spec files and the program...".into(),
+                fix: None,
+            }),
+            None => {}
+        }
         out
     }
 

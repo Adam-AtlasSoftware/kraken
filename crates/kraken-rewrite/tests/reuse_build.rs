@@ -100,8 +100,7 @@ fn inner_and_top(store: &RewriteStore) -> (RewriteUnit, RewriteUnit, Resolved) {
 
 #[test]
 fn a_translation_that_calls_a_reused_callee_builds_and_runs_confined() {
-    if !sandbox::enforced() {
-        eprintln!("skipped: this host cannot confine generated code");
+    if !sandbox::enforced_or_skip() {
         return;
     }
     let store = RewriteStore::open_in_memory().expect("store");
@@ -137,6 +136,7 @@ fn the_export_links_a_reusing_unit_to_its_callees_module() {
         },
         originals: Vec::new(),
         symbols: Default::default(),
+        caveats: Default::default(),
     };
 
     let target = dir.path().join("out");

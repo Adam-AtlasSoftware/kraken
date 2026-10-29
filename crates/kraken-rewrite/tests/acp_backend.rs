@@ -5,8 +5,8 @@
 //! `<kraken-result>` format, KRAKEN builds and checks it in its own sandbox, and every permission
 //! request the agent makes for its own tools is denied.
 //!
-//! Like the cassette tests, the function-level test needs a Ghidra install for the SLEIGH specs
-//! (`#[ignore]`, runs in the real-ghidra job); the program-level tests compile the translations
+//! Like the cassette tests, the function-level test needs the SLEIGH specs (`KRAKEN_NATIVE_SPECS`
+//! or a Ghidra install; skipped without them unless `KRAKEN_REQUIRE_SPECS=1`); the program-level tests compile the translations
 //! and run the original and the rewrite side by side, which needs only Landlock.
 // The fake agent is a Unix-style process in these tests.
 #![cfg(unix)]
@@ -216,8 +216,10 @@ fn sandbox_available() -> bool {
 const CMP_ID: &str = include_str!("../references/cmp_id.rs");
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn rewrite_function_on_a_terminal_agent_is_verified_and_the_agent_cannot_act() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }
@@ -278,8 +280,10 @@ async fn rewrite_function_on_a_terminal_agent_is_verified_and_the_agent_cannot_a
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn a_repair_attempt_goes_to_the_agent_with_the_counterexample() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }
@@ -315,8 +319,10 @@ async fn a_repair_attempt_goes_to_the_agent_with_the_counterexample() {
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn spec_mode_runs_both_model_calls_on_the_agent() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }

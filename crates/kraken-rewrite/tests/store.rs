@@ -4,11 +4,11 @@ use kraken_registry::commands::{PlanFlag, RewriteMode, UnitStatus};
 use kraken_rewrite::abi::{Arg, Observation, Param, Ret, Signature, Termination};
 use kraken_rewrite::difftest::{CaseRecord, Counterexample, DiffReport, Verdict};
 use kraken_rewrite::store::{
-    DB_FILE, MIGRATIONS, NewSpec, PlannedFunction, RewriteStore, SCHEMA_VERSION, StoredPlan,
-    StoredSpec, migrate,
+    DB_FILE, MIGRATIONS, NewSpec, PlannedFunction, Replay, RewriteStore, SCHEMA_VERSION,
+    StoredPlan, StoredSpec, migrate,
 };
 use kraken_rewrite::unit::{
-    FunctionAnchor, OracleInfo, Provenance, RewriteUnit, UnitSource, status_for,
+    Coverage, FunctionAnchor, OracleInfo, Provenance, RewriteUnit, UnitSource, status_for,
 };
 use rusqlite::{Connection, params};
 
@@ -392,8 +392,8 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
     }
 
     let st = RewriteStore::open(&path).expect("open migrates");
-    assert_eq!(st.schema_version().expect("version"), 4);
-    assert_eq!(SCHEMA_VERSION, 4);
+    assert_eq!(st.schema_version().expect("version"), 5);
+    assert_eq!(SCHEMA_VERSION, 5);
 
     // The old unit reads back intact, with the new column empty.
     let u = st.get("ru-old").expect("get").expect("unit");
@@ -435,7 +435,7 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
 
     // Opening again changes nothing.
     let again = RewriteStore::open(&path).expect("reopen");
-    assert_eq!(again.schema_version().expect("version"), 4);
+    assert_eq!(again.schema_version().expect("version"), 5);
     assert_eq!(again.versions("ab12", "0x10").expect("versions").len(), 2);
 }
 
@@ -468,4 +468,107 @@ fn the_store_lives_in_its_own_file_next_to_the_project_database() {
     // Data survives a reopen.
     let st = RewriteStore::in_project(dir.path()).expect("reopen");
     assert_eq!(st.versions(PROG, "0x10").expect("versions").len(), 1);
+}
+
+#[test]
+fn rejecting_unaccepting_and_replaying_move_the_status_and_leave_a_trail() {
+    let st = RewriteStore::open_in_memory().expect("store");
+    let a = st.put_unit(pass("0x10", "fn a")).expect("put");
+    // A verified version is rejected; the function row follows.
+    let r = st
+        .reject(&a.id, "user", Some("drops the error path"))
+        .expect("reject");
+    assert_eq!(r.status, UnitStatus::Failed);
+    assert!(st.reject(&a.id, "user", None).is_err(), "already failed");
+    assert!(
+        st.accept(&a.id, "user").is_err(),
+        "a rejected version cannot be accepted"
+    );
+    let summary = st.summaries(PROG).expect("summaries");
+    assert_eq!(summary[0].status, UnitStatus::Failed);
+
+    let b = st.put_unit(pass("0x10", "fn b")).expect("put");
+    st.accept(&b.id, "user").expect("accept");
+    assert!(
+        st.reject(&b.id, "user", None).is_err(),
+        "an accepted version must be unaccepted first"
+    );
+    let u = st.unaccept(&b.id, "user").expect("unaccept");
+    assert_eq!(u.status, UnitStatus::Verified);
+    assert!(st.accepted(PROG, "0x10").expect("accepted").is_none());
+    assert!(st.unaccept(&b.id, "user").is_err(), "not accepted any more");
+    st.accept(&b.id, "user").expect("accept again");
+
+    // A user case is stored after the generated ones and counted.
+    st.add_cases(&b.id, &[case(7)], Some("edge")).expect("case");
+    let with = st.get(&b.id).expect("get").expect("unit");
+    assert_eq!(with.test_cases.len(), 4);
+    assert_eq!(with.user_cases, 1);
+    assert_eq!(with.test_cases[3], case(7));
+
+    // A disagreeing replay unaccepts and fails the version; coverage is kept.
+    let replay = Replay {
+        verdict: Verdict::Fail,
+        cases_run: 4,
+        passed: 3,
+        skipped: 0,
+        counterexamples: Vec::new(),
+        coverage: Some(Coverage {
+            blocks: 5,
+            hit: 4,
+            missed: vec![0x40],
+            cases: 4,
+        }),
+    };
+    let after = st.record_replay(&b.id, &replay, "agent-1").expect("replay");
+    assert_eq!(after.status, UnitStatus::Failed);
+    assert_eq!(after.summary.cases_run, 4);
+    assert_eq!(
+        after.coverage.as_ref().map(|c| c.missed.clone()),
+        Some(vec![0x40])
+    );
+    assert!(st.accepted(PROG, "0x10").expect("accepted").is_none());
+    assert_eq!(
+        st.summaries(PROG).expect("summaries")[0].status,
+        UnitStatus::Failed
+    );
+    let events = st.events(PROG, "0x10").expect("events");
+    assert!(
+        events
+            .iter()
+            .any(|e| e.4.as_deref() == Some("rejected: drops the error path"))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.4.as_deref() == Some("unaccepted") && e.3 == "user")
+    );
+    assert!(events.iter().any(|e| e.3 == "agent-1"));
+}
+
+#[test]
+fn a_version_4_database_migrates_to_the_human_control_columns() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(DB_FILE);
+    {
+        let mut c = Connection::open(&path).expect("open");
+        migrate(&mut c, &MIGRATIONS[..4]).expect("v4");
+        c.execute(
+            "INSERT INTO units (program_sha256, address, name, mode, status, current_version, created_at, updated_at)
+             VALUES ('p', '0x1', 'f', 'incremental', 'verified', 1, 1, 1)",
+            [],
+        )
+        .expect("unit");
+    }
+    let st = RewriteStore::open(&path).expect("migrated");
+    assert_eq!(st.schema_version().expect("version"), SCHEMA_VERSION);
+    let c = Connection::open(&path).expect("open");
+    let n: i64 = c
+        .query_row("SELECT COUNT(*) FROM units", params![], |r| r.get(0))
+        .expect("count");
+    assert_eq!(n, 1, "the old row is still there");
+    c.prepare("SELECT origin, note FROM test_cases")
+        .expect("origin column");
+    c.prepare("SELECT coverage_json FROM verdicts")
+        .expect("coverage column");
 }

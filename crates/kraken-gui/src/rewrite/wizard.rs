@@ -351,6 +351,22 @@ fn mode_step(ui: &mut egui::Ui, vm: &mut ViewModel) {
 // ---------------------------------------------------------------- check
 
 fn check_step(ui: &mut egui::Ui, vm: &mut ViewModel) {
+    ui.horizontal(|ui| {
+        let busy = vm.rewrite.prereqs_loading;
+        if ui
+            .add_enabled(!busy, egui::Button::new("Check again"))
+            .on_hover_text("Look at the Rust toolchain, the spec files and the program again, for example after you installed something.")
+            .on_disabled_hover_text("The requirements are being checked.")
+            .clicked()
+        {
+            vm.rewrite.prereqs = None;
+            vm.rewrite_check_refresh();
+        }
+        if busy {
+            ui.spinner();
+        }
+    });
+    ui.add_space(4.0);
     check_list(ui, vm);
     model_for_run(ui, vm);
 }
@@ -464,6 +480,14 @@ fn check_list(ui: &mut egui::Ui, vm: &ViewModel) {
             ui.label(medium(c.title, 13.0).color(p.text_strong));
         });
         ui.label(RichText::new(&c.detail).size(12.0).color(p.text));
+        if let Some(fix) = c.fix.as_ref().filter(|_| c.level != CheckLevel::Ok)
+            && ui
+                .small_button("Copy the fix")
+                .on_hover_text("Copy the command or the step to the clipboard.")
+                .clicked()
+        {
+            ui.ctx().copy_text(fix.clone());
+        }
         ui.add_space(6.0);
     }
 }

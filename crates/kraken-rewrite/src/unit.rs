@@ -125,6 +125,20 @@ pub struct RunSummary {
     pub sandbox: String,
 }
 
+/// Which parts of the original function the test cases reached: the control-flow graph's basic
+/// blocks that ran under the emulation oracle on at least one case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Coverage {
+    /// Basic blocks of the function.
+    pub blocks: u32,
+    /// Blocks some case ran.
+    pub hit: u32,
+    /// Start addresses (as KRAKEN reports them) of the blocks no case reached.
+    pub missed: Vec<u64>,
+    /// Cases replayed to find out.
+    pub cases: u32,
+}
+
 /// One versioned rewrite unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RewriteUnit {
@@ -173,6 +187,12 @@ pub struct RewriteUnit {
     /// Repair-run bookkeeping; `None` for a version made outside a run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repair: Option<RepairLink>,
+    /// What the cases reach, once `rewrite_verify` has measured it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
+    /// How many of `test_cases` a person added (`rewrite_add_case`).
+    #[serde(default)]
+    pub user_cases: u32,
 }
 
 fn default_status() -> UnitStatus {
@@ -264,6 +284,8 @@ impl RewriteUnit {
             counterexamples: report.counterexamples,
             verdict: report.verdict,
             repair: None,
+            coverage: None,
+            user_cases: 0,
         }
     }
 }

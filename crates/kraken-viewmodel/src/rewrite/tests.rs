@@ -40,7 +40,7 @@ fn status_page(units: Vec<Value>, next: Option<&str>) -> Value {
            "units": units, "next_cursor": next})
 }
 
-fn version_result(unit: &str, version: u32, status: &str, verdict: &str) -> Value {
+pub(super) fn version_result(unit: &str, version: u32, status: &str, verdict: &str) -> Value {
     json!({"unit": unit, "address": "0x401240", "name": u("checksum"), "version": version,
            "mode": "incremental", "status": status, "verdict": verdict, "cases_run": 200,
            "passed": if verdict == "pass" { 200 } else { 37 }, "skipped": 0,
@@ -69,14 +69,14 @@ fn job(id: &str, command: &str, status: JobState) -> JobInfo {
     }
 }
 
-fn done(id: &str, command: &str, result: Value) -> BackendEvent {
+pub(super) fn done(id: &str, command: &str, result: Value) -> BackendEvent {
     BackendEvent::Job(Box::new(JobInfo {
         result: Some(result),
         ..job(id, command, JobState::Succeeded)
     }))
 }
 
-fn base() -> FakeBackend {
+pub(super) fn base() -> FakeBackend {
     FakeBackend::new()
         .reply("project_open", project_json())
         .reply("project_info", project_json())
@@ -110,13 +110,13 @@ fn base() -> FakeBackend {
         )
 }
 
-struct Rig {
+pub(super) struct Rig {
     _rt: Runtime,
-    vm: ViewModel,
-    backend: Arc<FakeBackend>,
+    pub(super) vm: ViewModel,
+    pub(super) backend: Arc<FakeBackend>,
 }
 
-fn opened(b: FakeBackend) -> Rig {
+pub(super) fn opened(b: FakeBackend) -> Rig {
     let rt = Runtime::new().expect("runtime");
     let backend = Arc::new(b);
     let mut vm = ViewModel::new(backend.clone(), rt.handle().clone());
@@ -133,11 +133,11 @@ fn opened(b: FakeBackend) -> Rig {
 }
 
 impl Rig {
-    fn idle(&mut self) {
+    pub(super) fn idle(&mut self) {
         assert!(self.vm.block_until_idle(WAIT));
     }
 
-    fn until(&mut self, what: &str, cond: impl Fn(&ViewModel) -> bool) {
+    pub(super) fn until(&mut self, what: &str, cond: impl Fn(&ViewModel) -> bool) {
         assert!(
             self.vm.block_until(WAIT, cond),
             "timed out waiting for {what}"

@@ -72,6 +72,12 @@ pub struct RewriteUi {
     pub program_spec: bool,
     /// The confirm question of "Accept all verified" is showing.
     pub confirm_accept: bool,
+    /// The values of a test case being typed.
+    pub case_text: String,
+    /// Why the typed case was not understood.
+    pub case_error: Option<String>,
+    /// The spec being edited, when the editor is open.
+    pub editing_spec: Option<String>,
 }
 
 /// What the person asked for in one frame; applied after the drawing borrow ends.
@@ -81,6 +87,11 @@ pub(crate) struct Acts {
     pub run: Option<(u64, RewriteMode)>,
     pub retry: Option<u64>,
     pub accept: Option<u64>,
+    pub reject: Option<u64>,
+    pub unaccept: Option<u64>,
+    pub verify: Option<u64>,
+    pub add_case: Option<(u64, String)>,
+    pub spec_edit: Option<(u64, String)>,
     pub spec: Option<Option<u64>>,
     pub show_version: Option<(u64, u32)>,
     pub goto: Option<u64>,
@@ -232,6 +243,28 @@ fn apply(vm: &mut ViewModel, st: &mut RewriteUi, acts: Acts, front: &mut Option<
     }
     if let Some(a) = acts.accept {
         vm.rewrite_accept(a);
+    }
+    if let Some(a) = acts.reject {
+        vm.rewrite_reject(a);
+    }
+    if let Some(a) = acts.unaccept {
+        vm.rewrite_unaccept(a);
+    }
+    if let Some(a) = acts.verify {
+        vm.rewrite_verify(a);
+    }
+    if let Some((a, text)) = acts.add_case {
+        match vm.rewrite_add_case(a, &text) {
+            Ok(()) => {
+                st.case_text.clear();
+                st.case_error = None;
+            }
+            Err(e) => st.case_error = Some(e),
+        }
+    }
+    if let Some((a, md)) = acts.spec_edit {
+        vm.rewrite_edit_spec(a, md);
+        st.editing_spec = None;
     }
     if let Some(target) = acts.spec {
         vm.rewrite_write_spec(target);

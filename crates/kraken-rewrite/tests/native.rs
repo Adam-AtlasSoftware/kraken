@@ -28,12 +28,7 @@ fn record(id: i32) -> Arg {
 }
 
 fn can_confine() -> bool {
-    if sandbox::enforced() {
-        true
-    } else {
-        eprintln!("skipped: this host cannot confine generated code");
-        false
-    }
+    sandbox::enforced_or_skip()
 }
 
 const CMP_ID: &str = include_str!("../references/cmp_id.rs");

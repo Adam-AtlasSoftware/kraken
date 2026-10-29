@@ -17,6 +17,23 @@ pub use kraken_confine::{
 
 use crate::error::RewriteError;
 
+/// For tests and CI: whether a test that runs generated code can go on. True when the host
+/// enforces the sandbox. When it does not, the test is skipped (false, with a message), unless
+/// `KRAKEN_REQUIRE_SANDBOX=1` is set, which makes a missing sandbox a failure: a CI job that
+/// should have one must not pass by skipping everything.
+pub fn enforced_or_skip() -> bool {
+    if enforced() {
+        return true;
+    }
+    assert!(
+        !std::env::var("KRAKEN_REQUIRE_SANDBOX").is_ok_and(|v| !v.is_empty() && v != "0"),
+        "KRAKEN_REQUIRE_SANDBOX is set but this host cannot confine generated code \
+         (Landlock ABI 4+ and a network or seccomp barrier are needed)"
+    );
+    eprintln!("skipped: this host cannot confine generated code");
+    false
+}
+
 impl From<kraken_confine::ConfineError> for RewriteError {
     fn from(e: kraken_confine::ConfineError) -> Self {
         match e {

@@ -23,8 +23,8 @@ use crate::abi::Signature;
 use crate::difftest::{CaseRecord, Counterexample, Verdict};
 use crate::error::RewriteError;
 use crate::unit::{
-    CalleeRef, FunctionAnchor, OracleInfo, Provenance, RepairLink, RewriteUnit, RunSummary,
-    UNIT_SCHEMA,
+    CalleeRef, Coverage, FunctionAnchor, OracleInfo, Provenance, RepairLink, RewriteUnit,
+    RunSummary, UNIT_SCHEMA,
 };
 
 /// File name inside the project directory.
@@ -172,6 +172,11 @@ pub const MIGRATIONS: &[&str] = &[
         result_json    TEXT NOT NULL
      );
      CREATE INDEX program_runs_by_program ON program_runs (program_sha256, id);",
+    // 5: human control. Cases a person added are marked (`origin`), a replay keeps what the
+    // cases reach (`coverage_json`).
+    "ALTER TABLE test_cases ADD COLUMN origin TEXT NOT NULL DEFAULT 'oracle';
+     ALTER TABLE test_cases ADD COLUMN note TEXT;
+     ALTER TABLE verdicts ADD COLUMN coverage_json TEXT;",
 ];
 
 /// The newest schema version.
@@ -700,6 +705,201 @@ impl RewriteStore {
             .get(id)?
             .ok_or_else(|| RewriteError::Store("accepted unit vanished".into()))?;
         Ok((unit, replaced))
+    }
+
+    /// Marks a version as rejected by `actor`: it becomes `failed` (it stays in the history and
+    /// is never exported). An accepted version must be unaccepted first.
+    pub fn reject(
+        &self,
+        id: &str,
+        actor: &str,
+        reason: Option<&str>,
+    ) -> Result<RewriteUnit, RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(db)?;
+        let (prog, addr, version, status) = version_row(&tx, id)?;
+        match status.as_str() {
+            "accepted" => {
+                return Err(RewriteError::Store(format!(
+                    "unit `{id}` is accepted; unaccept it before rejecting it"
+                )));
+            }
+            "failed" => {
+                return Err(RewriteError::Store(format!(
+                    "unit `{id}` is already failed"
+                )));
+            }
+            _ => {}
+        }
+        tx.execute(
+            "UPDATE unit_versions SET status = 'failed' WHERE id = ?1",
+            params![id],
+        )
+        .map_err(db)?;
+        refresh_function_status(&tx, &prog, &addr)?;
+        let note = match reason {
+            Some(r) if !r.trim().is_empty() => format!("rejected: {}", r.trim()),
+            _ => "rejected".to_string(),
+        };
+        event(
+            &tx,
+            &prog,
+            &addr,
+            version,
+            Some(&status),
+            UnitStatus::Failed,
+            actor,
+            Some(&note),
+        )?;
+        tx.commit().map_err(db)?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RewriteError::Store("rejected unit vanished".into()))
+    }
+
+    /// Takes the acceptance back: the version is `verified` again and the function has no
+    /// accepted version.
+    pub fn unaccept(&self, id: &str, actor: &str) -> Result<RewriteUnit, RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(db)?;
+        let (prog, addr, version, status) = version_row(&tx, id)?;
+        if status != "accepted" {
+            return Err(RewriteError::Store(format!(
+                "unit `{id}` is {status}, not accepted"
+            )));
+        }
+        tx.execute(
+            "UPDATE unit_versions SET status = 'verified' WHERE id = ?1",
+            params![id],
+        )
+        .map_err(db)?;
+        tx.execute(
+            "UPDATE units SET accepted_version = NULL WHERE program_sha256 = ?1 AND address = ?2",
+            params![prog, addr],
+        )
+        .map_err(db)?;
+        refresh_function_status(&tx, &prog, &addr)?;
+        event(
+            &tx,
+            &prog,
+            &addr,
+            version,
+            Some("accepted"),
+            UnitStatus::Verified,
+            actor,
+            Some("unaccepted"),
+        )?;
+        tx.commit().map_err(db)?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RewriteError::Store("unaccepted unit vanished".into()))
+    }
+
+    /// Adds cases a person chose to a version (kept after the generated ones).
+    pub fn add_cases(
+        &self,
+        id: &str,
+        cases: &[CaseRecord],
+        note: Option<&str>,
+    ) -> Result<(), RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(db)?;
+        version_row(&tx, id)?;
+        let next: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(ordinal) + 1, 0) FROM test_cases WHERE version_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(db)?;
+        for (i, case) in cases.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO test_cases (version_id, ordinal, case_json, origin, note)
+                 VALUES (?1, ?2, ?3, 'user', ?4)",
+                params![
+                    id,
+                    next + i as i64,
+                    serde_json::to_string(case).map_err(js)?,
+                    note
+                ],
+            )
+            .map_err(db)?;
+        }
+        tx.commit().map_err(db)
+    }
+
+    /// Stores the outcome of replaying every case of a version: the verdict and counts, the
+    /// counterexamples and the coverage. A disagreeing replay turns the version `failed` (an
+    /// accepted one is unaccepted, with an event saying why); a passing replay does not promote
+    /// a version.
+    pub fn record_replay(
+        &self,
+        id: &str,
+        replay: &Replay,
+        actor: &str,
+    ) -> Result<RewriteUnit, RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(db)?;
+        let (prog, addr, version, status) = version_row(&tx, id)?;
+        let (kind, detail) = verdict_parts(&replay.verdict);
+        tx.execute(
+            "UPDATE verdicts SET verdict = ?2, detail = ?3, cases_run = ?4, passed = ?5,
+                    skipped = ?6, counterexamples_json = ?7, coverage_json = ?8
+             WHERE version_id = ?1",
+            params![
+                id,
+                kind,
+                detail,
+                replay.cases_run as i64,
+                replay.passed as i64,
+                replay.skipped as i64,
+                serde_json::to_string(&replay.counterexamples).map_err(js)?,
+                replay
+                    .coverage
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(js)?,
+            ],
+        )
+        .map_err(db)?;
+        let demoted = matches!(replay.verdict, Verdict::Fail | Verdict::Rejected { .. })
+            && matches!(status.as_str(), "accepted" | "verified" | "translated");
+        if demoted {
+            if status == "accepted" {
+                tx.execute(
+                    "UPDATE units SET accepted_version = NULL
+                     WHERE program_sha256 = ?1 AND address = ?2",
+                    params![prog, addr],
+                )
+                .map_err(db)?;
+            }
+            tx.execute(
+                "UPDATE unit_versions SET status = 'failed' WHERE id = ?1",
+                params![id],
+            )
+            .map_err(db)?;
+            refresh_function_status(&tx, &prog, &addr)?;
+        }
+        let to = if demoted {
+            UnitStatus::Failed
+        } else {
+            UnitStatus::parse(&status).unwrap_or(UnitStatus::Translated)
+        };
+        event(
+            &tx,
+            &prog,
+            &addr,
+            version,
+            Some(&status),
+            to,
+            actor,
+            Some(&format!("replayed {} case(s): {kind}", replay.cases_run)),
+        )?;
+        tx.commit().map_err(db)?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RewriteError::Store("replayed unit vanished".into()))
     }
 
     /// When each stored version of the function was written: (version id, seconds since the
@@ -1352,6 +1552,56 @@ fn observe_in(
     Ok(())
 }
 
+fn version_row(
+    tx: &rusqlite::Transaction<'_>,
+    id: &str,
+) -> Result<(String, String, u32, String), RewriteError> {
+    tx.query_row(
+        "SELECT program_sha256, address, version, status FROM unit_versions WHERE id = ?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .optional()
+    .map_err(db)?
+    .ok_or_else(|| RewriteError::Store(format!("no rewrite unit `{id}`")))
+}
+
+/// Sets the function row's status after a version changed: accepted when one is, otherwise
+/// the status of the newest version.
+fn refresh_function_status(
+    tx: &rusqlite::Transaction<'_>,
+    prog: &str,
+    addr: &str,
+) -> Result<(), RewriteError> {
+    tx.execute(
+        "UPDATE units SET status = CASE WHEN accepted_version IS NOT NULL THEN 'accepted'
+                ELSE (SELECT status FROM unit_versions
+                      WHERE program_sha256 = ?1 AND address = ?2 ORDER BY version DESC LIMIT 1)
+                END, updated_at = ?3
+         WHERE program_sha256 = ?1 AND address = ?2",
+        params![prog, addr, now()],
+    )
+    .map_err(db)?;
+    Ok(())
+}
+
+/// What replaying the cases of a version found ([`RewriteStore::record_replay`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replay {
+    /// The verdict of the replay.
+    pub verdict: Verdict,
+    /// Cases run on both sides.
+    pub cases_run: usize,
+    /// Cases that agreed.
+    pub passed: usize,
+    /// Cases the oracle could not evaluate.
+    pub skipped: usize,
+    /// Disagreements (smallest input first).
+    pub counterexamples: Vec<Counterexample>,
+    /// What the cases reach, when it could be measured.
+    pub coverage: Option<Coverage>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn event(
     tx: &rusqlite::Transaction<'_>,
@@ -1563,6 +1813,24 @@ fn build_unit(conn: &Connection, raw: Raw) -> Result<RewriteUnit, RewriteError> 
         )
         .optional()
         .map_err(db)?;
+    let coverage = conn
+        .query_row(
+            "SELECT coverage_json FROM verdicts WHERE version_id = ?1",
+            params![id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(db)?
+        .flatten()
+        .map(|j| serde_json::from_str::<Coverage>(&j).map_err(js))
+        .transpose()?;
+    let user_cases: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM test_cases WHERE version_id = ?1 AND origin = 'user'",
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(db)?;
     Ok(RewriteUnit {
         schema: UNIT_SCHEMA,
         id,
@@ -1602,5 +1870,7 @@ fn build_unit(conn: &Connection, raw: Raw) -> Result<RewriteUnit, RewriteError> 
             .map_err(js)?,
         verdict: verdict_from(&verdict, detail)?,
         repair,
+        coverage,
+        user_cases,
     })
 }

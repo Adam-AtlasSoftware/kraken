@@ -31,6 +31,7 @@ mod rawguess;
 mod rebuild;
 mod rewrite;
 mod rewrite_build;
+mod rewrite_control;
 mod rewrite_program;
 mod search;
 mod types;
@@ -141,6 +142,12 @@ pub use rewrite_build::{
     BUILD_LOG_CAP, BUILD_SUMMARY, BuildStepResult, EXPORT_GENERATOR, MAX_RUN_ARGS,
     PROGRAM_GENERATOR, RewriteBuild, RewriteBuildArgs, RewriteBuildResult, crate_kind,
     manifest_kind,
+};
+pub use rewrite_control::{
+    CoverageView, Prereq, PrereqLevel, RewriteAddCase, RewriteAddCaseArgs, RewriteCheck,
+    RewriteCheckArgs, RewriteCheckOut, RewriteReject, RewriteRejectArgs, RewriteSpecEdit,
+    RewriteSpecEditArgs, RewriteUnaccept, RewriteUnacceptCmd, RewriteVerify, RewriteVerifyArgs,
+    RewriteVerifyResult, UnitChangeOut,
 };
 pub use rewrite_program::{
     DEFAULT_PROGRAM_DIR, DEFAULT_REPAIR_ROUNDS, MAX_GENERATED_CASES, MAX_REPAIR_ROUNDS,
@@ -261,6 +268,12 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteUnit);
     r.register(RewriteFunction);
     r.register(RewriteAccept);
+    r.register(RewriteReject);
+    r.register(RewriteUnacceptCmd);
+    r.register(RewriteAddCase);
+    r.register(RewriteCheck);
+    r.register(RewriteVerify);
+    r.register(RewriteSpecEdit);
     r.register(RewriteSpec);
     r.register(RewriteExport);
     r.register(RewriteProgram);

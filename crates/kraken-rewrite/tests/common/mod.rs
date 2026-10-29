@@ -38,3 +38,22 @@ pub fn config() -> OracleConfig {
 pub fn oracle(path: &Path) -> FunctionOracle {
     FunctionOracle::load(path, &config()).expect("oracle (needs a Ghidra install for SLEIGH specs)")
 }
+
+/// Whether the SLEIGH spec files the oracle compiles its CPU from can be found (a Ghidra
+/// install, `KRAKEN_NATIVE_SPECS`, or the tree `cargo xtask native-sla` builds). Without them a
+/// test that needs the oracle is skipped, unless `KRAKEN_REQUIRE_SPECS=1` is set (CI sets it), which
+/// makes missing specs a failure so a job cannot pass by skipping.
+pub fn need_specs() -> bool {
+    if kraken_rewrite::oracle::find_processors(&config()).is_ok() {
+        return true;
+    }
+    assert!(
+        !std::env::var("KRAKEN_REQUIRE_SPECS").is_ok_and(|v| !v.is_empty() && v != "0"),
+        "KRAKEN_REQUIRE_SPECS is set but no SLEIGH spec files were found \
+         (KRAKEN_NATIVE_SPECS, KRAKEN_GHIDRA_HOME or `cargo xtask native-sla`)"
+    );
+    eprintln!(
+        "skipped: no SLEIGH spec files (set KRAKEN_NATIVE_SPECS or run `cargo xtask native-sla`)"
+    );
+    false
+}

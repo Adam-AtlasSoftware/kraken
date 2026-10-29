@@ -4,8 +4,9 @@
 //! next to the generated Rust crate.
 //!
 //! The default tests compile the translations but skip the function-level differential test, so
-//! they need no Ghidra install: the program-level test is the evidence. The `#[ignore]` ones
-//! also run the emulation oracle and need the SLEIGH specs of a Ghidra install.
+//! they need no Ghidra install: the program-level test is the evidence. The ones marked
+//! `need_specs` also run the emulation oracle and need the SLEIGH specs (`KRAKEN_NATIVE_SPECS` or a
+//! Ghidra install; skipped without them unless `KRAKEN_REQUIRE_SPECS=1`).
 //!
 //! Regenerate the cassettes after a prompt change with
 //! `KRAKEN_UPDATE_CASSETTES=1 cargo test -p kraken-rewrite --test program`.
@@ -195,12 +196,7 @@ impl Rig {
 }
 
 fn sandbox_available() -> bool {
-    if kraken_rewrite::sandbox::enforced() {
-        true
-    } else {
-        eprintln!("skipped: this host cannot confine generated code (Landlock ABI 4+ needed)");
-        false
-    }
+    kraken_rewrite::sandbox::enforced_or_skip()
 }
 
 fn cassette_path(name: &str) -> PathBuf {
@@ -1263,8 +1259,10 @@ fn common_sha(binary: &str) -> String {
 // ----- with the emulation oracle (needs a Ghidra install for the SLEIGH specs) -----
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn switch_vm_is_checked_function_by_function_and_as_a_program() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }
@@ -1292,8 +1290,10 @@ async fn switch_vm_is_checked_function_by_function_and_as_a_program() {
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn stripped_calc_is_checked_function_by_function_and_as_a_program() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }
@@ -1334,8 +1334,10 @@ async fn stripped_calc_is_checked_function_by_function_and_as_a_program() {
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn the_pointer_aware_inputs_catch_a_wrong_parser_function() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }
@@ -1374,8 +1376,10 @@ async fn the_pointer_aware_inputs_catch_a_wrong_parser_function() {
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn pie_list_is_checked_function_by_function_and_as_a_program() {
+    if !common::need_specs() {
+        return;
+    }
     if !sandbox_available() {
         return;
     }

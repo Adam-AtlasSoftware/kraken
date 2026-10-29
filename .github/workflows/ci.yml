@@ -39,6 +39,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # Downloads every crate source (incl. other platforms') so the notices staleness test runs.
       - run: cargo fetch --locked
+      # The rewrite tests run the original function under emulation, which compiles its CPU from
+      # the SLEIGH sources: the pinned Ghidra sources and the Sleigh files built from them (the
+      # same steps as the release workflow). With KRAKEN_REQUIRE_SPECS those tests fail instead
+      # of skipping when the files are missing. Set KRAKEN_REQUIRE_SANDBOX=1 as well to make a
+      # runner that cannot confine generated code fail instead of skipping the sandboxed tests.
+      - name: Cache the pinned Ghidra sources and the compiled Sleigh files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/kraken-dev/ghidra-src
+            ~/.cache/kraken-dev/native-sla
+          key: kraken-dev-native-sla-${{ hashFiles('xtask/src/native_src.rs', 'xtask/src/native_sla.rs') }}
+      - name: Fetch the Ghidra sources and compile the Sleigh files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xtask native-src
+          cargo xtask native-sla
+          spec_dir="$HOME/.cache/kraken-dev/native-sla/Ghidra_${GHIDRA_VERSION}_build"
+          echo "KRAKEN_NATIVE_SPECS=$spec_dir" >> "$GITHUB_ENV"
+          echo "KRAKEN_REQUIRE_SPECS=1" >> "$GITHUB_ENV"
       - name: cargo test --workspace
         shell: bash
         run: cargo test --workspace 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}

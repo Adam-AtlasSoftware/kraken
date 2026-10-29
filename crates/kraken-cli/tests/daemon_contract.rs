@@ -669,6 +669,13 @@ async fn every_registry_command_identical() {
         ("rewrite_build", json!({"dir": "out"})),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
+        ("rewrite_check", json!({})),
+        ("rewrite_verify", json!({"unit": "ru-1"})),
+        ("rewrite_add_case", json!({"unit": "ru-1", "args": [1]})),
+        (
+            "rewrite_spec_edit",
+            json!({"address": "0x401040", "markdown": "x"}),
+        ),
         (
             "patch_from_source",
             json!({"address": "0x401040", "source": "int f(void) { return 7; }"}),
@@ -679,6 +686,10 @@ async fn every_registry_command_identical() {
     }
     let denied = step!("rewrite_accept", json!({"unit": "ru-1"}));
     assert_eq!(denied["code"], "rejected_human_priority", "{denied}");
+    for cmd in ["rewrite_reject", "rewrite_unaccept"] {
+        let denied = step!(cmd, json!({"unit": "ru-1"}));
+        assert_eq!(denied["code"], "rejected_human_priority", "{cmd}: {denied}");
+    }
 
     let missing: Vec<String> = Registry::standard()
         .iter()

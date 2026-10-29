@@ -22,6 +22,10 @@ use crate::session::Session;
 
 use super::JobStarted;
 use super::rewrite_build::{RewriteBuildArgs, RewriteBuildResult};
+use super::rewrite_control::{
+    RewriteAddCaseArgs, RewriteCheckOut, RewriteRejectArgs, RewriteSpecEditArgs, RewriteUnaccept,
+    RewriteVerifyArgs, RewriteVerifyResult, UnitChangeOut,
+};
 use super::rewrite_program::{
     RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
 };
@@ -453,6 +457,12 @@ pub struct UnitVersionView {
     /// them again (their Rust names).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reused_callees: Vec<String>,
+    /// What the cases reach in the original, once `rewrite_verify` measured it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<super::rewrite_control::CoverageView>,
+    /// Cases a person added with `rewrite_add_case`.
+    #[serde(default)]
+    pub user_cases: u32,
 }
 
 /// The stored spec of a function.
@@ -1075,6 +1085,63 @@ pub trait RewriteBackend: Send + Sync {
         args: RewriteAcceptArgs,
     ) -> Result<RewriteAcceptOut, ProtoError>;
 
+    /// `rewrite_reject` (the caller is already known to be a user).
+    async fn reject(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteRejectArgs,
+    ) -> Result<UnitChangeOut, ProtoError> {
+        Err(no_control())
+    }
+
+    /// `rewrite_unaccept` (the caller is already known to be a user).
+    async fn unaccept(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteUnaccept,
+    ) -> Result<UnitChangeOut, ProtoError> {
+        Err(no_control())
+    }
+
+    /// The body of a `rewrite_add_case` job.
+    async fn add_case(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteAddCaseArgs,
+        _job: &JobReporter,
+    ) -> Result<RewriteVerifyResult, ProtoError> {
+        Err(no_control())
+    }
+
+    /// The body of a `rewrite_verify` job.
+    async fn verify(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteVerifyArgs,
+        _job: &JobReporter,
+    ) -> Result<RewriteVerifyResult, ProtoError> {
+        Err(no_control())
+    }
+
+    /// `rewrite_check`.
+    async fn check(&self, _s: &Session, _ctx: &CallContext) -> Result<RewriteCheckOut, ProtoError> {
+        Err(no_control())
+    }
+
+    /// `rewrite_spec_edit`.
+    async fn spec_edit(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteSpecEditArgs,
+    ) -> Result<RewriteSpecResult, ProtoError> {
+        Err(no_control())
+    }
+
     /// The body of a `rewrite_spec` job.
     async fn spec(
         &self,
@@ -1152,6 +1219,13 @@ pub trait RewriteBackend: Send + Sync {
             "this rewrite backend does not rewrite whole programs",
         ))
     }
+}
+
+fn no_control() -> ProtoError {
+    ProtoError::new(
+        ErrorCode::Unsupported,
+        "this rewrite backend does not support this unit control",
+    )
 }
 
 impl std::fmt::Debug for dyn RewriteBackend {

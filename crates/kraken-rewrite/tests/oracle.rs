@@ -35,8 +35,10 @@ fn cmp_sig(name: &str) -> Signature {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_id_and_cmp_dist_match_the_c_source() {
+    if !common::need_specs() {
+        return;
+    }
     let mut o = oracle(&corpus_bin("pie_list-O0"));
     let cmp_id = o.symbol("cmp_id").expect("cmp_id");
     let cmp_dist = o.symbol("cmp_dist").expect("cmp_dist");
@@ -128,8 +130,10 @@ fn run(code: &[u8]) -> kraken_rewrite::abi::Observation {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_computes_and_updates_state() {
+    if !common::need_specs() {
+        return;
+    }
     // PUSH 6; PUSH 7; MUL; HALT -> 42, sp == 1, pc == 6, steps == 4
     let r = run(&[1, 6, 1, 7, 4, 0]);
     assert_eq!(r.termination, Termination::Returned);
@@ -142,8 +146,10 @@ fn vm_run_computes_and_updates_state() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_print_goes_through_the_printf_stub() {
+    if !common::need_specs() {
+        return;
+    }
     // PUSH -5; PRINT; HALT
     let r = run(&[1, 0xfb, 11, 0]);
     assert_eq!(r.termination, Termination::Returned);
@@ -152,8 +158,10 @@ fn vm_run_print_goes_through_the_printf_stub() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_failure_path_reaches_exit_with_stderr() {
+    if !common::need_specs() {
+        return;
+    }
     // ADD on an empty stack: vm_fail("stack underflow", pc) -> fprintf(stderr) + exit(42).
     let r = run(&[2, 0]);
     assert_eq!(r.termination, Termination::Exited { status: 42 });
@@ -162,8 +170,10 @@ fn vm_run_failure_path_reaches_exit_with_stderr() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn jump_table_loop_counts_down() {
+    if !common::need_specs() {
+        return;
+    }
     // PUSH 3; loop(2): DEC; DUP; JNZ 2; HALT -> 0 after 3 iterations.
     let r = run(&[1, 3, 10, 5, 9, 2, 0]);
     assert_eq!(r.termination, Termination::Returned);
@@ -173,8 +183,10 @@ fn jump_table_loop_counts_down() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn unknown_import_is_reported_not_guessed() {
+    if !common::need_specs() {
+        return;
+    }
     // `join` starts by constructing a std::string through libstdc++, which the oracle does not
     // model: the call ends as unsupported, naming the import, instead of being guessed.
     let mut o = oracle(&corpus_bin("cpp_shapes-O0"));
@@ -204,8 +216,10 @@ fn unknown_import_is_reported_not_guessed() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn strncpy_is_modelled_as_c_does() {
+    if !common::need_specs() {
+        return;
+    }
     // node_new: calloc, then strncpy of at most 15 bytes into a zeroed 16-byte name.
     let mut o = oracle(&corpus_bin("pie_list-O0"));
     let entry = o.symbol("node_new").expect("node_new");
@@ -267,8 +281,10 @@ fn strncpy_is_modelled_as_c_does() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn calls_are_independent() {
+    if !common::need_specs() {
+        return;
+    }
     let mut o = oracle(&corpus_bin("switch_vm-O0"));
     let entry = o.symbol("vm_run").expect("vm_run");
     let go = |o: &mut kraken_rewrite::oracle::FunctionOracle| {
@@ -313,8 +329,10 @@ fn run_on(path: &std::path::Path, code: &[u8]) -> kraken_rewrite::abi::Observati
 /// dynamic builds (the RISC-V 32 one is static with picolibc's printf inside, so it is left out
 /// of the print case).
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_agrees_across_architectures() {
+    if !common::need_specs() {
+        return;
+    }
     let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus");
     let compute: &[u8] = &[1, 6, 1, 7, 4, 0];
     let print: &[u8] = &[1, 0xfb, 11, 0];

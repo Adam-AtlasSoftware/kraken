@@ -54,32 +54,42 @@ fn assert_caught(id: &str, from: &str, to: &str) -> DiffReport {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_id_reference_passes() {
+    if !common::need_specs() {
+        return;
+    }
     assert_pass("cmp_id");
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_dist_reference_passes() {
+    if !common::need_specs() {
+        return;
+    }
     assert_pass("cmp_dist");
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_reference_passes() {
+    if !common::need_specs() {
+        return;
+    }
     assert_pass("vm_run");
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn evaluate_reference_passes() {
+    if !common::need_specs() {
+        return;
+    }
     assert_pass("evaluate");
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_id_returning_the_sign_instead_of_the_difference_fails() {
+    if !common::need_specs() {
+        return;
+    }
     // The "nicer" comparator: same ordering, different return value.
     let r = assert_caught(
         "cmp_id",
@@ -98,8 +108,10 @@ fn cmp_id_returning_the_sign_instead_of_the_difference_fails() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn cmp_dist_without_wrapping_fails_on_overflow() {
+    if !common::need_specs() {
+        return;
+    }
     // Plain operators panic on overflow (the runner is built with overflow checks): the
     // original wraps, so the translation faults where the original returns.
     let r = assert_caught(
@@ -117,8 +129,10 @@ fn cmp_dist_without_wrapping_fails_on_overflow() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_with_swapped_sub_operands_fails() {
+    if !common::need_specs() {
+        return;
+    }
     let r = assert_caught(
         "vm_run",
         "push(vm, a.wrapping_sub(b));",
@@ -134,8 +148,10 @@ fn vm_run_with_swapped_sub_operands_fails() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn vm_run_with_a_wrong_error_message_fails_through_stderr() {
+    if !common::need_specs() {
+        return;
+    }
     let r = assert_caught("vm_run", "\"stack underflow\"", "\"stack underrun\"");
     let c = &r.counterexamples[0];
     assert!(
@@ -147,8 +163,10 @@ fn vm_run_with_a_wrong_error_message_fails_through_stderr() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn evaluate_with_euclidean_remainder_fails_on_negative_operands() {
+    if !common::need_specs() {
+        return;
+    }
     let r = assert_caught("evaluate", "v % r", "v.rem_euclid(r)");
     let c = &r.counterexamples[0];
     let Arg::Buf { data } = &c.args[0] else {
@@ -159,8 +177,10 @@ fn evaluate_with_euclidean_remainder_fails_on_negative_operands() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn a_translation_that_does_not_compile_is_rejected_not_an_error() {
+    if !common::need_specs() {
+        return;
+    }
     let tgt = t("cmp_id");
     let r = run(&tgt, "this is not rust", 5);
     assert!(
@@ -171,8 +191,10 @@ fn a_translation_that_does_not_compile_is_rejected_not_an_error() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn translations_that_reach_for_the_system_are_refused_before_building() {
+    if !common::need_specs() {
+        return;
+    }
     let tgt = t("cmp_id");
     for bad in [
         "use std::fs; #[unsafe(no_mangle)] pub unsafe extern \"C\" fn cmp_id(a: *const u8, b: *const u8) -> i32 { let _ = std::fs::read(\"/etc/passwd\"); 0 }",
@@ -255,8 +277,10 @@ pub unsafe extern "C" fn node_new(a0: i32, a1: *mut u8, a2: i32, a3: i32, a4: f6
 "#;
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn a_constructor_is_checked_by_the_object_it_returns() {
+    if !common::need_specs() {
+        return;
+    }
     let r = node_new_run(NODE_NEW);
     assert_eq!(r.verdict, Verdict::Pass, "{:#?}", r.counterexamples.first());
     assert!(r.passed > 0 && r.passed == r.cases_run, "{r:?}");
@@ -316,8 +340,10 @@ pub unsafe extern "C" fn print_rec(a0: *mut u8, _a1: *mut u8) {
 "#;
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn a_function_printing_a_double_is_checked_on_its_own() {
+    if !common::need_specs() {
+        return;
+    }
     let r = print_rec_run(PRINT_REC);
     assert_eq!(r.verdict, Verdict::Pass, "{:#?}", r.counterexamples.first());
     assert!(r.passed > 0 && r.skipped == 0, "{r:?}");

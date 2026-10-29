@@ -78,8 +78,10 @@ fn i32_param() -> Param {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn doubles_are_passed_in_xmm_registers_and_returned_in_xmm0() {
+    if !common::need_specs() {
+        return;
+    }
     // addsd xmm0, xmm1; ret
     let r = call(
         &[0xf2, 0x0f, 0x58, 0xc1, 0xc3],
@@ -105,8 +107,10 @@ fn doubles_are_passed_in_xmm_registers_and_returned_in_xmm0() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn a_callback_is_called_recorded_and_answers_like_the_native_side() {
+    if !common::need_specs() {
+        return;
+    }
     // f(cb, a, b) = cb(a, b):
     //   mov rax, rdi; mov rdi, rsi; mov rsi, rdx; sub rsp, 8; call rax; add rsp, 8; ret
     let code = [
@@ -150,8 +154,10 @@ fn a_callback_is_called_recorded_and_answers_like_the_native_side() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn graph_objects_sit_where_the_native_runner_puts_them() {
+    if !common::need_specs() {
+        return;
+    }
     // mov rax, [rdi]; mov eax, [rax]; ret: the first int of the object the first word points to.
     let code = [0x48, 0x8b, 0x07, 0x8b, 0x00, 0xc3];
     let mut head = vec![0u8; 16];
@@ -177,8 +183,10 @@ fn graph_objects_sit_where_the_native_runner_puts_them() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn reading_one_byte_past_an_object_faults() {
+    if !common::need_specs() {
+        return;
+    }
     // movzx eax, byte [rdi + 8]; ret
     let code = [0x0f, 0xb6, 0x47, 0x08, 0xc3];
     let s = sig(vec![Param::Buf], i32_ret());
@@ -210,8 +218,10 @@ fn diff(
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn doubles_and_callbacks_go_through_the_differential_test_end_to_end() {
+    if !common::need_specs() {
+        return;
+    }
     use kraken_rewrite::difftest::Verdict;
     // f(int a, double b) = b * a, and a wrong Rust version of it.
     let code = [0xf2, 0x0f, 0x2a, 0xcf, 0xf2, 0x0f, 0x59, 0xc1, 0xc3];
@@ -255,8 +265,10 @@ fn doubles_and_callbacks_go_through_the_differential_test_end_to_end() {
 }
 
 #[test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 fn the_generic_inputs_accept_the_reference_comparator() {
+    if !common::need_specs() {
+        return;
+    }
     use kraken_rewrite::difftest::{DiffOptions, Verdict, run_differential};
     use kraken_rewrite::targets::target;
     let t = target("cmp_id").expect("target");

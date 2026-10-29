@@ -70,8 +70,7 @@ fn an_export_cannot_be_run() {
 
 #[test]
 fn a_program_crate_builds_tests_and_runs_in_the_sandbox() {
-    if !sandbox::enforced() {
-        eprintln!("skipped: this host cannot confine generated code");
+    if !sandbox::enforced_or_skip() {
         return;
     }
     let r = root("ok");

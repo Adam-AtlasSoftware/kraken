@@ -686,7 +686,7 @@ fn the_check_step_blocks_on_a_missing_sandbox_and_says_why_on_screen() {
     assert!(
         has(
             &t,
-            "Sandbox: KRAKEN runs the Rust it generates only inside a sandbox"
+            "KRAKEN runs the Rust it generates only inside a sandbox"
         ),
         "{t:?}"
     );
@@ -764,4 +764,114 @@ fn the_wizard_closes_without_losing_the_results_and_the_palette_action_opens_it(
     r.vm.rewrite_wizard_close();
     assert!(!has(&r.frame2(), "Step 1 of 9"));
     assert_eq!(r.vm.rewrite.counts.accepted, 1);
+}
+
+#[test]
+fn a_replay_shows_coverage_and_a_typed_case_reaches_more_of_the_function() {
+    let mut r = Rig::new();
+    r.settle(|vm| vm.rewrite.loaded);
+    r.vm.rewrite_select(CHECKSUM);
+    let t = r.settle(|vm| {
+        vm.rewrite
+            .selected_detail()
+            .is_some_and(|d| !d.loading && d.versions().len() == 2)
+    });
+    assert!(has(&t, "Replay cases") && has(&t, "Reject"), "{t:?}");
+    // Nothing is measured before a replay.
+    assert!(!has(&t, "Coverage"));
+
+    r.vm.rewrite_verify(CHECKSUM);
+    let t = r.settle(|vm| {
+        vm.rewrite.verifying(CHECKSUM).then_some(()).is_none()
+            && vm
+                .rewrite
+                .selected_detail()
+                .and_then(|d| d.current())
+                .is_some_and(|v| v.coverage.is_some())
+    });
+    assert!(has(&t, "Coverage 4 of 6 blocks"), "{t:?}");
+    assert!(
+        has(&t, "Not reached:"),
+        "the missed blocks are listed: {t:?}"
+    );
+
+    // The person types a case; the coverage grows and the case is counted.
+    r.ui.case_text = "1, 2".into();
+    r.vm.rewrite_add_case(CHECKSUM, "1, 2").expect("a case");
+    let t = r.settle(|vm| {
+        !vm.rewrite.verifying(CHECKSUM)
+            && vm
+                .rewrite
+                .selected_detail()
+                .and_then(|d| d.current())
+                .is_some_and(|v| v.user_cases == 1)
+    });
+    assert!(has(&t, "Coverage 5 of 6 blocks"), "{t:?}");
+    assert!(has(&t, "1 of them yours"), "{t:?}");
+    assert!(
+        r.vm.rewrite_add_case(CHECKSUM, "{broken")
+            .is_err_and(|e| e.contains("not JSON"))
+    );
+}
+
+#[test]
+fn reject_and_unaccept_change_the_list_and_the_buttons_say_who_can_do_it() {
+    let mut r = Rig::new();
+    r.settle(|vm| vm.rewrite.loaded && !vm.rewrite.rows.is_empty());
+    let verified =
+        r.vm.rewrite
+            .rows
+            .iter()
+            .find(|x| x.status == kraken_viewmodel::rewrite::UnitStatus::Verified)
+            .map(|x| x.address)
+            .expect("a verified function");
+    r.vm.rewrite_select(verified);
+    let t = r.settle(|vm| vm.rewrite.rejectable_unit(verified).is_some());
+    assert!(has(&t, "Reject"), "{t:?}");
+    let before =
+        r.vm.rewrite
+            .counts
+            .of(kraken_viewmodel::rewrite::UnitStatus::Failed);
+    r.vm.rewrite_reject(verified);
+    r.settle(|vm| {
+        vm.rewrite
+            .counts
+            .of(kraken_viewmodel::rewrite::UnitStatus::Failed)
+            == before + 1
+    });
+    assert!(r.vm.rewrite.rejectable_unit(verified).is_none());
+
+    let accepted =
+        r.vm.rewrite
+            .rows
+            .iter()
+            .find(|x| x.status == kraken_viewmodel::rewrite::UnitStatus::Accepted)
+            .map(|x| x.address)
+            .expect("an accepted function");
+    r.vm.rewrite_select(accepted);
+    let t = r.settle(|vm| vm.rewrite.accepted_version(accepted).is_some());
+    assert!(has(&t, "Unaccept"), "{t:?}");
+    r.vm.rewrite_unaccept(accepted);
+    let t = r.settle(|vm| vm.rewrite.counts.accepted == 0);
+    assert!(!has(&t, "Unaccept"), "{t:?}");
+}
+
+#[test]
+fn the_check_step_lists_the_toolchain_the_spec_files_and_the_program() {
+    use kraken_viewmodel::rewrite::WizardStep as S;
+    let (mut r, _b) = wizard_rig();
+    r.vm.rewrite_wizard_open();
+    r.vm.rewrite_wizard_set_function(CHECKSUM);
+    r.vm.rewrite.wizard.step = S::Check;
+    let t = r.settle(|vm| vm.rewrite.prereqs.is_some());
+    assert!(has(&t, "Check again"), "{t:?}");
+    // The rows come after the others and may be scrolled out of this small window.
+    let titles: Vec<&str> =
+        r.vm.rewrite_wizard_checks()
+            .iter()
+            .map(|c| c.title)
+            .collect();
+    for needle in ["Rust toolchain", "Spec files", "Program"] {
+        assert!(titles.contains(&needle), "{needle}: {titles:?}");
+    }
 }

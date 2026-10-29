@@ -1,6 +1,6 @@
 //! The `rewrite_*` registry commands end to end, offline: FakeEngine on a corpus fixture, the
 //! `RewriteService` backend, `ReplayProvider` cassettes for the model, the real emulation oracle
-//! and the real sandbox. Needs a Ghidra install for the SLEIGH specs, like the other tests.
+//! and the real sandbox. Needs the SLEIGH specs (`KRAKEN_NATIVE_SPECS` or a Ghidra install), like the other tests.
 
 mod common;
 
@@ -431,8 +431,10 @@ async fn status_before_a_plan_and_with_one() {
 // ----- rewrite_function -----
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn a_cassette_translation_is_verified_stored_and_listed() {
+    if !common::need_specs() {
+        return;
+    }
     let r = pie_rig().await;
     let out = r
         .job(
@@ -549,8 +551,10 @@ async fn a_cassette_translation_is_verified_stored_and_listed() {
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn a_wrong_translation_fails_with_a_counterexample_and_cannot_be_accepted() {
+    if !common::need_specs() {
+        return;
+    }
     let r = rig("pie_list-O0").await;
     let id = r
         .service
@@ -613,8 +617,10 @@ async fn a_wrong_translation_fails_with_a_counterexample_and_cannot_be_accepted(
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn a_counterexample_is_fed_back_and_the_repaired_attempt_is_a_second_version() {
+    if !common::need_specs() {
+        return;
+    }
     let r = rig("pie_list-O0").await;
     let reference = target("cmp_id").expect("target").reference;
     let wrong = reference.replace(
@@ -688,8 +694,10 @@ async fn a_counterexample_is_fed_back_and_the_repaired_attempt_is_a_second_versi
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn spec_mode_writes_the_spec_first_then_reimplements_from_it() {
+    if !common::need_specs() {
+        return;
+    }
     let r = pie_rig().await;
     let out = r
         .job(
@@ -747,8 +755,10 @@ async fn a_constructor_is_checked_and_reaches_the_model() {
 // ----- accept -----
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn only_users_accept_and_only_verified_units() {
+    if !common::need_specs() {
+        return;
+    }
     let r = pie_rig().await;
     let out = r
         .job(
@@ -999,8 +1009,10 @@ async fn accept_both(r: &Rig) {
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn export_builds_a_workspace_in_the_sandbox_and_the_symbol_table_matches() {
+    if !common::need_specs() {
+        return;
+    }
     let r = pie_rig().await;
     r.call(&user(), "rewrite_plan", json!({"limit": 200}))
         .await
@@ -1069,8 +1081,10 @@ async fn export_builds_a_workspace_in_the_sandbox_and_the_symbol_table_matches()
 }
 
 #[tokio::test]
-#[ignore = "needs a Ghidra install for SLEIGH specs (KRAKEN_GHIDRA_HOME); runs in the real-ghidra job"]
 async fn export_needs_accepted_units_and_a_safe_target() {
+    if !common::need_specs() {
+        return;
+    }
     let r = pie_rig().await;
     let none = r
         .job(&user(), "rewrite_export", json!({"dir": "export"}))
@@ -1386,4 +1400,263 @@ async fn the_prompt_states_the_layouts_the_engine_knows() {
     assert!(text.contains("+0x0004 char[16] name"), "{text}");
     assert!(text.contains("+0x0020 double weight"), "{text}");
     assert!(text.contains("struct point"), "{text}");
+}
+
+// ----- human control: reject, unaccept, add a case, replay, edit a spec -----
+
+fn record_hex(id: i32) -> String {
+    let mut b = [0u8; 40];
+    b[0..4].copy_from_slice(&id.to_le_bytes());
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+#[tokio::test]
+async fn people_reject_and_unaccept_and_agents_cannot() {
+    if !common::need_specs() || !kraken_rewrite::sandbox::enforced_or_skip() {
+        return;
+    }
+    let r = pie_rig().await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_function",
+            json!({"address": "0x10124e", "cases": 30}),
+        )
+        .await
+        .expect("rewrite_function");
+    let unit = out["unit"].as_str().expect("id").to_string();
+
+    for cmd in ["rewrite_reject", "rewrite_unaccept"] {
+        let denied = r
+            .call(&agent(), cmd, json!({"unit": unit}))
+            .await
+            .expect_err("agents cannot decide about a unit");
+        assert_eq!(denied.code, ErrorCode::RejectedHumanPriority, "{cmd}");
+    }
+    let not_accepted = r
+        .call(&user(), "rewrite_unaccept", json!({"unit": unit}))
+        .await
+        .expect_err("not accepted yet");
+    assert_eq!(
+        not_accepted.code,
+        ErrorCode::InvalidArgument,
+        "{not_accepted}"
+    );
+
+    r.call(&user(), "rewrite_accept", json!({"unit": unit}))
+        .await
+        .expect("accept");
+    let refused = r
+        .call(&user(), "rewrite_reject", json!({"unit": unit}))
+        .await
+        .expect_err("accepted units are unaccepted first");
+    assert!(refused.message.contains("unaccept"), "{refused}");
+
+    let back = r
+        .call(&user(), "rewrite_unaccept", json!({"unit": unit}))
+        .await
+        .expect("unaccept");
+    assert_eq!(back["status"], "verified");
+    let rejected = r
+        .call(
+            &user(),
+            "rewrite_reject",
+            json!({"unit": unit, "reason": "not what the program does"}),
+        )
+        .await
+        .expect("reject");
+    assert_eq!(rejected["status"], "failed");
+    let unit_view = r
+        .call(&user(), "rewrite_unit", json!({"unit": unit}))
+        .await
+        .expect("unit");
+    assert_eq!(unit_view["versions"][0]["status"], "failed");
+    let missing = r
+        .call(&user(), "rewrite_reject", json!({"unit": "ru-nope"}))
+        .await
+        .expect_err("unknown unit");
+    assert_eq!(missing.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn a_replay_measures_coverage_and_a_user_case_joins_the_cases() {
+    if !common::need_specs() || !kraken_rewrite::sandbox::enforced_or_skip() {
+        return;
+    }
+    let r = pie_rig().await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_function",
+            json!({"address": "0x10124e", "cases": 30}),
+        )
+        .await
+        .expect("rewrite_function");
+    let unit = out["unit"].as_str().expect("id").to_string();
+    let stored = out["cases_run"].as_u64().expect("cases");
+
+    let v = r
+        .job(&agent(), "rewrite_verify", json!({"unit": unit}))
+        .await
+        .expect("an agent may replay");
+    assert_eq!(v["verdict"], "pass", "{v:#}");
+    assert_eq!(v["status"], "verified");
+    assert_eq!(v["cases_run"].as_u64(), Some(stored));
+    let cov = &v["coverage"];
+    assert!(cov["blocks"].as_u64().unwrap_or(0) >= 1, "{v:#}");
+    assert!(cov["hit"].as_u64().unwrap_or(0) >= 1, "{v:#}");
+    assert!(cov["hit"].as_u64() <= cov["blocks"].as_u64());
+    assert_eq!(
+        cov["missed"].as_array().map(Vec::len).map(|n| n as u64),
+        Some(cov["blocks"].as_u64().unwrap() - cov["hit"].as_u64().unwrap())
+    );
+
+    // The coverage is stored with the version and shows in rewrite_unit.
+    let shown = r
+        .call(&user(), "rewrite_unit", json!({"unit": unit}))
+        .await
+        .expect("unit");
+    assert_eq!(shown["versions"][0]["coverage"], *cov);
+
+    // A case of the person's own: two records with equal ids.
+    let added = r
+        .job(
+            &user(),
+            "rewrite_add_case",
+            json!({
+                "unit": unit,
+                "args": [{"hex": record_hex(7)}, {"hex": record_hex(7)}],
+                "note": "equal ids"
+            }),
+        )
+        .await
+        .expect("rewrite_add_case");
+    assert_eq!(added["verdict"], "pass", "{added:#}");
+    assert_eq!(added["user_cases"], 1);
+    assert_eq!(added["cases_run"].as_u64(), Some(stored + 1));
+
+    let bad_arity = r
+        .job(
+            &user(),
+            "rewrite_add_case",
+            json!({"unit": unit, "args": [1]}),
+        )
+        .await
+        .expect_err("two parameters");
+    assert_eq!(bad_arity.code, ErrorCode::InvalidArgument, "{bad_arity}");
+    let unknown = r
+        .job(&user(), "rewrite_verify", json!({"unit": "ru-nope"}))
+        .await
+        .expect_err("unknown unit");
+    assert_eq!(unknown.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn an_edited_spec_becomes_the_current_one() {
+    let r = rig("switch_vm-O0").await;
+    let prepared = r
+        .service
+        .prepare(&r.session, &user(), 0x101255)
+        .await
+        .expect("prepare");
+    let md = include_str!("../references/spec_vm_run.md");
+    let c = Cassette {
+        entries: vec![entry(
+            &prepared.spec_task(&Budget::default()).request(),
+            md.to_string(),
+        )],
+        ..Cassette::default()
+    };
+    r.use_cassette(checked_in("service-vm-spec.json", c));
+    let written = r
+        .job(
+            &user(),
+            "rewrite_spec",
+            json!({"scope": "function", "address": "0x101255"}),
+        )
+        .await
+        .expect("rewrite_spec");
+
+    let edited_md = md.replacen(
+        "# Behavioural spec: vm_run",
+        "# Behavioural spec: vm_run (checked by hand)",
+        1,
+    );
+    let edited = r
+        .call(
+            &agent(),
+            "rewrite_spec_edit",
+            json!({"address": "0x101255", "markdown": edited_md}),
+        )
+        .await
+        .expect("spec edit");
+    assert_ne!(edited["spec"], written["spec"]);
+    assert_eq!(edited["provider"], "user");
+    assert!(
+        edited["markdown"]["value"]
+            .as_str()
+            .is_some_and(|m| m.contains("checked by hand"))
+    );
+
+    // A repeated rewrite_spec now answers with the edit.
+    let again = r
+        .job(
+            &user(),
+            "rewrite_spec",
+            json!({"scope": "function", "address": "0x101255"}),
+        )
+        .await
+        .expect("again");
+    assert_eq!(again["spec"], edited["spec"]);
+
+    let bad = r
+        .call(
+            &user(),
+            "rewrite_spec_edit",
+            json!({"address": "0x101255", "markdown": "just some words"}),
+        )
+        .await
+        .expect_err("not a spec");
+    assert!(!bad.message.is_empty());
+}
+
+#[tokio::test]
+async fn rewrite_check_lists_what_the_host_and_the_program_provide() {
+    let r = pie_rig().await;
+    let out = r
+        .call(&agent(), "rewrite_check", json!({}))
+        .await
+        .expect("rewrite_check is a query");
+    let rows = out["checks"].as_array().expect("checks");
+    let ids: Vec<&str> = rows.iter().filter_map(|c| c["id"].as_str()).collect();
+    assert_eq!(ids, ["sandbox", "toolchain", "specs", "program"]);
+    let level = |id: &str| {
+        rows.iter().find(|c| c["id"] == id).expect("row")["level"]
+            .as_str()
+            .expect("level")
+            .to_string()
+    };
+    assert_eq!(level("toolchain"), "ok", "{out:#}");
+    assert_eq!(
+        level("program"),
+        "ok",
+        "the corpus binary is a Linux x86-64 ELF: {out:#}"
+    );
+    assert_eq!(
+        level("sandbox"),
+        if kraken_rewrite::sandbox::enforced() {
+            "ok"
+        } else {
+            "blocked"
+        }
+    );
+    let specs = rows.iter().find(|c| c["id"] == "specs").expect("specs row");
+    if specs["level"] != "ok" {
+        assert!(
+            specs["fix"]
+                .as_str()
+                .is_some_and(|f| f.contains("native-sla"))
+        );
+    }
+    assert_eq!(out["ready"], rows.iter().all(|c| c["level"] != "blocked"));
 }

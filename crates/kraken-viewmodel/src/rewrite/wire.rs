@@ -144,6 +144,42 @@ pub(super) struct VersionWire {
     pub assumptions: Vec<Untrusted<String>>,
     #[serde(default)]
     pub unsupported: Vec<Untrusted<String>>,
+    #[serde(default)]
+    pub coverage: Option<UnitCoverageWire>,
+    #[serde(default)]
+    pub user_cases: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct UnitCoverageWire {
+    #[serde(default)]
+    pub blocks: u32,
+    #[serde(default)]
+    pub hit: u32,
+    #[serde(default)]
+    pub missed: Vec<Hex64>,
+    #[serde(default)]
+    pub cases: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct CheckWire {
+    #[serde(default)]
+    pub checks: Vec<PrereqWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct PrereqWire {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub fix: Option<String>,
 }
 
 /// The reply of `rewrite_unit`, a query the panel uses when the daemon offers it: the stored

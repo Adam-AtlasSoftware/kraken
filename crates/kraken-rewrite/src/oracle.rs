@@ -13,7 +13,8 @@
 //! pointer graphs placed where the native runner places them (on 64-bit targets; 32-bit targets
 //! get the same layout below 4 GiB), and two host callbacks for function-pointer parameters (see
 //! `abi`). What it deliberately does not do: run `main`, the dynamic loader or libc; vector
-//! arguments; more parameters than the x86-64 registers hold (the native runner's limit); threads;
+//! arguments; stack arguments (at most six integer-class and eight floating-point parameters, which
+//! the native runner passes in registers too); threads;
 //! syscalls (a system call ends the case as a fault); floating-point `printf`.
 
 use std::path::{Path, PathBuf};
@@ -262,6 +263,8 @@ pub struct FunctionOracle {
     heap_next: u64,
     /// The heap blocks of the call in progress, with the size asked for.
     blocks: Vec<(u64, usize)>,
+    /// Which code blocks ran, when coverage is on.
+    coverage: Option<kraken_emu::BlockLog>,
 }
 
 impl std::fmt::Debug for FunctionOracle {
@@ -377,6 +380,28 @@ impl FunctionOracle {
             stderr: Vec::new(),
             heap_next: layout.heap_base,
             blocks: Vec::new(),
+            coverage: None,
+        })
+    }
+
+    /// Starts recording which of the code addresses `elf_vaddrs` (ELF virtual addresses, for
+    /// example the starts of a function's basic blocks) run. Call it before the first
+    /// [`call`](Self::call): code the emulator already ran is not watched.
+    pub fn watch_addresses(&mut self, elf_vaddrs: &[u64]) {
+        let bias = self.image.bias;
+        let abs: Vec<u64> = elf_vaddrs.iter().map(|a| a.wrapping_add(bias)).collect();
+        self.coverage = Some(self.m.track_addresses(&abs));
+    }
+
+    /// The watched addresses (ELF virtual addresses) that ran since the last call of this
+    /// method.
+    pub fn take_watched(&mut self) -> Vec<u64> {
+        let bias = self.image.bias;
+        self.coverage.as_ref().map_or_else(Vec::new, |log| {
+            log.take()
+                .into_iter()
+                .map(|a| a.wrapping_sub(bias))
+                .collect()
         })
     }
 
