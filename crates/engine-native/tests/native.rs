@@ -404,7 +404,10 @@ impl LocatorOffset for FunctionSummary {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn contract_suite_subset() {
-    for binary in ["pie_list-O0", "switch_vm-O0"] {
+    // An address with no function that still decodes: Ghidra 12.2's decompiler gives up after
+    // four undecodable instructions, so a scratch function in data that does not decode fails.
+    // pie_list's .rodata happens to decode; in switch_vm the scratch is inside `_start`.
+    for (binary, scratch) in [("pie_list-O0", 0x102000u64), ("switch_vm-O0", 0x101072)] {
         let Some((e, info)) = open(binary, true).await else {
             return;
         };
@@ -421,8 +424,7 @@ async fn contract_suite_subset() {
             program: info,
             functions,
             rename_to: "kraken_renamed".into(),
-            // .rodata holds no function
-            scratch: Locator::ram(0x102000),
+            scratch: Locator::ram(scratch),
         };
         // the suite opens the binary again through the loader, on a fresh engine, once in each
         // isolation mode

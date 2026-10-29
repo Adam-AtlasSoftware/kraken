@@ -396,7 +396,8 @@ async fn contract_suite_on_pe_and_elf32() {
     for (set, binary, scratch) in [
         ("corpus/pe", "win_tls-x64-O0.exe", 0x1_4000_a800u64),
         ("corpus/pe", "win_tls-x86-O0.exe", 0x40_a800),
-        ("corpus/elf32", "pie_list-i386-O0", 0x1_2000),
+        // inside `_start`: Ghidra 12.2's decompiler gives up on data that does not decode
+        ("corpus/elf32", "pie_list-i386-O0", 0x1_10b2),
     ] {
         let Some((e, info)) = open(set, binary).await else {
             return;
