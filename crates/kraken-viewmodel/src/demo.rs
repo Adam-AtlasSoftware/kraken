@@ -303,7 +303,13 @@ pub fn demo_project_with(
 ) -> std::io::Result<DemoProject> {
     let tmp = tempfile::tempdir()?;
     let binary = tmp.path().join("demo-server");
-    std::fs::write(&binary, b"\x7fELF placeholder for the KRAKEN demo project")?;
+    // `KRAKEN_DEMO_BINARY` swaps the placeholder for a real program, so the Debug tab can run it.
+    match std::env::var_os("KRAKEN_DEMO_BINARY").filter(|p| std::path::Path::new(p).is_file()) {
+        Some(real) => {
+            std::fs::copy(real, &binary)?;
+        }
+        None => std::fs::write(&binary, b"\x7fELF placeholder for the KRAKEN demo project")?,
+    }
     let project_dir = tmp.path().join("project");
     // The Rewrite tab runs against a scripted pipeline; nothing is translated or run.
     let rewrite = crate::rewrite::demo::DemoRewrite::new();

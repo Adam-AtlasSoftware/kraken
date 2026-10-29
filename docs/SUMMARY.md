@@ -17,6 +17,7 @@
 - [The native engine](native-engine.md)
 - [Running the program in the emulator](emulation.md)
 - [Emulators and tools](integrations.md)
+- [Debugging in the emulator](debugger.md)
 - [Byte patching](patching.md)
 - [Performance](performance.md)
 - [Scripting with the CLI](cli.md)

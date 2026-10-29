@@ -143,6 +143,8 @@ pub struct ViewModel {
     ui_dialog: Option<String>,
     /// Go to, Search, Bookmarks, the type and function dialogs and generated command forms.
     pub tools: crate::navtools::NavTools,
+    /// The Debug tab.
+    pub debug: crate::debug::DebugPanel,
     /// AI work: what runs and what it costs, and the question asked before it starts.
     pub ai: crate::ai::AiState,
 }
@@ -381,6 +383,7 @@ impl ViewModel {
             ui_info: None,
             ui_dialog: None,
             tools: crate::navtools::NavTools::default(),
+            debug: crate::debug::DebugPanel::default(),
             ai: crate::ai::AiState::default(),
         };
         vm.start_event_forwarder();
@@ -636,6 +639,9 @@ impl ViewModel {
         self.decompile_seq += 1;
         self.views.reset();
         self.tools = crate::navtools::NavTools::default();
+        let generation = self.debug.generation() + 1;
+        self.debug = crate::debug::DebugPanel::default();
+        self.debug.set_generation(generation);
     }
 
     /// Opens the project in `dir`.

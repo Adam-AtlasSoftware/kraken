@@ -36,6 +36,7 @@ pub enum Tab {
     Edit,
     Emulation,
     AiActivity,
+    Debug,
 }
 
 /// How long a tab flashed by `ui_highlight` stays marked.
@@ -64,6 +65,7 @@ impl Tab {
             Tab::Edit => "edit",
             Tab::Emulation => "emulation",
             Tab::AiActivity => "ai_activity",
+            Tab::Debug => "debug",
         }
     }
 
@@ -87,6 +89,7 @@ impl Tab {
         Tab::Edit,
         Tab::Emulation,
         Tab::AiActivity,
+        Tab::Debug,
     ];
 
     pub fn title(self) -> &'static str {
@@ -110,6 +113,7 @@ impl Tab {
             Tab::Edit => "Edit",
             Tab::Emulation => "Emulation",
             Tab::AiActivity => "AI Activity",
+            Tab::Debug => "Debug",
         }
     }
 
@@ -222,6 +226,7 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
             NavTab::Patches => Tab::Patches,
             NavTab::Edit => Tab::Edit,
             NavTab::Emulation => Tab::Emulation,
+            NavTab::Debug => Tab::Debug,
             NavTab::History => Tab::History,
             NavTab::Rewrite => Tab::Rewrite,
         });
@@ -239,9 +244,10 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
                     | Tab::Edit
                     | Tab::Emulation
                     | Tab::AiActivity
+                    | Tab::Debug
             )
         {
-            if matches!(tab, Tab::Edit | Tab::Emulation)
+            if matches!(tab, Tab::Edit | Tab::Emulation | Tab::Debug)
                 && let Some(path) = dock.find_tab(&Tab::Decompiler)
             {
                 dock.set_focused_node_and_surface(path.node_path());
@@ -349,6 +355,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Edit => panels::source_edit::show(ui, self.vm),
             Tab::Emulation => panels::emulation::show(ui, self.vm),
             Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
+            Tab::Debug => panels::debug::show(ui, self.vm),
         }
     }
 }

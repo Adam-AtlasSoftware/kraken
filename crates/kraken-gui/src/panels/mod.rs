@@ -3,6 +3,7 @@
 
 pub mod bookmarks;
 pub mod context;
+pub mod debug;
 pub mod dialogs;
 pub mod emulation;
 pub mod graph;
@@ -128,6 +129,42 @@ pub fn global_keys(
             )
         })
     };
+    if !typing && !blocked && vm.connection == kraken_viewmodel::Connection::Open {
+        let (f5, f9, f10, f11, out) = ctx.input_mut(|i| {
+            let out = i.consume_key(Modifiers::SHIFT, Key::F11);
+            (
+                i.consume_key(Modifiers::NONE, Key::F5),
+                i.consume_key(Modifiers::NONE, Key::F9),
+                i.consume_key(Modifiers::NONE, Key::F10),
+                i.consume_key(Modifiers::NONE, Key::F11),
+                out,
+            )
+        });
+        if f9
+            && let Some(a) = st
+                .hot
+                .or(vm.views.listing.selected_row().map(|r| r.address))
+        {
+            vm.debug_toggle_breakpoint(a);
+        }
+        if f5 {
+            if vm.debug.active() {
+                vm.debug_step(kraken_viewmodel::debug::DebugStep::Continue);
+            } else {
+                vm.debug_start();
+            }
+            vm.show_debug();
+        }
+        if f10 {
+            vm.debug_step(kraken_viewmodel::debug::DebugStep::Over);
+        }
+        if f11 {
+            vm.debug_step(kraken_viewmodel::debug::DebugStep::Into);
+        }
+        if out {
+            vm.debug_step(kraken_viewmodel::debug::DebugStep::Out);
+        }
+    }
     let front = st.front.take();
     let mut bring: Option<Tab> = None;
     if space || st.swap_requested {

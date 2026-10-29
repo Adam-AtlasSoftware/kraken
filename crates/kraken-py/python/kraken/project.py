@@ -49,6 +49,7 @@ from .types import (
 __all__ = [
     "CommandSpec",
     "Connection",
+    "Debugger",
     "Function",
     "Job",
     "KrakenWarning",
@@ -260,6 +261,109 @@ class Job:
 
     def __repr__(self) -> str:
         return f"<kraken.Job {self.command} {self.job_id}>"
+
+
+class Debugger:
+    """A debugging session on KRAKEN's emulator (the ``debug_*`` commands).
+
+    The program runs interpreted in a sandboxed child process, never on this computer. Addresses
+    are the Listing's. Use it as a context manager so the session ends::
+
+        with project.debug(argv=["-v"]) as dbg:
+            dbg.run_to("main")
+            print(dbg.registers()["RDI"], dbg.disassemble(count=5)[0]["text"])
+            dbg.step_over()
+            dbg.cont()
+            print(dbg.state()["stdout"])
+    """
+
+    def __init__(self, project: Project, start: dict[str, Any]) -> None:
+        self.project = project
+        self.id: int = start["session"]
+        self.arch: str = start["arch"]
+        self.address_delta = parse_address(start["address_delta"])
+        self.notes: list[str] = start["notes"]
+
+    def _call(self, command: str, **args: Any) -> Any:
+        return self.project.call(command, session=self.id, **args)
+
+    def step(self, count: int = 1) -> dict[str, Any]:
+        """Executes ``count`` instructions, entering calls."""
+        return self._call("debug_step", count=count)  # type: ignore[no-any-return]
+
+    def step_over(self) -> dict[str, Any]:
+        """Executes one instruction; a call runs to its return."""
+        return self._call("debug_step_over")  # type: ignore[no-any-return]
+
+    def step_out(self) -> dict[str, Any]:
+        """Runs until the current function returns."""
+        return self._call("debug_step_out")  # type: ignore[no-any-return]
+
+    def cont(self, *, timeout_seconds: int | None = None) -> dict[str, Any]:
+        """Runs to the next breakpoint or the end of the program."""
+        return self._call("debug_continue", timeout_seconds=timeout_seconds)  # type: ignore[no-any-return]
+
+    def run_to(self, where: Address) -> dict[str, Any]:
+        """Runs to an address, or to the function named by a string that is not a hex address."""
+        if isinstance(where, str) and not where.lower().startswith("0x"):
+            return self._call("debug_run_to", symbol=where)  # type: ignore[no-any-return]
+        return self._call("debug_run_to", address=parse_address(where))  # type: ignore[no-any-return]
+
+    def set_breakpoint(self, where: Address) -> list[int]:
+        """Sets a breakpoint (an address, or a function symbol); returns all of them."""
+        if isinstance(where, str) and not where.lower().startswith("0x"):
+            out = self._call("debug_break_set", symbol=where)
+        else:
+            out = self._call("debug_break_set", address=parse_address(where))
+        return [parse_address(a) for a in out["breakpoints"]]
+
+    def remove_breakpoint(self, where: Address) -> list[int]:
+        """Removes a breakpoint; returns the remaining ones."""
+        if isinstance(where, str) and not where.lower().startswith("0x"):
+            out = self._call("debug_break_remove", symbol=where)
+        else:
+            out = self._call("debug_break_remove", address=parse_address(where))
+        return [parse_address(a) for a in out["breakpoints"]]
+
+    def breakpoints(self) -> list[int]:
+        """The breakpoints."""
+        return [parse_address(a) for a in self._call("debug_break_list")["breakpoints"]]
+
+    def registers(self) -> dict[str, int]:
+        """Register values by name (the emulator's own addresses)."""
+        out = self._call("debug_regs")
+        return {r["name"]: parse_address(r["value"]) for r in out["registers"]}
+
+    def read_memory(self, address: int, length: int = 64, *, emulator_address: bool = False) -> bytes:
+        """Reads guest memory; ``emulator_address`` for a pointer taken from a register."""
+        out = self._call(
+            "debug_mem_read", address=address, length=length, emulator_address=emulator_address
+        )
+        return bytes.fromhex(out["hex"])
+
+    def disassemble(self, address: int | None = None, count: int = 20) -> list[dict[str, Any]]:
+        """Instructions from ``address`` or the program counter."""
+        args: dict[str, Any] = {"count": count}
+        if address is not None:
+            args["address"] = address
+        return self._call("debug_disasm", **args)["instructions"]  # type: ignore[no-any-return]
+
+    def state(self) -> dict[str, Any]:
+        """Where the program is, how it last stopped and what it printed."""
+        return self._call("debug_state")  # type: ignore[no-any-return]
+
+    def stop(self) -> None:
+        """Ends the session."""
+        self._call("debug_stop")
+
+    def __enter__(self) -> Debugger:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.stop()
+
+    def __repr__(self) -> str:
+        return f"<kraken.Debugger session={self.id} arch={self.arch}>"
 
 
 class Function:
@@ -634,6 +738,19 @@ class Project:
     def reject_proposal(self, proposal_id: int) -> Any:
         """Rejects a proposal as the user (not available to agents)."""
         return self.call("proposal_reject", id=proposal_id)
+
+    # -- debugger -----------------------------------------------------------------------------
+
+    def debug(
+        self,
+        *,
+        argv: list[str] | None = None,
+        stdin: str = "",
+        patched: bool = False,
+    ) -> Debugger:
+        """Starts a debugger session on the emulator, stopped before the first instruction."""
+        out = self.call("debug_start", argv=argv or [], stdin=stdin, patched=patched)
+        return Debugger(self, out)
 
     # -- lifecycle ----------------------------------------------------------------------------
 

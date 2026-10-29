@@ -19,6 +19,7 @@ from .errors import (
 from .project import (
     CommandSpec as CommandSpec,
     Connection as Connection,
+    Debugger as Debugger,
     Function as Function,
     Job as Job,
     KrakenWarning as KrakenWarning,

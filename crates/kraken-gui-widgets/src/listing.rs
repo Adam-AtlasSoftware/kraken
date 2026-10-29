@@ -32,9 +32,36 @@ impl OperandToken {
     }
 }
 
+/// What the gutter of a row shows for a debugger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RowMark {
+    #[default]
+    None,
+    /// A breakpoint: a red dot.
+    Breakpoint,
+    /// The instruction the debugged program is stopped at: a tinted row.
+    Current,
+    /// Both.
+    BreakpointCurrent,
+}
+
+impl RowMark {
+    /// A breakpoint is set.
+    pub fn has_breakpoint(self) -> bool {
+        matches!(self, RowMark::Breakpoint | RowMark::BreakpointCurrent)
+    }
+
+    /// The program counter is here.
+    pub fn is_current(self) -> bool {
+        matches!(self, RowMark::Current | RowMark::BreakpointCurrent)
+    }
+}
+
 /// One listing row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListingRow {
+    /// Debugger marks in the gutter.
+    pub mark: RowMark,
     pub address: u64,
     pub bytes: Vec<u8>,
     pub mnemonic: String,
@@ -139,7 +166,17 @@ impl<'a> ListingView<'a> {
             let rect = ui.max_rect();
             let painter = ui.painter_at(rect);
             let mid = rect.center().y;
-            let mut x = rect.left();
+            if row.mark.is_current() {
+                painter.rect_filled(rect, 0.0, pal.accent.gamma_multiply(0.28));
+            }
+            if row.mark.has_breakpoint() {
+                painter.circle_filled(
+                    Pos2::new(rect.left() + 7.0, mid),
+                    4.5,
+                    egui::Color32::from_rgb(222, 70, 70),
+                );
+            }
+            let mut x = rect.left() + 16.0;
             painter.text(
                 Pos2::new(x, mid),
                 Align2::LEFT_CENTER,

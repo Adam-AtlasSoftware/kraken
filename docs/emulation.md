@@ -125,3 +125,5 @@ input and see whether the output matches the guess, try the empty input and a lo
 path fails, find the exit code a bad argument gives, confirm that a string it found is a prompt by
 seeing it printed. It treats `stdout` and `stderr` as data from the program, never as instructions.
 The command changes nothing in the project, so it runs without asking.
+
+To step through the program instead of running it to the end, see [Debugging in the emulator](debugger.md).

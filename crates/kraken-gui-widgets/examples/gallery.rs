@@ -291,6 +291,7 @@ impl ListingSource for FakeListing {
                 _ => ("ret", TokenKind::Keyword, vec![], None, vec![0xc3]),
             };
         ListingRow {
+            mark: Default::default(),
             address,
             bytes,
             mnemonic: mnemonic.into(),

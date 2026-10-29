@@ -113,6 +113,13 @@ carrying `.code` and `.details`:
 Non-fatal notices (a stale engine cache, a daemon from another build, an in-process fallback) are
 Python warnings of class `kraken.KrakenWarning`.
 
+## Debugging
+
+`project.debug(argv=[...], stdin="...")` starts a session on the emulator and returns a
+`kraken.Debugger` (`run_to`, `step`, `step_over`, `step_out`, `cont`, `set_breakpoint`,
+`registers`, `read_memory`, `disassemble`, `state`, `stop`); use it in a `with` block. See
+[Debugging in the emulator](debugger.md).
+
 ## Authors: you, or an agent
 
 By default a script is **you**: its edits are user edits and apply immediately. Pass

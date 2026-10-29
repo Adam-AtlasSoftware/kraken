@@ -48,6 +48,8 @@ pub enum NavChoice {
     CopyAddress,
     CopyName,
     Bookmark,
+    ToggleBreakpoint,
+    RunToHere,
     CreateFunction,
     DeleteFunction,
     Rewrite,
@@ -275,6 +277,41 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
         None => mark.off("There is no address here to bookmark."),
     });
 
+    if t.kind == TargetKind::Code {
+        let on = t.address.is_some_and(|a| vm.debug.has_breakpoint(a));
+        let brk = item(
+            NavChoice::ToggleBreakpoint,
+            if on {
+                "Remove breakpoint"
+            } else {
+                "Set breakpoint"
+            },
+            Some("F9"),
+            "Stop the emulated program here; see the Debug tab",
+        );
+        out.push(match t.address {
+            Some(_) => brk,
+            None => brk.off("There is no address here."),
+        });
+        let run_to = item(
+            NavChoice::RunToHere,
+            "Run to here",
+            None,
+            "Run the emulated program until it reaches this instruction",
+        );
+        out.push(match t.address {
+            None => run_to.off("There is no address here."),
+            Some(_) if !vm.debug.active() => {
+                run_to.off("Start the program in the Debug tab first.")
+            }
+            Some(_) => run_to.off_if(if vm.debug.can_step() {
+                None
+            } else {
+                Some("The program is running or has ended.")
+            }),
+        });
+    }
+
     if entry {
         out.push(
             item(
@@ -492,6 +529,17 @@ pub fn run(ctx: &egui::Context, vm: &mut ViewModel, t: &Target, choice: NavChoic
             if let Some(a) = t.address.or(func) {
                 vm.ensure_bookmarks();
                 vm.begin_bookmark(a);
+            }
+        }
+        NavChoice::ToggleBreakpoint => {
+            if let Some(a) = t.address {
+                vm.debug_toggle_breakpoint(a);
+            }
+        }
+        NavChoice::RunToHere => {
+            if let Some(a) = t.address {
+                vm.debug_run_to(a);
+                vm.show_debug();
             }
         }
         NavChoice::CreateFunction => {

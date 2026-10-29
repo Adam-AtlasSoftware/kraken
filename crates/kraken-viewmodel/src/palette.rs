@@ -460,6 +460,19 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Project",
     ),
     sc("Ctrl+L", "Search functions", "Project"),
+    sc(
+        "F9",
+        "Set or clear a breakpoint at the selected instruction",
+        "Project",
+    ),
+    sc(
+        "F5",
+        "Start the program in the debugger, or continue it",
+        "Project",
+    ),
+    sc("F10", "Debugger: step over", "Project"),
+    sc("F11", "Debugger: step into", "Project"),
+    sc("Shift+F11", "Debugger: step out", "Project"),
     sc("Alt+Left", "Go back", "Project"),
     sc("Alt+Right", "Go forward again", "Project"),
     sc(

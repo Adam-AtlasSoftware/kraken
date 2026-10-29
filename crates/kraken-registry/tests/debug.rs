@@ -144,6 +144,24 @@ async fn a_corpus_program_is_stepped_to_main() {
         "{code} {dis}"
     );
 
+    // A breakpoint ahead of the program counter stops the run there.
+    let ahead = insns[1]["address"].as_str().expect("address").to_string();
+    env.ok(
+        &u,
+        "debug_break_set",
+        json!({"session": id, "address": ahead}),
+    )
+    .await;
+    let hit = env.ok(&u, "debug_continue", json!({"session": id})).await;
+    assert_eq!(hit["stop"]["kind"], "breakpoint", "{hit}");
+    assert_eq!(hit["stop"]["pc"], json!(ahead));
+    env.ok(
+        &u,
+        "debug_break_remove",
+        json!({"session": id, "address": ahead}),
+    )
+    .await;
+
     // Stepping moves the counter; a call is stepped over; breakpoints round trip.
     let one = env.ok(&u, "debug_step", json!({"session": id})).await;
     assert_eq!(one["stop"]["kind"], "stepped");

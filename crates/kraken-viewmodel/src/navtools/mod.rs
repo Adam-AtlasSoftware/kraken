@@ -61,6 +61,8 @@ pub enum NavTab {
     Edit,
     /// The Emulation tab.
     Emulation,
+    /// The Debug tab.
+    Debug,
 }
 
 /// What a Go to suggestion is.

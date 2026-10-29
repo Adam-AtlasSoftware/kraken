@@ -35,6 +35,7 @@ from .errors import (
 from .project import (
     CommandSpec,
     Connection,
+    Debugger,
     Function,
     Job,
     KrakenWarning,
@@ -76,6 +77,7 @@ __all__ = [
     "Decompiled",
     "EditResult",
     "EngineRejectedError",
+    "Debugger",
     "Function",
     "HistoryEntry",
     "Import",

@@ -14,6 +14,7 @@ pub mod ai;
 mod approval;
 pub mod assist;
 mod backend;
+pub mod debug;
 mod errors;
 mod fuzzy;
 pub mod history;

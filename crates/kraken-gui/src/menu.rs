@@ -54,6 +54,7 @@ pub const VIEW_TABS: [Tab; 18] = [
     Tab::Patches,
     Tab::Edit,
     Tab::Emulation,
+    Tab::Debug,
     Tab::History,
     Tab::Proposals,
     Tab::Assistant,
@@ -335,6 +336,11 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             .on_hover_text(
                 "Run the program safely in the emulator and compare patched against original",
             );
+            ui.menu_button("Debug", |ui| {
+                tab_item(ui, Tab::Debug, "Show the Debug tab", env, &mut out);
+            })
+            .response
+            .on_hover_text("Run the program in the emulator and step through it");
             ui.menu_button("AI", |ui| {
                 item(ui, AppAction::ExplainProgram, env, &mut out);
                 item(ui, AppAction::Automate, env, &mut out);

@@ -45,7 +45,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Emulation, Edit, History, Proposals, Assistant, Rewrite, AI Activity. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Debug, Edit, History, Proposals, Assistant, Rewrite, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -123,15 +123,11 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Show patches | See every staged byte patch, run them and export |  |
 | Export patched binary... | Write a copy of the program with every patch applied; the original is untouched |  |
 
-### Emulate
+### Debug
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| Run program... | Run the program in the sandboxed emulator with the arguments, input, environment and files you give it |  |
-| Run patched program... | Run a copy with your byte patches applied in the sandboxed emulator |  |
-| Compare original vs patched... | Run the original and the patched program with the same input and see what changed |  |
-| Show emulation results | See what the last run or comparison did |  |
-| About running programs | What the emulator does, what it cannot do, and why running here is safe |  |
+| Show the Debug tab | Show the Debug tab and bring it to the front. |  |
 
 ## Panels
 
@@ -289,20 +285,23 @@ How to use it:
 
 - In the Listing, click an instruction and press Patch bytes; in the Hex view, select bytes and press Patch selection.
 - Type the new bytes as hex. A shorter patch on x86 can be filled with nop (90).
-- Press Run original vs patched to compare them in the emulator; the result opens in the Emulation tab.
+- Press Run original vs patched to compare them in the emulator.
 - Press Export patched binary to write the copy.
 
-### Emulation
+### Debug
 
-What the program did when you ran it in the sandboxed emulator, and how a patch changed it.
+Run the program in KRAKEN's emulator and step through it: registers, memory, breakpoints.
 
-The Emulation tab shows the last run: how it ended, what it printed, the files it wrote and the emulator's notes. A comparison runs the original and the patched program with the same input and lays them side by side, marking the lines that differ and naming the first place they diverge. The program is interpreted instruction by instruction in a sandbox: it has no network, sees only its own private files, and nothing in the project changes.
+The debugger runs the program inside KRAKEN's own emulator, stopped before its first instruction. You can step one instruction at a time, step over a call, run until the function returns or to a breakpoint, and look at the registers, the stack and the memory. The Listing follows the instruction the program is stopped at. The program never runs on this computer: its time and randomness are fixed, it cannot reach the network or your files, and the project does not change.
 
 How to use it:
 
-- Open Emulate > Run program, give it arguments, input, environment variables or files, and press Run.
-- After staging patches, choose Emulate > Compare original vs patched to see what they changed.
-- A note naming a system call means the emulator does not implement it; the program was told it failed.
+- Press Start (or F5). Set Arguments and Input first if the program needs them.
+- In the Listing, click an instruction and press F9 (or right-click, Set breakpoint) to stop there.
+- Press Continue (F5) to run to the breakpoint, Step (F11) or Over (F10) to go one instruction.
+- Click a register value to see the memory it points at. Press Stop when done.
+
+Shortcuts here: `F5` start the program in the debugger, or continue it; `F9` set or clear a breakpoint at the selected instruction; `F10` debugger: step over; `F11` debugger: step into; `Shift+F11` debugger: step out.
 
 ### Edit
 
@@ -315,7 +314,7 @@ How to use it:
 - Open a function and press Patch function in the Decompiler.
 - Edit the C on the left, then press Plan patch.
 - Read the check and the patched decompile, then press Stage patches.
-- Compare original vs patched from the Emulate menu before you export.
+- Run original vs patched from the Patches tab before you export.
 
 ### History
 
@@ -393,6 +392,11 @@ How to use it:
 | `G` | Go to an address, a function or a symbol | Project |
 | `Ctrl+Shift+F` | Search names, strings, bytes or instructions | Project |
 | `Ctrl+L` | Search functions | Project |
+| `F9` | Set or clear a breakpoint at the selected instruction | Project |
+| `F5` | Start the program in the debugger, or continue it | Project |
+| `F10` | Debugger: step over | Project |
+| `F11` | Debugger: step into | Project |
+| `Shift+F11` | Debugger: step out | Project |
 | `Alt+Left` | Go back | Project |
 | `Alt+Right` | Go forward again | Project |
 | `N` | Rename the name under the pointer, or this function | Code views |

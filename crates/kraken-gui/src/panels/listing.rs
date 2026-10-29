@@ -3,7 +3,7 @@
 use std::cell::Cell;
 
 use egui::{RichText, Ui};
-use kraken_gui_widgets::{ListingRow, ListingSource, ListingView, OperandToken};
+use kraken_gui_widgets::{ListingRow, ListingSource, ListingView, OperandToken, RowMark};
 use kraken_proto::TokenKind;
 use kraken_viewmodel::{ListingRowItem, ViewModel, mnemonic_kind, operand_kind};
 
@@ -65,7 +65,25 @@ impl ListingUi {
     }
 }
 
+/// The debugger's marks on listing rows.
+pub struct DebugMarks<'a> {
+    pub breakpoints: &'a std::collections::BTreeSet<u64>,
+    pub pc: Option<u64>,
+}
+
+impl DebugMarks<'_> {
+    fn mark(&self, addr: u64) -> RowMark {
+        match (self.breakpoints.contains(&addr), self.pc == Some(addr)) {
+            (false, false) => RowMark::None,
+            (true, false) => RowMark::Breakpoint,
+            (false, true) => RowMark::Current,
+            (true, true) => RowMark::BreakpointCurrent,
+        }
+    }
+}
+
 struct Source<'a> {
+    marks: DebugMarks<'a>,
     rows: &'a [ListingRowItem],
     lines: &'a [Line],
     max_seen: Cell<usize>,
@@ -80,6 +98,7 @@ impl ListingSource for Source<'_> {
         self.max_seen.set(self.max_seen.get().max(index));
         match &self.lines[index] {
             Line::Label { row, text } => ListingRow {
+                mark: Default::default(),
                 address: self.rows[*row].address,
                 bytes: Vec::new(),
                 mnemonic: format!("{text}:"),
@@ -90,6 +109,7 @@ impl ListingSource for Source<'_> {
             Line::Insn(i) => {
                 let r = &self.rows[*i];
                 ListingRow {
+                    mark: self.marks.mark(r.address),
                     address: r.address,
                     bytes: r.bytes.clone(),
                     mnemonic: r.mnemonic.clone(),
@@ -212,7 +232,12 @@ pub fn show(
     let mut selected = l
         .selected
         .and_then(|i| st.listing.insn_line.get(i).copied());
+    let dbg = &vm.debug;
     let src = Source {
+        marks: DebugMarks {
+            breakpoints: &dbg.breakpoints,
+            pc: dbg.session.map(|_| dbg.pc),
+        },
         rows: &l.rows,
         lines: &st.listing.lines,
         max_seen: Cell::new(0),

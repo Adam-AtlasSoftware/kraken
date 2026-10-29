@@ -930,6 +930,7 @@ mod audit;
 #[cfg(unix)]
 mod bench;
 mod emulate;
+mod debug;
 mod help;
 mod integrations;
 mod loading;

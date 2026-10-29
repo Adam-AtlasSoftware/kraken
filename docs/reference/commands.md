@@ -18169,7 +18169,7 @@ Example: `ui_action {"tab": "graph", "address": "0x401136"}`
 |---|---|---|---|---|
 | `action` | `--action` | string | no | Id of a GUI action in snake_case (`show_history`, `go_to_main`, `search`, `analyze`...). `ui_state` lists the ids. |
 | `address` | `--address` | json | no | Address (or function entry) to show. |
-| `tab` | `--tab` | string | no | Tab to open and focus (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`, `strings`, `symbols`, `history`, `proposals`, `assistant`, `rewrite`, `search`, `bookmarks`, `ai_activity`). |
+| `tab` | `--tab` | string | no | Tab to open and focus (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`, `strings`, `symbols`, `history`, `proposals`, `assistant`, `rewrite`, `search`, `bookmarks`, `ai_activity`, `debug`). |
 
 <details>
 <summary>Output schema</summary>

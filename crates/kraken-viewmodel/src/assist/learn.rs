@@ -167,6 +167,19 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         terms: &["patch", "byte"],
     },
     PanelHelp {
+        panel: "Debug",
+        short: "Run the program in KRAKEN's emulator and step through it: registers, memory, breakpoints.",
+        text: "The debugger runs the program inside KRAKEN's own emulator, stopped before its first instruction. You can step one instruction at a time, step over a call, run until the function returns or to a breakpoint, and look at the registers, the stack and the memory. The Listing follows the instruction the program is stopped at. The program never runs on this computer: its time and randomness are fixed, it cannot reach the network or your files, and the project does not change.",
+        how: &[
+            "Press Start (or F5). Set Arguments and Input first if the program needs them.",
+            "In the Listing, click an instruction and press F9 (or right-click, Set breakpoint) to stop there.",
+            "Press Continue (F5) to run to the breakpoint, Step (F11) or Over (F10) to go one instruction.",
+            "Click a register value to see the memory it points at. Press Stop when done.",
+        ],
+        keys: &["F5", "F9", "F10", "F11", "Shift+F11"],
+        terms: &["breakpoint", "register", "instruction", "stack"],
+    },
+    PanelHelp {
         panel: "Edit",
         short: "Experimental: edit a function's C and let the assistant turn it into a byte patch.",
         text: "Change the decompiled C of a function, for example a constant, a comparison or which branch runs. The assistant's model works out the smallest change to the machine code that does the same, then the patched bytes are decompiled again to check it. Nothing changes until you stage the patches, and nothing on disk changes until you export. It works best for small, local changes; for anything bigger, patch the bytes by hand or rewrite the function.",
