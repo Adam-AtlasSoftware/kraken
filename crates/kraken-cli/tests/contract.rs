@@ -413,6 +413,51 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     step!("patch_export", json!({"output_path": "patched.bin"}));
     step!("emulate_run", json!({"patched": true}));
     step!("emulate_compare", json!({}));
+    // Patch intents in preview record nothing; a branch edit on a non-branch is refused alike.
+    step!("patch_nop", json!({"address": "0x401040", "preview": true}));
+    step!(
+        "patch_branch",
+        json!({"address": "0x401040", "mode": "invert", "preview": true})
+    );
+    step!(
+        "patch_return",
+        json!({"address": "0x401040", "value": 1, "preview": true})
+    );
+    step!(
+        "patch_fill",
+        json!({"address": "0x401040", "length": 2, "pattern": "cc", "preview": true})
+    );
+    step!(
+        "patch_constant",
+        json!({"address": "0x401040", "value": 7, "preview": true})
+    );
+    // The debugger: no session is open, so every session command answers alike.
+    step!("debug_sessions", json!({}));
+    for (name, args) in [
+        ("debug_step", json!({"session": 99})),
+        ("debug_step_over", json!({"session": 99})),
+        ("debug_step_out", json!({"session": 99})),
+        ("debug_continue", json!({"session": 99})),
+        ("debug_run_to", json!({"session": 99, "symbol": "main"})),
+        ("debug_break_set", json!({"session": 99, "symbol": "main"})),
+        (
+            "debug_break_remove",
+            json!({"session": 99, "symbol": "main"}),
+        ),
+        ("debug_break_list", json!({"session": 99})),
+        ("debug_regs", json!({"session": 99})),
+        (
+            "debug_mem_read",
+            json!({"session": 99, "address": "0x401040"}),
+        ),
+        ("debug_disasm", json!({"session": 99})),
+        ("debug_state", json!({"session": 99})),
+        ("debug_stop", json!({"session": 99})),
+    ] {
+        step!(name, args);
+    }
+    step!("debug_start", json!({}));
+    step!("debug_stop", json!({"session": 1}));
     step!("patch_remove", json!({"address": "0x401040"}));
     step!("patch_remove", json!({"address": "0x401040"}));
 
