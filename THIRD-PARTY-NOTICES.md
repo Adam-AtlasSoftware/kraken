@@ -118,9 +118,9 @@ Provenance:
 
     Compiled into KRAKEN by engine-native-sys (the native engine's decompiler library).
 
-    Ghidra 12.2 decompiler and Sleigh (C++), Apache License 2.0
-      source: https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.2_build.tar.gz
-      sha256: ade4fd6e277a10c82db4e75ff5acaeedb3113ef0c7d126ea2c8b38c37128f3c3
+    Ghidra 12.1.4 decompiler and Sleigh (C++), Apache License 2.0
+      source: https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.1.4_build.tar.gz
+      sha256: 2a858300c350f05ae2e729dff86b4f584d0b9a6b398879c55025574e67696cec
       members: Ghidra/Features/Decompiler/src/decompile/cpp
         (the Makefile's CORE, DECCORE and SLEIGH sets, sleigh_arch, inject_sleigh)
       license: ghidra/LICENSE; notice: ghidra/NOTICE
@@ -130,7 +130,7 @@ Provenance:
       unmodified apart from a header comment per file
       license: zlib/LICENSE; Ghidra's note on the subset: zlib/README.txt
 
-### Ghidra 12.2 decompiler and Sleigh (Apache License 2.0)
+### Ghidra 12.1.4 decompiler and Sleigh (Apache License 2.0)
 
 Ghidra's C++ decompiler and Sleigh translator from
 <https://github.com/NationalSecurityAgency/ghidra>. Ghidra's `NOTICE`:
@@ -438,7 +438,7 @@ not linked into KRAKEN).
 
 - **Ghidra** (<https://github.com/NationalSecurityAgency/ghidra>), Apache License 2.0. Downloaded
   from the NSA's GitHub release. Its own `LICENSE` and `NOTICE` files come with the download.
-- **Eclipse Temurin JDK 25** (<https://adoptium.net/>), GPL-2.0-only with the Classpath Exception
+- **Eclipse Temurin JDK 21** (<https://adoptium.net/>), GPL-2.0-only with the Classpath Exception
   (GPLv2+CE). Downloaded from the Adoptium release. Its license files come with the download.
 
 If a future release bundles either component, this page and the release archive will carry their
@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-595 crates in 31 license groups.
+598 crates in 31 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -7636,10 +7636,10 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - http-body-util 0.1.5 (<https://github.com/hyperium/http-body>)
 - hyper 1.12.0 (<https://github.com/hyperium/hyper>)
 - hyper-util 0.1.21 (<https://github.com/hyperium/hyper-util>)
-- iced-x86 1.21.0 (<https://github.com/icedland/iced>)
 - libm 0.2.16 (<https://github.com/rust-lang/compiler-builtins>)
 - libredox 0.1.25 (<https://gitlab.redox-os.org/redox-os/libredox.git>)
 - libsqlite3-sys 0.38.2 (<https://github.com/rusqlite/rusqlite>)
+- lzma-rs 0.3.0 (<https://github.com/gendx/lzma-rs>)
 - matchers 0.2.0 (<https://github.com/hawkw/matchers>)
 - memoffset 0.9.1 (<https://github.com/Gilnaa/memoffset>)
 - mio 1.2.4 (<https://github.com/tokio-rs/mio>)
@@ -8464,6 +8464,30 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
     THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+**LICENSE** — lzma-rs 0.3.0
+
+    MIT License
+
+    Copyright (c) 2017 - 2018  Guillaume Endignoux
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
@@ -9586,7 +9610,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
-No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, iced-x86 1.21.0, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, rsqlite-vfs 0.1.1. They are distributed under the SPDX expression `MIT` above.
+No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, rsqlite-vfs 0.1.1. They are distributed under the SPDX expression `MIT` above.
 
 ### MIT OR Apache-2.0
 
@@ -9633,6 +9657,8 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - cpp_demangle 0.5.1 (<https://github.com/gimli-rs/cpp_demangle>)
 - cpufeatures 0.2.17 (<https://github.com/RustCrypto/utils>)
 - cpufeatures 0.3.1 (<https://github.com/RustCrypto/utils>)
+- crc 3.4.0 (<https://github.com/mrhooray/crc-rs.git>)
+- crc-catalog 2.5.0 (<https://github.com/akhilles/crc-catalog.git>)
 - crc32fast 1.5.2 (<https://github.com/srijs/rust-crc32fast>)
 - crossbeam-utils 0.8.23 (<https://github.com/crossbeam-rs/crossbeam>)
 - crypto-common 0.1.7 (<https://github.com/RustCrypto/traits>)
@@ -12084,6 +12110,210 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
        WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
        See the License for the specific language governing permissions and
        limitations under the License.
+
+**LICENSE-APACHE** — crc 3.4.0
+
+                                  Apache License
+                            Version 2.0 January 2004
+                         http://www.apache.org/licenses/
+
+    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+    1. Definitions.
+
+       "License" shall mean the terms and conditions for use, reproduction,
+       and distribution as defined by Sections 1 through 9 of this document.
+
+       "Licensor" shall mean the copyright owner or entity authorized by
+       the copyright owner that is granting the License.
+
+       "Legal Entity" shall mean the union of the acting entity and all
+       other entities that control, are controlled by, or are under common
+       control with that entity. For the purposes of this definition,
+       "control" means (i) the power, direct or indirect, to cause the
+       direction or management of such entity, whether by contract or
+       otherwise, or (ii) ownership of fifty percent (50%) or more of the
+       outstanding shares, or (iii) beneficial ownership of such entity.
+
+       "You" (or "Your") shall mean an individual or Legal Entity
+       exercising permissions granted by this License.
+
+       "Source" form shall mean the preferred form for making modifications,
+       including but not limited to software source code, documentation
+       source, and configuration files.
+
+       "Object" form shall mean any form resulting from mechanical
+       transformation or translation of a Source form, including but
+       not limited to compiled object code, generated documentation,
+       and conversions to other media types.
+
+       "Work" shall mean the work of authorship, whether in Source or
+       Object form, made available under the License, as indicated by a
+       copyright notice that is included in or attached to the work
+       (an example is provided in the Appendix below).
+
+       "Derivative Works" shall mean any work, whether in Source or Object
+       form, that is based on (or derived from) the Work and for which the
+       editorial revisions, annotations, elaborations, or other modifications
+       represent, as a whole, an original work of authorship. For the purposes
+       of this License, Derivative Works shall not include works that remain
+       separable from, or merely link (or bind by name) to the interfaces of,
+       the Work and Derivative Works thereof.
+
+       "Contribution" shall mean any work of authorship, including
+       the original version of the Work and any modifications or additions
+       to that Work or Derivative Works thereof, that is intentionally
+       submitted to Licensor for inclusion in the Work by the copyright owner
+       or by an individual or Legal Entity authorized to submit on behalf of
+       the copyright owner. For the purposes of this definition, "submitted"
+       means any form of electronic, verbal, or written communication sent
+       to the Licensor or its representatives, including but not limited to
+       communication on electronic mailing lists, source code control systems,
+       and issue tracking systems that are managed by, or on behalf of, the
+       Licensor for the purpose of discussing and improving the Work, but
+       excluding communication that is conspicuously marked or otherwise
+       designated in writing by the copyright owner as "Not a Contribution."
+
+       "Contributor" shall mean Licensor and any individual or Legal Entity
+       on behalf of whom a Contribution has been received by Licensor and
+       subsequently incorporated within the Work.
+
+    2. Grant of Copyright License. Subject to the terms and conditions of
+       this License, each Contributor hereby grants to You a perpetual,
+       worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+       copyright license to reproduce, prepare Derivative Works of,
+       publicly display, publicly perform, sublicense, and distribute the
+       Work and such Derivative Works in Source or Object form.
+
+    3. Grant of Patent License. Subject to the terms and conditions of
+       this License, each Contributor hereby grants to You a perpetual,
+       worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+       (except as stated in this section) patent license to make, have made,
+       use, offer to sell, sell, import, and otherwise transfer the Work,
+       where such license applies only to those patent claims licensable
+       by such Contributor that are necessarily infringed by their
+       Contribution(s) alone or by combination of their Contribution(s)
+       with the Work to which such Contribution(s) was submitted. If You
+       institute patent litigation against any entity (including a
+       cross-claim or counterclaim in a lawsuit) alleging that the Work
+       or a Contribution incorporated within the Work constitutes direct
+       or contributory patent infringement, then any patent licenses
+       granted to You under this License for that Work shall terminate
+       as of the date such litigation is filed.
+
+    4. Redistribution. You may reproduce and distribute copies of the
+       Work or Derivative Works thereof in any medium, with or without
+       modifications, and in Source or Object form, provided that You
+       meet the following conditions:
+
+       (a) You must give any other recipients of the Work or
+           Derivative Works a copy of this License; and
+
+       (b) You must cause any modified files to carry prominent notices
+           stating that You changed the files; and
+
+       (c) You must retain, in the Source form of any Derivative Works
+           that You distribute, all copyright, patent, trademark, and
+           attribution notices from the Source form of the Work,
+           excluding those notices that do not pertain to any part of
+           the Derivative Works; and
+
+       (d) If the Work includes a "NOTICE" text file as part of its
+           distribution, then any Derivative Works that You distribute must
+           include a readable copy of the attribution notices contained
+           within such NOTICE file, excluding those notices that do not
+           pertain to any part of the Derivative Works, in at least one
+           of the following places: within a NOTICE text file distributed
+           as part of the Derivative Works; within the Source form or
+           documentation, if provided along with the Derivative Works; or,
+           within a display generated by the Derivative Works, if and
+           wherever such third-party notices normally appear. The contents
+           of the NOTICE file are for informational purposes only and
+           do not modify the License. You may add Your own attribution
+           notices within Derivative Works that You distribute, alongside
+           or as an addendum to the NOTICE text from the Work, provided
+           that such additional attribution notices cannot be construed
+           as modifying the License.
+
+       You may add Your own copyright statement to Your modifications and
+       may provide additional or different license terms and conditions
+       for use, reproduction, or distribution of Your modifications, or
+       for any such Derivative Works as a whole, provided Your use,
+       reproduction, and distribution of the Work otherwise complies with
+       the conditions stated in this License.
+
+    5. Submission of Contributions. Unless You explicitly state otherwise,
+       any Contribution intentionally submitted for inclusion in the Work
+       by You to the Licensor shall be under the terms and conditions of
+       this License, without any additional terms or conditions.
+       Notwithstanding the above, nothing herein shall supersede or modify
+       the terms of any separate license agreement you may have executed
+       with Licensor regarding such Contributions.
+
+    6. Trademarks. This License does not grant permission to use the trade
+       names, trademarks, service marks, or product names of the Licensor,
+       except as required for reasonable and customary use in describing the
+       origin of the Work and reproducing the content of the NOTICE file.
+
+    7. Disclaimer of Warranty. Unless required by applicable law or
+       agreed to in writing, Licensor provides the Work (and each
+       Contributor provides its Contributions) on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+       implied, including, without limitation, any warranties or conditions
+       of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+       PARTICULAR PURPOSE. You are solely responsible for determining the
+       appropriateness of using or redistributing the Work and assume any
+       risks associated with Your exercise of permissions under this License.
+
+    8. Limitation of Liability. In no event and under no legal theory,
+       whether in tort (including negligence), contract, or otherwise,
+       unless required by applicable law (such as deliberate and grossly
+       negligent acts) or agreed to in writing, shall any Contributor be
+       liable to You for damages, including any direct, indirect, special,
+       incidental, or consequential damages of any character arising as a
+       result of this License or out of the use or inability to use the
+       Work (including but not limited to damages for loss of goodwill,
+       work stoppage, computer failure or malfunction, or any and all
+       other commercial damages or losses), even if such Contributor
+       has been advised of the possibility of such damages.
+
+    9. Accepting Warranty or Additional Liability. While redistributing
+       the Work or Derivative Works thereof, You may choose to offer,
+       and charge a fee for, acceptance of support, warranty, indemnity,
+       or other liability obligations and/or rights consistent with this
+       License. However, in accepting such obligations, You may act only
+       on Your own behalf and on Your sole responsibility, not on behalf
+       of any other Contributor, and only if You agree to indemnify,
+       defend, and hold each Contributor harmless for any liability
+       incurred by, or claims asserted against, such Contributor by reason
+       of your accepting any such warranty or additional liability.
+
+    END OF TERMS AND CONDITIONS
+
+    APPENDIX: How to apply the Apache License to your work.
+
+       To apply the Apache License to your work, attach the following
+       boilerplate notice, with the fields enclosed by brackets "[]"
+       replaced with your own identifying information. (Don't include
+       the brackets!)  The text should be enclosed in the appropriate
+       comment syntax for the file format. We also recommend that a
+       file or class name and description of purpose be included on the
+       same "printed page" as the copyright notice for easier
+       identification within third-party archives.
+
+    Copyright [yyyy] [name of copyright owner]
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+    	http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
 
 **LICENSE-APACHE** — allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, cxx 1.0.205, cxx-build 1.0.205, cxxbridge-flags 1.0.205, cxxbridge-macro 1.0.205, dyn-clone 1.0.20, itoa 1.0.18, libc 0.2.190, link-cplusplus 1.0.12, litrs 1.0.1, paste 1.0.15, pastey 0.2.3, proc-macro2 1.0.107, proc-macro2-diagnostics 0.10.1, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustversion 1.0.23, scratch 1.0.9, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, serde_urlencoded 0.7.1, syn 2.0.119, syn 3.0.9, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, wasm-streams 0.4.2
 
@@ -19164,6 +19394,30 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+**LICENSE-MIT** — crc 3.4.0
+
+    MIT License
+
+    Copyright (c) 2017 crc-rs Developers
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 **LICENSE-MIT** — crc32fast 1.5.2
 
     MIT License
@@ -20061,7 +20315,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-No license file in the source of: accesskit 0.24.1, ecolor 0.36.2, eframe 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, egui_glow 0.36.2, emath 0.36.2, epaint 0.36.2, jni 0.22.4, jni-macros 0.22.4, jni-sys-macros 0.4.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, profiling 1.0.18. They are distributed under the SPDX expression `MIT OR Apache-2.0` above.
+No license file in the source of: accesskit 0.24.1, crc-catalog 2.5.0, ecolor 0.36.2, eframe 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, egui_glow 0.36.2, emath 0.36.2, epaint 0.36.2, jni 0.22.4, jni-macros 0.22.4, jni-sys-macros 0.4.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, profiling 1.0.18. They are distributed under the SPDX expression `MIT OR Apache-2.0` above.
 
 ### MIT OR Apache-2.0 OR LGPL-2.1-or-later
 
@@ -21735,6 +21989,7 @@ No license file in the source of: icicle-cpu 0.1.0, icicle-jit 0.2.0, icicle-lin
 ### Unlicense OR MIT
 
 - aho-corasick 1.1.5 (<https://github.com/BurntSushi/aho-corasick>)
+- byteorder 1.5.0 (<https://github.com/BurntSushi/byteorder>)
 - byteorder-lite 0.1.0 (<https://github.com/image-rs/byteorder-lite>)
 - jiff 0.2.38 (<https://github.com/BurntSushi/jiff>)
 - jiff-core 0.1.1 (<https://github.com/BurntSushi/jiff>)
@@ -21747,7 +22002,7 @@ No license file in the source of: icicle-cpu 0.1.0, icicle-jit 0.2.0, icicle-lin
 - walkdir 2.5.0 (<https://github.com/BurntSushi/walkdir>)
 - winapi-util 0.1.11 (<https://github.com/BurntSushi/winapi-util>)
 
-**LICENSE-MIT** — aho-corasick 1.1.5, byteorder-lite 0.1.0, jiff 0.2.38, jiff-core 0.1.1, jiff-static 0.2.38, jiff-tzdb 0.1.9, jiff-tzdb-platform 0.1.3, memchr 2.8.3, termcolor 1.4.1, walkdir 2.5.0
+**LICENSE-MIT** — aho-corasick 1.1.5, byteorder 1.5.0, byteorder-lite 0.1.0, jiff 0.2.38, jiff-core 0.1.1, jiff-static 0.2.38, jiff-tzdb 0.1.9, jiff-tzdb-platform 0.1.3, memchr 2.8.3, termcolor 1.4.1, walkdir 2.5.0
 
     The MIT License (MIT)
 
@@ -21795,7 +22050,7 @@ No license file in the source of: icicle-cpu 0.1.0, icicle-jit 0.2.0, icicle-lin
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
-**UNLICENSE** — aho-corasick 1.1.5, byteorder-lite 0.1.0, jiff 0.2.38, jiff-core 0.1.1, jiff-static 0.2.38, jiff-tzdb 0.1.9, jiff-tzdb-platform 0.1.3, memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11
+**UNLICENSE** — aho-corasick 1.1.5, byteorder 1.5.0, byteorder-lite 0.1.0, jiff 0.2.38, jiff-core 0.1.1, jiff-static 0.2.38, jiff-tzdb 0.1.9, jiff-tzdb-platform 0.1.3, memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11
 
     This is free and unencumbered software released into the public domain.
 
@@ -21822,7 +22077,7 @@ No license file in the source of: icicle-cpu 0.1.0, icicle-jit 0.2.0, icicle-lin
 
     For more information, please refer to <http://unlicense.org/>
 
-**COPYING** — aho-corasick 1.1.5, jiff 0.2.38, jiff-core 0.1.1, jiff-static 0.2.38, jiff-tzdb 0.1.9, jiff-tzdb-platform 0.1.3, memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11
+**COPYING** — aho-corasick 1.1.5, byteorder 1.5.0, jiff 0.2.38, jiff-core 0.1.1, jiff-static 0.2.38, jiff-tzdb 0.1.9, jiff-tzdb-platform 0.1.3, memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11
 
     This project is dual-licensed under the Unlicense and MIT licenses.
 

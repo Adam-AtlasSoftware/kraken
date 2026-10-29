@@ -1,0 +1,399 @@
+# The compiled-in integrations catalogue (Linux x86_64 builds).
+#
+# Nothing here is bundled with KRAKEN. An [[artifact]] is the upstream project's own release asset,
+# pinned by version and SHA-256 (GitHub's release API publishes the digest; checked 2026-10-28);
+# KRAKEN downloads it on the user's machine and never redistributes it. An entry without an
+# [[artifact]] for this platform is "use the copy you already have".
+#
+# argv templates: {exe} the emulator, {binary} the file to run, {dir} a private run directory,
+# {port} the GDB stub port.
+
+schema = 1
+
+[[emulator]]
+id = "xemu"
+name = "xemu"
+summary = "Original Xbox emulator"
+homepage = "https://xemu.app"
+platforms = ["Original Xbox"]
+formats = ["iso", "xiso"]
+license = "GPL-2.0-or-later"
+notice = "xemu needs the MCPX boot ROM, a flash image and a hard disk image that you dump from your own console; KRAKEN does not fetch or ship them."
+[emulator.detect]
+names = ["xemu"]
+flatpak = "app.xemu.xemu"
+paths = ["~/Applications/xemu*.AppImage", "~/.local/bin/xemu*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "-dvd_path", "{binary}"]
+[[emulator.artifact]]
+version = "0.8.139"
+url = "https://github.com/xemu-project/xemu/releases/download/v0.8.139/xemu-0.8.139-x86_64.AppImage"
+sha256 = "220282aacf09b30b35c55ba900a774fb6940c70deca1408bc70a4c9cc67c322f"
+size = 17971704
+format = "file"
+entry = "xemu-0.8.139-x86_64.AppImage"
+
+[[emulator]]
+id = "xenia-canary"
+name = "Xenia Canary"
+summary = "Xbox 360 emulator (community Canary branch)"
+homepage = "https://github.com/xenia-canary/xenia-canary-releases"
+platforms = ["Xbox 360"]
+formats = ["xex", "iso", "xcp"]
+license = "BSD-3-Clause"
+contains_key_material = true
+notice = "The Xenia binary embeds Xbox 360 decryption key material that Microsoft owns. KRAKEN fetches it only from upstream's release page, only after you ask, and never ships or mirrors it; an agent cannot install it for you. Run only games you own."
+[emulator.detect]
+names = ["xenia_canary", "xenia-canary"]
+paths = ["~/Applications/xenia_canary", "~/.local/bin/xenia_canary"]
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+[[emulator.artifact]]
+version = "02d2cb5"
+url = "https://github.com/xenia-canary/xenia-canary-releases/releases/download/02d2cb5/xenia_canary_linux.tar_.xz"
+sha256 = "5ac3bcd35430dc406cc79cb403dc326341514a5e3c19e118a37386dc46f4e6c1"
+size = 3462192
+format = "tar_xz"
+entry = "build/bin/Linux/Release/xenia_canary"
+
+[[emulator]]
+id = "shadps4"
+name = "shadPS4"
+summary = "PlayStation 4 emulator"
+homepage = "https://shadps4.net"
+platforms = ["PlayStation 4"]
+formats = ["elf", "self", "bin"]
+license = "GPL-2.0-or-later"
+notice = "shadPS4 is early software. It needs firmware modules that you dump from your own console; KRAKEN does not fetch or ship them."
+[emulator.detect]
+names = ["shadps4", "shadPS4"]
+flatpak = "net.shadps4.shadPS4"
+paths = ["~/Applications/*hadps4*.AppImage", "~/.local/bin/*hadps4*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "-g", "{binary}"]
+[[emulator.artifact]]
+version = "0.20.0"
+url = "https://github.com/shadps4-emu/shadPS4/releases/download/v.0.20.0/shadps4-linux-sdl-0.20.0.zip"
+sha256 = "be25d0324cd7b74068d32cdb66fa1b7b1e7bb499b062be51c7006d27d41d4255"
+size = 33229758
+format = "zip"
+entry = "Shadps4-sdl.AppImage"
+
+[[emulator]]
+id = "rpcs3"
+name = "RPCS3"
+summary = "PlayStation 3 emulator"
+homepage = "https://rpcs3.net"
+platforms = ["PlayStation 3"]
+formats = ["self", "elf", "iso", "pkg"]
+license = "GPL-2.0-only"
+notice = "RPCS3 installs the PS3 firmware from a PUP file that you download from Sony yourself; KRAKEN does not fetch or ship it."
+[emulator.detect]
+names = ["rpcs3"]
+flatpak = "net.rpcs3.RPCS3"
+paths = ["~/Applications/rpcs3*.AppImage", "~/.local/bin/rpcs3*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "--no-gui", "{binary}"]
+[[emulator.artifact]]
+version = "0.0.43-20415-6c44fff7"
+url = "https://github.com/RPCS3/rpcs3-binaries-linux/releases/download/build-6c44fff7549e941389a4ce072a95c5ff9db7237c/rpcs3-v0.0.43-20415-6c44fff7_linux64.AppImage"
+sha256 = "fbbe102511471b21150ea3aa2cbc15662e0ab26cabcb346807f6fca30ff7a62a"
+size = 83208472
+format = "file"
+entry = "rpcs3-v0.0.43-20415-6c44fff7_linux64.AppImage"
+
+[[emulator]]
+id = "pcsx2"
+name = "PCSX2"
+summary = "PlayStation 2 emulator"
+homepage = "https://pcsx2.net"
+platforms = ["PlayStation 2"]
+formats = ["iso", "elf", "bin", "chd", "cso"]
+license = "GPL-3.0-or-later"
+notice = "PCSX2 needs a PS2 BIOS that you dump from your own console; KRAKEN does not fetch or ship one."
+[emulator.detect]
+names = ["pcsx2-qt", "pcsx2"]
+flatpak = "net.pcsx2.PCSX2"
+paths = ["~/Applications/pcsx2*.AppImage", "~/.local/bin/pcsx2*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "-batch", "--", "{binary}"]
+[[emulator.artifact]]
+version = "2.8.2"
+url = "https://github.com/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-linux-appimage-x64-Qt.AppImage"
+sha256 = "0c46bb6a88aa2782b10853a7b07cf3387ba99cbef2b966372cd2315b8571abea"
+size = 60119544
+format = "file"
+entry = "pcsx2-v2.8.2-linux-appimage-x64-Qt.AppImage"
+
+[[emulator]]
+id = "ppsspp"
+name = "PPSSPP"
+summary = "PlayStation Portable emulator"
+homepage = "https://www.ppsspp.org"
+platforms = ["PlayStation Portable"]
+formats = ["iso", "cso", "pbp", "elf"]
+license = "GPL-2.0-or-later"
+notice = "PPSSPP runs PSP games and homebrew; commercial games are yours to supply."
+[emulator.detect]
+names = ["PPSSPPSDL", "ppsspp", "PPSSPPQt"]
+flatpak = "org.ppsspp.PPSSPP"
+paths = ["~/Applications/PPSSPP*.AppImage", "~/.local/bin/PPSSPP*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+[[emulator.artifact]]
+version = "1.20.4"
+url = "https://github.com/hrydgard/ppsspp/releases/download/v1.20.4/PPSSPP-v1.20.4-anylinux-x86_64.AppImage"
+sha256 = "661c098e6b7f7610171a57b7c533ce8bba6f2312b71e76d61e850461973eba21"
+size = 50689748
+format = "file"
+entry = "PPSSPP-v1.20.4-anylinux-x86_64.AppImage"
+
+[[emulator]]
+id = "dolphin"
+name = "Dolphin"
+summary = "GameCube and Wii emulator"
+homepage = "https://dolphin-emu.org"
+platforms = ["GameCube", "Wii"]
+formats = ["dol", "elf", "iso", "gcm", "rvz", "wbfs"]
+license = "GPL-2.0-or-later"
+notice = "Upstream publishes no Linux binary (only Windows and macOS builds and distribution packages), so there is nothing KRAKEN can download. Install it from your distribution or Flatpak, then use the copy you have."
+[emulator.detect]
+names = ["dolphin-emu"]
+flatpak = "org.DolphinEmu.dolphin-emu"
+paths = ["~/Applications/Dolphin*.AppImage", "~/.local/bin/dolphin-emu"]
+[emulator.run]
+argv = ["{exe}", "-e", "{binary}"]
+
+[[emulator]]
+id = "duckstation"
+name = "DuckStation"
+summary = "PlayStation 1 emulator"
+homepage = "https://www.duckstation.org"
+platforms = ["PlayStation 1"]
+formats = ["exe", "psexe", "cue", "bin", "iso", "chd", "elf"]
+license = "CC-BY-NC-ND-4.0"
+notice = "DuckStation is licensed CC BY-NC-ND 4.0: free for non-commercial use, no derivatives. It needs a PS1 BIOS that you dump from your own console; KRAKEN does not fetch or ship one. KRAKEN downloads upstream's rolling `latest` build; the pinned hash is what was current when this catalogue was written, so an Install after upstream moves on reports a hash mismatch."
+[emulator.detect]
+names = ["duckstation-qt", "duckstation"]
+flatpak = "org.duckstation.DuckStation"
+paths = ["~/Applications/DuckStation*.AppImage", "~/.local/bin/DuckStation*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "-batch", "--", "{binary}"]
+[[emulator.artifact]]
+version = "2026-10-25"
+url = "https://github.com/stenzek/duckstation/releases/download/latest/DuckStation-x64.AppImage"
+sha256 = "4d5c3dcfd9937dc9e77b8fcd5f879b8ec0c69551d5ed13462592073608542fca"
+size = 94519584
+format = "file"
+entry = "DuckStation-x64.AppImage"
+
+[[emulator]]
+id = "mgba"
+name = "mGBA"
+summary = "Game Boy, Game Boy Color and Game Boy Advance emulator with a GDB stub"
+homepage = "https://mgba.io"
+platforms = ["Game Boy", "Game Boy Color", "Game Boy Advance"]
+formats = ["gba", "gb", "gbc", "elf", "mb"]
+license = "MPL-2.0"
+notice = "mGBA runs without a BIOS. The SHA-256 below was computed from upstream's release asset (GitHub publishes no digest for it)."
+[emulator.detect]
+names = ["mgba-qt", "mgba"]
+flatpak = "io.mgba.mGBA"
+paths = ["~/Applications/mGBA*.appimage", "~/Applications/mGBA*.AppImage", "~/.local/bin/mGBA*.appimage"]
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+gdb_argv = ["{exe}", "-g", "{binary}"]
+gdb_port = 2345
+[[emulator.artifact]]
+version = "0.10.5"
+url = "https://github.com/mgba-emu/mgba/releases/download/0.10.5/mGBA-0.10.5-appimage-x64.appimage"
+sha256 = "fdf0a5c1588e1606c38315735cf48a9f9dca3573f32a3947ebc956f8297e85cd"
+size = 25208000
+format = "file"
+entry = "mGBA-0.10.5-appimage-x64.appimage"
+
+[[emulator]]
+id = "melonds"
+name = "melonDS"
+summary = "Nintendo DS and DSi emulator"
+homepage = "https://melonds.kuribo64.net"
+platforms = ["Nintendo DS", "Nintendo DSi"]
+formats = ["nds", "dsi", "srl"]
+license = "GPL-3.0-or-later"
+notice = "melonDS runs without console firmware (with limits); the real BIOS and firmware are yours to dump."
+[emulator.detect]
+names = ["melonDS"]
+flatpak = "net.kuribo64.melonDS"
+paths = ["~/Applications/melonDS*", "~/.local/bin/melonDS*"]
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+[[emulator.artifact]]
+version = "1.1"
+url = "https://github.com/melonDS-emu/melonDS/releases/download/1.1/melonDS-1.1-ubuntu-x86_64.zip"
+sha256 = "99465129f5413b2aad332e4377e523cf3cda905dc329d47dcb1ad01ce2cb3f66"
+size = 1861751
+format = "zip"
+entry = "melonDS"
+
+[[emulator]]
+id = "ryubing"
+name = "Ryubing (Ryujinx fork)"
+summary = "Nintendo Switch emulator"
+homepage = "https://ryujinx.app"
+platforms = ["Nintendo Switch"]
+formats = ["nro", "nso", "nsp", "xci"]
+license = "MIT"
+notice = "Ryubing publishes releases on its own GitLab, which publishes no digests, so there is no pinned release for KRAKEN to verify yet: install it yourself and use the copy you have. It needs the console keys and firmware from your own Switch; KRAKEN does not handle them."
+[emulator.detect]
+names = ["Ryujinx", "ryujinx", "Ryubing"]
+flatpak = "io.github.ryubing.Ryujinx"
+paths = ["~/Applications/Ryujinx*", "~/.local/bin/Ryujinx*"]
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+
+[[emulator]]
+id = "cemu"
+name = "Cemu"
+summary = "Wii U emulator"
+homepage = "https://cemu.info"
+platforms = ["Wii U"]
+formats = ["rpx", "wud", "wux", "wua", "elf"]
+license = "MPL-2.0"
+notice = "Cemu needs the online files and keys from your own Wii U for some titles; KRAKEN does not fetch or ship them."
+[emulator.detect]
+names = ["Cemu", "cemu"]
+flatpak = "info.cemu.Cemu"
+paths = ["~/Applications/Cemu*.AppImage", "~/.local/bin/Cemu*.AppImage"]
+[emulator.run]
+argv = ["{exe}", "-g", "{binary}"]
+[[emulator.artifact]]
+version = "2.6"
+url = "https://github.com/cemu-project/Cemu/releases/download/v2.6/Cemu-2.6-x86_64.AppImage"
+sha256 = "0c20c4aeb800bb13d9bab9474ef45a6f8fcde6402cad9b32ac2a1bbd03186313"
+size = 61423960
+format = "file"
+entry = "Cemu-2.6-x86_64.AppImage"
+
+[[emulator]]
+id = "mame"
+name = "MAME"
+summary = "Arcade and many other systems"
+homepage = "https://www.mamedev.org"
+platforms = ["Arcade", "Many systems"]
+formats = []
+license = "GPL-2.0-or-later"
+notice = "Upstream publishes no Linux binary; install `mame` from your distribution. MAME needs the system name and a ROM path: pass them as extra arguments to emulator_run (for example `[\"-rompath\", \"/roms\"]`)."
+[emulator.detect]
+names = ["mame"]
+flatpak = "org.mamedev.MAME"
+probe = true
+[emulator.run]
+argv = ["{exe}", "-cart", "{binary}"]
+
+[[emulator]]
+id = "ares"
+name = "ares"
+summary = "Multi-system emulator"
+homepage = "https://ares-emu.net"
+platforms = ["Many systems"]
+formats = []
+license = "ISC"
+notice = "Upstream builds only Windows and macOS binaries; build or install ares for Linux yourself and use the copy you have."
+[emulator.detect]
+names = ["ares"]
+flatpak = "dev.ares.ares"
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+
+[[emulator]]
+id = "qemu-user-x86-64"
+name = "QEMU user mode (x86-64)"
+summary = "Runs a Linux x86-64 program on this computer, with a GDB stub"
+homepage = "https://www.qemu.org"
+kind = "tool"
+platforms = ["Linux x86-64 programs"]
+formats = ["elf"]
+license = "GPL-2.0-only"
+notice = "Install QEMU from your distribution (package `qemu-user`); KRAKEN detects it. User mode runs the program with this computer's system calls, so a hostile program can act on your files: KRAKEN asks before every run."
+[emulator.detect]
+names = ["qemu-x86_64"]
+probe = true
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+gdb_argv = ["{exe}", "-g", "{port}", "{binary}"]
+gdb_port = 1234
+gui = false
+
+[[emulator]]
+id = "qemu-user-aarch64"
+name = "QEMU user mode (AArch64)"
+summary = "Runs a Linux AArch64 program, with a GDB stub"
+homepage = "https://www.qemu.org"
+kind = "tool"
+platforms = ["Linux AArch64 programs"]
+formats = ["elf"]
+license = "GPL-2.0-only"
+notice = "Install QEMU from your distribution (package `qemu-user`); KRAKEN detects it. User mode forwards the program's system calls to this computer: KRAKEN asks before every run."
+[emulator.detect]
+names = ["qemu-aarch64"]
+probe = true
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+gdb_argv = ["{exe}", "-g", "{port}", "{binary}"]
+gdb_port = 1234
+gui = false
+
+[[emulator]]
+id = "qemu-user-arm"
+name = "QEMU user mode (ARM)"
+summary = "Runs a Linux 32-bit ARM program, with a GDB stub"
+homepage = "https://www.qemu.org"
+kind = "tool"
+platforms = ["Linux ARM programs"]
+formats = ["elf"]
+license = "GPL-2.0-only"
+notice = "Install QEMU from your distribution (package `qemu-user`); KRAKEN detects it. User mode forwards the program's system calls to this computer: KRAKEN asks before every run."
+[emulator.detect]
+names = ["qemu-arm"]
+probe = true
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+gdb_argv = ["{exe}", "-g", "{port}", "{binary}"]
+gdb_port = 1234
+gui = false
+
+[[emulator]]
+id = "qemu-user-riscv64"
+name = "QEMU user mode (RISC-V 64)"
+summary = "Runs a Linux RISC-V 64 program, with a GDB stub"
+homepage = "https://www.qemu.org"
+kind = "tool"
+platforms = ["Linux RISC-V programs"]
+formats = ["elf"]
+license = "GPL-2.0-only"
+notice = "Install QEMU from your distribution (package `qemu-user`); KRAKEN detects it. User mode forwards the program's system calls to this computer: KRAKEN asks before every run."
+[emulator.detect]
+names = ["qemu-riscv64"]
+probe = true
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+gdb_argv = ["{exe}", "-g", "{port}", "{binary}"]
+gdb_port = 1234
+gui = false
+
+[[emulator]]
+id = "wine"
+name = "Wine"
+summary = "Runs Windows programs on Linux"
+homepage = "https://www.winehq.org"
+kind = "compat_layer"
+platforms = ["Windows programs"]
+formats = ["exe", "dll", "msi"]
+license = "LGPL-2.1-or-later"
+notice = "Wine runs the Windows program with your user's rights: it can read and write your files. KRAKEN asks before every run. Install it from your distribution; KRAKEN detects it."
+[emulator.detect]
+names = ["wine", "wine64"]
+probe = true
+[emulator.run]
+argv = ["{exe}", "{binary}"]
+gui = true

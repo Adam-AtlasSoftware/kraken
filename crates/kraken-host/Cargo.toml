@@ -20,6 +20,7 @@ kraken-infer = { path = "../kraken-infer", version = "0.1.0" }
 kraken-ipc = { version = "0.1.0", path = "../kraken-ipc" }
 kraken-model = { version = "0.1.0", path = "../kraken-model" }
 kraken-proto.workspace = true
+lzma-rs = "0.3"
 kraken-registry = { path = "../kraken-registry", version = "0.1.0" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde.workspace = true

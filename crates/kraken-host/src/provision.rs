@@ -776,7 +776,59 @@ pub(crate) fn dos_to_unix_secs(
 /// Extracts a `.tar.gz` into `dest`, refusing unsafe entries and links that point outside.
 pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<(), ProvisionError> {
     let file = File::open(archive).map_err(io_err(format!("cannot open {}", archive.display())))?;
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    extract_tar_reader(flate2::read::GzDecoder::new(file), archive, dest)
+}
+
+/// Extracts a `.tar.xz` into `dest` under the same rules as [`extract_tar_gz`]. The xz stream is
+/// unpacked to a temporary file beside the archive first (bounded by [`MAX_EXTRACTED_BYTES`]).
+pub fn extract_tar_xz(archive: &Path, dest: &Path) -> Result<(), ProvisionError> {
+    let tmp = archive.with_extension("tar.unxz");
+    let result = (|| {
+        let input =
+            File::open(archive).map_err(io_err(format!("cannot open {}", archive.display())))?;
+        let mut out =
+            File::create(&tmp).map_err(io_err(format!("cannot create {}", tmp.display())))?;
+        let mut capped = CappedWriter {
+            inner: &mut out,
+            left: MAX_EXTRACTED_BYTES,
+        };
+        lzma_rs::xz_decompress(&mut io::BufReader::new(input), &mut capped)
+            .map_err(|e| ProvisionError::BadArchive(format!("{}: {e}", archive.display())))?;
+        out.flush()
+            .map_err(io_err(format!("cannot write {}", tmp.display())))?;
+        let tar = File::open(&tmp).map_err(io_err(format!("cannot open {}", tmp.display())))?;
+        extract_tar_reader(tar, archive, dest)
+    })();
+    let _ = fs::remove_file(&tmp);
+    result
+}
+
+/// A writer that fails once more than `left` bytes pass through (decompression bombs).
+struct CappedWriter<'a, W: Write> {
+    inner: &'a mut W,
+    left: u64,
+}
+
+impl<W: Write> Write for CappedWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.len() as u64 > self.left {
+            return Err(io::Error::other("archive expands beyond the size limit"));
+        }
+        self.left -= buf.len() as u64;
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn extract_tar_reader<R: Read>(
+    reader: R,
+    archive: &Path,
+    dest: &Path,
+) -> Result<(), ProvisionError> {
+    let mut tar = tar::Archive::new(reader);
     tar.set_preserve_permissions(false);
     // Same policy as zip: never leave group/other write bits on extracted files or directories.
     tar.set_mask(0o022);
