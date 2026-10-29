@@ -351,6 +351,10 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     step!("bookmark_list", json!({}));
     step!("bookmark_remove", json!({"address": "0x401040"}));
 
+    // Types, as C.
+    step!("types_list", json!({"name_filter": "po"}));
+    step!("type_get", json!({"name": "point", "dependencies": true}));
+
     // AI usage: nothing called a model here, so the ledger is empty on every surface.
     let usage = step!("ai_usage", json!({}));
     assert_eq!(usage["totals"]["calls"], 0, "{usage}");

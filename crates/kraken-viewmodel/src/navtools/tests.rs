@@ -168,6 +168,39 @@ fn bookmarks_are_added_listed_and_removed() {
 }
 
 #[test]
+fn types_are_listed_filtered_and_shown_as_c() {
+    let mut r = rig();
+    r.vm.ensure_types();
+    idle(&mut r.vm);
+    let names: Vec<&str> =
+        r.vm.tools
+            .types
+            .items
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+    assert_eq!(names, ["color", "point", "pt_t"]);
+
+    r.vm.set_types_kind("struct");
+    idle(&mut r.vm);
+    assert_eq!(r.vm.tools.types.items.len(), 1);
+    r.vm.set_types_kind("");
+    r.vm.set_types_filter("PT");
+    idle(&mut r.vm);
+    assert_eq!(r.vm.tools.types.items[0].name, "pt_t");
+    r.vm.set_types_filter("");
+    idle(&mut r.vm);
+
+    r.vm.select_type("point");
+    idle(&mut r.vm);
+    let decl = r.vm.tools.types.decl.as_ref().expect("declaration");
+    assert!(decl.c.starts_with("struct point {"), "{}", decl.c);
+    r.vm.select_type("nope");
+    idle(&mut r.vm);
+    assert!(r.vm.tools.types.decl.is_none() && r.vm.tools.types.decl_error.is_some());
+}
+
+#[test]
 fn signature_dialog_parses_inline_and_saves_through_set_type() {
     let mut r = rig();
     let helper = addr_of(&r.vm, "helper");

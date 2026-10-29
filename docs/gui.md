@@ -45,7 +45,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Edit, History, Proposals, Assistant, Rewrite, AI Activity. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Edit, History, Proposals, Assistant, Rewrite, Types, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -343,6 +343,18 @@ How to use it:
 - Open Rewrite > Rewrite in Rust to start the step-by-step wizard.
 - Review each function's plan, translation and test result in this tab.
 - Accept the ones you trust, then export and build.
+
+### Types
+
+The program's structs, enums, typedefs and function prototypes, shown as C.
+
+Types come from the program's debug information (DWARF), from KRAKEN's tables of libc and Windows functions, and from types you define. Pick one to read its C declaration, with the byte offset of every field. A program without debug information lists only the built-in prototypes.
+
+How to use it:
+
+- Type part of a name, or choose a kind, to narrow the list.
+- Click a type to read its declaration; tick the box to include the types it uses.
+- Agents can read the same list with the types_list and type_get commands.
 
 ### AI Activity
 

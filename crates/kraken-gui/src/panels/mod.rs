@@ -12,6 +12,7 @@ pub mod search;
 pub mod source_edit;
 pub mod strings;
 pub mod symbols;
+pub mod types;
 pub mod xrefs;
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ pub struct PanelState {
     pub graph: graph::GraphUi,
     pub strings: strings::StringsUi,
     pub symbols: symbols::SymbolsUi,
+    pub types: types::TypesUi,
     pub xrefs: xrefs::XrefsUi,
     pub search: search::SearchUi,
     /// Address under the pointer in the panel the person is working in; `X` asks about it.

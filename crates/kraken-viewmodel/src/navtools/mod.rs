@@ -9,6 +9,7 @@ mod form;
 mod patches;
 mod search;
 mod source_edit;
+mod types;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ pub use patches::{
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
+pub use types::{TypeDecl, TypeItem, TypesPanel};
 
 use kraken_proto::Page;
 use serde_json::json;
@@ -115,6 +117,8 @@ pub struct NavTools {
     pub search: SearchPanel,
     /// The Bookmarks tab.
     pub bookmarks: BookmarksPanel,
+    /// The Types tab.
+    pub types: TypesPanel,
     /// The bookmark note dialog, when open.
     pub bookmark_dialog: Option<BookmarkDialog>,
     /// The Patches tab.

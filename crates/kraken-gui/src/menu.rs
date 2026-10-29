@@ -39,7 +39,7 @@ pub struct MenuEnv<'a> {
 }
 
 /// The tabs the View menu lists, in menu order.
-pub const VIEW_TABS: [Tab; 17] = [
+pub const VIEW_TABS: [Tab; 18] = [
     Tab::Functions,
     Tab::Decompiler,
     Tab::Listing,
@@ -50,6 +50,7 @@ pub const VIEW_TABS: [Tab; 17] = [
     Tab::Symbols,
     Tab::Search,
     Tab::Bookmarks,
+    Tab::Types,
     Tab::Patches,
     Tab::Edit,
     Tab::History,

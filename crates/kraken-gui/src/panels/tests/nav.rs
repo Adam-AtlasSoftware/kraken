@@ -125,6 +125,31 @@ fn y_and_ctrl_d_open_their_dialogs_for_the_function_being_read() {
 }
 
 #[test]
+fn the_types_tab_lists_types_and_shows_the_picked_declaration() {
+    let mut h = Harness::demo();
+    h.app.bring_to_front(Tab::Types);
+    h.settle();
+    assert!(is_front(h.app.dock(), Tab::Types));
+    let vm = h.app.view_model().unwrap();
+    assert!(vm.tools.types.loaded);
+    let i = vm
+        .tools
+        .types
+        .items
+        .iter()
+        .position(|t| t.name == "point")
+        .expect("the demo has a struct named point");
+    // the list is a virtual list: rows are not individually addressable, so pick through the
+    // view-model as a click would, and check the tab draws it
+    h.app.view_model_mut().unwrap().select_type("point");
+    h.settle();
+    let vm = h.app.view_model().unwrap();
+    assert!(vm.tools.types.items.len() > i);
+    let c = &vm.tools.types.decl.as_ref().expect("declaration").c;
+    assert!(c.contains("struct point"), "{c}");
+}
+
+#[test]
 fn ctrl_shift_f_searches_and_clicking_a_result_navigates() {
     let mut h = Harness::demo();
     h.select("main");

@@ -50,7 +50,7 @@ pub struct UiActionArgs {
     pub action: Option<String>,
     /// Tab to open and focus (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`,
     /// `strings`, `symbols`, `history`, `proposals`, `assistant`, `rewrite`, `search`,
-    /// `bookmarks`, `ai_activity`).
+    /// `bookmarks`, `types`, `ai_activity`).
     #[serde(default)]
     pub tab: Option<String>,
     /// Address (or function entry) to show.

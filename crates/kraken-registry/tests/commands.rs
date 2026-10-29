@@ -76,6 +76,8 @@ const EXPECTED: &[&str] = &[
     "strings",
     "tainted_clear",
     "tainted_list",
+    "type_get",
+    "types_list",
     "ui_action",
     "ui_highlight",
     "ui_state",

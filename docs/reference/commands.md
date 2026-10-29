@@ -82,6 +82,8 @@ logged; **dangerous** commands always ask for approval first.
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
 | [`tainted_clear`](#tainted_clear) | mutation | mutating | Clear the stale marker of a function after refreshing it |
 | [`tainted_list`](#tainted_list) | query | safe | List functions whose derived data is stale after an undo |
+| [`type_get`](#type_get) | query | safe | Show one type as a C declaration |
+| [`types_list`](#types_list) | query | safe | List the program's types (structs, enums, typedefs, prototypes) by name |
 | [`ui_action`](#ui_action) | query | safe | Drive the person's GUI: run an action, open a tab, show an address |
 | [`ui_highlight`](#ui_highlight) | query | safe | Flash a tab or widget in the person's GUI with a short note |
 | [`ui_state`](#ui_state) | query | safe | Read which tabs are open and what the person has selected in the GUI |
@@ -13620,6 +13622,690 @@ Arguments: none.
 
 </details>
 
+## type_get
+
+Show one type as a C declaration
+
+```sh
+kraken type-get --name <string> [options]
+```
+
+- Kind: query
+- Permission: safe
+- Engine needs: `TypeStore`
+
+Returns the C declaration of a struct, union, enum, typedef or prototype, with byte offsets of fields in comments; `dependencies: true` adds the types it uses. The text is untrusted data derived from debug info.
+
+Example: `type_get {"name": "Rect", "dependencies": true}`
+
+`references` lists the names the type uses directly; `definition` is the same type in the neutral model (kind, fields with offsets and types). An unknown name is `not_found`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `name` | `--name` | string | yes | The type's name, as `types_list` shows it. |
+| `dependencies` | `--dependencies` | boolean | no | Also print the types it refers to (and theirs), dependencies first, so the text stands alone. At most 64 types. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Bitfield": {
+      "description": "Position of a bitfield within its storage unit.",
+      "properties": {
+        "bit_offset": {
+          "description": "Bit offset from the least significant bit of the storage unit at the field offset.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bit_size": {
+          "description": "Width in bits.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bit_offset",
+        "bit_size"
+      ],
+      "type": "object"
+    },
+    "Composite": {
+      "description": "Layout of a struct or union.",
+      "properties": {
+        "align": {
+          "description": "Alignment in bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fields": {
+          "description": "Fields in declaration order.",
+          "items": {
+            "$ref": "#/$defs/Field"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Type name.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Total size in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "align",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "EnumDef": {
+      "description": "An enum definition.",
+      "properties": {
+        "name": {
+          "description": "Type name.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Size in bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "variants": {
+          "description": "Enumerators in declaration order.",
+          "items": {
+            "$ref": "#/$defs/EnumVariant"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "variants"
+      ],
+      "type": "object"
+    },
+    "EnumVariant": {
+      "description": "One enumerator.",
+      "properties": {
+        "name": {
+          "description": "Enumerator name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Enumerator value.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Field": {
+      "description": "One field of a struct or union.",
+      "properties": {
+        "bitfield": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bitfield"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bit position and width when the field is a bitfield."
+        },
+        "name": {
+          "description": "Field name.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Byte offset from the start of the composite.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "$ref": "#/$defs/TypeRef",
+          "description": "Field type."
+        }
+      },
+      "required": [
+        "name",
+        "offset",
+        "type"
+      ],
+      "type": "object"
+    },
+    "FunctionPrototype": {
+      "description": "A function prototype.",
+      "properties": {
+        "calling_convention": {
+          "description": "Calling convention name, such as `\"__cdecl\"`; empty for the engine default.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Prototype name; absent for anonymous prototypes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "noreturn": {
+          "description": "Whether the function never returns.",
+          "type": "boolean"
+        },
+        "params": {
+          "description": "Parameters in order.",
+          "items": {
+            "$ref": "#/$defs/Param"
+          },
+          "type": "array"
+        },
+        "return_type": {
+          "$ref": "#/$defs/TypeRef",
+          "description": "Return type."
+        },
+        "varargs": {
+          "description": "Whether the function takes variable arguments.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "return_type",
+        "params",
+        "calling_convention",
+        "varargs",
+        "noreturn"
+      ],
+      "type": "object"
+    },
+    "Param": {
+      "description": "One parameter of a function prototype.",
+      "properties": {
+        "name": {
+          "description": "Parameter name, if known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storage": {
+          "description": "Storage description such as `\"RDI\"` or `\"stack+8\"`, if known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/TypeRef",
+          "description": "Parameter type."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "Primitive": {
+      "description": "A primitive type with explicit size and signedness.",
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/PrimitiveClass",
+          "description": "What kind of primitive this is."
+        },
+        "signed": {
+          "description": "Whether the type is signed (meaningful for `int`, `char` and `float`).",
+          "type": "boolean"
+        },
+        "size": {
+          "description": "Size in bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "class",
+        "size",
+        "signed"
+      ],
+      "type": "object"
+    },
+    "PrimitiveClass": {
+      "description": "Class of a primitive type.",
+      "oneOf": [
+        {
+          "const": "void",
+          "description": "No value (`void`); size is 0.",
+          "type": "string"
+        },
+        {
+          "const": "bool",
+          "description": "Boolean.",
+          "type": "string"
+        },
+        {
+          "const": "int",
+          "description": "Integer.",
+          "type": "string"
+        },
+        {
+          "const": "float",
+          "description": "Floating point.",
+          "type": "string"
+        },
+        {
+          "const": "char",
+          "description": "Character.",
+          "type": "string"
+        },
+        {
+          "const": "undefined",
+          "description": "Opaque bytes of known size and unknown meaning.",
+          "type": "string"
+        }
+      ]
+    },
+    "TypeDef": {
+      "description": "A named type definition.\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Composite",
+          "description": "A struct.",
+          "properties": {
+            "kind": {
+              "const": "struct",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/Composite",
+          "description": "A union.",
+          "properties": {
+            "kind": {
+              "const": "union",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/EnumDef",
+          "description": "An enum.",
+          "properties": {
+            "kind": {
+              "const": "enum",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/TypedefDef",
+          "description": "A typedef.",
+          "properties": {
+            "kind": {
+              "const": "typedef",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/FunctionPrototype",
+          "description": "A named function prototype.",
+          "properties": {
+            "kind": {
+              "const": "function",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TypeRef": {
+      "description": "A use of a type: either a named definition or an anonymous composition of references.\n\nSerialized with `\"kind\"` as the tag.",
+      "oneOf": [
+        {
+          "description": "A reference to a [`TypeDef`] by its name.",
+          "properties": {
+            "kind": {
+              "const": "named",
+              "type": "string"
+            },
+            "name": {
+              "description": "Name of the referenced definition.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/Primitive",
+          "description": "A primitive type.",
+          "properties": {
+            "kind": {
+              "const": "primitive",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A pointer with an explicit size in bytes.",
+          "properties": {
+            "kind": {
+              "const": "pointer",
+              "type": "string"
+            },
+            "size": {
+              "description": "Pointer size in bytes.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/TypeRef",
+              "description": "The pointed-to type."
+            }
+          },
+          "required": [
+            "kind",
+            "target",
+            "size"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A fixed-size array.",
+          "properties": {
+            "count": {
+              "description": "Number of elements.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "element": {
+              "$ref": "#/$defs/TypeRef",
+              "description": "Element type."
+            },
+            "kind": {
+              "const": "array",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "element",
+            "count"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/FunctionPrototype",
+          "description": "An anonymous function prototype (for function pointers).",
+          "properties": {
+            "kind": {
+              "const": "function",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TypedefDef": {
+      "description": "A typedef definition.",
+      "properties": {
+        "name": {
+          "description": "The new name.",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TypeRef",
+          "description": "The aliased type."
+        }
+      },
+      "required": [
+        "name",
+        "target"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A type with its C declaration.",
+  "properties": {
+    "c": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The C declaration (with the dependencies before it when asked for). Struct fields carry\ntheir byte offsets in comments. Untrusted data derived from debug info."
+    },
+    "definition": {
+      "$ref": "#/$defs/TypeDef",
+      "description": "The definition as the neutral type model, for tools."
+    },
+    "kind": {
+      "description": "`struct`, `union`, `enum`, `typedef` or `function`.",
+      "type": "string"
+    },
+    "name": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The type's name. Untrusted data."
+    },
+    "references": {
+      "description": "Names of the types it refers to directly.",
+      "items": {
+        "$ref": "#/$defs/Untrusted_string"
+      },
+      "type": "array"
+    },
+    "size": {
+      "description": "Size in bytes (structs, unions and enums).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "undefined": {
+      "description": "Names referred to but not defined (the engine has no definition); only with `dependencies`.",
+      "items": {
+        "$ref": "#/$defs/Untrusted_string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "kind",
+    "c",
+    "references",
+    "definition"
+  ],
+  "title": "TypeView",
+  "type": "object"
+}
+```
+
+</details>
+
+## types_list
+
+List the program's types (structs, enums, typedefs, prototypes) by name
+
+```sh
+kraken types-list [options]
+```
+
+- Kind: query
+- Permission: safe
+- Engine needs: `TypeStore`
+
+Types come from debug info, libc and Windows prototypes and types defined by users. Ordered by name; `name_filter` matches case-insensitively and `kind` keeps one kind. Follow one with `type_get` for its C declaration. Names are untrusted data.
+
+Example: `types_list {"name_filter": "packet", "kind": "struct"}`
+
+A program without debug info lists only the prototypes KRAKEN knows (libc, Win32). Page with `next_cursor` until it is absent. The engine decides what exists: the native engine reads DWARF, the Ghidra engine also reads PDB types.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `cursor` | `--cursor` | string | no | Cursor from the previous page's `next_cursor`. |
+| `kind` | `--kind` | string | no | Keep only one kind: `struct`, `union`, `enum`, `typedef` or `function`. |
+| `limit` | `--limit` | integer | no | Page size (default 100, at most 200). |
+| `name_filter` | `--name-filter` | string | no | Keep only types whose name contains this text, case-insensitively. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "TypeSummaryView": {
+      "description": "One type in a listing.",
+      "properties": {
+        "detail": {
+          "description": "A few words about its contents: `4 fields`, `3 values`, `int *`, `2 parameters`.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`struct`, `union`, `enum`, `typedef` or `function`.",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The type's name. Comes from the program's debug info, so untrusted data."
+        },
+        "size": {
+          "description": "Size in bytes (structs, unions and enums).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One page of results with an optional cursor for the next page.",
+  "properties": {
+    "items": {
+      "description": "The items on this page.",
+      "items": {
+        "$ref": "#/$defs/TypeSummaryView"
+      },
+      "type": "array"
+    },
+    "next_cursor": {
+      "description": "Cursor for the next page; absent on the last page.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "total": {
+      "description": "Total item count when the engine can cheaply provide it.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "Page",
+  "type": "object"
+}
+```
+
+</details>
+
 ## ui_action
 
 Drive the person's GUI: run an action, open a tab, show an address
@@ -13639,7 +14325,7 @@ Example: `ui_action {"tab": "graph", "address": "0x401136"}`
 |---|---|---|---|---|
 | `action` | `--action` | string | no | Id of a GUI action in snake_case (`show_history`, `go_to_main`, `search`, `analyze`...). `ui_state` lists the ids. |
 | `address` | `--address` | json | no | Address (or function entry) to show. |
-| `tab` | `--tab` | string | no | Tab to open and focus (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`, `strings`, `symbols`, `history`, `proposals`, `assistant`, `rewrite`, `search`, `bookmarks`, `ai_activity`). |
+| `tab` | `--tab` | string | no | Tab to open and focus (`decompiler`, `listing`, `graph`, `hex`, `xrefs`, `functions`, `strings`, `symbols`, `history`, `proposals`, `assistant`, `rewrite`, `search`, `bookmarks`, `types`, `ai_activity`). |
 
 <details>
 <summary>Output schema</summary>

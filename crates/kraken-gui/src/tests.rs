@@ -467,6 +467,7 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         Tab::Rewrite,
         Tab::Search,
         Tab::Bookmarks,
+        Tab::Types,
         Tab::Patches,
     ] {
         assert!(!t.title().is_empty());

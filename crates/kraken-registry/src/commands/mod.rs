@@ -28,6 +28,7 @@ mod rewrite;
 mod rewrite_build;
 mod rewrite_program;
 mod search;
+mod types;
 mod ui;
 mod undo_entry;
 
@@ -123,6 +124,9 @@ pub use rewrite_program::{
 pub use search::{
     DEFAULT_SEARCH_HITS, MAX_SCAN_BYTES, MAX_SCAN_FUNCTIONS, MAX_SEARCH_HITS, Search, SearchArgs,
     SearchHit, SearchKind, parse_pattern,
+};
+pub use types::{
+    TYPES_PAGE_CAP, TypeGet, TypeGetArgs, TypeSummaryView, TypeView, TypesList, TypesListArgs,
 };
 pub use ui::{
     DENIED_UI_ACTIONS, MAX_HIGHLIGHT_NOTE, UiAction, UiActionArgs, UiActionOut, UiHighlight,
@@ -258,6 +262,9 @@ pub fn register_all(r: &mut Registry) {
     r.register(LocalModelStop);
     // Card NAV: search and bookmarks.
     r.register(Search);
+    // Card DI-03: types as C.
+    r.register(TypesList);
+    r.register(TypeGet);
     r.register(BookmarkAdd);
     r.register(BookmarkRemove);
     r.register(BookmarkList);

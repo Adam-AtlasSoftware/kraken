@@ -215,6 +215,18 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         terms: &["function", "decompiler", "calling convention"],
     },
     PanelHelp {
+        panel: "Types",
+        short: "The program's structs, enums, typedefs and function prototypes, shown as C.",
+        text: "Types come from the program's debug information (DWARF), from KRAKEN's tables of libc and Windows functions, and from types you define. Pick one to read its C declaration, with the byte offset of every field. A program without debug information lists only the built-in prototypes.",
+        how: &[
+            "Type part of a name, or choose a kind, to narrow the list.",
+            "Click a type to read its declaration; tick the box to include the types it uses.",
+            "Agents can read the same list with the types_list and type_get commands.",
+        ],
+        keys: &[],
+        terms: &["symbol", "function"],
+    },
+    PanelHelp {
         panel: "AI Activity",
         short: "Which AI work runs, on which model, what it has cost so far, and a Stop button for each.",
         text: "Every piece of AI work on this project shows here: rewrite jobs started from this window, from the command line or by an agent, and the assistant's runs in this window. Each row says which model it asks, who started it, how many model calls it made and an estimate of the cost. Terminal agents are billed by their own subscription; local models are free.",

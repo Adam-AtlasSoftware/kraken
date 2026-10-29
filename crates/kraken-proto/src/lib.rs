@@ -9,6 +9,7 @@
 //! plain JSON numbers.
 
 pub mod ai;
+pub mod ctext;
 pub mod debuginfo;
 pub mod decompile;
 pub mod error;

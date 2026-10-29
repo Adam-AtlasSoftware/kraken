@@ -31,6 +31,7 @@ pub enum Tab {
     Rewrite,
     Search,
     Bookmarks,
+    Types,
     Patches,
     Edit,
     AiActivity,
@@ -57,13 +58,14 @@ impl Tab {
             Tab::Rewrite => "rewrite",
             Tab::Search => "search",
             Tab::Bookmarks => "bookmarks",
+            Tab::Types => "types",
             Tab::Patches => "patches",
             Tab::Edit => "edit",
             Tab::AiActivity => "ai_activity",
         }
     }
 
-    pub const ALL: [Tab; 17] = [
+    pub const ALL: [Tab; 18] = [
         Tab::Functions,
         Tab::Decompiler,
         Tab::Hex,
@@ -78,6 +80,7 @@ impl Tab {
         Tab::Rewrite,
         Tab::Search,
         Tab::Bookmarks,
+        Tab::Types,
         Tab::Patches,
         Tab::Edit,
         Tab::AiActivity,
@@ -99,6 +102,7 @@ impl Tab {
             Tab::Rewrite => "Rewrite",
             Tab::Search => "Search",
             Tab::Bookmarks => "Bookmarks",
+            Tab::Types => "Types",
             Tab::Patches => "Patches",
             Tab::Edit => "Edit",
             Tab::AiActivity => "AI Activity",
@@ -223,7 +227,12 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
         if dock.find_tab(&tab).is_none()
             && matches!(
                 tab,
-                Tab::Search | Tab::Bookmarks | Tab::Patches | Tab::Edit | Tab::AiActivity
+                Tab::Search
+                    | Tab::Bookmarks
+                    | Tab::Types
+                    | Tab::Patches
+                    | Tab::Edit
+                    | Tab::AiActivity
             )
         {
             if tab == Tab::Edit
@@ -329,6 +338,7 @@ impl TabViewer for Viewer<'_> {
             ),
             Tab::Search => panels::search::show(ui, self.vm, &mut self.ui.panels),
             Tab::Bookmarks => panels::bookmarks::show(ui, self.vm, &mut self.ui.panels),
+            Tab::Types => panels::types::show(ui, self.vm, &mut self.ui.panels),
             Tab::Patches => panels::patches::show(ui, self.vm),
             Tab::Edit => panels::source_edit::show(ui, self.vm),
             Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
