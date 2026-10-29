@@ -59,8 +59,9 @@ pub use edit::{
     SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
 };
 pub use emulate::{
-    DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateExit, EmulateExitKind, EmulateRun,
-    EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS,
+    DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateCompare, EmulateCompareArgs,
+    EmulateCompareOut, EmulateDifference, EmulateExit, EmulateExitKind, EmulateFile, EmulateInput,
+    EmulateRun, EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
 pub use help::{
@@ -306,4 +307,5 @@ pub fn register_all(r: &mut Registry) {
     r.register(AiJobs);
     // Card EMULATE: run the analysed program in the emulator.
     r.register(EmulateRun);
+    r.register(EmulateCompare);
 }

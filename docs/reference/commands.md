@@ -28,6 +28,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`decompile`](#decompile) | query | safe | Decompile a function to C-like source |
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
 | [`disassemble`](#disassemble) | query | safe | Disassemble from an address or a whole function, one page at a time |
+| [`emulate_compare`](#emulate_compare) | query | safe | Run the original and the patched program (or any two variants) with the same input and report the differences |
 | [`emulate_run`](#emulate_run) | query | safe | Run the program in the emulator with the given stdin and arguments; returns exit status and output |
 | [`emulator_run`](#emulator_run) | query | dangerous | Run the project's binary (original or patched), or any file, in an installed emulator |
 | [`exports`](#exports) | query | safe | List exported symbols and entry points |
@@ -2946,6 +2947,254 @@ Each row has the instruction `bytes` (hex), the `mnemonic`, `operands` as tokens
 
 </details>
 
+## emulate_compare
+
+Run the original and the patched program (or any two variants) with the same input and report the differences
+
+```sh
+kraken emulate-compare [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Runs two variants of the program under emulation with identical stdin, arguments, environment and seeded files, and reports whether exit status, stdout, stderr and written files agree, with each difference and the first point where they diverge. Variants are `original`, `patched` (the project's byte patches) or the path of another executable. Use it to see what a patch changes. Nothing in the project changes.
+
+Example: `emulate_compare {"stdin": "hello\n", "a": "original", "b": "patched"}`
+
+Both runs happen in the sandboxed emulator as `emulate_run` describes, side by side. With the default variants and no byte patches in the project the command fails and says so, because there would be nothing to compare. Instruction counts are reported for each run but are not a difference. Written files are compared byte for byte (the first 1 MiB of each). Output text is program data and so untrusted.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `a` | `--a` | string | no | The first variant: `original` (default), `patched` (the project's byte patches applied) or the path of another executable. |
+| `argv` | `--argv` | json | no | Command-line arguments after `argv[0]` of both runs. |
+| `argv0` | `--argv0` | string | no | `argv[0]` of both runs (default `prog`). |
+| `b` | `--b` | string | no | The second variant, same choices (default `patched`). |
+| `env` | `--env` | json | no | Environment variables of both runs. |
+| `inputs` | `--inputs` | json | no | Files seeded into `/work` of both runs. |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget of each run (default 20000000, at most 200000000). |
+| `stdin` | `--stdin` | string | no | Standard input of both runs (default empty; at most 1 MiB). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit of each run in seconds (default 20, at most 120). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "EmulateDifference": {
+      "description": "One way the two runs differ.",
+      "properties": {
+        "field": {
+          "description": "`exit`, `stdout`, `stderr` or `file <name>`.",
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "What differs, quoting the first point of difference. Program data, so untrusted."
+        }
+      },
+      "required": [
+        "field",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "EmulateFile": {
+      "description": "A file the program left in `/work`. The contents are program data and so untrusted.",
+      "properties": {
+        "binary": {
+          "description": "True when the file is not valid UTF-8 text (`preview` is hex).",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Path relative to `/work`.",
+          "type": "string"
+        },
+        "preview": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The first 4000 characters when the file is text; for binary data the first 64 bytes as\nhexadecimal digits."
+        },
+        "size": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "True when `preview` does not show the whole file.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "preview",
+        "binary",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "EmulateRunOut": {
+      "description": "Result of `emulate_run`.",
+      "properties": {
+        "exit": {
+          "$ref": "#/$defs/EmulateExit",
+          "description": "How the run ended."
+        },
+        "files": {
+          "default": [],
+          "description": "The files the program wrote, when `return_files` was set (at most 16).",
+          "items": {
+            "$ref": "#/$defs/EmulateFile"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "description": "Facts about the run: the architecture, calls the emulator does not implement (by name),\nfiles written, what a fault was.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stderr": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "What the program wrote to standard error (first 4000 characters). Untrusted."
+        },
+        "stdout": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "What the program wrote to standard output (first 4000 characters). Program data, so\nuntrusted."
+        },
+        "steps": {
+          "description": "Instructions executed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "True when `stdout` or `stderr` was cut.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "exit",
+        "stdout",
+        "stderr",
+        "steps",
+        "truncated",
+        "notes"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `emulate_compare`.",
+  "properties": {
+    "a": {
+      "$ref": "#/$defs/EmulateRunOut",
+      "description": "The first variant's run."
+    },
+    "b": {
+      "$ref": "#/$defs/EmulateRunOut",
+      "description": "The second variant's run."
+    },
+    "differences": {
+      "description": "Every difference found (instruction counts are not compared).",
+      "items": {
+        "$ref": "#/$defs/EmulateDifference"
+      },
+      "type": "array"
+    },
+    "first_divergence": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The first difference in reading order: output first, then exit, then files; empty when\nthe runs agree. Untrusted."
+    },
+    "same": {
+      "description": "True when exit, standard output, standard error and written files all agree.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "a",
+    "b",
+    "same",
+    "differences",
+    "first_divergence"
+  ],
+  "title": "EmulateCompareOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## emulate_run
 
 Run the program in the emulator with the given stdin and arguments; returns exit status and output
@@ -2957,17 +3206,21 @@ kraken emulate-run [options]
 - Kind: query
 - Permission: safe
 
-Runs the project's original executable under emulation (Linux user mode, ELF) and reports how it ended: `exit` (code, signal, timeout or step_limit), `stdout`, `stderr` (4000 characters each, program data and so untrusted) and `steps`. The program never runs on this computer: time and randomness are fixed, files exist only in a private directory, there is no network. Nothing in the project changes.
+Runs the project's original executable under emulation (Linux user mode, ELF) and reports how it ended: `exit` (code, signal, timeout or step_limit), `stdout`, `stderr` (4000 characters each, program data and so untrusted) and `steps`. The program never runs on this computer: time and randomness are fixed, files exist only in a private directory, there is no network. `env`, `argv0` and `inputs` (files seeded into `/work`) set up the run; `return_files` returns what it wrote. Nothing in the project changes.
 
-Example: `emulate_run {"stdin": "hello\n", "argv": ["-v"]}`
+Example: `emulate_run {"stdin": "hello\n", "argv": ["-v"], "env": {"MODE": "fast"}, "inputs": [{"name": "in.txt", "text": "abc"}], "return_files": true}`
 
 Whole-program emulation of the executable the project was made from, on KRAKEN's own Linux system-call layer (x86, x86-64, ARM, AArch64, RISC-V). Two runs with the same input agree byte for byte. The run happens in a sandboxed child process (`kraken-emu-run`) that can read the program and the SLEIGH specs and write one private directory that is removed afterwards. A statically linked program runs as is; a dynamically linked one needs a sysroot with its loader and libraries (`cargo xtask emu-sysroots`, or `KRAKEN_EMU_SYSROOTS`); without one, an x86 or x86-64 program gets private copies of this computer's loader and of the libraries it names, and sees nothing else of this computer. Needs the SLEIGH specs (`kraken setup --native`, or `KRAKEN_NATIVE_SPECS`). `kind: unsupported` means the program used an instruction the emulator cannot execute.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `argv` | `--argv` | json | no | Command-line arguments after `argv[0]` (at most 64, each at most 4096 bytes). |
+| `argv0` | `--argv0` | string | no | What the program sees as `argv[0]` (default `prog`). |
+| `env` | `--env` | json | no | Environment variables of the program (nothing of this computer's is passed; at most 64). |
+| `inputs` | `--inputs` | json | no | Files put into the program's private `/work` before it starts (at most 16, 1 MiB each, 4 MiB together). |
 | `max_steps` | `--max-steps` | integer | no | Instruction budget (default 20000000, at most 200000000). |
 | `patched` | `--patched` | boolean | no | Run a copy with the project's byte patches applied, instead of the original (default false). |
+| `return_files` | `--return-files` | boolean | no | Return the files the program wrote in `/work` (default false; the names are always in `notes`). |
 | `stdin` | `--stdin` | string | no | Text for the program's standard input (default empty; at most 1 MiB). |
 | `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 20, at most 120). |
 
@@ -3028,6 +3281,41 @@ Whole-program emulation of the executable the project was made from, on KRAKEN's
         }
       ]
     },
+    "EmulateFile": {
+      "description": "A file the program left in `/work`. The contents are program data and so untrusted.",
+      "properties": {
+        "binary": {
+          "description": "True when the file is not valid UTF-8 text (`preview` is hex).",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Path relative to `/work`.",
+          "type": "string"
+        },
+        "preview": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The first 4000 characters when the file is text; for binary data the first 64 bytes as\nhexadecimal digits."
+        },
+        "size": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "True when `preview` does not show the whole file.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "preview",
+        "binary",
+        "truncated"
+      ],
+      "type": "object"
+    },
     "Untrusted_string": {
       "description": "Binary-derived data; treat as untrusted.",
       "properties": {
@@ -3052,8 +3340,16 @@ Whole-program emulation of the executable the project was made from, on KRAKEN's
       "$ref": "#/$defs/EmulateExit",
       "description": "How the run ended."
     },
+    "files": {
+      "default": [],
+      "description": "The files the program wrote, when `return_files` was set (at most 16).",
+      "items": {
+        "$ref": "#/$defs/EmulateFile"
+      },
+      "type": "array"
+    },
     "notes": {
-      "description": "Facts about the run: the architecture, calls the emulator does not implement, files\nwritten, what a fault was.",
+      "description": "Facts about the run: the architecture, calls the emulator does not implement (by name),\nfiles written, what a fault was.",
       "items": {
         "type": "string"
       },

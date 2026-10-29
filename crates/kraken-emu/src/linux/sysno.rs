@@ -13,6 +13,150 @@ pub fn name(arch: Arch, nr: u64) -> Option<&'static str> {
         .map(|(_, s)| *s)
 }
 
+/// A readable name for system call `nr`: the layer's own name, else the kernel's name for a call
+/// it does not implement, else `syscall <nr>`. Used in reports so a user sees `socket` and not 41.
+pub fn describe(arch: Arch, nr: u64) -> String {
+    if let Some(n) = name(arch, nr) {
+        return n.to_string();
+    }
+    let extra: &[(u64, &str)] = match arch {
+        Arch::X86_64 => X86_64_EXTRA,
+        Arch::Aarch64 | Arch::Riscv64 | Arch::Riscv32 => GENERIC_EXTRA,
+        Arch::Arm => ARM_EXTRA,
+        Arch::X86 => I386_EXTRA,
+    };
+    match extra.iter().find(|(n, _)| *n == nr) {
+        Some((_, s)) => (*s).to_string(),
+        None => format!("syscall {nr}"),
+    }
+}
+
+/// Linux x86-64 calls the layer does not implement (named for reports only).
+const X86_64_EXTRA: &[(u64, &str)] = &[
+    (7, "poll"),
+    (22, "pipe"),
+    (23, "select"),
+    (24, "sched_yield"),
+    (25, "mremap"),
+    (32, "dup"),
+    (33, "dup2"),
+    (35, "nanosleep"),
+    (38, "setitimer"),
+    (41, "socket"),
+    (42, "connect"),
+    (43, "accept"),
+    (44, "sendto"),
+    (45, "recvfrom"),
+    (46, "sendmsg"),
+    (47, "recvmsg"),
+    (48, "shutdown"),
+    (49, "bind"),
+    (50, "listen"),
+    (51, "getsockname"),
+    (52, "getpeername"),
+    (54, "setsockopt"),
+    (55, "getsockopt"),
+    (56, "clone"),
+    (57, "fork"),
+    (58, "vfork"),
+    (59, "execve"),
+    (61, "wait4"),
+    (72, "fcntl"),
+    (74, "fsync"),
+    (78, "getdents"),
+    (80, "chdir"),
+    (82, "rename"),
+    (83, "mkdir"),
+    (84, "rmdir"),
+    (90, "chmod"),
+    (95, "umask"),
+    (98, "getrusage"),
+    (99, "sysinfo"),
+    (100, "times"),
+    (203, "sched_setaffinity"),
+    (204, "sched_getaffinity"),
+    (217, "getdents64"),
+    (230, "clock_nanosleep"),
+    (270, "pselect6"),
+    (271, "ppoll"),
+    (281, "epoll_pwait"),
+    (288, "accept4"),
+    (290, "eventfd2"),
+    (291, "epoll_create1"),
+    (292, "dup3"),
+    (293, "pipe2"),
+    (319, "memfd_create"),
+    (435, "clone3"),
+];
+
+/// Calls of the generic table (AArch64, RISC-V) the layer does not implement.
+const GENERIC_EXTRA: &[(u64, &str)] = &[
+    (19, "eventfd2"),
+    (20, "epoll_create1"),
+    (21, "epoll_ctl"),
+    (22, "epoll_pwait"),
+    (23, "dup"),
+    (24, "dup3"),
+    (25, "fcntl"),
+    (34, "mkdirat"),
+    (38, "renameat"),
+    (59, "pipe2"),
+    (61, "getdents64"),
+    (73, "ppoll"),
+    (82, "fsync"),
+    (101, "nanosleep"),
+    (115, "clock_nanosleep"),
+    (122, "sched_setaffinity"),
+    (123, "sched_getaffinity"),
+    (124, "sched_yield"),
+    (153, "times"),
+    (165, "getrusage"),
+    (166, "umask"),
+    (179, "sysinfo"),
+    (198, "socket"),
+    (200, "bind"),
+    (201, "listen"),
+    (202, "accept"),
+    (203, "connect"),
+    (204, "getsockname"),
+    (205, "getpeername"),
+    (206, "sendto"),
+    (207, "recvfrom"),
+    (208, "setsockopt"),
+    (209, "getsockopt"),
+    (210, "shutdown"),
+    (211, "sendmsg"),
+    (212, "recvmsg"),
+    (216, "mremap"),
+    (220, "clone"),
+    (221, "execve"),
+    (242, "accept4"),
+    (260, "wait4"),
+    (435, "clone3"),
+];
+
+/// ARM EABI calls the layer does not implement.
+const ARM_EXTRA: &[(u64, &str)] = &[
+    (2, "fork"),
+    (11, "execve"),
+    (114, "wait4"),
+    (120, "clone"),
+    (162, "nanosleep"),
+    (281, "socket"),
+    (283, "connect"),
+];
+
+/// i386 calls the layer does not implement.
+const I386_EXTRA: &[(u64, &str)] = &[
+    (2, "fork"),
+    (11, "execve"),
+    (102, "socketcall"),
+    (114, "wait4"),
+    (120, "clone"),
+    (158, "sched_yield"),
+    (162, "nanosleep"),
+];
+
 fn tables(arch: Arch) -> &'static [&'static [(u64, &'static str)]] {
     match arch {
         Arch::Aarch64 | Arch::Riscv64 => &[GENERIC, GENERIC64],
@@ -276,6 +420,10 @@ mod tests {
         assert_eq!(name(Arch::X86_64, 158), Some("arch_prctl"));
         assert_eq!(name(Arch::X86, 252), Some("exit_group"));
         assert_eq!(name(Arch::X86_64, 9999), None);
+        assert_eq!(describe(Arch::X86_64, 41), "socket");
+        assert_eq!(describe(Arch::Aarch64, 220), "clone");
+        assert_eq!(describe(Arch::X86_64, 9999), "syscall 9999");
+        assert_eq!(describe(Arch::X86_64, 1), "write");
     }
 
     #[test]

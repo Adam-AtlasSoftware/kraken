@@ -77,6 +77,45 @@ the CPU model. A program that really executes one ends with `kind: unsupported` 
   `cargo build -p kraken-emu --bin kraken-emu-run`; `KRAKEN_EMU_RUN` names another place).
 - A Linux host with Landlock ABI 4 or newer (the same requirement as the rewrite pipeline).
 
+## Environment, files and the program's name
+
+Besides `stdin` and `argv`, a run can be set up with:
+
+- `env`: environment variables, for example `{"MODE": "fast"}`. Nothing of this computer's
+  environment is passed.
+- `argv0`: what the program sees as its own name (default `prog`).
+- `inputs`: files put into `/work` before it starts, each `{"name": "in.txt", "text": "..."}` or
+  `{"name": "data.bin", "hex": "00ff10"}` (at most 16 files, 1 MiB each, 4 MiB together; the name
+  is a relative path without `..`).
+- `return_files`: also return the files the program wrote in `/work` (`files`, each with `name`,
+  `size`, a `preview` and whether it is `binary`). Files it only read are not listed. The contents
+  are program data, so they are marked untrusted.
+
+```
+emulate_run {"env": {"MODE": "fast"}, "inputs": [{"name": "in.txt", "text": "abc"}], "return_files": true}
+```
+
+System calls the emulator does not implement are named by architecture in `notes`
+(`socket (41)`, not `41`).
+
+## Comparing two runs
+
+`emulate_compare` runs two variants with the same stdin, arguments, environment and files and says
+how they differ: exit status, stdout, stderr and written files, with each difference and
+`first_divergence` (for output, the first differing line). The variants are `original`, `patched`
+(the project's byte patches applied to a copy) or the path of another executable; the default is
+original against patched.
+
+```
+emulate_compare {"stdin": "hello\n"}
+```
+
+In the GUI, the **Emulate** menu has *Run...*, *Run patched...* and *Compare original vs patched...*.
+The Run dialog takes the arguments, standard input, environment, input files and the step and time
+limits; the **Emulation** panel shows the exit, the output and the notes, and for a comparison the
+two runs side by side with the differing lines marked. The Patches tab's *Run original vs patched*
+opens the same comparison.
+
 ## How the assistant uses it
 
 The assistant calls `emulate_run` to check what it reads in the code: feed a function's expected
