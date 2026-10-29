@@ -3090,6 +3090,7 @@ dependencies = [
  "kraken-model",
  "kraken-proto",
  "kraken-sidecar",
+ "libc",
  "object 0.40.0",
  "schemars 1.2.3",
  "serde",

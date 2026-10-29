@@ -96,8 +96,9 @@ probe = true                  # ask `--version` and show it
 [emulator.run]
 argv = ["{exe}", "--machine", "board", "{binary}"]   # {exe} {binary} {dir} {port}
 gui = false                   # false: wait for it and show its output; true: leave it running
-gdb_argv = ["{exe}", "--machine", "board", "-gdb", "tcp::{port}", "-S", "{binary}"]
-gdb_port = 1234
+gdb_argv = ["{exe}", "--machine", "board", "-gdb", "unix:{dir}/gdb.sock,server=on,wait=off", "-S", "{binary}"]
+# a stub at {dir}/gdb.sock is reported as that path (gdb: target remote | or `target remote unix:`);
+# with a TCP {port} (gdb_port, default 1234) the stub may listen on all interfaces, and the result says so
 
 [[emulator.artifact]]         # optional: makes Install work
 version = "1.0"

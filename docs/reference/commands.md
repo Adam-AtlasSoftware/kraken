@@ -13736,7 +13736,7 @@ Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a `
 |---|---|---|---|---|
 | `binary` | `--binary` | string | yes | Path of the binary to analyse. |
 | `project_dir` | `--project-dir` | string | yes | Directory for the new project; created if missing and must not hold a project yet. |
-| `base` | `--base` | json | no | Address the image is mapped at (hex such as `0x08000000`); `0` for a raw image. |
+| `base` | `--base` | json | no | Raw images only: address the image is mapped at (hex such as `0x08000000`); default `0`. |
 | `compiler` | `--compiler` | string | no | Compiler spec (`gcc`, `windows`, `default`); the language's default when unset. |
 | `engine` | `--engine` | json | no | Engine for native code: `ghidra`, `native` (JVM-free; ELF and PE, x86 and x86-64) or `auto` (native when it can open the file, else Ghidra). Default: the `engine` setting. .NET assemblies always use the .NET engine. |
 | `entry` | `--entry` | json | no | Raw images: address where execution starts (a function entry; for Thumb code the low bit may be set). Default: the reset vector of an ARM Cortex-M vector table, else `base`. |

@@ -419,11 +419,19 @@ fn stage(root: &Path, id: &str, a: &Artifact, archive: &Path) -> Result<u64, Pro
         return Err(e);
     }
     let program = staging.join(&a.entry);
-    if !program.is_file() {
+    // A symbolic link in the archive may not lead the entry out of the install directory.
+    let inside = match (program.canonicalize(), staging.canonicalize()) {
+        (Ok(p), Ok(s)) => p.starts_with(&s) && p.is_file(),
+        _ => false,
+    };
+    if !inside {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(ProtoError::new(
             ErrorCode::Unsupported,
-            format!("the release does not contain `{}`", a.entry),
+            format!(
+                "the release does not contain `{}` (or it is a link leaving the install)",
+                a.entry
+            ),
         ));
     }
     make_executable(&program);

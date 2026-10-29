@@ -6,8 +6,10 @@
 //! around the program counter. The guest never runs natively and the project does not change.
 //!
 //! Sessions are owned by the registry [`Session`] (the daemon holds it): at most
-//! [`MAX_SESSIONS`] at a time, closed after [`IDLE_LIMIT`] without a command, when the project
-//! is closed or replaced, and when the daemon ends (the child dies with its parent).
+//! [`MAX_SESSIONS`] at a time (a slot is reserved before the child starts), closed after
+//! [`IDLE_LIMIT`] without a command (a background thread checks every [`REAP_EVERY`] while
+//! sessions exist), when the project is closed or replaced, and when the daemon ends (the child
+//! dies with its parent).
 //!
 //! Addresses in arguments and results are listing addresses (what the Listing tab shows); for a
 //! position-independent program they differ from the emulator's by `address_delta`. Register
@@ -34,6 +36,9 @@ use super::emulate::{
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
 use crate::session::{Session, blocking};
+
+/// How often the background thread looks for idle sessions.
+pub const REAP_EVERY: Duration = Duration::from_secs(60);
 
 /// Most debug sessions open at once.
 pub const MAX_SESSIONS: usize = 4;
@@ -85,6 +90,8 @@ impl Live {
 #[derive(Default)]
 struct Table {
     next: u64,
+    reserved: usize,
+    reaper: bool,
     sessions: HashMap<u64, Arc<Mutex<Live>>>,
 }
 
@@ -110,32 +117,91 @@ impl DebugTable {
         drop(drained);
     }
 
-    fn reap(t: &mut Table) {
-        t.sessions.retain(|_, v| match v.try_lock() {
-            Ok(l) => l.last_used.elapsed() < IDLE_LIMIT,
-            Err(_) => true,
+    fn reap(t: &mut Table) -> Vec<Arc<Mutex<Live>>> {
+        let mut gone = Vec::new();
+        t.sessions.retain(|_, v| {
+            let keep = match v.try_lock() {
+                Ok(l) => l.last_used.elapsed() < IDLE_LIMIT,
+                Err(_) => true,
+            };
+            if !keep {
+                gone.push(v.clone());
+            }
+            keep
         });
+        gone
     }
 
-    fn insert(&self, live: Live) -> Result<u64, ProtoError> {
+    /// Takes a slot before the child is started; dropped unused, it gives the slot back.
+    fn reserve(&self) -> Result<Slot, ProtoError> {
+        let (gone, result) = {
+            let mut t = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let gone = Self::reap(&mut t);
+            if t.sessions.len() + t.reserved >= MAX_SESSIONS {
+                (
+                    gone,
+                    Err(problem(
+                        ErrorCode::InvalidArgument,
+                        format!(
+                            "{MAX_SESSIONS} debug sessions are open; end one with debug_stop first"
+                        ),
+                    )),
+                )
+            } else {
+                t.reserved += 1;
+                (gone, Ok(()))
+            }
+        };
+        drop(gone);
+        result.map(|()| Slot {
+            table: self.clone(),
+            used: false,
+        })
+    }
+
+    fn insert(&self, mut slot: Slot, live: Live) -> u64 {
+        slot.used = true;
         let mut t = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::reap(&mut t);
-        if t.sessions.len() >= MAX_SESSIONS {
-            return Err(problem(
-                ErrorCode::InvalidArgument,
-                format!("{MAX_SESSIONS} debug sessions are open; end one with debug_stop first"),
-            ));
-        }
+        t.reserved = t.reserved.saturating_sub(1);
         t.next += 1;
         let id = t.next;
         t.sessions.insert(id, Arc::new(Mutex::new(live)));
-        Ok(id)
+        if !t.reaper {
+            t.reaper = true;
+            let weak = Arc::downgrade(&self.inner);
+            std::thread::spawn(move || Self::reap_loop(&weak, REAP_EVERY));
+        }
+        id
+    }
+
+    fn reap_loop(weak: &std::sync::Weak<Mutex<Table>>, every: Duration) {
+        loop {
+            std::thread::sleep(every);
+            let Some(inner) = weak.upgrade() else { return };
+            let (gone, stop) = {
+                let mut t = inner.lock().unwrap_or_else(PoisonError::into_inner);
+                let gone = Self::reap(&mut t);
+                let stop = t.sessions.is_empty();
+                if stop {
+                    t.reaper = false;
+                }
+                (gone, stop)
+            };
+            drop(gone);
+            if stop {
+                return;
+            }
+        }
     }
 
     fn get(&self, id: u64) -> Result<Arc<Mutex<Live>>, ProtoError> {
-        let mut t = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::reap(&mut t);
-        t.sessions.get(&id).cloned().ok_or_else(|| {
+        let (gone, found) = {
+            let mut t = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let gone = Self::reap(&mut t);
+            (gone, t.sessions.get(&id).cloned())
+        };
+        drop(gone);
+        found.ok_or_else(|| {
             problem(
                 ErrorCode::NotFound,
                 format!("no debug session {id}; it ended or was never started (debug_start)"),
@@ -153,11 +219,34 @@ impl DebugTable {
     }
 
     fn ids(&self) -> Vec<(u64, Arc<Mutex<Live>>)> {
-        let mut t = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::reap(&mut t);
-        let mut v: Vec<_> = t.sessions.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let (gone, mut v) = {
+            let mut t = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let gone = Self::reap(&mut t);
+            let v: Vec<_> = t.sessions.iter().map(|(k, v)| (*k, v.clone())).collect();
+            (gone, v)
+        };
+        drop(gone);
         v.sort_by_key(|(k, _)| *k);
         v
+    }
+}
+
+/// A reserved session slot.
+struct Slot {
+    table: DebugTable,
+    used: bool,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        if !self.used {
+            let mut t = self
+                .table
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            t.reserved = t.reserved.saturating_sub(1);
+        }
     }
 }
 
@@ -393,6 +482,7 @@ fn start(
     args: DebugStartArgs,
     patched: Patched,
 ) -> Result<DebugStartOut, ProtoError> {
+    let slot = table.reserve()?;
     let runner = find_runner().filter(|p| p.is_file()).ok_or_else(|| {
         problem(
             ErrorCode::Unsupported,
@@ -468,7 +558,7 @@ fn start(
         last_stop: None,
     };
     let pc = Hex64(live.to_listing(initial.pc));
-    let id = table.insert(live)?;
+    let id = table.insert(slot, live);
     Ok(DebugStartOut {
         session: id,
         arch: initial.arch,
@@ -1428,5 +1518,19 @@ impl Command for DebugStopSession {
             })
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+
+    #[test]
+    fn slots_are_reserved_before_a_start_and_given_back() {
+        let t = DebugTable::default();
+        let slots: Vec<_> = (0..MAX_SESSIONS).map(|_| t.reserve().unwrap()).collect();
+        assert!(t.reserve().is_err());
+        drop(slots);
+        assert!(t.reserve().is_ok());
     }
 }

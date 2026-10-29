@@ -674,7 +674,9 @@ fn launch(
     let pid = child.id();
     let started = Instant::now();
     // A windowed emulator is given a moment to fail (missing library, bad flag), then left running.
-    let limit = if spec.gui {
+    // A debug launch waits for the debugger, so it is left running like a windowed one.
+    let keep = spec.gui || args.debug;
+    let limit = if keep {
         Duration::from_millis(1500)
     } else {
         wait
@@ -688,7 +690,14 @@ fn launch(
                 break;
             }
             Ok(None) if started.elapsed() >= limit => {
-                if !spec.gui {
+                if !keep {
+                    #[cfg(unix)]
+                    if let Ok(pid) = i32::try_from(pid) {
+                        // SAFETY: plain kill(2) on the process group the child leads.
+                        unsafe {
+                            libc::kill(-pid, libc::SIGKILL);
+                        }
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                     timed_out = true;
@@ -705,15 +714,23 @@ fn launch(
             }
         }
     }
-    if spec.gui && !exited {
+    if keep && !exited {
         // Reaped by a thread so the finished emulator does not stay a zombie of the daemon.
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        notes.push("still running; close its window to end it".into());
+        notes.push(if spec.gui {
+            "still running; close its window to end it".into()
+        } else {
+            format!("still running, waiting for a debugger; stop it with `kill -- -{pid}`")
+        });
     }
-    let raw = std::fs::read(&log).unwrap_or_default();
-    let text = String::from_utf8_lossy(&raw[..raw.len().min(64 * 1024)]).into_owned();
+    let mut raw = Vec::new();
+    if let Ok(f) = std::fs::File::open(&log) {
+        use std::io::Read;
+        let _ = f.take(64 * 1024).read_to_end(&mut raw);
+    }
+    let text = String::from_utf8_lossy(&raw).into_owned();
     let cut = text.chars().count() > OUTPUT_CHARS;
     let output: String = sanitize(&text.chars().take(OUTPUT_CHARS).collect::<String>());
     if cut {
@@ -721,6 +738,18 @@ fn launch(
             "output cut to {OUTPUT_CHARS} characters; see the log"
         ));
     }
+    let gdb = args.debug.then(|| {
+        let socket = dir.join("gdb.sock");
+        if argv.iter().any(|a| a.contains(&*socket.to_string_lossy())) {
+            socket.display().to_string()
+        } else {
+            notes.push(
+                "the debugger stub is a TCP port; the emulator may listen on all interfaces, not only 127.0.0.1"
+                    .into(),
+            );
+            format!("127.0.0.1:{}", spec.gdb_port.unwrap_or(1234))
+        }
+    });
     Ok(EmulatorRunOut {
         emulator: spec.name.clone(),
         command: argv,
@@ -731,9 +760,7 @@ fn launch(
         timed_out,
         log: log.display().to_string(),
         output: Untrusted(output),
-        gdb: args
-            .debug
-            .then(|| format!("127.0.0.1:{}", spec.gdb_port.unwrap_or(1234))),
+        gdb,
         notes,
     })
 }
@@ -819,5 +846,57 @@ mod tests {
             dbg,
             ["/opt/t/t", "-gdb", "tcp::2345", "/x/a.xex", "--extra"]
         );
+    }
+
+    #[cfg(unix)]
+    fn pid_alive(pid: u32) -> bool {
+        // SAFETY: signal 0 only probes the process.
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_debug_launch_stays_alive_and_a_timeout_kills_the_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("prog");
+        std::fs::write(&file, b"x").unwrap();
+        let sock = |s: &mut LaunchSpec| {
+            s.exe = "/bin/sh".into();
+            s.argv = vec!["{exe}".into(), "-c".into(), "sleep 30 & wait".into()];
+            s.gdb_argv = Some(vec![
+                "{exe}".into(),
+                "-c".into(),
+                "sleep 30 & wait # {dir}/gdb.sock".into(),
+            ]);
+        };
+        let mut s = spec();
+        sock(&mut s);
+        let args = EmulatorRunArgs {
+            id: "t".into(),
+            debug: true,
+            ..Default::default()
+        };
+        let out = launch(&s, &file, &[], 0, &args, Duration::from_millis(100)).unwrap();
+        assert!(!out.exited && !out.timed_out, "{out:?}");
+        assert!(out.gdb.as_deref().unwrap().ends_with("gdb.sock"));
+        assert!(pid_alive(out.pid));
+        // SAFETY: kills the group of the process this test started.
+        unsafe { libc::kill(-(out.pid as i32), libc::SIGKILL) };
+
+        let args = EmulatorRunArgs {
+            id: "t".into(),
+            ..Default::default()
+        };
+        let out = launch(&s, &file, &[], 0, &args, Duration::from_millis(300)).unwrap();
+        assert!(out.timed_out, "{out:?}");
+        std::thread::sleep(Duration::from_millis(200));
+        // The shell's child (`sleep`) was in the group and is gone with it.
+        assert!(!pid_alive(out.pid));
+        let g = std::process::Command::new("pgrep")
+            .args(["-g", &out.pid.to_string()])
+            .output();
+        if let Ok(g) = g {
+            assert!(g.stdout.is_empty(), "group survivors");
+        }
     }
 }

@@ -208,7 +208,7 @@ pub struct ProjectCreateArgs {
     /// Compiler spec (`gcc`, `windows`, `default`); the language's default when unset.
     #[serde(default)]
     pub compiler: Option<String>,
-    /// Address the image is mapped at (hex such as `0x08000000`); `0` for a raw image.
+    /// Raw images only: address the image is mapped at (hex such as `0x08000000`); default `0`.
     #[serde(default)]
     pub base: Option<Hex64>,
     /// Raw images: file offset where the image starts (skips a header); default 0.
@@ -243,6 +243,12 @@ impl ProjectCreateArgs {
                 "a raw image needs `language`, the processor it was built for (for example \
                  `cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`; `binary_probe` \
                  suggests one)",
+            ));
+        }
+        if !raw && self.base.is_some() {
+            return Err(invalid(
+                "`base` applies to a raw image only: add `loader: raw` (PE and ELF files carry \
+                 their own load address)",
             ));
         }
         if !raw && (self.offset.is_some() || self.length.is_some() || self.entry.is_some()) {
@@ -472,5 +478,25 @@ impl Command for ProjectClose {
             closed: dir.is_some(),
             project_dir: dir.map(|d| d.to_string_lossy().into_owned()),
         })
+    }
+}
+
+#[cfg(test)]
+mod base_tests {
+    use super::*;
+
+    #[test]
+    fn base_is_for_raw_images_only() {
+        let args = |v: serde_json::Value| serde_json::from_value::<ProjectCreateArgs>(v).unwrap();
+        let e = args(serde_json::json!({"binary": "/a", "project_dir": "/p", "base": "0x1000"}))
+            .loader_spec()
+            .unwrap_err();
+        assert!(e.message.contains("raw"), "{e:?}");
+        let ok = args(serde_json::json!({
+            "binary": "/a", "project_dir": "/p", "base": "0x1000", "loader": "raw", "language": "arm"
+        }))
+        .loader_spec()
+        .unwrap();
+        assert_eq!(ok.base.map(|b| b.0), Some(0x1000));
     }
 }
