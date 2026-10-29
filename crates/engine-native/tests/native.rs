@@ -765,8 +765,18 @@ async fn compiled_specs_replace_a_ghidra_install() {
         "{}",
         r.text
     );
-    if let Some(g) =
-        NativeConfig::discover_ghidra().filter(|g| engine_native::has_specs(&g.spec_root))
+    // only an install of the pinned version can be byte-identical (an older one may still sit
+    // in the cache after the pin moves)
+    let pinned = |g: &NativeConfig| {
+        std::fs::read_to_string(g.spec_root.join("Ghidra/application.properties")).is_ok_and(|p| {
+            p.lines()
+                .filter_map(|l| l.strip_prefix("application.version="))
+                .any(|v| format!("Ghidra_{}_build", v.trim()) == engine_native::SOURCE_TAG)
+        })
+    };
+    if let Some(g) = NativeConfig::discover_ghidra()
+        .filter(|g| engine_native::has_specs(&g.spec_root))
+        .filter(pinned)
     {
         let rel = "Ghidra/Processors/x86/data/languages/x86-64.sla";
         let ours = std::fs::read(dir.join(rel)).expect("ours");
