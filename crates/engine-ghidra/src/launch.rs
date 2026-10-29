@@ -57,6 +57,47 @@ pub trait Launcher: Send + Sync {
 
 pub use real::GhidraLauncher;
 
+/// The PDB next to a program (`<stem>.pdb`, `<stem>.PDB`), which Ghidra's PDB analyzer looks for
+/// beside the image. Only files that exist are listed; the sidecar gets them read-only.
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
+pub(crate) fn sibling_pdbs(binary: &std::path::Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    for ext in ["pdb", "PDB"] {
+        let p = binary.with_extension(ext);
+        if p.is_file() && !found.iter().any(|f| same_file(f, &p)) {
+            found.push(p);
+        }
+    }
+    found
+}
+
+/// True when both paths name one file (case-insensitive file systems list `a.pdb` for `a.PDB`).
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sibling_pdbs;
+
+    #[test]
+    fn sibling_pdb_is_listed_only_when_it_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("app.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        assert!(sibling_pdbs(&exe).is_empty());
+        let pdb = dir.path().join("app.pdb");
+        std::fs::write(&pdb, b"pdb").unwrap();
+        assert_eq!(sibling_pdbs(&exe), vec![pdb]);
+        let elf = dir.path().join("prog");
+        std::fs::write(&elf, b"x").unwrap();
+        assert!(sibling_pdbs(&elf).is_empty());
+    }
+}
+
 #[cfg(any(unix, windows))]
 mod real {
     use std::ffi::OsString;
@@ -66,7 +107,7 @@ mod real {
     use kraken_proto::{ErrorCode, ProtoError};
     use tempfile::TempDir;
 
-    use super::{LaunchPlan, Launched, Launcher, Session};
+    use super::{LaunchPlan, Launched, Launcher, Session, sibling_pdbs};
     use crate::error::GhidraError;
     use crate::install::GhidraInstall;
     use crate::log::LogSink;
@@ -142,7 +183,7 @@ mod real {
                     i.ext_jar.clone(),
                     plan.binary.clone(),
                 ],
-                optional_read_only: Vec::new(),
+                optional_read_only: sibling_pdbs(&plan.binary),
                 proc_self_read: false,
                 read_write: vec![home.to_path_buf(), plan.project_dir.clone()],
                 options: self.confinement.clone(),

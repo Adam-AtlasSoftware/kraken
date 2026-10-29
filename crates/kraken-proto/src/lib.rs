@@ -9,6 +9,7 @@
 //! plain JSON numbers.
 
 pub mod ai;
+pub mod debuginfo;
 pub mod decompile;
 pub mod error;
 pub mod hex;
@@ -29,6 +30,7 @@ pub use ai::{
     AiBilling, AiCallRecord, AiEstimate, AiFeature, AiJobStatus, AiJobView, AiOrigin,
     AiProviderKind, AiUsageTotals, money, short_count,
 };
+pub use debuginfo::{DebugLink, DebugRefs, DwarfState, PdbRef};
 pub use decompile::{DecompileResult, LANGUAGE_C, LANGUAGE_CSHARP, Token, TokenKind};
 pub use error::{ErrorCode, ProtoError};
 pub use hex::{Hex64, ParseHexError};

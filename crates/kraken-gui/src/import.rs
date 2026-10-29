@@ -212,6 +212,58 @@ pub fn members_note(p: &BinaryProbeOut) -> Option<String> {
 }
 
 /// The facts below the summary, as (label, value, explanation) rows.
+/// The debug-information row, worded for the three states: in the file, named but elsewhere, none.
+fn debug_row(p: &BinaryProbeOut) -> Option<(&'static str, String, &'static str)> {
+    let refs = p.debug.as_ref();
+    let embedded = refs.map_or(p.debug_info == Some(true), |r| r.embedded());
+    if embedded {
+        let how = match refs.and_then(|r| r.dwarf) {
+            Some(kraken_proto::DwarfState::Compressed) => "Included in the file (compressed)",
+            _ => "Included in the file",
+        };
+        return Some((
+            "Debug information",
+            how.to_string(),
+            "The compiler left debug data in the program: KRAKEN uses it for names, types and parameters.",
+        ));
+    }
+    if let Some(r) = refs {
+        if let Some(pdb) = &r.pdb {
+            return Some((
+                "Debug information",
+                format!("In a separate PDB ({})", file_name(&pdb.name.0)),
+                "The program names a PDB file that holds its debug data. It is not inside the program. Keep the PDB next to the program when you import it (the Ghidra engine reads it from there).",
+            ));
+        }
+        if let Some(l) = &r.debuglink {
+            return Some((
+                "Debug information",
+                format!("In a separate file ({})", l.name.0),
+                "The program was split from its debug data, which lives in the named file (or a debug package of your system). It is not inside the program.",
+            ));
+        }
+        if r.external() {
+            return Some((
+                "Debug information",
+                "In a separate file".to_string(),
+                "The program points at debug data kept in another file. It is not inside the program.",
+            ));
+        }
+    }
+    p.debug_info.map(|_| {
+        (
+            "Debug information",
+            "None".to_string(),
+            "No debug data and no reference to any. Types and parameter names are guessed by the decompiler.",
+        )
+    })
+}
+
+/// The last component of a Windows or Unix path.
+fn file_name(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
 pub fn fact_rows(p: &BinaryProbeOut) -> Vec<(&'static str, String, &'static str)> {
     let mut rows = Vec::new();
     if let Some(stripped) = p.stripped {
@@ -229,20 +281,8 @@ pub fn fact_rows(p: &BinaryProbeOut) -> Vec<(&'static str, String, &'static str)
             )
         });
     }
-    if let Some(debug) = p.debug_info {
-        rows.push(if debug {
-            (
-                "Debug information",
-                "Present".to_string(),
-                "Extra data the compiler left in: KRAKEN uses it for names, types and parameters.",
-            )
-        } else {
-            (
-                "Debug information",
-                "None".to_string(),
-                "No debug data. Types and parameter names are guessed by the decompiler.",
-            )
-        });
+    if let Some(row) = debug_row(p) {
+        rows.push(row);
     }
     if let Some(e) = p.entry_point {
         rows.push((
@@ -791,5 +831,52 @@ mod tests {
             Path::new(&d.project_dir()),
             Path::new("/elsewhere/pie_list-O0")
         );
+    }
+
+    fn probe_with(debug_info: Option<bool>, debug: serde_json::Value) -> BinaryProbeOut {
+        let mut v = serde_json::json!({
+            "path": {"untrusted": true, "value": "/x/app.exe"},
+            "format": "pe", "kind": "executable", "description": "d", "size": 1,
+            "sha256": "00", "recommended_reason": "r", "engines": [], "supported": true,
+            "debug": debug,
+        });
+        if let Some(b) = debug_info {
+            v["debug_info"] = b.into();
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn debug_value(p: &BinaryProbeOut) -> Option<String> {
+        fact_rows(p)
+            .into_iter()
+            .find(|r| r.0 == "Debug information")
+            .map(|r| r.1)
+    }
+
+    #[test]
+    fn debug_information_row_tells_the_three_states_apart() {
+        let pdb = serde_json::json!({"pdb": {"name": {"untrusted": true,
+            "value": "C:\\build\\app.pdb"}, "guid": "G", "age": 2}});
+        let p = probe_with(Some(false), pdb);
+        assert_eq!(
+            debug_value(&p).as_deref(),
+            Some("In a separate PDB (app.pdb)")
+        );
+        let link = serde_json::json!({"debuglink": {"name": {"untrusted": true,
+            "value": "app.debug"}, "crc": 1}});
+        let p = probe_with(Some(false), link);
+        assert_eq!(
+            debug_value(&p).as_deref(),
+            Some("In a separate file (app.debug)")
+        );
+        let p = probe_with(Some(true), serde_json::json!({"dwarf": "embedded"}));
+        assert_eq!(debug_value(&p).as_deref(), Some("Included in the file"));
+        let p = probe_with(Some(true), serde_json::json!({"dwarf": "compressed"}));
+        assert_eq!(
+            debug_value(&p).as_deref(),
+            Some("Included in the file (compressed)")
+        );
+        let p = probe_with(Some(false), serde_json::json!({}));
+        assert_eq!(debug_value(&p).as_deref(), Some("None"));
     }
 }

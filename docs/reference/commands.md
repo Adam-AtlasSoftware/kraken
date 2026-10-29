@@ -1099,6 +1099,92 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
         }
       ]
     },
+    "DebugLink": {
+      "description": "A `.gnu_debuglink` section: the name of a separate debug file and the CRC-32 of its bytes.",
+      "properties": {
+        "crc": {
+          "description": "CRC-32 of the debug file's contents.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "File name of the debug file."
+        }
+      },
+      "required": [
+        "name",
+        "crc"
+      ],
+      "type": "object"
+    },
+    "DebugRefs": {
+      "description": "The debug-information references of a binary. Every field is absent when the file has none.",
+      "properties": {
+        "build_id": {
+          "description": "The GNU build-id, lower-case hex: the key of `/usr/lib/debug/.build-id/..` files.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "debuglink": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugLink"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The separate debug file named by `.gnu_debuglink`."
+        },
+        "dwarf": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DwarfState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "DWARF inside (or beside) the file."
+        },
+        "pdb": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PdbRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The PDB a PE image names."
+        }
+      },
+      "type": "object"
+    },
+    "DwarfState": {
+      "description": "Where DWARF is, when the file has some.",
+      "oneOf": [
+        {
+          "const": "embedded",
+          "description": "Plain DWARF sections inside the file.",
+          "type": "string"
+        },
+        {
+          "const": "compressed",
+          "description": "DWARF sections inside the file that are compressed (zlib or zstd).",
+          "type": "string"
+        },
+        {
+          "const": "split",
+          "description": "The file points at DWARF kept in another file (`.gnu_debugaltlink`, `.debug_sup`, `.dwo`).",
+          "type": "string"
+        }
+      ]
+    },
     "EngineKind": {
       "description": "The engine behind a project, recorded in `meta.json` so a project reopens with the engine\nthat created it.",
       "oneOf": [
@@ -1149,6 +1235,31 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
       "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
       "type": "string"
     },
+    "PdbRef": {
+      "description": "A PDB that a PE image points at (its CodeView record).",
+      "properties": {
+        "age": {
+          "description": "The PDB's age (how often it was updated).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "guid": {
+          "description": "The PDB's GUID, upper-case with dashes (`DEADBEEF-...`).",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The path the linker recorded."
+        }
+      },
+      "required": [
+        "name",
+        "guid",
+        "age"
+      ],
+      "type": "object"
+    },
     "Untrusted_string": {
       "description": "Binary-derived data; treat as untrusted.",
       "properties": {
@@ -1186,8 +1297,19 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
         "null"
       ]
     },
+    "debug": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DebugRefs"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The debug references the file carries: PDB name, GUID and age, build-id, debug-link,\nDWARF state. Absent when unknown (header-only probe)."
+    },
     "debug_info": {
-      "description": "True when debug information (DWARF, or a PDB reference) is present; absent when unknown.",
+      "description": "True when debug information is inside the file (DWARF sections); a PDB reference or a\ndebug-link names data that is not there and does not count. Absent when unknown.",
       "type": [
         "boolean",
         "null"

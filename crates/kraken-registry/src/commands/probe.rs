@@ -4,9 +4,11 @@ use std::io::Read;
 use std::path::Path;
 
 use async_trait::async_trait;
-use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
+use kraken_proto::{
+    DebugLink, DebugRefs, DwarfState, ErrorCode, Hex64, PdbRef, ProtoError, Untrusted,
+};
 use object::read::pe::ImageNtHeaders;
-use object::{FileKind, LittleEndian, Object, ObjectKind, ObjectSymbol};
+use object::{FileKind, LittleEndian, Object, ObjectKind, ObjectSection, ObjectSymbol};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -106,9 +108,14 @@ pub struct BinaryProbeOut {
     /// True when the file has no symbol table (function names are gone); absent when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stripped: Option<bool>,
-    /// True when debug information (DWARF, or a PDB reference) is present; absent when unknown.
+    /// True when debug information is inside the file (DWARF sections); a PDB reference or a
+    /// debug-link names data that is not there and does not count. Absent when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_info: Option<bool>,
+    /// The debug references the file carries: PDB name, GUID and age, build-id, debug-link,
+    /// DWARF state. Absent when unknown (header-only probe).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug: Option<DebugRefs>,
     /// Where execution starts; absent for formats without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_point: Option<Hex64>,
@@ -136,6 +143,7 @@ struct Facts {
     little: Option<bool>,
     stripped: Option<bool>,
     debug_info: Option<bool>,
+    debug: Option<DebugRefs>,
     entry: Option<u64>,
     description: Option<String>,
     members: Vec<String>,
@@ -455,15 +463,12 @@ fn facts_of(data: &[u8], whole: bool) -> Facts {
             ..Facts::default()
         };
     };
-    let (stripped, debug_info) = if whole {
-        let pdb = f.pdb_info().ok().flatten().is_some();
-        (
-            Some(f.symbols().next().is_none()),
-            Some(f.has_debug_symbols() || pdb),
-        )
+    let (stripped, debug) = if whole {
+        (Some(f.symbols().next().is_none()), Some(debug_refs(&f)))
     } else {
         (None, None)
     };
+    let debug_info = debug.as_ref().map(DebugRefs::embedded);
     let entry = f.entry();
     // A position-independent executable is a shared object with an interpreter.
     let kind = match f.kind() {
@@ -492,9 +497,81 @@ fn facts_of(data: &[u8], whole: bool) -> Facts {
         little: Some(f.is_little_endian()),
         stripped,
         debug_info,
+        debug,
         entry: (entry != 0).then_some(entry),
         members: Vec::new(),
     }
+}
+
+/// A CodeView GUID as text: Data1 (LE u32), Data2 and Data3 (LE u16), then Data4 byte by byte.
+fn format_guid(g: &[u8; 16]) -> String {
+    format!(
+        "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        u32::from_le_bytes([g[0], g[1], g[2], g[3]]),
+        u16::from_le_bytes([g[4], g[5]]),
+        u16::from_le_bytes([g[6], g[7]]),
+        g[8],
+        g[9],
+        g[10],
+        g[11],
+        g[12],
+        g[13],
+        g[14],
+        g[15],
+    )
+}
+
+/// The debug references of a parsed file.
+fn debug_refs(f: &object::File) -> DebugRefs {
+    let mut refs = DebugRefs::default();
+    if let Ok(Some(p)) = f.pdb_info() {
+        refs.pdb = Some(PdbRef {
+            name: Untrusted::sanitized(&String::from_utf8_lossy(p.path())),
+            guid: format_guid(&p.guid()),
+            age: p.age(),
+        });
+    }
+    if let Ok(Some(id)) = f.build_id() {
+        refs.build_id = Some(id.iter().map(|b| format!("{b:02x}")).collect());
+    }
+    if let Ok(Some((name, crc))) = f.gnu_debuglink() {
+        refs.debuglink = Some(DebugLink {
+            name: Untrusted::sanitized(&String::from_utf8_lossy(name)),
+            crc,
+        });
+    }
+    let (mut plain, mut compressed, mut split) = (false, false, false);
+    for s in f.sections() {
+        let Ok(name) = s.name() else { continue };
+        match name {
+            ".gnu_debugaltlink" | ".debug_sup" => split = true,
+            n if n.ends_with(".dwo") => split = true,
+            n if n.starts_with(".zdebug_") => compressed = true,
+            n if n.starts_with(".debug_") => {
+                let flagged = matches!(
+                    s.flags(),
+                    object::SectionFlags::Elf { sh_flags, .. }
+                        if sh_flags.contains(object::elf::SHF_COMPRESSED)
+                );
+                if flagged {
+                    compressed = true;
+                } else {
+                    plain = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    refs.dwarf = if compressed {
+        Some(DwarfState::Compressed)
+    } else if plain {
+        Some(DwarfState::Embedded)
+    } else if split {
+        Some(DwarfState::Split)
+    } else {
+        None
+    };
+    refs
 }
 
 /// Why an archive goes to the native engine.
@@ -622,6 +699,7 @@ pub fn probe_binary(
         sha256,
         stripped: facts.stripped,
         debug_info: facts.debug_info,
+        debug: facts.debug,
         entry_point: facts.entry.map(Hex64),
         recommended_engine,
         recommended_reason,
@@ -722,6 +800,62 @@ mod tests {
         let stripped = probe_binary(&OneEngine, &corpus("bin/pie_list-O0-stripped")).unwrap();
         assert_eq!(stripped.stripped, Some(true));
         assert_eq!(stripped.debug_info, Some(false));
+    }
+
+    #[test]
+    fn debug_references_are_reported_by_kind() {
+        let guid = [
+            0x78, 0x56, 0x34, 0x12, 0xbc, 0x9a, 0xf0, 0xde, 1, 2, 3, 4, 5, 6, 7, 8,
+        ];
+        assert_eq!(format_guid(&guid), "12345678-9ABC-DEF0-0102-030405060708");
+
+        let src = corpus("bin/pie_list-O0");
+        let plain = probe_binary(&OneEngine, &src).unwrap();
+        let d = plain.debug.expect("whole-file probe has debug references");
+        assert_eq!(d.dwarf, Some(DwarfState::Embedded));
+        assert!(d.pdb.is_none() && d.debuglink.is_none());
+
+        let dir = tempfile::tempdir().unwrap();
+        let run = |args: &[&std::ffi::OsStr]| {
+            std::process::Command::new("objcopy")
+                .args(args)
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        let (stripped, debug, comp) = (
+            dir.path().join("p.stripped"),
+            dir.path().join("p.debug"),
+            dir.path().join("p.zst"),
+        );
+        let o = std::ffi::OsStr::new;
+        if !run(&[o("--only-keep-debug"), src.as_os_str(), debug.as_os_str()])
+            || !run(&[o("--strip-debug"), src.as_os_str(), stripped.as_os_str()])
+            || !run(&[
+                o("--add-gnu-debuglink"),
+                debug.as_os_str(),
+                stripped.as_os_str(),
+            ])
+            || !run(&[
+                o("--compress-debug-sections=zstd"),
+                src.as_os_str(),
+                comp.as_os_str(),
+            ])
+        {
+            eprintln!("objcopy is not available; the debuglink and compression cases are skipped");
+            return;
+        }
+        let s = probe_binary(&OneEngine, &stripped).unwrap();
+        assert_eq!(s.debug_info, Some(false), "debug data is not in the file");
+        let d = s.debug.unwrap();
+        assert_eq!(d.dwarf, None);
+        let link = d.debuglink.clone().expect("debuglink");
+        assert_eq!(link.name.0, "p.debug");
+        assert_ne!(link.crc, 0);
+        assert!(d.external());
+
+        let c = probe_binary(&OneEngine, &comp).unwrap();
+        assert_eq!(c.debug_info, Some(true));
+        assert_eq!(c.debug.unwrap().dwarf, Some(DwarfState::Compressed));
     }
 
     #[test]
