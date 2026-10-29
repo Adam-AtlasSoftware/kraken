@@ -61,14 +61,14 @@ pub struct PatchIntentOut {
 }
 
 /// The arguments every intent shares are repeated on each command so the schemas stay flat.
-struct Planned {
-    intent: &'static str,
-    address: Hex64,
-    original: Vec<u8>,
-    replacement: Vec<u8>,
-    old: Vec<DisasmRow>,
-    notes: Vec<String>,
-    isa: Option<Isa>,
+pub(super) struct Planned {
+    pub(super) intent: &'static str,
+    pub(super) address: Hex64,
+    pub(super) original: Vec<u8>,
+    pub(super) replacement: Vec<u8>,
+    pub(super) old: Vec<DisasmRow>,
+    pub(super) notes: Vec<String>,
+    pub(super) isa: Option<Isa>,
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -85,7 +85,7 @@ fn line(row: &DisasmRow) -> String {
 }
 
 /// The `count` instructions that start at `address`. The first must start exactly there.
-async fn instructions(
+pub(super) async fn instructions(
     project: &Project,
     ctx: &CallContext,
     address: Hex64,
@@ -123,7 +123,7 @@ fn instruction_bytes(rows: &[DisasmRow]) -> Vec<u8> {
     rows.iter().flat_map(|r| unhex(&r.bytes)).collect()
 }
 
-fn isa_for(project: &Project, rows: &[DisasmRow]) -> Result<Isa, ProtoError> {
+pub(super) fn isa_for(project: &Project, rows: &[DisasmRow]) -> Result<Isa, ProtoError> {
     let arch = project.program().arch;
     let thumb = rows.first().is_some_and(|r| r.bytes.len() == 4);
     Isa::from_language(&arch, thumb).ok_or_else(|| {
@@ -168,12 +168,13 @@ fn decode_new(isa: Isa, address: u64, bytes: &[u8]) -> Option<Vec<String>> {
     Some(out)
 }
 
-async fn finish(
+pub(super) async fn finish(
     s: &Session,
     ctx: &CallContext,
     plan: Planned,
     note: Option<String>,
     preview: bool,
+    group: Option<String>,
 ) -> Result<PatchIntentOut, ProtoError> {
     if plan.replacement.len() > MAX_PATCH_BYTES {
         return Err(invalid(format!(
@@ -205,7 +206,7 @@ async fn finish(
     let edit = if preview {
         None
     } else {
-        Some(set_patch(s, ctx, plan.address, plan.replacement.clone(), note).await?)
+        Some(set_patch(s, ctx, plan.address, plan.replacement.clone(), note, group).await?)
     };
     Ok(PatchIntentOut {
         intent: plan.intent.to_string(),
@@ -326,7 +327,7 @@ impl Command for PatchNop {
             notes: Vec::new(),
             isa: Some(isa),
         };
-        finish(s, ctx, plan, args.note, args.preview).await
+        finish(s, ctx, plan, args.note, args.preview, None).await
     }
 }
 
@@ -425,7 +426,7 @@ impl Command for PatchBranch {
             notes,
             isa: Some(isa),
         };
-        finish(s, ctx, plan, args.note, args.preview).await
+        finish(s, ctx, plan, args.note, args.preview, None).await
     }
 }
 
@@ -521,7 +522,7 @@ impl Command for PatchReturn {
             notes,
             isa: Some(isa),
         };
-        finish(s, ctx, plan, args.note, args.preview).await
+        finish(s, ctx, plan, args.note, args.preview, None).await
     }
 }
 
@@ -602,7 +603,7 @@ impl Command for PatchFill {
             notes: Vec::new(),
             isa: None,
         };
-        finish(s, ctx, plan, args.note, args.preview).await
+        finish(s, ctx, plan, args.note, args.preview, None).await
     }
 }
 
@@ -671,6 +672,6 @@ impl Command for PatchConstant {
             notes: vec![format!("constant {} becomes {}", edit.old, args.value)],
             isa: Some(isa),
         };
-        finish(s, ctx, plan, args.note, args.preview).await
+        finish(s, ctx, plan, args.note, args.preview, None).await
     }
 }

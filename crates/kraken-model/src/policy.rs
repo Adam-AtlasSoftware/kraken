@@ -129,6 +129,8 @@ mod tests {
             new: Some(PatchBytes {
                 replacement: bytes.into(),
                 note: String::new(),
+                group: String::new(),
+                disabled: false,
             }),
         }
     }
@@ -146,6 +148,8 @@ mod tests {
                 original: "00000000".into(),
                 replacement: "90909090".into(),
                 note: String::new(),
+                group: String::new(),
+                disabled: false,
             },
         );
         assert_eq!(

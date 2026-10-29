@@ -233,7 +233,7 @@ impl Command for EmulateRun {
         let project = s.project()?;
         let binary = PathBuf::from(project.meta().binary_path);
         let patches = if args.patched {
-            project.with_store(|st| st.all_patches()).await?
+            project.with_store(|st| st.active_patches(None)).await?
         } else {
             Vec::new()
         };
@@ -923,7 +923,7 @@ impl Command for EmulateCompare {
         let project = s.project()?;
         let binary = PathBuf::from(project.meta().binary_path);
         let patches = if a == Variant::Patched || b == Variant::Patched {
-            let p = project.with_store(|st| st.all_patches()).await?;
+            let p = project.with_store(|st| st.active_patches(None)).await?;
             if p.is_empty() {
                 return Err(invalid(
                     "the project has no byte patches to run; set one with patch_set or name \

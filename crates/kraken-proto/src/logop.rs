@@ -175,6 +175,12 @@ pub struct PatchBytes {
     /// Why; may be empty. Written by people or agents: untrusted.
     #[serde(default)]
     pub note: String,
+    /// The patch set it belongs to; empty when it is in none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    /// True when the patch is switched off: it stays staged but is not exported or emulated.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 impl LogOp {

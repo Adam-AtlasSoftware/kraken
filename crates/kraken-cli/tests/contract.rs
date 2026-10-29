@@ -456,6 +456,28 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         "patch_constant",
         json!({"address": "0x401040", "value": 7, "preview": true})
     );
+    step!(
+        "patch_asm",
+        json!({"address": "0x401040", "text": "xor eax, eax; ret", "preview": true})
+    );
+    step!(
+        "patch_string",
+        json!({"address": "0x401040", "text": "hi", "preview": true})
+    );
+    step!(
+        "patch_group_set",
+        json!({"name": "logging", "description": "turn on debug logging"})
+    );
+    step!("patch_group_list", json!({}));
+    step!(
+        "patch_group_assign",
+        json!({"group": "logging", "addresses": ["0x401040"]})
+    );
+    step!(
+        "patch_group_enable",
+        json!({"name": "logging", "enabled": false})
+    );
+    step!("patch_group_remove", json!({"name": "logging"}));
     // The debugger: no session is open, so every session command answers alike.
     step!("debug_sessions", json!({}));
     for (name, args) in [

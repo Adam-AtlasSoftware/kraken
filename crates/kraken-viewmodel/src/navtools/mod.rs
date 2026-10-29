@@ -12,6 +12,7 @@ mod patch_intents;
 mod patches;
 mod search;
 mod source_edit;
+mod string_edit;
 mod types;
 
 #[cfg(test)]
@@ -32,11 +33,12 @@ pub use form::{
 };
 pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
 pub use patches::{
-    AsmState, ExportDialog, ExportDone, MAX_PATCH_BYTES, PatchDialog, PatchItem, PatchOrigin,
-    PatchesPanel, parse_hex, spaced_hex,
+    AsmState, ExportDialog, ExportDone, GroupDialog, MAX_PATCH_BYTES, PatchDialog, PatchGroupItem,
+    PatchItem, PatchOrigin, PatchesPanel, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
+pub use string_edit::StringDialog;
 pub use types::{ApplyDialog, DefineDialog, FieldRow, TypeDecl, TypeItem, TypesPanel};
 
 use kraken_proto::Page;
@@ -140,6 +142,8 @@ pub struct NavTools {
     pub patches: PatchesPanel,
     /// The dialog that stages a byte patch, when open.
     pub patch_dialog: Option<PatchDialog>,
+    /// The Edit string dialog, when open.
+    pub string_dialog: Option<StringDialog>,
     /// The dialog that exports the patched binary, when open.
     pub export_dialog: Option<ExportDialog>,
     /// The one-click patch dialog (NOP, branch, return, fill), when open.
@@ -186,6 +190,7 @@ impl NavTools {
             || self.bookmark_dialog.is_some()
             || self.patch_dialog.is_some()
             || self.export_dialog.is_some()
+            || self.string_dialog.is_some()
             || self.intent_dialog.is_some()
             || self.type_dialog.is_some()
             || self.function_dialog.is_some()

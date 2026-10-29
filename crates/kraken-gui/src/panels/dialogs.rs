@@ -16,6 +16,8 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     goto_dialog(ctx, vm);
     bookmark_dialog(ctx, vm);
     patch_dialog(ctx, vm);
+    string_dialog(ctx, vm);
+    group_dialog(ctx, vm);
     export_dialog(ctx, vm);
     intent_dialog(ctx, vm);
     super::emulation::dialog(ctx, vm);
@@ -266,15 +268,32 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         return;
     };
     let (p, s) = colors(ctx);
-    let (enter, esc) = enter_escape(ctx);
+    // Enter in the instruction field starts a new line; Ctrl+Enter there assembles, and once it
+    // is assembled (or anywhere else) Enter stages.
+    let in_asm = ctx.memory(|m| m.has_focus(Id::new(ASM_ID)));
+    let (enter, esc) = if in_asm {
+        ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::COMMAND, Key::Enter),
+                i.consume_key(Modifiers::NONE, Key::Escape),
+            )
+        })
+    } else {
+        enter_escape(ctx)
+    };
     let mut input = d.input.clone();
     let mut note = d.note.clone();
     let mut asm = d.asm.clone();
+    let mut group = d.group.clone();
+    let groups: Vec<String> = vm
+        .tools
+        .patches
+        .groups
+        .iter()
+        .map(|g| g.name.clone())
+        .collect();
     let (mut save, mut cancel, mut pad) = (false, false, false);
     let (mut assemble, mut pick) = (false, None);
-    // Enter in the instruction field assembles a new line; once it is assembled (or anywhere
-    // else) Enter stages.
-    let in_asm = ctx.memory(|m| m.has_focus(Id::new(ASM_ID)));
     let focused_once = ctx.memory(|m| m.focused().is_some());
     let title = if d.existing {
         "Edit byte patch"
@@ -327,15 +346,17 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         );
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut asm)
+                egui::TextEdit::multiline(&mut asm)
                     .id(Id::new(ASM_ID))
                     .font(egui::TextStyle::Monospace)
-                    .hint_text("mov eax, 0x7")
+                    .hint_text("mov eax, 0x7\nret")
+                    .desired_rows(3)
                     .desired_width(ui.available_width() - 90.0),
             )
             .on_hover_text(
-                "Type an instruction (or several, separated by ;) and press Enter: it is assembled \
-                 for this address and its bytes go in the field below",
+                "One instruction per line (or separated by ;). Press Assemble or Ctrl+Enter: \
+                 they are assembled for this address, padded with NOPs to the next instruction, \
+                 and their bytes go in the field below",
             );
             let busy = matches!(d.asm_state, AsmState::Busy);
             if ui
@@ -424,6 +445,25 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 .desired_width(f32::INFINITY),
         )
         .on_hover_text("A note kept with the patch");
+        if !groups.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Patch set").size(12.0).color(p.text_dim));
+                egui::ComboBox::from_id_salt("kraken_patch_dialog_set")
+                    .selected_text(if group.is_empty() { "(none)" } else { &group })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut group, String::new(), "(none)")
+                            .on_hover_text("Keep this patch in no set");
+                        for g in &groups {
+                            ui.selectable_value(&mut group, g.clone(), g)
+                                .on_hover_text("Put this patch in this set");
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Keep this patch in a set to switch it on and off with the others",
+                    );
+            });
+        }
         match &d.error {
             Some(e) => ui.label(RichText::new(e).color(s.danger)),
             None => ui.label(
@@ -452,6 +492,9 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     if note != d.note {
         vm.set_patch_note(note);
     }
+    if group != d.group {
+        vm.set_patch_dialog_group(group);
+    }
     if asm != d.asm {
         vm.set_patch_asm(asm);
     }
@@ -472,6 +515,232 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.assemble_patch();
     } else if save || enter {
         vm.submit_patch();
+    }
+}
+
+/// The Edit string dialog.
+fn string_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    use kraken_registry::commands::PatchStringEncoding as Enc;
+    let Some(d) = vm.tools.string_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut input = d.input.clone();
+    let mut note = d.note.clone();
+    let mut group = d.group.clone();
+    let mut encoding = d.encoding;
+    let groups: Vec<String> = vm
+        .tools
+        .patches
+        .groups
+        .iter()
+        .map(|g| g.name.clone())
+        .collect();
+    let (mut save, mut cancel) = (false, false);
+    let check = d.check();
+    window("Edit string", "kraken_string_edit", 520.0).show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Address").size(12.0).color(p.text_dim));
+            ui.label(
+                RichText::new(format!("{:#x}", d.address))
+                    .monospace()
+                    .color(p.address),
+            );
+        });
+        if let Some(old) = &d.old_text {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Now").size(12.0).color(p.text_dim));
+                ui.label(
+                    RichText::new(super::strings::one_line(old, 120))
+                        .monospace()
+                        .color(s.danger),
+                );
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Stored as").size(12.0).color(p.text_dim));
+            egui::ComboBox::from_id_salt("kraken_string_encoding")
+                .selected_text(match encoding {
+                    Enc::Auto => "Detect".to_string(),
+                    Enc::Ascii => "ASCII".to_string(),
+                    Enc::Utf8 => "UTF-8".to_string(),
+                    Enc::Utf16le => "UTF-16 (little endian)".to_string(),
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut encoding, Enc::Auto, "Detect")
+                        .on_hover_text("Look at the bytes in the program to decide");
+                    ui.selectable_value(&mut encoding, Enc::Ascii, "ASCII")
+                        .on_hover_text("One byte per character, 7-bit text only");
+                    ui.selectable_value(&mut encoding, Enc::Utf8, "UTF-8")
+                        .on_hover_text("UTF-8 text, one to four bytes per character");
+                    ui.selectable_value(&mut encoding, Enc::Utf16le, "UTF-16 (little endian)")
+                        .on_hover_text("Two bytes per character, as Windows programs store text");
+                })
+                .response
+                .on_hover_text(
+                    "How the program stores the characters. Detect looks at the bytes: UTF-16 \
+                     if every other byte is zero, UTF-8 otherwise",
+                );
+        });
+        ui.label(RichText::new("New text").size(12.0).color(p.text_dim));
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut input)
+                    .id(Id::new("kraken_string_input"))
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text(
+                "The new text. It may be as long as the old one or shorter; the rest is filled \
+                 with zero bytes",
+            );
+        if !r.has_focus() && !d.submitting && d.capacity.is_some() && d.error.is_none() {
+            let other = ui.memory(|m| m.has_focus(Id::new("kraken_string_note")));
+            if !other {
+                r.request_focus();
+            }
+        }
+        if let Some(cap) = d.capacity {
+            let needed = d.needed();
+            let (text, color) = match &needed {
+                Ok(n) if *n <= cap => (format!("{n} of {cap} bytes"), p.text_dim),
+                Ok(n) => (format!("{n} of {cap} bytes"), s.danger),
+                Err(e) => (e.clone(), s.danger),
+            };
+            ui.label(RichText::new(text).size(12.0).color(color))
+                .on_hover_text("Bytes the new text takes, against the room the old text leaves");
+        }
+        ui.add(
+            egui::TextEdit::singleline(&mut note)
+                .id(Id::new("kraken_string_note"))
+                .hint_text("Why (optional)")
+                .desired_width(f32::INFINITY),
+        )
+        .on_hover_text("A note kept with the patch");
+        if !groups.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Patch set").size(12.0).color(p.text_dim));
+                egui::ComboBox::from_id_salt("kraken_string_set")
+                    .selected_text(if group.is_empty() { "(none)" } else { &group })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut group, String::new(), "(none)")
+                            .on_hover_text("Keep this patch in no set");
+                        for g in &groups {
+                            ui.selectable_value(&mut group, g.clone(), g)
+                                .on_hover_text("Put this patch in this set");
+                        }
+                    })
+                    .response
+                    .on_hover_text("Keep this edit in a set to switch it on and off with others");
+            });
+        }
+        match (&d.error, &check) {
+            (Some(e), _) => ui.label(RichText::new(e).color(s.danger)),
+            (None, Err(e)) if !d.probing && !d.input.is_empty() => {
+                ui.label(RichText::new(e).color(s.warning))
+            }
+            _ => ui.label(
+                RichText::new(
+                    "The text is written over the old string and its end is padded with zero \
+                     bytes. Nothing on disk changes until you export a patched copy.",
+                )
+                .size(12.0)
+                .color(p.text_dim),
+            ),
+        };
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Stage string",
+            "Keep this edit in the project (Enter)",
+            check.clone(),
+            d.submitting,
+            &mut save,
+            &mut cancel,
+        );
+    });
+    if input != d.input {
+        vm.set_string_input(input);
+    }
+    if note != d.note {
+        vm.set_string_note(note);
+    }
+    if group != d.group {
+        vm.set_string_group(group);
+    }
+    if encoding != d.encoding {
+        vm.set_string_encoding(encoding);
+    }
+    if esc || cancel {
+        vm.cancel_string_edit();
+    } else if save || enter {
+        vm.submit_string_edit();
+    }
+}
+
+/// The New patch set dialog.
+fn group_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.patches.group_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let (mut name, mut description) = (d.name.clone(), d.description.clone());
+    let (mut save, mut cancel) = (false, false);
+    window("New patch set", "kraken_patch_group", 460.0).show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "A patch set groups the patches of one change. Switch it off to leave it out of \
+                 exports and emulated runs, or export it alone.",
+            )
+            .color(p.text_dim),
+        );
+        ui.label(RichText::new("Name").size(12.0).color(p.text_dim));
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut name)
+                    .id(Id::new("kraken_group_name"))
+                    .hint_text("debug logging")
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text("A short name for the set");
+        if !r.has_focus() && !ctx.memory(|m| m.has_focus(Id::new("kraken_group_desc"))) {
+            r.request_focus();
+        }
+        ui.label(RichText::new("What it does").size(12.0).color(p.text_dim));
+        ui.add(
+            egui::TextEdit::singleline(&mut description)
+                .id(Id::new("kraken_group_desc"))
+                .hint_text("optional")
+                .desired_width(f32::INFINITY),
+        )
+        .on_hover_text("A line describing the change");
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(s.danger));
+        }
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Create set",
+            "Create the patch set (Enter)",
+            if name.trim().is_empty() {
+                Err("Give the set a name".into())
+            } else {
+                Ok(())
+            },
+            false,
+            &mut save,
+            &mut cancel,
+        );
+    });
+    if name != d.name || description != d.description {
+        vm.set_patch_group_text(name, description);
+    }
+    if esc || cancel {
+        vm.cancel_patch_group();
+    } else if save || enter {
+        vm.submit_patch_group();
     }
 }
 
@@ -542,7 +811,16 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         overwrite = true;
     }
     let (mut save, mut cancel, mut browse) = (false, false, false);
-    let n = vm.tools.patches.items.len();
+    let n = match &d.group {
+        Some(g) => vm
+            .tools
+            .patches
+            .items
+            .iter()
+            .filter(|p| &p.group == g && p.enabled)
+            .count(),
+        None => vm.tools.patches.items.iter().filter(|p| p.enabled).count(),
+    };
     if let Some(done) = &d.done {
         let mut copy = false;
         let mut folder = false;
@@ -589,10 +867,15 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         }
         return;
     }
-    window("Export patched binary", "kraken_patch_export", 520.0).show(ctx, |ui| {
+    let title = match &d.group {
+        Some(g) => format!("Export patch set {g}"),
+        None => "Export patched binary".to_string(),
+    };
+    window(&title, "kraken_patch_export", 520.0).show(ctx, |ui| {
         ui.label(
             RichText::new(format!(
-                "Writes a copy of the program with {} applied. Each address is mapped to its \
+                "Writes a copy of the program with {} applied (patches that are switched off are \
+                 left out). Each address is mapped to its \
                  place in the file and the original bytes are checked first; if anything does \
                  not line up nothing is written. The original file is never touched.",
                 match n {

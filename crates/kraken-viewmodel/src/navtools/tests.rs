@@ -474,6 +474,7 @@ fn a_short_replacement_is_flagged_and_can_be_padded_with_nops() {
         asm: String::new(),
         asm_state: AsmState::Idle,
         asm_note: None,
+        group: String::new(),
     };
     assert!(d.length_note().expect("note").contains("first 2 of the 5"));
     d.pad_with_nops();

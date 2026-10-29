@@ -16,9 +16,9 @@ Everything below is also in the GUI, under the **Patch** menu:
 1. **Stage a patch.** In the **Listing**, click an instruction and press **Patch bytes**; in the
    **Hex** view, select bytes and press **Patch selection** (or **Patch > Patch bytes here...**).
    The dialog shows the instruction and the bytes there now. Type the new instruction
-   (`mov eax, 0x7`, in either case) and press Enter: it is assembled for that address and its
-   shortest encoding goes in the hex field, with the other encodings offered beside it. Several
-   instructions can be typed at once, separated by `;`. On the native engine, function and symbol
+   (`mov eax, 0x7`, in either case) and press **Assemble** or Ctrl+Enter: it is assembled for that
+   address and its shortest encoding goes in the hex field, with the other encodings offered
+   beside it. The field takes several lines, one instruction each (or separated by `;`). On the native engine, function and symbol
    names work as operands (`call cmp_id`), so do labels (`again: dec ecx; jnz again`), relative
    branches are encoded for the address they sit at, the result is decoded back through Sleigh to
    check it means what you typed, and it is padded with `nop`s to the next instruction boundary
@@ -29,6 +29,21 @@ Everything below is also in the GUI, under the **Patch** menu:
    RISC-V through `llvm-mc` when it is installed (otherwise it says so; type the hex). Branch
    targets for those are numbers, as `llvm-mc` reads them.
    ![The patch dialog: the instruction there now, a new instruction assembled to 31 c0 with its other encoding, and the note that the rest of the instruction stays](images/patch-dialog.png)
+
+   **Edit a string.** On the **Strings** tab select a string and press **Edit string...** (or
+   right-click it; in the Listing right-click string data and pick **Patch > Edit string...**).
+   The dialog reads the string that is there, shows how it is stored (**Detect** looks at the
+   bytes; ASCII, UTF-8 and UTF-16 little endian can be chosen) and counts the bytes of what you
+   type against the room the old text leaves ("9 of 11 bytes"). Same length or shorter fits and
+   the rest is filled with zero bytes, so the terminator stays and nothing after the string moves.
+   A longer text is refused with how many bytes to cut. It is an ordinary patch you can undo.
+
+   **Patch sets.** **New patch set...** on the Patches tab makes a named group with a description
+   for the patches of one change ("debug logging", "English strings"). Pick the set in the
+   patch dialog, in the **Set** column of the table, or with `patch_set`'s `group`. The checkbox of
+   a set switches all its patches on or off: off patches stay staged (marked **off**) but are left
+   out of **Export**, **Run original vs patched** and the emulator and debugger when they run the
+   patched program. **Export set...** writes a copy with only that set's patches.
 
 2. **Check it.** **Patch > Show patches** opens the **Patches** tab: every staged patch with its
    original and new bytes, note and author, with **Edit** and **Remove**. **Run original vs
@@ -131,7 +146,20 @@ analysing. The commands:
   bytes. At most 4096 bytes per patch.
 - `patch_remove` — delete the patch at an address, putting the overlay back the way it was.
 - `patch_list` — every patch with its original and replacement bytes, note and who set it.
-- `patch_export` — write a copy of the binary with every patch applied.
+- `patch_export` — write a copy of the binary with every patch that is switched on applied;
+  `group` limits it to one patch set.
+- `patch_asm` — assemble one or several instructions (`;` or newlines) at an address and record
+  them as a patch, padded with NOPs to the next instruction boundary; the answer lists the
+  instructions replaced and the new disassembly, and `preview` records nothing (`patch_asm
+  {"address": "0x401136", "text": "xor eax, eax\nret", "preview": true}`).
+- `patch_string` — rewrite the NUL-terminated string at an address in `ascii`, `utf8`, `utf16le`
+  or `auto`; the text must fit in the old text's bytes (the rest becomes NULs), a longer one is
+  refused with how many bytes to cut (`patch_string {"address": "0x402010", "text": "Hello"}`).
+- `patch_group_set`, `patch_group_list`, `patch_group_remove` — create a patch set (name and
+  description), list the sets with their patch counts and on/off state, delete an empty one.
+- `patch_group_assign` — move patches (by address) into a set, or out of any with `""`;
+  `patch_group_enable` — switch every patch of a set on or off. Each patch changed is one logged
+  edit, so they show in the History and `undo` flips them back; for an agent they are proposals.
 - `assemble` — one instruction to its encodings at an address (`assemble {"address":
   "0x401136", "text": "mov eax, 0x7"}`), shortest first; nothing is written.
 

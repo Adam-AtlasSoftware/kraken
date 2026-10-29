@@ -2008,6 +2008,14 @@
     "PatchBytes": {
       "description": "The replacement bytes and note of a byte patch.",
       "properties": {
+        "disabled": {
+          "description": "True when the patch is switched off: it stays staged but is not exported or emulated.",
+          "type": "boolean"
+        },
+        "group": {
+          "description": "The patch set it belongs to; empty when it is in none.",
+          "type": "string"
+        },
         "note": {
           "default": "",
           "description": "Why; may be empty. Written by people or agents: untrusted.",

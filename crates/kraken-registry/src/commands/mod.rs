@@ -24,8 +24,10 @@ mod integrations;
 mod jobs;
 mod local_model;
 mod patch;
+mod patch_group;
 mod patch_intent;
 mod patch_source;
+mod patch_write;
 mod patched_view;
 mod probe;
 mod project;
@@ -119,6 +121,12 @@ pub use patch::{
     PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs, PatchSet, PatchSetArgs,
     PatchView,
 };
+pub use patch_group::{
+    MAX_ASSIGN, MAX_GROUP_DESCRIPTION, MAX_GROUP_NAME, PatchGroupAssign, PatchGroupAssignArgs,
+    PatchGroupChangeOut, PatchGroupEnable, PatchGroupEnableArgs, PatchGroupList,
+    PatchGroupListArgs, PatchGroupListOut, PatchGroupRemove, PatchGroupRemoveArgs,
+    PatchGroupRemoveOut, PatchGroupSet, PatchGroupSetArgs, PatchGroupView,
+};
 pub use patch_intent::{
     BranchChange, PatchBranch, PatchBranchArgs, PatchConstant, PatchConstantArgs, PatchFill,
     PatchFillArgs, PatchIntentOut, PatchNop, PatchNopArgs, PatchReturn, PatchReturnArgs,
@@ -127,6 +135,10 @@ pub use patch_source::{
     DEFAULT_SOURCE_PATCH_ATTEMPTS, MAX_SOURCE_BYTES, MAX_SOURCE_PATCH_ATTEMPTS, PatchFromSource,
     PatchFromSourceArgs, PatchFromSourceResult, PlannedPatch, SourcePatchBackend, SourcePatchCheck,
     SourcePatchVerdict, source_patch_result,
+};
+pub use patch_write::{
+    MAX_STRING_BYTES, PatchAsm, PatchAsmArgs, PatchString, PatchStringArgs, PatchStringEncoding,
+    PatchStringOut, StringPlan, detect_encoding, encode_string, plan_string,
 };
 pub use patched_view::{DecompilePatched, DecompilePatchedArgs};
 pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
@@ -343,6 +355,13 @@ pub fn register_all(r: &mut Registry) {
     r.register(PatchReturn);
     r.register(PatchFill);
     r.register(PatchConstant);
+    r.register(PatchAsm);
+    r.register(PatchString);
+    r.register(PatchGroupSet);
+    r.register(PatchGroupList);
+    r.register(PatchGroupRemove);
+    r.register(PatchGroupAssign);
+    r.register(PatchGroupEnable);
     r.register(PatchList);
     r.register(PatchExport);
     // Card COST: what AI work costs and what runs.

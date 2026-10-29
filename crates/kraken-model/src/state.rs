@@ -63,6 +63,12 @@ pub enum StateValue {
         replacement: String,
         /// Its note.
         note: String,
+        /// Its patch set; empty for none.
+        #[serde(default)]
+        group: String,
+        /// Switched off.
+        #[serde(default)]
+        disabled: bool,
     },
 }
 
@@ -114,6 +120,8 @@ pub fn apply_op(state: &mut AnnotationState, op: &LogOp) {
             original: original.clone(),
             replacement: b.replacement.clone(),
             note: b.note.clone(),
+            group: b.group.clone(),
+            disabled: b.disabled,
         }),
     };
     match value {

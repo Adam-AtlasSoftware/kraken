@@ -34,6 +34,47 @@ pub struct PatchItem {
     pub by_agent: bool,
     /// "you" or the agent id.
     pub who: String,
+    /// The patch set it is in; empty for none.
+    pub group: String,
+    /// False when it is switched off: not exported or emulated.
+    pub enabled: bool,
+}
+
+/// A patch set as the Patches tab lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchGroupItem {
+    /// Its name.
+    pub name: String,
+    /// What it does; may be empty.
+    pub description: String,
+    /// Patches in it.
+    pub patches: u32,
+    /// Of those, how many are on.
+    pub enabled_patches: u32,
+}
+
+impl PatchGroupItem {
+    /// `on`, `off` or `mixed`.
+    pub fn state(&self) -> &'static str {
+        if self.enabled_patches == self.patches {
+            "on"
+        } else if self.enabled_patches == 0 {
+            "off"
+        } else {
+            "mixed"
+        }
+    }
+}
+
+/// The dialog that creates a patch set.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GroupDialog {
+    /// The name typed.
+    pub name: String,
+    /// The description typed.
+    pub description: String,
+    /// Why creating failed.
+    pub error: Option<String>,
 }
 
 impl PatchItem {
@@ -71,6 +112,10 @@ pub struct PatchesPanel {
     pub error: Option<String>,
     /// The last export of this session.
     pub last_export: Option<ExportDone>,
+    /// The patch sets, by name.
+    pub groups: Vec<PatchGroupItem>,
+    /// The new-set dialog, when open.
+    pub group_dialog: Option<GroupDialog>,
     generation: u64,
 }
 
@@ -117,6 +162,8 @@ pub struct PatchDialog {
     pub asm_state: AsmState,
     /// What the assembler did beyond the typed text (NOP padding, instructions replaced).
     pub asm_note: Option<String>,
+    /// The patch set the patch goes in; empty for none.
+    pub group: String,
 }
 
 /// Assembling the typed instruction.
@@ -196,6 +243,8 @@ pub struct ExportDialog {
     pub output_path: String,
     /// Replace an existing file.
     pub overwrite: bool,
+    /// Export only this patch set; `None` exports every patch that is on.
+    pub group: Option<String>,
     /// Why writing failed.
     pub error: Option<String>,
     /// The call is running.
@@ -212,6 +261,27 @@ struct PatchWire {
     note: Untrusted<String>,
     author_kind: String,
     author_id: String,
+    #[serde(default)]
+    group: Untrusted<String>,
+    #[serde(default = "yes")]
+    enabled: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GroupWire {
+    name: Untrusted<String>,
+    description: Untrusted<String>,
+    patches: u32,
+    enabled_patches: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GroupListWire {
+    groups: Vec<GroupWire>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -271,12 +341,133 @@ impl ViewModel {
         }
     }
 
-    /// Reloads the patches from the first page.
+    /// Reloads the patches from the first page, and the patch sets.
     pub fn refresh_patches(&mut self) {
         self.tools.patches.generation += 1;
         self.tools.patches.next_cursor = None;
         self.patches_changed();
         self.fetch_patches(true);
+        self.fetch_patch_groups();
+    }
+
+    fn fetch_patch_groups(&mut self) {
+        self.call("patch_group_list", json!({}), |vm, res| {
+            if let Ok(list) = res.and_then(parse::<GroupListWire>) {
+                vm.tools.patches.groups = list
+                    .groups
+                    .into_iter()
+                    .map(|g| PatchGroupItem {
+                        name: g.name.0,
+                        description: g.description.0,
+                        patches: g.patches,
+                        enabled_patches: g.enabled_patches,
+                    })
+                    .collect();
+            }
+        });
+    }
+
+    /// Opens the dialog that creates a patch set.
+    pub fn begin_patch_group(&mut self) {
+        self.tools.patches.group_dialog = Some(GroupDialog::default());
+    }
+
+    /// Closes the new-set dialog.
+    pub fn cancel_patch_group(&mut self) {
+        self.tools.patches.group_dialog = None;
+    }
+
+    /// Updates the new set's name and description.
+    pub fn set_patch_group_text(
+        &mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) {
+        if let Some(d) = self.tools.patches.group_dialog.as_mut() {
+            d.name = name.into();
+            d.description = description.into();
+            d.error = None;
+        }
+    }
+
+    /// Creates the set typed in the dialog (`patch_group_set`).
+    pub fn submit_patch_group(&mut self) {
+        let Some(d) = self.tools.patches.group_dialog.clone() else {
+            return;
+        };
+        let name = d.name.trim().to_string();
+        if name.is_empty() {
+            if let Some(d) = self.tools.patches.group_dialog.as_mut() {
+                d.error = Some("Give the set a name.".into());
+            }
+            return;
+        }
+        let args = json!({"name": name, "description": d.description.trim()});
+        self.call("patch_group_set", args, move |vm, res| match res {
+            Ok(_) => {
+                vm.tools.patches.group_dialog = None;
+                vm.toast(
+                    ToastLevel::Success,
+                    format!("Created the patch set {name}."),
+                );
+                vm.fetch_patch_groups();
+            }
+            Err(e) => {
+                if let Some(d) = vm.tools.patches.group_dialog.as_mut() {
+                    d.error = Some(plain_error(&e));
+                }
+            }
+        });
+    }
+
+    /// Switches every patch of a set on or off (`patch_group_enable`).
+    pub fn set_patch_group_enabled(&mut self, name: &str, enabled: bool) {
+        let n = name.to_string();
+        self.call(
+            "patch_group_enable",
+            json!({"name": name, "enabled": enabled}),
+            move |vm, res| match res {
+                Ok(_) => {
+                    vm.toast(
+                        ToastLevel::Info,
+                        format!(
+                            "Switched the patch set {n} {}.",
+                            if enabled { "on" } else { "off" }
+                        ),
+                    );
+                    vm.refresh_patches();
+                    vm.refresh_history();
+                }
+                Err(e) => vm.toast_error(&e),
+            },
+        );
+    }
+
+    /// Moves the patch at `address` into the set `group` (`""` for none).
+    pub fn assign_patch_group(&mut self, address: u64, group: &str) {
+        self.call(
+            "patch_group_assign",
+            json!({"group": group, "addresses": [hex(address)]}),
+            |vm, res| match res {
+                Ok(_) => {
+                    vm.refresh_patches();
+                    vm.refresh_history();
+                }
+                Err(e) => vm.toast_error(&e),
+            },
+        );
+    }
+
+    /// Deletes an empty patch set (`patch_group_remove`).
+    pub fn remove_patch_group(&mut self, name: &str) {
+        self.call(
+            "patch_group_remove",
+            json!({"name": name}),
+            |vm, res| match res {
+                Ok(_) => vm.fetch_patch_groups(),
+                Err(e) => vm.toast_error(&e),
+            },
+        );
     }
 
     /// Loads the next page of patches.
@@ -315,6 +506,8 @@ impl ViewModel {
                         } else {
                             w.author_id
                         },
+                        group: w.group.0,
+                        enabled: w.enabled,
                     });
                     if reset {
                         p.items = rows.collect();
@@ -370,6 +563,10 @@ impl ViewModel {
             asm: String::new(),
             asm_state: AsmState::Idle,
             asm_note: None,
+            group: existing
+                .as_ref()
+                .map(|p| p.group.clone())
+                .unwrap_or_default(),
         });
     }
 
@@ -418,6 +615,13 @@ impl ViewModel {
         if let Some(d) = self.tools.patch_dialog.as_mut() {
             d.note = text.into();
             d.error = None;
+        }
+    }
+
+    /// Chooses the patch set for the patch being staged (`""` for none).
+    pub fn set_patch_dialog_group(&mut self, group: impl Into<String>) {
+        if let Some(d) = self.tools.patch_dialog.as_mut() {
+            d.group = group.into();
         }
     }
 
@@ -534,6 +738,7 @@ impl ViewModel {
             "address": hex(addr),
             "bytes": spaced_hex(&bytes),
             "note": d.note.trim(),
+            "group": d.group,
         });
         self.call("patch_set", args, move |vm, res| match res {
             Ok(_) => {
@@ -579,16 +784,27 @@ impl ViewModel {
         );
     }
 
-    /// Opens the export dialog, suggesting `<binary>.patched` next to the project.
+    /// Opens the export dialog for every patch that is on.
     pub fn begin_patch_export(&mut self) {
+        self.begin_patch_export_group(None);
+    }
+
+    /// Opens the export dialog for one patch set (or all patches that are on, with `None`),
+    /// suggesting `<binary>.patched` next to the project.
+    pub fn begin_patch_export_group(&mut self, group: Option<String>) {
         let name = self
             .project
             .as_ref()
             .map(|p| p.name.clone())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| "program".into());
+        let output_path = match &group {
+            Some(g) => format!("{name}.{}.patched", file_stem(g)),
+            None => format!("{name}.patched"),
+        };
         self.tools.export_dialog = Some(ExportDialog {
-            output_path: format!("{name}.patched"),
+            output_path,
+            group,
             overwrite: false,
             error: None,
             submitting: false,
@@ -628,7 +844,10 @@ impl ViewModel {
             return;
         }
         d.submitting = true;
-        let args = json!({"output_path": path, "overwrite": d.overwrite});
+        let mut args = json!({"output_path": path, "overwrite": d.overwrite});
+        if let Some(g) = &d.group {
+            args["group"] = json!(g);
+        }
         self.call("patch_export", args, move |vm, res| {
             match res.and_then(parse::<ExportWire>) {
                 Ok(out) => {
@@ -659,6 +878,15 @@ impl ViewModel {
         self.ensure_patches();
         self.tools.request_tab(NavTab::Patches);
     }
+}
+
+/// A set name as part of a file name.
+fn file_stem(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    s.trim_matches('_').to_string()
 }
 
 /// The sentence about NOP padding and replaced instructions in an `assemble` result.

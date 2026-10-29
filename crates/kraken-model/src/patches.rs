@@ -24,6 +24,16 @@ pub(crate) const MIGRATION: &str = "CREATE TABLE patches (
         ts INTEGER NOT NULL
     );";
 
+/// Patch sets: the set a patch belongs to, whether it is switched off, and the sets' names with
+/// their descriptions.
+pub(crate) const MIGRATION_GROUPS: &str = "
+    ALTER TABLE patches ADD COLUMN grp TEXT NOT NULL DEFAULT '';
+    ALTER TABLE patches ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE patch_groups (
+        name TEXT PRIMARY KEY,
+        description TEXT NOT NULL
+    );";
+
 type Result<T> = std::result::Result<T, ProtoError>;
 
 /// One stored byte patch. `original` and `replacement` are always the same length.
@@ -37,6 +47,10 @@ pub struct Patch {
     pub replacement: Vec<u8>,
     /// The note; empty when none was given.
     pub note: String,
+    /// The patch set it belongs to; empty for none.
+    pub group: String,
+    /// Switched off: kept, but neither exported nor emulated.
+    pub disabled: bool,
     /// Who set it last.
     pub author: Author,
     /// When it was set last, milliseconds since the Unix epoch.
@@ -88,7 +102,14 @@ pub(crate) fn apply_patch_op(conn: &Connection, op: &LogOp, author: &Author) -> 
             let replacement = unhex(&b.replacement)?;
             // the originals may cover a longer patch this one replaced
             let original = original.get(..replacement.len()).unwrap_or(&original);
-            write_patch(conn, address.0, original, &replacement, &b.note, author)?;
+            write_patch(
+                conn,
+                address.0,
+                original,
+                &replacement,
+                (&b.note, &b.group, b.disabled),
+                author,
+            )?;
         }
     }
     Ok(())
@@ -116,7 +137,7 @@ fn write_patch(
     address: u64,
     original: &[u8],
     replacement: &[u8],
-    note: &str,
+    (note, group, disabled): (&str, &str, bool),
     author: &Author,
 ) -> Result<Patch> {
     if replacement.is_empty() {
@@ -133,10 +154,12 @@ fn write_patch(
     }
     let ts = now_ms();
     conn.execute(
-        "INSERT INTO patches(address, original, replacement, note, author_kind, author_id, ts)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO patches(address, original, replacement, note, author_kind, author_id, ts,
+                             grp, disabled)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(address) DO UPDATE SET original = excluded.original,
             replacement = excluded.replacement, note = excluded.note,
+            grp = excluded.grp, disabled = excluded.disabled,
             author_kind = excluded.author_kind, author_id = excluded.author_id,
             ts = excluded.ts",
         params![
@@ -146,7 +169,9 @@ fn write_patch(
             note,
             kind_str(author.kind),
             author.id,
-            ts
+            ts,
+            group,
+            disabled
         ],
     )
     .map_err(db)?;
@@ -155,6 +180,8 @@ fn write_patch(
         original: original.to_vec(),
         replacement: replacement.to_vec(),
         note: note.to_string(),
+        group: group.to_string(),
+        disabled,
         author: author.clone(),
         ts_ms: ts,
     })
@@ -180,6 +207,8 @@ impl Store {
                 new: Some(kraken_proto::PatchBytes {
                     replacement: kraken_proto::hex_bytes(&p.replacement),
                     note: p.note.clone(),
+                    group: p.group.clone(),
+                    disabled: p.disabled,
                 }),
             };
             let key = crate::keys::op_key(&op)?;
@@ -224,7 +253,14 @@ impl Store {
         note: &str,
         author: &Author,
     ) -> Result<Patch> {
-        write_patch(&self.conn, address, original, replacement, note, author)
+        write_patch(
+            &self.conn,
+            address,
+            original,
+            replacement,
+            (note, "", false),
+            author,
+        )
     }
 
     /// Removes the patch at `address`; false when there was none.
@@ -240,7 +276,7 @@ impl Store {
     pub fn patch_get(&self, address: u64) -> Result<Option<Patch>> {
         self.conn
             .query_row(
-                "SELECT address, original, replacement, note, author_kind, author_id, ts
+                "SELECT address, original, replacement, note, author_kind, author_id, ts, grp, disabled
                  FROM patches WHERE address = ?1",
                 [to_db(address)],
                 row,
@@ -257,7 +293,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT address, original, replacement, note, author_kind, author_id, ts
+                "SELECT address, original, replacement, note, author_kind, author_id, ts, grp, disabled
                  FROM patches ORDER BY address < 0, address",
             )
             .map_err(db)?;
@@ -267,6 +303,49 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(db)?;
         raw.into_iter().map(finish).collect()
+    }
+
+    /// The patches that are switched on, ordered by address: what an export or an emulated run
+    /// applies. `group` limits them to one patch set.
+    pub fn active_patches(&self, group: Option<&str>) -> Result<Vec<Patch>> {
+        Ok(self
+            .all_patches()?
+            .into_iter()
+            .filter(|p| !p.disabled && group.is_none_or(|g| p.group == g))
+            .collect())
+    }
+
+    /// Creates the patch set `name` or changes its description.
+    pub fn patch_group_put(&mut self, name: &str, description: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO patch_groups(name, description) VALUES (?1, ?2)
+                 ON CONFLICT(name) DO UPDATE SET description = excluded.description",
+                params![name, description],
+            )
+            .map_err(db)?;
+        Ok(())
+    }
+
+    /// Deletes the patch set `name` (its metadata; the caller checks it has no members).
+    pub fn patch_group_delete(&mut self, name: &str) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM patch_groups WHERE name = ?1", [name])
+            .map_err(db)?;
+        Ok(n > 0)
+    }
+
+    /// The patch sets with their descriptions, by name.
+    pub fn patch_groups(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, description FROM patch_groups ORDER BY name")
+            .map_err(db)?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(db)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(db)
     }
 
     /// Patches ordered by address, one page at a time. The cursor is the address of the last row
@@ -290,7 +369,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT address, original, replacement, note, author_kind, author_id, ts
+                "SELECT address, original, replacement, note, author_kind, author_id, ts, grp, disabled
                  FROM patches
                  WHERE ?1 IS NULL OR (address < 0, address) > (?1 < 0, ?1)
                  ORDER BY address < 0, address LIMIT ?2",
@@ -316,7 +395,17 @@ impl Store {
     }
 }
 
-type Raw = (i64, Vec<u8>, Vec<u8>, String, String, String, i64);
+type Raw = (
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    bool,
+);
 
 fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Raw> {
     Ok((
@@ -327,15 +416,21 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Raw> {
         r.get(4)?,
         r.get(5)?,
         r.get(6)?,
+        r.get(7)?,
+        r.get(8)?,
     ))
 }
 
-fn finish((address, original, replacement, note, kind, id, ts): Raw) -> Result<Patch> {
+fn finish(
+    (address, original, replacement, note, kind, id, ts, group, disabled): Raw,
+) -> Result<Patch> {
     Ok(Patch {
         address: from_db(address),
         original,
         replacement,
         note,
+        group,
+        disabled,
         author: Author {
             kind: parse_kind(&kind)?,
             id,

@@ -35,7 +35,7 @@ fn patch_here_stages_from_the_listing_and_show_patches_opens_the_tab() {
     let nops = vec![0x90; row.bytes.len()];
     vm.set_patch_input(spaced_hex(&nops));
     h.step();
-    h.key(Key::Enter, Modifiers::NONE);
+    h.key(Key::Enter, Modifiers::COMMAND);
     h.run_until("the patch to be staged and listed", |a| {
         a.view_model().is_some_and(|vm| {
             vm.tools.patch_dialog.is_none()
@@ -101,7 +101,7 @@ fn enter_assembles_the_typed_instruction_then_stages_it() {
         .expect("vm")
         .set_patch_asm("xor eax, eax");
     h.step();
-    h.key(Key::Enter, Modifiers::NONE);
+    h.key(Key::Enter, Modifiers::COMMAND);
     h.run_until("the instruction to be assembled", |a| {
         a.view_model().is_some_and(|vm| {
             vm.tools
@@ -110,7 +110,7 @@ fn enter_assembles_the_typed_instruction_then_stages_it() {
                 .is_some_and(|d| d.input == "31 c0")
         })
     });
-    h.key(Key::Enter, Modifiers::NONE);
+    h.key(Key::Enter, Modifiers::COMMAND);
     h.run_until("the assembled bytes to be staged", |a| {
         a.view_model().is_some_and(|vm| {
             vm.tools.patch_dialog.is_none()
@@ -148,12 +148,13 @@ fn the_context_menu_patch_items_preview_then_apply_a_nop() {
     };
     let items = context::items(vm, &target);
     let patch: Vec<_> = items.iter().filter(|i| i.group == Some("Patch")).collect();
-    assert_eq!(patch.len(), 6, "NOP, three branch edits, return, fill");
-    assert!(
-        patch
-            .iter()
-            .all(|i| i.disabled.is_none() || i.choice == NavChoice::PatchReturn)
+    assert_eq!(
+        patch.len(),
+        7,
+        "edit string, NOP, three branch edits, return, fill"
     );
+    assert!(patch.iter().all(|i| i.disabled.is_none()
+        || matches!(i.choice, NavChoice::PatchReturn | NavChoice::EditString)));
     let data = Target {
         kind: TargetKind::Data,
         ..target.clone()
@@ -314,4 +315,108 @@ fn the_patched_toggle_shows_the_patch_in_the_listing_and_offers_a_patched_decomp
     });
     let vm = h.app.view_model().expect("vm");
     assert_ne!(vm.views.listing.rows[0].mnemonic, "nop");
+}
+
+#[test]
+fn the_patches_tab_lists_two_sets_and_switching_one_off_marks_its_patches() {
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    h.app.dispatch(AppAction::GoToMain, &ctx);
+    h.run_until("the listing of main", |a| {
+        a.view_model()
+            .is_some_and(|vm| vm.views.listing.loaded && vm.views.listing.rows.len() >= 2)
+    });
+    for (name, what) in [
+        ("logging", "turn on debug logging"),
+        ("banner", "no banner"),
+    ] {
+        let vm = h.app.view_model_mut().expect("vm");
+        vm.begin_patch_group();
+        vm.set_patch_group_text(name, what);
+        vm.submit_patch_group();
+        h.run_until("the set to exist", |a| {
+            a.view_model().is_some_and(|vm| {
+                vm.tools.patches.group_dialog.is_none()
+                    && vm.tools.patches.groups.iter().any(|g| g.name == name)
+            })
+        });
+    }
+    let vm = h.app.view_model_mut().expect("vm");
+    let rows: Vec<_> = vm.views.listing.rows.iter().take(2).cloned().collect();
+    for (row, group) in rows.iter().zip(["logging", "banner"]) {
+        let vm = h.app.view_model_mut().expect("vm");
+        vm.begin_patch(
+            row.address,
+            Some(row.bytes.clone()),
+            kraken_viewmodel::navtools::PatchOrigin::Bytes,
+        );
+        vm.set_patch_input(spaced_hex(&vec![0x90; row.bytes.len()]));
+        vm.set_patch_dialog_group(group);
+        vm.submit_patch();
+        let at = row.address;
+        h.run_until("the patch to be staged in its set", |a| {
+            a.view_model().is_some_and(|vm| {
+                vm.tools.patch_dialog.is_none()
+                    && vm
+                        .tools
+                        .patches
+                        .items
+                        .iter()
+                        .any(|p| p.address == at && p.group == group)
+            })
+        });
+    }
+    h.app.dispatch(AppAction::ShowPatches, &ctx);
+    h.step();
+    h.step();
+    let vm = h.app.view_model().expect("vm");
+    assert_eq!(vm.tools.patches.groups.len(), 2);
+    assert!(
+        vm.tools
+            .patches
+            .groups
+            .iter()
+            .all(|g| g.patches == 1 && g.state() == "on")
+    );
+
+    h.app
+        .view_model_mut()
+        .expect("vm")
+        .set_patch_group_enabled("logging", false);
+    h.run_until("logging to be off", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools
+                .patches
+                .groups
+                .iter()
+                .any(|g| g.name == "logging" && g.state() == "off")
+                && vm.tools.patches.items.iter().any(|p| !p.enabled)
+        })
+    });
+    h.step();
+    let vm = h.app.view_model().expect("vm");
+    let off: Vec<_> = vm
+        .tools
+        .patches
+        .items
+        .iter()
+        .filter(|p| !p.enabled)
+        .collect();
+    assert_eq!(off.len(), 1);
+    assert_eq!(off[0].group, "logging");
+
+    // Exporting one set alone suggests a file named after it.
+    let vm = h.app.view_model_mut().expect("vm");
+    vm.begin_patch_export_group(Some("banner".into()));
+    h.step();
+    let e = h
+        .app
+        .view_model()
+        .expect("vm")
+        .tools
+        .export_dialog
+        .clone()
+        .expect("export dialog");
+    assert_eq!(e.group.as_deref(), Some("banner"));
+    assert!(e.output_path.contains("banner"), "{}", e.output_path);
 }

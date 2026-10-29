@@ -92,6 +92,17 @@ pub struct PatchView {
     pub author_id: String,
     /// When it was set last, milliseconds since the Unix epoch.
     pub ts_ms: i64,
+    /// The patch set it belongs to; empty when it is in none. Written by people or agents:
+    /// untrusted data.
+    #[serde(default)]
+    pub group: Untrusted<String>,
+    /// False when the patch is switched off: staged, but not exported or emulated.
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 impl From<&Patch> for PatchView {
@@ -109,6 +120,8 @@ impl From<&Patch> for PatchView {
             .into(),
             author_id: p.author.id.clone(),
             ts_ms: p.ts_ms,
+            group: crate::validate::untrusted(&p.group),
+            enabled: !p.disabled,
         }
     }
 }
@@ -126,6 +139,10 @@ pub struct PatchSetArgs {
     /// A short note on why, at most 1000 characters.
     #[serde(default)]
     pub note: Option<String>,
+    /// The patch set to put it in (see `patch_group_set`); `""` takes it out of its set.
+    /// Absent keeps the set an existing patch at this address has.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// Result of `patch_set` and `patch_remove`: the edit as the log took it, and the patch.
@@ -192,8 +209,36 @@ impl Command for PatchSet {
                 "note is longer than {MAX_PATCH_NOTE} characters"
             )));
         }
-        set_patch(s, ctx, args.address, replacement, note).await
+        set_patch(s, ctx, args.address, replacement, note, args.group).await
     }
+}
+
+/// The set and the on/off state a patch being staged gets. `group` of `None` keeps what an
+/// existing patch at the address has; a named set must exist, and a set whose members are all
+/// switched off takes the new patch switched off too, so a set never half-switches.
+fn placement(
+    all: &[Patch],
+    sets: &[(String, String)],
+    old: Option<&Patch>,
+    group: Option<String>,
+) -> Result<(String, bool), ProtoError> {
+    let Some(name) = group else {
+        return Ok(old.map_or((String::new(), false), |p| (p.group.clone(), p.disabled)));
+    };
+    if name.is_empty() {
+        return Ok((name, false));
+    }
+    if !sets.iter().any(|(n, _)| *n == name) {
+        return Err(invalid(format!(
+            "there is no patch set named {name:?}; create it with patch_group_set"
+        )));
+    }
+    let members: Vec<&Patch> = all
+        .iter()
+        .filter(|p| p.group == name && old.is_none_or(|o| o.address != p.address))
+        .collect();
+    let off = !members.is_empty() && members.iter().all(|p| p.disabled);
+    Ok((name, off))
 }
 
 /// Records `replacement` at `address` as a patch: the one path `patch_set` and the patch intents
@@ -205,6 +250,7 @@ pub(crate) async fn set_patch(
     address: Hex64,
     replacement: Vec<u8>,
     note: String,
+    group: Option<String>,
 ) -> Result<PatchEditOut, ProtoError> {
     let project = s.project()?;
     let start = address.0;
@@ -230,6 +276,8 @@ pub(crate) async fn set_patch(
         )));
     }
     let old = all.iter().find(|p| p.address == start).cloned();
+    let sets = project.with_store(|st| st.patch_groups()).await?;
+    let (group, disabled) = placement(&all, &sets, old.as_ref(), group)?;
     // The originals cover the old patch too, so undoing a replacement restores it whole.
     let len = replacement
         .len()
@@ -238,6 +286,8 @@ pub(crate) async fn set_patch(
     let new = PatchBytes {
         replacement: hex_bytes(&replacement),
         note: note.clone(),
+        group: group.clone(),
+        disabled,
     };
     let resolved = crate::mutate::anchor_for(&project, ctx, address).await?;
     let op = LogOp::SetPatch {
@@ -252,6 +302,8 @@ pub(crate) async fn set_patch(
         original: original[..replacement.len()].to_vec(),
         replacement,
         note,
+        group,
+        disabled,
         author: ctx.author.clone(),
         ts_ms: 0,
     };
@@ -266,10 +318,12 @@ pub(crate) async fn set_patch(
     })
 }
 
-fn patch_bytes(p: &Patch) -> PatchBytes {
+pub(crate) fn patch_bytes(p: &Patch) -> PatchBytes {
     PatchBytes {
         replacement: hex_bytes(&p.replacement),
         note: p.note.clone(),
+        group: p.group.clone(),
+        disabled: p.disabled,
     }
 }
 
@@ -441,6 +495,10 @@ pub struct PatchExportArgs {
     /// Overwrite an existing file at `output_path` (default false).
     #[serde(default)]
     pub overwrite: bool,
+    /// Export only the patches of this patch set (see `patch_group_list`). Absent exports every
+    /// patch that is switched on.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// Where one patch landed in the exported file.
@@ -483,7 +541,8 @@ impl Command for PatchExport {
             Permission::Dangerous,
         )
         .doc(
-            "Applies all byte patches to a fresh copy of the program's binary and writes it to \
+            "Applies the byte patches that are switched on (all of them, or only the patch set \
+             named by `group`) to a fresh copy of the program's binary and writes it to \
              `output_path`. Each patch's address is mapped to a file offset through the binary's \
              segments and the recorded original bytes are checked first, so a patch that does not \
              line up is refused rather than corrupting the file; the original binary is never \
@@ -518,7 +577,17 @@ impl Command for PatchExport {
                 project.dir().join(p)
             }
         };
-        let patches = project.with_store(|st| st.all_patches()).await?;
+        let group = args.group.clone();
+        let patches = project
+            .with_store(move |st| {
+                if let Some(g) = &group
+                    && !st.patch_groups()?.iter().any(|(n, _)| n == g)
+                {
+                    return Err(invalid(format!("there is no patch set named {g:?}")));
+                }
+                st.active_patches(group.as_deref())
+            })
+            .await?;
         let overwrite = args.overwrite;
         let base = project.program().base.0;
         blocking(move || export(&binary, &out, &patches, overwrite, base)).await
@@ -642,7 +711,7 @@ pub const MAX_ASSEMBLY_LINE: usize = 200;
 pub const MAX_ASSEMBLY_LINES: usize = 64;
 
 /// Like `sanitize` but keeps newlines.
-fn sanitize_multiline(s: &str) -> String {
+pub(crate) fn sanitize_multiline(s: &str) -> String {
     s.split('\n').map(sanitize).collect::<Vec<_>>().join("\n")
 }
 

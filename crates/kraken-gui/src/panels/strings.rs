@@ -77,7 +77,29 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
             if n == 1 { "" } else { "s" }
         )
     };
-    ui.label(RichText::new(summary).size(11.5).color(p.text_dim));
+    let selected_now = st
+        .strings
+        .selected
+        .and_then(|i| list.items.get(i))
+        .map(|it| it.address);
+    let mut edit_string = None;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(summary).size(11.5).color(p.text_dim));
+        if ui
+            .add_enabled(
+                selected_now.is_some(),
+                egui::Button::new("Edit string...").small(),
+            )
+            .on_hover_text(
+                "Change the text of the selected string in the program: same length or \
+                 shorter, padded with zero bytes. Nothing on disk changes until you export",
+            )
+            .on_disabled_hover_text("Select a string first")
+            .clicked()
+        {
+            edit_string = selected_now;
+        }
+    });
 
     if let Some(err) = list.error.clone() {
         ui.label(RichText::new(err).color(s.danger));
@@ -133,13 +155,26 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
                 .size(12.5)
                 .color(color),
         )
-        .on_hover_text("Double-click to see what uses this string");
+        .on_hover_text("Double-click to see what uses this string")
+        .context_menu(|ui| {
+            if ui
+                .button("Edit string...")
+                .on_hover_text("Change this string in the program (same length or shorter)")
+                .clicked()
+            {
+                edit_string = Some(it.address);
+                ui.close();
+            }
+        });
         if let Some(e) = encoding_label(it.encoding) {
             chip(ui, e, p.text_dim);
         }
     });
     st.strings.selected = selected;
     vm.strings_scrolled(max_seen + 1);
+    if let Some(a) = edit_string {
+        vm.begin_string_edit(a);
+    }
     if let Some(i) = resp.double_clicked {
         vm.open_string(i);
     }

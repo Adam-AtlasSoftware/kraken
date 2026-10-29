@@ -20,6 +20,83 @@ fn short_hex(bytes: &[u8]) -> String {
     }
 }
 
+/// The patch sets: one row each with an on/off switch, how many patches, export and remove.
+fn sets(ui: &mut Ui, vm: &mut ViewModel) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    if vm.tools.patches.groups.is_empty() {
+        return;
+    }
+    let groups = vm.tools.patches.groups.clone();
+    let (mut switch, mut export, mut remove) = (None, None, None);
+    ui.label(RichText::new("Patch sets").size(11.0).color(p.text_dim));
+    egui::Grid::new("kraken_patch_sets")
+        .striped(true)
+        .num_columns(5)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
+            for g in &groups {
+                let mut on = g.enabled_patches > 0;
+                if ui
+                    .checkbox(&mut on, RichText::new(&g.name).color(p.text_strong))
+                    .on_hover_text(
+                        "Switch every patch of this set on or off. Off patches stay staged but \
+                         are left out of exports and emulated runs",
+                    )
+                    .changed()
+                {
+                    switch = Some((g.name.clone(), on));
+                }
+                let state = g.state();
+                let color = match state {
+                    "on" => s.success,
+                    "off" => s.warning,
+                    _ => s.info,
+                };
+                chip(
+                    ui,
+                    &format!(
+                        "{} patch{} {state}",
+                        g.patches,
+                        if g.patches == 1 { "" } else { "es" }
+                    ),
+                    color,
+                );
+                ui.label(
+                    RichText::new(one_line(&g.description, 70))
+                        .size(12.0)
+                        .color(p.text_dim),
+                );
+                if ui
+                    .small_button("Export set...")
+                    .on_hover_text("Write a copy of the program with only this set's patches")
+                    .clicked()
+                {
+                    export = Some(g.name.clone());
+                }
+                if ui
+                    .add_enabled(g.patches == 0, egui::Button::new("Delete").small())
+                    .on_hover_text("Delete this empty set")
+                    .on_disabled_hover_text("Move or remove its patches first")
+                    .clicked()
+                {
+                    remove = Some(g.name.clone());
+                }
+                ui.end_row();
+            }
+        });
+    ui.separator();
+    if let Some((n, on)) = switch {
+        vm.set_patch_group_enabled(&n, on);
+    }
+    if let Some(n) = export {
+        vm.begin_patch_export_group(Some(n));
+    }
+    if let Some(n) = remove {
+        vm.remove_patch_group(&n);
+    }
+}
+
 pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
@@ -65,10 +142,20 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
             vm.begin_emulate(kraken_viewmodel::navtools::EmulateMode::Compare);
         }
         if ui
+            .button("New patch set...")
+            .on_hover_text(
+                "Make a named group for the patches of one change, so you can switch them on \
+                 and off together and export them alone",
+            )
+            .clicked()
+        {
+            vm.begin_patch_group();
+        }
+        if ui
             .button("Export patched binary...")
             .on_hover_text(
-                "Write a copy of the program with every patch applied. It asks first; the \
-                 original file is never touched",
+                "Write a copy of the program with every patch that is on applied. It asks \
+                 first; the original file is never touched",
             )
             .clicked()
         {
@@ -107,6 +194,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         ui.label(RichText::new(e).color(s.danger));
     }
     ui.separator();
+    sets(ui, vm);
 
     let b = &vm.tools.patches;
     if b.items.is_empty() {
@@ -127,16 +215,18 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
     let mut go = None;
     let mut remove = None;
     let mut edit = None;
+    let mut assign: Option<(u64, String)> = None;
+    let names: Vec<String> = b.groups.iter().map(|g| g.name.clone()).collect();
     egui::ScrollArea::vertical()
         .id_salt("kraken_patches")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Grid::new("kraken_patch_rows")
                 .striped(true)
-                .num_columns(6)
+                .num_columns(7)
                 .spacing([12.0, 4.0])
                 .show(ui, |ui| {
-                    for h in ["Address", "Change", "Length", "", "By", "Note"] {
+                    for h in ["Address", "Change", "Length", "", "Set", "By", "Note"] {
                         ui.label(RichText::new(h).size(11.0).color(p.text_dim));
                     }
                     ui.end_row();
@@ -196,6 +286,43 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
                                 remove = Some(it.address);
                             }
                         });
+                        ui.horizontal(|ui| {
+                            let shown = if it.group.is_empty() {
+                                "(none)"
+                            } else {
+                                it.group.as_str()
+                            };
+                            egui::ComboBox::from_id_salt(("patch_set_of", it.address))
+                                .selected_text(shown)
+                                .width(110.0)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(it.group.is_empty(), "(none)")
+                                        .on_hover_text("Take this patch out of its set")
+                                        .clicked()
+                                        && !it.group.is_empty()
+                                    {
+                                        assign = Some((it.address, String::new()));
+                                    }
+                                    for n in &names {
+                                        if ui
+                                            .selectable_label(&it.group == n, n)
+                                            .on_hover_text("Put this patch in this set")
+                                            .clicked()
+                                            && &it.group != n
+                                        {
+                                            assign = Some((it.address, n.clone()));
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text("The patch set this patch belongs to");
+                            if !it.enabled {
+                                chip(ui, "off", s.warning).on_hover_text(
+                                    "Switched off with its set: not exported or emulated",
+                                );
+                            }
+                        });
                         if it.by_agent {
                             chip(ui, &it.who, s.info).on_hover_text("An agent staged this patch");
                         } else {
@@ -212,6 +339,9 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         });
     if b.next_cursor.is_some() && !b.loading {
         vm.more_patches();
+    }
+    if let Some((a, group)) = assign {
+        vm.assign_patch_group(a, &group);
     }
     if let Some(a) = go {
         vm.goto(a);

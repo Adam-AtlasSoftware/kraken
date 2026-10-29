@@ -60,6 +60,7 @@ pub enum NavChoice {
     PatchReturn,
     PatchFill,
     CallFunction,
+    EditString,
 }
 
 /// One menu row.
@@ -361,6 +362,19 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
     });
 
     const PATCH: &str = "Patch";
+    out.push(
+        item(
+            NavChoice::EditString,
+            "Edit string...",
+            None,
+            "Change the text of the string here: same length or shorter, padded with zero bytes",
+        )
+        .in_group(PATCH)
+        .off_if(
+            (!(t.kind == TargetKind::Data && t.address.is_some()))
+                .then_some("Right-click a string in the Listing data to edit it."),
+        ),
+    );
     let code = t.kind == TargetKind::Code && t.address.is_some();
     let on_code = |it: Item| {
         it.in_group(PATCH)
@@ -597,6 +611,11 @@ pub fn run(ctx: &egui::Context, vm: &mut ViewModel, t: &Target, choice: NavChoic
         NavChoice::CallFunction => {
             if let Some(f) = func {
                 vm.begin_call(f);
+            }
+        }
+        NavChoice::EditString => {
+            if let Some(a) = t.address {
+                vm.begin_string_edit(a);
             }
         }
         NavChoice::Rewrite => {

@@ -466,7 +466,7 @@ impl Command for DebugStart {
         let project = s.project()?;
         let binary = PathBuf::from(project.meta().binary_path);
         let patches = if args.patched {
-            project.with_store(|st| st.all_patches()).await?
+            project.with_store(|st| st.active_patches(None)).await?
         } else {
             Vec::new()
         };
