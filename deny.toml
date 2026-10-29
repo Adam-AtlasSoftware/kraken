@@ -11,7 +11,10 @@ ignore = [
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive via zbus 5 (GUI D-Bus deps); not a vulnerability" },
     # paste is a compile-time proc-macro pulled in by egui_dock; unmaintained, no known vulnerability.
     { id = "RUSTSEC-2024-0436", reason = "build-time only via egui_dock; revisit when egui_dock drops it" },
-    # ruzstd is reached only through icicle-cpu -> addr2line -> object (zstd-compressed DWARF
+    # KRAKEN's own parsers (engine-native, kraken-registry) use object 0.40 with ruzstd 0.9; the
+    # advisory is about ruzstd 0.8.3, which object 0.39.1 keeps. crates/kraken-registry/tests/
+    # object_versions.rs fails if any crate other than icicle's addr2line depends on object 0.39.
+    # ruzstd 0.8.3 is reached only through icicle-cpu -> addr2line -> object (zstd-compressed DWARF
     # sections). icicle-cpu has no feature to drop that and the workspace manifest may not patch
     # it. The only icicle entry point that parses a program image's debug info is
     # icicle_cpu::debug_info::DebugInfo::add_file, called by icicle's PE loader and icicle-linux;
@@ -20,7 +23,7 @@ ignore = [
     # own Linux syscall layer instead of icicle-linux. crates/kraken-emu/tests/no_debug_info.rs
     # and crates/kraken-rewrite/tests/no_debug_info.rs fail if that changes. Details:
     # docs/design/0013-rewrite-pipeline.md.
-    { id = "RUSTSEC-2026-0344", reason = "ruzstd is unreachable from KRAKEN: only icicle's DebugInfo::add_file (PE loader, icicle-linux) decodes compressed debug sections, and neither kraken-emu nor kraken-rewrite calls it (guarded by their tests/no_debug_info.rs); no icicle feature drops the dependency (ADR 0013). Revisit when object moves to ruzstd >= 0.9.1" },
+    { id = "RUSTSEC-2026-0344", reason = "ruzstd 0.8.3 is reachable only through icicle (object 0.39.1 under addr2line; KRAKEN itself uses object 0.40 with ruzstd 0.9, guarded by kraken-registry/tests/object_versions.rs): only icicle's DebugInfo::add_file (PE loader, icicle-linux) decodes compressed debug sections, and neither kraken-emu nor kraken-rewrite calls it (guarded by their tests/no_debug_info.rs); no icicle feature drops the dependency (ADR 0013). Revisit when icicle moves to object 0.40" },
 ]
 
 [licenses]

@@ -319,9 +319,9 @@ fn load_pe<Pe: ImageNtHeaders>(
             data.get(off..off.saturating_add(raw as usize).min(data.len()))
                 .unwrap_or_default()
         };
-        let exec = flags & pe::IMAGE_SCN_MEM_EXECUTE != 0;
+        let exec = flags & pe::IMAGE_SCN_MEM_EXECUTE != pe::SectionFlags(0);
         // the import tables are read-only once bound (Ghidra shows `.idata` as r--)
-        let write = flags & pe::IMAGE_SCN_MEM_WRITE != 0
+        let write = flags & pe::IMAGE_SCN_MEM_WRITE != pe::SectionFlags(0)
             && !holds(va, size, iat)
             && !holds(va, size, import_dir);
         let start = base + u64::from(va);
@@ -744,7 +744,7 @@ fn load_pe<Pe: ImageNtHeaders>(
         .map(|(a, f)| (at(a), f))
         .collect();
 
-    let dll = nt.file_header().characteristics.get(LE) & pe::IMAGE_FILE_DLL != 0;
+    let dll = nt.file_header().characteristics.get(LE) & pe::IMAGE_FILE_DLL != pe::FileFlags(0);
     Ok(Loaded {
         format: "pe",
         container: "pe",

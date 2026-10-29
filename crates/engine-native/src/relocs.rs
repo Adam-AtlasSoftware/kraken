@@ -11,10 +11,10 @@ use object::Architecture;
 use object::elf::*;
 
 // the ARM ELF ABI's names for the types `object` names after their older spellings
-const R_ARM_GOTOFF32: u32 = R_ARM_GOTOFF;
-const R_ARM_BASE_PREL: u32 = R_ARM_GOTPC;
-const R_ARM_GOT_BREL: u32 = R_ARM_GOT32;
-const R_ARM_THM_CALL: u32 = R_ARM_THM_PC22;
+const R_ARM_GOTOFF32: RelocationType = R_ARM_GOTOFF;
+const R_ARM_BASE_PREL: RelocationType = R_ARM_GOTPC;
+const R_ARM_GOT_BREL: RelocationType = R_ARM_GOT32;
+const R_ARM_THM_CALL: RelocationType = R_ARM_THM_PC22;
 
 /// Where a relocation points.
 #[derive(Debug, Clone, Copy, Default)]
@@ -40,7 +40,7 @@ pub(crate) enum Applied {
 
 /// Whether relocation type `r_type` of `arch` needs a GOT slot for its symbol, and whether it
 /// needs the GOT's address.
-pub(crate) fn got_use(arch: Architecture, r_type: u32) -> (bool, bool) {
+pub(crate) fn got_use(arch: Architecture, r_type: RelocationType) -> (bool, bool) {
     match arch {
         Architecture::Arm => match r_type {
             R_ARM_GOT_BREL | R_ARM_GOT_PREL => (true, true),
@@ -216,7 +216,7 @@ fn set_thumb_imm16(hw1: u16, hw2: u16, v: u32) -> (u16, u16) {
 
 /// Computes the `%pcrel_hi` offsets of the RISC-V `auipc` instructions of a section (by the
 /// address of the `auipc`), which the `%pcrel_lo` relocations name by their label.
-pub(crate) fn riscv_hi(r_type: u32, p: u64, t: &Target) -> Option<i64> {
+pub(crate) fn riscv_hi(r_type: RelocationType, p: u64, t: &Target) -> Option<i64> {
     let a = t.addend.unwrap_or(0);
     match r_type {
         R_RISCV_PCREL_HI20 => Some((t.s as i64).wrapping_add(a).wrapping_sub(p as i64)),
@@ -229,7 +229,7 @@ pub(crate) fn riscv_hi(r_type: u32, p: u64, t: &Target) -> Option<i64> {
 /// `%pcrel_hi` offsets by `auipc` address (see [`riscv_hi`]).
 pub(crate) fn apply(
     arch: Architecture,
-    r_type: u32,
+    r_type: RelocationType,
     bytes: &mut [u8],
     off: usize,
     p: u64,
@@ -247,7 +247,13 @@ pub(crate) fn apply(
     done.map_or(Applied::Skipped, Applied::Done)
 }
 
-fn arm(r_type: u32, bytes: &mut [u8], off: usize, p: u64, t: &Target) -> Option<Option<u64>> {
+fn arm(
+    r_type: RelocationType,
+    bytes: &mut [u8],
+    off: usize,
+    p: u64,
+    t: &Target,
+) -> Option<Option<u64>> {
     let (s, p, got, slot) = (t.s as i64, p as i64, t.got as i64, t.slot as i64);
     let word = |b: &[u8]| get32(b, off);
     let a32 = |b: &[u8]| -> Option<i64> { Some(t.addend.unwrap_or(i64::from(word(b)? as i32))) };
@@ -359,7 +365,13 @@ fn arm(r_type: u32, bytes: &mut [u8], off: usize, p: u64, t: &Target) -> Option<
     }
 }
 
-fn aarch64(r_type: u32, bytes: &mut [u8], off: usize, p: u64, t: &Target) -> Option<Option<u64>> {
+fn aarch64(
+    r_type: RelocationType,
+    bytes: &mut [u8],
+    off: usize,
+    p: u64,
+    t: &Target,
+) -> Option<Option<u64>> {
     let a = t.addend.unwrap_or(0);
     let (s, pi) = (t.s as i64, p as i64);
     let target = s.wrapping_add(a);
@@ -430,7 +442,7 @@ fn aarch64(r_type: u32, bytes: &mut [u8], off: usize, p: u64, t: &Target) -> Opt
 
 fn riscv(
     rv64: bool,
-    r_type: u32,
+    r_type: RelocationType,
     bytes: &mut [u8],
     off: usize,
     p: u64,

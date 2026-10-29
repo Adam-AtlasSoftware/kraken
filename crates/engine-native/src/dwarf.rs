@@ -93,6 +93,20 @@ fn uleb(bytes: &[u8]) -> Option<u64> {
     None
 }
 
+/// Most bytes a compressed debug section may expand to; larger ones are skipped.
+const MAX_SECTION_BYTES: u64 = 512 << 20;
+
+/// The contents of a debug section, decompressed (zlib, zstd) when it is compressed.
+fn section_bytes<'a>(s: &object::Section<'a, '_>) -> Option<Cow<'a, [u8]>> {
+    if let Ok(c) = s.compressed_data()
+        && c.format != object::CompressionFormat::None
+        && c.uncompressed_size > MAX_SECTION_BYTES
+    {
+        return None;
+    }
+    s.uncompressed_data().ok()
+}
+
 /// Parses the DWARF of `file`; empty when it has none or it does not parse.
 pub fn parse(file: &object::File<'_>) -> Debug {
     if file.section_by_name(".debug_info").is_none() {
@@ -102,8 +116,7 @@ pub fn parse(file: &object::File<'_>) -> Debug {
     let mut total = 0;
     import(&mut importer, &mut total, |name| {
         file.section_by_name(name)
-            .and_then(|s| s.data().ok())
-            .map(Cow::Borrowed)
+            .and_then(|s| section_bytes(&s))
             .unwrap_or(Cow::Borrowed(&[]))
     });
     importer.finish()

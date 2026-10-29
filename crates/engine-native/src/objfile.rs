@@ -557,8 +557,8 @@ struct Placed {
 /// Whether a section takes part in the layout.
 fn loadable(sec: &object::Section<'_, '_>, family: Family) -> bool {
     match (family, sec.flags()) {
-        (Family::Elf, SectionFlags::Elf { sh_flags }) => {
-            sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
+        (Family::Elf, SectionFlags::Elf { sh_flags, .. }) => {
+            sh_flags.contains(object::elf::SHF_ALLOC)
         }
         (Family::Coff, SectionFlags::Coff { characteristics }) => {
             let content = pe::IMAGE_SCN_CNT_CODE
@@ -566,8 +566,8 @@ fn loadable(sec: &object::Section<'_, '_>, family: Family) -> bool {
                 | pe::IMAGE_SCN_CNT_UNINITIALIZED_DATA;
             let dropped =
                 pe::IMAGE_SCN_LNK_REMOVE | pe::IMAGE_SCN_LNK_INFO | pe::IMAGE_SCN_MEM_DISCARDABLE;
-            characteristics & content != 0
-                && characteristics & dropped == 0
+            characteristics & content != pe::SectionFlags(0)
+                && characteristics & dropped == pe::SectionFlags(0)
                 && !sec.name().is_ok_and(|n| n.starts_with(".debug"))
         }
         _ => false,
@@ -576,13 +576,14 @@ fn loadable(sec: &object::Section<'_, '_>, family: Family) -> bool {
 
 fn perms(sec: &object::Section<'_, '_>) -> (bool, bool) {
     match sec.flags() {
-        SectionFlags::Elf { sh_flags } => (
-            sh_flags & u64::from(object::elf::SHF_WRITE) != 0,
-            sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0,
+        SectionFlags::Elf { sh_flags, .. } => (
+            sh_flags.contains(object::elf::SHF_WRITE),
+            sh_flags.contains(object::elf::SHF_EXECINSTR),
         ),
         SectionFlags::Coff { characteristics } => (
-            characteristics & pe::IMAGE_SCN_MEM_WRITE != 0,
-            characteristics & (pe::IMAGE_SCN_MEM_EXECUTE | pe::IMAGE_SCN_CNT_CODE) != 0,
+            characteristics & pe::IMAGE_SCN_MEM_WRITE != pe::SectionFlags(0),
+            characteristics & (pe::IMAGE_SCN_MEM_EXECUTE | pe::IMAGE_SCN_CNT_CODE)
+                != pe::SectionFlags(0),
         ),
         _ => (false, false),
     }
@@ -616,7 +617,7 @@ fn align_up(v: u64, a: u64) -> u64 {
 }
 
 /// The relocation types that address the GOT.
-fn got_relative(family: Family, ptr: usize, r_type: u32) -> (bool, bool) {
+fn got_relative(family: Family, ptr: usize, r_type: object::elf::RelocationType) -> (bool, bool) {
     use object::elf::*;
     if family != Family::Elf {
         return (false, false);
@@ -768,8 +769,10 @@ fn relocate(
                         }
                         pe::IMAGE_REL_AMD64_ADDR32 => Some((s + a4, 4, false)),
                         pe::IMAGE_REL_AMD64_ADDR32NB => Some((s - base + a4, 4, false)),
-                        pe::IMAGE_REL_AMD64_REL32..=pe::IMAGE_REL_AMD64_REL32_5 => {
-                            let k = i128::from(typ - pe::IMAGE_REL_AMD64_REL32);
+                        t if (pe::IMAGE_REL_AMD64_REL32.0..=pe::IMAGE_REL_AMD64_REL32_5.0)
+                            .contains(&t.0) =>
+                        {
+                            let k = i128::from(typ.0 - pe::IMAGE_REL_AMD64_REL32.0);
                             Some((s - (p + 4 + k) + a4, 4, false))
                         }
                         pe::IMAGE_REL_AMD64_SECREL => Some((s - sec_start + a4, 4, false)),
@@ -1377,8 +1380,8 @@ fn link(
                 code.push((addr, name.to_string(), !sym.is_local()));
             }
             // a hidden ELF symbol (`__x86.get_pc_thunk.bx`) stays inside whatever links it
-            let hidden = matches!(sym.flags(), SymbolFlags::Elf { st_other, .. }
-                if st_other & 3 == object::elf::STV_HIDDEN || st_other & 3 == object::elf::STV_INTERNAL);
+            let hidden = matches!(sym.flags(), SymbolFlags::Elf { st_other: object::elf::SymbolOther(st_other), .. }
+                if st_other & 3 == object::elf::STV_HIDDEN.0 || st_other & 3 == object::elf::STV_INTERNAL.0);
             if !sym.is_local() && !hidden && sym.is_definition() && globals.get(name) == Some(&raw)
             {
                 let kind = if is_code {
@@ -1620,11 +1623,11 @@ mod tests {
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(&0xffffu16.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&pe::IMAGE_FILE_MACHINE_AMD64.to_le_bytes());
+        out.extend_from_slice(&pe::IMAGE_FILE_MACHINE_AMD64.0.to_le_bytes());
         out.extend_from_slice(&0u32.to_le_bytes());
         out.extend_from_slice(&(names.len() as u32).to_le_bytes());
         out.extend_from_slice(&ordinal.unwrap_or(0).to_le_bytes());
-        out.extend_from_slice(&(ty | (name_type << 2)).to_le_bytes());
+        out.extend_from_slice(&(ty | (name_type.0 << 2)).to_le_bytes());
         out.append(&mut names);
         out
     }

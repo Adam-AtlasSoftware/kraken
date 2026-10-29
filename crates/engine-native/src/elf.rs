@@ -8,8 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
 use object::elf::{
-    PF_W, PF_X, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE, R_ARM_IRELATIVE,
-    R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE,
+    PF_W, PF_X, ProgramFlags, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE,
+    R_ARM_IRELATIVE, R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC,
+    SHF_EXECINSTR, SHF_WRITE, SectionFlags as ElfSectionFlags,
 };
 use object::read::{Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable};
 use object::{
@@ -306,15 +307,15 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
             continue;
         }
         let flags = match seg.flags() {
-            SegmentFlags::Elf { p_flags } => p_flags,
-            _ => 0,
+            SegmentFlags::Elf { p_flags, .. } => p_flags,
+            _ => ProgramFlags(0),
         };
         let bytes = seg.data().map_err(|e| bad(format!("bad segment: {e}")))?;
         segments.push(Segment {
             start: at(seg.address()),
             data: bytes.to_vec(),
             mem_size: seg.size().max(bytes.len() as u64),
-            readonly: flags & PF_W == 0,
+            readonly: !flags.contains(PF_W),
         });
     }
     segments.sort_by_key(|s| s.start);
@@ -327,10 +328,10 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     let mut blocks = Vec::new();
     for sec in file.sections() {
         let sh_flags = match sec.flags() {
-            SectionFlags::Elf { sh_flags } => sh_flags,
-            _ => 0,
+            SectionFlags::Elf { sh_flags, .. } => sh_flags,
+            _ => ElfSectionFlags(0),
         };
-        if sh_flags & u64::from(SHF_ALLOC) == 0 || sec.size() == 0 {
+        if !sh_flags.contains(SHF_ALLOC) || sec.size() == 0 {
             continue;
         }
         let name = sec.name().unwrap_or("").to_string();
@@ -345,8 +346,8 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
             end: at(sec.address() + sec.size()).into(),
             perms: MemoryBlock::perms_string(
                 true,
-                sh_flags & u64::from(SHF_WRITE) != 0,
-                sh_flags & u64::from(SHF_EXECINSTR) != 0,
+                sh_flags.contains(SHF_WRITE),
+                sh_flags.contains(SHF_EXECINSTR),
             ),
             initialized: sec.kind() != SectionKind::UninitializedData,
             kind: MemoryKind::Default,
@@ -355,15 +356,15 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     if blocks.is_empty() {
         for (i, seg) in file.segments().filter(|s| s.size() > 0).enumerate() {
             let flags = match seg.flags() {
-                SegmentFlags::Elf { p_flags } => p_flags,
-                _ => 0,
+                SegmentFlags::Elf { p_flags, .. } => p_flags,
+                _ => ProgramFlags(0),
             };
             blocks.push(MemoryBlock {
                 name: format!("segment_{i}"),
                 space: "ram".into(),
                 start: at(seg.address()).into(),
                 end: at(seg.address() + seg.size()).into(),
-                perms: MemoryBlock::perms_string(true, flags & PF_W != 0, flags & PF_X != 0),
+                perms: MemoryBlock::perms_string(true, flags.contains(PF_W), flags.contains(PF_X)),
                 initialized: true,
                 kind: MemoryKind::Default,
             });
@@ -529,11 +530,11 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
     if relative.is_empty() || static_risc {
         for sec in file.sections() {
             let sh_flags = match sec.flags() {
-                SectionFlags::Elf { sh_flags } => sh_flags,
-                _ => 0,
+                SectionFlags::Elf { sh_flags, .. } => sh_flags,
+                _ => ElfSectionFlags(0),
             };
-            let alloc = sh_flags & u64::from(SHF_ALLOC) != 0;
-            let exec = sh_flags & u64::from(SHF_EXECINSTR) != 0;
+            let alloc = sh_flags.contains(SHF_ALLOC);
+            let exec = sh_flags.contains(SHF_EXECINSTR);
             if !alloc || exec || sec.kind() == SectionKind::UninitializedData {
                 continue;
             }
@@ -576,7 +577,7 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
                 continue;
             };
             let jump_slot = matches!(r.flags(), RelocationFlags::Elf { r_type }
-                if matches!(r_type, 5 | 22 | 1026));
+                if matches!(r_type.0, 5 | 22 | 1026));
             if !sym.is_definition() || sym.address() == 0 || jump_slot {
                 continue;
             }
@@ -843,7 +844,7 @@ fn plt_entries(
             let word = |i: usize| le_word(&r[i * ptr..(i + 1) * ptr]);
             // the relocation type is the low byte of a 32-bit r_info, the low word of a 64-bit one
             let mask = if ptr == 4 { 0xff } else { 0xffff_ffff };
-            if word(1) & mask != u64::from(irelative) {
+            if word(1) & mask != u64::from(irelative.0) {
                 continue;
             }
             // REL keeps the resolver in the slot

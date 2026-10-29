@@ -29,7 +29,7 @@ checksum = "59317f77929f0e679d39364702289274de2f0f0b22cbf50b2b8cff2169a0b27a"
 dependencies = [
  "cpp_demangle",
  "fallible-iterator",
- "gimli",
+ "gimli 0.33.0",
  "memmap2",
  "object 0.39.1",
  "rustc-demangle",
@@ -819,7 +819,7 @@ dependencies = [
  "cranelift-control",
  "cranelift-entity",
  "cranelift-isle",
- "gimli",
+ "gimli 0.33.0",
  "hashbrown 0.15.5",
  "libm",
  "log",
@@ -1444,13 +1444,13 @@ dependencies = [
  "async-trait",
  "cpp_demangle",
  "engine-native-sys",
- "gimli",
+ "gimli 0.34.0",
  "kraken-engine",
  "kraken-proto",
  "kraken-sidecar",
  "libc",
  "msvc-demangler",
- "object 0.39.1",
+ "object 0.40.0",
  "serde",
  "serde_json",
  "sha2",
@@ -1894,6 +1894,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gimli"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
+dependencies = [
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2239,7 +2248,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.13.2",
  "bytemuck",
- "gimli",
+ "gimli 0.33.0",
  "half",
  "icicle-mem",
  "object 0.38.1",
@@ -3047,7 +3056,7 @@ dependencies = [
  "kraken-model",
  "kraken-proto",
  "kraken-sidecar",
- "object 0.39.1",
+ "object 0.40.0",
  "schemars 1.2.3",
  "serde",
  "serde_json",
@@ -3857,7 +3866,18 @@ checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
 dependencies = [
  "flate2",
  "memchr",
- "ruzstd",
+ "ruzstd 0.8.3",
+]
+
+[[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
+dependencies = [
+ "flate2",
+ "memchr",
+ "ruzstd 0.9.1",
 ]
 
 [[package]]
@@ -4807,6 +4827,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruzstd"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5362,7 +5391,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
