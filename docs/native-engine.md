@@ -282,6 +282,50 @@ DWARF counts, and now and then an unreachable padding instruction, as Ghidra's d
 of the small programs takes 30 to 230 ms in a debug build; the statically linked `static_strops`
 (glibc inside) about 3 s on RISC-V 64, 5 s on AArch64 and 12 s on ARM.
 
+## Firmware, ROMs and other files with no header
+
+A flat image from a microcontroller, a ROM or a boot sector has no header that says what it is.
+Open it as a **raw binary**: tell KRAKEN the processor and where the image lives in memory.
+
+```sh
+# an STM32-style firmware image mapped at 0x08000000
+kraken project-create --binary corpus/raw/fw_cortexm.bin --loader raw --language cortex-m \
+  --base 0x08000000 --project ~/kraken-projects/fw
+kraken analyze --project ~/kraken-projects/fw
+kraken list-functions --project ~/kraken-projects/fw
+```
+
+**You should see:** `Reset_Handler`, `SysTick_Handler` and `Default_Handler` named from the ARM
+Cortex-M vector table at the start of the image, plus the functions they call, at their real
+addresses (`0x080000dc` for the reset handler). Any other raw image gets a function at its entry
+point and everything that entry reaches.
+
+The options (`project_create`, the CLI, MCP, Python `kraken.create(..., loader="raw")` and the
+import dialog all take the same ones):
+
+| Option | Meaning |
+|---|---|
+| `--loader raw` | Read the file as one block of memory instead of by its format. |
+| `--language` | The processor: `cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`, `riscv64` (the native engine) or any Ghidra language id (`x86:LE:16:Real Mode`, `MIPS:LE:32:default`; Ghidra). |
+| `--base` | Address of the first byte. Default 0. |
+| `--offset`, `--length` | Map only part of the file (skip a header, drop a trailer). |
+| `--entry` | Where execution starts. Default: the reset vector of a Cortex-M vector table, else the base. For Thumb code the low bit may be set. |
+| `--compiler` | Compiler spec (`gcc`, `windows`, `default`). |
+
+The options are kept in the project (`meta.json`) and used again whenever it is reopened or
+rebuilt. With `--engine auto` the native engine takes the processors listed above and Ghidra the
+rest; the Ghidra path marks the entry point and analyses from there (it does not read a vector
+table).
+
+Not sure what a file is? `kraken binary-probe --path firmware.bin` recognises the usual layouts
+of firmware and suggests the options: an ARM Cortex-M vector table (processor, flash base and
+reset vector), a U-Boot `uImage` header (processor, load address, entry, 64-byte offset), the
+Linux arm64 `Image` header, and the x86 reset vector of a BIOS or flash image. For compressed
+files, file systems and Intel HEX or S-record text it says what to unpack or convert first. In
+the window, the import dialog shows a **Raw binary** section for such a file, filled in from the
+suggestion, instead of refusing it. Raw images are decompiled and edited like any program; there
+are no symbols, so names come from the vector table, your renames and analysis.
+
 ## Libraries and object files
 
 The native engine also opens files that are not linked into a program yet, for Linux and for
@@ -322,9 +366,10 @@ same code linked into a shared library, so the time goes to the analysis, not to
 ## What does not work yet
 
 - Mach-O files, big-endian ELF (ARM BE8, AArch64 BE), processors other than x86, ARM, AArch64 and
-  RISC-V, and PDB files for PE images (the native engine ignores a PDB; keep it next to the
-  program and use the Ghidra engine to get its names and types). With `auto` the first three go
-  to Ghidra.
+  RISC-V (this includes raw images of other processors and 16-bit real-mode x86), and PDB files
+  for PE images (the native engine ignores a PDB; keep it next to the program and use the Ghidra
+  engine to get its names and types). With `auto` these go to Ghidra. Intel HEX and S-record
+  files must be converted to a flat binary first (`objcopy -I ihex -O binary`).
 - COFF objects and libraries for processors other than x86 and x86-64 (Windows on ARM), thin
   archives, and LLVM bitcode members. RISC-V objects assembled with linker relaxation are read
   unrelaxed, which is what they mean, and TLS relocations are not applied.

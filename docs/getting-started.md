@@ -1,6 +1,6 @@
 # Getting started
 
-This page takes you from nothing to a renamed function in a real binary. KRAKEN 0.1a runs on Linux x86_64 only, and you build it from source. The path below uses the **native engine**: no Java and no Ghidra download. If you need PE or Mach-O files, 32-bit programs or debug-info types, use the optional Ghidra engine in [the last section](#optional-the-ghidra-engine).
+This page takes you from nothing to a renamed function in a real binary. KRAKEN 0.1a runs on Linux x86_64 only, and you build it from source. The path below uses the **native engine**: no Java and no Ghidra download. If you need Mach-O files, other processors or debug-info types, use the optional Ghidra engine in [the last section](#optional-the-ghidra-engine).
 
 ## What you need
 
@@ -153,7 +153,7 @@ Then create projects with `--engine ghidra` (the default when `engine` is not se
 | | Native | Ghidra |
 |---|---|---|
 | Needs Java and a Ghidra download | No | Yes |
-| Formats | ELF (x86-64, AArch64, 32-bit x86) and PE (x86, x86-64) | ELF, PE, Mach-O, many processors |
+| Formats | ELF (x86, x86-64, ARM, AArch64, RISC-V), PE (x86, x86-64), libraries, raw images | ELF, PE, Mach-O, raw images, many processors |
 | Decompiler, listing, graph, xrefs, strings, rename and undo | Yes | Yes |
 | Debug-info types, C++ demangling | Not yet | Yes |
 

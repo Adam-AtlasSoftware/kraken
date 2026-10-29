@@ -27,7 +27,7 @@ kraken setup --native
 
 **You should see:** a few build messages, then "The native engine is ready." and the folder of the compiled processor files. It needs the network once (to fetch the pinned sources, checked against a SHA-256 hash) and a C++ compiler, takes about a minute and never needs root. Running it again does nothing if everything is in place.
 
-**Why it matters:** KRAKEN uses Ghidra's decompiler, a free analysis component from the NSA, but runs it as a library inside a locked-down child process, so there is no Java and no Ghidra window. Setup compiles the descriptions of the processors it needs. If you later want PE or Mach-O programs, `kraken setup` installs the full Ghidra engine as well (see [the native engine](native-engine.md#native-or-ghidra)).
+**Why it matters:** KRAKEN uses Ghidra's decompiler, a free analysis component from the NSA, but runs it as a library inside a locked-down child process, so there is no Java and no Ghidra window. Setup compiles the descriptions of the processors it needs. If you later want Mach-O programs or other processors, `kraken setup` installs the full Ghidra engine as well (see [the native engine](native-engine.md#native-or-ghidra)).
 
 ## 2. Create a project
 
