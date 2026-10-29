@@ -156,7 +156,7 @@ fn plan_column(
         let staged = matches!(edit.phase, SourceEditPhase::Staged(_));
         if ui
             .add_enabled(staged, egui::Button::new("Run original vs patched"))
-            .on_hover_text("Run both in the sandboxed emulator and compare, in the Patches tab")
+            .on_hover_text("Run both in the sandboxed emulator and compare, in the Emulation tab")
             .on_disabled_hover_text("Stage the patches first")
             .clicked()
         {

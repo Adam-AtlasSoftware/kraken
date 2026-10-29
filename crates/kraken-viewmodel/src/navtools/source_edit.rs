@@ -337,11 +337,11 @@ impl ViewModel {
         });
     }
 
-    /// After staging: the Patches tab, with the original and the patched program run side by
-    /// side.
+    /// After staging: the Patches tab, and the original and the patched program run side by
+    /// side in the Emulation tab.
     pub fn verify_source_edit(&mut self) {
         self.show_patches();
-        self.run_patched_compare();
+        self.compare_patched_now();
     }
 }
 

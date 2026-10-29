@@ -86,6 +86,16 @@ pub enum AppAction {
     ShowPatches,
     /// Write a copy of the binary with the patches applied.
     ExportPatched,
+    /// Run the program in the emulator with arguments and input.
+    RunProgram,
+    /// Run the program with the byte patches applied.
+    RunPatched,
+    /// Run the original and the patched program with the same input and compare them.
+    ComparePatched,
+    /// Show the Emulation tab.
+    ShowEmulation,
+    /// Read how running the program in the emulator works.
+    EmulationHelp,
     /// Mark the code at the cursor as a function.
     CreateFunctionHere,
     /// Remove the function being viewed.
@@ -110,7 +120,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 47] = [
+    pub const ALL: [AppAction; 51] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -124,6 +134,11 @@ impl AppAction {
         AppAction::PatchHere,
         AppAction::ShowPatches,
         AppAction::ExportPatched,
+        AppAction::RunProgram,
+        AppAction::RunPatched,
+        AppAction::ComparePatched,
+        AppAction::ShowEmulation,
+        AppAction::EmulationHelp,
         AppAction::CreateFunctionHere,
         AppAction::DeleteFunction,
         AppAction::Back,
@@ -241,6 +256,11 @@ impl AppAction {
             AppAction::PatchHere => "Patch bytes here...",
             AppAction::ShowPatches => "Show patches",
             AppAction::ExportPatched => "Export patched binary...",
+            AppAction::RunProgram => "Run program...",
+            AppAction::RunPatched => "Run patched program...",
+            AppAction::ComparePatched => "Compare original vs patched...",
+            AppAction::ShowEmulation => "Show emulation results",
+            AppAction::EmulationHelp => "About running programs",
             AppAction::CreateFunctionHere => "Create function here",
             AppAction::DeleteFunction => "Delete this function...",
             AppAction::ShowAiActivity => "Show AI activity",
@@ -308,6 +328,19 @@ impl AppAction {
             AppAction::ExportPatched => {
                 "Write a copy of the program with every patch applied; the original is untouched"
             }
+            AppAction::RunProgram => {
+                "Run the program in the sandboxed emulator with the arguments, input, environment and files you give it"
+            }
+            AppAction::RunPatched => {
+                "Run a copy with your byte patches applied in the sandboxed emulator"
+            }
+            AppAction::ComparePatched => {
+                "Run the original and the patched program with the same input and see what changed"
+            }
+            AppAction::ShowEmulation => "See what the last run or comparison did",
+            AppAction::EmulationHelp => {
+                "What the emulator does, what it cannot do, and why running here is safe"
+            }
             AppAction::CreateFunctionHere => "Tell KRAKEN the code at the cursor is a function",
             AppAction::DeleteFunction => "Remove a function the analysis got wrong",
             AppAction::AskAboutKraken => {
@@ -373,6 +406,8 @@ impl AppAction {
             "patch_set" => AppAction::PatchHere,
             "patch_list" => AppAction::ShowPatches,
             "patch_export" => AppAction::ExportPatched,
+            "emulate_run" => AppAction::RunProgram,
+            "emulate_compare" => AppAction::ComparePatched,
             "create_function" => AppAction::CreateFunctionHere,
             "delete_function" => AppAction::DeleteFunction,
             _ => return None,
@@ -497,6 +532,8 @@ pub enum UiRequest {
     OpenDocs,
     /// Show the help window.
     ShowHelp,
+    /// Show the help page of the Emulation tab.
+    ShowEmulationHelp,
     /// Start the guided tour.
     TakeTour,
     /// Show the Automate dialog.

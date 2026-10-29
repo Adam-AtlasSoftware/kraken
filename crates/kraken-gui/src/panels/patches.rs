@@ -1,9 +1,10 @@
-//! The Patches tab: byte patches staged on the program, a run of the original against the
-//! patched program in the emulator, and the export of a patched copy.
+//! The Patches tab: byte patches staged on the program, the button that compares the original
+//! against the patched program in the emulator (the Emulation tab shows it), and the export of a
+//! patched copy.
 
 use egui::{RichText, Ui};
 use kraken_viewmodel::ViewModel;
-use kraken_viewmodel::navtools::{RunSide, spaced_hex};
+use kraken_viewmodel::navtools::spaced_hex;
 
 use super::strings::one_line;
 use crate::style::{self, chip, empty_state, medium, pal};
@@ -53,20 +54,15 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         {
             vm.begin_patch_bytes();
         }
-        let running = vm.tools.patches.running;
         if ui
-            .add_enabled(!running, egui::Button::new("Run original vs patched"))
+            .button("Run original vs patched...")
             .on_hover_text(
-                "Run the program twice in the sandboxed emulator, as it is and with the patches, \
-                 and compare what each did",
+                "Run the program twice in the sandboxed emulator with the arguments and input \
+                 you give, as it is and with the patches, and compare what each did",
             )
-            .on_disabled_hover_text("Running...")
             .clicked()
         {
-            vm.run_patched_compare();
-        }
-        if running {
-            ui.spinner();
+            vm.begin_emulate(kraken_viewmodel::navtools::EmulateMode::Compare);
         }
         if ui
             .button("Export patched binary...")
@@ -110,7 +106,6 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
     if let Some(e) = &vm.tools.patches.error {
         ui.label(RichText::new(e).color(s.danger));
     }
-    run_report(ui, vm);
     ui.separator();
 
     let b = &vm.tools.patches;
@@ -230,70 +225,5 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
             Some(original),
             kraken_viewmodel::navtools::PatchOrigin::Bytes,
         );
-    }
-}
-
-/// The last original-versus-patched run, side by side.
-fn run_report(ui: &mut Ui, vm: &ViewModel) {
-    let Some(run) = &vm.tools.patches.run else {
-        return;
-    };
-    let p = pal(ui);
-    let s = style::status(style::dark(ui));
-    let (text, color) = if run.same() {
-        (
-            "Both runs behaved the same: the patches made no visible difference with no input.",
-            s.warning,
-        )
-    } else if run.original.is_ok() && run.patched.is_ok() {
-        ("The patched program behaved differently.", s.success)
-    } else {
-        ("A run could not finish; see below.", s.danger)
-    };
-    ui.label(RichText::new(text).size(12.5).color(color));
-    ui.columns(2, |cols| {
-        side(&mut cols[0], "Original", &run.original, p, s);
-        side(&mut cols[1], "Patched", &run.patched, p, s);
-    });
-}
-
-fn side(
-    ui: &mut Ui,
-    title: &str,
-    r: &Result<RunSide, String>,
-    p: kraken_gui_widgets::Palette,
-    s: style::Status,
-) {
-    ui.label(
-        RichText::new(title)
-            .size(11.5)
-            .strong()
-            .color(p.text_strong),
-    );
-    match r {
-        Ok(r) => {
-            ui.label(RichText::new(&r.exit).monospace().size(12.0));
-            let out = if r.stdout.is_empty() {
-                "(no output)".to_string()
-            } else {
-                one_line(&r.stdout, 300)
-            };
-            ui.label(RichText::new(out).monospace().size(11.5).color(p.text))
-                .on_hover_text("Standard output; program data, shown as text");
-            if !r.stderr.is_empty() {
-                ui.label(
-                    RichText::new(one_line(&r.stderr, 200))
-                        .monospace()
-                        .size(11.5)
-                        .color(s.warning),
-                );
-            }
-            for n in r.notes.iter().take(3) {
-                ui.label(RichText::new(n).size(11.0).color(p.text_dim));
-            }
-        }
-        Err(e) => {
-            ui.label(RichText::new(e).size(12.0).color(s.danger));
-        }
     }
 }

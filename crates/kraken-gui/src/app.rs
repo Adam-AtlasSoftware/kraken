@@ -1037,6 +1037,9 @@ impl KrakenApp {
                 }
                 self.state.assist.focus_input = true;
             }
+            UiRequest::ShowEmulationHelp => {
+                self.help.show_topic(help::Topic::Panel(Tab::Emulation))
+            }
             UiRequest::ShowAiActivity => {
                 if let Some(vm) = self.vm.as_mut() {
                     vm.ai_refresh();

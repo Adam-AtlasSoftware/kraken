@@ -110,11 +110,13 @@ original against patched.
 emulate_compare {"stdin": "hello\n"}
 ```
 
-In the GUI, the **Emulate** menu has *Run...*, *Run patched...* and *Compare original vs patched...*.
+In the GUI, the **Emulate** menu has *Run program...*, *Run patched program...* and *Compare original vs patched...*, plus *About running programs*.
 The Run dialog takes the arguments, standard input, environment, input files and the step and time
 limits; the **Emulation** panel shows the exit, the output and the notes, and for a comparison the
-two runs side by side with the differing lines marked. The Patches tab's *Run original vs patched*
+two runs side by side with the differing lines marked. The Patches tab's *Run original vs patched...*
 opens the same comparison.
+
+![The Emulation tab after comparing the original and the patched program: the first difference, both exits and the two outputs side by side with the changed line marked](images/emulation.png)
 
 ## How the assistant uses it
 

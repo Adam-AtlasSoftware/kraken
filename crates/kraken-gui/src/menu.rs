@@ -53,6 +53,7 @@ pub const VIEW_TABS: [Tab; 18] = [
     Tab::Types,
     Tab::Patches,
     Tab::Edit,
+    Tab::Emulation,
     Tab::History,
     Tab::Proposals,
     Tab::Assistant,
@@ -95,6 +96,10 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::ShowPatches
             | AppAction::ExportPatched
             | AppAction::RunInEmulator
+            | AppAction::RunProgram
+            | AppAction::RunPatched
+            | AppAction::ComparePatched
+            | AppAction::ShowEmulation
             | AppAction::CreateFunctionHere
             | AppAction::DeleteFunction
             | AppAction::ShowAiActivity
@@ -318,6 +323,18 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             })
             .response
             .on_hover_text("Change the program's bytes and write a patched copy");
+            ui.menu_button("Emulate", |ui| {
+                item(ui, AppAction::RunProgram, env, &mut out);
+                item(ui, AppAction::RunPatched, env, &mut out);
+                item(ui, AppAction::ComparePatched, env, &mut out);
+                ui.separator();
+                item(ui, AppAction::ShowEmulation, env, &mut out);
+                item(ui, AppAction::EmulationHelp, env, &mut out);
+            })
+            .response
+            .on_hover_text(
+                "Run the program safely in the emulator and compare patched against original",
+            );
             ui.menu_button("AI", |ui| {
                 item(ui, AppAction::ExplainProgram, env, &mut out);
                 item(ui, AppAction::Automate, env, &mut out);

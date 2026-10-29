@@ -4,6 +4,7 @@
 pub mod bookmarks;
 pub mod context;
 pub mod dialogs;
+pub mod emulation;
 pub mod graph;
 pub mod hex;
 pub mod listing;

@@ -412,6 +412,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     );
     step!("patch_export", json!({"output_path": "patched.bin"}));
     step!("emulate_run", json!({"patched": true}));
+    step!("emulate_compare", json!({}));
     step!("patch_remove", json!({"address": "0x401040"}));
     step!("patch_remove", json!({"address": "0x401040"}));
 

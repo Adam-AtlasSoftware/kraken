@@ -34,6 +34,7 @@ pub enum Tab {
     Types,
     Patches,
     Edit,
+    Emulation,
     AiActivity,
 }
 
@@ -61,6 +62,7 @@ impl Tab {
             Tab::Types => "types",
             Tab::Patches => "patches",
             Tab::Edit => "edit",
+            Tab::Emulation => "emulation",
             Tab::AiActivity => "ai_activity",
         }
     }
@@ -83,6 +85,7 @@ impl Tab {
         Tab::Types,
         Tab::Patches,
         Tab::Edit,
+        Tab::Emulation,
         Tab::AiActivity,
     ];
 
@@ -105,6 +108,7 @@ impl Tab {
             Tab::Types => "Types",
             Tab::Patches => "Patches",
             Tab::Edit => "Edit",
+            Tab::Emulation => "Emulation",
             Tab::AiActivity => "AI Activity",
         }
     }
@@ -217,6 +221,7 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
             NavTab::Bookmarks => Tab::Bookmarks,
             NavTab::Patches => Tab::Patches,
             NavTab::Edit => Tab::Edit,
+            NavTab::Emulation => Tab::Emulation,
             NavTab::History => Tab::History,
             NavTab::Rewrite => Tab::Rewrite,
         });
@@ -232,10 +237,11 @@ pub fn show(ui: &mut Ui, dock: &mut DockState<Tab>, vm: &mut ViewModel, state: &
                     | Tab::Types
                     | Tab::Patches
                     | Tab::Edit
+                    | Tab::Emulation
                     | Tab::AiActivity
             )
         {
-            if tab == Tab::Edit
+            if matches!(tab, Tab::Edit | Tab::Emulation)
                 && let Some(path) = dock.find_tab(&Tab::Decompiler)
             {
                 dock.set_focused_node_and_surface(path.node_path());
@@ -341,6 +347,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Types => panels::types::show(ui, self.vm, &mut self.ui.panels),
             Tab::Patches => panels::patches::show(ui, self.vm),
             Tab::Edit => panels::source_edit::show(ui, self.vm),
+            Tab::Emulation => panels::emulation::show(ui, self.vm),
             Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
         }
     }

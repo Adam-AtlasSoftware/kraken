@@ -5,6 +5,7 @@
 mod bookmarks;
 pub mod ctype;
 mod edits;
+mod emulate;
 mod form;
 mod patch_intents;
 mod patches;
@@ -17,6 +18,10 @@ mod tests;
 
 pub use bookmarks::{BookmarkDialog, BookmarkItem, BookmarksPanel};
 pub use edits::{FunctionDialog, FunctionDialogKind, TypeDialog, TypeMode};
+pub use emulate::{
+    Difference, EmulateDialog, EmulateMode, EmulationPanel, EmulationResult, FileDetail, InputRow,
+    MAX_INPUT_FILE, RunDetail, SideRow, side_by_side,
+};
 pub use form::{
     CommandForm, CommandResult, FieldKind, FormField, ResultSegment, fields_for_schema,
     result_lines,
@@ -24,7 +29,7 @@ pub use form::{
 pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
 pub use patches::{
     AsmState, ExportDialog, ExportDone, MAX_PATCH_BYTES, PatchDialog, PatchItem, PatchOrigin,
-    PatchesPanel, RunCompare, RunSide, parse_hex, spaced_hex,
+    PatchesPanel, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
@@ -54,6 +59,8 @@ pub enum NavTab {
     Patches,
     /// The Edit tab (patching from edited decompiled code).
     Edit,
+    /// The Emulation tab.
+    Emulation,
 }
 
 /// What a Go to suggestion is.
@@ -131,6 +138,10 @@ pub struct NavTools {
     pub export_dialog: Option<ExportDialog>,
     /// The one-click patch dialog (NOP, branch, return, fill), when open.
     pub intent_dialog: Option<IntentDialog>,
+    /// The Run dialog, when open.
+    pub emulate_dialog: Option<EmulateDialog>,
+    /// The Emulation tab.
+    pub emulation: EmulationPanel,
     /// The Edit tab's function, when one is being edited.
     pub source_edit: Option<SourceEdit>,
     /// The Retype / Edit signature dialog, when open.

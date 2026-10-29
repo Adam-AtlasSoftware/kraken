@@ -148,11 +148,23 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         how: &[
             "In the Listing, click an instruction and press Patch bytes; in the Hex view, select bytes and press Patch selection.",
             "Type the new bytes as hex. A shorter patch on x86 can be filled with nop (90).",
-            "Press Run original vs patched to compare them in the emulator.",
+            "Press Run original vs patched to compare them in the emulator; the result opens in the Emulation tab.",
             "Press Export patched binary to write the copy.",
         ],
         keys: &[],
         terms: &["patch", "opcode", "offset", "byte"],
+    },
+    PanelHelp {
+        panel: "Emulation",
+        short: "What the program did when you ran it in the sandboxed emulator, and how a patch changed it.",
+        text: "The Emulation tab shows the last run: how it ended, what it printed, the files it wrote and the emulator's notes. A comparison runs the original and the patched program with the same input and lays them side by side, marking the lines that differ and naming the first place they diverge. The program is interpreted instruction by instruction in a sandbox: it has no network, sees only its own private files, and nothing in the project changes.",
+        how: &[
+            "Open Emulate > Run program, give it arguments, input, environment variables or files, and press Run.",
+            "After staging patches, choose Emulate > Compare original vs patched to see what they changed.",
+            "A note naming a system call means the emulator does not implement it; the program was told it failed.",
+        ],
+        keys: &[],
+        terms: &["patch", "byte"],
     },
     PanelHelp {
         panel: "Edit",
@@ -162,7 +174,7 @@ pub const PANEL_HELP: &[PanelHelp] = &[
             "Open a function and press Patch function in the Decompiler.",
             "Edit the C on the left, then press Plan patch.",
             "Read the check and the patched decompile, then press Stage patches.",
-            "Run original vs patched from the Patches tab before you export.",
+            "Compare original vs patched from the Emulate menu before you export.",
         ],
         keys: &[],
         terms: &["patch", "decompiler", "pseudocode", "instruction"],

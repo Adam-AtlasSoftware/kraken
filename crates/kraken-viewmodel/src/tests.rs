@@ -1813,3 +1813,4 @@ mod inprocess {
 
 #[cfg(test)]
 mod dotnet;
+mod emulate;

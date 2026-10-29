@@ -20,6 +20,7 @@ use crate::backend::{Backend, BackendEvent, ChangeInfo, CommandInfo, JobInfo, Jo
 use crate::errors::plain_error;
 use crate::loading::LoadingState;
 use crate::nav::NavHistory;
+use crate::navtools::EmulateMode;
 use crate::palette::{AppAction, PaletteState, PaletteTarget, UiRequest};
 use crate::state::*;
 use crate::tokens::tokenize;
@@ -1919,6 +1920,10 @@ impl ViewModel {
                 | AppAction::PatchHere
                 | AppAction::ShowPatches
                 | AppAction::ExportPatched
+                | AppAction::RunProgram
+                | AppAction::RunPatched
+                | AppAction::ComparePatched
+                | AppAction::ShowEmulation
                 | AppAction::CreateFunctionHere
                 | AppAction::DeleteFunction
         );
@@ -1991,6 +1996,11 @@ impl ViewModel {
             }
             AppAction::ShowPatches => self.show_patches(),
             AppAction::ExportPatched => self.begin_patch_export(),
+            AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
+            AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
+            AppAction::ComparePatched => self.begin_emulate(EmulateMode::Compare),
+            AppAction::ShowEmulation => self.show_emulation(),
+            AppAction::EmulationHelp => return Some(UiRequest::ShowEmulationHelp),
             AppAction::CreateFunctionHere => self.begin_create_function_here(),
             AppAction::DeleteFunction => self.begin_delete_current(),
         }

@@ -56,38 +56,6 @@ pub struct ExportDone {
     pub sha256: String,
 }
 
-/// One emulated run, as the Patches tab shows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunSide {
-    /// How it ended, in words ("exit code 0", "signal 11").
-    pub exit: String,
-    /// Standard output (program data).
-    pub stdout: String,
-    /// Standard error (program data).
-    pub stderr: String,
-    /// The emulator's notes.
-    pub notes: Vec<String>,
-}
-
-/// The original and the patched program run side by side.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunCompare {
-    /// The program as it is on disk.
-    pub original: Result<RunSide, String>,
-    /// With every patch applied.
-    pub patched: Result<RunSide, String>,
-}
-
-impl RunCompare {
-    /// True when both ran and behaved the same (exit and output).
-    pub fn same(&self) -> bool {
-        match (&self.original, &self.patched) {
-            (Ok(a), Ok(b)) => a.exit == b.exit && a.stdout == b.stdout && a.stderr == b.stderr,
-            _ => false,
-        }
-    }
-}
-
 /// State of the Patches tab.
 #[derive(Debug, Clone, Default)]
 pub struct PatchesPanel {
@@ -103,10 +71,6 @@ pub struct PatchesPanel {
     pub error: Option<String>,
     /// The last export of this session.
     pub last_export: Option<ExportDone>,
-    /// The emulator is running the program.
-    pub running: bool,
-    /// The last original-versus-patched run.
-    pub run: Option<RunCompare>,
     generation: u64,
 }
 
@@ -248,39 +212,6 @@ struct PatchWire {
     note: Untrusted<String>,
     author_kind: String,
     author_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ExitWire {
-    kind: String,
-    value: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RunWire {
-    exit: ExitWire,
-    stdout: Untrusted<String>,
-    stderr: Untrusted<String>,
-    notes: Vec<String>,
-}
-
-impl From<RunWire> for RunSide {
-    fn from(w: RunWire) -> Self {
-        let exit = match (w.exit.kind.as_str(), w.exit.value) {
-            ("code", Some(v)) => format!("exit code {v}"),
-            ("signal", Some(v)) => format!("signal {v}"),
-            ("timeout", _) => "ran out of time".into(),
-            ("step_limit", _) => "ran out of instructions".into(),
-            ("unsupported", _) => "needs something the emulator lacks".into(),
-            (k, _) => k.replace('_', " "),
-        };
-        RunSide {
-            exit,
-            stdout: w.stdout.0,
-            stderr: w.stderr.0,
-            notes: w.notes,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -719,33 +650,6 @@ impl ViewModel {
                     }
                 }
             }
-        });
-    }
-
-    /// Runs the program in the emulator as it is and with the patches, to compare them.
-    pub fn run_patched_compare(&mut self) {
-        if self.tools.patches.running {
-            return;
-        }
-        self.tools.patches.running = true;
-        self.tools.patches.run = None;
-        self.call("emulate_run", json!({"patched": false}), |vm, original| {
-            let original = original
-                .and_then(parse::<RunWire>)
-                .map(RunSide::from)
-                .map_err(|e| plain_error(&e));
-            vm.call(
-                "emulate_run",
-                json!({"patched": true}),
-                move |vm, patched| {
-                    let patched = patched
-                        .and_then(parse::<RunWire>)
-                        .map(RunSide::from)
-                        .map_err(|e| plain_error(&e));
-                    vm.tools.patches.running = false;
-                    vm.tools.patches.run = Some(RunCompare { original, patched });
-                },
-            );
         });
     }
 

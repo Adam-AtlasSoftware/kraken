@@ -32,7 +32,9 @@ Everything below is also in the GUI, under the **Patch** menu:
 
 2. **Check it.** **Patch > Show patches** opens the **Patches** tab: every staged patch with its
    original and new bytes, note and author, with **Edit** and **Remove**. **Run original vs
-   patched** runs the program twice in the emulator and puts the two runs side by side. Staged
+   patched...** (also **Emulate > Compare original vs patched...**) asks for arguments, input,
+   environment and files, runs the program twice in the emulator and shows the two runs side by
+   side in the **Emulation** tab (see [Running the program in the emulator](emulation.md)). Staged
    bytes are tinted in the Hex view (which keeps showing the bytes on disk).
    ![The Patches tab with one staged patch, its original and new bytes, and the Run, Export and Refresh buttons; the staged bytes tinted in the Hex view](images/patches.png)
 
@@ -97,7 +99,7 @@ before you see it:
 ![The Edit tab next to the decompiler: the edited C on the left, the plan with its verdict and the patch on the right](images/edit-tab.png)
 
 **Stage patches** stages the plan with `patch_set` (each patch's note says it came from your
-edit); **Run original vs patched** then compares the two in the Patches tab. It works best for
+edit); **Run original vs patched** then compares the two in the Emulation tab. It works best for
 small, local changes: an edit that needs more room, a new call or new data comes back with no
 patches and says why. Planning costs AI calls on the assistant's model (two per round) and asks
 first like other AI work. The command behind it is `patch_from_source`, a job that only plans:
