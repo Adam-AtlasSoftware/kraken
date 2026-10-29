@@ -163,3 +163,22 @@ fn an_interrupt_stops_a_run_and_the_session_goes_on() {
         SessionStop::Exited { .. }
     ));
 }
+
+#[test]
+#[ignore = "needs Ghidra processor sources for the SLEIGH specs"]
+fn a_breakpoint_inside_an_executed_block_stops_the_run() {
+    let _ = specs(kraken_emu::Arch::X86_64);
+    let s =
+        Session::new(Target::Program(RunSpec::new(bin("", "static_strops-O0")))).expect("session");
+    let main = s.symbol("main").expect("symbols").expect("main");
+    assert!(matches!(
+        s.run_to(main, BUDGET).expect("to main"),
+        SessionStop::Reached { .. }
+    ));
+    let insns = s.disasm(None, 4).expect("disasm");
+    let ahead = insns[1].addr;
+    s.add_breakpoint(ahead).expect("break");
+    let stop = s.run(BUDGET).expect("run");
+    assert_eq!(stop, SessionStop::Breakpoint { pc: ahead });
+    assert_eq!(s.pc().expect("pc"), ahead);
+}

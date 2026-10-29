@@ -254,6 +254,12 @@ impl Arch {
         }
     }
 
+    /// An instruction address without the Thumb marker in bit 0 (only ARM has one; elsewhere
+    /// the bit is part of the address).
+    pub fn insn_addr(self, addr: u64) -> u64 {
+        if self == Arch::Arm { addr & !1 } else { addr }
+    }
+
     /// The register a call leaves its return address in; `None` on x86 (pushed on the stack).
     pub fn link_reg(self) -> Option<&'static str> {
         match self {

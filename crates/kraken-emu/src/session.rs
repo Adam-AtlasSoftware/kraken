@@ -489,7 +489,8 @@ impl Session {
     /// Runs until the program counter reaches `addr` (an instruction address), a breakpoint, the
     /// end or the budget.
     pub fn run_to(&self, addr: u64, budget: u64) -> Result<SessionStop, EmuError> {
-        self.call(move |i| i.run(budget, Some(addr & !1)))
+        let arch = self.arch;
+        self.call(move |i| i.run(budget, Some(arch.insn_addr(addr))))
     }
 
     /// Run to the return of the function just entered (call it at the function's first
@@ -519,12 +520,14 @@ impl Session {
 
     /// Adds a breakpoint at an instruction address.
     pub fn add_breakpoint(&self, addr: u64) -> Result<bool, EmuError> {
-        self.call(move |i| i.m().add_breakpoint(addr & !1))
+        let arch = self.arch;
+        self.call(move |i| i.m().add_breakpoint(arch.insn_addr(addr)))
     }
 
     /// Removes a breakpoint.
     pub fn remove_breakpoint(&self, addr: u64) -> Result<bool, EmuError> {
-        self.call(move |i| i.m().remove_breakpoint(addr & !1))
+        let arch = self.arch;
+        self.call(move |i| i.m().remove_breakpoint(arch.insn_addr(addr)))
     }
 
     /// The user breakpoints (stub and trap addresses of function sessions included).
@@ -574,7 +577,7 @@ impl Session {
         self.call(move |i| {
             let m = i.m();
             let thumb = m.thumb();
-            let mut at = addr.map_or(m.pc(), |a| a & !1);
+            let mut at = addr.map_or(m.pc(), |a| m.arch().insn_addr(a));
             let mode = match addr {
                 Some(a) if m.arch().has_thumb() => Some(a & 1 == 1 || thumb),
                 _ => Some(thumb),
