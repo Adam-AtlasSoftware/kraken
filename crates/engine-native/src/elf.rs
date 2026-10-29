@@ -261,6 +261,16 @@ pub(crate) fn language(arch: Architecture) -> Result<Language, ProtoError> {
 /// formats are `unsupported`. Objects and archives are laid out at Ghidra's base and take no
 /// `base_override`.
 pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError> {
+    load_with(data, base_override, None)
+}
+
+/// [`load`] with the contents of the program's separate debug file (`crate::debugfile`), whose
+/// DWARF is used when the program has none of its own.
+pub fn load_with(
+    data: &[u8],
+    base_override: Option<u64>,
+    external_debug: Option<&[u8]>,
+) -> Result<Loaded, ProtoError> {
     if crate::objfile::handles(data) {
         return crate::objfile::load(data);
     }
@@ -418,6 +428,12 @@ pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoErro
         }
     }
     let mut debug = crate::dwarf::parse(&file);
+    if debug.functions.is_empty()
+        && let Some(ext) = external_debug
+        && let Ok(f) = object::File::parse(ext)
+    {
+        debug = crate::dwarf::parse(&f);
+    }
     debug.functions = std::mem::take(&mut debug.functions)
         .into_iter()
         .map(|(a, f)| (at(a), f))

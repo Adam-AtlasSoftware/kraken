@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ctypes::{base_definitions_in, parse_prototype_in, signature};
 use crate::discover::{Func, discover};
-use crate::elf::{Loaded, load};
+use crate::elf::Loaded;
 use crate::listing::{flow_kind, operands};
 use crate::mutate::{Defined, Edits, Journaled, PROTO_NAME, STATE_FILE, STATE_FORMAT};
 use crate::refs::RefIndex;
@@ -939,7 +939,13 @@ fn build_program(
             data.len() as f64 / 1e6
         ),
     );
-    let mut loaded = load(&data, spec.base.map(|b| b.0))?;
+    // a stripped program keeps its names in a separate debug file when one is installed
+    let external = if config.use_symbols {
+        crate::debugfile::find(path, &data).and_then(|p| std::fs::read(p).ok())
+    } else {
+        None
+    };
+    let mut loaded = crate::elf::load_with(&data, spec.base.map(|b| b.0), external.as_deref())?;
     if !config.use_symbols {
         // a stripped binary has neither
         loaded.debug = crate::dwarf::Debug::default();

@@ -326,6 +326,10 @@ impl WorkerEngine {
         let spec_root = open.spec_root.clone();
         let binary = open.path.clone();
         let state_dir = open.state_dir.clone();
+        // a separate debug file next to the program or in its .debug directory is read too
+        let debug_file = std::fs::read(&binary)
+            .ok()
+            .and_then(|d| crate::debugfile::find(&binary, &d));
         let (sandbox, home, log, channel) = tokio::task::spawn_blocking(move || {
             let root = opts.temp_root.clone().unwrap_or_else(std::env::temp_dir);
             let home = tempfile::Builder::new()
@@ -356,7 +360,10 @@ impl WorkerEngine {
                     ("LANG".into(), "C.UTF-8".into()),
                 ],
                 cwd: home.path().to_path_buf(),
-                read_only: vec![program, spec_root, binary],
+                read_only: [program, spec_root, binary]
+                    .into_iter()
+                    .chain(debug_file)
+                    .collect(),
                 // the memory figures let the sessions of a first open wait for each other when
                 // little is free
                 optional_read_only: vec!["/etc/ld.so.cache".into(), "/proc/meminfo".into()],

@@ -154,6 +154,23 @@ engine imports its structs, unions, enums and typedefs into the project's types 
 function its declared name and prototype, so decompiled C reads
 `int cmp_id(record *a,record *b) { return a->id - b->id; }` without any typing on your part.
 
+Rust names (both the legacy `_ZN...17h<hash>E` and the v0 `_R...` mangling) are demangled too:
+`core::ptr::drop_in_place<alloc::string::String>` is shown as `drop_in_place`, and the mangled
+name is kept the same way.
+
+DWARF in compressed sections (zlib or zstd, as `-Wl,--compress-debug-sections` or
+`objcopy --compress-debug-sections` write them) is read like plain DWARF.
+
+A stripped ELF program that was split from its debug data gets its names back when the debug file
+is installed. KRAKEN looks where GDB does, in this order: `.build-id/xx/yyyy.debug` next to the
+program, the same under `/usr/lib/debug`, the file named by the program's `.gnu_debuglink` next to
+it, in its `.debug/` directory and under `/usr/lib/debug/<the program's directory>/`. A file only
+counts when it proves to be the program's own: the same GNU build-id, or the CRC-32 that the
+debug-link records. Install the distribution's debug package for the program (`-dbg` or `-debuginfo`)
+and open the program with the native engine.
+`binary_probe` shows what a file points at (`debug.build_id`, `debug.debuglink`, `debug.pdb`) so
+you can see before importing whether its debug data is inside, elsewhere or missing.
+
 Creating, deleting or resizing functions and defining code or data rebuild the cross-references,
 the exports and the list of functions that never return, so callers and references stay right.
 Renaming a function or giving it a prototype only updates the exports and the list of functions
