@@ -120,7 +120,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 51] = [
+    pub const ALL: [AppAction; 52] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,

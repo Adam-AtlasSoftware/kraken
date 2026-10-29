@@ -929,8 +929,8 @@ fn stale_functions_get_a_marker_that_draws() {
 mod audit;
 #[cfg(unix)]
 mod bench;
-mod emulate;
 mod debug;
+mod emulate;
 mod help;
 mod integrations;
 mod loading;

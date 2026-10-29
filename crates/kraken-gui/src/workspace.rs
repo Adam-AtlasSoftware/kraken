@@ -69,7 +69,7 @@ impl Tab {
         }
     }
 
-    pub const ALL: [Tab; 18] = [
+    pub const ALL: [Tab; 20] = [
         Tab::Functions,
         Tab::Decompiler,
         Tab::Hex,

@@ -350,6 +350,7 @@ pub fn load(data: &[u8], spec: &LoaderSpec) -> Result<Loaded, ProtoError> {
         got_code: Vec::new(),
         default_names: BTreeMap::new(),
         global_pointer: None,
+        data_symbols: BTreeMap::new(),
     })
 }
 
