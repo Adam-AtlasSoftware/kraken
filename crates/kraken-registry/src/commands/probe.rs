@@ -17,6 +17,8 @@ use crate::context::CallContext;
 use crate::session::{EngineChoice, EngineFactory, EngineKind, EngineStatus, Session, blocking};
 use crate::trust;
 
+use super::rawguess::RawSuggestion;
+
 /// Files larger than this are only identified by their header: no symbol or debug check.
 const MAX_PARSE_BYTES: u64 = 512 << 20;
 /// Bytes read for the header of a file too large to parse whole.
@@ -131,6 +133,10 @@ pub struct BinaryProbeOut {
     /// Why it cannot, when `supported` is false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// For a file in no known format: ways to open it as a raw image (`project_create` with
+    /// `loader: raw`), most likely first, recognised from the layouts of firmware and ROM images.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raw_options: Vec<RawSuggestion>,
 }
 
 /// Header facts of a file, without the engine part.
@@ -587,7 +593,8 @@ fn recommend(
     match format {
         BinaryFormat::Unknown => (
             None,
-            "no engine opens this file: it is not an ELF, PE or Mach-O program or a .NET assembly"
+            "no engine opens this file by its format: it is not an ELF, PE or Mach-O program or a .NET \
+             assembly (firmware and ROM images open as a raw image: see `raw_options`)"
                 .into(),
         ),
         BinaryFormat::Dotnet => (
@@ -646,7 +653,12 @@ pub fn probe_binary(
         crate::session::hash_file(&abs)?
     };
     let facts = facts_of(&data, whole);
-    drop(data);
+    // only a file in no known format is looked at again, for raw-image layouts
+    let head = if facts.format.is_none() {
+        data
+    } else {
+        Vec::new()
+    };
     let format = facts.format.unwrap_or(BinaryFormat::Unknown);
     let (recommended_engine, recommended_reason) = recommend(factory, &abs, format);
     let engines = factory.engine_status();
@@ -683,6 +695,29 @@ pub fn probe_binary(
         .map(|m| Untrusted::sanitized(m))
         .collect();
     let supported = format != BinaryFormat::Unknown && facts.problem.is_none();
+    let (raw_options, container) = if format == BinaryFormat::Unknown {
+        (
+            super::rawguess::guess(&head),
+            super::rawguess::container_hint(&head),
+        )
+    } else {
+        (Vec::new(), None)
+    };
+    let problem = match (format, problem) {
+        (BinaryFormat::Unknown, Some(p)) => Some(match (container, raw_options.first()) {
+            (Some(c), _) => format!("{p} It looks like {c}."),
+            (None, Some(s)) => format!(
+                "{p} It can be opened as a raw image: {} (`loader: raw`, `language: {}`, `base: \
+                 {:#x}`).",
+                s.why, s.language, s.base.0
+            ),
+            (None, None) => format!(
+                "{p} If it is firmware or a ROM, open it as a raw image (`loader: raw` with the \
+                 processor in `language`, and `base`)."
+            ),
+        }),
+        (_, p) => p,
+    };
     Ok(BinaryProbeOut {
         path: Untrusted::sanitized(&abs.to_string_lossy()),
         format,
@@ -706,6 +741,7 @@ pub fn probe_binary(
         engines,
         supported,
         problem,
+        raw_options,
     })
 }
 
@@ -960,6 +996,23 @@ mod tests {
         assert_eq!(exe.description, "Windows program");
         let elf = probe_binary(&OneEngine, &corpus("bin/pie_list-O0")).unwrap();
         assert_eq!(elf.description, "Linux program");
+    }
+
+    #[test]
+    fn unknown_firmware_gets_raw_options() {
+        let out = probe_binary(&OneEngine, &corpus("raw/fw_cortexm.bin")).unwrap();
+        assert_eq!(out.format, BinaryFormat::Unknown);
+        assert!(!out.supported);
+        let best = &out.raw_options[0];
+        assert_eq!(best.language, "cortex-m");
+        assert_eq!(best.base, Hex64(0x0800_0000));
+        assert_eq!(best.entry, Some(Hex64(0x0800_00dd)));
+        let problem = out.problem.unwrap();
+        assert!(problem.contains("does not recognise"), "{problem}");
+        assert!(problem.contains("raw image"), "{problem}");
+        // a program is not offered as a raw image
+        let elf = probe_binary(&OneEngine, &corpus("bin/pie_list-O0")).unwrap();
+        assert!(elf.raw_options.is_empty());
     }
 
     #[test]

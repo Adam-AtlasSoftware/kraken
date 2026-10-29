@@ -23,6 +23,7 @@ mod patch_source;
 mod probe;
 mod project;
 mod query;
+mod rawguess;
 mod rebuild;
 mod rewrite;
 mod rewrite_build;
@@ -99,6 +100,7 @@ pub use project::{
 pub use query::{
     Decompile, DecompileArgs, GetFunction, GetFunctionArgs, ListFunctions, ListFunctionsArgs,
 };
+pub use rawguess::RawSuggestion;
 pub use rebuild::{DriftEntry, DriftKind, Rebuild, RebuildReport, ReplayFailure};
 pub use rewrite::{
     CounterexampleView, ExportCoverage, ExportRequest, PlanEntry, PlanFlag, PlanScope,
