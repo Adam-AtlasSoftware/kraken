@@ -634,12 +634,9 @@ mod tests {
                 .code,
             ErrorCode::Timeout
         );
-        side.notify("ready", json!({"ghidra_version": "12.1.4", "init_ms": 7}));
+        side.notify("ready", json!({"ghidra_version": "12.2", "init_ms": 7}));
         let ready = client.wait_ready(Duration::from_secs(1)).await.unwrap();
-        assert_eq!(
-            (ready.ghidra_version.as_str(), ready.init_ms),
-            ("12.1.4", 7)
-        );
+        assert_eq!((ready.ghidra_version.as_str(), ready.init_ms), ("12.2", 7));
 
         let mut a = client.subscribe_progress("a");
         let mut b = client.subscribe_progress("b");

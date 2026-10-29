@@ -522,28 +522,28 @@ fn link_checks_are_lexical_and_depth_aware() {
 fn fixture_specs() -> (ArtifactSpec, ArtifactSpec, MemFetcher) {
     let ghidra_zip = zip_bytes(&[
         (
-            "ghidra_12.1.4_PUBLIC/Ghidra/application.properties",
-            b"application.version=12.1.4\n",
+            "ghidra_12.2_PUBLIC/Ghidra/application.properties",
+            b"application.version=12.2\n",
             0o644,
         ),
         (
-            "ghidra_12.1.4_PUBLIC/Ghidra/Framework/Utility/lib/Utility.jar",
+            "ghidra_12.2_PUBLIC/Ghidra/Framework/Utility/lib/Utility.jar",
             b"not really a jar",
             0o644,
         ),
     ]);
     let jdk = tar_gz(|b| {
-        tar_file(b, "jdk-21.0.12.1+1/bin/java", b"#!/bin/sh\nexit 0\n", 0o755);
+        tar_file(b, "jdk-25.0.5+8/bin/java", b"#!/bin/sh\nexit 0\n", 0o755);
         // The fake javac reads the `-d` option from the argument file and "compiles" one class.
         tar_file(
             b,
-            "jdk-21.0.12.1+1/bin/javac",
+            "jdk-25.0.5+8/bin/javac",
             b"#!/bin/sh\nf=\"${1#@}\"\nd=$(awk '/^-d$/ {getline; gsub(/\"/, \"\"); print; exit}' \"$f\")\nmkdir -p \"$d/kraken/ghidra\" && echo class > \"$d/kraken/ghidra/X.class\"\n",
             0o755,
         );
         tar_file(
             b,
-            "jdk-21.0.12.1+1/bin/jar",
+            "jdk-25.0.5+8/bin/jar",
             b"#!/bin/sh\necho jar > \"$3\"\n",
             0o755,
         );
@@ -725,7 +725,7 @@ fn javac_argument_file_quotes_paths_and_lists_sources() {
     let q = |s: String| format!("\"{}\"", s.replace('\\', "\\\\"));
     let sep = if cfg!(windows) { ";" } else { ":" };
     let cp = format!("{}{sep}{}", jar_ab.display(), jar_c.display());
-    assert!(args.contains("--release\n21\n"));
+    assert!(args.contains("--release\n25\n"));
     assert!(args.contains(&q(cp)), "{args}");
     assert!(args.contains(&format!("-d\n{}\n", q(out_dir.display().to_string()))));
     assert!(args.trim_end().ends_with(&q(src.display().to_string())));
@@ -734,7 +734,7 @@ fn javac_argument_file_quotes_paths_and_lists_sources() {
 /// Compiles the real extension with a real JDK and Ghidra. Needs the dev environment:
 /// `KRAKEN_JAVA_HOME` and `KRAKEN_GHIDRA_HOME`.
 #[test]
-#[ignore = "needs a JDK 21 and Ghidra 12.1.4 (scripts/dev-env.sh)"]
+#[ignore = "needs a JDK 25 and Ghidra 12.2 (scripts/dev-env.sh)"]
 fn the_real_extension_compiles_with_javac() {
     let (Some(jdk), Some(ghidra)) = (
         std::env::var_os("KRAKEN_JAVA_HOME"),

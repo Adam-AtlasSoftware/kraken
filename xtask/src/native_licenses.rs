@@ -33,7 +33,7 @@ const MEMBERS: &[(&str, &str)] = &[
 /// File below [`DIR`] that records where the texts come from.
 pub const PROVENANCE: &str = "PROVENANCE.txt";
 
-/// The Ghidra version of [`TAG`] (`12.1.4` for `Ghidra_12.1.4_build`).
+/// The Ghidra version of [`TAG`] (`12.2` for `Ghidra_12.2_build`).
 pub fn ghidra_version() -> &'static str {
     TAG.trim_start_matches("Ghidra_").trim_end_matches("_build")
 }
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn versions_are_read() {
-        assert_eq!(ghidra_version(), "12.1.4");
+        assert_eq!(ghidra_version(), "12.2");
         assert_eq!(
             zlib_version("x\n#define ZLIB_VERSION \"1.3.1\"\n").as_deref(),
             Some("1.3.1")

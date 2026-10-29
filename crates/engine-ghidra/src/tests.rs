@@ -219,7 +219,7 @@ fn rig_with(tweak: impl FnOnce(&mut EngineConfig)) -> Rig {
             ghidra_home: p.clone(),
             java_home: p.clone(),
             ext_jar: p.join("x.jar"),
-            ghidra_version: "12.1.4".into(),
+            ghidra_version: "12.2".into(),
         },
         p.join("project"),
     );
@@ -275,7 +275,7 @@ async fn capabilities_cover_every_trait() {
     assert!(r.engine.assembler().is_some());
     assert!(r.engine.loader().is_some() && r.engine.mutator().is_some());
     assert_eq!(caps.handshake.protocol, kraken_proto::PROTOCOL_VERSION);
-    assert!(caps.handshake.build.contains("12.1.4"));
+    assert!(caps.handshake.build.contains("12.2"));
 }
 
 #[tokio::test]
@@ -772,7 +772,7 @@ async fn startup_failures_carry_the_exit_and_log() {
             ghidra_home: p.clone(),
             java_home: p.clone(),
             ext_jar: p.join("x.jar"),
-            ghidra_version: "12.1.4".into(),
+            ghidra_version: "12.2".into(),
         },
         p.join("project"),
     );

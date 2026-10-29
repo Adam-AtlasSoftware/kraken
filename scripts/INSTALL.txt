@@ -28,7 +28,7 @@ Install
      KRAKEN finds kraken-ghidra.jar next to the program or in ../share/kraken.
   2. Linux: the native engine works right away (`kraken setup --native` checks it). For the
      optional Ghidra engine (Mach-O, other processors, PDB) and on macOS and Windows, run
-     `kraken setup`: it downloads the pinned Ghidra and Temurin JDK 21 (both checked against
+     `kraken setup`: it downloads the pinned Ghidra and Temurin JDK 25 (both checked against
      compiled-in SHA-256 hashes) into your user data directory. Nothing needs root.
   3. Optional, for .NET assemblies (C# decompilation): `kraken setup --dotnet`. It downloads the
      pinned .NET runtime (SHA-256 checked before it is unpacked) and installs the sidecar from

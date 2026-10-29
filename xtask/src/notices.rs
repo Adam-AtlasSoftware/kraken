@@ -335,7 +335,7 @@ not linked into KRAKEN).
 
 - **Ghidra** (<https://github.com/NationalSecurityAgency/ghidra>), Apache License 2.0. Downloaded
   from the NSA's GitHub release. Its own `LICENSE` and `NOTICE` files come with the download.
-- **Eclipse Temurin JDK 21** (<https://adoptium.net/>), GPL-2.0-only with the Classpath Exception
+- **Eclipse Temurin JDK 25** (<https://adoptium.net/>), GPL-2.0-only with the Classpath Exception
   (GPLv2+CE). Downloaded from the Adoptium release. Its license files come with the download.
 
 If a future release bundles either component, this page and the release archive will carry their
@@ -513,7 +513,7 @@ mod tests {
         let text = render(&meta, &workspace_root()).expect("render");
         for needle in [
             "Compiled-in C and C++ components",
-            "Ghidra 12.1.4 decompiler and Sleigh (Apache License 2.0)",
+            "Ghidra 12.2 decompiler and Sleigh (Apache License 2.0)",
             "This product includes software developed at National Security Agency",
             "Apache License",
             "zlib 1.3.1 (zlib License)",

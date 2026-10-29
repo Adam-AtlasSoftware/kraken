@@ -12,15 +12,15 @@ use sha2::{Digest, Sha256};
 use crate::{Result, cache_dir};
 
 /// Ghidra release tag the native engine builds from.
-pub const TAG: &str = "Ghidra_12.1.4_build";
+pub const TAG: &str = "Ghidra_12.2_build";
 /// GitHub's source archive for [`TAG`].
 pub const URL: &str =
-    "https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.1.4_build.tar.gz";
+    "https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.2_build.tar.gz";
 /// SHA-256 of the archive at [`URL`], recorded 2026-10-16.
-pub const SHA256: &str = "2a858300c350f05ae2e729dff86b4f584d0b9a6b398879c55025574e67696cec";
+pub const SHA256: &str = "ade4fd6e277a10c82db4e75ff5acaeedb3113ef0c7d126ea2c8b38c37128f3c3";
 
 /// Top-level directory of the archive.
-pub const PREFIX: &str = "ghidra-Ghidra_12.1.4_build";
+pub const PREFIX: &str = "ghidra-Ghidra_12.2_build";
 const DECOMPILE: &str = "Ghidra/Features/Decompiler/src/decompile";
 
 /// Where the sources are extracted: `~/.cache/kraken-dev/ghidra-src/<TAG>`.

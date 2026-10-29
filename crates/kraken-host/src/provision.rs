@@ -27,19 +27,19 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 /// The Ghidra version `kraken setup` installs.
-pub const GHIDRA_VERSION: &str = "12.1.4";
+pub const GHIDRA_VERSION: &str = "12.2";
 /// Download URL of the pinned Ghidra release.
-pub const GHIDRA_URL: &str = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip";
+pub const GHIDRA_URL: &str = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip";
 /// SHA-256 of the pinned Ghidra archive.
-pub const GHIDRA_SHA256: &str = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db";
+pub const GHIDRA_SHA256: &str = "2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67";
 /// Directory the Ghidra archive extracts to.
-pub const GHIDRA_TOP_DIR: &str = "ghidra_12.1.4_PUBLIC";
-/// Download URL of the pinned Temurin 21 JDK (Linux x86_64).
-pub const JDK_URL: &str = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz";
+pub const GHIDRA_TOP_DIR: &str = "ghidra_12.2_PUBLIC";
+/// Download URL of the pinned Temurin 25 JDK (Linux x86_64).
+pub const JDK_URL: &str = "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz";
 /// SHA-256 of the pinned JDK archive.
-pub const JDK_SHA256: &str = "ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94";
+pub const JDK_SHA256: &str = "68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb";
 /// Directory the JDK archive extracts to.
-pub const JDK_TOP_DIR: &str = "jdk-21.0.12.1+1";
+pub const JDK_TOP_DIR: &str = "jdk-25.0.5+8";
 
 /// Most bytes one archive may extract to; guards against decompression bombs.
 pub const MAX_EXTRACTED_BYTES: u64 = 16 << 30;
@@ -49,7 +49,7 @@ pub const MAX_EXTRACTED_BYTES: u64 = 16 << 30;
 pub enum ProvisionError {
     /// No pinned artifacts exist for this platform.
     #[error(
-        "automatic setup supports Linux x86_64 only (this is {0}); install Ghidra 12.1.4 and a JDK 21 yourself and set KRAKEN_GHIDRA_HOME / KRAKEN_JAVA_HOME"
+        "automatic setup supports Linux x86_64 only (this is {0}); install Ghidra 12.2 and a JDK 25 yourself and set KRAKEN_GHIDRA_HOME / KRAKEN_JAVA_HOME"
     )]
     UnsupportedPlatform(String),
     /// No pinned build of an optional component exists for this platform.
@@ -156,7 +156,7 @@ pub fn pinned() -> Result<(ArtifactSpec, ArtifactSpec), ProvisionError> {
     Ok((
         ArtifactSpec {
             name: "ghidra".into(),
-            file_name: "ghidra_12.1.4_PUBLIC_20260921.zip".into(),
+            file_name: "ghidra_12.2_PUBLIC_20261016.zip".into(),
             url: GHIDRA_URL.into(),
             sha256: GHIDRA_SHA256.into(),
             format: ArchiveFormat::Zip,
@@ -164,7 +164,7 @@ pub fn pinned() -> Result<(ArtifactSpec, ArtifactSpec), ProvisionError> {
         },
         ArtifactSpec {
             name: "jdk".into(),
-            file_name: "OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz".into(),
+            file_name: "OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz".into(),
             url: JDK_URL.into(),
             sha256: JDK_SHA256.into(),
             format: ArchiveFormat::TarGz,
@@ -970,7 +970,7 @@ pub fn javac_args(classpath: &[PathBuf], classes: &Path, sources: &[PathBuf]) ->
         .collect::<Vec<_>>()
         .join(if cfg!(windows) { ";" } else { ":" });
     let mut out = String::new();
-    out.push_str("--release\n21\n-nowarn\n-encoding\nUTF-8\n-cp\n");
+    out.push_str("--release\n25\n-nowarn\n-encoding\nUTF-8\n-cp\n");
     out.push_str(&q(Path::new(&cp)));
     out.push_str("\n-d\n");
     out.push_str(&q(classes));

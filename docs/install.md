@@ -3,7 +3,7 @@
 KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It has two analysis engines:
 
 - **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN. It opens Linux and Windows programs and libraries of every kind (see [Supported files](#supported-files)). The Linux release (archive, AppImage and AUR package) carries it ready to use, with Ghidra's processor specifications compiled for it; new projects use it whenever it can open the file.
-- **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 21 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
+- **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 25 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
 
 The [native engine page](native-engine.md#native-or-ghidra) compares them.
 
@@ -99,10 +99,10 @@ kraken setup --native
 
 ### Ghidra engine
 
-You need Rust (stable), a JDK 21, Ghidra 12.1.4 and Gradle to build the extension. In short:
+You need Rust (stable), a JDK 25, Ghidra 12.2 and Gradle to build the extension. In short:
 
 ```sh
-export GHIDRA_INSTALL_DIR=/path/to/ghidra_12.1.4_PUBLIC JAVA_HOME=/path/to/jdk-21
+export GHIDRA_INSTALL_DIR=/path/to/ghidra_12.2_PUBLIC JAVA_HOME=/path/to/jdk-25
 cargo xtask ghidra-ext
 cargo install --path crates/kraken-cli
 cargo install --path crates/krakend
@@ -119,7 +119,7 @@ Skip this if you only use the native engine.
 kraken setup
 ```
 
-`kraken setup` downloads the pinned Ghidra and Temurin JDK 21 into your user data directory (`~/.local/share/kraken/runtime`), checks them against SHA-256 hashes compiled into the program, and installs the Ghidra extension: the bundled `kraken-ghidra.jar` from a release, or one compiled with the downloaded JDK otherwise. It needs network access once. Interrupted downloads resume, and running it again does nothing if everything is in place (`--force` redoes it). Nothing needs root.
+`kraken setup` downloads the pinned Ghidra and Temurin JDK 25 into your user data directory (`~/.local/share/kraken/runtime`), checks them against SHA-256 hashes compiled into the program, and installs the Ghidra extension: the bundled `kraken-ghidra.jar` from a release, or one compiled with the downloaded JDK otherwise. It needs network access once. Interrupted downloads resume, and running it again does nothing if everything is in place (`--force` redoes it). Nothing needs root.
 
 To open .NET assemblies as well, run `kraken setup --dotnet` once. It downloads a pinned .NET runtime the same way and installs the sidecar that ships with the release; see [.NET assemblies](dotnet.md).
 

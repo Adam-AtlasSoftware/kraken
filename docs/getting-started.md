@@ -30,7 +30,7 @@ export PATH="$PWD/target/release:$PATH"
 kraken setup --native
 ```
 
-This fetches the pinned Ghidra 12.1.4 sources (checked against a SHA-256 hash) and compiles the Sleigh specification files, about a minute. It needs the network and a C++ compiler once, and never root. Nothing is downloaded at run time after that. See [the native engine](native-engine.md) for what it does and does not open.
+This fetches the pinned Ghidra 12.2 sources (checked against a SHA-256 hash) and compiles the Sleigh specification files, about a minute. It needs the network and a C++ compiler once, and never root. Nothing is downloaded at run time after that. See [the native engine](native-engine.md) for what it does and does not open.
 
 To make native the default for new projects, create `~/.config/kraken/config.toml` with
 
@@ -47,7 +47,7 @@ Settings live in `~/.config/kraken/config.toml`. For the native path you need no
 | Key | Environment variable | Meaning |
 |---|---|---|
 | `ghidra_home` | `KRAKEN_GHIDRA_HOME` | Ghidra install directory |
-| `java_home` | `KRAKEN_JAVA_HOME` | JDK 21 home (`JAVA_HOME` is used as a fallback) |
+| `java_home` | `KRAKEN_JAVA_HOME` | JDK 25 home (`JAVA_HOME` is used as a fallback) |
 | `ext_jar` | `KRAKEN_GHIDRA_EXT_JAR` | Path of `kraken-ghidra.jar`; default is the `cargo xtask ghidra-ext` output |
 | `dotnet_root` | `KRAKEN_DOTNET_ROOT` | Directory with the `dotnet` host for [.NET assemblies](dotnet.md); default is the copy `kraken setup --dotnet` installed |
 | `dotnet_ext` | `KRAKEN_DOTNET_EXT_DLL` | Path of `kraken-dotnet.dll`; default is the installed copy |
@@ -134,19 +134,19 @@ The [GUI reference](gui.md) lists every menu, panel and shortcut. The same steps
 
 The Ghidra engine opens every format KRAKEN knows (ELF, PE, Mach-O, 32-bit, other processors), reads debug-info types and demangles C++ names. It needs Java and a Ghidra download. Install it either way:
 
-- `kraken setup` downloads the pinned Ghidra 12.1.4 and a JDK 21 into your user data directory, checks them against SHA-256 hashes and builds the small KRAKEN extension that runs inside Ghidra. This is the easy path.
+- `kraken setup` downloads the pinned Ghidra 12.2 and a JDK 25 into your user data directory, checks them against SHA-256 hashes and builds the small KRAKEN extension that runs inside Ghidra. This is the easy path.
 - By hand, from a checkout:
 
   ```sh
-  curl -fLO https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
-  echo "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db  ghidra_12.1.4_PUBLIC_20260921.zip" | sha256sum -c -
-  unzip -q ghidra_12.1.4_PUBLIC_20260921.zip -d ~/ghidra
-  export GHIDRA_INSTALL_DIR=~/ghidra/ghidra_12.1.4_PUBLIC
-  export JAVA_HOME=/path/to/jdk-21
+  curl -fLO https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip
+  echo "2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67  ghidra_12.2_PUBLIC_20261016.zip" | sha256sum -c -
+  unzip -q ghidra_12.2_PUBLIC_20261016.zip -d ~/ghidra
+  export GHIDRA_INSTALL_DIR=~/ghidra/ghidra_12.2_PUBLIC
+  export JAVA_HOME=/path/to/jdk-25
   cargo xtask ghidra-ext          # needs Gradle 9.8
   ```
 
-  and tell KRAKEN where they are in `config.toml`: `ghidra_home = "/home/you/ghidra/ghidra_12.1.4_PUBLIC"` and `java_home = "/path/to/jdk-21"`.
+  and tell KRAKEN where they are in `config.toml`: `ghidra_home = "/home/you/ghidra/ghidra_12.2_PUBLIC"` and `java_home = "/path/to/jdk-25"`.
 
 Then create projects with `--engine ghidra` (the default when `engine` is not set) or `--engine auto`, which uses native when it can open the file and Ghidra otherwise. The `sha256sum` line must print `OK`; if it does not, delete the download and try again. The extension is built against exactly this Ghidra version.
 

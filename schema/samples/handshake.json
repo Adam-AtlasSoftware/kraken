@@ -1,5 +1,5 @@
 {
-  "build": "kraken-ghidra 0.0.0 (ghidra 12.1.4)",
+  "build": "kraken-ghidra 0.0.0 (ghidra 12.2)",
   "capabilities": [
     {
       "name": "decompile",

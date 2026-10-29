@@ -74,7 +74,7 @@ fn runner() -> PathBuf {
 }
 
 #[tokio::test]
-#[ignore = "needs the SLEIGH tree (KRAKEN_NATIVE_SPECS=~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build), \
+#[ignore = "needs the SLEIGH tree (KRAKEN_NATIVE_SPECS=~/.cache/kraken-dev/native-sla/Ghidra_12.2_build), \
             Landlock and `cargo build -p kraken-emu --bin kraken-emu-run`"]
 async fn a_corpus_program_runs_under_emulation() {
     let env = Setup::new(tiny()).start().await;

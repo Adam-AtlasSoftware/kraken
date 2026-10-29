@@ -113,7 +113,7 @@ async fn serve(hooks: bool) -> io::Result<()> {
     state.send(&json!({
         "jsonrpc": "2.0",
         "method": "ready",
-        "params": {"ghidra_version": "12.1.4", "init_ms": 0},
+        "params": {"ghidra_version": "12.2", "init_ms": 0},
     }));
     while let Some(body) = read_frame(&mut reader).await? {
         let Ok(msg) = serde_json::from_slice::<Value>(&body) else {

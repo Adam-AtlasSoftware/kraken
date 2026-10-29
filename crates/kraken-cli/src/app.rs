@@ -510,7 +510,7 @@ pub fn build_cli(registry: &Registry) -> Command {
         Command::new("setup")
             .about("Download and install the pinned Ghidra and JDK, and build the Ghidra extension")
             .long_about(
-                "Downloads Ghidra 12.1.4 and Temurin JDK 21 (HTTPS only, SHA-256 checked before \
+                "Downloads Ghidra 12.2 and Temurin JDK 25 (HTTPS only, SHA-256 checked before \
                  anything is extracted), unpacks them into the runtime directory \
                  ($XDG_DATA_HOME/kraken/runtime) and compiles the KRAKEN extension with the \
                  downloaded JDK. Interrupted downloads resume; a finished setup is left alone unless \

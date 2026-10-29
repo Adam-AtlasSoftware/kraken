@@ -19,8 +19,8 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "env": {
-        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
-        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.2_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-25.0.5+8"
       }
     },
     {
@@ -31,8 +31,8 @@
       "args": ["--no-daemon"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
-        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.2_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-25.0.5+8"
       }
     },
     {
@@ -43,8 +43,8 @@
       "args": ["--no-daemon", "${input:krakenArgs}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
-        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.2_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-25.0.5+8"
       }
     },
     {
@@ -55,8 +55,8 @@
       "args": ["--log-stderr"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
-        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1",
+        "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.2_PUBLIC",
+        "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-25.0.5+8",
         "KRAKEN_LOG": "info"
       }
     }

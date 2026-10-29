@@ -45,7 +45,7 @@ pub struct FakeLauncher {
 impl FakeLauncher {
     pub fn new(handler: Handler) -> Arc<Self> {
         Self::with_start(handler, |side, _| {
-            side.notify("ready", json!({"ghidra_version": "12.1.4", "init_ms": 1}));
+            side.notify("ready", json!({"ghidra_version": "12.2", "init_ms": 1}));
         })
     }
 

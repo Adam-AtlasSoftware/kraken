@@ -1,8 +1,8 @@
 Compiled into KRAKEN by engine-native-sys (the native engine's decompiler library).
 
-Ghidra 12.1.4 decompiler and Sleigh (C++), Apache License 2.0
-  source: https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.1.4_build.tar.gz
-  sha256: 2a858300c350f05ae2e729dff86b4f584d0b9a6b398879c55025574e67696cec
+Ghidra 12.2 decompiler and Sleigh (C++), Apache License 2.0
+  source: https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.2_build.tar.gz
+  sha256: ade4fd6e277a10c82db4e75ff5acaeedb3113ef0c7d126ea2c8b38c37128f3c3
   members: Ghidra/Features/Decompiler/src/decompile/cpp
     (the Makefile's CORE, DECCORE and SLEIGH sets, sleigh_arch, inject_sleigh)
   license: ghidra/LICENSE; notice: ghidra/NOTICE

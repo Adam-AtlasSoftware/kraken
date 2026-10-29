@@ -9,7 +9,7 @@
 //!
 //! ```json
 //! {
-//!   "ghidra_version": "12.1.4",
+//!   "ghidra_version": "12.2",
 //!   "program": { "arch": "x86:LE:64:default", "format": "elf", "base": "0x400000",
 //!                "sha256": "<hex>", "size": 8192 },
 //!   "functions": [

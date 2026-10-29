@@ -3,7 +3,7 @@
 //! install at run time.
 //!
 //! The result is a tree laid out like an install, which the library's language scan reads:
-//! `~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build/Ghidra/Processors/<proc>/data/languages`
+//! `~/.cache/kraken-dev/native-sla/Ghidra_12.2_build/Ghidra/Processors/<proc>/data/languages`
 //! with the `.ldefs`, `.pspec`, `.cspec` files from the archive and the `.sla` files compiled
 //! here. The compiler itself is the Makefile's `sleigh_opt` set (CORE, SLEIGH and SLACOMP)
 //! plus the bundled zlib, built with the system C++ compiler (`CXX`, default `c++`; `CC` for

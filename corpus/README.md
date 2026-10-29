@@ -131,7 +131,7 @@ or input, so every case prints the baseline output. `crates/kraken-rewrite/tests
 checks the cases still match `derive_cases` and that the x86-64 `-O0` and `-O2` builds still give
 these results; `KRAKEN_CORPUS_BLESS=1` rewrites the files.
 
-Ghidra fixtures (`<set>/fixtures/`, `kraken-record --corpus corpus/<set>`): real Ghidra 12.1.4 imports all 68 binaries (languages
+Ghidra fixtures (`<set>/fixtures/`, `kraken-record --corpus corpus/<set>`): real Ghidra 12.2 imports all 68 binaries (languages
 `ARM:LE:32:v8`, `AARCH64:LE:64:v8A`, `RISCV:LE:64:default`, and `RISCV:LE:32:AndeStar_v5` for
 riscv32, which is what Ghidra's ELF loader picks for these files). Recording all of them would
 take about 25 MB, so like the PE set only a subset is committed: per Linux set

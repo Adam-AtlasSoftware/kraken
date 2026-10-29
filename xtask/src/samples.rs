@@ -419,7 +419,7 @@ pub fn samples() -> Result<Samples, String> {
         "handshake",
         Handshake {
             protocol: PROTOCOL_VERSION,
-            build: "kraken-ghidra 0.0.0 (ghidra 12.1.4)".into(),
+            build: "kraken-ghidra 0.0.0 (ghidra 12.2)".into(),
             capabilities: vec![Capability {
                 name: "decompile".into(),
                 version: 1,

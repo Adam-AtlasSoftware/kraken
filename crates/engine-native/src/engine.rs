@@ -32,14 +32,10 @@ use crate::typestore::TypeModel;
 use crate::worker::Isolation;
 
 /// Build id in the handshake.
-pub const BUILD: &str = concat!(
-    "kraken-native/",
-    env!("CARGO_PKG_VERSION"),
-    " ghidra-12.1.4"
-);
+pub const BUILD: &str = concat!("kraken-native/", env!("CARGO_PKG_VERSION"), " ghidra-12.2");
 
 /// The Ghidra source tag the library and the compiled `.sla` files come from.
-pub const SOURCE_TAG: &str = "Ghidra_12.1.4_build";
+pub const SOURCE_TAG: &str = "Ghidra_12.2_build";
 
 /// Default limit for one decompile.
 pub const DEFAULT_DECOMPILE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -84,7 +80,7 @@ impl NativeConfig {
     }
 
     /// The first usable spec tree of: `KRAKEN_NATIVE_SPECS`, the tree compiled by `cargo xtask
-    /// native-sla` (`~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build`), the tree a release
+    /// native-sla` (`~/.cache/kraken-dev/native-sla/Ghidra_12.2_build`), the tree a release
     /// ships (`share/kraken/native-sla` beside `bin`), `KRAKEN_GHIDRA_HOME`, and the newest
     /// Ghidra install under `~/.cache/kraken-dev/ghidra`.
     pub fn discover() -> Option<NativeConfig> {

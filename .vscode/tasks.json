@@ -5,10 +5,10 @@
   "options": {
     "env": {
       "KRAKEN_DOTNET_ROOT": "${env:HOME}/.cache/kraken-dev/dotnet",
-      "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
-      "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1",
-      "GHIDRA_INSTALL_DIR": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.1.4_PUBLIC",
-      "JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-21.0.12.1+1"
+      "KRAKEN_GHIDRA_HOME": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.2_PUBLIC",
+      "KRAKEN_JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-25.0.5+8",
+      "GHIDRA_INSTALL_DIR": "${env:HOME}/.cache/kraken-dev/ghidra/ghidra_12.2_PUBLIC",
+      "JAVA_HOME": "${env:HOME}/.cache/kraken-dev/jdk/jdk-25.0.5+8"
     }
   },
   "tasks": [

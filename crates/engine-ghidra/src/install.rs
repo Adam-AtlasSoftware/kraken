@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::error::GhidraError;
 
 /// Ghidra versions the sidecar has been tested against (decision 42).
-pub const TESTED_GHIDRA_VERSIONS: &[&str] = &["12.1.4"];
+pub const TESTED_GHIDRA_VERSIONS: &[&str] = &["12.2"];
 
 /// Environment variable naming the Ghidra install directory.
 pub const ENV_GHIDRA_HOME: &str = "KRAKEN_GHIDRA_HOME";
@@ -250,8 +250,8 @@ mod tests {
     #[test]
     fn parses_version() {
         assert_eq!(
-            parse_application_version("a=b\napplication.version=12.1.4\n").as_deref(),
-            Some("12.1.4")
+            parse_application_version("a=b\napplication.version=12.2\n").as_deref(),
+            Some("12.2")
         );
         assert_eq!(parse_application_version("x=y"), None);
     }
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn explicit_config_wins_over_env() {
         let dir = tempfile::tempdir().unwrap();
-        let (ghidra, jdk, jar) = fake_install(dir.path(), "12.1.4");
+        let (ghidra, jdk, jar) = fake_install(dir.path(), "12.2");
         let cfg = InstallConfig {
             ghidra_home: Some(ghidra.clone()),
             java_home: Some(jdk),
@@ -267,7 +267,7 @@ mod tests {
         };
         let env = |_: &str| Some(OsString::from("/nonexistent"));
         let i = GhidraInstall::discover_with(&cfg, &env).unwrap();
-        assert_eq!(i.ghidra_version, "12.1.4");
+        assert_eq!(i.ghidra_version, "12.2");
         assert_eq!(
             i.ghidra_home,
             simplify_verbatim(&fs::canonicalize(ghidra).unwrap())
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn env_is_used_and_java_home_is_the_fallback() {
         let dir = tempfile::tempdir().unwrap();
-        let (ghidra, jdk, jar) = fake_install(dir.path(), "12.1.4");
+        let (ghidra, jdk, jar) = fake_install(dir.path(), "12.2");
         let env = move |k: &str| match k {
             ENV_GHIDRA_HOME => Some(ghidra.clone().into()),
             "JAVA_HOME" => Some(jdk.clone().into()),

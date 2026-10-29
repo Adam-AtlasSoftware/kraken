@@ -11,7 +11,7 @@ use crate::arch::Arch;
 use crate::error::EmuError;
 
 /// The source tag of the pinned Ghidra sources (`cargo xtask native-sla` names its tree after it).
-const SOURCE_TAG: &str = "Ghidra_12.1.4_build";
+const SOURCE_TAG: &str = "Ghidra_12.2_build";
 
 /// The tree a release ships beside the programs: `share/kraken/native-sla` in the prefix of the
 /// running executable, or `native-sla` next to it.
@@ -290,7 +290,7 @@ pub fn overlay(processors: &Path, arch: Arch) -> Result<PathBuf, EmuError> {
         if !text.contains(p.from) {
             return Err(EmuError::Unsupported(format!(
                 "the {dir} spec in {} does not have the shape kraken-emu patches ({}); use the \
-                 pinned Ghidra 12.1 sources",
+                 pinned Ghidra 12.2 sources",
                 src.display(),
                 p.file
             )));

@@ -2,7 +2,7 @@
 //!
 //! Source lookup: `KRAKEN_GHIDRA_SRC` (a directory holding `cpp/` and `zlib/`, i.e. Ghidra's
 //! `Ghidra/Features/Decompiler/src/decompile`), else the copy `cargo xtask native-src` puts in
-//! `~/.cache/kraken-dev/ghidra-src/Ghidra_12.1.4_build/decompile`. When neither exists the crate
+//! `~/.cache/kraken-dev/ghidra-src/Ghidra_12.2_build/decompile`. When neither exists the crate
 //! builds a stub whose `available()` is false, unless the `require-native` feature is on, which
 //! turns that into a build error. `KRAKEN_NATIVE_STUB=1` forces the stub. Only Linux builds the
 //! native library for now (decision 95).
@@ -10,7 +10,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-const TAG: &str = "Ghidra_12.1.4_build";
+const TAG: &str = "Ghidra_12.2_build";
 
 /// Ghidra sources of the decompiler library: the Makefile's CORE, DECCORE and SLEIGH sets plus
 /// the Sleigh architecture glue. Console, Ghidra-protocol, BFD and sleigh-compiler files are left

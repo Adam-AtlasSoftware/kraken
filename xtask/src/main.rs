@@ -25,12 +25,12 @@ Commands:
                isolated SDK in ~/.cache/kraken-dev/dotnet (refuses if it is missing; see
                dotnet/install-sdk.sh). NuGet packages go to ~/.cache/kraken-dev/nuget; the first
                build restores ICSharpCode.Decompiler from nuget.org.
-  native-src   Download the pinned Ghidra source archive (Ghidra_12.1.4_build, SHA-256 checked),
+  native-src   Download the pinned Ghidra source archive (Ghidra_12.2_build, SHA-256 checked),
                and extract the decompiler C++ sources into
-               ~/.cache/kraken-dev/ghidra-src/Ghidra_12.1.4_build for engine-native-sys.
+               ~/.cache/kraken-dev/ghidra-src/Ghidra_12.2_build for engine-native-sys.
   native-sla   Build Ghidra's Sleigh compiler from the same pinned sources (CXX/CC, default
                c++/cc) and compile the x86, AArch64, ARM and RISC-V specifications into
-               ~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, so the native engine needs no
+               ~/.cache/kraken-dev/native-sla/Ghidra_12.2_build, so the native engine needs no
                Ghidra install.
   emu-sysroots Extract the armhf, arm64, riscv64, i386 and x86-64 glibc sysroots (loader and
                shared libraries) into ~/.cache/kraken-dev/emu-sysroots/<set>, so kraken-emu runs
