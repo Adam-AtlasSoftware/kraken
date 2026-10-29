@@ -574,3 +574,33 @@ async fn raw_loader_options_are_checked_recorded_and_kept_on_reopen() {
     .unwrap();
     assert!(r.meta("plain").get("loader").is_none());
 }
+
+#[tokio::test]
+async fn hex_firmware_is_detected_and_records_its_loader() {
+    let r = Rig::new();
+    let hex =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/raw/fw_cortexm.hex");
+    // the vector table names the processor, so no `language` is needed
+    r.call(
+        "project_create",
+        json!({"binary": hex, "project_dir": r.dir("hex")}),
+    )
+    .await
+    .unwrap();
+    let loader = r.meta("hex")["loader"].clone();
+    assert_eq!(loader["format"], "ihex");
+    assert_eq!(loader["arch"], "ARM:LE:32:Cortex");
+
+    // text with no recognisable processor needs one
+    let plain = r.write("plain.hex", b":0400000090909090BC\n:00000001FF\n");
+    let e = r
+        .call(
+            "project_create",
+            json!({"binary": plain, "project_dir": r.dir("plain")}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, kraken_proto::ErrorCode::InvalidArgument);
+    assert!(e.message.contains("language"), "{e}");
+    assert!(!r.tmp.path().join("plain/meta.json").exists());
+}

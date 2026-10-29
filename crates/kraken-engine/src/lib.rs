@@ -13,6 +13,7 @@
 //! fixture's expectations.
 
 pub mod caps;
+pub mod hexfile;
 pub mod job;
 pub mod traits;
 pub mod types;

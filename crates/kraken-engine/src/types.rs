@@ -12,7 +12,8 @@ pub struct LoaderSpec {
     /// Image base override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<Hex64>,
-    /// Container format override such as `"elf"`; an unknown format is `unsupported`.
+    /// Container format override such as `"elf"`, `"raw"`, `"ihex"` or `"srec"`; an unknown format is
+    /// `unsupported`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
     /// Compiler spec id such as `"gcc"` or `"windows"`; the language's default when unset.
@@ -74,9 +75,10 @@ pub fn language_id(name: &str) -> String {
 }
 
 impl LoaderSpec {
-    /// Whether this asks for a raw binary image (no container format).
+    /// Whether this asks for a flat image with no program container: a raw binary, or Intel
+    /// HEX or Motorola S-record text. The processor comes from `arch`, not from the file.
     pub fn is_raw(&self) -> bool {
-        self.format.as_deref() == Some("raw")
+        matches!(self.format.as_deref(), Some("raw" | "ihex" | "srec"))
     }
 }
 

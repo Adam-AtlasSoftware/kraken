@@ -10,4 +10,7 @@ llvm-objcopy -O binary "$out/fw_cortexm.elf" fw_cortexm.bin
 clang --target=i686-unknown-none -m32 -Os -ffreestanding -fno-builtin -fno-pic -static -nostdlib \
   -fuse-ld=lld -Wl,-T,src/fw_x86.ld -o "$out/fw_x86.elf" src/fw_x86.c
 llvm-objcopy -O binary "$out/fw_x86.elf" fw_x86.bin
-ls -l fw_cortexm.bin fw_x86.bin
+# the same Cortex-M program as Intel HEX and Motorola S-record text (real addresses, start record)
+llvm-objcopy -O ihex "$out/fw_cortexm.elf" fw_cortexm.hex
+llvm-objcopy -O srec "$out/fw_cortexm.elf" fw_cortexm.srec
+ls -l fw_cortexm.bin fw_x86.bin fw_cortexm.hex fw_cortexm.srec

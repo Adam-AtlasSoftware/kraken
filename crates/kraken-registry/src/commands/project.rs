@@ -13,7 +13,7 @@ use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
 use crate::opening::OpenOptions;
 use crate::session::{
-    AnalysisPhase, EngineChoice, EngineKind, Epoch, Project, Session, peek_binary,
+    AnalysisPhase, EngineChoice, EngineKind, Epoch, Project, Session, blocking, peek_binary,
 };
 use crate::trust;
 use crate::views::ProgramView;
@@ -272,6 +272,30 @@ impl ProjectCreateArgs {
     }
 }
 
+/// For an Intel HEX or S-record file: its loader format and the processor its contents suggest.
+fn firmware_loader(path: &Path) -> Result<Option<(&'static str, Option<String>)>, ProtoError> {
+    use std::io::Read;
+    let mut head = [0u8; 64];
+    let n = std::fs::File::open(path)
+        .and_then(|mut f| f.read(&mut head))
+        .unwrap_or(0);
+    let Some(kind) = kraken_engine::hexfile::detect(&head[..n]) else {
+        return Ok(None);
+    };
+    let data = std::fs::read(path).map_err(|e| {
+        ProtoError::new(
+            ErrorCode::NotFound,
+            format!("cannot read {}: {e}", path.display()),
+        )
+    })?;
+    let image = kraken_engine::hexfile::parse(&data, kind)?;
+    let language = super::rawguess::guess_blocks(&image.blocks)
+        .into_iter()
+        .find(|s| s.confidence != "low")
+        .map(|s| kraken_engine::language_id(&s.language));
+    Ok(Some((kind.format(), language)))
+}
+
 /// Creates a project for a binary.
 pub struct ProjectCreate;
 
@@ -301,6 +325,9 @@ impl Command for ProjectCreate {
              `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon \
              sends `open_progress` events), and `job_cancel` stops it without leaving a \
              project behind.\n\
+             Intel HEX and Motorola S-record files are detected: their blocks load at the addresses \
+             the records give and the start record becomes the entry; give `language` (or let \
+             a recognisable vector table choose it).\n\
              Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a \
              `language`: one memory block holds the file (or `offset`/`length` of it) at `base`, \
              and execution starts at `entry`. An ARM Cortex-M vector table at the start names \
@@ -324,7 +351,24 @@ impl Command for ProjectCreate {
             ctx,
         )
         .await?;
-        let loader = args.loader_spec()?;
+        let mut loader = args.loader_spec()?;
+        if args.loader != Some(LoaderKind::Raw) {
+            let binary = args.binary.clone();
+            let found = blocking(move || firmware_loader(Path::new(&binary))).await?;
+            if let Some((format, language)) = found {
+                loader.format = Some(format.into());
+                if loader.arch.is_none() {
+                    loader.arch = Some(language.ok_or_else(|| {
+                        ProtoError::new(
+                            ErrorCode::InvalidArgument,
+                            "this is a firmware record file (Intel HEX or S-record), which does \
+                             not say which processor it is for: pass `language` (for example \
+                             `cortex-m`, `arm`, `x86`; `binary_probe` suggests one)",
+                        )
+                    })?);
+                }
+            }
+        }
         let project = s
             .create_project_loaded(
                 Path::new(&args.project_dir),

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use engine_native_sys::{ContextRange, Image, Segment};
 use kraken_engine::LoaderSpec;
+use kraken_engine::hexfile::{self, HexKind};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError};
 
 use crate::elf::{Language, Loaded};
@@ -135,21 +136,23 @@ fn vector_name(i: usize) -> String {
 /// pointer, then handlers with the Thumb bit set that point into the image. Returns the
 /// handlers as (index, even address); empty when the start does not look like a table.
 pub fn cortex_vectors(bytes: &[u8], base: u64) -> Vec<(usize, u64)> {
+    let end = base + bytes.len() as u64;
+    cortex_vectors_in(bytes, &|a| (base..end).contains(&a))
+}
+
+/// [`cortex_vectors`] for an image of several blocks: `in_image` says which addresses are mapped.
+fn cortex_vectors_in(bytes: &[u8], in_image: &dyn Fn(u64) -> bool) -> Vec<(usize, u64)> {
     let word = |i: usize| {
         bytes
             .get(i * 4..i * 4 + 4)
             .map(|b| u64::from(u32::from_le_bytes([b[0], b[1], b[2], b[3]])))
     };
-    let inside = |v: u64| v & 1 == 1 && (base..base + bytes.len() as u64).contains(&(v & !1));
+    let inside = |v: u64| v & 1 == 1 && in_image(v & !1);
     let (Some(sp), Some(reset)) = (word(0), word(1)) else {
         return Vec::new();
     };
     // the stack pointer is word aligned and points into RAM or a vector table's CCM, not code
-    if sp & 3 != 0
-        || sp < 0x1000
-        || !inside(reset)
-        || (base..base + bytes.len() as u64).contains(&sp)
-    {
+    if sp & 3 != 0 || sp < 0x1000 || !inside(reset) || in_image(sp) {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -203,38 +206,61 @@ pub fn load(data: &[u8], spec: &LoaderSpec) -> Result<Loaded, ProtoError> {
         pointer_size: p.pointer_size,
     };
 
-    let offset = spec.offset.map_or(0, |o| o.0);
-    if offset >= data.len() as u64 {
-        return Err(bad(format!(
-            "file offset {offset:#x} is past the end of the file ({} bytes)",
-            data.len()
-        )));
+    let hex = match spec.format.as_deref().and_then(HexKind::from_format) {
+        Some(kind) => Some(hexfile::parse(data, kind)?),
+        None => None,
+    };
+    let chunks: Vec<(u64, Vec<u8>)> = match &hex {
+        Some(h) => h.blocks.clone(),
+        None => {
+            let offset = spec.offset.map_or(0, |o| o.0);
+            if offset >= data.len() as u64 {
+                return Err(bad(format!(
+                    "file offset {offset:#x} is past the end of the file ({} bytes)",
+                    data.len()
+                )));
+            }
+            let available = data.len() as u64 - offset;
+            let length = spec.length.map_or(available, |l| l.0);
+            if length == 0 || length > available {
+                return Err(bad(format!(
+                    "length {length:#x} does not fit: {available:#x} bytes follow offset \
+                     {offset:#x}"
+                )));
+            }
+            vec![(
+                spec.base.map_or(0, |b| b.0),
+                data[offset as usize..(offset + length) as usize].to_vec(),
+            )]
+        }
+    };
+    let mut ranges = Vec::new();
+    for (start, bytes) in &chunks {
+        let end = start
+            .checked_add(bytes.len() as u64)
+            .filter(|e| p.pointer_size == 8 || *e <= 1 << 32)
+            .ok_or_else(|| bad("the image does not fit in the address space at that base"))?;
+        ranges.push((*start, end));
     }
-    let available = data.len() as u64 - offset;
-    let length = spec.length.map_or(available, |l| l.0);
-    if length == 0 || length > available {
-        return Err(bad(format!(
-            "length {length:#x} does not fit: {available:#x} bytes follow offset {offset:#x}"
-        )));
-    }
-    let bytes = &data[offset as usize..(offset + length) as usize];
-    let base = spec.base.map_or(0, |b| b.0);
-    let end = base
-        .checked_add(length)
-        .filter(|e| p.pointer_size == 8 || *e <= 1 << 32)
-        .ok_or_else(|| bad("the image does not fit in the address space at that base"))?;
+    let base = ranges[0].0;
+    let end = ranges[ranges.len() - 1].1;
+    let length: u64 = chunks.iter().map(|c| c.1.len() as u64).sum();
 
     let cortex = p.id == "ARM:LE:32:Cortex";
     let arm = p.id.starts_with("ARM:");
+    let in_image = |a: u64| ranges.iter().any(|(s, e)| (*s..*e).contains(&a));
     let vectors = if cortex {
-        cortex_vectors(bytes, base)
+        cortex_vectors_in(&chunks[0].1, &in_image)
     } else {
         Vec::new()
     };
-    let in_image = |a: u64| (base..end).contains(&a);
-    let entry = match spec.entry {
+    // an entry record outside the image (objcopy writes 0 when the ELF has none) is ignored
+    let recorded = hex
+        .as_ref()
+        .and_then(|h| h.entry)
+        .filter(|e| in_image(if arm { e & !1 } else { *e }));
+    let entry = match spec.entry.map(|e| e.0).or(recorded) {
         Some(e) => {
-            let e = e.0;
             let at = if arm { e & !1 } else { e };
             if !in_image(at) {
                 return Err(bad(format!(
@@ -249,25 +275,30 @@ pub fn load(data: &[u8], spec: &LoaderSpec) -> Result<Loaded, ProtoError> {
         },
     };
 
-    let image = Image {
-        segments: vec![Segment {
-            start: base,
-            data: bytes.to_vec(),
-            mem_size: length,
-            readonly: false,
-        }],
+    let mut loaded_image = Image {
+        segments: chunks
+            .iter()
+            .map(|(start, bytes)| Segment {
+                start: *start,
+                data: bytes.clone(),
+                mem_size: bytes.len() as u64,
+                readonly: false,
+            })
+            .collect(),
         context: Vec::new(),
     };
-    let mut loaded_image = image;
     if cortex {
-        loaded_image.context = vec![ContextRange {
-            name: crate::arm::TMODE.into(),
-            start: base,
-            end,
-            value: 1,
-        }];
+        loaded_image.context = ranges
+            .iter()
+            .map(|(start, end)| ContextRange {
+                name: crate::arm::TMODE.into(),
+                start: *start,
+                end: *end,
+                value: 1,
+            })
+            .collect();
     } else if arm {
-        let exec = vec![(base, end)];
+        let exec = ranges.clone();
         let mut seeds = vec![crate::arm::Seed {
             rank: crate::arm::rank::SYMBOL,
             addr: entry & !1,
@@ -303,33 +334,52 @@ pub fn load(data: &[u8], spec: &LoaderSpec) -> Result<Loaded, ProtoError> {
         }
     }
     let entry_addr = if arm { entry & !1 } else { entry };
-    let description = format!(
-        "Raw binary image for {} ({} bytes at {base:#x}{})",
-        p.title,
-        length,
-        if vectors.is_empty() {
-            String::new()
-        } else {
-            format!(", {} vector table entries", vectors.len())
-        }
-    );
+    let vector_note = if vectors.is_empty() {
+        String::new()
+    } else {
+        format!(", {} vector table entries", vectors.len())
+    };
+    let description = match &hex {
+        Some(h) => format!(
+            "{} image for {} ({} bytes in {} block{}{vector_note})",
+            h.kind.title(),
+            p.title,
+            length,
+            chunks.len(),
+            if chunks.len() == 1 { "" } else { "s" }
+        ),
+        None => format!(
+            "Raw binary image for {} ({length} bytes at {base:#x}{vector_note})",
+            p.title
+        ),
+    };
+    let container = hex.as_ref().map_or("raw", |h| h.kind.format());
+    let blocks = ranges
+        .iter()
+        .enumerate()
+        .map(|(i, (start, end))| MemoryBlock {
+            name: if ranges.len() == 1 {
+                "image".into()
+            } else {
+                format!("block{i}")
+            },
+            space: "ram".into(),
+            start: (*start).into(),
+            end: (*end).into(),
+            perms: "rwx".into(),
+            initialized: true,
+            kind: MemoryKind::Default,
+        })
+        .collect();
     Ok(Loaded {
         format: "raw",
-        container: "raw",
+        container,
         description,
         members: Vec::new(),
         language,
         base,
         image: loaded_image,
-        blocks: vec![MemoryBlock {
-            name: "image".into(),
-            space: "ram".into(),
-            start: base.into(),
-            end: end.into(),
-            perms: "rwx".into(),
-            initialized: true,
-            kind: MemoryKind::Default,
-        }],
+        blocks,
         functions,
         code_symbols,
         debug: crate::dwarf::Debug::default(),

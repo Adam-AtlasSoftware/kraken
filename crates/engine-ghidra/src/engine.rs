@@ -81,6 +81,8 @@ pub fn loader_name(format: &str) -> Option<&'static str> {
         "pe" => Some("Portable Executable (PE)"),
         "macho" => Some("Mac OS X Mach-O"),
         "raw" => Some("Raw Binary"),
+        "ihex" => Some("Intel Hex"),
+        "srec" => Some("Motorola Hex"),
         _ => None,
     }
 }
@@ -96,6 +98,10 @@ pub fn normalize_format(ghidra: &str) -> String {
         "macho".into()
     } else if l.contains("raw binary") {
         "raw".into()
+    } else if l == "intel hex" {
+        "ihex".into()
+    } else if l == "motorola hex" {
+        "srec".into()
     } else {
         l
     }

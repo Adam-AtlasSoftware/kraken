@@ -1098,7 +1098,7 @@ kraken binary-probe --path <string>
 - Kind: query
 - Permission: safe
 
-Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, COFF object, library archive or unknown), the kind in plain words (`Linux shared library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, size, SHA-256, whether it is stripped or has debug info, the entry point, the recommended engine with the reason, and which engines are installed. Needs no open project. Agents may not probe files in hidden folders of the home directory.
+Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, COFF object, library archive, Intel HEX or S-record firmware, or unknown), the kind in plain words (`Linux shared library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, size, SHA-256, whether it is stripped or has debug info, the entry point, the recommended engine with the reason, and which engines are installed. Needs no open project. Agents may not probe files in hidden folders of the home directory.
 
 Example: `binary_probe {"path": "/usr/bin/ls"}`
 
@@ -1145,6 +1145,16 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
         {
           "const": "archive",
           "description": "An `ar` archive: a static library (`.a`, `.lib`) or a Windows import library\n(`.dll.a`, `.lib`).",
+          "type": "string"
+        },
+        {
+          "const": "intel_hex",
+          "description": "An Intel HEX firmware image (text records with addresses).",
+          "type": "string"
+        },
+        {
+          "const": "srec",
+          "description": "A Motorola S-record firmware image (text records with addresses).",
           "type": "string"
         },
         {
@@ -14158,6 +14168,7 @@ Starts a project for a binary and loads it. Analysis is separate: run `analyze` 
 Example: `project_create {"binary": "./a.out", "project_dir": "./a.kraken"}`
 
 Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary. `engine` picks the engine and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it. The first load of a big program can take minutes: while it runs it is the job `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon sends `open_progress` events), and `job_cancel` stops it without leaving a project behind.
+Intel HEX and Motorola S-record files are detected: their blocks load at the addresses the records give and the start record becomes the entry; give `language` (or let a recognisable vector table choose it).
 Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a `language`: one memory block holds the file (or `offset`/`length` of it) at `base`, and execution starts at `entry`. An ARM Cortex-M vector table at the start names `Reset_Handler` and the interrupt handlers. `binary_probe` suggests these options for a file it cannot identify. The options are recorded in `meta.json` and used on every reopen and `rebuild`. The native engine loads raw x86, x86-64, ARM, Cortex-M, AArch64 and RISC-V images; `auto` falls back to Ghidra for other processors.
 
 | Argument | CLI flag | Type | Required | Description |

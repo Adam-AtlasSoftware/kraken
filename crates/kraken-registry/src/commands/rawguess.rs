@@ -39,6 +39,20 @@ pub fn guess(data: &[u8]) -> Vec<RawSuggestion> {
     out
 }
 
+/// The suggestions for the blocks of a firmware record file: the layouts are looked for in the
+/// first block, and the base is where that block really is.
+pub fn guess_blocks(blocks: &[(u64, Vec<u8>)]) -> Vec<RawSuggestion> {
+    let Some((start, data)) = blocks.first() else {
+        return Vec::new();
+    };
+    let mut out = guess(data);
+    out.retain(|s| s.base.0 == *start || s.language == "cortex-m");
+    for s in &mut out {
+        s.base = Hex64(*start);
+    }
+    out
+}
+
 /// What a container with no loader is, when its magic number says (the person has to unpack or
 /// convert it first).
 pub fn container_hint(data: &[u8]) -> Option<&'static str> {

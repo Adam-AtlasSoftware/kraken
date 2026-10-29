@@ -42,6 +42,10 @@ pub enum BinaryFormat {
     /// An `ar` archive: a static library (`.a`, `.lib`) or a Windows import library
     /// (`.dll.a`, `.lib`).
     Archive,
+    /// An Intel HEX firmware image (text records with addresses).
+    IntelHex,
+    /// A Motorola S-record firmware image (text records with addresses).
+    Srec,
     /// Not a program KRAKEN recognises.
     Unknown,
 }
@@ -56,6 +60,8 @@ impl BinaryFormat {
             BinaryFormat::Dotnet => ".NET assembly",
             BinaryFormat::Coff => "COFF",
             BinaryFormat::Archive => "library archive",
+            BinaryFormat::IntelHex => "Intel HEX",
+            BinaryFormat::Srec => "Motorola S-record",
             BinaryFormat::Unknown => "unknown",
         }
     }
@@ -139,6 +145,46 @@ pub struct BinaryProbeOut {
     pub raw_options: Vec<RawSuggestion>,
 }
 
+/// Facts of an Intel HEX or S-record file; `None` when the file is neither.
+fn hex_facts(data: &[u8]) -> Option<Facts> {
+    let kind = kraken_engine::hexfile::detect(data)?;
+    let format = match kind {
+        kraken_engine::hexfile::HexKind::Ihex => BinaryFormat::IntelHex,
+        kraken_engine::hexfile::HexKind::Srec => BinaryFormat::Srec,
+    };
+    Some(match kraken_engine::hexfile::parse(data, kind) {
+        Ok(img) => {
+            let bytes: usize = img.blocks.iter().map(|b| b.1.len()).sum();
+            let n = img.blocks.len();
+            let first = img.blocks[0].0;
+            let last = img.blocks.last().map_or(0, |b| b.0 + b.1.len() as u64);
+            Facts {
+                format: Some(format),
+                kind: Some("firmware"),
+                entry: img.entry.filter(|e| {
+                    img.blocks
+                        .iter()
+                        .any(|(a, d)| (*a..*a + d.len() as u64).contains(&(e & !1)))
+                }),
+                description: Some(format!(
+                    "{} firmware image: {bytes} bytes in {n} block{} between {first:#x} and \
+                     {last:#x}; it does not say which processor it is for (`language`)",
+                    kind.title(),
+                    if n == 1 { "" } else { "s" }
+                )),
+                raw_options: super::rawguess::guess_blocks(&img.blocks),
+                ..Facts::default()
+            }
+        }
+        Err(e) => Facts {
+            format: Some(format),
+            kind: Some("firmware"),
+            problem: Some(format!("{} file is damaged: {}", kind.title(), e.message)),
+            ..Facts::default()
+        },
+    })
+}
+
 /// Header facts of a file, without the engine part.
 #[derive(Debug, Clone, PartialEq, Default)]
 struct Facts {
@@ -155,6 +201,8 @@ struct Facts {
     members: Vec<String>,
     /// Why no engine opens a file of a known format (an archive without x86 objects).
     problem: Option<String>,
+    /// Processors a firmware record file may be for.
+    raw_options: Vec<RawSuggestion>,
 }
 
 /// What the members of an archive are.
@@ -400,6 +448,9 @@ fn pe_is_managed<H: ImageNtHeaders>(data: &[u8]) -> bool {
 
 /// Reads what the header (and, for a whole file, the symbol table and debug sections) says.
 fn facts_of(data: &[u8], whole: bool) -> Facts {
+    if whole && let Some(f) = hex_facts(data) {
+        return f;
+    }
     let Ok(file_kind) = FileKind::parse(data) else {
         return Facts::default();
     };
@@ -506,6 +557,7 @@ fn facts_of(data: &[u8], whole: bool) -> Facts {
         debug,
         entry: (entry != 0).then_some(entry),
         members: Vec::new(),
+        raw_options: Vec::new(),
     }
 }
 
@@ -660,7 +712,34 @@ pub fn probe_binary(
         Vec::new()
     };
     let format = facts.format.unwrap_or(BinaryFormat::Unknown);
-    let (recommended_engine, recommended_reason) = recommend(factory, &abs, format);
+    let (recommended_engine, recommended_reason) = match (format, facts.raw_options.first()) {
+        (BinaryFormat::IntelHex | BinaryFormat::Srec, Some(s)) => {
+            let spec = kraken_engine::LoaderSpec {
+                format: Some(
+                    if format == BinaryFormat::IntelHex {
+                        "ihex"
+                    } else {
+                        "srec"
+                    }
+                    .into(),
+                ),
+                arch: Some(kraken_engine::language_id(&s.language)),
+                ..Default::default()
+            };
+            match factory.select_kind_for(&abs, Some(EngineChoice::Auto), &spec) {
+                Ok(sel) => (Some(sel.kind), sel.reason),
+                Err(e) => (Some(EngineKind::Ghidra), e.message),
+            }
+        }
+        (BinaryFormat::IntelHex | BinaryFormat::Srec, None) => (
+            Some(EngineKind::Native),
+            "the file does not say which processor it is for: pass `language` to \
+             `project_create`; the native engine loads x86, ARM, Cortex-M, AArch64 and RISC-V \
+             images, other processors go to Ghidra"
+                .into(),
+        ),
+        _ => recommend(factory, &abs, format),
+    };
     let engines = factory.engine_status();
     let problem = match format {
         BinaryFormat::Unknown => Some(
@@ -695,7 +774,9 @@ pub fn probe_binary(
         .map(|m| Untrusted::sanitized(m))
         .collect();
     let supported = format != BinaryFormat::Unknown && facts.problem.is_none();
-    let (raw_options, container) = if format == BinaryFormat::Unknown {
+    let (raw_options, container) = if !facts.raw_options.is_empty() {
+        (facts.raw_options.clone(), None)
+    } else if format == BinaryFormat::Unknown {
         (
             super::rawguess::guess(&head),
             super::rawguess::container_hint(&head),
@@ -762,7 +843,7 @@ impl Command for BinaryProbe {
         )
         .doc(
             "Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, \
-             COFF object, library archive or unknown), the kind in plain words (`Linux shared \
+             COFF object, library archive, Intel HEX or S-record firmware, or unknown), the kind in plain words (`Linux shared \
              library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, \
              size, SHA-256, whether it is stripped or has debug info, the entry point, the \
              recommended engine with the reason, and which engines are installed. Needs no open \
@@ -1013,6 +1094,39 @@ mod tests {
         // a program is not offered as a raw image
         let elf = probe_binary(&OneEngine, &corpus("bin/pie_list-O0")).unwrap();
         assert!(elf.raw_options.is_empty());
+    }
+
+    #[test]
+    fn intel_hex_and_srec_firmware_are_recognised_with_a_processor() {
+        for (file, format, title) in [
+            ("raw/fw_cortexm.hex", BinaryFormat::IntelHex, "Intel HEX"),
+            (
+                "raw/fw_cortexm.srec",
+                BinaryFormat::Srec,
+                "Motorola S-record",
+            ),
+        ] {
+            let out = probe_binary(&OneEngine, &corpus(file)).unwrap();
+            assert_eq!(out.format, format, "{file}");
+            assert_eq!(out.kind, "firmware", "{file}");
+            assert!(out.description.contains(title), "{}", out.description);
+            assert!(out.description.contains("0x8000000"), "{}", out.description);
+            assert!(out.supported, "{file}: {:?}", out.problem);
+            let best = &out.raw_options[0];
+            assert_eq!(best.language, "cortex-m", "{file}");
+            assert_eq!(best.base, Hex64(0x0800_0000), "{file}");
+        }
+    }
+
+    #[test]
+    fn a_damaged_hex_file_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.hex");
+        std::fs::write(&path, ":0300300002337A1F\n:00000001FF\n").unwrap();
+        let out = probe_binary(&OneEngine, &path).unwrap();
+        assert_eq!(out.format, BinaryFormat::IntelHex);
+        assert!(!out.supported);
+        assert!(out.problem.unwrap().contains("damaged"));
     }
 
     #[test]

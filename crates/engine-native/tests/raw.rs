@@ -137,3 +137,74 @@ async fn bad_raw_options_are_refused() {
             .is_err()
     );
 }
+
+fn hex_spec(format: &str) -> LoaderSpec {
+    LoaderSpec {
+        format: Some(format.into()),
+        arch: Some("cortex-m".into()),
+        ..LoaderSpec::default()
+    }
+}
+
+#[tokio::test]
+async fn intel_hex_and_srec_open_at_their_real_addresses() {
+    for (file, format) in [("fw_cortexm.hex", "ihex"), ("fw_cortexm.srec", "srec")] {
+        for iso in [worker(), Isolation::InProcess] {
+            let Some(e) = engine(iso) else { return };
+            let info = open(&e, file, &hex_spec(format)).await;
+            assert_eq!(info.format, format);
+            assert_eq!(info.arch, "ARM:LE:32:Cortex");
+            assert_eq!(info.base, Hex64(0x0800_0000));
+            let found = names(&e).await;
+            let at = |a: u64| found.iter().find(|(x, _)| *x == a).map(|(_, n)| n.as_str());
+            assert_eq!(at(0x0800_00dc), Some("Reset_Handler"), "{file}: {found:?}");
+            assert_eq!(
+                at(0x0800_007a),
+                Some("SysTick_Handler"),
+                "{file}: {found:?}"
+            );
+            let d = e
+                .decompile(&Locator::ram(0x0800_0040), &CancellationToken::new())
+                .await
+                .unwrap();
+            assert!(d.text.contains("return"), "{}", d.text);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_hex_file_with_two_blocks_maps_both() {
+    let Some(e) = engine(Isolation::InProcess) else {
+        return;
+    };
+    // the same program split into two blocks with a gap, as a bootloader plus an application
+    let bin = std::fs::read(blob("fw_cortexm.bin")).unwrap();
+    let rec = |addr: u16, ty: u8, data: &[u8]| {
+        let mut r = vec![data.len() as u8, (addr >> 8) as u8, addr as u8, ty];
+        r.extend(data);
+        let sum = r.iter().fold(0u8, |a, x| a.wrapping_add(*x));
+        r.push(sum.wrapping_neg());
+        let hex: String = r.iter().map(|b| format!("{b:02X}")).collect();
+        format!(":{hex}\n")
+    };
+    let mut text = rec(0, 4, &[0x08, 0x00]);
+    for (i, c) in bin[..0x80].chunks(16).enumerate() {
+        text += &rec((i * 16) as u16, 0, c);
+    }
+    for (i, c) in bin[0xc0..].chunks(16).enumerate() {
+        text += &rec((0xc0 + i * 16) as u16, 0, c);
+    }
+    text += &rec(0, 1, &[]);
+    let dir = std::env::temp_dir().join(format!("kr-hex2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("two.hex");
+    std::fs::write(&path, text).unwrap();
+    let info = e
+        .open_binary(&path, &hex_spec("ihex"), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(info.description.unwrap_or_default().contains("2 blocks"));
+    let found = names(&e).await;
+    assert!(found.iter().any(|(a, _)| *a == 0x0800_00dc), "{found:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}

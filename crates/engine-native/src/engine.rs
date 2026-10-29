@@ -953,10 +953,12 @@ pub(crate) fn release_free_memory() {
 /// engine and the worker client share it.
 pub(crate) fn check_format(spec: &LoaderSpec) -> EngineResult<()> {
     match spec.format.as_deref() {
-        Some(f) if !matches!(f, "elf" | "pe" | "coff" | "ar" | "raw") => Err(ProtoError::new(
-            ErrorCode::Unsupported,
-            format!("format {f:?} is not supported by the native engine"),
-        )),
+        Some(f) if !matches!(f, "elf" | "pe" | "coff" | "ar" | "raw" | "ihex" | "srec") => {
+            Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                format!("format {f:?} is not supported by the native engine"),
+            ))
+        }
         _ => Ok(()),
     }
 }

@@ -322,10 +322,31 @@ Not sure what a file is? `kraken binary-probe --path firmware.bin` recognises th
 of firmware and suggests the options: an ARM Cortex-M vector table (processor, flash base and
 reset vector), a U-Boot `uImage` header (processor, load address, entry, 64-byte offset), the
 Linux arm64 `Image` header, and the x86 reset vector of a BIOS or flash image. For compressed
-files, file systems and Intel HEX or S-record text it says what to unpack or convert first. In
+files and file systems it says what to unpack first (Intel HEX and S-record text open directly, see below). In
 the window, the import dialog shows a **Raw binary** section for such a file, filled in from the
 suggestion, instead of refusing it. Raw images are decompiled and edited like any program; there
 are no symbols, so names come from the vector table, your renames and analysis.
+
+### Intel HEX and Motorola S-record files
+
+Firmware often ships as text records that carry their own addresses. KRAKEN detects Intel HEX
+and S-record files by their first line, so no `--loader` is needed. Each run of records becomes
+a memory block at its real address (a gap between runs stays a gap), and the start record
+(Intel HEX types 03 and 05, S7 to S9) becomes the entry point when it points into the image.
+Checksums are verified, overlapping records and a missing end-of-file record are errors. The
+text does not say which processor the code is for: `--language` names it, and when it is left
+out an ARM Cortex-M vector table in the first block chooses `cortex-m`.
+
+```sh
+kraken project-create --binary corpus/raw/fw_cortexm.hex --project ~/kraken-projects/fwhex
+kraken list-functions --project ~/kraken-projects/fwhex
+```
+
+**You should see:** the same functions at the same addresses as the `.bin` above
+(`Reset_Handler` at `0x080000dc`), and `kraken decompile --address 0x08000040` returns C.
+`kraken binary-probe --path fw.hex` reports `format: intel_hex` (or `srec`), the number of
+blocks and address range, and suggests the processor. `--base`, `--offset` and `--length` do
+not apply (the records carry the addresses); `--entry` overrides the start record.
 
 ## Libraries and object files
 
