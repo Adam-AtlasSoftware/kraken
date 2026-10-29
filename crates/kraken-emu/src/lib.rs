@@ -41,6 +41,6 @@ pub use arch::Arch;
 pub use call::{CallOutcome, CallSpec, CallTermination, Callee, FunctionCaller, RetKind, Value};
 pub use error::EmuError;
 pub use linux::{Exit, ProgramOutcome, RunSpec, run_program};
-pub use machine::{Machine, Perm, Stop};
+pub use machine::{BlockLog, Machine, Perm, Stop};
 pub use session::{Interrupter, Session, SessionStop, Target};
 pub use specs::SpecRoots;

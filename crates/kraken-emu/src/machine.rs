@@ -124,6 +124,18 @@ pub struct Machine {
     sp: pcode::VarNode,
 }
 
+/// The watched addresses that ran since the last [`take`](BlockLog::take)
+/// ([`Machine::track_addresses`]).
+#[derive(Debug, Clone, Default)]
+pub struct BlockLog(std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<u64>>>);
+
+impl BlockLog {
+    /// The recorded addresses, and forgets them.
+    pub fn take(&self) -> std::collections::BTreeSet<u64> {
+        std::mem::take(&mut *self.0.borrow_mut())
+    }
+}
+
 impl std::fmt::Debug for Machine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Machine")
@@ -582,6 +594,18 @@ impl Machine {
         };
         let text = rt.disasm(sleigh)?.to_string();
         Some((text, len))
+    }
+
+    /// Starts recording which of the instruction addresses `addrs` run. Code the emulator lifted
+    /// before this call is not watched, so call it right after building the machine.
+    pub fn track_addresses(&mut self, addrs: &[u64]) -> BlockLog {
+        let log = BlockLog::default();
+        let sink = log.0.clone();
+        self.vm
+            .hook_many_addresses(addrs, move |_: &mut Cpu, addr: u64| {
+                sink.borrow_mut().insert(addr);
+            });
+        log
     }
 
     /// Adds a breakpoint (an instruction address, no Thumb bit).
