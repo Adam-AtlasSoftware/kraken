@@ -630,7 +630,8 @@ impl ImportDialog {
                                     &mut self.raw_load.language,
                                     name.to_string(),
                                     label,
-                                );
+                                )
+                                .on_hover_text(format!("Open the image as {label} code."));
                             }
                         })
                         .response
