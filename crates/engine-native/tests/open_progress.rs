@@ -10,6 +10,9 @@ use kraken_engine::{CancellationToken, Loader, LoaderSpec, OpenReporter};
 use kraken_proto::{OpenStage, OpenUpdate};
 
 fn config(state: Option<&Path>) -> Option<NativeConfig> {
+    if !engine_native_sys::available() {
+        return None;
+    }
     let mut cfg = NativeConfig::discover()?;
     cfg.isolation = Isolation::InProcess;
     cfg.state_dir = state.map(Path::to_path_buf);
@@ -43,7 +46,7 @@ fn corpus(rel: &str) -> PathBuf {
 async fn an_open_reports_its_stages_and_a_growing_fraction() {
     let state = tempfile::tempdir().unwrap();
     let Some(cfg) = config(Some(state.path())) else {
-        eprintln!("skipping: no Sleigh specs (cargo xtask native-sla)");
+        eprintln!("skipping: no Sleigh specs (cargo xtask native-sla) or no decompiler sources");
         return;
     };
     let bin = corpus("bin/pie_list-O0");
