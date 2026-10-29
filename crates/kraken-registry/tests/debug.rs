@@ -79,7 +79,7 @@ fn runner() -> PathBuf {
 }
 
 #[tokio::test]
-#[ignore = "needs KRAKEN_NATIVE_SPECS=~/.cache/kraken-dev/native-sla/Ghidra_12.1.4_build, Landlock \
+#[ignore = "needs KRAKEN_NATIVE_SPECS=~/.cache/kraken-dev/native-sla/Ghidra_12.2_build, Landlock \
             and `cargo build -p kraken-emu --bin kraken-emu-run`"]
 async fn a_corpus_program_is_stepped_to_main() {
     let env = Setup::new(tiny()).start().await;
