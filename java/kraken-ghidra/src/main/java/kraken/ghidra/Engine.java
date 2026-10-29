@@ -1071,6 +1071,15 @@ final class Engine {
         return result;
     }
 
+    void removeType(String name) {
+        requireProgram();
+        boolean removed = inTransaction("kraken remove type", () -> types.remove(name));
+        if (!removed) {
+            throw KrakenError.notFound("no type named " + name);
+        }
+        invalidateDecompiler(true);
+    }
+
     // ---- save / close -------------------------------------------------------------------
 
     String save(String watermark) throws Exception {

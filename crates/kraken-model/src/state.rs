@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use kraken_proto::{AddressRange, CodeData, Hex64, LogOp, TypeRef};
+use kraken_proto::{AddressRange, CodeData, Hex64, LogOp, TypeDef, TypeRef};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::op_key;
@@ -49,6 +49,11 @@ pub enum StateValue {
     CallingConvention {
         /// Convention name.
         name: String,
+    },
+    /// A named type's definition.
+    TypeDef {
+        /// The definition.
+        def: TypeDef,
     },
     /// A byte patch.
     Patch {
@@ -104,6 +109,7 @@ pub fn apply_op(state: &mut AnnotationState, op: &LogOp) {
         LogOp::SetCallingConvention { new, .. } => {
             (!new.is_empty()).then(|| StateValue::CallingConvention { name: new.clone() })
         }
+        LogOp::DefineType { new, .. } => new.clone().map(|def| StateValue::TypeDef { def }),
         LogOp::SetPatch { original, new, .. } => new.as_ref().map(|b| StateValue::Patch {
             original: original.clone(),
             replacement: b.replacement.clone(),
@@ -188,6 +194,11 @@ pub fn invert_op(op: &LogOp) -> LogOp {
             anchor,
             old: Some(new),
             new: old.unwrap_or_default(),
+        },
+        LogOp::DefineType { name, old, new } => LogOp::DefineType {
+            name,
+            old: new,
+            new: old,
         },
         LogOp::SetPatch {
             anchor,

@@ -113,7 +113,7 @@ fn check_engine_supports(project: &Project, op: &LogOp) -> Result<(), ProtoError
     if project.meta().engine_kind != crate::session::EngineKind::Dotnet {
         return Ok(());
     }
-    let managed = kraken_model::op_anchor(op).managed_parts().is_some();
+    let managed = kraken_model::op_anchor(op).is_some_and(|a| a.managed_parts().is_some());
     match op {
         LogOp::Rename { .. } | LogOp::SetComment { .. } if managed => Ok(()),
         LogOp::Rename { .. } | LogOp::SetComment { .. } => Err(ProtoError::new(

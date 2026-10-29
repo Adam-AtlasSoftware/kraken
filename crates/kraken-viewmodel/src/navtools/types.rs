@@ -1,12 +1,14 @@
 //! The Types tab: the program's structs, enums, typedefs and prototypes, with the C declaration of
 //! the one picked.
 
-use kraken_proto::{Page, Untrusted};
+use kraken_proto::{Page, TypeDef, Untrusted};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::errors::plain_error;
 use crate::vm::{ViewModel, parse};
+
+use super::parse_address;
 
 /// Rows asked for at a time.
 const PAGE: u32 = 200;
@@ -33,6 +35,45 @@ pub struct TypeDecl {
     pub c: String,
     /// Names it refers to that the engine has no definition for.
     pub undefined: Vec<String>,
+    /// `struct`, `union`, `enum`, `typedef` or `function`.
+    pub kind: String,
+    /// Fields of a struct or union, for inline editing.
+    pub fields: Vec<FieldRow>,
+}
+
+/// One field of the picked struct or union.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRow {
+    /// Field name.
+    pub name: String,
+    /// Field type as C text.
+    pub ty: String,
+    /// Byte offset.
+    pub offset: u64,
+}
+
+/// The "New type" dialog.
+#[derive(Debug, Clone, Default)]
+pub struct DefineDialog {
+    /// The C declarations being typed.
+    pub text: String,
+    /// Why the last attempt failed (a parse error names the line).
+    pub error: Option<String>,
+    /// The call is running.
+    pub busy: bool,
+}
+
+/// The "Apply to address" dialog.
+#[derive(Debug, Clone, Default)]
+pub struct ApplyDialog {
+    /// The type being applied.
+    pub type_name: String,
+    /// The address as typed.
+    pub address: String,
+    /// Why the last attempt failed.
+    pub error: Option<String>,
+    /// The call is running.
+    pub busy: bool,
 }
 
 /// State of the Types tab.
@@ -62,6 +103,14 @@ pub struct TypesPanel {
     pub decl_loading: bool,
     /// Why the declaration could not be shown.
     pub decl_error: Option<String>,
+    /// The New type dialog, when open.
+    pub define: Option<DefineDialog>,
+    /// The Apply to address dialog, when open.
+    pub apply: Option<ApplyDialog>,
+    /// Why the last field edit or deletion failed.
+    pub edit_error: Option<String>,
+    /// What the last change did, in a few words.
+    pub notice: Option<String>,
     generation: u64,
     decl_generation: u64,
 }
@@ -81,6 +130,13 @@ struct TypeDeclWire {
     c: Untrusted<String>,
     #[serde(default)]
     undefined: Vec<Untrusted<String>>,
+    kind: String,
+    definition: TypeDef,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DefineWire {
+    types: Vec<String>,
 }
 
 impl TypesPanel {
@@ -224,11 +280,166 @@ impl ViewModel {
                         name: w.name.0,
                         c: w.c.0,
                         undefined: w.undefined.into_iter().map(|u| u.0).collect(),
+                        kind: w.kind,
+                        fields: match &w.definition {
+                            TypeDef::Struct(c) | TypeDef::Union(c) => c
+                                .fields
+                                .iter()
+                                .map(|f| FieldRow {
+                                    name: f.name.clone(),
+                                    ty: f.ty.to_c(),
+                                    offset: f.offset,
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        },
                     });
                 }
                 Err(e) => {
                     t.decl = None;
                     t.decl_error = Some(plain_error(&e));
+                }
+            }
+        });
+    }
+}
+
+impl ViewModel {
+    /// Opens the New type dialog with a starting template.
+    pub fn open_type_define(&mut self) {
+        self.tools.types.define = Some(DefineDialog {
+            text: "struct name {\n    int field;\n};\n".into(),
+            ..DefineDialog::default()
+        });
+    }
+
+    /// Closes the New type dialog.
+    pub fn close_type_define(&mut self) {
+        self.tools.types.define = None;
+    }
+
+    /// Sends the dialog's C text to `type_define`. A parse error stays in the dialog.
+    pub fn submit_type_define(&mut self) {
+        let Some(d) = self.tools.types.define.as_mut() else {
+            return;
+        };
+        if d.busy {
+            return;
+        }
+        d.busy = true;
+        d.error = None;
+        let args = json!({ "c_declaration": d.text });
+        self.call("type_define", args, |vm, res| {
+            match res.and_then(parse::<DefineWire>) {
+                Ok(out) => {
+                    vm.tools.types.define = None;
+                    vm.tools.types.notice = Some(match out.types.as_slice() {
+                        [one] => format!("Defined {one}."),
+                        many => format!("Defined {} types.", many.len()),
+                    });
+                    vm.refresh_types();
+                    if let Some(first) = out.types.first() {
+                        vm.select_type(first);
+                    }
+                }
+                Err(e) => {
+                    if let Some(d) = vm.tools.types.define.as_mut() {
+                        d.busy = false;
+                        d.error = Some(plain_error(&e));
+                    }
+                }
+            }
+        });
+    }
+
+    /// Renames a field or changes its type (C text); the struct is laid out again.
+    pub fn edit_type_field(
+        &mut self,
+        type_name: &str,
+        field: &str,
+        new_name: Option<String>,
+        new_type: Option<String>,
+    ) {
+        let mut args = json!({ "type_name": type_name, "field": field });
+        if let Some(n) = new_name {
+            args["new_name"] = Value::String(n);
+        }
+        if let Some(t) = new_type {
+            args["new_type"] = Value::String(t);
+        }
+        self.tools.types.edit_error = None;
+        let name = type_name.to_string();
+        self.call("type_edit_field", args, move |vm, res| match res {
+            Ok(_) => {
+                vm.tools.types.notice = Some(format!("Changed {name}."));
+                vm.refresh_types();
+                vm.select_type(&name);
+            }
+            Err(e) => vm.tools.types.edit_error = Some(plain_error(&e)),
+        });
+    }
+
+    /// Deletes a type.
+    pub fn delete_type(&mut self, name: &str) {
+        self.tools.types.edit_error = None;
+        let name = name.to_string();
+        self.call(
+            "type_delete",
+            json!({ "name": name }),
+            move |vm, res| match res {
+                Ok(_) => {
+                    vm.tools.types.notice = Some(format!("Deleted {name}."));
+                    let t = &mut vm.tools.types;
+                    if t.selected.as_deref() == Some(name.as_str()) {
+                        t.selected = None;
+                        t.decl = None;
+                    }
+                    vm.refresh_types();
+                }
+                Err(e) => vm.tools.types.edit_error = Some(plain_error(&e)),
+            },
+        );
+    }
+
+    /// Opens the Apply to address dialog for a type.
+    pub fn open_type_apply(&mut self, name: &str) {
+        self.tools.types.apply = Some(ApplyDialog {
+            type_name: name.to_string(),
+            ..ApplyDialog::default()
+        });
+    }
+
+    /// Closes the Apply to address dialog.
+    pub fn close_type_apply(&mut self) {
+        self.tools.types.apply = None;
+    }
+
+    /// Gives the address in the dialog the type, through `set_type`.
+    pub fn submit_type_apply(&mut self) {
+        let Some(d) = self.tools.types.apply.as_mut() else {
+            return;
+        };
+        if d.busy {
+            return;
+        }
+        let Some(at) = parse_address(&d.address) else {
+            d.error = Some("Type an address such as 0x404040.".into());
+            return;
+        };
+        d.busy = true;
+        d.error = None;
+        let args = json!({ "address": format!("{at:#x}"), "type_name": d.type_name });
+        self.call("set_type", args, |vm, res| match res {
+            Ok(_) => {
+                if let Some(d) = vm.tools.types.apply.take() {
+                    vm.tools.types.notice =
+                        Some(format!("{} applied at {}.", d.type_name, d.address.trim()));
+                }
+            }
+            Err(e) => {
+                if let Some(d) = vm.tools.types.apply.as_mut() {
+                    d.busy = false;
+                    d.error = Some(plain_error(&e));
                 }
             }
         });

@@ -502,6 +502,13 @@ impl TypeStore for NativeEngine {
         )
     }
 
+    async fn remove_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<()> {
+        route!(self,
+            l => l.remove_type(name, cancel).await,
+            w => w.remove_type(name, cancel).await
+        )
+    }
+
     async fn list_types(
         &self,
         page: &PageRequest,

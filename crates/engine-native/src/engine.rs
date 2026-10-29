@@ -1669,6 +1669,7 @@ impl InProcessEngine {
                         // one rebuild of the references at the end instead of one per edit
                         Journaled::Op(op) => crate::mutate::apply_deferred(&p, &op).is_ok(),
                         Journaled::TypeDef(def) => crate::data::define(&p, def).is_ok(),
+                        Journaled::RemoveType(name) => crate::data::remove(&p, &name).is_ok(),
                     };
                     if !ok {
                         p.replay_failed.fetch_add(1, Ordering::Relaxed);

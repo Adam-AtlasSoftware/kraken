@@ -84,6 +84,12 @@ pub trait TypeStore: Send + Sync {
     async fn get_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<TypeDef>;
     /// Defines or replaces a named type; anonymous prototypes are `invalid_argument`.
     async fn define_type(&self, def: TypeDef, cancel: &CancellationToken) -> EngineResult<()>;
+    /// Removes a user-defined type; `not_found` if there is none, `unsupported` where the engine
+    /// cannot forget a type.
+    async fn remove_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<()> {
+        let _ = (name, cancel);
+        Err(crate::unsupported("remove_type"))
+    }
     /// Types ordered by name, paginated.
     async fn list_types(
         &self,

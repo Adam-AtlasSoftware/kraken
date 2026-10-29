@@ -1517,6 +1517,46 @@
             "original"
           ],
           "type": "object"
+        },
+        {
+          "description": "Define, replace or delete a named type. One op covers `type_define`, `type_edit_field`\nand `type_delete`: the whole definition before and after.",
+          "properties": {
+            "name": {
+              "description": "The type's name.",
+              "type": "string"
+            },
+            "new": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TypeDef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The definition after the edit; absent deletes the type."
+            },
+            "old": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TypeDef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The definition before the edit; absent when the type was new."
+            },
+            "op": {
+              "const": "define_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "name"
+          ],
+          "type": "object"
         }
       ]
     },

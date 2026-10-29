@@ -131,6 +131,14 @@ impl TypeModel {
         self.defs.get(name)
     }
 
+    /// Forgets the definition named `name`; the decompiler keeps what it already accepted.
+    /// False when there was none.
+    pub fn remove(&mut self, name: &str) -> bool {
+        self.pending.remove(name);
+        self.aliases.remove(name);
+        self.defs.remove(name).is_some()
+    }
+
     /// Definitions ordered by name.
     pub fn all(&self) -> Vec<TypeDef> {
         self.defs.values().cloned().collect()

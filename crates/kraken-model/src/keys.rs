@@ -43,12 +43,13 @@ pub fn op_aspect(op: &LogOp) -> String {
         LogOp::SetCodeData { .. } => "codedata".into(),
         LogOp::SetCallingConvention { .. } => "cc".into(),
         LogOp::SetPatch { .. } => "patch".into(),
+        LogOp::DefineType { .. } => "typedef".into(),
     }
 }
 
-/// The anchor a log op applies to.
-pub fn op_anchor(op: &LogOp) -> &Anchor {
-    match op {
+/// The anchor a log op applies to; type definitions have none.
+pub fn op_anchor(op: &LogOp) -> Option<&Anchor> {
+    Some(match op {
         LogOp::Rename { anchor, .. }
         | LogOp::SetType { anchor, .. }
         | LogOp::SetComment { anchor, .. }
@@ -58,12 +59,22 @@ pub fn op_anchor(op: &LogOp) -> &Anchor {
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
-    }
+        LogOp::DefineType { .. } => return None,
+    })
 }
 
 /// The single entity key a log op writes.
 pub fn op_key(op: &LogOp) -> Result<String, ProtoError> {
-    entity_key(op_anchor(op), &op_aspect(op))
+    if let LogOp::DefineType { name, .. } = op {
+        return Ok(format!("type:{name}"));
+    }
+    match op_anchor(op) {
+        Some(a) => entity_key(a, &op_aspect(op)),
+        None => Err(ProtoError::new(
+            kraken_proto::ErrorCode::InvalidArgument,
+            "op has no anchor",
+        )),
+    }
 }
 
 /// Short name of a log op, such as `rename` or `set_type`.
@@ -78,5 +89,6 @@ pub fn op_kind_name(op: &LogOp) -> &'static str {
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
         LogOp::SetPatch { .. } => "set_patch",
+        LogOp::DefineType { .. } => "define_type",
     }
 }

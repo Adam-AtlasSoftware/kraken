@@ -932,3 +932,86 @@ async fn data_edits_reach_the_decompiler() {
     let again = reopen().await;
     assert_eq!(decompiled(&again, sbrk).await, typed);
 }
+
+/// Types are edits: a definition, a changed definition and a deletion go through `apply`, show
+/// in the type store, and replay (in order) when the engine is reopened over the same state.
+#[tokio::test(flavor = "multi_thread")]
+async fn type_definitions_are_edits_and_replay_on_reopen() {
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(e) = open(state.path()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let record = |name: &str, fields: &[&str]| {
+        TypeDef::Struct(Composite {
+            name: name.into(),
+            size: 4 * fields.len() as u64,
+            align: 4,
+            fields: fields
+                .iter()
+                .enumerate()
+                .map(|(i, n)| Field {
+                    name: (*n).into(),
+                    offset: 4 * i as u64,
+                    ty: int(),
+                    bitfield: None,
+                })
+                .collect(),
+        })
+    };
+    let define = |old: Option<TypeDef>, new: Option<TypeDef>, name: &str| LogOp::DefineType {
+        name: name.into(),
+        old,
+        new,
+    };
+    apply(&e, define(None, Some(record("record", &["id"])), "record"))
+        .await
+        .expect("define");
+    assert_eq!(
+        apply(&e, define(None, Some(record("record", &["id"])), "other")).await,
+        Err(ErrorCode::InvalidArgument),
+        "a name that differs from the definition's is refused"
+    );
+    apply(
+        &e,
+        define(
+            Some(record("record", &["id"])),
+            Some(record("record", &["id", "len"])),
+            "record",
+        ),
+    )
+    .await
+    .expect("change");
+    assert_eq!(
+        e.get_type("record", &c).await.expect("record"),
+        record("record", &["id", "len"])
+    );
+
+    let gone = record("gone", &["a"]);
+    apply(&e, define(None, Some(gone.clone()), "gone"))
+        .await
+        .expect("define gone");
+    apply(&e, define(Some(gone.clone()), None, "gone"))
+        .await
+        .expect("delete");
+    assert_eq!(
+        e.get_type("gone", &c).await.map_err(|x| x.code),
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        apply(&e, define(Some(gone), None, "gone")).await,
+        Err(ErrorCode::NotFound)
+    );
+
+    e.save(&c).await.expect("save");
+    drop(e);
+    let e = open(state.path()).await.expect("reopen");
+    assert_eq!(
+        e.get_type("record", &c).await.expect("replayed"),
+        record("record", &["id", "len"])
+    );
+    assert_eq!(
+        e.get_type("gone", &c).await.map_err(|x| x.code),
+        Err(ErrorCode::NotFound)
+    );
+}

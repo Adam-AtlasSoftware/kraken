@@ -1138,12 +1138,7 @@ impl KrakenApp {
         for c in cmds {
             match c {
                 MenuCmd::Action(a) => self.dispatch(a, ctx),
-                MenuCmd::ShowTab(tab) => {
-                    if self.dock.find_tab(&tab).is_none() {
-                        self.dock.push_to_focused_leaf(tab);
-                    }
-                    self.state.bring_to_front = Some(tab);
-                }
+                MenuCmd::ShowTab(tab) => self.show_tab(tab),
                 MenuCmd::OpenRecent(path) => {
                     self.request(Pending::Open(Choice::OpenProject(path)), ctx)
                 }
@@ -1625,6 +1620,14 @@ impl KrakenApp {
         let path = self.dock.focused_leaf()?;
         let leaf = self.dock[path.surface][path.node].get_leaf()?;
         leaf.tabs.get(leaf.active.0).copied()
+    }
+
+    /// Opens the tab if it is not in the layout and brings it to the front.
+    pub(crate) fn show_tab(&mut self, tab: Tab) {
+        if self.dock.find_tab(&tab).is_none() {
+            self.dock.push_to_focused_leaf(tab);
+        }
+        self.state.bring_to_front = Some(tab);
     }
 
     /// Makes the pane holding `tab` the focused one (tests).

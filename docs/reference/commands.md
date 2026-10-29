@@ -117,6 +117,9 @@ logged; **dangerous** commands always ask for approval first.
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
 | [`tainted_clear`](#tainted_clear) | mutation | mutating | Clear the stale marker of a function after refreshing it |
 | [`tainted_list`](#tainted_list) | query | safe | List functions whose derived data is stale after an undo |
+| [`type_define`](#type_define) | mutation | mutating | Define structs, unions, enums and typedefs from C declarations |
+| [`type_delete`](#type_delete) | mutation | mutating | Delete a type |
+| [`type_edit_field`](#type_edit_field) | mutation | mutating | Rename a field of a struct or union, or change its type |
 | [`type_get`](#type_get) | query | safe | Show one type as a C declaration |
 | [`types_list`](#types_list) | query | safe | List the program's types (structs, enums, typedefs, prototypes) by name |
 | [`ui_action`](#ui_action) | query | safe | Drive the person's GUI: run an action, open a tab, show an address |
@@ -19613,6 +19616,350 @@ Arguments: none.
     "items"
   ],
   "title": "TaintedListOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## type_define
+
+Define structs, unions, enums and typedefs from C declarations
+
+```sh
+kraken type-define --c-declaration <string>
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `TypeStore`, `Mutator`
+
+Parses the C text, lays structs out naturally for the program's architecture and records one undoable edit per type. Then `set_type` with `type_name` applies a type to an address. A new name applies at once, even for an agent; replacing an existing type becomes a proposal for an agent. A parse error names the line and column.
+
+Example: `type_define {"c_declaration": "struct packet { unsigned short len; char tag; int *data; };"}`
+
+Supported: scalar types (`unsigned long`, `uint32_t`, `size_t`, ...), pointers, arrays, `struct`/`union`/`enum` bodies, `typedef`, function-pointer typedefs and function prototypes. A struct that holds another type by value needs that type defined first (in the same text or earlier). The decompiler reads a type once: a redefined type shows its new layout in listings and `type_get`, while the decompiler of a running native engine keeps the old one until the project is reopened.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `c_declaration` | `--c-declaration` | string | yes | C declarations: `struct`, `union`, `enum`, `typedef` (function-pointer typedefs too) and function prototypes, without preprocessor lines or bitfields. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "MutationOutput": {
+      "description": "Result of every edit command.",
+      "properties": {
+        "entry_id": {
+          "description": "Log entry id (applied and queued).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Entity key the edit wrote.",
+          "type": "string"
+        },
+        "proposal_id": {
+          "description": "Proposal id (proposed).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "For proposals, why the edit was not auto-applied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MutationStatus",
+          "description": "`applied`, `queued` or `proposed`."
+        },
+        "versions": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "New version of the written key (applied and queued).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "key",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `type_define` created.",
+  "properties": {
+    "edits": {
+      "description": "One edit per type, in the same order.",
+      "items": {
+        "$ref": "#/$defs/MutationOutput"
+      },
+      "type": "array"
+    },
+    "types": {
+      "description": "Names of the declared types, in declaration order.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "types",
+    "edits"
+  ],
+  "title": "TypeDefineOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## type_delete
+
+Delete a type
+
+```sh
+kraken type-delete --name <string>
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `TypeStore`, `Mutator`
+
+Removes the type from the program and records an undoable edit that brings it back. Items already given the type keep it by name. An agent's deletion becomes a proposal.
+
+Example: `type_delete {"name": "packet"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `name` | `--name` | string | yes | The type to remove. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of every edit command.",
+  "properties": {
+    "entry_id": {
+      "description": "Log entry id (applied and queued).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "key": {
+      "description": "Entity key the edit wrote.",
+      "type": "string"
+    },
+    "proposal_id": {
+      "description": "Proposal id (proposed).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "reason": {
+      "description": "For proposals, why the edit was not auto-applied.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/MutationStatus",
+      "description": "`applied`, `queued` or `proposed`."
+    },
+    "versions": {
+      "additionalProperties": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "description": "New version of the written key (applied and queued).",
+      "type": "object"
+    }
+  },
+  "required": [
+    "status",
+    "key",
+    "versions"
+  ],
+  "title": "MutationOutput",
+  "type": "object"
+}
+```
+
+</details>
+
+## type_edit_field
+
+Rename a field of a struct or union, or change its type
+
+```sh
+kraken type-edit-field --field <string> --type-name <string> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `TypeStore`, `Mutator`
+
+Changes one field and records the whole new definition as an undoable edit. A new type lays the fields out again with natural alignment, which moves later fields. An agent's change becomes a proposal.
+
+Example: `type_edit_field {"type_name": "packet", "field": "len", "new_name": "length", "new_type": "unsigned int"}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `field` | `--field` | string | yes | The field to change. |
+| `type_name` | `--type-name` | string | yes | The struct or union. |
+| `new_name` | `--new-name` | string | no | New field name. |
+| `new_type` | `--new-type` | string | no | New field type as C text, such as `unsigned int *` or `char[16]`; the struct is laid out again. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of every edit command.",
+  "properties": {
+    "entry_id": {
+      "description": "Log entry id (applied and queued).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "key": {
+      "description": "Entity key the edit wrote.",
+      "type": "string"
+    },
+    "proposal_id": {
+      "description": "Proposal id (proposed).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "reason": {
+      "description": "For proposals, why the edit was not auto-applied.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/MutationStatus",
+      "description": "`applied`, `queued` or `proposed`."
+    },
+    "versions": {
+      "additionalProperties": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "description": "New version of the written key (applied and queued).",
+      "type": "object"
+    }
+  },
+  "required": [
+    "status",
+    "key",
+    "versions"
+  ],
+  "title": "MutationOutput",
   "type": "object"
 }
 ```

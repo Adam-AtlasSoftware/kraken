@@ -63,6 +63,23 @@ fn define_inner(p: &Program, def: TypeDef) -> EngineResult<()> {
     Ok(())
 }
 
+/// Forgets the type named `name` (`not_found` if there is none) and journals the removal.
+pub(crate) fn remove(p: &Program, name: &str) -> EngineResult<()> {
+    p.touch();
+    let removed = p.types().remove(name);
+    p.touch();
+    if !removed {
+        return Err(ProtoError::new(
+            ErrorCode::NotFound,
+            format!("no type named {name}"),
+        ));
+    }
+    p.edits()
+        .journal
+        .push(Journaled::RemoveType(name.to_string()));
+    Ok(())
+}
+
 #[async_trait]
 impl XrefProvider for InProcessEngine {
     async fn xrefs(
@@ -196,6 +213,13 @@ impl TypeStore for InProcessEngine {
         check(cancel)?;
         let p = self.program()?;
         blocking(move || define(&p, def)).await
+    }
+
+    async fn remove_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<()> {
+        check(cancel)?;
+        let p = self.program()?;
+        let name = name.to_string();
+        blocking(move || remove(&p, &name)).await
     }
 
     async fn list_types(

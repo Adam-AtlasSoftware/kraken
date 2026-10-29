@@ -30,7 +30,7 @@ final class Dispatcher {
     static final int PROTOCOL_MINOR = 1;
 
     private static final Set<String> MUTATING =
-        Set.of("open_binary", "analyze", "apply_op", "define_type", "save", "shutdown");
+        Set.of("open_binary", "analyze", "apply_op", "define_type", "remove_type", "save", "shutdown");
     private static final Set<String> INLINE = Set.of("handshake", "cancel", "ping");
 
     private final Engine engine = new Engine();
@@ -211,6 +211,12 @@ final class Dispatcher {
             }
             case "define_type" -> {
                 return engine.defineType(TypeDef.fromJson(J.req(params, "def"))).toJson();
+            }
+            case "remove_type" -> {
+                engine.removeType(J.str(params, "name"));
+                JsonObject o = new JsonObject();
+                o.addProperty("ok", true);
+                return o;
             }
             case "save" -> {
                 JsonObject o = new JsonObject();

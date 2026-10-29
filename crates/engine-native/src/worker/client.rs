@@ -313,6 +313,7 @@ impl WorkerEngine {
             let (method, params) = match entry {
                 Journaled::Op(op) => ("apply", json!({ "log_op": op })),
                 Journaled::TypeDef(def) => ("define_type", json!({ "def": def })),
+                Journaled::RemoveType(name) => ("remove_type", json!({ "name": name })),
             };
             self.exec(&live, method, params, self.request_limits(), cancel)
                 .await?;
@@ -478,6 +479,24 @@ impl WorkerEngine {
         )
         .await?;
         lock(&self.journal).push(Journaled::TypeDef(def));
+        Ok(())
+    }
+
+    /// Removes a type in the worker and records it for replay after a restart.
+    pub(crate) async fn remove_type(
+        &self,
+        name: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), ProtoError> {
+        let _gate = self.edit_gate.lock().await;
+        self.call::<()>(
+            "remove_type",
+            json!({ "name": name }),
+            self.request_limits(),
+            cancel,
+        )
+        .await?;
+        lock(&self.journal).push(Journaled::RemoveType(name.to_string()));
         Ok(())
     }
 

@@ -58,6 +58,9 @@ pub fn classify(op: &LogOp, state: &AnnotationState) -> Classification {
         LogOp::SetPatch { old, new, .. } => {
             new.is_some() && old.is_none() && current.is_none() && !overlaps_a_patch(op, state)
         }
+        // Defining a name nothing has defined adds to the program; replacing or deleting a
+        // definition changes what other edits and the decompiler already rely on.
+        LogOp::DefineType { old, new, .. } => new.is_some() && old.is_none() && current.is_none(),
         LogOp::CreateFunction { .. }
         | LogOp::DeleteFunction { .. }
         | LogOp::SetFunctionBounds { .. } => false,
@@ -156,6 +159,46 @@ mod tests {
         assert_eq!(
             classify(&set(0xffe, "9090"), &state),
             Classification::Additive
+        );
+    }
+
+    #[test]
+    fn a_new_type_is_additive_and_changing_or_deleting_one_is_not() {
+        use kraken_proto::{Composite, TypeDef};
+        let def = |size| {
+            TypeDef::Struct(Composite {
+                name: "packet".into(),
+                size,
+                align: 1,
+                fields: Vec::new(),
+            })
+        };
+        let op = |old: Option<TypeDef>, new: Option<TypeDef>| LogOp::DefineType {
+            name: "packet".into(),
+            old,
+            new,
+        };
+        let mut state = AnnotationState::new();
+        assert_eq!(
+            classify(&op(None, Some(def(4))), &state),
+            Classification::Additive
+        );
+        // the engine already had the name (debug info): replacing it is not additive
+        assert_eq!(
+            classify(&op(Some(def(4)), Some(def(8))), &state),
+            Classification::Overwrite
+        );
+        state.insert(
+            op_key(&op(None, Some(def(4)))).expect("key"),
+            StateValue::TypeDef { def: def(4) },
+        );
+        assert_eq!(
+            classify(&op(None, Some(def(8))), &state),
+            Classification::Overwrite
+        );
+        assert_eq!(
+            classify(&op(Some(def(4)), None), &state),
+            Classification::Overwrite
         );
     }
 }

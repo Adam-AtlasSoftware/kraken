@@ -37,6 +37,7 @@ mod rewrite_build;
 mod rewrite_control;
 mod rewrite_program;
 mod search;
+mod typedit;
 mod types;
 mod ui;
 mod undo_entry;
@@ -168,6 +169,10 @@ pub use rewrite_program::{
 pub use search::{
     DEFAULT_SEARCH_HITS, MAX_SCAN_BYTES, MAX_SCAN_FUNCTIONS, MAX_SEARCH_HITS, Search, SearchArgs,
     SearchHit, SearchKind, parse_pattern,
+};
+pub use typedit::{
+    TypeDefine, TypeDefineArgs, TypeDefineOut, TypeDelete, TypeDeleteArgs, TypeEditField,
+    TypeEditFieldArgs,
 };
 pub use types::{
     TYPES_PAGE_CAP, TypeGet, TypeGetArgs, TypeSummaryView, TypeView, TypesList, TypesListArgs,
@@ -321,6 +326,10 @@ pub fn register_all(r: &mut Registry) {
     // Card DI-03: types as C.
     r.register(TypesList);
     r.register(TypeGet);
+    // Card DI-07: types are edits.
+    r.register(TypeDefine);
+    r.register(TypeEditField);
+    r.register(TypeDelete);
     r.register(BookmarkAdd);
     r.register(BookmarkRemove);
     r.register(BookmarkList);

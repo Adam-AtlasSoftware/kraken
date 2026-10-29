@@ -169,8 +169,8 @@ fn check_project_path(dir: &Path) -> EngineResult<()> {
     Ok(())
 }
 
-fn op_anchor(op: &LogOp) -> &Anchor {
-    match op {
+fn op_anchor(op: &LogOp) -> Option<&Anchor> {
+    Some(match op {
         LogOp::Rename { anchor, .. }
         | LogOp::SetType { anchor, .. }
         | LogOp::SetComment { anchor, .. }
@@ -180,7 +180,8 @@ fn op_anchor(op: &LogOp) -> &Anchor {
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
-    }
+        LogOp::DefineType { .. } => return None,
+    })
 }
 
 fn page_params(page: &PageRequest) -> Value {
@@ -644,6 +645,17 @@ impl TypeStore for GhidraEngine {
             .map(drop)
     }
 
+    async fn remove_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<()> {
+        self.rpc(
+            "remove_type",
+            json!({"name": name}),
+            self.deadline(),
+            cancel,
+        )
+        .await
+        .map(drop)
+    }
+
     async fn list_types(
         &self,
         page: &PageRequest,
@@ -714,7 +726,22 @@ impl Mutator for GhidraEngine {
         cancel: &CancellationToken,
     ) -> Result<(), EngineRejected> {
         op.check_version()?;
-        op_anchor(&op.op).native()?;
+        if let LogOp::DefineType { name, new, .. } = &op.op {
+            return match new {
+                Some(def) if type_def_name(def) == Some(name.as_str()) => self
+                    .define_type(def.clone(), cancel)
+                    .await
+                    .map_err(Into::into),
+                Some(_) => Err(EngineRejected::new(
+                    ErrorCode::InvalidArgument,
+                    "the definition's name differs from the op's",
+                )),
+                None => self.remove_type(name, cancel).await.map_err(Into::into),
+            };
+        }
+        op_anchor(&op.op)
+            .ok_or_else(|| EngineRejected::new(ErrorCode::InvalidArgument, "the op has no anchor"))?
+            .native()?;
         if let LogOp::Rename {
             anchor: Anchor::Native { space, offset, .. },
             old_name,

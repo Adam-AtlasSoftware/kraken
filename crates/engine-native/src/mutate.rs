@@ -102,6 +102,8 @@ pub(crate) enum Journaled {
     Op(VersionedLogOp),
     /// A type defined through the type store.
     TypeDef(TypeDef),
+    /// A type removed through the type store.
+    RemoveType(String),
 }
 
 impl Edits {
@@ -220,8 +222,8 @@ fn native_rejected(e: NativeError) -> EngineRejected {
     }
 }
 
-fn anchor_of(op: &LogOp) -> &Anchor {
-    match op {
+fn anchor_of(op: &LogOp) -> Result<&Anchor, EngineRejected> {
+    Ok(match op {
         LogOp::Rename { anchor, .. }
         | LogOp::SetType { anchor, .. }
         | LogOp::SetComment { anchor, .. }
@@ -231,7 +233,8 @@ fn anchor_of(op: &LogOp) -> &Anchor {
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
-    }
+        LogOp::DefineType { .. } => return Err(invalid("a type definition has no anchor")),
+    })
 }
 
 fn check_name(name: &str) -> Result<(), EngineRejected> {
@@ -317,7 +320,16 @@ fn apply_op(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
 
 fn apply_inner(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
     op.check_version()?;
-    let (space, offset, _, hash) = anchor_of(&op.op).native()?;
+    if let LogOp::DefineType { name, new, .. } = &op.op {
+        return match new {
+            Some(def) if kraken_engine::type_def_name(def) == Some(name.as_str()) => {
+                crate::data::define(p, def.clone()).map_err(Into::into)
+            }
+            Some(_) => Err(invalid("the definition's name differs from the op's")),
+            None => crate::data::remove(p, name).map_err(Into::into),
+        };
+    }
+    let (space, offset, _, hash) = anchor_of(&op.op)?.native()?;
     if space != "ram" {
         return Err(not_found(format!("no address space {space}")));
     }
@@ -383,6 +395,7 @@ fn apply_inner(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
         }
         // Patches stay in the project; the registry never pushes them.
         LogOp::SetPatch { .. } => return Ok(()),
+        LogOp::DefineType { .. } => return Err(invalid("a type definition has no anchor")),
     }
     e.journal.push(Journaled::Op(op.clone()));
     Ok(())

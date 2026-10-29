@@ -279,6 +279,7 @@ async fn dispatch(
         "exports" => out(e.exports(&page(params)?, c).await?),
         "get_type" => out(e.get_type(&arg::<String>(params, "name")?, c).await?),
         "define_type" => out(e.define_type(arg::<TypeDef>(params, "def")?, c).await?),
+        "remove_type" => out(e.remove_type(&arg::<String>(params, "name")?, c).await?),
         "list_types" => out(e.list_types(&page(params)?, c).await?),
         "apply" => {
             let op: VersionedLogOp = arg(params, "log_op")?;

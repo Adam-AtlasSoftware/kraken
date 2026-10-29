@@ -447,6 +447,15 @@ impl TypeStore for FakeEngine {
         Ok(())
     }
 
+    async fn remove_type(&self, name: &str, cancel: &CancellationToken) -> EngineResult<()> {
+        check(cancel)?;
+        self.lock()
+            .types
+            .remove(name)
+            .map(|_| ())
+            .ok_or_else(|| not_found(format!("type {name}")).into())
+    }
+
     async fn list_types(
         &self,
         page: &PageRequest,
@@ -652,8 +661,8 @@ fn rename_in_listing(functions: &mut BTreeMap<FnKey, FixtureFunction>, old: &str
     }
 }
 
-fn anchor_of(op: &LogOp) -> &kraken_proto::Anchor {
-    match op {
+fn anchor_of(op: &LogOp) -> Option<&kraken_proto::Anchor> {
+    Some(match op {
         LogOp::Rename { anchor, .. }
         | LogOp::SetType { anchor, .. }
         | LogOp::SetComment { anchor, .. }
@@ -663,7 +672,8 @@ fn anchor_of(op: &LogOp) -> &kraken_proto::Anchor {
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
-    }
+        LogOp::DefineType { .. } => return None,
+    })
 }
 
 fn valid_name(n: &str) -> bool {
@@ -732,7 +742,7 @@ impl State {
     }
 
     fn apply_op(&mut self, op: &LogOp) -> Result<(), EngineRejected> {
-        if let Some((module, token)) = anchor_of(op).managed_parts() {
+        if let Some((module, token)) = anchor_of(op).and_then(|a| a.managed_parts()) {
             return self.apply_managed_op(op, module, token);
         }
         match op {
@@ -863,6 +873,22 @@ impl State {
                     .ok_or_else(|| not_found(format!("function at {space}:{entry}")))?;
                 check_hash(f, hash)
             }
+            LogOp::DefineType { name, new, .. } => match new {
+                Some(def) => {
+                    if type_def_name(def) != Some(name.as_str()) {
+                        return Err(EngineRejected::new(
+                            ErrorCode::InvalidArgument,
+                            "the definition's name differs from the op's",
+                        ));
+                    }
+                    self.types.insert(name.clone(), def.clone());
+                    Ok(())
+                }
+                None => {
+                    self.types.remove(name);
+                    Ok(())
+                }
+            },
             // Patches stay in the project; the registry never pushes them.
             LogOp::SetPatch { .. } => Ok(()),
         }

@@ -83,6 +83,7 @@ fn arb_op() -> impl Strategy<Value = LogOp> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum Step {
     Append {
         op: LogOp,

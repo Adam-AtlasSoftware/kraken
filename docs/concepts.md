@@ -29,6 +29,10 @@ A **symbol** is a name attached to an address. Programs built for release are of
 
 Every change you make (a rename, a comment, a type) is written to an **edit log** inside your project. The log is the source of truth. Ghidra's own project is only a cache that KRAKEN can rebuild from the log (`rebuild`). Each entry records who made the change: you, or a named AI agent and its run.
 
+## Types are edits too
+
+A struct, union, enum or typedef you define is a log entry like any rename. `type-define` takes C text (`struct packet { unsigned short len; char tag; int *data; };`), lays the fields out for the program's architecture and records one entry per type; a mistake is reported with its line and column and records nothing. `type-edit-field` renames a field or changes its type (the later fields move), `type-delete` removes a type, and `set-type --type-name packet` gives data at an address the type. All of it can be undone, and it is replayed when the project is reopened or rebuilt, on the native and the Ghidra engine alike. The Types tab does the same with a New type... dialog, an editable Fields table, Delete and Apply to address. Defining a new name is additive, so an agent may do it at once; changing or deleting a type becomes a proposal. The native decompiler reads a type once, so a changed layout shows in the type listings immediately but in decompiled code after the project is reopened.
+
 ## Undo
 
 Because every change is a log entry, it can be reversed. `undo` reverses your most recent edit. `undo-run` reverses everything one AI agent run did, newest first. `history` shows the log.

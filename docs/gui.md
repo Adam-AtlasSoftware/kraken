@@ -405,7 +405,9 @@ How to use it:
 
 - Type part of a name, or choose a kind, to narrow the list.
 - Click a type to read its declaration; tick the box to include the types it uses.
-- Agents can read the same list with the types_list and type_get commands.
+- Press New type... and type C to define a struct, union, enum or typedef; mistakes are shown with their line.
+- Edit a field's name or type in the Fields table and press Enter. Delete removes a type, and Apply to address gives data at an address the type. Every change can be undone from History.
+- Agents use the types_list and type_get commands, and type_define, type_edit_field and type_delete to change types.
 
 ### AI Activity
 

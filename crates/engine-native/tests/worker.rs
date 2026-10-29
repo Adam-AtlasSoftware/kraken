@@ -288,6 +288,28 @@ fn comment(text: &str) -> VersionedLogOp {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_removed_type_stays_removed_after_a_crash() {
+    let Some(e) = open(options()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    e.define_type(record(), &c).await.expect("define");
+    e.remove_type("worker_rec", &c).await.expect("remove");
+    assert_eq!(
+        e.remove_type("worker_rec", &c).await.unwrap_err().code,
+        ErrorCode::NotFound
+    );
+    e.worker_test_hook("test_crash", &c).await.unwrap_err();
+    // the restart replays the definition and then the removal
+    let stats = e.stats().await.expect("stats");
+    assert_eq!(stats.replay_failed, 0);
+    assert_eq!(
+        e.get_type("worker_rec", &c).await.unwrap_err().code,
+        ErrorCode::NotFound
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn edits_survive_a_crash_and_land_in_the_state_dir() {
     let state = tempfile::tempdir().expect("state dir");
     let Some(e) = open_with(options(), Some(state.path())).await else {

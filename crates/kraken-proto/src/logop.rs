@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, ProtoError};
 use crate::hex::Hex64;
 use crate::locator::{AddressRange, Anchor};
-use crate::types::TypeRef;
+use crate::types::{TypeDef, TypeRef};
 
 /// Schema version written with every persisted log operation.
 pub const LOG_SCHEMA_VERSION: u32 = 1;
@@ -152,6 +152,18 @@ pub enum LogOp {
         /// The patch after the edit; absent removes it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         new: Option<PatchBytes>,
+    },
+    /// Define, replace or delete a named type. One op covers `type_define`, `type_edit_field`
+    /// and `type_delete`: the whole definition before and after.
+    DefineType {
+        /// The type's name.
+        name: String,
+        /// The definition before the edit; absent when the type was new.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old: Option<TypeDef>,
+        /// The definition after the edit; absent deletes the type.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new: Option<TypeDef>,
     },
 }
 

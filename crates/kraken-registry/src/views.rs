@@ -218,11 +218,16 @@ fn op_kind(op: &LogOp) -> &'static str {
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
         LogOp::SetPatch { .. } => "set_patch",
+        LogOp::DefineType { new, old, .. } => match (old, new) {
+            (_, None) => "type_delete",
+            (None, Some(_)) => "type_define",
+            (Some(_), Some(_)) => "type_edit",
+        },
     }
 }
 
 fn op_address(op: &LogOp) -> Option<Hex64> {
-    let anchor = kraken_model::op_anchor(op);
+    let anchor = kraken_model::op_anchor(op)?;
     match anchor.native() {
         Ok((_, offset, _, _)) => Some(offset),
         Err(_) => anchor
@@ -234,6 +239,10 @@ fn op_address(op: &LogOp) -> Option<Hex64> {
 fn describe_op(op: &LogOp) -> String {
     let addr = op_address(op).map(|a| a.to_hex()).unwrap_or_default();
     let detail = match op {
+        LogOp::DefineType { name, new, .. } => match new {
+            Some(def) => def.to_c().replace('\n', " "),
+            None => format!("removed {name}"),
+        },
         LogOp::Rename {
             old_name, new_name, ..
         } => format!("{} -> {new_name}", old_name.as_deref().unwrap_or("?")),

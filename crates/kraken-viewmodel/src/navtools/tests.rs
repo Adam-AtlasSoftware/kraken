@@ -201,6 +201,66 @@ fn types_are_listed_filtered_and_shown_as_c() {
 }
 
 #[test]
+fn types_are_defined_edited_and_deleted_from_the_tab() {
+    let mut r = rig();
+    r.vm.ensure_types();
+    idle(&mut r.vm);
+
+    // a parse error stays in the dialog and names the line
+    r.vm.open_type_define();
+    r.vm.tools.types.define.as_mut().expect("dialog").text =
+        "struct packet {\n  int len;\n  nosuch x;\n};".into();
+    r.vm.submit_type_define();
+    idle(&mut r.vm);
+    let d = r.vm.tools.types.define.as_ref().expect("still open");
+    assert!(
+        !d.busy && d.error.as_deref().is_some_and(|e| e.contains("line 3")),
+        "{d:?}"
+    );
+
+    r.vm.tools.types.define.as_mut().expect("dialog").text =
+        "struct packet { unsigned short len; char tag; };".into();
+    r.vm.submit_type_define();
+    idle(&mut r.vm);
+    idle(&mut r.vm);
+    assert!(r.vm.tools.types.define.is_none());
+    assert!(r.vm.tools.types.items.iter().any(|t| t.name == "packet"));
+    let decl = r.vm.tools.types.decl.as_ref().expect("selected");
+    assert_eq!(decl.name, "packet");
+    assert_eq!(decl.fields.len(), 2);
+    assert_eq!(decl.fields[0].ty, "uint16_t");
+
+    r.vm.edit_type_field("packet", "len", Some("length".into()), Some("int".into()));
+    idle(&mut r.vm);
+    idle(&mut r.vm);
+    let decl = r.vm.tools.types.decl.as_ref().expect("declaration");
+    assert_eq!(decl.fields[0].name, "length");
+    assert_eq!(decl.fields[1].offset, 4);
+
+    r.vm.edit_type_field("packet", "nope", Some("x".into()), None);
+    idle(&mut r.vm);
+    assert!(r.vm.tools.types.edit_error.is_some());
+
+    r.vm.open_type_apply("packet");
+    r.vm.tools.types.apply.as_mut().expect("dialog").address = "not an address".into();
+    r.vm.submit_type_apply();
+    assert!(
+        r.vm.tools
+            .types
+            .apply
+            .as_ref()
+            .is_some_and(|d| d.error.is_some())
+    );
+    r.vm.close_type_apply();
+
+    r.vm.delete_type("packet");
+    idle(&mut r.vm);
+    idle(&mut r.vm);
+    assert!(r.vm.tools.types.items.iter().all(|t| t.name != "packet"));
+    assert!(r.vm.tools.types.decl.is_none());
+}
+
+#[test]
 fn signature_dialog_parses_inline_and_saves_through_set_type() {
     let mut r = rig();
     let helper = addr_of(&r.vm, "helper");

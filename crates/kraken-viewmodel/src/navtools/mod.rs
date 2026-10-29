@@ -37,7 +37,7 @@ pub use patches::{
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
-pub use types::{TypeDecl, TypeItem, TypesPanel};
+pub use types::{ApplyDialog, DefineDialog, FieldRow, TypeDecl, TypeItem, TypesPanel};
 
 use kraken_proto::Page;
 use serde_json::json;

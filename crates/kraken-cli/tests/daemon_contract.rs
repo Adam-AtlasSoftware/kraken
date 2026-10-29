@@ -545,6 +545,25 @@ async fn every_registry_command_identical() {
     // Types, as C.
     step!("types_list", json!({"name_filter": "po"}));
     step!("type_get", json!({"name": "point", "dependencies": true}));
+    let defined = step!(
+        "type_define",
+        json!({"c_declaration": "struct packet { unsigned short len; char tag; };"})
+    );
+    assert_eq!(defined["types"], json!(["packet"]), "{defined}");
+    step!(
+        "type_edit_field",
+        json!({"type_name": "packet", "field": "len", "new_name": "length"})
+    );
+    let gone = step!("type_delete", json!({"name": "packet"}));
+    assert_eq!(
+        gone["status"], "proposed",
+        "an agent's deletion waits for approval: {gone}"
+    );
+    let bad = step!(
+        "type_define",
+        json!({"c_declaration": "struct a { nosuch x; };"})
+    );
+    assert_eq!(bad["code"], "invalid_argument", "{bad}");
 
     // AI usage: nothing called a model here, so the ledger is empty on every surface.
     let usage = step!("ai_usage", json!({}));
