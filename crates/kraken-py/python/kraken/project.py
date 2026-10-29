@@ -139,11 +139,43 @@ class Connection:
         *,
         agent: str | None = None,
         run_id: str | None = None,
+        engine: str | None = None,
+        loader: str | None = None,
+        language: str | None = None,
+        compiler: str | None = None,
+        base: int | str | None = None,
+        offset: int | str | None = None,
+        length: int | str | None = None,
+        entry: int | str | None = None,
     ) -> Project:
-        """Creates a project for ``binary`` in ``project_dir`` (analysis is a separate step)."""
+        """Creates a project for ``binary`` in ``project_dir`` (analysis is a separate step).
+
+        For firmware or a ROM with no header pass ``loader="raw"`` and ``language`` (``"cortex-m"``,
+        ``"arm"``, ``"aarch64"``, ``"x86"``, ``"x86-64"``, ``"riscv32"`` or a Sleigh language id),
+        with ``base`` (where the image lives), and optionally ``offset``, ``length`` and
+        ``entry``. Numbers may be ints or ``"0x..."`` strings. ``engine`` is ``"ghidra"``,
+        ``"native"`` or ``"auto"``.
+        """
         path = os.path.abspath(os.fspath(project_dir))
         project = Project(self, path, agent=agent, run_id=run_id)
-        project.call("project_create", project_dir=path, binary=os.path.abspath(os.fspath(binary)))
+        options: dict[str, object] = {}
+        for key, value in (
+            ("engine", engine),
+            ("loader", loader),
+            ("language", language),
+            ("compiler", compiler),
+        ):
+            if value is not None:
+                options[key] = value
+        for key, number in (("base", base), ("offset", offset), ("length", length), ("entry", entry)):
+            if number is not None:
+                options[key] = hex(number) if isinstance(number, int) else number
+        project.call(
+            "project_create",
+            project_dir=path,
+            binary=os.path.abspath(os.fspath(binary)),
+            **options,
+        )
         return project
 
     def stop_daemon(self) -> bool:
@@ -695,8 +727,12 @@ def create(
     agent: str | None = None,
     run_id: str | None = None,
     connection: Connection | None = None,
+    **options: Any,
 ) -> Project:
-    """Creates a project for ``binary`` on the shared connection (or ``connection``)."""
+    """Creates a project for ``binary`` on the shared connection (or ``connection``).
+
+    ``options`` are those of :meth:`Connection.create` (``loader="raw"``, ``language``, ``base``...).
+    """
     return (connection or default_connection()).create(
-        project_dir, binary, agent=agent, run_id=run_id
+        project_dir, binary, agent=agent, run_id=run_id, **options
     )

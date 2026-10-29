@@ -10,6 +10,7 @@ use egui::{Align, Layout, RichText, Ui};
 use kraken_host::KrakenConfig;
 use kraken_registry::commands::{BinaryFormat, BinaryProbeOut};
 use kraken_registry::{EngineChoice, EngineKind};
+use kraken_viewmodel::RawLoad;
 use tokio::runtime::Handle;
 
 use crate::style::{self, medium, pal};
@@ -149,9 +150,46 @@ pub struct ImportDialog {
     pub engine: EngineChoice,
     /// Start the analysis as soon as the project is open.
     pub analyze: bool,
+    /// Open the file as a raw image (firmware, a ROM) instead of by its format. Always on for a
+    /// file in no known format.
+    pub raw: bool,
+    /// The raw image options as typed.
+    pub raw_load: RawLoad,
     /// Whether the engine was set from the probe's recommendation yet.
     engine_set: bool,
     picker: Picker,
+}
+
+/// Processors offered for a raw image: what the person sees and the short name sent.
+pub const RAW_PROCESSORS: [(&str, &str); 16] = [
+    ("ARM Cortex-M (Thumb microcontrollers)", "cortex-m"),
+    ("ARM 32-bit (A32 and Thumb)", "arm"),
+    ("AArch64 (ARM 64-bit)", "aarch64"),
+    ("x86 32-bit", "x86"),
+    ("x86-64", "x86-64"),
+    ("x86 16-bit real mode (BIOS, DOS)", "x86-16"),
+    ("RISC-V 32-bit", "riscv32"),
+    ("RISC-V 64-bit", "riscv64"),
+    ("MIPS big-endian", "mips"),
+    ("MIPS little-endian", "mipsel"),
+    ("PowerPC 32-bit", "ppc"),
+    ("Motorola 68000", "m68k"),
+    ("Zilog Z80", "z80"),
+    ("MOS 6502", "6502"),
+    ("Intel 8051", "8051"),
+    ("AVR (Arduino)", "avr"),
+];
+
+/// A typed number: `0x..` hex or decimal; empty is `None`.
+fn number(s: &str) -> Result<Option<u64>, ()> {
+    let s = s.trim().replace('_', "");
+    if s.is_empty() {
+        return Ok(None);
+    }
+    match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(h) => u64::from_str_radix(h, 16).map(Some).map_err(|_| ()),
+        None => s.parse::<u64>().map(Some).map_err(|_| ()),
+    }
 }
 
 /// `12.3 KB`, `4.0 MB`: a size in plain words.
@@ -354,6 +392,8 @@ impl ImportDialog {
             location,
             engine: cfg.engine.unwrap_or_default(),
             analyze: true,
+            raw: false,
+            raw_load: RawLoad::default(),
             engine_set: false,
             picker: Picker::default(),
         }
@@ -383,15 +423,85 @@ impl ImportDialog {
         if self.engine_set {
             return;
         }
-        if let ProbeState::Ready(p) = &self.probe {
-            self.engine_set = true;
-            self.engine = match p.recommended_engine {
-                Some(EngineKind::Native) => EngineChoice::Native,
-                Some(EngineKind::Ghidra) => EngineChoice::Ghidra,
-                Some(EngineKind::Dotnet) => EngineChoice::Auto,
-                None => self.engine,
-            };
+        let ProbeState::Ready(p) = &self.probe else {
+            return;
+        };
+        self.engine_set = true;
+        let recommended = p.recommended_engine;
+        let native_ready = p
+            .engines
+            .iter()
+            .any(|e| e.kind == EngineKind::Native && e.usable);
+        let suggestion =
+            (p.format == BinaryFormat::Unknown).then(|| p.raw_options.first().cloned());
+        if let Some(first) = suggestion {
+            self.raw = true;
+            if let Some(s) = first {
+                self.use_suggestion(&s);
+                // the native engine opens the common processors without a JVM
+                if native_ready && kraken_host::native::raw_native_supported(&s.language) {
+                    self.engine = EngineChoice::Native;
+                    return;
+                }
+            }
         }
+        self.engine = match recommended {
+            Some(EngineKind::Native) => EngineChoice::Native,
+            Some(EngineKind::Ghidra) => EngineChoice::Ghidra,
+            Some(EngineKind::Dotnet) => EngineChoice::Auto,
+            None => self.engine,
+        };
+    }
+
+    /// Fills the raw image options from a suggestion of the probe.
+    pub fn use_suggestion(&mut self, s: &kraken_registry::commands::RawSuggestion) {
+        self.raw = true;
+        self.raw_load = RawLoad {
+            language: s.language.clone(),
+            base: format!("{:#x}", s.base.0),
+            offset: s.offset.map_or_else(String::new, |o| format!("{:#x}", o.0)),
+            length: String::new(),
+            entry: s.entry.map_or_else(String::new, |e| format!("{:#x}", e.0)),
+        };
+    }
+
+    /// Whether the file is opened as a raw image: asked for, or in no known format.
+    pub fn raw_active(&self) -> bool {
+        self.raw
+            || self
+                .probed()
+                .is_some_and(|p| p.format == BinaryFormat::Unknown)
+    }
+
+    /// What is wrong with the raw image options, if anything.
+    pub fn raw_problem(&self) -> Option<String> {
+        let r = &self.raw_load;
+        if r.language.trim().is_empty() {
+            return Some(
+                "Choose the processor the program was built for (needed for a raw binary).".into(),
+            );
+        }
+        for (name, v) in [
+            ("Base address", &r.base),
+            ("File offset", &r.offset),
+            ("Length", &r.length),
+            ("Entry point", &r.entry),
+        ] {
+            if number(v).is_err() {
+                return Some(format!(
+                    "{name} must be a number such as 0x08000000 or 4096."
+                ));
+            }
+        }
+        if self.engine == EngineChoice::Native
+            && !kraken_host::native::raw_native_supported(&r.language)
+        {
+            return Some(
+                "The native engine cannot load this processor as a raw binary yet. Choose Ghidra."
+                    .into(),
+            );
+        }
+        None
     }
 
     /// The probe result, once ready.
@@ -417,7 +527,7 @@ impl ImportDialog {
                 return Some("Wait until KRAKEN has looked at the file.".into());
             }
             ProbeState::Failed(e) => return Some(format!("The file could not be read: {e}")),
-            ProbeState::Ready(p) if !p.supported => {
+            ProbeState::Ready(p) if !p.supported && p.format != BinaryFormat::Unknown => {
                 return Some(
                     p.problem
                         .clone()
@@ -425,6 +535,11 @@ impl ImportDialog {
                 );
             }
             ProbeState::Ready(_) => {}
+        }
+        if self.raw_active()
+            && let Some(why) = self.raw_problem()
+        {
+            return Some(why);
         }
         let name = self.name.trim();
         if name.is_empty() {
@@ -449,7 +564,127 @@ impl ImportDialog {
             project_dir: self.project_dir(),
             engine: self.engine,
             analyze: self.analyze,
+            raw: self.raw_active().then(|| self.raw_load.clone()),
         })
+    }
+
+    /// The "Raw binary" part of the dialog: processor, base address, file offset, length and
+    /// entry point, with what the probe recognised offered as one-click choices.
+    fn raw_section(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
+        let pal = pal(ui);
+        let forced = p.format == BinaryFormat::Unknown;
+        if forced {
+            ui.label(medium("Import as a raw binary", 13.0).color(pal.text_strong))
+                .on_hover_text(
+                    "A raw binary has no header telling KRAKEN how to load it, so you say which \
+                     processor it is for and where it lives in memory.",
+                );
+        } else {
+            ui.checkbox(
+                &mut self.raw,
+                "Open as a raw binary (firmware, ROM, boot code)",
+            )
+            .on_hover_text(
+                "Ignore the file's own format and map the whole file as one block of memory. \
+                     Use it for images that were cut out of a larger file.",
+            );
+        }
+        if !self.raw_active() {
+            return;
+        }
+        for s in p.raw_options.clone() {
+            let label = format!(
+                "{}, base {:#x} ({} confidence)",
+                RAW_PROCESSORS
+                    .iter()
+                    .find(|(_, n)| *n == s.language)
+                    .map_or(s.language.as_str(), |(l, _)| *l),
+                s.base.0,
+                s.confidence
+            );
+            if ui
+                .button(label)
+                .on_hover_text(format!("{} Click to fill in the fields below.", s.why))
+                .clicked()
+            {
+                self.use_suggestion(&s);
+            }
+        }
+        egui::Grid::new("kraken_import_raw")
+            .num_columns(2)
+            .spacing([16.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Processor").color(pal.text_dim))
+                    .on_hover_text("The processor the code was built for.");
+                ui.horizontal(|ui| {
+                    let current = RAW_PROCESSORS
+                        .iter()
+                        .find(|(_, n)| n.eq_ignore_ascii_case(self.raw_load.language.trim()))
+                        .map_or("Choose...", |(l, _)| *l);
+                    egui::ComboBox::from_id_salt("kraken_import_raw_processor")
+                        .selected_text(current)
+                        .width(250.0)
+                        .show_ui(ui, |ui| {
+                            for (label, name) in RAW_PROCESSORS {
+                                ui.selectable_value(
+                                    &mut self.raw_load.language,
+                                    name.to_string(),
+                                    label,
+                                );
+                            }
+                        })
+                        .response
+                        .on_hover_text("Pick the processor. For one that is not listed, type its Sleigh language id on the right.");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.raw_load.language)
+                            .hint_text("or a language id")
+                            .desired_width(ui.available_width()),
+                    )
+                    .on_hover_text(
+                        "A short name (cortex-m, arm, x86) or a Ghidra language id such as \
+                         ARM:LE:32:Cortex.",
+                    );
+                });
+                ui.end_row();
+                for (label, value, hint, tip) in [
+                    (
+                        "Base address",
+                        &mut self.raw_load.base,
+                        "0x08000000",
+                        "Where the first byte is in memory. For microcontroller firmware this is \
+                         where the flash is mapped (0x08000000 on STM32, 0 on many others).",
+                    ),
+                    (
+                        "File offset",
+                        &mut self.raw_load.offset,
+                        "0 (start of the file)",
+                        "Skip this many bytes at the start of the file (a header in front of the code).",
+                    ),
+                    (
+                        "Length",
+                        &mut self.raw_load.length,
+                        "the rest of the file",
+                        "How many bytes to load from the offset.",
+                    ),
+                    (
+                        "Entry point",
+                        &mut self.raw_load.entry,
+                        "start of the image",
+                        "Where execution starts. Empty uses the reset vector of an ARM Cortex-M \
+                         vector table, else the base address.",
+                    ),
+                ] {
+                    ui.label(RichText::new(label).color(pal.text_dim))
+                        .on_hover_text(tip);
+                    ui.add(
+                        egui::TextEdit::singleline(value)
+                            .hint_text(hint)
+                            .desired_width(180.0),
+                    )
+                    .on_hover_text(tip);
+                    ui.end_row();
+                }
+            });
     }
 
     fn engine_row(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
@@ -637,7 +872,16 @@ impl ImportDialog {
                     ui.label(RichText::new(problem).color(s.warning));
                 }
             }
-            if probed.as_ref().is_some_and(|p| p.supported) {
+            let can_import = probed
+                .as_ref()
+                .is_some_and(|p| p.supported || p.format == BinaryFormat::Unknown);
+            if let Some(pr) = &probed
+                && can_import
+            {
+                ui.add_space(8.0);
+                self.raw_section(ui, pr);
+            }
+            if can_import {
                 ui.add_space(10.0);
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -683,7 +927,7 @@ impl ImportDialog {
             let blocker = self.blocker();
             if let Some(b) = &blocker
                 && !matches!(self.probe, ProbeState::Probing(_))
-                && probed.as_ref().is_some_and(|p| p.supported)
+                && can_import
             {
                 ui.label(RichText::new(b).size(12.0).color(s.warning));
             }
@@ -780,7 +1024,13 @@ mod tests {
         std::fs::write(&txt, b"text").unwrap();
         let out = kraken_host::native::probe_binary(&cfg, &txt).unwrap();
         let d = ImportDialog::with_probe(&cfg, &txt.to_string_lossy(), out);
-        assert!(d.blocker().unwrap().contains("does not recognise"));
+        // an unknown file opens as a raw binary once it is told the processor
+        assert!(d.raw_active());
+        assert!(
+            d.blocker().unwrap().contains("processor"),
+            "{:?}",
+            d.blocker()
+        );
         assert!(d.choice().is_none());
 
         let mut d = probed(&cfg, "bin/pie_list-O0");

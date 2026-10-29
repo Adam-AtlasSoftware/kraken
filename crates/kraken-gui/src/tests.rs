@@ -609,6 +609,7 @@ mod live {
                 project_dir: project.to_string_lossy().into_owned(),
                 engine: Default::default(),
                 analyze: true,
+                raw: None,
             },
             &ctx,
         );
@@ -694,6 +695,7 @@ mod live {
                 project_dir: project.to_string_lossy().into_owned(),
                 engine: Default::default(),
                 analyze: true,
+                raw: None,
             },
             &ctx,
         );
@@ -773,6 +775,7 @@ mod live {
                 project_dir: project.to_string_lossy().into_owned(),
                 engine: Default::default(),
                 analyze: false,
+                raw: None,
             },
             &ctx,
         );
@@ -815,6 +818,7 @@ mod live {
                 project_dir: r.project().to_string_lossy().into_owned(),
                 engine: Default::default(),
                 analyze: true,
+                raw: None,
             },
             &ctx,
         );

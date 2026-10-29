@@ -67,4 +67,12 @@ def create(
     agent: str | None = None,
     run_id: str | None = None,
     connection: Connection | None = None,
+    engine: str | None = None,
+    loader: str | None = None,
+    language: str | None = None,
+    compiler: str | None = None,
+    base: int | str | None = None,
+    offset: int | str | None = None,
+    length: int | str | None = None,
+    entry: int | str | None = None,
 ) -> Project: ...

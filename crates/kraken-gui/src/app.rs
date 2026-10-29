@@ -524,6 +524,11 @@ impl KrakenApp {
     }
 
     #[cfg(test)]
+    pub fn import_dialog_mut(&mut self) -> Option<&mut ImportDialog> {
+        self.import.as_mut()
+    }
+
+    #[cfg(test)]
     pub fn confirming(&self) -> Option<&Pending> {
         self.confirm.as_ref()
     }
@@ -737,8 +742,9 @@ impl KrakenApp {
                 project_dir,
                 engine,
                 analyze,
+                raw,
             } => {
-                vm.create_project_with(binary, project_dir, Some(engine));
+                vm.create_project_raw(binary, project_dir, Some(engine), raw);
                 self.auto_analyze = analyze;
             }
             Choice::Demo => return,

@@ -5,6 +5,7 @@ use std::path::Path;
 use egui::{Align, Layout, RichText, Ui, vec2};
 use kraken_host::KrakenConfig;
 use kraken_registry::EngineChoice;
+use kraken_viewmodel::RawLoad;
 use tokio::runtime::Handle;
 
 use crate::import::{Picked, Picker};
@@ -25,6 +26,8 @@ pub enum Choice {
         project_dir: String,
         engine: EngineChoice,
         analyze: bool,
+        /// Open the file as a raw image (firmware, a ROM) with these options.
+        raw: Option<RawLoad>,
     },
 }
 
@@ -101,7 +104,7 @@ pub fn engine_help(e: EngineChoice) -> &'static str {
     match e {
         EngineChoice::Ghidra => "Ghidra with Java: every format, and renames and comments.",
         EngineChoice::Native => {
-            "No Java, fast start. ELF and Windows PE programs (x86, x86-64, AArch64 ELF). Needs `kraken setup --native` once."
+            "No Java, fast start. ELF and Windows PE programs, libraries and raw firmware images for x86, ARM, AArch64 and RISC-V. Needs `kraken setup --native` once."
         }
         EngineChoice::Auto => "Native when it is installed and can open the program, else Ghidra.",
     }

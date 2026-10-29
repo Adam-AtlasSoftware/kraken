@@ -375,3 +375,69 @@ fn ctrl_slash_opens_the_shortcut_list_on_the_welcome_screen() {
     h.key(Key::Escape, Modifiers::NONE);
     assert!(!h.app.shortcuts_open());
 }
+
+#[test]
+fn the_import_dialog_offers_a_raw_binary_for_firmware() {
+    let mut k = kit(false);
+    let ctx = k.h.ctx.clone();
+    let bin = corpus("raw/fw_cortexm.bin");
+    k.h.state_mut().open_path(&bin, &ctx);
+    for _ in 0..2000 {
+        k.h.run_steps(1);
+        if k.h
+            .state()
+            .import_dialog()
+            .is_some_and(|d| d.probed().is_some())
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    k.h.run_steps(3);
+    // the raw section is there instead of a dead end, filled in from the vector table
+    assert!(
+        k.h.query_by_label_contains("Import as a raw binary")
+            .is_some()
+    );
+    assert!(k.h.query_by_label_contains("(high confidence)").is_some());
+    assert!(k.h.query_by_label_contains("Base address").is_some());
+    let d = k.h.state().import_dialog().unwrap();
+    assert!(d.raw_active());
+    assert_eq!(d.raw_load.language, "cortex-m");
+    assert_eq!(d.raw_load.base, "0x8000000");
+    assert_eq!(d.raw_load.entry, "0x80000dd");
+    assert!(
+        !k.h.get_by_label("Import").accesskit_node().is_disabled(),
+        "{:?}",
+        d.blocker()
+    );
+    match d.choice() {
+        Some(crate::welcome::Choice::NewProject { raw: Some(r), .. }) => {
+            assert_eq!(r.language, "cortex-m");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // without a processor Import is off and says why
+    k.h.state_mut()
+        .import_dialog_mut()
+        .unwrap()
+        .raw_load
+        .language
+        .clear();
+    k.h.run_steps(2);
+    assert!(k.h.get_by_label("Import").accesskit_node().is_disabled());
+    assert!(
+        k.h.state()
+            .import_dialog()
+            .unwrap()
+            .blocker()
+            .unwrap()
+            .contains("processor")
+    );
+    // a bad number is named
+    let d = k.h.state_mut().import_dialog_mut().unwrap();
+    d.raw_load.language = "arm".into();
+    d.raw_load.base = "zzz".into();
+    assert!(d.blocker().unwrap().contains("Base address"));
+}

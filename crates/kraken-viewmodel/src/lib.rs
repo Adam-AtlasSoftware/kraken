@@ -65,7 +65,7 @@ pub use views::{
     ProgramViews, ReferencesTo, Reveal, StringItem, SymbolItem, SymbolTable, XrefItem, XrefList,
     XrefWhich, XrefsPanel, mnemonic_kind, operand_kind,
 };
-pub use vm::{FUNCTION_PAGE, MAX_NAME_LEN, ViewModel, validate_name};
+pub use vm::{FUNCTION_PAGE, MAX_NAME_LEN, RawLoad, ViewModel, validate_name};
 
 #[cfg(test)]
 mod stub_tests;

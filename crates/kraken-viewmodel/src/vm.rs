@@ -279,6 +279,48 @@ pub fn validate_name(input: &str, old_name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
+/// How to open a file as a raw image (firmware, a ROM): what `project_create` takes as
+/// `loader: raw`. The numbers are as typed (`0x08000000` or decimal) and empty when unset.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RawLoad {
+    /// Processor: a short name (`cortex-m`) or a Sleigh language id.
+    pub language: String,
+    /// Address the image is mapped at.
+    pub base: String,
+    /// File offset where the image starts.
+    pub offset: String,
+    /// How many bytes to map.
+    pub length: String,
+    /// Where execution starts.
+    pub entry: String,
+}
+
+impl RawLoad {
+    /// Adds the `project_create` arguments for this image to `args`.
+    pub fn add_to(&self, args: &mut Value) {
+        args["loader"] = json!("raw");
+        args["language"] = json!(self.language.trim());
+        for (key, v) in [
+            ("base", &self.base),
+            ("offset", &self.offset),
+            ("length", &self.length),
+            ("entry", &self.entry),
+        ] {
+            if !v.trim().is_empty() {
+                args[key] = json!(number_arg(v.trim()));
+            }
+        }
+    }
+}
+
+/// A typed number as the daemon's hex argument: decimal becomes `0x..`, hex is kept.
+fn number_arg(s: &str) -> String {
+    match s.parse::<u64>() {
+        Ok(n) => format!("{n:#x}"),
+        Err(_) => s.to_string(),
+    }
+}
+
 impl ViewModel {
     /// The runtime the calls run on, for dialogs the window opens (a folder chooser).
     pub fn runtime_handle(&self) -> Handle {
@@ -614,12 +656,27 @@ impl ViewModel {
         project_dir: impl Into<String>,
         engine: Option<EngineChoice>,
     ) {
+        self.create_project_raw(binary, project_dir, engine, None);
+    }
+
+    /// [`create_project_with`](Self::create_project_with) that opens the file as a raw image
+    /// when `raw` is given.
+    pub fn create_project_raw(
+        &mut self,
+        binary: impl Into<String>,
+        project_dir: impl Into<String>,
+        engine: Option<EngineChoice>,
+        raw: Option<RawLoad>,
+    ) {
         let binary = binary.into();
         self.connection = Connection::Opening(format!("Loading {}...", file_name(&binary)));
         self.loading = Some(LoadingState::new(file_name(&binary), true));
         let mut args = json!({ "binary": binary, "project_dir": project_dir.into() });
         if let Some(e) = engine {
             args["engine"] = json!(e.as_str());
+        }
+        if let Some(r) = raw {
+            r.add_to(&mut args);
         }
         self.call("project_create", args, |vm, res| vm.project_opened(res));
     }
