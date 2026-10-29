@@ -149,6 +149,8 @@ pub struct PatchDialog {
     pub asm: String,
     /// Where assembling the instruction stands.
     pub asm_state: AsmState,
+    /// What the assembler did beyond the typed text (NOP padding, instructions replaced).
+    pub asm_note: Option<String>,
 }
 
 /// Assembling the typed instruction.
@@ -429,6 +431,7 @@ impl ViewModel {
             x86: self.is_x86(),
             asm: String::new(),
             asm_state: AsmState::Idle,
+            asm_note: None,
         });
     }
 
@@ -486,6 +489,7 @@ impl ViewModel {
             d.asm = text.into();
             if !matches!(d.asm_state, AsmState::Busy) {
                 d.asm_state = AsmState::Idle;
+                d.asm_note = None;
             }
         }
     }
@@ -501,6 +505,7 @@ impl ViewModel {
             return;
         }
         d.asm_state = AsmState::Busy;
+        d.asm_note = None;
         let address = d.address;
         self.call(
             "assemble",
@@ -520,7 +525,9 @@ impl ViewModel {
                             .as_array()
                             .map(|a| a.iter().filter_map(|h| h.as_str()).map(unhex).collect())
                             .unwrap_or_default();
-                        match enc.first() {
+                        d.asm_note = asm_note(&v);
+                        let padded = v["padded"].as_str().map(unhex);
+                        match padded.as_ref().or(enc.first()) {
                             Some(first) => {
                                 d.input = spaced_hex(first);
                                 d.error = None;
@@ -528,6 +535,12 @@ impl ViewModel {
                             }
                             None => d.asm_state = AsmState::Failed("No encoding came back.".into()),
                         }
+                    }
+                    Err(e)
+                        if e.code == kraken_proto::ErrorCode::Unsupported
+                            && e.message.contains("llvm-mc") =>
+                    {
+                        d.asm_state = AsmState::Failed(plain_error(&e));
                     }
                     Err(e) if e.code == kraken_proto::ErrorCode::Unsupported => {
                         d.asm_state = AsmState::Failed(
@@ -738,4 +751,24 @@ impl ViewModel {
         self.ensure_patches();
         self.tools.request_tab(NavTab::Patches);
     }
+}
+
+/// The sentence about NOP padding and replaced instructions in an `assemble` result.
+fn asm_note(v: &serde_json::Value) -> Option<String> {
+    let pad = v["pad"].as_u64().unwrap_or(0);
+    let over = v["overwritten"].as_u64().unwrap_or(0);
+    if pad == 0 && over == 0 {
+        return None;
+    }
+    let mut note = format!(
+        "Padded with {pad} byte{} of nop up to the next instruction.",
+        if pad == 1 { "" } else { "s" }
+    );
+    if over > 0 {
+        note.push_str(&format!(
+            " Replaces {over} following instruction{}.",
+            if over == 1 { "" } else { "s" }
+        ));
+    }
+    Some(note)
 }

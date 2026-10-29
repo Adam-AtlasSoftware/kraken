@@ -265,6 +265,9 @@ async fn dispatch(
         "disassemble" => out(e
             .disassemble(&arg::<DisasmRequest>(params, "req")?, &page(params)?, c)
             .await?),
+        "asm_context" => out(e.asm_context(arg(params, "at")?)?),
+        "asm_run" => out(e.asm_run(arg(params, "at")?, &arg::<String>(params, "text")?)?),
+        "asm_finish" => out(e.asm_finish(arg(params, "at")?, arg(params, "lines")?)?),
         "xrefs" => out(e
             .xrefs(&arg::<XrefRequest>(params, "req")?, &page(params)?, c)
             .await?),

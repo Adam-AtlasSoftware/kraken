@@ -9,9 +9,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use engine_native_sys::{Instruction, NativeError, Session, TokenKind as NativeKind};
 use kraken_engine::{
-    Analyzer, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected,
-    EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator,
-    OpenReporter, ProgramInfo, StringLister, SymbolLister, TypeStore, Watermark, XrefProvider,
+    Analyzer, Assembler, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps,
+    EngineRejected, EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader,
+    Mutator, OpenReporter, ProgramInfo, StringLister, SymbolLister, TypeStore, Watermark,
+    XrefProvider,
 };
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
@@ -623,6 +624,42 @@ impl Program {
             cache.entry(i.addr).or_insert(i);
         }
         Ok(cache.get(&addr).cloned())
+    }
+
+    /// A name the assembler may use as an address: functions, labels, symbol-table names,
+    /// imports, and placeholder names such as `LAB_00401136`.
+    pub(crate) fn asm_symbol(&self, name: &str) -> Option<u64> {
+        let funcs = self.funcs();
+        if let Some(a) = funcs.named(name).first() {
+            return Some(*a);
+        }
+        if let Some((a, _)) = self.edits().labels.iter().find(|(_, l)| l.as_str() == name) {
+            return Some(*a);
+        }
+        if let Some((a, _)) = self
+            .symbol_labels
+            .iter()
+            .find(|(_, v)| v.iter().any(|n| n == name))
+        {
+            return Some(*a);
+        }
+        if let Some(i) = self.imports.iter().find(|i| i.name == name)
+            && let Some(a) = i.address
+        {
+            return Some(a.0);
+        }
+        if let Some((_, a)) = name.rsplit_once('_')
+            && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && a.len() >= 6
+        {
+            return u64::from_str_radix(a, 16).ok();
+        }
+        None
+    }
+
+    /// The length of the instruction at `addr`, if Sleigh reads one there.
+    pub(crate) fn existing_len(&self, addr: u64) -> Option<u32> {
+        self.instruction(addr).ok().flatten().map(|i| i.length)
     }
 
     /// The function name, the other symbol-table names (mangled ones) and the user label at
@@ -1483,6 +1520,7 @@ impl Engine for InProcessEngine {
                 Cap::Mutator,
                 Cap::Memory,
                 Cap::Disassembler,
+                Cap::Assembler,
                 Cap::Xrefs,
                 Cap::Cfg,
                 Cap::Strings,
@@ -1506,6 +1544,9 @@ impl Engine for InProcessEngine {
         Some(self)
     }
     fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        Some(self)
+    }
+    fn assembler(&self) -> Option<&dyn Assembler> {
         Some(self)
     }
     fn disassembler(&self) -> Option<&dyn Disassembler> {

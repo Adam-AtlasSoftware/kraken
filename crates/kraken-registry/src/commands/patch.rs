@@ -583,7 +583,9 @@ pub struct AssembleArgs {
     /// Where the instruction would go, as `0x...` (relative branches and RIP-relative operands
     /// are encoded for this address).
     pub address: Hex64,
-    /// One instruction in the processor's assembly syntax, e.g. `mov eax, 0x7`.
+    /// One instruction in the processor's assembly syntax, e.g. `mov eax, 0x7`; or several,
+    /// separated by `;` or newlines (the native engine also takes labels, `again:`, and symbol
+    /// names as operands).
     pub text: String,
 }
 
@@ -592,10 +594,33 @@ pub struct AssembleArgs {
 pub struct AssembleOut {
     /// Encodings of the instruction as lower-case hex, shortest first.
     pub encodings: Vec<String>,
+    /// For one instruction on an engine that looks at the code already there: the shortest
+    /// encoding padded with NOPs to the next instruction boundary. Absent when no padding is
+    /// needed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padded: Option<String>,
+    /// Bytes of NOP padding at the end of the result.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pad: u32,
+    /// Instructions after the first that the result replaces.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub overwritten: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Longest assembly line accepted, in characters.
 pub const MAX_ASSEMBLY_LINE: usize = 200;
+
+/// Most instructions `assemble` takes at once.
+pub const MAX_ASSEMBLY_LINES: usize = 64;
+
+/// Like `sanitize` but keeps newlines.
+fn sanitize_multiline(s: &str) -> String {
+    s.split('\n').map(sanitize).collect::<Vec<_>>().join("\n")
+}
 
 /// Assembles one instruction.
 pub struct Assemble;
@@ -608,20 +633,26 @@ impl Command for Assemble {
     fn spec() -> CommandSpec {
         CommandSpec::new(
             "assemble",
-            "Turn one assembly instruction into machine-code bytes at an address",
+            "Turn assembly instructions into machine-code bytes at an address",
             CommandKind::Query,
             Permission::Safe,
         )
         .doc(
-            "Assembles a single instruction for the program's processor at `address` and returns \
-             its encodings, shortest first. Nothing is written: pass the bytes to `patch_set` to \
-             stage them.\n\
+            "Assembles an instruction (or several, separated by `;` or newlines) for the \
+             program's processor at `address` and returns its encodings, shortest first. Nothing \
+             is written: pass the bytes to `patch_set` to stage them.\n\
              Example: assemble {\"address\": \"0x401136\", \"text\": \"mov eax, 0x7\"}",
         )
         .details(
-            "Uses the engine's assembler (Ghidra's SLEIGH assembler on the Ghidra engine). The \
-             syntax is the one the Listing shows. An instruction the processor does not have, or \
-             an operand that does not fit, is `invalid_argument` with the reason.",
+            "Uses the engine's assembler: Ghidra's SLEIGH assembler on the Ghidra engine; iced for \
+             x86 and x86-64 on the native engine, which also resolves function, label and symbol \
+             names (and `LAB_00401136`-style names) in operands, encodes relative branches for \
+             the target, reads the result back through Sleigh to check it means what was typed, \
+             and pads with NOPs to the next instruction boundary (`padded`, `pad`; `overwritten` \
+             counts the following instructions the bytes replace). The native engine assembles \
+             ARM, AArch64 and RISC-V through `llvm-mc` when it is on PATH (branch targets as \
+             numbers). The syntax is the one the Listing shows. An instruction the processor does \
+             not have, or an operand that does not fit, is `invalid_argument` with the reason.",
         )
         .needs(&[Cap::Assembler])
     }
@@ -632,26 +663,43 @@ impl Command for Assemble {
         ctx: &CallContext,
         args: AssembleArgs,
     ) -> Result<AssembleOut, ProtoError> {
-        let text = sanitize(&args.text).trim().to_string();
+        let text = sanitize_multiline(&args.text).trim().to_string();
         if text.is_empty() {
             return Err(invalid("text is empty; give one instruction such as `nop`"));
         }
-        if text.chars().count() > MAX_ASSEMBLY_LINE || text.contains('\n') {
+        let lines: Vec<&str> = text
+            .split([';', '\n'])
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if lines.len() > MAX_ASSEMBLY_LINES
+            || lines.iter().any(|l| l.chars().count() > MAX_ASSEMBLY_LINE)
+        {
             return Err(invalid(format!(
-                "give one instruction of at most {MAX_ASSEMBLY_LINE} characters"
+                "give at most {MAX_ASSEMBLY_LINES} instructions of at most {MAX_ASSEMBLY_LINE} \
+                 characters each"
             )));
         }
+        let single = lines.len() == 1;
         let project = s.project()?;
         let engine = project.engine();
         let asm = engine.assembler().ok_or_else(|| unsupported("assembler"))?;
-        let encodings = asm
-            .assemble(&locator(args.address), &text, &ctx.cancel)
-            .await?;
+        let at = locator(args.address);
+        let block = asm.assemble_block(&at, &text, &ctx.cancel).await?;
+        let encodings = if single {
+            asm.assemble(&at, &text, &ctx.cancel).await?
+        } else {
+            vec![block.bytes.clone()]
+        };
+        let text = text.as_str();
         if encodings.is_empty() {
             return Err(invalid(format!("`{text}` has no encoding here")));
         }
         Ok(AssembleOut {
             encodings: encodings.iter().map(|b| hex_bytes(b)).collect(),
+            padded: (single && block.pad > 0).then(|| hex_bytes(&block.bytes)),
+            pad: block.pad,
+            overwritten: block.overwritten,
         })
     }
 }

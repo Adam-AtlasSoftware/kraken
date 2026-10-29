@@ -178,6 +178,66 @@ pub trait Assembler: Send + Sync {
         text: &str,
         cancel: &CancellationToken,
     ) -> EngineResult<Vec<Vec<u8>>>;
+
+    /// Several instructions separated by `;` or newlines, placed one after the other from `at`
+    /// (labels, `name:`, may be defined and used by branches in the block). The engine pads the
+    /// result with NOPs up to the next instruction boundary of the code already there and
+    /// reports how many of the instructions after the first it replaces. The default assembles
+    /// each line on its own, takes the shortest encoding and pads nothing.
+    async fn assemble_block(
+        &self,
+        at: &Locator,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> EngineResult<AsmBlock> {
+        let addr = match at {
+            Locator::Native { offset, .. } => Some(offset.0),
+            _ => None,
+        };
+        let mut bytes = Vec::new();
+        let mut line_lengths = Vec::new();
+        for line in text
+            .split([';', '\n'])
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
+            let here = match addr {
+                Some(a) => Locator::ram(a.wrapping_add(bytes.len() as u64)),
+                None => at.clone(),
+            };
+            let enc = self.assemble(&here, line, cancel).await?;
+            let first = enc.into_iter().next().ok_or_else(|| {
+                ProtoError::new(
+                    ErrorCode::InvalidArgument,
+                    format!("`{line}` has no encoding"),
+                )
+            })?;
+            line_lengths.push(first.len() as u32);
+            bytes.extend(first);
+        }
+        Ok(AsmBlock {
+            bytes,
+            line_lengths,
+            pad: 0,
+            overwritten: 0,
+            covered: 0,
+        })
+    }
+}
+
+/// The result of [`Assembler::assemble_block`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AsmBlock {
+    /// The machine code, NOP padding included.
+    pub bytes: Vec<u8>,
+    /// Encoded length of each typed instruction, in order (padding not counted).
+    pub line_lengths: Vec<u32>,
+    /// Bytes of NOP padding at the end of `bytes`.
+    pub pad: u32,
+    /// Instructions after the first that the bytes replace (0 when they fit in the first).
+    pub overwritten: u32,
+    /// Bytes of existing code the result covers (0 when the engine did not look).
+    pub covered: u32,
 }
 
 /// Answers cross-reference queries.

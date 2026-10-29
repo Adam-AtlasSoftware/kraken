@@ -17,11 +17,17 @@ Everything below is also in the GUI, under the **Patch** menu:
    **Hex** view, select bytes and press **Patch selection** (or **Patch > Patch bytes here...**).
    The dialog shows the instruction and the bytes there now. Type the new instruction
    (`mov eax, 0x7`, in either case) and press Enter: it is assembled for that address and its
-   shortest encoding goes in the hex field, with the other encodings offered beside it. Or type
-   the bytes as hex yourself. When the replacement is shorter than the instruction it says so,
-   and on x86 **Fill with nop** pads it with `90`. A longer one is flagged too, since it
-   overwrites what follows. Assembling uses Ghidra's SLEIGH assembler, so it needs a project on
-   the Ghidra engine; on the native engine type the hex.
+   shortest encoding goes in the hex field, with the other encodings offered beside it. Several
+   instructions can be typed at once, separated by `;`. On the native engine, function and symbol
+   names work as operands (`call cmp_id`), so do labels (`again: dec ecx; jnz again`), relative
+   branches are encoded for the address they sit at, the result is decoded back through Sleigh to
+   check it means what you typed, and it is padded with `nop`s to the next instruction boundary
+   (a note says how many following instructions the bytes replace). When the replacement is
+   shorter than the instruction it says so, and on x86 **Fill with nop** pads it with `90`. A
+   longer one is flagged too, since it overwrites what follows. The Ghidra engine assembles with
+   its SLEIGH assembler; the native engine assembles x86 and x86-64 itself, and ARM, AArch64 and
+   RISC-V through `llvm-mc` when it is installed (otherwise it says so; type the hex). Branch
+   targets for those are numbers, as `llvm-mc` reads them.
    ![The patch dialog: the instruction there now, a new instruction assembled to 31 c0 with its other encoding, and the note that the rest of the instruction stays](images/patch-dialog.png)
 
 2. **Check it.** **Patch > Show patches** opens the **Patches** tab: every staged patch with its

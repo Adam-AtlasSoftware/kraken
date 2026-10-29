@@ -83,9 +83,10 @@ pub use local_model::{
     strata_view,
 };
 pub use patch::{
-    AppliedPatchView, Assemble, AssembleArgs, AssembleOut, MAX_ASSEMBLY_LINE, MAX_PATCH_BYTES,
-    MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchEditOut, PatchExport, PatchExportArgs, PatchExportOut,
-    PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs, PatchSet, PatchSetArgs, PatchView,
+    AppliedPatchView, Assemble, AssembleArgs, AssembleOut, MAX_ASSEMBLY_LINE, MAX_ASSEMBLY_LINES,
+    MAX_PATCH_BYTES, MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchEditOut, PatchExport, PatchExportArgs,
+    PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs, PatchSet, PatchSetArgs,
+    PatchView,
 };
 pub use patch_source::{
     DEFAULT_SOURCE_PATCH_ATTEMPTS, MAX_SOURCE_BYTES, MAX_SOURCE_PATCH_ATTEMPTS, PatchFromSource,

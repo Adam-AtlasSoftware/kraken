@@ -331,8 +331,8 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                     .desired_width(ui.available_width() - 90.0),
             )
             .on_hover_text(
-                "Type one instruction and press Enter: it is assembled for this address and its \
-                 bytes go in the field below",
+                "Type an instruction (or several, separated by ;) and press Enter: it is assembled \
+                 for this address and its bytes go in the field below",
             );
             let busy = matches!(d.asm_state, AsmState::Busy);
             if ui
@@ -351,6 +351,9 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 assemble = true;
             }
         });
+        if let Some(note) = &d.asm_note {
+            ui.label(RichText::new(note).size(12.0).color(p.text_dim));
+        }
         match &d.asm_state {
             AsmState::Failed(why) => {
                 ui.label(RichText::new(why).size(12.0).color(s.danger));

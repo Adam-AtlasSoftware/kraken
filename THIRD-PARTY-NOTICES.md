@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-594 crates in 31 license groups.
+595 crates in 31 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -7636,6 +7636,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - http-body-util 0.1.5 (<https://github.com/hyperium/http-body>)
 - hyper 1.12.0 (<https://github.com/hyperium/hyper>)
 - hyper-util 0.1.21 (<https://github.com/hyperium/hyper-util>)
+- iced-x86 1.21.0 (<https://github.com/icedland/iced>)
 - libm 0.2.16 (<https://github.com/rust-lang/compiler-builtins>)
 - libredox 0.1.25 (<https://gitlab.redox-os.org/redox-os/libredox.git>)
 - libsqlite3-sys 0.38.2 (<https://github.com/rusqlite/rusqlite>)
@@ -9585,7 +9586,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
-No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, rsqlite-vfs 0.1.1. They are distributed under the SPDX expression `MIT` above.
+No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, iced-x86 1.21.0, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, rsqlite-vfs 0.1.1. They are distributed under the SPDX expression `MIT` above.
 
 ### MIT OR Apache-2.0
 

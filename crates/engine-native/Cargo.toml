@@ -16,10 +16,12 @@ async-trait = "0.1.89"
 cpp_demangle = "0.5.1"
 rustc-demangle = "0.1"
 engine-native-sys = { path = "../engine-native-sys", version = "0.1.0" }
+kraken-confine = { path = "../kraken-confine", version = "0.1.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
 kraken-proto.workspace = true
 kraken-sidecar = { path = "../kraken-sidecar", version = "0.1.0" }
 gimli = { version = "0.34", default-features = false, features = ["read", "std"] }
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "encoder", "op_code_info", "instr_info"] }
 object = { version = "0.40", default-features = false, features = ["read_core", "elf", "pe", "coff", "archive", "compression", "std"] }
 msvc-demangler = "0.11"
 serde.workspace = true

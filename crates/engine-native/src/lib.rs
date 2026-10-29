@@ -21,6 +21,8 @@
 
 mod analyze;
 pub mod arm;
+pub mod asm;
+mod assembler;
 pub mod cfg;
 pub mod constprop;
 pub mod ctypes;

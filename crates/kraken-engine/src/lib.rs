@@ -26,9 +26,9 @@ pub use caps::{Cap, Engine, EngineCaps, SharedEngine};
 pub use job::{AnalysisJob, ProgressSender};
 pub use tokio_util::sync::CancellationToken;
 pub use traits::{
-    Analyzer, Assembler, Decompiler, Disassembler, EngineResult, FlowGraph, FunctionLister, Loader,
-    MemoryReader, Mutator, OpenReporter, StringLister, SymbolLister, TypeStore, XrefProvider,
-    unsupported,
+    Analyzer, AsmBlock, Assembler, Decompiler, Disassembler, EngineResult, FlowGraph,
+    FunctionLister, Loader, MemoryReader, Mutator, OpenReporter, StringLister, SymbolLister,
+    TypeStore, XrefProvider, unsupported,
 };
 pub use types::{
     AnalysisSummary, AnalyzeRequest, DisasmRequest, EngineRejected, LANGUAGE_ALIASES, LoaderSpec,

@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_engine::{
-    AnalysisJob, AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, Engine,
-    EngineCaps, EngineRejected, EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec,
-    MemoryReader, Mutator, OpenReporter, ProgramInfo, StringLister, StringsRequest, SymbolLister,
-    TypeStore, XrefProvider, XrefRequest,
+    AnalysisJob, AnalyzeRequest, Analyzer, AsmBlock, Assembler, Decompiler, DisasmRequest,
+    Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph, FunctionLister,
+    Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, StringLister,
+    StringsRequest, SymbolLister, TypeStore, XrefProvider, XrefRequest,
 };
 use kraken_proto::{
     BytesRead, Cfg, DecompileResult, DisasmRow, FunctionSummary, Locator, MemoryBlock, Page,
@@ -202,6 +202,9 @@ impl Engine for NativeEngine {
         Some(self)
     }
     fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        Some(self)
+    }
+    fn assembler(&self) -> Option<&dyn Assembler> {
         Some(self)
     }
     fn disassembler(&self) -> Option<&dyn Disassembler> {
@@ -507,6 +510,88 @@ impl TypeStore for NativeEngine {
         route!(self,
             l => l.list_types(page, cancel).await,
             w => w.call("list_types", json!({ "page": page }), w.request_limits(), cancel).await
+        )
+    }
+}
+
+#[cfg(unix)]
+async fn asm_through_worker(
+    w: &WorkerEngine,
+    at: u64,
+    text: &str,
+    cancel: &CancellationToken,
+) -> EngineResult<(AsmBlock, Vec<Vec<u8>>)> {
+    let (language, thumb): (String, bool) = w
+        .call(
+            "asm_context",
+            json!({ "at": at }),
+            w.request_limits(),
+            cancel,
+        )
+        .await?;
+    if language.starts_with("x86:") {
+        return w
+            .call(
+                "asm_run",
+                json!({ "at": at, "text": text }),
+                w.request_limits(),
+                cancel,
+            )
+            .await;
+    }
+    // the worker cannot start programs; llvm-mc runs here, in its own confined child
+    let target = crate::asm::llvm_mc::target(&language, thumb).ok_or_else(|| {
+        kraken_proto::ProtoError::new(
+            kraken_proto::ErrorCode::Unsupported,
+            format!("the native assembler covers x86, ARM, AArch64 and RISC-V; {language} is not one of them"),
+        )
+    })?;
+    let exe = crate::asm::llvm_mc::find().ok_or_else(|| crate::asm::llvm_mc::missing(&language))?;
+    let text = text.to_string();
+    let lines =
+        tokio::task::spawn_blocking(move || crate::asm::llvm_mc::assemble(&exe, &target, &text))
+            .await
+            .map_err(|e| {
+                kraken_proto::ProtoError::new(kraken_proto::ErrorCode::Internal, e.to_string())
+            })??;
+    let block: AsmBlock = w
+        .call(
+            "asm_finish",
+            json!({ "at": at, "lines": lines }),
+            w.request_limits(),
+            cancel,
+        )
+        .await?;
+    let alt = if lines.len() == 1 { lines } else { Vec::new() };
+    Ok((block, alt))
+}
+
+#[async_trait]
+impl Assembler for NativeEngine {
+    async fn assemble(
+        &self,
+        at: &Locator,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Vec<Vec<u8>>> {
+        route!(self,
+            l => Assembler::assemble(l.as_ref(), at, text, cancel).await,
+            w => {
+                let (block, alt) = asm_through_worker(w, crate::engine::ram_offset(at)?, text, cancel).await?;
+                Ok(if alt.is_empty() { vec![block.bytes] } else { alt })
+            }
+        )
+    }
+
+    async fn assemble_block(
+        &self,
+        at: &Locator,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> EngineResult<AsmBlock> {
+        route!(self,
+            l => Assembler::assemble_block(l.as_ref(), at, text, cancel).await,
+            w => Ok(asm_through_worker(w, crate::engine::ram_offset(at)?, text, cancel).await?.0)
         )
     }
 }

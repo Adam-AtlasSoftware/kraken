@@ -32,6 +32,7 @@ new projects.
 | Start of a new project | Seconds (a small program is ready in well under a second) | About a minute of analysis for a small program |
 | File formats | ELF (x86-64, 32-bit x86, ARM and Thumb-2, AArch64, RISC-V 64 and 32) and PE (x86, x86-64); object files and static libraries for those (COFF and import libraries for x86 and x86-64) | ELF, PE, Mach-O, object files, many processors; no archives |
 | Function list, disassembly, hex, memory map | Yes | Yes |
+| Assemble instructions (`assemble`, the patch dialog) | x86 and x86-64 built in (labels, symbol names, NOP padding, checked through Sleigh); ARM, AArch64 and RISC-V with `llvm-mc` on PATH | All processors (SLEIGH assembler) |
 | Decompiler | Yes (the same Ghidra decompiler) | Yes |
 | Cross-references, callers and callees, control-flow graph | Yes | Yes |
 | Strings, imports, exports | Yes | Yes |

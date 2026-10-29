@@ -16,7 +16,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`ai_usage`](#ai_usage) | query | safe | Show the model calls made and their estimated cost (project, today or one run) |
 | [`analyze`](#analyze) | job | mutating | Analyse the binary (job): functions, types and references |
 | [`apply_edits`](#apply_edits) | mutation | mutating | Rename, comment and retype many items in one call |
-| [`assemble`](#assemble) | query | safe | Turn one assembly instruction into machine-code bytes at an address |
+| [`assemble`](#assemble) | query | safe | Turn assembly instructions into machine-code bytes at an address |
 | [`binary_probe`](#binary_probe) | query | safe | Describe a file and say which engine should open it, without making a project |
 | [`bookmark_add`](#bookmark_add) | mutation | mutating | Bookmark an address with an optional note |
 | [`bookmark_list`](#bookmark_list) | query | safe | List bookmarks ordered by address, one page at a time |
@@ -985,7 +985,7 @@ Items: `rename` takes `name`; `comment` takes `text` and optional `kind` (defaul
 
 ## assemble
 
-Turn one assembly instruction into machine-code bytes at an address
+Turn assembly instructions into machine-code bytes at an address
 
 ```sh
 kraken assemble --address <address> --text <string>
@@ -995,16 +995,16 @@ kraken assemble --address <address> --text <string>
 - Permission: safe
 - Engine needs: `Assembler`
 
-Assembles a single instruction for the program's processor at `address` and returns its encodings, shortest first. Nothing is written: pass the bytes to `patch_set` to stage them.
+Assembles an instruction (or several, separated by `;` or newlines) for the program's processor at `address` and returns its encodings, shortest first. Nothing is written: pass the bytes to `patch_set` to stage them.
 
 Example: `assemble {"address": "0x401136", "text": "mov eax, 0x7"}`
 
-Uses the engine's assembler (Ghidra's SLEIGH assembler on the Ghidra engine). The syntax is the one the Listing shows. An instruction the processor does not have, or an operand that does not fit, is `invalid_argument` with the reason.
+Uses the engine's assembler: Ghidra's SLEIGH assembler on the Ghidra engine; iced for x86 and x86-64 on the native engine, which also resolves function, label and symbol names (and `LAB_00401136`-style names) in operands, encodes relative branches for the target, reads the result back through Sleigh to check it means what was typed, and pads with NOPs to the next instruction boundary (`padded`, `pad`; `overwritten` counts the following instructions the bytes replace). The native engine assembles ARM, AArch64 and RISC-V through `llvm-mc` when it is on PATH (branch targets as numbers). The syntax is the one the Listing shows. An instruction the processor does not have, or an operand that does not fit, is `invalid_argument` with the reason.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `address` | `--address` | address | yes | Where the instruction would go, as `0x...` (relative branches and RIP-relative operands are encoded for this address). |
-| `text` | `--text` | string | yes | One instruction in the processor's assembly syntax, e.g. `mov eax, 0x7`. |
+| `text` | `--text` | string | yes | One instruction in the processor's assembly syntax, e.g. `mov eax, 0x7`; or several, separated by `;` or newlines (the native engine also takes labels, `again:`, and symbol names as operands). |
 
 <details>
 <summary>Output schema</summary>
@@ -1020,6 +1020,25 @@ Uses the engine's assembler (Ghidra's SLEIGH assembler on the Ghidra engine). Th
         "type": "string"
       },
       "type": "array"
+    },
+    "overwritten": {
+      "description": "Instructions after the first that the result replaces.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "pad": {
+      "description": "Bytes of NOP padding at the end of the result.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "padded": {
+      "description": "For one instruction on an engine that looks at the code already there: the shortest\nencoding padded with NOPs to the next instruction boundary. Absent when no padding is\nneeded.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
