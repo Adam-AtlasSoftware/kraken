@@ -45,7 +45,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Debug, Edit, History, Proposals, Assistant, Rewrite, AI Activity. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Emulation, Debug, Edit, History, Proposals, Assistant, Rewrite, Types, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -122,12 +122,29 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Patch bytes here... | Replace the bytes of the selected instruction or Hex selection; nothing on disk changes until you export |  |
 | Show patches | See every staged byte patch, run them and export |  |
 | Export patched binary... | Write a copy of the program with every patch applied; the original is untouched |  |
+| Run in emulator... | Open the program, or a copy with your patches, in an installed emulator |  |
+
+### Emulate
+
+| Item | What it does | Shortcut |
+|---|---|---|
+| Run program... | Run the program in the sandboxed emulator with the arguments, input, environment and files you give it |  |
+| Run patched program... | Run a copy with your byte patches applied in the sandboxed emulator |  |
+| Compare original vs patched... | Run the original and the patched program with the same input and see what changed |  |
+| Show emulation results | See what the last run or comparison did |  |
+| About running programs | What the emulator does, what it cannot do, and why running here is safe |  |
 
 ### Debug
 
 | Item | What it does | Shortcut |
 |---|---|---|
 | Show the Debug tab | Show the Debug tab and bring it to the front. |  |
+
+### Tools
+
+| Item | What it does | Shortcut |
+|---|---|---|
+| Emulators and tools... | Install, find or remove the emulators KRAKEN can run programs in; nothing is bundled |  |
 
 ## Panels
 
@@ -285,8 +302,20 @@ How to use it:
 
 - In the Listing, click an instruction and press Patch bytes; in the Hex view, select bytes and press Patch selection.
 - Type the new bytes as hex. A shorter patch on x86 can be filled with nop (90).
-- Press Run original vs patched to compare them in the emulator.
+- Press Run original vs patched to compare them in the emulator; the result opens in the Emulation tab.
 - Press Export patched binary to write the copy.
+
+### Emulation
+
+What the program did when you ran it in the sandboxed emulator, and how a patch changed it.
+
+The Emulation tab shows the last run: how it ended, what it printed, the files it wrote and the emulator's notes. A comparison runs the original and the patched program with the same input and lays them side by side, marking the lines that differ and naming the first place they diverge. The program is interpreted instruction by instruction in a sandbox: it has no network, sees only its own private files, and nothing in the project changes.
+
+How to use it:
+
+- Open Emulate > Run program, give it arguments, input, environment variables or files, and press Run.
+- After staging patches, choose Emulate > Compare original vs patched to see what they changed.
+- A note naming a system call means the emulator does not implement it; the program was told it failed.
 
 ### Debug
 
@@ -314,7 +343,7 @@ How to use it:
 - Open a function and press Patch function in the Decompiler.
 - Edit the C on the left, then press Plan patch.
 - Read the check and the patched decompile, then press Stage patches.
-- Run original vs patched from the Patches tab before you export.
+- Compare original vs patched from the Emulate menu before you export.
 
 ### History
 
@@ -364,6 +393,18 @@ How to use it:
 - Open Rewrite > Rewrite in Rust to start the step-by-step wizard.
 - Review each function's plan, translation and test result in this tab.
 - Accept the ones you trust, then export and build.
+
+### Types
+
+The program's structs, enums, typedefs and function prototypes, shown as C.
+
+Types come from the program's debug information (DWARF), from KRAKEN's tables of libc and Windows functions, and from types you define. Pick one to read its C declaration, with the byte offset of every field. A program without debug information lists only the built-in prototypes.
+
+How to use it:
+
+- Type part of a name, or choose a kind, to narrow the list.
+- Click a type to read its declaration; tick the box to include the types it uses.
+- Agents can read the same list with the types_list and type_get commands.
 
 ### AI Activity
 

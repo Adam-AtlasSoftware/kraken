@@ -118,9 +118,9 @@ Provenance:
 
     Compiled into KRAKEN by engine-native-sys (the native engine's decompiler library).
 
-    Ghidra 12.1.4 decompiler and Sleigh (C++), Apache License 2.0
-      source: https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.1.4_build.tar.gz
-      sha256: 2a858300c350f05ae2e729dff86b4f584d0b9a6b398879c55025574e67696cec
+    Ghidra 12.2 decompiler and Sleigh (C++), Apache License 2.0
+      source: https://github.com/NationalSecurityAgency/ghidra/archive/refs/tags/Ghidra_12.2_build.tar.gz
+      sha256: ade4fd6e277a10c82db4e75ff5acaeedb3113ef0c7d126ea2c8b38c37128f3c3
       members: Ghidra/Features/Decompiler/src/decompile/cpp
         (the Makefile's CORE, DECCORE and SLEIGH sets, sleigh_arch, inject_sleigh)
       license: ghidra/LICENSE; notice: ghidra/NOTICE
@@ -130,7 +130,7 @@ Provenance:
       unmodified apart from a header comment per file
       license: zlib/LICENSE; Ghidra's note on the subset: zlib/README.txt
 
-### Ghidra 12.1.4 decompiler and Sleigh (Apache License 2.0)
+### Ghidra 12.2 decompiler and Sleigh (Apache License 2.0)
 
 Ghidra's C++ decompiler and Sleigh translator from
 <https://github.com/NationalSecurityAgency/ghidra>. Ghidra's `NOTICE`:
@@ -438,7 +438,7 @@ not linked into KRAKEN).
 
 - **Ghidra** (<https://github.com/NationalSecurityAgency/ghidra>), Apache License 2.0. Downloaded
   from the NSA's GitHub release. Its own `LICENSE` and `NOTICE` files come with the download.
-- **Eclipse Temurin JDK 21** (<https://adoptium.net/>), GPL-2.0-only with the Classpath Exception
+- **Eclipse Temurin JDK 25** (<https://adoptium.net/>), GPL-2.0-only with the Classpath Exception
   (GPLv2+CE). Downloaded from the Adoptium release. Its license files come with the download.
 
 If a future release bundles either component, this page and the release archive will carry their
@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-598 crates in 31 license groups.
+602 crates in 31 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -3982,6 +3982,7 @@ No license file in the source of: agent-client-protocol-schema 1.12.0, gl_genera
 - object 0.36.7 (<https://github.com/gimli-rs/object>)
 - object 0.38.1 (<https://github.com/gimli-rs/object>)
 - object 0.39.1 (<https://github.com/gimli-rs/object>)
+- object 0.40.0 (<https://github.com/gimli-rs/object>)
 - parking 2.2.1 (<https://github.com/smol-rs/parking>)
 - peniko 0.6.1 (<https://github.com/linebender/peniko>)
 - pin-project 1.1.13 (<https://github.com/taiki-e/pin-project>)
@@ -4565,7 +4566,7 @@ No license file in the source of: agent-client-protocol-schema 1.12.0, gl_genera
 
     END OF TERMS AND CONDITIONS
 
-**LICENSE-APACHE** — addr2line 0.26.1, atomic-waker 1.1.2, autocfg 1.5.1, concurrent-queue 2.5.0, equivalent 1.0.3, event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0, fnv 1.0.7, futures-lite 2.6.1, idna_adapter 1.2.2, indexmap 1.9.3, indexmap 2.14.2, object 0.36.7, object 0.38.1, object 0.39.1, parking 2.2.1, polling 3.11.0, pollster 0.4.0, pollster 1.0.1, rustc-hash 1.1.0, simd_cesu8 1.2.0, uuid 1.28.0
+**LICENSE-APACHE** — addr2line 0.26.1, atomic-waker 1.1.2, autocfg 1.5.1, concurrent-queue 2.5.0, equivalent 1.0.3, event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0, fnv 1.0.7, futures-lite 2.6.1, idna_adapter 1.2.2, indexmap 1.9.3, indexmap 2.14.2, object 0.36.7, object 0.38.1, object 0.39.1, object 0.40.0, parking 2.2.1, polling 3.11.0, pollster 0.4.0, pollster 1.0.1, rustc-hash 1.1.0, simd_cesu8 1.2.0, uuid 1.28.0
 
                                   Apache License
                             Version 2.0, January 2004
@@ -5062,7 +5063,7 @@ No license file in the source of: agent-client-protocol-schema 1.12.0, gl_genera
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-**LICENSE-MIT** — object 0.36.7, object 0.38.1, object 0.39.1
+**LICENSE-MIT** — object 0.36.7, object 0.38.1, object 0.39.1, object 0.40.0
 
     Copyright (c) 2015 The Gimli Developers
 
@@ -7636,6 +7637,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - http-body-util 0.1.5 (<https://github.com/hyperium/http-body>)
 - hyper 1.12.0 (<https://github.com/hyperium/hyper>)
 - hyper-util 0.1.21 (<https://github.com/hyperium/hyper-util>)
+- iced-x86 1.21.0 (<https://github.com/icedland/iced>)
 - libm 0.2.16 (<https://github.com/rust-lang/compiler-builtins>)
 - libredox 0.1.25 (<https://gitlab.redox-os.org/redox-os/libredox.git>)
 - libsqlite3-sys 0.38.2 (<https://github.com/rusqlite/rusqlite>)
@@ -7675,6 +7677,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - rsqlite-vfs 0.1.1
 - rusqlite 0.40.2 (<https://github.com/rusqlite/rusqlite>)
 - ruzstd 0.8.3 (<https://github.com/KillingSpark/zstd-rs>)
+- ruzstd 0.9.1 (<https://github.com/KillingSpark/zstd-rs>)
 - schemars 0.9.0 (<https://github.com/GREsau/schemars>)
 - schemars 1.2.3 (<https://github.com/GREsau/schemars>)
 - schemars_derive 1.2.3 (<https://github.com/GREsau/schemars>)
@@ -8612,7 +8615,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-**LICENSE** — ruzstd 0.8.3
+**LICENSE** — ruzstd 0.8.3, ruzstd 0.9.1
 
     MIT License
 
@@ -9610,7 +9613,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
-No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, rsqlite-vfs 0.1.1. They are distributed under the SPDX expression `MIT` above.
+No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, iced-x86 1.21.0, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, rsqlite-vfs 0.1.1. They are distributed under the SPDX expression `MIT` above.
 
 ### MIT OR Apache-2.0
 
@@ -9715,6 +9718,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
 - getrandom 0.3.4 (<https://github.com/rust-random/getrandom>)
 - getrandom 0.4.3 (<https://github.com/rust-random/getrandom>)
 - gimli 0.33.0 (<https://github.com/gimli-rs/gimli>)
+- gimli 0.34.0 (<https://github.com/gimli-rs/gimli>)
 - gpu-allocator 0.28.0 (<https://github.com/Traverse-Research/gpu-allocator>)
 - guillotiere 0.7.0 (<https://github.com/nical/guillotiere>)
 - half 2.7.1 (<https://github.com/VoidStarKat/half-rs>)
@@ -14739,7 +14743,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
     See the License for the specific language governing permissions and
     limitations under the License.
 
-**LICENSE-APACHE** — ahash 0.8.12, arbitrary 1.5.0, arrayvec 0.7.8, async-recursion 1.2.0, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.3, cc 1.8.0, cfg-if 1.0.5, cgl 0.3.2, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, cpp_demangle 0.5.1, crossbeam-utils 0.8.23, displaydoc 0.2.7, either 1.19.0, errno 0.3.14, euclid 0.22.14, filetime 0.2.29, find-msvc-tools 0.1.14, fixedbitset 0.5.7, flate2 1.1.10, form_urlencoded 1.2.2, gimli 0.33.0, hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, hermit-abi 0.5.3, httparse 1.10.1, idna 1.1.0, itertools 0.15.0, jobserver 0.1.35, js-sys 0.3.106, khronos-egl 6.0.0, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.34, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0, ron 0.11.0, rustc-demangle 0.1.28, rustc_version 0.4.1, scoped-tls 1.0.1, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, signal-hook-registry 1.4.8, smallvec 1.16.3, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, thread_local 1.1.10, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, vcpkg 0.2.15, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl 0.1.12, xattr 1.6.1
+**LICENSE-APACHE** — ahash 0.8.12, arbitrary 1.5.0, arrayvec 0.7.8, async-recursion 1.2.0, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.3, cc 1.8.0, cfg-if 1.0.5, cgl 0.3.2, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, cpp_demangle 0.5.1, crossbeam-utils 0.8.23, displaydoc 0.2.7, either 1.19.0, errno 0.3.14, euclid 0.22.14, filetime 0.2.29, find-msvc-tools 0.1.14, fixedbitset 0.5.7, flate2 1.1.10, form_urlencoded 1.2.2, gimli 0.33.0, gimli 0.34.0, hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, hermit-abi 0.5.3, httparse 1.10.1, idna 1.1.0, itertools 0.15.0, jobserver 0.1.35, js-sys 0.3.106, khronos-egl 6.0.0, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.34, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0, ron 0.11.0, rustc-demangle 0.1.28, rustc_version 0.4.1, scoped-tls 1.0.1, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, signal-hook-registry 1.4.8, smallvec 1.16.3, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, thread_local 1.1.10, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, vcpkg 0.2.15, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl 0.1.12, xattr 1.6.1
 
                                   Apache License
                             Version 2.0, January 2004
@@ -17483,7 +17487,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ob
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-**LICENSE-MIT** — cpp_demangle 0.5.1, gimli 0.33.0, heck 0.5.0, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6
+**LICENSE-MIT** — cpp_demangle 0.5.1, gimli 0.33.0, gimli 0.34.0, heck 0.5.0, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6
 
     Copyright (c) 2015 The Rust Project Developers
 
