@@ -5,7 +5,7 @@
 use egui::{RichText, Ui};
 use kraken_proto::{Locator, Token, TokenKind};
 use kraken_viewmodel::ViewModel;
-use kraken_viewmodel::navtools::NavTab;
+use kraken_viewmodel::navtools::{IntentKind, NavTab};
 use kraken_viewmodel::rewrite::RewriteMode;
 
 /// What was right-clicked.
@@ -51,6 +51,12 @@ pub enum NavChoice {
     CreateFunction,
     DeleteFunction,
     Rewrite,
+    PatchNop,
+    PatchInvert,
+    PatchAlways,
+    PatchNever,
+    PatchReturn,
+    PatchFill,
 }
 
 /// One menu row.
@@ -63,6 +69,8 @@ pub struct Item {
     pub hover: String,
     /// `Some(reason)` when the item cannot be used.
     pub disabled: Option<String>,
+    /// The submenu the item lives in; ungrouped items are drawn in the main list.
+    pub group: Option<&'static str>,
 }
 
 fn item(choice: NavChoice, label: &str, shortcut: Option<&'static str>, hover: &str) -> Item {
@@ -72,10 +80,16 @@ fn item(choice: NavChoice, label: &str, shortcut: Option<&'static str>, hover: &
         shortcut,
         hover: hover.into(),
         disabled: None,
+        group: None,
     }
 }
 
 impl Item {
+    fn in_group(mut self, group: &'static str) -> Item {
+        self.group = Some(group);
+        self
+    }
+
     fn off(mut self, why: impl Into<String>) -> Item {
         self.disabled = Some(why.into());
         self
@@ -296,12 +310,98 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
         None => rewrite.off("This is not inside a known function."),
         Some(_) => rewrite.off_if(vm.rewrite.blocked_note()),
     });
+
+    const PATCH: &str = "Patch";
+    let code = t.kind == TargetKind::Code && t.address.is_some();
+    let on_code = |it: Item| {
+        it.in_group(PATCH)
+            .off_if((!code).then_some("Right-click an instruction in the Listing to patch it."))
+    };
+    out.push(on_code(item(
+        NavChoice::PatchNop,
+        "NOP this",
+        None,
+        "Replace this instruction with NOPs for this processor. You see the new bytes first",
+    )));
+    out.push(on_code(item(
+        NavChoice::PatchInvert,
+        "Invert branch",
+        None,
+        "Make a conditional branch go the other way",
+    )));
+    out.push(on_code(item(
+        NavChoice::PatchAlways,
+        "Always take branch",
+        None,
+        "Turn a conditional branch into a jump to the same place",
+    )));
+    out.push(on_code(item(
+        NavChoice::PatchNever,
+        "Never take branch",
+        None,
+        "Remove a conditional branch: execution falls through",
+    )));
+    let entry_addr = if t.kind == TargetKind::Function {
+        t.address
+    } else {
+        t.function
+    };
+    out.push(
+        item(
+            NavChoice::PatchReturn,
+            "Make function return...",
+            None,
+            "Make the function return a number straight away",
+        )
+        .in_group(PATCH)
+        .off_if(
+            entry_addr
+                .is_none()
+                .then_some("This is not inside a known function."),
+        ),
+    );
+    out.push(
+        item(
+            NavChoice::PatchFill,
+            "Fill...",
+            None,
+            "Overwrite a range of bytes starting here with a repeated pattern",
+        )
+        .in_group(PATCH)
+        .off_if(
+            t.address
+                .is_none()
+                .then_some("There is no address here to fill from."),
+        ),
+    );
     out
 }
 
 /// Draws the items; a click sets `choice`.
 pub fn draw(ui: &mut Ui, items: &[Item], choice: &mut Option<NavChoice>) {
+    let mut groups: Vec<&'static str> = Vec::new();
     for it in items {
+        if let Some(g) = it.group {
+            if !groups.contains(&g) {
+                groups.push(g);
+            }
+            continue;
+        }
+        draw_item(ui, it, choice);
+    }
+    for g in groups {
+        ui.menu_button(g, |ui| {
+            for it in items.iter().filter(|i| i.group == Some(g)) {
+                draw_item(ui, it, choice);
+            }
+        })
+        .response
+        .on_hover_text("Change the program's bytes here. You see the result first and can undo it");
+    }
+}
+
+fn draw_item(ui: &mut Ui, it: &Item, choice: &mut Option<NavChoice>) {
+    {
         let text = match it.shortcut {
             Some(s) => format!("{}    ({s})", it.label),
             None => it.label.clone(),
@@ -316,6 +416,7 @@ pub fn draw(ui: &mut Ui, items: &[Item], choice: &mut Option<NavChoice>) {
         super::remember_rect(ui.ctx(), ("menu", it.label.as_str()), r.rect);
         if r.clicked() {
             *choice = Some(it.choice);
+            ui.close();
         }
     }
 }
@@ -401,6 +502,36 @@ pub fn run(ctx: &egui::Context, vm: &mut ViewModel, t: &Target, choice: NavChoic
         NavChoice::DeleteFunction => {
             if let Some(a) = t.address {
                 vm.begin_delete_function(a);
+            }
+        }
+        NavChoice::PatchNop => {
+            if let Some(a) = t.address {
+                vm.begin_intent(IntentKind::Nop, a);
+            }
+        }
+        NavChoice::PatchInvert => {
+            if let Some(a) = t.address {
+                vm.begin_intent(IntentKind::BranchInvert, a);
+            }
+        }
+        NavChoice::PatchAlways => {
+            if let Some(a) = t.address {
+                vm.begin_intent(IntentKind::BranchAlways, a);
+            }
+        }
+        NavChoice::PatchNever => {
+            if let Some(a) = t.address {
+                vm.begin_intent(IntentKind::BranchNever, a);
+            }
+        }
+        NavChoice::PatchReturn => {
+            if let Some(f) = func {
+                vm.begin_intent(IntentKind::Return, f);
+            }
+        }
+        NavChoice::PatchFill => {
+            if let Some(a) = t.address {
+                vm.begin_intent(IntentKind::Fill, a);
             }
         }
         NavChoice::Rewrite => {

@@ -36,8 +36,46 @@ Everything below is also in the GUI, under the **Patch** menu:
    bytes are tinted in the Hex view (which keeps showing the bytes on disk).
    ![The Patches tab with one staged patch, its original and new bytes, and the Run, Export and Refresh buttons; the staged bytes tinted in the Hex view](images/patches.png)
 
-3. **Export.** **Export patched binary...** asks where to write the copy (a relative path lands in
-   the project folder), then asks for approval like every dangerous command.
+3. **Export.** **Export patched binary...** asks where to write the copy (type a path, a relative
+   one lands in the project folder, or press **Browse...** for a save dialog), then asks for
+   approval like every dangerous command. When it is written the window shows the file's
+   **SHA-256** (with **Copy SHA-256**) and **Open folder**; the Patches tab keeps the last one.
+   `patch_export` returns the same hash as `sha256`.
+
+### One-click patches
+
+Right-click an instruction in the **Listing** and open **Patch** (in the **Decompiler** only
+**Make function return...** and **Fill...** apply):
+
+- **NOP this** replaces the instruction with NOPs in the processor's own encoding (x86 gets the
+  multi-byte forms, ARM, Thumb, AArch64 and RISC-V their own);
+- **Invert branch**, **Always take branch** and **Never take branch** change a conditional jump
+  (x86 `jcc` short and near, ARM and Thumb `b<cond>`, `cbz`, `cbnz`, AArch64 `b.cond`, `cbz`,
+  `cbnz`, `tbz`, `tbnz`, RISC-V branches); on anything else they say it is not a conditional
+  branch;
+- **Make function return...** makes a function return a number right away;
+- **Fill...** fills a range with a repeated byte.
+
+Each opens a small preview first: the bytes there now, the bytes that will be written and the
+new disassembly. **Apply** records an ordinary patch, so it shows in the Patches tab and the
+History and **Undo** takes it back. None of this needs an assembler, so it works on every engine.
+
+The same intents are commands. Each takes `"preview": true` to show what it would write without
+recording it:
+
+```
+patch_branch {"address": "0x401136", "mode": "invert"}
+patch_nop {"address": "0x401140", "count": 2}
+patch_return {"address": "0x401200", "value": 1}
+patch_fill {"address": "0x402000", "length": 16, "pattern": "cc"}
+patch_constant {"address": "0x401150", "value": 100}
+```
+
+`patch_constant` changes the immediate of one instruction without changing its length (x86
+`mov`/`cmp`/`add`/..., AArch64 `mov`/`add`/`sub`/`cmp`, ARM and Thumb data-processing, RISC-V
+`addi`/`lui`); a value the encoding cannot hold is refused instead of overflowing. Two patches
+may not overlap: setting one over bytes another covers is refused (remove the old one first), and
+for an agent it would never apply on its own. Replacing the patch at the same address is fine.
 
 ### Edit the C instead (experimental)
 

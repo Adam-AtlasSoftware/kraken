@@ -52,6 +52,8 @@ pub struct ExportDone {
     pub applied: usize,
     /// Size of the file.
     pub bytes_written: u64,
+    /// SHA-256 of the file, lower-case hex.
+    pub sha256: String,
 }
 
 /// One emulated run, as the Patches tab shows it.
@@ -234,6 +236,8 @@ pub struct ExportDialog {
     pub error: Option<String>,
     /// The call is running.
     pub submitting: bool,
+    /// What was written, once it was: the dialog then shows the result.
+    pub done: Option<ExportDone>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -284,6 +288,8 @@ struct ExportWire {
     output_path: String,
     applied: Vec<serde_json::Value>,
     bytes_written: u64,
+    #[serde(default)]
+    sha256: String,
 }
 
 /// Parses hex like the registry does: spaces ignored, an optional `0x`.
@@ -654,6 +660,7 @@ impl ViewModel {
             overwrite: false,
             error: None,
             submitting: false,
+            done: None,
         });
     }
 
@@ -693,21 +700,17 @@ impl ViewModel {
         self.call("patch_export", args, move |vm, res| {
             match res.and_then(parse::<ExportWire>) {
                 Ok(out) => {
-                    vm.tools.export_dialog = None;
-                    vm.toast(
-                        ToastLevel::Success,
-                        format!(
-                            "Wrote {} with {} patch{}.",
-                            out.output_path,
-                            out.applied.len(),
-                            if out.applied.len() == 1 { "" } else { "es" }
-                        ),
-                    );
-                    vm.tools.patches.last_export = Some(ExportDone {
+                    let done = ExportDone {
                         output_path: out.output_path,
                         applied: out.applied.len(),
                         bytes_written: out.bytes_written,
-                    });
+                        sha256: out.sha256,
+                    };
+                    if let Some(d) = vm.tools.export_dialog.as_mut() {
+                        d.submitting = false;
+                        d.done = Some(done.clone());
+                    }
+                    vm.tools.patches.last_export = Some(done);
                 }
                 Err(e) => {
                     if let Some(d) = vm.tools.export_dialog.as_mut() {

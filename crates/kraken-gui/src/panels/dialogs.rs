@@ -4,8 +4,8 @@
 use egui::{Align2, Id, Key, Margin, Modifiers, RichText, vec2};
 use kraken_gui_widgets::{KrakenTheme, Palette};
 use kraken_viewmodel::navtools::{
-    AsmState, FieldKind, FunctionDialogKind, PatchOrigin, ResultSegment, TypeMode, result_lines,
-    spaced_hex,
+    AsmState, FieldKind, FunctionDialogKind, IntentKind, PatchOrigin, ResultSegment, TypeMode,
+    result_lines, spaced_hex,
 };
 use kraken_viewmodel::{Permission, ViewModel, humanize_command};
 
@@ -17,6 +17,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     bookmark_dialog(ctx, vm);
     patch_dialog(ctx, vm);
     export_dialog(ctx, vm);
+    intent_dialog(ctx, vm);
     type_dialog(ctx, vm);
     function_dialog(ctx, vm);
     command_form(ctx, vm);
@@ -472,6 +473,59 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     }
 }
 
+/// The path chosen in the system save dialog, waiting for the export dialog to take it.
+static EXPORT_PICK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn browse_export(vm: &ViewModel, ctx: &egui::Context, current: &str) {
+    let ctx = ctx.clone();
+    let start = vm
+        .project
+        .as_ref()
+        .map(|p| p.project_dir.clone())
+        .filter(|d| std::path::Path::new(d).is_dir());
+    let name = std::path::Path::new(current)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "program.patched".into());
+    vm.runtime_handle().spawn(async move {
+        let mut d = rfd::AsyncFileDialog::new()
+            .set_title("Where should the patched binary be written?")
+            .set_file_name(name);
+        if let Some(s) = start {
+            d = d.set_directory(s);
+        }
+        if let Some(h) = d.save_file().await {
+            if let Ok(mut p) = EXPORT_PICK.lock() {
+                *p = Some(h.path().to_string_lossy().into_owned());
+            }
+            ctx.request_repaint();
+        }
+    });
+}
+
+/// Opens the folder holding `path` in the desktop's file manager.
+fn open_folder_of(path: &str) {
+    if cfg!(test) {
+        return;
+    }
+    let dir = std::path::Path::new(path)
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let _ = std::process::Command::new(program)
+        .arg(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let Some(d) = vm.tools.export_dialog.clone() else {
         return;
@@ -480,8 +534,59 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let (enter, esc) = enter_escape(ctx);
     let mut path = d.output_path.clone();
     let mut overwrite = d.overwrite;
-    let (mut save, mut cancel) = (false, false);
+    if let Some(picked) = EXPORT_PICK.lock().ok().and_then(|mut x| x.take()) {
+        path = picked;
+        // The system dialog already asked about replacing a file.
+        overwrite = true;
+    }
+    let (mut save, mut cancel, mut browse) = (false, false, false);
     let n = vm.tools.patches.items.len();
+    if let Some(done) = &d.done {
+        let mut copy = false;
+        let mut folder = false;
+        window("Patched binary written", "kraken_patch_export", 540.0).show(ctx, |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "Wrote {} with {} applied ({} bytes).",
+                    done.output_path,
+                    match done.applied {
+                        0 => "no patches".to_string(),
+                        1 => "1 patch".to_string(),
+                        n => format!("{n} patches"),
+                    },
+                    done.bytes_written
+                ))
+                .color(s.success),
+            );
+            ui.label(RichText::new("SHA-256").size(12.0).color(p.text_dim));
+            ui.add(egui::Label::new(RichText::new(&done.sha256).monospace().size(11.5)).wrap());
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                folder = ui
+                    .button("Open folder")
+                    .on_hover_text("Show the file in your file manager")
+                    .clicked();
+                copy = ui
+                    .button("Copy SHA-256")
+                    .on_hover_text("Copy the hash to the clipboard")
+                    .clicked();
+                cancel = ui
+                    .button("Close")
+                    .on_hover_text("Close this window")
+                    .clicked();
+            });
+        });
+        if folder {
+            open_folder_of(&done.output_path);
+        }
+        if copy {
+            ctx.copy_text(done.sha256.clone());
+        }
+        if esc || enter || cancel {
+            vm.cancel_patch_export();
+        }
+        return;
+    }
     window("Export patched binary", "kraken_patch_export", 520.0).show(ctx, |ui| {
         ui.label(
             RichText::new(format!(
@@ -497,17 +602,23 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             .color(p.text_dim),
         );
         ui.label(RichText::new("Write to").size(12.0).color(p.text_dim));
-        let r = ui
-            .add(
-                egui::TextEdit::singleline(&mut path)
-                    .id(Id::new("kraken_patch_export_path"))
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY),
-            )
-            .on_hover_text("A file path; a relative one is placed in the project folder");
-        if !r.has_focus() && !d.submitting {
-            r.request_focus();
-        }
+        ui.horizontal(|ui| {
+            let r = ui
+                .add(
+                    egui::TextEdit::singleline(&mut path)
+                        .id(Id::new("kraken_patch_export_path"))
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width((ui.available_width() - 84.0).max(120.0)),
+                )
+                .on_hover_text("A file path; a relative one is placed in the project folder");
+            if !r.has_focus() && !d.submitting {
+                r.request_focus();
+            }
+            browse = ui
+                .button("Browse...")
+                .on_hover_text("Choose the file in a save dialog")
+                .clicked();
+        });
         ui.checkbox(&mut overwrite, "Replace the file if it exists")
             .on_hover_text("Without this, an existing file at that path is left alone");
         if let Some(e) = &d.error {
@@ -528,6 +639,9 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             &mut cancel,
         );
     });
+    if browse {
+        browse_export(vm, ctx, &path);
+    }
     if path != d.output_path {
         vm.set_export_path(path);
     }
@@ -538,6 +652,165 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.cancel_patch_export();
     } else if save || enter {
         vm.submit_patch_export();
+    }
+}
+
+// ---------------------------------------------------------------- one-click patches
+
+fn spaced(hex: &str) -> String {
+    hex.as_bytes()
+        .chunks(2)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn intent_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.intent_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut value = d.value.clone();
+    let mut pattern = d.pattern.clone();
+    let (mut apply, mut cancel, mut preview) = (false, false, false);
+    let fname = vm.functions.containing(d.address).map(|f| f.name.clone());
+    window(d.kind.title(), "kraken_patch_intent", 540.0).show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Address").size(12.0).color(p.text_dim));
+            ui.label(
+                RichText::new(format!("{:#x}", d.address))
+                    .monospace()
+                    .color(p.address),
+            );
+            if let Some(n) = &fname {
+                ui.label(
+                    RichText::new(format!("in {n}"))
+                        .monospace()
+                        .color(p.text_strong),
+                );
+            }
+        });
+        ui.label(RichText::new(d.kind.blurb()).color(p.text_dim));
+        if d.kind.takes_input() {
+            ui.horizontal(|ui| {
+                let (label, hint) = match d.kind {
+                    IntentKind::Return => ("Return value", "0, 1, -1, 0x10"),
+                    _ => ("Length in bytes", "1 to 4096"),
+                };
+                ui.label(RichText::new(label).size(12.0).color(p.text_dim));
+                let r = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut value)
+                            .id(Id::new("kraken_intent_value"))
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text(hint)
+                            .desired_width(110.0),
+                    )
+                    .on_hover_text(match d.kind {
+                        IntentKind::Return => "The number the function returns, decimal or 0x hex",
+                        _ => "How many bytes to overwrite, from the address above",
+                    });
+                if d.kind == IntentKind::Fill {
+                    ui.label(RichText::new("Pattern (hex)").size(12.0).color(p.text_dim));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut pattern)
+                            .id(Id::new("kraken_intent_pattern"))
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text("90 or cc")
+                            .desired_width(110.0),
+                    );
+                }
+                if !r.has_focus() && d.preview.is_none() && !d.loading {
+                    r.request_focus();
+                }
+                preview = ui
+                    .add_enabled(!d.loading, egui::Button::new("Preview"))
+                    .on_hover_text("Show the bytes this would write")
+                    .on_disabled_hover_text("Working...")
+                    .clicked();
+            });
+        }
+        ui.add_space(4.0);
+        if d.loading {
+            ui.label(RichText::new("Working out the new bytes...").color(p.text_dim));
+        }
+        if let Some(pv) = &d.preview {
+            egui::Grid::new("kraken_intent_preview")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Now").size(12.0).color(p.text_dim));
+                    ui.label(RichText::new(spaced(&pv.original)).monospace());
+                    ui.end_row();
+                    ui.label(RichText::new("After").size(12.0).color(p.text_dim));
+                    ui.label(
+                        RichText::new(spaced(&pv.replacement))
+                            .monospace()
+                            .color(p.text_strong),
+                    );
+                    ui.end_row();
+                });
+            ui.add_space(2.0);
+            ui.columns(2, |cols| {
+                cols[0].label(
+                    RichText::new("Instructions now")
+                        .size(12.0)
+                        .color(p.text_dim),
+                );
+                for l in &pv.old_disassembly {
+                    cols[0].label(RichText::new(l).monospace().size(12.0));
+                }
+                cols[1].label(
+                    RichText::new("Instructions after")
+                        .size(12.0)
+                        .color(p.text_dim),
+                );
+                if pv.new_disassembly.is_empty() {
+                    cols[1].label(
+                        RichText::new("(not shown: no decoder for this processor here)")
+                            .size(12.0)
+                            .color(p.text_dim),
+                    );
+                }
+                for l in &pv.new_disassembly {
+                    cols[1].label(RichText::new(l).monospace().size(12.0).color(p.text_strong));
+                }
+            });
+            for n in &pv.notes {
+                ui.label(RichText::new(n).size(12.0).color(p.text_dim));
+            }
+        }
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(s.danger));
+        }
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Apply patch",
+            "Record the patch (Enter). Undo it from the History; nothing on disk changes",
+            if d.preview.is_some() {
+                Ok(())
+            } else {
+                Err("Preview the patch first".into())
+            },
+            d.applying || d.loading,
+            &mut apply,
+            &mut cancel,
+        );
+    });
+    if value != d.value {
+        vm.set_intent_value(value);
+    }
+    if pattern != d.pattern {
+        vm.set_intent_pattern(pattern);
+    }
+    if esc || cancel {
+        vm.cancel_intent();
+    } else if preview || (enter && d.preview.is_none() && d.kind.takes_input()) {
+        vm.preview_intent();
+    } else if apply || (enter && d.preview.is_some()) {
+        vm.apply_intent();
     }
 }
 

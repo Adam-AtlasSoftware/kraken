@@ -98,6 +98,14 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
             .size(12.0)
             .color(s.success),
         );
+        if !done.sha256.is_empty() {
+            ui.label(
+                RichText::new(format!("SHA-256 {}", done.sha256))
+                    .monospace()
+                    .size(11.0),
+            )
+            .on_hover_text("Hash of the exported file");
+        }
     }
     if let Some(e) = &vm.tools.patches.error {
         ui.label(RichText::new(e).color(s.danger));

@@ -6,6 +6,7 @@ mod bookmarks;
 pub mod ctype;
 mod edits;
 mod form;
+mod patch_intents;
 mod patches;
 mod search;
 mod source_edit;
@@ -20,6 +21,7 @@ pub use form::{
     CommandForm, CommandResult, FieldKind, FormField, ResultSegment, fields_for_schema,
     result_lines,
 };
+pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
 pub use patches::{
     AsmState, ExportDialog, ExportDone, MAX_PATCH_BYTES, PatchDialog, PatchItem, PatchOrigin,
     PatchesPanel, RunCompare, RunSide, parse_hex, spaced_hex,
@@ -127,6 +129,8 @@ pub struct NavTools {
     pub patch_dialog: Option<PatchDialog>,
     /// The dialog that exports the patched binary, when open.
     pub export_dialog: Option<ExportDialog>,
+    /// The one-click patch dialog (NOP, branch, return, fill), when open.
+    pub intent_dialog: Option<IntentDialog>,
     /// The Edit tab's function, when one is being edited.
     pub source_edit: Option<SourceEdit>,
     /// The Retype / Edit signature dialog, when open.
@@ -163,6 +167,7 @@ impl NavTools {
             || self.bookmark_dialog.is_some()
             || self.patch_dialog.is_some()
             || self.export_dialog.is_some()
+            || self.intent_dialog.is_some()
             || self.type_dialog.is_some()
             || self.function_dialog.is_some()
             || self.form.is_some()

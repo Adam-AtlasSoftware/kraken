@@ -123,3 +123,113 @@ fn enter_assembles_the_typed_instruction_then_stages_it() {
         })
     });
 }
+
+#[test]
+fn the_context_menu_patch_items_preview_then_apply_a_nop() {
+    use crate::panels::context::{self, NavChoice, Target, TargetKind};
+    use kraken_viewmodel::navtools::IntentKind;
+
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    h.app.dispatch(AppAction::GoToMain, &ctx);
+    h.run_until("the listing of main", |a| {
+        a.view_model()
+            .is_some_and(|vm| vm.views.listing.loaded && !vm.views.listing.rows.is_empty())
+    });
+    let vm = h.app.view_model_mut().expect("vm");
+    vm.select_listing_row(0);
+    let row = vm.views.listing.selected_row().cloned().expect("row");
+
+    let target = Target {
+        kind: TargetKind::Code,
+        address: Some(row.address),
+        name: None,
+        function: None,
+    };
+    let items = context::items(vm, &target);
+    let patch: Vec<_> = items.iter().filter(|i| i.group == Some("Patch")).collect();
+    assert_eq!(patch.len(), 6, "NOP, three branch edits, return, fill");
+    assert!(
+        patch
+            .iter()
+            .all(|i| i.disabled.is_none() || i.choice == NavChoice::PatchReturn)
+    );
+    let data = Target {
+        kind: TargetKind::Data,
+        ..target.clone()
+    };
+    let off = context::items(vm, &data)
+        .into_iter()
+        .find(|i| i.choice == NavChoice::PatchNop)
+        .expect("item");
+    assert!(off.disabled.is_some(), "NOP is for instructions");
+
+    context::run(&ctx, vm, &target, NavChoice::PatchNop);
+    h.run_until("the preview", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools
+                .intent_dialog
+                .as_ref()
+                .is_some_and(|d| d.preview.is_some())
+        })
+    });
+    let d = h
+        .app
+        .view_model()
+        .expect("vm")
+        .tools
+        .intent_dialog
+        .clone()
+        .expect("dialog");
+    assert_eq!(d.kind, IntentKind::Nop);
+    let pv = d.preview.expect("preview");
+    assert_eq!(pv.original.len(), row.bytes.len() * 2);
+    assert_eq!(pv.replacement.len(), pv.original.len());
+    assert!(pv.replacement.starts_with("0f1f") || pv.replacement.starts_with("90"));
+    h.step();
+    h.key(Key::Enter, Modifiers::NONE);
+    h.run_until("the NOP to be staged", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools.intent_dialog.is_none()
+                && vm
+                    .tools
+                    .patches
+                    .items
+                    .iter()
+                    .any(|p| p.address == row.address)
+        })
+    });
+
+    // A branch edit on a plain instruction is refused with a reason, and nothing is staged.
+    let vm = h.app.view_model_mut().expect("vm");
+    let next = vm.views.listing.rows.get(1).expect("row 1").address;
+    vm.begin_intent(IntentKind::BranchInvert, next);
+    h.run_until("the refusal", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools
+                .intent_dialog
+                .as_ref()
+                .is_some_and(|d| d.error.is_some())
+        })
+    });
+    let err = h
+        .app
+        .view_model()
+        .expect("vm")
+        .tools
+        .intent_dialog
+        .as_ref()
+        .and_then(|d| d.error.clone())
+        .expect("error");
+    assert!(err.to_lowercase().contains("conditional"), "{err}");
+    h.key(Key::Escape, Modifiers::NONE);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .expect("vm")
+            .tools
+            .intent_dialog
+            .is_none()
+    );
+}
