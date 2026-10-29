@@ -6,9 +6,13 @@
 //! `std::__cxx11::basic_string<...>::capacity() const`), with spaces turned into underscores
 //! (`_M_construct<char_const*>`), except after `operator`, where it uses a dot
 //! (`operator.new`). Special symbols get fixed names: `vtable`, `typeinfo`, `typeinfo-name`.
+//! Rust symbols (legacy `_ZN...17h<hash>E` and v0 `_R...`) go through `rustc-demangle`; the name is
+//! the last path component without generic arguments and without the hash
+//! (`core::ptr::drop_in_place<alloc::string::String>` -> `drop_in_place`).
 //! The mangled name stays available next to it (labels, `mangled` in summaries and symbols).
 
 use cpp_demangle::{DemangleOptions, Symbol};
+use rustc_demangle::try_demangle;
 
 /// A demangled symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,9 +37,34 @@ pub fn is_msvc(name: &str) -> bool {
     name.starts_with('?')
 }
 
-/// Whether `name` looks like a mangled C++ name (Itanium or Microsoft).
+/// Whether `name` is a Rust symbol: v0 (`_R`) or legacy (`_ZN`, ending in the 17h hash).
+pub fn is_rust(name: &str) -> bool {
+    let n = unversioned(name);
+    (n.starts_with("_R") || n.starts_with("_ZN")) && try_demangle(n).is_ok()
+}
+
+/// Whether `name` looks like a mangled name (Itanium C++, Microsoft or Rust).
 pub fn is_mangled(name: &str) -> bool {
-    is_msvc(name) || unversioned(name).starts_with("_Z")
+    is_msvc(name) || unversioned(name).starts_with("_Z") || is_rust(name)
+}
+
+/// Demangles a Rust symbol: the path with generics, without the hash, and the short name.
+fn demangle_rust(raw: &str) -> Option<Demangled> {
+    let d = try_demangle(raw).ok()?;
+    let full = format!("{d:#}");
+    let last = last_component(&full);
+    let short = if last.starts_with(['<', '{']) {
+        last
+    } else {
+        last.split('<').next().unwrap_or(last)
+    };
+    if short.is_empty() {
+        return None;
+    }
+    Some(Demangled {
+        name: sanitize(short),
+        full,
+    })
 }
 
 /// Demangles a Microsoft-decorated name: the whole name, and Ghidra's name for it.
@@ -55,6 +84,9 @@ pub fn demangle(raw: &str) -> Option<Demangled> {
         return demangle_msvc(raw);
     }
     let raw = unversioned(raw);
+    if is_rust(raw) {
+        return demangle_rust(raw);
+    }
     if !is_mangled(raw) {
         return None;
     }
@@ -249,6 +281,32 @@ mod tests {
 
     fn name(raw: &str) -> String {
         demangle(raw).map(|d| d.name).unwrap_or_default()
+    }
+
+    #[test]
+    fn rust_symbols_are_demangled_legacy_and_v0() {
+        let legacy = "_ZN4core3ptr42drop_in_place$LT$alloc..string..String$GT$17h0123456789abcdefE";
+        assert!(is_rust(legacy) && is_mangled(legacy));
+        let d = demangle(legacy).unwrap();
+        assert_eq!(d.full, "core::ptr::drop_in_place<alloc::string::String>");
+        assert_eq!(d.name, "drop_in_place");
+        assert_eq!(mangled(legacy).as_deref(), Some(legacy));
+
+        let v0 = "_RNvCs1234_7mycrate4main";
+        assert!(is_rust(v0));
+        let d = demangle(v0).unwrap();
+        assert_eq!(d.full, "mycrate::main");
+        assert_eq!(d.name, "main");
+
+        let closure = "_ZN4demo4main28_$u7b$$u7b$closure$u7d$$u7d$17h0123456789abcdefE";
+        assert_eq!(name(closure), "{{closure}}");
+        let imp = "_ZN60_$LT$alloc..string..String$u20$as$u20$core..fmt..Display$GT$3fmt17h0123456789abcdefE";
+        assert_eq!(name(imp), "fmt");
+        // C++ names and plain C names are not Rust
+        assert!(!is_rust("_ZN4RectC2Edd"));
+        assert!(!is_rust("_Rtl_thing"));
+        assert!(!is_rust("main"));
+        assert_eq!(name("_ZN4RectC2Edd"), "Rect");
     }
 
     #[test]

@@ -1451,6 +1451,7 @@ dependencies = [
  "libc",
  "msvc-demangler",
  "object 0.40.0",
+ "rustc-demangle",
  "serde",
  "serde_json",
  "sha2",

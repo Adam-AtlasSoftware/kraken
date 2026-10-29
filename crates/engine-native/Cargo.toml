@@ -14,6 +14,7 @@ path = "src/bin/kraken-native-worker.rs"
 [dependencies]
 async-trait = "0.1.89"
 cpp_demangle = "0.5.1"
+rustc-demangle = "0.1"
 engine-native-sys = { path = "../engine-native-sys", version = "0.1.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
 kraken-proto.workspace = true

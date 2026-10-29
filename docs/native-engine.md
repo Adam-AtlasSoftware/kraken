@@ -37,7 +37,7 @@ new projects.
 | Strings, imports, exports | Yes | Yes |
 | Rename, comments, prototypes, function create/delete | Yes, undoable | Yes, undoable |
 | Prototypes (`set-type`), calling conventions | Yes | Yes |
-| Debug-info (DWARF) types, C++ name demangling | Yes (types and prototypes; not variables) | Yes |
+| Debug-info (DWARF) types, C++ and Rust name demangling | Yes (types and prototypes; not variables) | Yes |
 | Function discovery on stripped code | Finds every function the symbol table lists; on a stripped program it can miss a small helper that is reached only by a jump from other code (`stripped_calc` has one, `FUN_001011c0`); Ghidra also lists its imported symbols as functions, so counts differ (14 and 22 for `stripped_calc`) | The reference |
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
 | Runs where | Linux | Linux; macOS and Windows experimental |

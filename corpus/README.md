@@ -205,3 +205,10 @@ updates; check `TOOLCHAIN.txt` and the manifest diff.
 
 Decision 78 also wants a "small source edit" variant of each program for mapping-precision
 tests; that is not part of this first corpus drop.
+
+## lang
+
+`corpus/lang` holds small freestanding programs in other languages for name and metadata tests.
+`rust_hello` (Rust, `no_std`) is built with legacy and v0 symbol mangling, with symbols and
+stripped, by `corpus/lang/build.sh` using the host's `rustc` (no container). `legacy` needs
+`RUSTC_BOOTSTRAP=1`, which the script sets.
