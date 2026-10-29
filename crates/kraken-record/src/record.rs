@@ -18,8 +18,10 @@ use kraken_proto::{
 /// Functions recorded per binary unless overridden.
 pub const DEFAULT_FUNCTION_CAP: usize = 200;
 /// Functions recorded for the statically linked `static_strops` binaries, whose fixtures would
-/// otherwise grow to several megabytes each. The user functions all lie within the first 96.
-pub const STATIC_FUNCTION_CAP: usize = 96;
+/// otherwise grow to several megabytes each. The user functions all lie within the first 48;
+/// with Ghidra 12.2, which no longer makes `.cold` fragments into functions, a larger cap
+/// reaches libc's `printf` and pulls libc into the whole-program rewrite tests.
+pub const STATIC_FUNCTION_CAP: usize = 48;
 /// Types recorded per binary unless overridden.
 pub const DEFAULT_TYPE_CAP: usize = 200;
 /// Strings recorded per binary.

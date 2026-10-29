@@ -16,7 +16,7 @@ usage: kraken-record [--check] [--jobs N] [--function-cap N] [--type-cap N]
 
 Records an engine-fake fixture per corpus binary into <corpus>/fixtures/<binary>.json: functions
 with their decompilation, listing, control-flow graph and references, plus types, the memory map,
-strings and imports/exports. The function cap is 200, or 96 for the static_* binaries; override it
+strings and imports/exports. The function cap is 200, or 48 for the static_* binaries; override it
 with --function-cap.
 With --check nothing is written: each binary is re-recorded in memory and compared structurally
 (functions, names, signatures, sizes, token kinds, type names, listing, CFG, references, memory
