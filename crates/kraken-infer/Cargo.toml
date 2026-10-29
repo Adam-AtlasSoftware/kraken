@@ -15,7 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.47", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
 toml = "0.8"
-kraken-procguard = { path = "../kraken-procguard", version = "0.1.0" }
+kraken-procguard = { path = "../kraken-procguard", version = "0.2.0" }
 kraken-proto.workspace = true
 
 [target.'cfg(unix)'.dependencies]

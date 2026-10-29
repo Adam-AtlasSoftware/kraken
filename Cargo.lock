@@ -1410,7 +1410,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine-dotnet"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "kraken-engine",
@@ -1427,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "engine-fake"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "kraken-engine",
@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "engine-ghidra"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "kraken-engine",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "engine-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "cpp_demangle",
@@ -1486,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "engine-native-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cc",
  "cxx",
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-acp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-agent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-assist"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-confine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "landlock",
  "libc",
@@ -2807,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-e2e"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -2826,7 +2826,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-emu"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "icicle-cpu",
  "icicle-vm",
@@ -2843,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "kraken-proto",
@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -2877,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -2907,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-gui-widgets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -2921,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-dotnet",
@@ -2952,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-infer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "getrandom 0.3.4",
@@ -2969,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "getrandom 0.3.4",
@@ -2986,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-layout"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "thiserror 2.0.21",
@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -3015,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kraken-proto",
  "proptest",
@@ -3026,14 +3026,14 @@ dependencies = [
 
 [[package]]
 name = "kraken-procguard"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "kraken-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "schemars 1.2.3",
@@ -3044,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -3064,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-record"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "engine-fake",
@@ -3080,7 +3080,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-registry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -3103,7 +3103,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-rewrite"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "cpp_demangle",
@@ -3135,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-sidecar"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kraken-procguard",
  "kraken-proto",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "kraken-viewmodel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3180,7 +3180,7 @@ dependencies = [
 
 [[package]]
 name = "krakend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
@@ -6856,7 +6856,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kraken-proto",
  "kraken-registry",

@@ -9,9 +9,9 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-engine-fake = { path = "../engine-fake", version = "0.1.0" }
-engine-ghidra = { path = "../engine-ghidra", version = "0.1.0" }
-kraken-engine = { path = "../kraken-engine", version = "0.1.0" }
+engine-fake = { path = "../engine-fake", version = "0.2.0" }
+engine-ghidra = { path = "../engine-ghidra", version = "0.2.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.2.0" }
 kraken-proto.workspace = true
 serde_json.workspace = true
 tempfile = "3"
@@ -19,6 +19,6 @@ thiserror.workspace = true
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros"] }
 
 [dev-dependencies]
-kraken-engine = { path = "../kraken-engine", version = "0.1.0", features = ["testing"] }
+kraken-engine = { path = "../kraken-engine", version = "0.2.0", features = ["testing"] }
 serde.workspace = true
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros"] }

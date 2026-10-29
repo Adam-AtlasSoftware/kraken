@@ -7,14 +7,14 @@ exclude = ["spikes"]
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Adam-AtlasSoftware/kraken"
-version = "0.1.0"
+version = "0.2.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "=1.2.3"
 thiserror = "2"
-kraken-proto = { path = "crates/kraken-proto", version = "0.1.0" }
+kraken-proto = { path = "crates/kraken-proto", version = "0.2.0" }
 
 # Third-party crates build without debug info in dev builds: much smaller target/ and faster
 # links, while KRAKEN's own crates keep full debug info for stepping and variable inspection.
