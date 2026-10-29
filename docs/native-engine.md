@@ -81,7 +81,7 @@ and the compiled Sleigh (`.sla`) files, which are built once from the pinned Ghi
 kraken setup --native
 ```
 
-From a source checkout this runs `cargo xtask native-src` (fetches the pinned Ghidra 12.1.4 sources,
+From a source checkout this runs `cargo xtask native-src` (fetches the pinned Ghidra 12.2 sources,
 SHA-256 checked) and `cargo xtask native-sla` (compiles the specifications with a C++ compiler,
 about a minute). If your `kraken` was built without the sources it then says so and prints the
 rebuild command:
@@ -245,7 +245,7 @@ kraken decompile --project ~/kraken-projects/thumb --address 0x105d4   # vm_run,
   and ULEB128 arithmetic of the DWARF and unwind tables. External symbols get stand-in addresses
   whose code is a return in the processor's own instruction set.
 
-Agreement with Ghidra 12.1.4 on the committed fixtures (`tests/agreement.rs`,
+Agreement with Ghidra 12.2 on the committed fixtures (`tests/agreement.rs`,
 `KRAKEN_AGREEMENT_SET=corpus/<set>`; recall over what Ghidra recorded):
 
 | Set (fixtures) | functions | bodies | xrefs (in image) | callers | CFG edges | strings | imports | exports | names |
@@ -314,3 +314,17 @@ same code linked into a shared library, so the time goes to the analysis, not to
   and data symbols in the decompiler output (`uRam0040d03c` where Ghidra shows `tls_hits`).
 - DWARF variables (globals and locals); DWARF types and function prototypes are imported.
 - Linux only.
+
+## How it is kept honest
+
+Every change runs the native engine against Ghidra's own recordings of the corpus (the `native` CI
+job, one leg per set: `corpus`, `corpus/pe`, `corpus/elf32`, `corpus/arm32`, `corpus/aarch64`,
+`corpus/riscv64`, `corpus/riscv32`). The job builds the pinned Ghidra 12.2 sources and Sleigh
+files, and fails if any test prints `skipped:`, so a missing prerequisite cannot pass as a green
+run. The same sweep runs locally:
+
+```sh
+cargo xtask native-sla
+KRAKEN_AGREEMENT_SET=corpus/pe cargo test -p engine-native --test agreement \
+  agreement_over_the_corpus -- --ignored --nocapture
+```

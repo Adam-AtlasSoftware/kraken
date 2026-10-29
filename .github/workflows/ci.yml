@@ -7,11 +7,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  GHIDRA_VERSION: "12.1.4"
-  GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
-  GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
-  JDK_URL: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz
-  JDK_SHA256: ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94
+  GHIDRA_VERSION: "12.2"
+  GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip
+  GHIDRA_SHA256: 2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67
+  JDK_URL: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz
+  JDK_SHA256: 68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb
 
 jobs:
   fmt:
@@ -99,7 +99,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/kraken-dev
-          key: kraken-dev-ghidra-12.1.4-${{ env.GHIDRA_SHA256 }}-jdk-${{ env.JDK_SHA256 }}
+          key: kraken-dev-ghidra-12.2-${{ env.GHIDRA_SHA256 }}-jdk-${{ env.JDK_SHA256 }}
 
       - name: Download Ghidra and Temurin
         if: steps.toolcache.outputs.cache-hit != 'true'
@@ -118,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           ghidra=$(echo ~/.cache/kraken-dev/ghidra/ghidra_${GHIDRA_VERSION}_PUBLIC)
-          jdk=$(echo ~/.cache/kraken-dev/jdk/jdk-21*)
+          jdk=$(echo ~/.cache/kraken-dev/jdk/jdk-25*)
           test -d "$ghidra" && test -d "$jdk"
           {
             echo "KRAKEN_GHIDRA_HOME=$ghidra"
@@ -147,6 +147,72 @@ jobs:
           grep -E -A1 -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | grep -v '^--$' | head -60 | while IFS= read -r line; do
             echo "::error title=test failure::${line//%/%25}"
           done || true
+
+  # The native engine against Ghidra's fixtures, on every merge. The decompiler sources and the
+  # compiled Sleigh tree are the pinned ones (`cargo xtask native-src` / `native-sla`), cached by
+  # the hash of the xtask files that pin them. Tests of this engine print "skipped: ..." and pass
+  # when a prerequisite is missing; here that is a failure, so a green leg means the comparison ran.
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        set:
+          - corpus
+          - corpus/pe
+          - corpus/elf32
+          - corpus/arm32
+          - corpus/aarch64
+          - corpus/riscv64
+          - corpus/riscv32
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the pinned Ghidra sources and the compiled Sleigh tree
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/kraken-dev/ghidra-src
+            ~/.cache/kraken-dev/native-sla
+          key: kraken-dev-native-${{ hashFiles('xtask/src/native_src.rs', 'xtask/src/native_sla.rs') }}
+
+      - name: Fetch the native engine sources and compile its Sleigh files
+        run: |
+          set -euo pipefail
+          cargo xtask native-src
+          cargo xtask native-sla
+          echo "KRAKEN_NATIVE_SPECS=$HOME/.cache/kraken-dev/native-sla/Ghidra_${GHIDRA_VERSION}_build" >> "$GITHUB_ENV"
+
+      - name: The native crates and the end-to-end flow (default set only)
+        if: matrix.set == 'corpus'
+        shell: bash
+        env:
+          KRAKEN_NO_DAEMON: "1"
+        run: |
+          cargo test -p engine-native-sys -p engine-native --features engine-native-sys/require-native 2>&1 | tee native-output.log
+          test ${PIPESTATUS[0]} -eq 0
+          cargo test -p kraken-e2e --test exit_criterion_native --features engine-native-sys/require-native 2>&1 | tee -a native-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Agreement with Ghidra over the set
+        shell: bash
+        env:
+          KRAKEN_AGREEMENT_SET: ${{ matrix.set }}
+        run: |
+          cargo test -p engine-native --features engine-native-sys/require-native \
+            --test agreement agreement_over_the_corpus -- --ignored --nocapture 2>&1 | tee -a native-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Fail when a test skipped itself
+        if: always()
+        shell: bash
+        run: |
+          if grep -n 'skipped:' native-output.log; then
+            echo "::error title=native tests skipped::a prerequisite is missing, the comparison did not run"
+            exit 1
+          fi
 
   # Python module (decision 15). The wheel is built twice: as released (no test hook), then with
   # the `testing` feature for the pytest suite, which runs against a FakeEngine-backed in-process
