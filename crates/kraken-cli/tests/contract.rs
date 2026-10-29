@@ -450,6 +450,17 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
             "patch_from_source",
             json!({"address": "0x401040", "source": "int f(void) { return 7; }"}),
         ),
+        ("integrations_list", json!({})),
+        (
+            "integration_install",
+            json!({"id": "mgba", "accept_licence": true}),
+        ),
+        (
+            "integration_use_path",
+            json!({"id": "mgba", "path": "/bin/true"}),
+        ),
+        ("integration_remove", json!({"id": "mgba"})),
+        ("emulator_run", json!({"id": "mgba"})),
         ("local_model_setup", json!({})),
         ("local_model_list", json!({})),
         ("local_model_devices", json!({})),

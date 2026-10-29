@@ -16,6 +16,7 @@ mod gui_navigate;
 mod help;
 mod history;
 mod infer;
+mod integrations;
 mod jobs;
 mod local_model;
 mod patch;
@@ -71,6 +72,13 @@ pub use infer::{
     LocalModelListOut, LocalModelRelease, LocalModelReleaseOut, LocalModelStart,
     LocalModelStartArgs, LocalModelStatus, LocalModelStatusOut, LocalModelStop, LocalModelStopOut,
     NoArgs as LocalModelNoArgs, ServedModelView, ServingBackend,
+};
+pub use integrations::{
+    EmulatorRun, EmulatorRunArgs, EmulatorRunOut, InstallProgress, IntegrationInstall,
+    IntegrationInstallArgs, IntegrationRemove, IntegrationRemoveArgs, IntegrationRemoveOut,
+    IntegrationSource, IntegrationStatus, IntegrationUsePath, IntegrationUsePathArgs,
+    IntegrationView, IntegrationsBackend, IntegrationsList, IntegrationsListOut, LaunchSpec,
+    RunTarget, command_line, expand_arg,
 };
 pub use jobs::{
     Analyze, AnalyzeOut, AnalyzeResult, JobAwait, JobAwaitArgs, JobCancel, JobIdArgs, JobStatus,
@@ -258,6 +266,12 @@ pub fn register_all(r: &mut Registry) {
     r.register(UiState);
     r.register(UiHighlight);
     r.register(KrakenHelp);
+    // Card INTEGRATIONS: emulators and tools downloaded from upstream on the user's machine.
+    r.register(IntegrationsList);
+    r.register(IntegrationInstall);
+    r.register(IntegrationUsePath);
+    r.register(IntegrationRemove);
+    r.register(EmulatorRun);
     r.register(LocalModelRecommend);
     r.register(LocalModelSetup);
     // Card LOCAL-SERVING: the models KRAKEN runs on this computer.

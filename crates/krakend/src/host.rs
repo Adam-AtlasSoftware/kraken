@@ -75,6 +75,8 @@ pub struct HostConfig {
     pub rewrite: Option<Arc<dyn RewriteBackend>>,
     /// What `local_model_setup` downloads and configures with, if any.
     pub local_models: Option<Arc<dyn kraken_registry::commands::LocalModelBackend>>,
+    /// The integrations catalogue (emulators and tools), if any.
+    pub integrations: Option<Arc<dyn kraken_registry::commands::IntegrationsBackend>>,
 }
 
 impl Default for HostConfig {
@@ -85,6 +87,7 @@ impl Default for HostConfig {
             max_sessions: 4,
             rewrite: None,
             local_models: None,
+            integrations: None,
         }
     }
 }
@@ -265,6 +268,9 @@ impl SessionHost {
             .with_config(self.inner.cfg.session_config.clone());
         if let Some(rewrite) = &self.inner.cfg.rewrite {
             session = session.with_rewrite(rewrite.clone());
+        }
+        if let Some(i) = &self.inner.cfg.integrations {
+            session = session.with_integrations(i.clone());
         }
         if let Some(lm) = &self.inner.cfg.local_models {
             session = session.with_local_models(lm.clone());

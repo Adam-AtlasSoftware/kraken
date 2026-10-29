@@ -171,7 +171,11 @@ impl OwnerSlot {
 }
 
 /// Commands that need no open project.
-const PROJECTLESS: [&str; 10] = [
+const PROJECTLESS: [&str; 14] = [
+    "integrations_list",
+    "integration_install",
+    "integration_use_path",
+    "integration_remove",
     "binary_probe",
     "ai_usage",
     "ai_jobs",
@@ -226,6 +230,9 @@ impl CliEnv {
                 Session::new(self.factory.clone()).with_config(self.config.session_config());
             if let Some(r) = &self.rewrite {
                 s = s.with_rewrite(r.clone());
+            }
+            if let Ok(i) = kraken_host::integrations::Integrations::system() {
+                s = s.with_integrations(Arc::new(i));
             }
             if let Ok(lm) = kraken_host::local_models::LocalModels::system() {
                 s = s.with_local_models(Arc::new(lm));

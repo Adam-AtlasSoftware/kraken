@@ -852,6 +852,7 @@ pub struct Session {
     source_patch: Option<Arc<dyn crate::commands::SourcePatchBackend>>,
     local_models: Option<Arc<dyn crate::commands::LocalModelBackend>>,
     serving: Option<Arc<dyn crate::commands::ServingBackend>>,
+    integrations: Option<Arc<dyn crate::commands::IntegrationsBackend>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -873,6 +874,7 @@ impl Session {
             source_patch: None,
             local_models: None,
             serving: None,
+            integrations: None,
         }
     }
 
@@ -880,6 +882,21 @@ impl Session {
     pub fn with_local_models(mut self, b: Arc<dyn crate::commands::LocalModelBackend>) -> Session {
         self.local_models = Some(b);
         self
+    }
+
+    /// Attaches the catalogue the `integration*` and `emulator_run` commands work with.
+    pub fn with_integrations(
+        mut self,
+        b: Arc<dyn crate::commands::IntegrationsBackend>,
+    ) -> Session {
+        self.integrations = Some(b);
+        self
+    }
+
+    pub(crate) fn integrations_backend(
+        &self,
+    ) -> Option<&Arc<dyn crate::commands::IntegrationsBackend>> {
+        self.integrations.as_ref()
     }
 
     /// Attaches the service the `local_model_*` commands start, stop and list models with.

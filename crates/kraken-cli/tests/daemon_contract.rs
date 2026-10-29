@@ -483,6 +483,55 @@ async fn every_registry_command_identical() {
     )
     .await;
     assert_eq!(bad.1["code"], "invalid_argument", "{}", bad.1);
+    // The catalogue is attached to the daemon only, like the download backend. Nothing is
+    // installed here: the list is read, and unknown ids are refused.
+    for name in [
+        "integrations_list",
+        "integration_install",
+        "integration_use_path",
+        "integration_remove",
+        "emulator_run",
+    ] {
+        covered.insert(name.to_string());
+    }
+    let listed = cli_call(&s.daemon_cli, &s.cli_dir, "integrations_list", &json!({})).await;
+    let ids: Vec<String> = listed.1["integrations"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|e| e["id"].as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        ids.iter().any(|i| i == "xemu") && ids.iter().any(|i| i == "wine"),
+        "{ids:?}"
+    );
+    for (name, args, code) in [
+        (
+            "integration_install",
+            json!({"id": "no-such-emulator", "accept_licence": true}),
+            "not_found",
+        ),
+        (
+            "integration_use_path",
+            json!({"id": "no-such-emulator", "path": "/bin/true"}),
+            "unsupported",
+        ),
+        (
+            "integration_remove",
+            json!({"id": "no-such-emulator"}),
+            "not_found",
+        ),
+        (
+            "emulator_run",
+            json!({"id": "no-such-emulator"}),
+            "not_found",
+        ),
+    ] {
+        let r = cli_call(&s.daemon_cli, &s.cli_dir, name, &args).await;
+        assert_eq!(r.1["code"], code, "{name}: {}", r.1);
+    }
     covered.extend(SERVING.iter().map(|n| n.to_string()));
     Box::pin(check_serving_commands(&s)).await;
     step!("search", json!({"query": "main", "kind": "names"}));

@@ -67,6 +67,7 @@ pub struct Setup {
     delay: Duration,
     without: Option<Cap>,
     config: SessionConfig,
+    integrations: Option<Arc<dyn kraken_registry::commands::IntegrationsBackend>>,
 }
 
 impl Setup {
@@ -76,6 +77,7 @@ impl Setup {
             delay: Duration::ZERO,
             without: None,
             config: SessionConfig::default(),
+            integrations: None,
         }
     }
 
@@ -100,6 +102,15 @@ impl Setup {
     }
 
     /// Builds a session and creates the project through the `project_create` command.
+    /// Attaches an integrations catalogue to the session.
+    pub fn integrations(
+        mut self,
+        b: Arc<dyn kraken_registry::commands::IntegrationsBackend>,
+    ) -> Setup {
+        self.integrations = Some(b);
+        self
+    }
+
     pub async fn start(self) -> Env {
         let tmp = tempfile::tempdir().expect("tempdir");
         let binary = tmp.path().join("prog.bin");
@@ -111,7 +122,10 @@ impl Setup {
             without: self.without,
             created: AtomicUsize::new(0),
         });
-        let session = Session::new(factory.clone()).with_config(self.config);
+        let mut session = Session::new(factory.clone()).with_config(self.config);
+        if let Some(b) = self.integrations {
+            session = session.with_integrations(b);
+        }
         let env = Env {
             tmp,
             session,

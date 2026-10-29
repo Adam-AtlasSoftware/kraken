@@ -342,11 +342,18 @@ impl DaemonHandler {
                 | "local_model_hold"
                 | "local_model_release"
                 | "local_model_stop"
+                | "integrations_list"
+                | "integration_install"
+                | "integration_use_path"
+                | "integration_remove"
         ) {
             // About a file, not a project: no session is made for it. The command applies the
             // agent path policy itself.
             let ctx = context(&p, conn, &self.approvals, Path::new(&p.project_dir));
             let mut session = kraken_registry::Session::new(self.host.factory().clone());
+            if let Some(i) = &self.host.config().integrations {
+                session = session.with_integrations(i.clone());
+            }
             if let Some(lm) = &self.host.config().local_models {
                 session = session.with_local_models(lm.clone());
             }

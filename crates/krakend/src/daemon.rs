@@ -188,6 +188,9 @@ pub fn start_full(
             local_models: kraken_host::local_models::LocalModels::system()
                 .ok()
                 .map(|m| Arc::new(m) as Arc<dyn kraken_registry::commands::LocalModelBackend>),
+            integrations: kraken_host::integrations::Integrations::system()
+                .ok()
+                .map(|i| Arc::new(i) as Arc<dyn kraken_registry::commands::IntegrationsBackend>),
         },
         opts.clock.clone(),
         hub.clone(),
