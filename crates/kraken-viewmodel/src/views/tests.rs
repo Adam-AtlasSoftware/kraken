@@ -1276,7 +1276,7 @@ mod recorded {
         l.vm.ensure_graph();
         l.settle();
         let g = l.vm.views.graph.data.as_ref().expect("graph built");
-        assert_eq!(g.blocks.len(), 18);
+        assert_eq!(g.blocks.len(), 19);
         let lines: usize = g.blocks.iter().map(|b| b.lines.len()).sum();
         assert_eq!(lines, 109);
         assert!(!g.edges.is_empty());

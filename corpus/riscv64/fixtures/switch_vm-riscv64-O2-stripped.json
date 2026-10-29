@@ -561,7 +561,7 @@
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x1006c0", "space": "ram"},
         "language": "c",
-        "text": "\nvoid entry(void)\n\n{\n  undefined8 uVar1;\n  undefined8 in_stack_00000000;\n  \n  uVar1 = _PREINIT_0();\n  FUN_ram_00100640(main,in_stack_00000000,&stack0x00000008,0,0,uVar1,&stack0x00000000);\n  ebreak();\n  gp = 0x102828;\n  return;\n}\n",
+        "text": "\nvoid entry(void)\n\n{\n  undefined8 uVar1;\n  undefined8 uStack0000000000000000;\n  undefined1 uStack0000000000000008;\n  \n  uVar1 = _PREINIT_0();\n  FUN_ram_00100640(main,uStack0000000000000000,&uStack0000000000000008,0,0,uVar1,\n                   &uStack0000000000000000);\n  ebreak();\n  gp = 0x102828;\n  return;\n}\n",
         "tokens": [
           {"end": 5, "kind": "type", "start": 1, "symbol": "void"},
           {"end": 11, "kind": "function", "start": 6, "symbol": "entry", "target": {"kind": "native", "offset": "0x1006c0", "space": "ram"}},
@@ -569,31 +569,33 @@
           {"end": 33, "kind": "type", "start": 23, "symbol": "undefined8"},
           {"end": 39, "kind": "variable", "start": 34, "symbol": "uVar1"},
           {"end": 53, "kind": "type", "start": 43, "symbol": "undefined8"},
-          {"end": 71, "kind": "variable", "start": 54, "symbol": "in_stack_00000000"},
-          {"end": 83, "kind": "variable", "start": 78, "symbol": "uVar1", "varnode": "(register, 0x2050, 8)"},
-          {"end": 85, "kind": "op", "start": 84},
-          {"end": 96, "kind": "function", "start": 86, "symbol": "_PREINIT_0", "target": {"kind": "native", "offset": "0x1006e2", "space": "ram"}},
-          {"end": 118, "kind": "function", "start": 102, "symbol": "FUN_ram_00100640", "target": {"kind": "native", "offset": "0x100640", "space": "ram"}},
-          {"end": 123, "kind": "variable", "start": 119, "symbol": "main"},
-          {"end": 124, "kind": "op", "start": 123},
-          {"end": 141, "kind": "variable", "start": 124, "symbol": "in_stack_00000000", "varnode": "(stack, 0x0, 8)"},
-          {"end": 142, "kind": "op", "start": 141},
-          {"end": 143, "kind": "op", "start": 142},
-          {"end": 158, "kind": "variable", "start": 143, "symbol": "stack0x00000008"},
-          {"end": 159, "kind": "op", "start": 158},
-          {"end": 160, "kind": "constant", "start": 159, "symbol": "0", "varnode": "(const, 0x0, 8)"},
-          {"end": 161, "kind": "op", "start": 160},
-          {"end": 162, "kind": "constant", "start": 161, "symbol": "0", "varnode": "(const, 0x0, 8)"},
-          {"end": 163, "kind": "op", "start": 162},
-          {"end": 168, "kind": "variable", "start": 163, "symbol": "uVar1", "varnode": "(register, 0x2050, 8)"},
-          {"end": 169, "kind": "op", "start": 168},
-          {"end": 170, "kind": "op", "start": 169},
-          {"end": 185, "kind": "variable", "start": 170, "symbol": "stack0x00000000"},
-          {"end": 196, "kind": "op", "start": 190},
-          {"end": 204, "kind": "variable", "start": 202, "symbol": "gp", "varnode": "(register, 0x2018, 8)"},
-          {"end": 206, "kind": "op", "start": 205},
-          {"end": 215, "kind": "constant", "start": 207, "symbol": "0x102828", "varnode": "(const, 0x102828, 8)"},
-          {"end": 225, "kind": "op", "start": 219}
+          {"end": 76, "kind": "variable", "start": 54, "symbol": "uStack0000000000000000"},
+          {"end": 90, "kind": "type", "start": 80, "symbol": "undefined1"},
+          {"end": 113, "kind": "variable", "start": 91, "symbol": "uStack0000000000000008"},
+          {"end": 125, "kind": "variable", "start": 120, "symbol": "uVar1", "varnode": "(register, 0x2050, 8)"},
+          {"end": 127, "kind": "op", "start": 126},
+          {"end": 138, "kind": "function", "start": 128, "symbol": "_PREINIT_0", "target": {"kind": "native", "offset": "0x1006e2", "space": "ram"}},
+          {"end": 160, "kind": "function", "start": 144, "symbol": "FUN_ram_00100640", "target": {"kind": "native", "offset": "0x100640", "space": "ram"}},
+          {"end": 165, "kind": "variable", "start": 161, "symbol": "main"},
+          {"end": 166, "kind": "op", "start": 165},
+          {"end": 188, "kind": "variable", "start": 166, "symbol": "uStack0000000000000000", "varnode": "(stack, 0x0, 8)"},
+          {"end": 189, "kind": "op", "start": 188},
+          {"end": 190, "kind": "op", "start": 189},
+          {"end": 212, "kind": "variable", "start": 190, "symbol": "uStack0000000000000008"},
+          {"end": 213, "kind": "op", "start": 212},
+          {"end": 214, "kind": "constant", "start": 213, "symbol": "0", "varnode": "(const, 0x0, 8)"},
+          {"end": 215, "kind": "op", "start": 214},
+          {"end": 216, "kind": "constant", "start": 215, "symbol": "0", "varnode": "(const, 0x0, 8)"},
+          {"end": 217, "kind": "op", "start": 216},
+          {"end": 222, "kind": "variable", "start": 217, "symbol": "uVar1", "varnode": "(register, 0x2050, 8)"},
+          {"end": 223, "kind": "op", "start": 222},
+          {"end": 244, "kind": "op", "start": 243},
+          {"end": 266, "kind": "variable", "start": 244, "symbol": "uStack0000000000000000"},
+          {"end": 277, "kind": "op", "start": 271},
+          {"end": 285, "kind": "variable", "start": 283, "symbol": "gp", "varnode": "(register, 0x2018, 8)"},
+          {"end": 287, "kind": "op", "start": 286},
+          {"end": 296, "kind": "constant", "start": 288, "symbol": "0x102828", "varnode": "(const, 0x102828, 8)"},
+          {"end": 306, "kind": "op", "start": 300}
         ],
         "warnings": []
       },
@@ -1066,7 +1068,7 @@
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x10073c", "space": "ram"},
         "language": "c",
-        "text": "\nvoid _FINI_0(void)\n\n{\n  if (DAT_ram_00102030 != '\\0') {\n    return;\n  }\n  __cxa_finalize(PTR_LOOP_ram_00102028);\n  FUN_ram_001006ee();\n  DAT_ram_00102030 = 1;\n  return;\n}\n",
+        "text": "\nvoid _FINI_0(void)\n\n{\n  if (DAT_ram_00102030 == '\\0') {\n    __cxa_finalize(PTR_LOOP_ram_00102028);\n    FUN_ram_001006ee();\n    DAT_ram_00102030 = 1;\n    return;\n  }\n  return;\n}\n",
         "tokens": [
           {"end": 5, "kind": "type", "start": 1, "symbol": "void"},
           {"end": 13, "kind": "function", "start": 6, "symbol": "_FINI_0", "target": {"kind": "native", "offset": "0x10073c", "space": "ram"}},
@@ -1075,14 +1077,14 @@
           {"end": 45, "kind": "variable", "start": 29, "symbol": "DAT_ram_00102030", "target": {"kind": "native", "offset": "0x102030", "space": "ram"}, "varnode": "(ram, 0x102030, 1)"},
           {"end": 48, "kind": "op", "start": 46},
           {"end": 53, "kind": "constant", "start": 49, "symbol": "'\\0'", "varnode": "(const, 0x0, 1)"},
-          {"end": 67, "kind": "op", "start": 61},
-          {"end": 89, "kind": "function", "start": 75, "symbol": "__cxa_finalize", "target": {"kind": "native", "offset": "0x103030", "space": "ram"}},
-          {"end": 111, "kind": "variable", "start": 90, "symbol": "PTR_LOOP_ram_00102028", "target": {"kind": "native", "offset": "0x102028", "space": "ram"}, "varnode": "(ram, 0x102028, 8)"},
-          {"end": 132, "kind": "function", "start": 116, "symbol": "FUN_ram_001006ee", "target": {"kind": "native", "offset": "0x1006ee", "space": "ram"}},
-          {"end": 154, "kind": "variable", "start": 138, "symbol": "DAT_ram_00102030", "target": {"kind": "native", "offset": "0x102030", "space": "ram"}, "varnode": "(ram, 0x102030, 1)"},
-          {"end": 156, "kind": "op", "start": 155},
-          {"end": 158, "kind": "constant", "start": 157, "symbol": "1", "varnode": "(const, 0x1, 1)"},
-          {"end": 168, "kind": "op", "start": 162}
+          {"end": 75, "kind": "function", "start": 61, "symbol": "__cxa_finalize", "target": {"kind": "native", "offset": "0x103030", "space": "ram"}},
+          {"end": 97, "kind": "variable", "start": 76, "symbol": "PTR_LOOP_ram_00102028", "target": {"kind": "native", "offset": "0x102028", "space": "ram"}, "varnode": "(ram, 0x102028, 8)"},
+          {"end": 120, "kind": "function", "start": 104, "symbol": "FUN_ram_001006ee", "target": {"kind": "native", "offset": "0x1006ee", "space": "ram"}},
+          {"end": 144, "kind": "variable", "start": 128, "symbol": "DAT_ram_00102030", "target": {"kind": "native", "offset": "0x102030", "space": "ram"}, "varnode": "(ram, 0x102030, 1)"},
+          {"end": 146, "kind": "op", "start": 145},
+          {"end": 148, "kind": "constant", "start": 147, "symbol": "1", "varnode": "(const, 0x1, 1)"},
+          {"end": 160, "kind": "op", "start": 154},
+          {"end": 174, "kind": "op", "start": 168}
         ],
         "warnings": []
       },
@@ -1358,19 +1360,19 @@
           {"end": 523, "kind": "type", "start": 513, "symbol": "undefined1"},
           {"end": 531, "kind": "variable", "start": 524, "symbol": "auVar11"},
           {"end": 535, "kind": "constant", "start": 533, "symbol": "16"},
-          {"end": 549, "kind": "variable", "start": 543, "symbol": "auVar6", "varnode": "(unique, 0x100000a4, 8)"},
+          {"end": 549, "kind": "variable", "start": 543, "symbol": "auVar6", "varnode": "(unique, 0x100000a1, 8)"},
           {"end": 550, "kind": "op", "start": 549},
           {"end": 557, "kind": "op", "start": 556},
           {"end": 566, "kind": "variable", "start": 558, "symbol": "unaff_s2", "varnode": "(register, 0x2090, 8)"},
-          {"end": 576, "kind": "variable", "start": 570, "symbol": "auVar6", "varnode": "(unique, 0x1000009c, 8)"},
+          {"end": 576, "kind": "variable", "start": 570, "symbol": "auVar6", "varnode": "(unique, 0x10000099, 8)"},
           {"end": 577, "kind": "op", "start": 576},
           {"end": 584, "kind": "op", "start": 583},
           {"end": 593, "kind": "variable", "start": 585, "symbol": "unaff_s0", "varnode": "(register, 0x2040, 8)"},
-          {"end": 603, "kind": "variable", "start": 597, "symbol": "auVar5", "varnode": "(unique, 0x10000094, 8)"},
+          {"end": 603, "kind": "variable", "start": 597, "symbol": "auVar5", "varnode": "(unique, 0x10000091, 8)"},
           {"end": 604, "kind": "op", "start": 603},
           {"end": 611, "kind": "op", "start": 610},
           {"end": 620, "kind": "variable", "start": 612, "symbol": "unaff_s2", "varnode": "(register, 0x2090, 8)"},
-          {"end": 630, "kind": "variable", "start": 624, "symbol": "auVar5", "varnode": "(unique, 0x1000008c, 8)"},
+          {"end": 630, "kind": "variable", "start": 624, "symbol": "auVar5", "varnode": "(unique, 0x10000089, 8)"},
           {"end": 631, "kind": "op", "start": 630},
           {"end": 638, "kind": "op", "start": 637},
           {"end": 647, "kind": "variable", "start": 639, "symbol": "unaff_s0", "varnode": "(register, 0x2040, 8)"},
@@ -1429,7 +1431,7 @@
           {"end": 1016, "kind": "variable", "start": 1008, "symbol": "unaff_s0", "varnode": "(register, 0x2040, 8)"},
           {"end": 1018, "kind": "op", "start": 1017},
           {"end": 1023, "kind": "constant", "start": 1019, "symbol": "0x80", "varnode": "(const, 0x80, 8)"},
-          {"end": 1039, "kind": "variable", "start": 1034, "symbol": "uVar8", "varnode": "(unique, 0x100000ec, 8)"},
+          {"end": 1039, "kind": "variable", "start": 1034, "symbol": "uVar8", "varnode": "(unique, 0x100000e9, 8)"},
           {"end": 1041, "kind": "op", "start": 1040},
           {"end": 1053, "kind": "variable", "start": 1042, "symbol": "extraout_a1", "varnode": "(register, 0x2058, 8)"},
           {"end": 1065, "kind": "op", "start": 1063},
@@ -1536,9 +1538,9 @@
           {"end": 1667, "kind": "variable", "start": 1659, "symbol": "unaff_s0", "varnode": "(register, 0x2040, 8)"},
           {"end": 1669, "kind": "op", "start": 1668},
           {"end": 1674, "kind": "constant", "start": 1670, "symbol": "0x84", "varnode": "(const, 0x84, 8)"},
-          {"end": 1692, "kind": "variable", "start": 1685, "symbol": "auVar11", "varnode": "(unique, 0x1000011c, 16)"},
+          {"end": 1692, "kind": "variable", "start": 1685, "symbol": "auVar11", "varnode": "(unique, 0x10000119, 16)"},
           {"end": 1694, "kind": "op", "start": 1693},
-          {"end": 1701, "kind": "variable", "start": 1695, "symbol": "auVar5", "varnode": "(unique, 0x1000008c, 16)"},
+          {"end": 1701, "kind": "variable", "start": 1695, "symbol": "auVar5", "varnode": "(unique, 0x10000089, 16)"},
           {"end": 1713, "kind": "op", "start": 1711},
           {"end": 1720, "kind": "variable", "start": 1715, "symbol": "uVar8", "varnode": "(register, 0x2070, 8)"},
           {"end": 1722, "kind": "op", "start": 1721},
@@ -1562,9 +1564,9 @@
           {"end": 1841, "kind": "variable", "start": 1836, "symbol": "uVar2", "varnode": "(unique, 0x6400, 4)"},
           {"end": 1843, "kind": "op", "start": 1842},
           {"end": 1849, "kind": "variable", "start": 1844, "symbol": "uVar3", "varnode": "(unique, 0x6400, 4)"},
-          {"end": 1864, "kind": "variable", "start": 1857, "symbol": "auVar11", "varnode": "(unique, 0x1000012c, 16)"},
+          {"end": 1864, "kind": "variable", "start": 1857, "symbol": "auVar11", "varnode": "(unique, 0x10000129, 16)"},
           {"end": 1866, "kind": "op", "start": 1865},
-          {"end": 1873, "kind": "variable", "start": 1867, "symbol": "auVar6", "varnode": "(unique, 0x1000009c, 16)"},
+          {"end": 1873, "kind": "variable", "start": 1867, "symbol": "auVar6", "varnode": "(unique, 0x10000099, 16)"},
           {"end": 1886, "kind": "op", "start": 1881},
           {"end": 1896, "kind": "variable", "start": 1888, "symbol": "unaff_s3", "varnode": "(register, 0x2098, 8)"},
           {"end": 1899, "kind": "op", "start": 1897},
@@ -1658,7 +1660,7 @@
           {"end": 2453, "kind": "constant", "start": 2441, "symbol": "\"bad opcode\"", "varnode": "(const, 0x100c18, 8)"},
           {"end": 2454, "kind": "op", "start": 2453},
           {"end": 2459, "kind": "variable", "start": 2454, "symbol": "uVar8", "varnode": "(register, 0x2070, 8)"},
-          {"end": 2469, "kind": "variable", "start": 2464, "symbol": "uVar8", "varnode": "(unique, 0x100000e4, 8)"},
+          {"end": 2469, "kind": "variable", "start": 2464, "symbol": "uVar8", "varnode": "(unique, 0x100000e1, 8)"},
           {"end": 2471, "kind": "op", "start": 2470},
           {"end": 2486, "kind": "variable", "start": 2472, "symbol": "extraout_a1_00", "varnode": "(register, 0x2058, 8)"},
           {"end": 2524, "kind": "function", "start": 2508, "symbol": "FUN_ram_00100776", "target": {"kind": "native", "offset": "0x100776", "space": "ram"}},
@@ -1898,7 +1900,12 @@
           {"end": "0x100898", "instructions": 1, "start": "0x100896"},
           {"end": "0x100ae0", "instructions": 4, "start": "0x100ad2"},
           {"end": "0x100aec", "instructions": 3, "start": "0x100ae0"},
-          {"end": "0x100afa", "instructions": 4, "start": "0x100aec"}
+          {"end": "0x100afa", "instructions": 4, "start": "0x100aec"},
+          {"end": "0x100b00", "instructions": 2, "start": "0x100afa"},
+          {"end": "0x100b10", "instructions": 6, "start": "0x100b00"},
+          {"end": "0x100b12", "instructions": 1, "start": "0x100b10"},
+          {"end": "0x100b1c", "instructions": 3, "start": "0x100b12"},
+          {"end": "0x100bb2", "instructions": 3, "start": "0x100ba8"}
         ],
         "edges": [
           {"from": "0x10079c", "kind": "conditional_false", "to": "0x1007b2"},
@@ -1921,7 +1928,12 @@
           {"from": "0x10088e", "kind": "conditional_false", "to": "0x100896"},
           {"from": "0x100896", "kind": "jump", "to": "0x10082a"},
           {"from": "0x100ad2", "kind": "fallthrough", "to": "0x100ae0"},
-          {"from": "0x100ae0", "kind": "fallthrough", "to": "0x100aec"}
+          {"from": "0x100ae0", "kind": "fallthrough", "to": "0x100aec"},
+          {"from": "0x100aec", "kind": "fallthrough", "to": "0x100afa"},
+          {"from": "0x100afa", "kind": "conditional_false", "to": "0x100b00"},
+          {"from": "0x100afa", "kind": "conditional_true", "to": "0x100ba8"},
+          {"from": "0x100b00", "kind": "fallthrough", "to": "0x100b10"},
+          {"from": "0x100b10", "kind": "switch", "to": "0x100b12"}
         ],
         "function": "0x10079c"
       },
@@ -1994,10 +2006,10 @@
           {"end": 452, "kind": "op", "start": 451},
           {"end": 454, "kind": "op", "start": 453},
           {"end": 470, "kind": "variable", "start": 454, "symbol": "DAT_ram_00100cc8"},
-          {"end": 484, "kind": "variable", "start": 476, "symbol": "unaff_s0", "varnode": "(unique, 0x1000009a, 8)"},
+          {"end": 484, "kind": "variable", "start": 476, "symbol": "unaff_s0", "varnode": "(unique, 0x10000097, 8)"},
           {"end": 486, "kind": "op", "start": 485},
           {"end": 494, "kind": "variable", "start": 487, "symbol": "param_1", "varnode": "(register, 0x2050, 8)"},
-          {"end": 508, "kind": "variable", "start": 500, "symbol": "unaff_s2", "varnode": "(unique, 0x100000ca, 8)"},
+          {"end": 508, "kind": "variable", "start": 500, "symbol": "unaff_s2", "varnode": "(unique, 0x100000c7, 8)"},
           {"end": 510, "kind": "op", "start": 509},
           {"end": 518, "kind": "variable", "start": 511, "symbol": "param_2", "varnode": "(register, 0x2058, 8)"},
           {"end": 530, "kind": "keyword", "start": 526, "symbol": "else"},
@@ -2016,7 +2028,7 @@
           {"end": 648, "kind": "variable", "start": 640, "symbol": "unaff_s0", "varnode": "(register, 0x2040, 8)"},
           {"end": 650, "kind": "op", "start": 649},
           {"end": 655, "kind": "constant", "start": 651, "symbol": "0x80", "varnode": "(const, 0x80, 8)"},
-          {"end": 671, "kind": "variable", "start": 666, "symbol": "uVar6", "varnode": "(unique, 0x100000aa, 8)"},
+          {"end": 671, "kind": "variable", "start": 666, "symbol": "uVar6", "varnode": "(unique, 0x100000a7, 8)"},
           {"end": 673, "kind": "op", "start": 672},
           {"end": 685, "kind": "variable", "start": 674, "symbol": "extraout_a1", "varnode": "(register, 0x2058, 8)"},
           {"end": 697, "kind": "op", "start": 695},
@@ -2234,7 +2246,7 @@
           {"end": 2006, "kind": "constant", "start": 1994, "symbol": "\"bad opcode\"", "varnode": "(const, 0x100c18, 8)"},
           {"end": 2007, "kind": "op", "start": 2006},
           {"end": 2012, "kind": "variable", "start": 2007, "symbol": "uVar6", "varnode": "(register, 0x2070, 8)"},
-          {"end": 2022, "kind": "variable", "start": 2017, "symbol": "uVar6", "varnode": "(unique, 0x100000a2, 8)"},
+          {"end": 2022, "kind": "variable", "start": 2017, "symbol": "uVar6", "varnode": "(unique, 0x1000009f, 8)"},
           {"end": 2024, "kind": "op", "start": 2023},
           {"end": 2039, "kind": "variable", "start": 2025, "symbol": "extraout_a1_00", "varnode": "(register, 0x2058, 8)"},
           {"end": 2077, "kind": "function", "start": 2061, "symbol": "FUN_ram_00100776", "target": {"kind": "native", "offset": "0x100776", "space": "ram"}},
@@ -2926,145 +2938,12 @@
           "flow": "call",
           "mnemonic": "jal",
           "operands": [{"kind": "register", "text": "ra"}, {"kind": "other", "text": ", "}, {"kind": "symbol", "target": {"kind": "native", "offset": "0x100776", "space": "ram"}, "text": "FUN_ram_00100776"}]
-        }
-      ],
-      "summary": {
-        "completeness": {"kind": "complete"},
-        "fn_hash": "c0059255bc0fa14894ce73ea72961801f8a2358f3f6ab6126f8f79344ccf9da5",
-        "locator": {"kind": "native", "offset": "0x10079c", "space": "ram"},
-        "name": "FUN_ram_0010079c",
-        "signature": "char * FUN_ram_0010079c(long param_1, long param_2, ulong param_3)",
-        "size": 242
-      },
-      "xrefs": [
-        {"from": "0x10069a", "from_function": {"address": "0x100680", "name": "main"}, "kind": "call", "to": "0x10079c", "to_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}},
-        {"from": "0x1007ae", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x10082a"},
-        {"from": "0x1007dc", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ad2"},
-        {"from": "0x1007e4", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100cc8"},
-        {"from": "0x100826", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x1007c2"},
-        {"from": "0x100830", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100bd8"},
-        {"from": "0x100834", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
-        {"from": "0x10083c", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ae0"},
-        {"from": "0x100852", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ae0"},
-        {"from": "0x100866", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x10081c"},
-        {"from": "0x10086e", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100be8"},
-        {"from": "0x100872", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
-        {"from": "0x10087e", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100c08"},
-        {"from": "0x10088a", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100660", "to_function": {"address": "0x100660", "name": "FUN_ram_00100660"}},
-        {"from": "0x100892", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x1007c2"},
-        {"from": "0x100896", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x10082a"},
-        {"from": "0x100ad8", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100c18"},
-        {"from": "0x100adc", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
-        {"from": "0x100ae4", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100bf8"},
-        {"from": "0x100ae8", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
-        {"from": "0x100af2", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100be8"},
-        {"from": "0x100af6", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
-        {"from": "0x100d78", "kind": "other", "to": "0x10079c", "to_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}},
-        {"from": "0x100dd0", "kind": "data", "to": "0x10079c", "to_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}}
-      ]
-    },
-    {
-      "cfg": {
-        "blocks": [
-          {"end": "0x100b00", "instructions": 2, "start": "0x100afa"},
-          {"end": "0x100b10", "instructions": 6, "start": "0x100b00"},
-          {"end": "0x100b12", "instructions": 1, "start": "0x100b10"},
-          {"end": "0x100b1c", "instructions": 3, "start": "0x100b12"},
-          {"end": "0x100bb2", "instructions": 3, "start": "0x100ba8"}
-        ],
-        "edges": [
-          {"from": "0x100afa", "kind": "conditional_false", "to": "0x100b00"},
-          {"from": "0x100afa", "kind": "conditional_true", "to": "0x100ba8"},
-          {"from": "0x100b00", "kind": "fallthrough", "to": "0x100b10"},
-          {"from": "0x100b10", "kind": "switch", "to": "0x100b12"}
-        ],
-        "function": "0x100afa"
-      },
-      "decompile": {
-        "completeness": {"kind": "complete"},
-        "function": {"kind": "native", "offset": "0x100afa", "space": "ram"},
-        "language": "c",
-        "text": "\nchar * FUN_ram_00100afa(undefined8 param_1)\n\n{\n  switch(param_1) {\n  case 0:\n    return \"halt\";\n  case 1:\n    return \"push\";\n  case 2:\n    return \"add\";\n  case 3:\n    return \"sub\";\n  case 4:\n    return \"mul\";\n  case 5:\n    return \"dup\";\n  case 6:\n    return \"swap\";\n  case 7:\n    return \"drop\";\n  case 8:\n    return \"neg\";\n  case 9:\n    return \"jnz\";\n  case 10:\n    return \"dec\";\n  case 0xb:\n    return \"print\";\n  case 0xc:\n    return \"and\";\n  case 0xd:\n    return \"or\";\n  case 0xe:\n    return \"xor\";\n  default:\n    return \"?\";\n  }\n}\n",
-        "tokens": [
-          {"end": 5, "kind": "type", "start": 1, "symbol": "char"},
-          {"end": 7, "kind": "op", "start": 6},
-          {"end": 24, "kind": "function", "start": 8, "symbol": "FUN_ram_00100afa", "target": {"kind": "native", "offset": "0x100afa", "space": "ram"}},
-          {"end": 35, "kind": "type", "start": 25, "symbol": "undefined8"},
-          {"end": 43, "kind": "variable", "start": 36, "symbol": "param_1"},
-          {"end": 56, "kind": "op", "start": 50},
-          {"end": 64, "kind": "variable", "start": 57, "symbol": "param_1", "varnode": "(register, 0x2050, 8)"},
-          {"end": 74, "kind": "keyword", "start": 70, "symbol": "case"},
-          {"end": 76, "kind": "constant", "start": 75, "symbol": "0", "varnode": "(register, 0x2050, 8)"},
-          {"end": 88, "kind": "op", "start": 82},
-          {"end": 95, "kind": "constant", "start": 89, "symbol": "\"halt\"", "varnode": "(const, 0x100c28, 8)"},
-          {"end": 103, "kind": "keyword", "start": 99, "symbol": "case"},
-          {"end": 105, "kind": "constant", "start": 104, "symbol": "1", "varnode": "(register, 0x2050, 8)"},
-          {"end": 117, "kind": "op", "start": 111},
-          {"end": 124, "kind": "constant", "start": 118, "symbol": "\"push\"", "varnode": "(const, 0x100c30, 8)"},
-          {"end": 132, "kind": "keyword", "start": 128, "symbol": "case"},
-          {"end": 134, "kind": "constant", "start": 133, "symbol": "2", "varnode": "(register, 0x2050, 8)"},
-          {"end": 146, "kind": "op", "start": 140},
-          {"end": 152, "kind": "constant", "start": 147, "symbol": "\"add\"", "varnode": "(const, 0x100c38, 8)"},
-          {"end": 160, "kind": "keyword", "start": 156, "symbol": "case"},
-          {"end": 162, "kind": "constant", "start": 161, "symbol": "3", "varnode": "(register, 0x2050, 8)"},
-          {"end": 174, "kind": "op", "start": 168},
-          {"end": 180, "kind": "constant", "start": 175, "symbol": "\"sub\"", "varnode": "(const, 0x100c40, 8)"},
-          {"end": 188, "kind": "keyword", "start": 184, "symbol": "case"},
-          {"end": 190, "kind": "constant", "start": 189, "symbol": "4", "varnode": "(register, 0x2050, 8)"},
-          {"end": 202, "kind": "op", "start": 196},
-          {"end": 208, "kind": "constant", "start": 203, "symbol": "\"mul\"", "varnode": "(const, 0x100c48, 8)"},
-          {"end": 216, "kind": "keyword", "start": 212, "symbol": "case"},
-          {"end": 218, "kind": "constant", "start": 217, "symbol": "5", "varnode": "(register, 0x2050, 8)"},
-          {"end": 230, "kind": "op", "start": 224},
-          {"end": 236, "kind": "constant", "start": 231, "symbol": "\"dup\"", "varnode": "(const, 0x100c50, 8)"},
-          {"end": 244, "kind": "keyword", "start": 240, "symbol": "case"},
-          {"end": 246, "kind": "constant", "start": 245, "symbol": "6", "varnode": "(register, 0x2050, 8)"},
-          {"end": 258, "kind": "op", "start": 252},
-          {"end": 265, "kind": "constant", "start": 259, "symbol": "\"swap\"", "varnode": "(const, 0x100c58, 8)"},
-          {"end": 273, "kind": "keyword", "start": 269, "symbol": "case"},
-          {"end": 275, "kind": "constant", "start": 274, "symbol": "7", "varnode": "(register, 0x2050, 8)"},
-          {"end": 287, "kind": "op", "start": 281},
-          {"end": 294, "kind": "constant", "start": 288, "symbol": "\"drop\"", "varnode": "(const, 0x100c60, 8)"},
-          {"end": 302, "kind": "keyword", "start": 298, "symbol": "case"},
-          {"end": 304, "kind": "constant", "start": 303, "symbol": "8", "varnode": "(register, 0x2050, 8)"},
-          {"end": 316, "kind": "op", "start": 310},
-          {"end": 322, "kind": "constant", "start": 317, "symbol": "\"neg\"", "varnode": "(const, 0x100c68, 8)"},
-          {"end": 330, "kind": "keyword", "start": 326, "symbol": "case"},
-          {"end": 332, "kind": "constant", "start": 331, "symbol": "9", "varnode": "(register, 0x2050, 8)"},
-          {"end": 344, "kind": "op", "start": 338},
-          {"end": 350, "kind": "constant", "start": 345, "symbol": "\"jnz\"", "varnode": "(const, 0x100c70, 8)"},
-          {"end": 358, "kind": "keyword", "start": 354, "symbol": "case"},
-          {"end": 361, "kind": "constant", "start": 359, "symbol": "10", "varnode": "(register, 0x2050, 8)"},
-          {"end": 373, "kind": "op", "start": 367},
-          {"end": 379, "kind": "constant", "start": 374, "symbol": "\"dec\"", "varnode": "(const, 0x100c78, 8)"},
-          {"end": 387, "kind": "keyword", "start": 383, "symbol": "case"},
-          {"end": 391, "kind": "constant", "start": 388, "symbol": "0xb", "varnode": "(register, 0x2050, 8)"},
-          {"end": 403, "kind": "op", "start": 397},
-          {"end": 411, "kind": "constant", "start": 404, "symbol": "\"print\"", "varnode": "(const, 0x100c80, 8)"},
-          {"end": 419, "kind": "keyword", "start": 415, "symbol": "case"},
-          {"end": 423, "kind": "constant", "start": 420, "symbol": "0xc", "varnode": "(register, 0x2050, 8)"},
-          {"end": 435, "kind": "op", "start": 429},
-          {"end": 441, "kind": "constant", "start": 436, "symbol": "\"and\"", "varnode": "(const, 0x100c88, 8)"},
-          {"end": 449, "kind": "keyword", "start": 445, "symbol": "case"},
-          {"end": 453, "kind": "constant", "start": 450, "symbol": "0xd", "varnode": "(register, 0x2050, 8)"},
-          {"end": 465, "kind": "op", "start": 459},
-          {"end": 470, "kind": "constant", "start": 466, "symbol": "\"or\"", "varnode": "(const, 0x100c90, 8)"},
-          {"end": 478, "kind": "keyword", "start": 474, "symbol": "case"},
-          {"end": 482, "kind": "constant", "start": 479, "symbol": "0xe", "varnode": "(register, 0x2050, 8)"},
-          {"end": 494, "kind": "op", "start": 488},
-          {"end": 500, "kind": "constant", "start": 495, "symbol": "\"xor\"", "varnode": "(const, 0x100c98, 8)"},
-          {"end": 511, "kind": "keyword", "start": 504, "symbol": "default", "varnode": "(register, 0x2050, 8)"},
-          {"end": 523, "kind": "op", "start": 517},
-          {"end": 527, "kind": "constant", "start": 524, "symbol": "\"?\"", "varnode": "(const, 0x100ca0, 8)"}
-        ],
-        "warnings": []
-      },
-      "disassembly": [
+        },
         {
           "address": "0x100afa",
           "bytes": "b947",
           "flow": "fallthrough",
-          "labels": ["FUN_ram_00100afa"],
+          "labels": ["LAB_ram_00100afa"],
           "mnemonic": "c.li",
           "operands": [{"kind": "register", "text": "a5"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0xe"}]
         },
@@ -3159,33 +3038,55 @@
       ],
       "summary": {
         "completeness": {"kind": "complete"},
-        "fn_hash": "c71fa5cc8547a80b86bb4bd1231aabb9c993adf40fddeeb3e39dff683175a801",
-        "locator": {"kind": "native", "offset": "0x100afa", "space": "ram"},
-        "name": "FUN_ram_00100afa",
-        "signature": "char * FUN_ram_00100afa(undefined8 param_1)",
-        "size": 44
+        "fn_hash": "19d0b2b77bae4a523e2724fa98bd3e853a724f236632a044e0016b26912d12b6",
+        "locator": {"kind": "native", "offset": "0x10079c", "space": "ram"},
+        "name": "FUN_ram_0010079c",
+        "signature": "char * FUN_ram_0010079c(long param_1, long param_2, ulong param_3)",
+        "size": 286
       },
       "xrefs": [
-        {"from": "0x100afc", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100ba8"},
-        {"from": "0x100b0c", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "data", "to": "0x100d04"},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b12"},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b1c", "to_function": {"address": "0x100b1c", "name": "caseD_0"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b26", "to_function": {"address": "0x100b26", "name": "caseD_2"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b30", "to_function": {"address": "0x100b30", "name": "caseD_3"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b3a", "to_function": {"address": "0x100b3a", "name": "caseD_4"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b44", "to_function": {"address": "0x100b44", "name": "caseD_5"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b4e", "to_function": {"address": "0x100b4e", "name": "caseD_6"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b58", "to_function": {"address": "0x100b58", "name": "caseD_7"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b62", "to_function": {"address": "0x100b62", "name": "caseD_e"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b6c", "to_function": {"address": "0x100b6c", "name": "caseD_c"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b76", "to_function": {"address": "0x100b76", "name": "caseD_d"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b80", "to_function": {"address": "0x100b80", "name": "caseD_8"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b8a", "to_function": {"address": "0x100b8a", "name": "caseD_9"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b94", "to_function": {"address": "0x100b94", "name": "caseD_a"}},
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b9e", "to_function": {"address": "0x100b9e", "name": "caseD_b"}},
-        {"from": "0x100bac", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "data", "to": "0x100ca0"},
-        {"from": "0x100d80", "kind": "other", "to": "0x100afa", "to_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}},
-        {"from": "0x100e08", "kind": "data", "to": "0x100afa", "to_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}}
+        {"from": "0x10069a", "from_function": {"address": "0x100680", "name": "main"}, "kind": "call", "to": "0x10079c", "to_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}},
+        {"from": "0x1007ae", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x10082a"},
+        {"from": "0x1007dc", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ad2"},
+        {"from": "0x1007e4", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100cc8"},
+        {"from": "0x100826", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x1007c2"},
+        {"from": "0x100830", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100bd8"},
+        {"from": "0x100834", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
+        {"from": "0x10083c", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ae0"},
+        {"from": "0x100852", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ae0"},
+        {"from": "0x100866", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x10081c"},
+        {"from": "0x10086e", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100be8"},
+        {"from": "0x100872", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
+        {"from": "0x10087e", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100c08"},
+        {"from": "0x10088a", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100660", "to_function": {"address": "0x100660", "name": "FUN_ram_00100660"}},
+        {"from": "0x100892", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x1007c2"},
+        {"from": "0x100896", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x10082a"},
+        {"from": "0x100ad8", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100c18"},
+        {"from": "0x100adc", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
+        {"from": "0x100ae4", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100bf8"},
+        {"from": "0x100ae8", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
+        {"from": "0x100af2", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100be8"},
+        {"from": "0x100af6", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "call", "to": "0x100776", "to_function": {"address": "0x100776", "name": "FUN_ram_00100776"}},
+        {"from": "0x100afc", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100ba8"},
+        {"from": "0x100b0c", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100d04"},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b12"},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b1c", "to_function": {"address": "0x100b1c", "name": "caseD_0"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b26", "to_function": {"address": "0x100b26", "name": "caseD_2"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b30", "to_function": {"address": "0x100b30", "name": "caseD_3"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b3a", "to_function": {"address": "0x100b3a", "name": "caseD_4"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b44", "to_function": {"address": "0x100b44", "name": "caseD_5"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b4e", "to_function": {"address": "0x100b4e", "name": "caseD_6"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b58", "to_function": {"address": "0x100b58", "name": "caseD_7"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b62", "to_function": {"address": "0x100b62", "name": "caseD_e"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b6c", "to_function": {"address": "0x100b6c", "name": "caseD_c"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b76", "to_function": {"address": "0x100b76", "name": "caseD_d"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b80", "to_function": {"address": "0x100b80", "name": "caseD_8"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b8a", "to_function": {"address": "0x100b8a", "name": "caseD_9"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b94", "to_function": {"address": "0x100b94", "name": "caseD_a"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b9e", "to_function": {"address": "0x100b9e", "name": "caseD_b"}},
+        {"from": "0x100bac", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "data", "to": "0x100ca0"},
+        {"from": "0x100d78", "kind": "other", "to": "0x10079c", "to_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}},
+        {"from": "0x100dd0", "kind": "data", "to": "0x10079c", "to_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}}
       ]
     },
     {
@@ -3234,7 +3135,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b1c", "to_function": {"address": "0x100b1c", "name": "caseD_0"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b1c", "to_function": {"address": "0x100b1c", "name": "caseD_0"}},
         {"from": "0x100b20", "from_function": {"address": "0x100b1c", "name": "caseD_0"}, "kind": "data", "to": "0x100c28"}
       ]
     },
@@ -3284,7 +3185,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b26", "to_function": {"address": "0x100b26", "name": "caseD_2"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b26", "to_function": {"address": "0x100b26", "name": "caseD_2"}},
         {"from": "0x100b2a", "from_function": {"address": "0x100b26", "name": "caseD_2"}, "kind": "data", "to": "0x100c38"}
       ]
     },
@@ -3334,7 +3235,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b30", "to_function": {"address": "0x100b30", "name": "caseD_3"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b30", "to_function": {"address": "0x100b30", "name": "caseD_3"}},
         {"from": "0x100b34", "from_function": {"address": "0x100b30", "name": "caseD_3"}, "kind": "data", "to": "0x100c40"}
       ]
     },
@@ -3384,7 +3285,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b3a", "to_function": {"address": "0x100b3a", "name": "caseD_4"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b3a", "to_function": {"address": "0x100b3a", "name": "caseD_4"}},
         {"from": "0x100b3e", "from_function": {"address": "0x100b3a", "name": "caseD_4"}, "kind": "data", "to": "0x100c48"}
       ]
     },
@@ -3434,7 +3335,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b44", "to_function": {"address": "0x100b44", "name": "caseD_5"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b44", "to_function": {"address": "0x100b44", "name": "caseD_5"}},
         {"from": "0x100b48", "from_function": {"address": "0x100b44", "name": "caseD_5"}, "kind": "data", "to": "0x100c50"}
       ]
     },
@@ -3484,7 +3385,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b4e", "to_function": {"address": "0x100b4e", "name": "caseD_6"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b4e", "to_function": {"address": "0x100b4e", "name": "caseD_6"}},
         {"from": "0x100b52", "from_function": {"address": "0x100b4e", "name": "caseD_6"}, "kind": "data", "to": "0x100c58"}
       ]
     },
@@ -3534,7 +3435,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b58", "to_function": {"address": "0x100b58", "name": "caseD_7"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b58", "to_function": {"address": "0x100b58", "name": "caseD_7"}},
         {"from": "0x100b5c", "from_function": {"address": "0x100b58", "name": "caseD_7"}, "kind": "data", "to": "0x100c60"}
       ]
     },
@@ -3584,7 +3485,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b62", "to_function": {"address": "0x100b62", "name": "caseD_e"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b62", "to_function": {"address": "0x100b62", "name": "caseD_e"}},
         {"from": "0x100b66", "from_function": {"address": "0x100b62", "name": "caseD_e"}, "kind": "data", "to": "0x100c98"}
       ]
     },
@@ -3634,7 +3535,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b6c", "to_function": {"address": "0x100b6c", "name": "caseD_c"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b6c", "to_function": {"address": "0x100b6c", "name": "caseD_c"}},
         {"from": "0x100b70", "from_function": {"address": "0x100b6c", "name": "caseD_c"}, "kind": "data", "to": "0x100c88"}
       ]
     },
@@ -3684,7 +3585,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b76", "to_function": {"address": "0x100b76", "name": "caseD_d"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b76", "to_function": {"address": "0x100b76", "name": "caseD_d"}},
         {"from": "0x100b7a", "from_function": {"address": "0x100b76", "name": "caseD_d"}, "kind": "data", "to": "0x100c90"}
       ]
     },
@@ -3694,16 +3595,16 @@
         "completeness": {"kind": "complete"},
         "function": {"kind": "native", "offset": "0x100b80", "space": "ram"},
         "language": "c",
-        "text": "\nundefined * switchD_ram:00100b10::caseD_8(void)\n\n{\n  return &DAT_ram_00100c68;\n}\n",
+        "text": "\nundefined1 * switchD_ram:00100b10::caseD_8(void)\n\n{\n  return &LAB_ram_00100c68;\n}\n",
         "tokens": [
-          {"end": 10, "kind": "type", "start": 1, "symbol": "undefined"},
-          {"end": 12, "kind": "op", "start": 11},
-          {"end": 33, "kind": "variable", "start": 13, "symbol": "switchD_ram:00100b10"},
-          {"end": 42, "kind": "function", "start": 35, "symbol": "caseD_8", "target": {"kind": "native", "offset": "0x100b80", "space": "ram"}},
-          {"end": 47, "kind": "keyword", "start": 43, "symbol": "void"},
-          {"end": 60, "kind": "op", "start": 54},
-          {"end": 62, "kind": "op", "start": 61},
-          {"end": 78, "kind": "variable", "start": 62, "symbol": "DAT_ram_00100c68"}
+          {"end": 11, "kind": "type", "start": 1, "symbol": "undefined1"},
+          {"end": 13, "kind": "op", "start": 12},
+          {"end": 34, "kind": "variable", "start": 14, "symbol": "switchD_ram:00100b10"},
+          {"end": 43, "kind": "function", "start": 36, "symbol": "caseD_8", "target": {"kind": "native", "offset": "0x100b80", "space": "ram"}},
+          {"end": 48, "kind": "keyword", "start": 44, "symbol": "void"},
+          {"end": 61, "kind": "op", "start": 55},
+          {"end": 63, "kind": "op", "start": 62},
+          {"end": 79, "kind": "variable", "start": 63, "symbol": "LAB_ram_00100c68"}
         ],
         "warnings": []
       },
@@ -3730,11 +3631,11 @@
         "fn_hash": "e8a7dd890b6be4b3508c2e18d7cd4388af1c0142deb395ebdd4794e18ec31414",
         "locator": {"kind": "native", "offset": "0x100b80", "space": "ram"},
         "name": "caseD_8",
-        "signature": "undefined * caseD_8(void)",
+        "signature": "undefined1 * caseD_8(void)",
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b80", "to_function": {"address": "0x100b80", "name": "caseD_8"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b80", "to_function": {"address": "0x100b80", "name": "caseD_8"}},
         {"from": "0x100b84", "from_function": {"address": "0x100b80", "name": "caseD_8"}, "kind": "data", "to": "0x100c68"}
       ]
     },
@@ -3784,7 +3685,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b8a", "to_function": {"address": "0x100b8a", "name": "caseD_9"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b8a", "to_function": {"address": "0x100b8a", "name": "caseD_9"}},
         {"from": "0x100b8e", "from_function": {"address": "0x100b8a", "name": "caseD_9"}, "kind": "data", "to": "0x100c70"}
       ]
     },
@@ -3834,7 +3735,7 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b94", "to_function": {"address": "0x100b94", "name": "caseD_a"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b94", "to_function": {"address": "0x100b94", "name": "caseD_a"}},
         {"from": "0x100b98", "from_function": {"address": "0x100b94", "name": "caseD_a"}, "kind": "data", "to": "0x100c78"}
       ]
     },
@@ -3883,12 +3784,12 @@
         "size": 10
       },
       "xrefs": [
-        {"from": "0x100b10", "from_function": {"address": "0x100afa", "name": "FUN_ram_00100afa"}, "kind": "jump", "to": "0x100b9e", "to_function": {"address": "0x100b9e", "name": "caseD_b"}},
+        {"from": "0x100b10", "from_function": {"address": "0x10079c", "name": "FUN_ram_0010079c"}, "kind": "jump", "to": "0x100b9e", "to_function": {"address": "0x100b9e", "name": "caseD_b"}},
         {"from": "0x100ba2", "from_function": {"address": "0x100b9e", "name": "caseD_b"}, "kind": "data", "to": "0x100c80"}
       ]
     }
   ],
-  "ghidra_version": "12.1.4",
+  "ghidra_version": "12.2",
   "imports": [
     {"address": "0x103000", "kind": "function", "name": "fprintf"},
     {"address": "0x103008", "kind": "function", "name": "__libc_start_main"},
@@ -3905,22 +3806,22 @@
     {"end": "0x103", "initialized": true, "kind": "overlay", "name": ".shstrtab", "perms": "---", "space": ".shstrtab", "start": "0x0"},
     {"end": "0x6c0", "initialized": true, "kind": "overlay", "name": "_elfSectionHeaders", "perms": "---", "space": "_elfSectionHeaders", "start": "0x0"},
     {"end": "0x8000", "initialized": false, "kind": "default", "name": "csr", "perms": "rw-", "space": "csreg", "start": "0x0"},
-    {"end": "0x100270", "initialized": true, "kind": "default", "name": "segment_3.1", "perms": "r--", "space": "ram", "start": "0x100000"},
-    {"end": "0x100291", "initialized": true, "kind": "default", "name": ".interp", "perms": "r--", "space": "ram", "start": "0x100270"},
-    {"end": "0x1002bc", "initialized": true, "kind": "default", "name": ".gnu.hash", "perms": "r--", "space": "ram", "start": "0x100298"},
-    {"end": "0x1003e0", "initialized": true, "kind": "default", "name": ".dynsym", "perms": "r--", "space": "ram", "start": "0x1002c0"},
-    {"end": "0x100473", "initialized": true, "kind": "default", "name": ".dynstr", "perms": "r--", "space": "ram", "start": "0x1003e0"},
-    {"end": "0x10048c", "initialized": true, "kind": "default", "name": ".gnu.version", "perms": "r--", "space": "ram", "start": "0x100474"},
-    {"end": "0x1004c0", "initialized": true, "kind": "default", "name": ".gnu.version_r", "perms": "r--", "space": "ram", "start": "0x100490"},
-    {"end": "0x100598", "initialized": true, "kind": "default", "name": ".rela.dyn", "perms": "r--", "space": "ram", "start": "0x1004c0"},
-    {"end": "0x100610", "initialized": true, "kind": "default", "name": ".rela.plt", "perms": "r--", "space": "ram", "start": "0x100598"},
+    {"end": "0x100270", "initialized": true, "kind": "default", "name": "segment_3.1", "perms": "r-x", "space": "ram", "start": "0x100000"},
+    {"end": "0x100291", "initialized": true, "kind": "default", "name": ".interp", "perms": "r-x", "space": "ram", "start": "0x100270"},
+    {"end": "0x1002bc", "initialized": true, "kind": "default", "name": ".gnu.hash", "perms": "r-x", "space": "ram", "start": "0x100298"},
+    {"end": "0x1003e0", "initialized": true, "kind": "default", "name": ".dynsym", "perms": "r-x", "space": "ram", "start": "0x1002c0"},
+    {"end": "0x100473", "initialized": true, "kind": "default", "name": ".dynstr", "perms": "r-x", "space": "ram", "start": "0x1003e0"},
+    {"end": "0x10048c", "initialized": true, "kind": "default", "name": ".gnu.version", "perms": "r-x", "space": "ram", "start": "0x100474"},
+    {"end": "0x1004c0", "initialized": true, "kind": "default", "name": ".gnu.version_r", "perms": "r-x", "space": "ram", "start": "0x100490"},
+    {"end": "0x100598", "initialized": true, "kind": "default", "name": ".rela.dyn", "perms": "r-x", "space": "ram", "start": "0x1004c0"},
+    {"end": "0x100610", "initialized": true, "kind": "default", "name": ".rela.plt", "perms": "r-x", "space": "ram", "start": "0x100598"},
     {"end": "0x100680", "initialized": true, "kind": "default", "name": ".plt", "perms": "r-x", "space": "ram", "start": "0x100610"},
     {"end": "0x100bb2", "initialized": true, "kind": "default", "name": ".text", "perms": "r-x", "space": "ram", "start": "0x100680"},
-    {"end": "0x100d51", "initialized": true, "kind": "default", "name": ".rodata", "perms": "r--", "space": "ram", "start": "0x100bb8"},
-    {"end": "0x100d88", "initialized": true, "kind": "default", "name": ".eh_frame_hdr", "perms": "r--", "space": "ram", "start": "0x100d54"},
-    {"end": "0x100e38", "initialized": true, "kind": "default", "name": ".eh_frame", "perms": "r--", "space": "ram", "start": "0x100d88"},
-    {"end": "0x100e58", "initialized": true, "kind": "default", "name": ".note.ABI-tag", "perms": "r--", "space": "ram", "start": "0x100e38"},
-    {"end": "0x100ecc", "initialized": true, "kind": "default", "name": ".note.package", "perms": "r--", "space": "ram", "start": "0x100e58"},
+    {"end": "0x100d51", "initialized": true, "kind": "default", "name": ".rodata", "perms": "r-x", "space": "ram", "start": "0x100bb8"},
+    {"end": "0x100d88", "initialized": true, "kind": "default", "name": ".eh_frame_hdr", "perms": "r-x", "space": "ram", "start": "0x100d54"},
+    {"end": "0x100e38", "initialized": true, "kind": "default", "name": ".eh_frame", "perms": "r-x", "space": "ram", "start": "0x100d88"},
+    {"end": "0x100e58", "initialized": true, "kind": "default", "name": ".note.ABI-tag", "perms": "r-x", "space": "ram", "start": "0x100e38"},
+    {"end": "0x100ecc", "initialized": true, "kind": "default", "name": ".note.package", "perms": "r-x", "space": "ram", "start": "0x100e58"},
     {"end": "0x101dd0", "initialized": true, "kind": "default", "name": ".preinit_array", "perms": "r--", "space": "ram", "start": "0x101dc8"},
     {"end": "0x101dd8", "initialized": true, "kind": "default", "name": ".init_array", "perms": "r--", "space": "ram", "start": "0x101dd0"},
     {"end": "0x101de0", "initialized": true, "kind": "default", "name": ".fini_array", "perms": "r--", "space": "ram", "start": "0x101dd8"},
@@ -3934,13 +3835,13 @@
   "program": {"arch": "RISCV:LE:64:default", "base": "0x100000", "format": "elf", "sha256": "d627e96033098583fe9f624f8ce5424b43ae35478bf160388ba0f0351c570089", "size": 10360},
   "recording": {
     "function_cap": 32,
-    "functions_listed": 37,
-    "functions_recorded": 29,
+    "functions_listed": 36,
+    "functions_recorded": 28,
     "functions_skipped": 8,
-    "recorder": "kraken-record 0.0.0",
+    "recorder": "kraken-record 0.1.0",
     "string_cap": 300,
-    "strings_listed": 25,
-    "strings_recorded": 25,
+    "strings_listed": 20,
+    "strings_recorded": 20,
     "type_cap": 200,
     "types_listed": 20,
     "types_recorded": 20
@@ -3974,18 +3875,13 @@
       "value": "out: %d\n"
     },
     {"address": "0x100c18", "encoding": "ascii", "length": 11, "value": "bad opcode"},
-    {"address": "0x100c28", "encoding": "ascii", "length": 5, "value": "halt"},
-    {"address": "0x100c30", "encoding": "ascii", "length": 5, "value": "push"},
-    {"address": "0x100c58", "encoding": "ascii", "length": 5, "value": "swap"},
-    {"address": "0x100c60", "encoding": "ascii", "length": 5, "value": "drop"},
     {"address": "0x100c80", "encoding": "ascii", "length": 6, "value": "print"},
     {
       "address": "0x100ca8",
       "encoding": "ascii",
       "length": 30,
       "value": "result=%d steps=%lu first=%s\n"
-    },
-    {"address": "0x100e68", "encoding": "ascii", "length": 97, "value": "{\"type\":\"deb\",\"os\":\"debian\",\"name\":\"cross-toolchain-base\",\"version\":\"77\",\"architecture\":\"amd64\"}"}
+    }
   ],
   "types": [
     {

@@ -635,9 +635,9 @@ async fn static_strops_is_rewritten_and_the_linked_in_libc_is_left_alone() {
         )
         .await
         .expect("rewrite_program");
-    // The binary carries its libc: 68 functions in the plan, 8 of them the program.
-    assert_eq!(out["functions_planned"], 68, "{}", table(&out));
-    assert_eq!(out["skipped"], 60);
+    // The binary carries its libc: 20 functions in the plan (the fixture is capped at 48), 8 of them the program.
+    assert_eq!(out["functions_planned"], 20, "{}", table(&out));
+    assert_eq!(out["skipped"], 12);
     assert_eq!(out["included"], 8);
     assert_eq!(out["failed"], 0, "{}", table(&out));
     let v = &out["verdict"];
