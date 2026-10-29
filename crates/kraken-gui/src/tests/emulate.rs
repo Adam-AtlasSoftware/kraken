@@ -174,3 +174,113 @@ fn screenshot_the_emulation_tab() {
     img.save(&path).expect("save png");
     println!("saved {}", path.display());
 }
+
+fn call_result() -> EmulationResult {
+    use kraken_viewmodel::navtools::{CallBufferDetail, CallDetail};
+    EmulationResult::Call(Box::new(CallDetail {
+        name: "str_upper".into(),
+        address: 0x401838,
+        ended: "returned".into(),
+        clean: true,
+        value: None,
+        buffers: vec![CallBufferDetail {
+            label: "argument 1".into(),
+            size: 13,
+            text: "HELLO, WORLD".into(),
+            hex: "48454c4c4f2c20574f524c4400".into(),
+            changed: true,
+        }],
+        stdout: String::new(),
+        stderr: String::new(),
+        steps: 412,
+        notes: vec!["architecture x86_64".into()],
+        given: "\"Hello, world\"".into(),
+    }))
+}
+
+#[test]
+fn the_call_dialog_opens_from_the_menu_and_a_failed_call_says_why() {
+    let mut k = kit(true);
+    ready(&mut k);
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().dispatch(AppAction::GoToMain, &ctx);
+    k.h.run_steps(10);
+    k.h.get_by_label("Emulate").click();
+    k.h.run_steps(3);
+    assert!(k.h.query_by_label("Call this function...").is_some());
+    k.h.get_by_label("Call this function...").click();
+    k.h.run_steps(4);
+    {
+        let vm = k.h.state_mut().view_model_mut().expect("vm");
+        let d = vm.tools.call_dialog.as_ref().expect("the call dialog");
+        assert!(!d.name.is_empty());
+    }
+    assert!(
+        k.h.query_by_label_contains("sandboxed emulator").is_some(),
+        "the dialog explains itself"
+    );
+    k.h.get_by_label("Call").click();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        k.h.run_steps(2);
+        let error =
+            k.h.state_mut()
+                .view_model_mut()
+                .and_then(|vm| vm.tools.call_dialog.as_ref().and_then(|d| d.error.clone()));
+        if error.is_some() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no answer");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    k.h.get_by_label("Cancel").click();
+    k.h.run_steps(3);
+    assert!(
+        k.h.state_mut()
+            .view_model_mut()
+            .is_some_and(|vm| vm.tools.call_dialog.is_none())
+    );
+}
+
+#[test]
+fn the_emulation_tab_shows_what_a_call_returned_and_wrote() {
+    let mut k = kit(true);
+    ready(&mut k);
+    {
+        let vm = k.h.state_mut().view_model_mut().expect("vm");
+        vm.tools.emulation.result = Some(call_result());
+    }
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().dispatch(AppAction::ShowEmulation, &ctx);
+    k.h.run_steps(6);
+    assert!(
+        k.h.query_by_label_contains("str_upper was called with")
+            .is_some()
+    );
+    assert!(k.h.query_by_label("HELLO, WORLD").is_some());
+    assert!(k.h.query_by_label("returned").is_some());
+}
+
+#[test]
+#[ignore = "writes a PNG file and needs a GPU; run by hand (KRAKEN_SHOT_DIR=<dir>)"]
+fn screenshot_the_call_dialog_and_result() {
+    let mut k = kit_with(true, true);
+    ready(&mut k);
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().dispatch(AppAction::GoToMain, &ctx);
+    k.h.run_steps(10);
+    {
+        let vm = k.h.state_mut().view_model_mut().expect("vm");
+        vm.tools.emulation.result = Some(call_result());
+    }
+    k.h.state_mut().dispatch(AppAction::ShowEmulation, &ctx);
+    k.h.state_mut().dispatch(AppAction::CallFunction, &ctx);
+    k.h.state_mut().hide_notices();
+    k.h.run_steps(8);
+    let img = k.h.render().expect("render");
+    let dir = std::env::var_os("KRAKEN_SHOT_DIR")
+        .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let path = dir.join("emulate-call.png");
+    img.save(&path).expect("save png");
+    println!("saved {}", path.display());
+}

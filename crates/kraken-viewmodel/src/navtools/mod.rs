@@ -3,6 +3,7 @@
 //! the command palette run every registry command.
 
 mod bookmarks;
+mod call;
 pub mod ctype;
 mod edits;
 mod emulate;
@@ -17,6 +18,9 @@ mod types;
 mod tests;
 
 pub use bookmarks::{BookmarkDialog, BookmarkItem, BookmarksPanel};
+pub use call::{
+    CallBufferDetail, CallDetail, CallDialog, CallParam, ParamKind, RETURN_KINDS, parse_signature,
+};
 pub use edits::{FunctionDialog, FunctionDialogKind, TypeDialog, TypeMode};
 pub use emulate::{
     Difference, EmulateDialog, EmulateMode, EmulationPanel, EmulationResult, FileDetail, InputRow,
@@ -142,6 +146,8 @@ pub struct NavTools {
     pub intent_dialog: Option<IntentDialog>,
     /// The Run dialog, when open.
     pub emulate_dialog: Option<EmulateDialog>,
+    /// The call-a-function dialog, when open.
+    pub call_dialog: Option<CallDialog>,
     /// The Emulation tab.
     pub emulation: EmulationPanel,
     /// The Edit tab's function, when one is being edited.

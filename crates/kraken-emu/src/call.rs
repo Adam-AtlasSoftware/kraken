@@ -566,6 +566,16 @@ pub struct CallOutcome {
     pub instructions: u64,
 }
 
+/// Where a started process is stopped for function calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StartAt {
+    /// A function symbol of the program (normally `main`).
+    Symbol { name: String },
+    /// A link-time address (the load bias is added).
+    Vaddr { value: u64 },
+}
+
 /// What a call targets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Callee {
@@ -662,6 +672,7 @@ enum Backend {
         out_mark: (usize, usize),
         symbols: std::collections::BTreeMap<String, u64>,
         stack_top: u64,
+        main_bias: u64,
     },
 }
 
@@ -762,14 +773,34 @@ impl FunctionCaller {
     /// main program, e.g. `main`) within `budget` instructions and keeps that state: every call
     /// starts from it. Fails when the program ends or faults first.
     pub fn after_startup(spec: &RunSpec, symbol: &str, budget: u64) -> Result<Self, EmuError> {
+        Self::after_startup_at(
+            spec,
+            &StartAt::Symbol {
+                name: symbol.to_string(),
+            },
+            budget,
+        )
+    }
+
+    /// Like [`FunctionCaller::after_startup`], stopping at `at` (a symbol, or a link-time
+    /// address, which is what a stripped program needs).
+    pub fn after_startup_at(spec: &RunSpec, at: &StartAt, budget: u64) -> Result<Self, EmuError> {
         let mut p = LinuxProcess::spawn(spec)?;
         let arch = p.arch();
         let data = std::fs::read(&spec.program)
             .map_err(|e| EmuError::Image(format!("{}: {e}", spec.program.display())))?;
-        let symbols = crate::session::function_symbols(&data, p.main_bias());
-        let at = *symbols
-            .get(symbol)
-            .ok_or_else(|| EmuError::Image(format!("no function symbol `{symbol}`")))?;
+        let main_bias = p.main_bias();
+        let symbols = crate::session::function_symbols(&data, main_bias);
+        let (at, symbol) = match at {
+            StartAt::Symbol { name } => (
+                *symbols
+                    .get(name)
+                    .ok_or_else(|| EmuError::Image(format!("no function symbol `{name}`")))?,
+                name.clone(),
+            ),
+            StartAt::Vaddr { value } => (value.wrapping_add(main_bias), format!("{value:#x}")),
+        };
+        let symbol = symbol.as_str();
         let m = p.machine();
         m.add_breakpoint(at & !1);
         let start = m.icount();
@@ -817,6 +848,7 @@ impl FunctionCaller {
                 out_mark,
                 symbols,
                 stack_top,
+                main_bias,
             },
             layout,
             imports: Vec::new(),
@@ -843,6 +875,14 @@ impl FunctionCaller {
         match &self.backend {
             Backend::Image { image, .. } => image.as_ref(),
             Backend::Process { .. } => None,
+        }
+    }
+
+    /// The load bias of the main program (0 unless it is position independent).
+    pub fn bias(&self) -> u64 {
+        match &self.backend {
+            Backend::Image { image, .. } => image.as_ref().map_or(0, |i| i.bias),
+            Backend::Process { main_bias, .. } => *main_bias,
         }
     }
 

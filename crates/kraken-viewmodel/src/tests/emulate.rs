@@ -116,3 +116,69 @@ fn a_failed_run_stays_in_the_dialog_with_the_reason() {
     );
     assert!(r.vm.tools.emulation.result.is_none());
 }
+
+#[test]
+fn calling_a_function_sends_its_signature_filled_arguments_and_shows_the_value() {
+    let mut r = opened(base_backend().on("emulate_call", |a| {
+        assert_eq!(a["address"], "0x401040");
+        assert_eq!(a["args"], json!([{"string": "level"}]));
+        assert_eq!(a["returns"], "void");
+        assert_eq!(a["libc"], true);
+        Ok(json!({
+            "address": "0x401040", "name": u("helper"), "ended": "returned", "detail": null,
+            "value": {"kind": "i32", "hex": "0x7", "signed": 7, "unsigned": 7, "float": null},
+            "buffers": [{
+                "arg": 0, "address": "0x6000", "size": 6, "hex": u("6c6576656c00"),
+                "text": u("LEVEL"), "changed": true
+            }],
+            "stdout": u(""), "stderr": u(""), "steps": 321, "notes": ["architecture x86_64"],
+        }))
+    }));
+    r.vm.begin_call(0x401040);
+    let d = r.vm.tools.call_dialog.as_mut().expect("dialog");
+    assert_eq!(d.name, "helper");
+    d.params.clear();
+    d.params.push(crate::navtools::CallParam {
+        label: "const char *s".into(),
+        kind: crate::navtools::ParamKind::Text,
+        value: "level".into(),
+    });
+    d.returns = "void".into();
+    d.libc = true;
+    r.vm.submit_call();
+    assert!(r.vm.block_until_idle(WAIT));
+    assert!(r.vm.tools.call_dialog.is_none(), "closed on success");
+    let Some(EmulationResult::Call(c)) = r.vm.tools.emulation.result.clone() else {
+        panic!("a call result");
+    };
+    assert_eq!(c.value.as_deref(), Some("7 (0x7)"));
+    assert!(c.clean);
+    assert_eq!(
+        (c.buffers[0].text.as_str(), c.buffers[0].changed),
+        ("LEVEL", true)
+    );
+    assert_eq!(
+        r.vm.tools.take_tab(),
+        Some(crate::navtools::NavTab::Emulation)
+    );
+}
+
+#[test]
+fn a_call_that_fails_stays_in_the_dialog_with_the_reason() {
+    let mut r = opened(base_backend().fail(
+        "emulate_call",
+        kraken_proto::ErrorCode::NotFound,
+        "the program has no main symbol: give startup_address",
+    ));
+    r.vm.begin_call(0x401040);
+    r.vm.submit_call();
+    assert!(r.vm.block_until_idle(WAIT));
+    let d = r.vm.tools.call_dialog.as_ref().expect("still open");
+    assert!(!d.running);
+    assert!(
+        d.error
+            .as_deref()
+            .is_some_and(|e| e.contains("startup_address")),
+        "{d:?}"
+    );
+}

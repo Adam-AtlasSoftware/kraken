@@ -59,6 +59,7 @@ pub enum NavChoice {
     PatchNever,
     PatchReturn,
     PatchFill,
+    CallFunction,
 }
 
 /// One menu row.
@@ -337,6 +338,17 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
         });
     }
 
+    let call = item(
+        NavChoice::CallFunction,
+        "Call this function...",
+        None,
+        "Run just this function in the emulator with arguments you choose; see the Emulation tab",
+    );
+    out.push(match func {
+        None => call.off("This is not inside a known function."),
+        Some(_) => call,
+    });
+
     let rewrite = item(
         NavChoice::Rewrite,
         "Rewrite this function in Rust",
@@ -580,6 +592,11 @@ pub fn run(ctx: &egui::Context, vm: &mut ViewModel, t: &Target, choice: NavChoic
         NavChoice::PatchFill => {
             if let Some(a) = t.address {
                 vm.begin_intent(IntentKind::Fill, a);
+            }
+        }
+        NavChoice::CallFunction => {
+            if let Some(f) = func {
+                vm.begin_call(f);
             }
         }
         NavChoice::Rewrite => {

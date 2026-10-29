@@ -45,6 +45,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`decompile_patched`](#decompile_patched) | query | safe | Decompile a function with the byte patches applied |
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
 | [`disassemble`](#disassemble) | query | safe | Disassemble from an address or a whole function, one page at a time |
+| [`emulate_call`](#emulate_call) | query | safe | Call one function in the emulator with the given arguments; returns its value and written buffers |
 | [`emulate_compare`](#emulate_compare) | query | safe | Run the original and the patched program (or any two variants) with the same input and report the differences |
 | [`emulate_run`](#emulate_run) | query | safe | Run the program in the emulator with the given stdin and arguments; returns exit status and output |
 | [`emulator_run`](#emulator_run) | query | dangerous | Run the project's binary (original or patched), or any file, in an installed emulator |
@@ -5528,6 +5529,238 @@ Each row has the instruction `bytes` (hex), the `mnemonic`, `operands` as tokens
     "items"
   ],
   "title": "Page",
+  "type": "object"
+}
+```
+
+</details>
+
+## emulate_call
+
+Call one function in the emulator with the given arguments; returns its value and written buffers
+
+```sh
+kraken emulate-call [options]
+```
+
+- Kind: query
+- Permission: safe
+- Engine needs: `FunctionLister`
+
+Runs one function of the program under emulation: give its `address` or `function` name, `args` (numbers, strings and byte buffers placed in emulated memory, floats) and what it `returns`. Answers with the `value`, the `buffers` after the call (what it wrote), `stdout`, `stderr` and how the call `ended`. With `libc` the program starts up to `main` first so libc works; without it a library call ends the call with `ended: import`. Nothing in the project changes.
+
+Example: `emulate_call {"function": "str_count_char", "args": [{"string": "mississippi"}, {"int": 115, "bits": 8}], "returns": "int", "libc": true}`
+
+Built on `kraken-emu`'s function caller (x86, x86-64, ARM, AArch64, RISC-V) in the sandboxed child `kraken-emu-run`. Arguments follow the C calling convention of the architecture; `string` and `hex` and `buffer` arguments are copied into scratch memory and the function gets their address. In the default image-only mode the program's own code runs and its imports are stubs, so a pure function (a parser, a hash, a state machine) works; with `libc` the program is started up to `main` (for a stripped program give `startup_address`), which needs a sysroot for a dynamically linked program as `emulate_run` explains. A function that reads globals sees the program's initial data. Decompiled prototypes are guesses: check the argument kinds with the listing.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | json | no | Address of the function, as `0x...` (the listing address). Give this or `function`. |
+| `args` | `--args` | json | no | Arguments in order (at most 16). |
+| `function` | `--function` | string | no | Name of the function as `list_functions` shows it. Give this or `address`. |
+| `libc` | `--libc` | boolean | no | Start the whole program up to `main` first so the C library works (needed when the function calls `strlen`, `malloc`, `printf` and the like; default false). |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget (default 10000000, at most 200000000). |
+| `patched` | `--patched` | boolean | no | Call a copy with the project's byte patches applied (default false). |
+| `returns` | `--returns` | string | no | What the function returns: `void`, `int` (32 bits), `long` or `ptr` (pointer-sized), `i8` `i16` `i32` `i64` `u8` `u16` `u32` `u64`, `f32` or `f64` (default `int`). |
+| `startup_address` | `--startup-address` | json | no | With `libc`: stop the startup at this address instead of `main` (a stripped program has no `main` symbol; the decompiler's `main` is found by name when it has one). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 20, at most 120). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "CallBufferOut": {
+      "description": "A buffer argument after the call.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Where it was placed in the emulator's memory."
+        },
+        "arg": {
+          "description": "Index of its argument.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changed": {
+          "description": "True when the function changed the buffer.",
+          "type": "boolean"
+        },
+        "hex": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The bytes as hexadecimal digits (first 256 bytes). Program data, so untrusted."
+        },
+        "size": {
+          "description": "Size in bytes.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The bytes as text up to the first zero byte. Untrusted."
+        }
+      },
+      "required": [
+        "arg",
+        "address",
+        "size",
+        "hex",
+        "text",
+        "changed"
+      ],
+      "type": "object"
+    },
+    "CallValue": {
+      "description": "The value a call returned.",
+      "properties": {
+        "float": {
+          "description": "The value as a floating-point number (`f32` and `f64` only).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "hex": {
+          "description": "The value as an unsigned number in hexadecimal (raw bits for `f32` and `f64`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The return kind used.",
+          "type": "string"
+        },
+        "signed": {
+          "description": "The value as a signed decimal number (absent for floats).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "unsigned": {
+          "description": "The value as an unsigned decimal number (absent for floats).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "hex"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `emulate_call`.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The function's listing address."
+    },
+    "buffers": {
+      "description": "The buffer arguments after the call.",
+      "items": {
+        "$ref": "#/$defs/CallBufferOut"
+      },
+      "type": "array"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Untrusted_string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What `ended` means here (the import name, the fault, how the program exited)."
+    },
+    "ended": {
+      "description": "How the call ended: `returned`, `import` (it reached a library function the image-only\nmode cannot run; see `detail`), `fault`, `syscall`, `exited` or `step_limit`.",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Untrusted_string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Its name, when the engine knows one."
+    },
+    "notes": {
+      "description": "Facts about the call.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "stderr": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the call wrote to standard error (`libc` mode). Untrusted."
+    },
+    "stdout": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the call wrote to standard output (`libc` mode). Untrusted."
+    },
+    "steps": {
+      "description": "Instructions executed by the call.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CallValue"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The value, when the call returned a value."
+    }
+  },
+  "required": [
+    "address",
+    "ended",
+    "buffers",
+    "stdout",
+    "stderr",
+    "steps",
+    "notes"
+  ],
+  "title": "EmulateCallOut",
   "type": "object"
 }
 ```

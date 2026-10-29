@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use kraken_sidecar::{ConfinementOptions, ConfinementReport, LogSink, SpawnSpec};
 
 use crate::arch::Arch;
+use crate::call::{CallOutcome, CallSpec, Callee, FunctionCaller, RetKind, StartAt, Value};
 use crate::error::EmuError;
 use crate::linux::{ProgramOutcome, RunSpec};
 use crate::session::{Insn, Session, SessionStop, Target};
@@ -72,6 +73,7 @@ fn prepare(
     spec: &RunSpec,
     runner: &Path,
     options: ConfinementOptions,
+    check_sysroot: bool,
 ) -> Result<(RunSpec, SpawnSpec), EmuError> {
     let workdir = spec
         .workdir
@@ -86,7 +88,7 @@ fn prepare(
         b
     };
     let arch = Arch::from_elf(&head)?;
-    if spec.sysroot.is_none() {
+    if check_sysroot && spec.sysroot.is_none() {
         // The child's errors cross as text; this one the caller acts on (it supplies a sysroot).
         let data = std::fs::read(&spec.program)
             .map_err(|e| EmuError::Image(format!("{}: {e}", spec.program.display())))?;
@@ -142,7 +144,7 @@ pub fn run_program_confined(
     runner: &Path,
     options: ConfinementOptions,
 ) -> Result<(ProgramOutcome, ConfinementReport), EmuError> {
-    let (child_spec, sp) = prepare(spec, runner, options)?;
+    let (child_spec, sp) = prepare(spec, runner, options, true)?;
     let log = LogSink::with_capacity(200);
     let (sandbox, mut sock) = kraken_sidecar::sandbox::Sandbox::spawn(sp, &log)
         .map_err(|e| EmuError::Io(format!("starting {RUNNER}: {e}")))?;
@@ -165,6 +167,178 @@ pub fn run_program_confined(
     let result: Result<ProgramOutcome, String> =
         serde_json::from_slice(&reply).map_err(|e| EmuError::Io(format!("{RUNNER} reply: {e}")))?;
     result.map(|o| (o, report)).map_err(EmuError::Emulator)
+}
+
+/// One argument of a function call made in the runner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallArg {
+    /// A number passed in a register or on the stack.
+    Value { value: Value },
+    /// A buffer placed in the emulator's memory; the function gets its address and the bytes
+    /// are returned after the call (`nul` appends a terminating zero byte first).
+    Buffer { data: Vec<u8>, nul: bool },
+}
+
+/// Where the function is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallTarget {
+    /// A function symbol.
+    Symbol { name: String },
+    /// A link-time address (the load bias is added).
+    Vaddr { value: u64 },
+}
+
+/// A function call for [`call_function_confined`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallRequest {
+    /// The function.
+    pub target: CallTarget,
+    /// Arguments in order.
+    pub args: Vec<CallArg>,
+    /// Result type.
+    pub ret: RetKind,
+    /// Instruction budget of the call.
+    pub max_instructions: u64,
+    /// Run the program to this point first, so its C library is initialised and the function
+    /// may use libc and system calls; absent: only the program image is loaded and an import
+    /// ends the call.
+    pub start_at: Option<StartAt>,
+    /// Instruction budget of that startup.
+    pub startup_budget: u64,
+}
+
+/// A buffer after the call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallBuffer {
+    /// Index of its argument.
+    pub arg: usize,
+    /// Where it was placed (runtime address).
+    pub address: u64,
+    /// Its bytes after the call.
+    pub data: Vec<u8>,
+}
+
+/// What a confined function call did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallReply {
+    /// How the call ended.
+    pub outcome: CallOutcome,
+    /// The buffers after the call.
+    pub buffers: Vec<CallBuffer>,
+    /// Standard output of the call (process mode).
+    pub stdout: Vec<u8>,
+    /// Standard error of the call (process mode).
+    pub stderr: Vec<u8>,
+    /// The architecture.
+    pub arch: String,
+    /// The load bias of the program.
+    pub bias: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CallHello {
+    mode: String,
+    spec: RunSpec,
+    call: CallRequest,
+}
+
+/// Calls one function of `spec.program` in the confined runner (`spec.workdir` set). A sysroot
+/// is only needed when `call.start_at` is set.
+pub fn call_function_confined(
+    spec: &RunSpec,
+    call: &CallRequest,
+    runner: &Path,
+    options: ConfinementOptions,
+) -> Result<(CallReply, ConfinementReport), EmuError> {
+    let (child_spec, sp) = prepare(spec, runner, options, call.start_at.is_some())?;
+    let log = LogSink::with_capacity(200);
+    let (sandbox, mut sock) = kraken_sidecar::sandbox::Sandbox::spawn(sp, &log)
+        .map_err(|e| EmuError::Io(format!("starting {RUNNER}: {e}")))?;
+    let report = sandbox.report().clone();
+    let hello = CallHello {
+        mode: "call".into(),
+        spec: child_spec,
+        call: call.clone(),
+    };
+    let body = serde_json::to_vec(&hello).map_err(|e| EmuError::Io(e.to_string()))?;
+    write_message(&mut sock, &body).map_err(|e| EmuError::Io(format!("to {RUNNER}: {e}")))?;
+    let deadline =
+        Instant::now() + Duration::from_millis(spec.timeout_ms) + Duration::from_secs(60);
+    sock.set_read_timeout(Some(deadline.saturating_duration_since(Instant::now())))
+        .map_err(|e| EmuError::Io(e.to_string()))?;
+    let reply = read_message(&mut sock);
+    drop(sandbox);
+    let reply = reply.map_err(|e| {
+        EmuError::Io(format!(
+            "no answer from {RUNNER} ({e}); its log: {}",
+            log.tail(20).join(" | ")
+        ))
+    })?;
+    let result: Result<CallReply, String> =
+        serde_json::from_slice(&reply).map_err(|e| EmuError::Io(format!("{RUNNER} reply: {e}")))?;
+    result.map(|o| (o, report)).map_err(EmuError::Emulator)
+}
+
+fn serve_call(sock: &mut UnixStream, spec: RunSpec, call: CallRequest) -> Result<(), String> {
+    let result = do_call(&spec, &call).map_err(|e| e.to_string());
+    let body = serde_json::to_vec(&result).map_err(|e| e.to_string())?;
+    write_message(sock, &body).map_err(|e| format!("reply: {e}"))
+}
+
+fn do_call(spec: &RunSpec, req: &CallRequest) -> Result<CallReply, EmuError> {
+    let mut fc = match &req.start_at {
+        Some(at) => FunctionCaller::after_startup_at(spec, at, req.startup_budget)?,
+        None => {
+            let data = std::fs::read(&spec.program)
+                .map_err(|e| EmuError::Image(format!("{}: {e}", spec.program.display())))?;
+            let roots = SpecRoots::discover_with(spec.spec_roots.iter().cloned());
+            FunctionCaller::load_elf(&data, 0x5555_5555_0000, &roots)?
+        }
+    };
+    let arch = fc.machine().arch();
+    let mut args = Vec::new();
+    let mut placed: Vec<(usize, u64, usize)> = Vec::new();
+    for (i, a) in req.args.iter().enumerate() {
+        match a {
+            CallArg::Value { value } => args.push(*value),
+            CallArg::Buffer { data, nul } => {
+                let mut bytes = data.clone();
+                if *nul {
+                    bytes.push(0);
+                }
+                let at = fc.alloc(&bytes)?;
+                placed.push((i, at, bytes.len()));
+                args.push(Value::ptr(arch, at));
+            }
+        }
+    }
+    let callee = match &req.target {
+        CallTarget::Symbol { name } => Callee::Symbol(name.clone()),
+        CallTarget::Vaddr { value } => Callee::Address(value.wrapping_add(fc.bias())),
+    };
+    let outcome = fc.call(&CallSpec {
+        callee,
+        args,
+        ret: req.ret,
+        max_instructions: req.max_instructions,
+    })?;
+    let mut buffers = Vec::new();
+    for (arg, address, len) in placed {
+        let mut data = vec![0u8; len];
+        fc.machine().read_mem(address, &mut data)?;
+        buffers.push(CallBuffer { arg, address, data });
+    }
+    let (stdout, stderr) = fc.output();
+    Ok(CallReply {
+        outcome,
+        buffers,
+        stdout,
+        stderr,
+        arch: arch.name().to_string(),
+        bias: fc.bias(),
+    })
 }
 
 /// A request to a debugging runner ([`DebugChild`]).
@@ -388,7 +562,7 @@ impl DebugChild {
         runner: &Path,
         options: ConfinementOptions,
     ) -> Result<DebugChild, EmuError> {
-        let (child_spec, sp) = prepare(spec, runner, options)?;
+        let (child_spec, sp) = prepare(spec, runner, options, true)?;
         let log = LogSink::with_capacity(200);
         let (sandbox, mut sock) = kraken_sidecar::sandbox::Sandbox::spawn(sp, &log)
             .map_err(|e| EmuError::Io(format!("starting {RUNNER}: {e}")))?;
@@ -472,6 +646,11 @@ impl DebugChild {
 /// The runner's side: read the request from the socket on fd 0, run, answer.
 pub fn serve(sock: &mut UnixStream) -> Result<(), String> {
     let req = read_message(sock).map_err(|e| format!("request: {e}"))?;
+    if let Ok(hello) = serde_json::from_slice::<CallHello>(&req)
+        && hello.mode == "call"
+    {
+        return serve_call(sock, hello.spec, hello.call);
+    }
     if let Ok(hello) = serde_json::from_slice::<DebugHello>(&req)
         && hello.mode == "debug"
     {

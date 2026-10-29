@@ -1934,6 +1934,7 @@ impl ViewModel {
                 | AppAction::RunProgram
                 | AppAction::RunPatched
                 | AppAction::ComparePatched
+                | AppAction::CallFunction
                 | AppAction::ShowEmulation
                 | AppAction::CreateFunctionHere
                 | AppAction::DeleteFunction
@@ -2010,6 +2011,7 @@ impl ViewModel {
             AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
             AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
             AppAction::ComparePatched => self.begin_emulate(EmulateMode::Compare),
+            AppAction::CallFunction => self.begin_call_current(),
             AppAction::ShowEmulation => self.show_emulation(),
             AppAction::EmulationHelp => return Some(UiRequest::ShowEmulationHelp),
             AppAction::CreateFunctionHere => self.begin_create_function_here(),

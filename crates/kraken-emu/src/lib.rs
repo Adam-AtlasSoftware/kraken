@@ -40,7 +40,9 @@ pub mod specs;
 mod vfp;
 
 pub use arch::Arch;
-pub use call::{CallOutcome, CallSpec, CallTermination, Callee, FunctionCaller, RetKind, Value};
+pub use call::{
+    CallOutcome, CallSpec, CallTermination, Callee, FunctionCaller, RetKind, StartAt, Value,
+};
 pub use error::EmuError;
 pub use linux::{Exit, ProgramOutcome, RunSpec, run_program};
 pub use machine::{BlockLog, Machine, Perm, Stop};

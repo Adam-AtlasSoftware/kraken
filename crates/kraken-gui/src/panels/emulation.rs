@@ -5,7 +5,8 @@ use std::sync::Mutex;
 use egui::{Align2, Frame, Id, Margin, RichText, Ui, vec2};
 use kraken_viewmodel::ViewModel;
 use kraken_viewmodel::navtools::{
-    EmulateMode, EmulationResult, InputRow, RunDetail, SideRow, side_by_side,
+    CallDetail, EmulateMode, EmulationResult, InputRow, ParamKind, RETURN_KINDS, RunDetail,
+    SideRow, side_by_side,
 };
 use kraken_viewmodel::rewrite::DiffLine;
 
@@ -80,6 +81,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         .id_salt("kraken_emulation")
         .auto_shrink([false, false])
         .show(ui, |ui| match &result {
+            EmulationResult::Call(c) => call_section(ui, c),
             EmulationResult::Run {
                 patched,
                 given,
@@ -547,5 +549,232 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.cancel_emulate();
     } else if go || enter {
         vm.submit_emulate();
+    }
+}
+
+/// The "Call this function" dialog.
+pub fn call_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(mut d) = vm.tools.call_dialog.clone() else {
+        return;
+    };
+    let dark = ctx.global_style().visuals.dark_mode;
+    let p = kraken_gui_widgets::KrakenTheme { dark }.palette();
+    let s = style::status(dark);
+    let (enter, esc) = ctx.input_mut(|i| {
+        (
+            i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+        )
+    });
+    let (mut go, mut cancel) = (false, false);
+    egui::Window::new(medium(format!("Call {}", d.name), 15.0))
+        .id(Id::new("kraken_call_dialog"))
+        .collapsible(false)
+        .resizable(false)
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .fixed_size(vec2(560.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(
+                    "Runs only this function in the sandboxed emulator and shows what it \
+                     returns and what it wrote. The rest of the program does not run.",
+                )
+                .color(p.text_dim),
+            );
+            if !d.signature.is_empty() {
+                ui.label(
+                    RichText::new(&d.signature)
+                        .monospace()
+                        .size(12.0)
+                        .color(p.text),
+                )
+                .on_hover_text("The function's signature; the rows below are filled from it");
+            }
+            egui::Grid::new("kraken_call_grid")
+                .num_columns(3)
+                .spacing([10.0, 6.0])
+                .show(ui, |ui| {
+                    for (i, row) in d.params.iter_mut().enumerate() {
+                        ui.label(
+                            RichText::new(one_line(&row.label, 40))
+                                .monospace()
+                                .size(11.5)
+                                .color(p.text_dim),
+                        )
+                        .on_hover_text(row.label.clone());
+                        egui::ComboBox::from_id_salt(("kraken_call_kind", i))
+                            .selected_text(row.kind.label())
+                            .width(110.0)
+                            .show_ui(ui, |ui| {
+                                for k in ParamKind::ALL {
+                                    ui.selectable_value(&mut row.kind, k, k.label())
+                                        .on_hover_text(k.hint());
+                                }
+                            })
+                            .response
+                            .on_hover_text("How this argument is given");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut row.value)
+                                .id(Id::new(("kraken_call_arg", i)))
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY),
+                        )
+                        .on_hover_text(row.kind.hint());
+                        ui.end_row();
+                    }
+                    if d.params.is_empty() {
+                        ui.label(RichText::new("No parameters").size(12.0).color(p.text_dim));
+                        ui.end_row();
+                    }
+                    ui.label(RichText::new("Returns").size(12.0).color(p.text_dim));
+                    egui::ComboBox::from_id_salt("kraken_call_returns")
+                        .selected_text(d.returns.clone())
+                        .show_ui(ui, |ui| {
+                            for k in RETURN_KINDS {
+                                ui.selectable_value(&mut d.returns, k.to_string(), k)
+                                    .on_hover_text(format!("The function returns {k}"));
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "What the function returns: void, int (32 bits), long or ptr \
+                             (pointer-sized), a narrower integer, f32 or f64",
+                        );
+                    ui.end_row();
+                    ui.label(RichText::new("Limit").size(12.0).color(p.text_dim));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut d.max_steps)
+                            .id(Id::new("kraken_call_steps"))
+                            .hint_text("10000000 steps")
+                            .desired_width(130.0),
+                    )
+                    .on_hover_text("Most instructions to run (up to 200000000)");
+                    ui.end_row();
+                });
+            ui.checkbox(
+                &mut d.libc,
+                "Start the program first (needed for libc functions)",
+            )
+            .on_hover_text(
+                "Runs the program up to main so the C library is set up; the function can \
+                 then call strlen, malloc, printf and the like",
+            );
+            if d.libc {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Stop startup at")
+                            .size(12.0)
+                            .color(p.text_dim),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut d.startup)
+                            .id(Id::new("kraken_call_startup"))
+                            .hint_text("main (or an address, for a stripped program)")
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .on_hover_text(
+                        "Leave empty to use main; a stripped program may need main's address",
+                    );
+                });
+            }
+            if let Some(e) = &d.error {
+                ui.label(RichText::new(e).color(s.danger));
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !d.running,
+                        egui::Button::new(RichText::new("Call").strong()),
+                    )
+                    .on_hover_text("Run the function (Ctrl+Enter)")
+                    .on_disabled_hover_text("Running...")
+                    .clicked()
+                {
+                    go = true;
+                }
+                if ui
+                    .add_enabled(!d.running, egui::Button::new("Cancel"))
+                    .on_hover_text("Close without calling (Esc)")
+                    .on_disabled_hover_text("The call has started; wait for it to finish")
+                    .clicked()
+                {
+                    cancel = true;
+                }
+                if d.running {
+                    ui.spinner();
+                }
+            });
+        });
+    if let Some(live) = vm.tools.call_dialog.as_mut() {
+        let (running, error) = (live.running, live.error.clone());
+        *live = d;
+        live.running = running;
+        live.error = error;
+    }
+    if esc || cancel {
+        vm.cancel_call();
+    } else if go || enter {
+        vm.submit_call();
+    }
+}
+
+fn call_section(ui: &mut Ui, c: &CallDetail) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    ui.label(
+        RichText::new(format!("{} was called with {}.", c.name, c.given))
+            .size(12.5)
+            .color(p.text),
+    );
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        chip(ui, &c.ended, if c.clean { s.success } else { s.warning })
+            .on_hover_text("How the call ended");
+        ui.label(
+            RichText::new(format!("{} instructions", c.steps))
+                .size(11.5)
+                .color(p.text_dim),
+        );
+    });
+    if let Some(v) = &c.value {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Returned").size(12.0).color(p.text_dim));
+            ui.label(
+                RichText::new(v)
+                    .monospace()
+                    .size(13.0)
+                    .strong()
+                    .color(p.text_strong),
+            )
+            .on_hover_text("The value in the return register, decimal and hexadecimal");
+        });
+    }
+    for (i, b) in c.buffers.iter().enumerate() {
+        let state = if b.changed { "changed" } else { "unchanged" };
+        ui.label(
+            RichText::new(format!("{} ({} bytes, {state})", b.label, b.size))
+                .size(11.5)
+                .color(p.text_dim),
+        );
+        stream(ui, ("buf", &i.to_string()), "As text", &b.text);
+        ui.label(
+            RichText::new(&b.hex)
+                .monospace()
+                .size(11.0)
+                .color(p.text_dim),
+        )
+        .on_hover_text("The first bytes as hexadecimal digits");
+    }
+    if !c.stdout.is_empty() {
+        stream(ui, ("out", "call"), "Standard output", &c.stdout);
+    }
+    if !c.stderr.is_empty() {
+        stream(ui, ("err", "call"), "Standard error", &c.stderr);
+    }
+    for n in &c.notes {
+        ui.label(RichText::new(n).size(11.0).color(p.text_dim));
     }
 }

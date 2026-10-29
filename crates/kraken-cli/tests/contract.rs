@@ -417,6 +417,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         json!({"function": "0x401000", "patched": true})
     );
     step!("decompile_patched", json!({"address": "0x401040"}));
+    step!("emulate_call", json!({"address": "0x401040"}));
     step!("emulate_compare", json!({}));
     // Patch intents in preview record nothing; a branch edit on a non-branch is refused alike.
     step!("patch_nop", json!({"address": "0x401040", "preview": true}));

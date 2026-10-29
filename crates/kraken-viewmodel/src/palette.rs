@@ -92,6 +92,8 @@ pub enum AppAction {
     RunPatched,
     /// Run the original and the patched program with the same input and compare them.
     ComparePatched,
+    /// Call the current function in the emulator with arguments you give.
+    CallFunction,
     /// Show the Emulation tab.
     ShowEmulation,
     /// Read how running the program in the emulator works.
@@ -120,7 +122,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 52] = [
+    pub const ALL: [AppAction; 53] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -137,6 +139,7 @@ impl AppAction {
         AppAction::RunProgram,
         AppAction::RunPatched,
         AppAction::ComparePatched,
+        AppAction::CallFunction,
         AppAction::ShowEmulation,
         AppAction::EmulationHelp,
         AppAction::CreateFunctionHere,
@@ -259,6 +262,7 @@ impl AppAction {
             AppAction::RunProgram => "Run program...",
             AppAction::RunPatched => "Run patched program...",
             AppAction::ComparePatched => "Compare original vs patched...",
+            AppAction::CallFunction => "Call this function...",
             AppAction::ShowEmulation => "Show emulation results",
             AppAction::EmulationHelp => "About running programs",
             AppAction::CreateFunctionHere => "Create function here",
@@ -337,6 +341,9 @@ impl AppAction {
             AppAction::ComparePatched => {
                 "Run the original and the patched program with the same input and see what changed"
             }
+            AppAction::CallFunction => {
+                "Run just this function in the emulator with arguments you give; shows its return value and what it wrote"
+            }
             AppAction::ShowEmulation => "See what the last run or comparison did",
             AppAction::EmulationHelp => {
                 "What the emulator does, what it cannot do, and why running here is safe"
@@ -408,6 +415,7 @@ impl AppAction {
             "patch_export" => AppAction::ExportPatched,
             "emulate_run" => AppAction::RunProgram,
             "emulate_compare" => AppAction::ComparePatched,
+            "emulate_call" => AppAction::CallFunction,
             "create_function" => AppAction::CreateFunctionHere,
             "delete_function" => AppAction::DeleteFunction,
             _ => return None,

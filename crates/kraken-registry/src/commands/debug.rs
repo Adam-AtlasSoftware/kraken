@@ -572,7 +572,7 @@ fn start(
     })
 }
 
-fn is_pie(path: &std::path::Path) -> bool {
+pub(super) fn is_pie(path: &std::path::Path) -> bool {
     use std::io::Read;
     let mut head = [0u8; 20];
     let Ok(mut f) = std::fs::File::open(path) else {

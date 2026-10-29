@@ -131,6 +131,7 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Run program... | Run the program in the sandboxed emulator with the arguments, input, environment and files you give it |  |
 | Run patched program... | Run a copy with your byte patches applied in the sandboxed emulator |  |
 | Compare original vs patched... | Run the original and the patched program with the same input and see what changed |  |
+| Call this function... | Run just this function in the emulator with arguments you give; shows its return value and what it wrote |  |
 | Show emulation results | See what the last run or comparison did |  |
 | About running programs | What the emulator does, what it cannot do, and why running here is safe |  |
 

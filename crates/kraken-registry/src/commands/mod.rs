@@ -14,6 +14,8 @@ mod data;
 mod debug;
 mod edit;
 mod emulate;
+#[cfg(unix)]
+mod emulate_call;
 mod gui_navigate;
 mod help;
 mod history;
@@ -76,6 +78,10 @@ pub use emulate::{
     DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateCompare, EmulateCompareArgs,
     EmulateCompareOut, EmulateDifference, EmulateExit, EmulateExitKind, EmulateFile, EmulateInput,
     EmulateRun, EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS,
+};
+#[cfg(unix)]
+pub use emulate_call::{
+    CallArgIn, CallBufferOut, CallValue, EmulateCall, EmulateCallArgs, EmulateCallOut, IntText,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
 pub use help::{
@@ -339,6 +345,7 @@ pub fn register_all(r: &mut Registry) {
     // Card EM-05: step the program in the emulator.
     #[cfg(unix)]
     {
+        r.register(EmulateCall);
         r.register(DebugStart);
         r.register(DebugStep);
         r.register(DebugStepOver);

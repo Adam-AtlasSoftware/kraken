@@ -118,6 +118,36 @@ opens the same comparison.
 
 ![The Emulation tab after comparing the original and the patched program: the first difference, both exits and the two outputs side by side with the changed line marked](images/emulation.png)
 
+## Calling one function
+
+`emulate_call` runs a single function instead of the whole program: give its `address` (or its
+`function` name), the `args` and what it `returns`. Arguments are numbers (`{"int": 5}`, optionally
+`"bits": 8`), raw addresses (`{"ptr": "0x404040"}`), floats (`f32`, `f64`) and buffers the emulator
+places in memory for the function to read and write: `{"string": "text"}` (with a terminating
+zero), `{"hex": "0105"}` and `{"buffer": 64}` (zero-filled). The answer has the returned `value`
+(signed, unsigned and hexadecimal), the `buffers` after the call with `changed` set when the
+function wrote to one, `stdout`, `stderr`, the instruction count and how the call `ended`.
+
+```
+emulate_call {"address": "0x401255", "args": [{"buffer": 144}, {"hex": "010501070201030400"}, {"int": 9}], "returns": "int"}
+emulate_call {"function": "str_upper", "args": [{"string": "Hello, world"}], "returns": "void", "libc": true}
+```
+
+By default only the program's own code is loaded: a parser, a hash or a state machine runs, and
+the call stops with `ended: import` (naming the library function) if it reaches one. With `libc`
+the program first runs up to `main` so the C library is set up, and the function may then call
+`strlen`, `malloc` or `printf`; for a stripped program, `startup_address` names where to stop. The
+call runs in the same sandboxed child as `emulate_run`, on x86, x86-64, ARM, AArch64 and RISC-V,
+and nothing in the project changes. A function's prototype in the decompiler is a guess; check the
+argument kinds against the listing.
+
+In the GUI, right-click a function (or any line inside it) in the Listing or the Decompiler and
+choose *Call this function...*, or use **Emulate > Call this function...**. The dialog is filled
+from the function's signature (a `char *` becomes a text row, other pointers an empty buffer, a
+`double` a decimal row) and every row can be changed; the result opens in the **Emulation** tab.
+
+![The Call this function dialog over the Emulation tab, which shows what str_upper wrote into its buffer](images/emulate-call.png)
+
 ## How the assistant uses it
 
 The assistant calls `emulate_run` to check what it reads in the code: feed a function's expected

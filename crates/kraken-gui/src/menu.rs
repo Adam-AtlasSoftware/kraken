@@ -100,6 +100,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::RunProgram
             | AppAction::RunPatched
             | AppAction::ComparePatched
+            | AppAction::CallFunction
             | AppAction::ShowEmulation
             | AppAction::CreateFunctionHere
             | AppAction::DeleteFunction
@@ -328,6 +329,7 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
                 item(ui, AppAction::RunProgram, env, &mut out);
                 item(ui, AppAction::RunPatched, env, &mut out);
                 item(ui, AppAction::ComparePatched, env, &mut out);
+                item(ui, AppAction::CallFunction, env, &mut out);
                 ui.separator();
                 item(ui, AppAction::ShowEmulation, env, &mut out);
                 item(ui, AppAction::EmulationHelp, env, &mut out);

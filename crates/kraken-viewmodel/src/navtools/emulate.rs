@@ -311,6 +311,8 @@ pub struct Difference {
 /// What the Emulation tab shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmulationResult {
+    /// One function called.
+    Call(Box<super::CallDetail>),
     /// One run.
     Run {
         /// True for the patched copy.

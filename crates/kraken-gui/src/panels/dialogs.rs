@@ -19,6 +19,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     export_dialog(ctx, vm);
     intent_dialog(ctx, vm);
     super::emulation::dialog(ctx, vm);
+    super::emulation::call_dialog(ctx, vm);
     type_dialog(ctx, vm);
     function_dialog(ctx, vm);
     command_form(ctx, vm);
