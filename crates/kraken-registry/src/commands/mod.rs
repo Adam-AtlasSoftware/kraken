@@ -41,6 +41,7 @@ mod rewrite_hint;
 mod rewrite_preload;
 mod rewrite_program;
 mod search;
+mod setup;
 mod typedit;
 mod types;
 mod ui;
@@ -192,6 +193,10 @@ pub use search::{
     DEFAULT_SEARCH_HITS, MAX_SCAN_BYTES, MAX_SCAN_FUNCTIONS, MAX_SEARCH_HITS, Search, SearchArgs,
     SearchHit, SearchKind, parse_pattern,
 };
+pub use setup::{
+    GlobalJobOut, IntegrationInstallStart, SetupArgs, SetupBackend, SetupDotnet, SetupGhidra,
+    SetupItem, SetupNative, SetupState, SetupStatus, SetupStatusOut, SetupTask,
+};
 pub use typedit::{
     TypeDefine, TypeDefineArgs, TypeDefineOut, TypeDelete, TypeDeleteArgs, TypeEditField,
     TypeEditFieldArgs,
@@ -333,6 +338,11 @@ pub fn register_all(r: &mut Registry) {
     // Card INTEGRATIONS: emulators and tools downloaded from upstream on the user's machine.
     r.register(IntegrationsList);
     r.register(IntegrationInstall);
+    r.register(IntegrationInstallStart);
+    r.register(SetupStatus);
+    r.register(SetupGhidra);
+    r.register(SetupNative);
+    r.register(SetupDotnet);
     r.register(IntegrationUsePath);
     r.register(IntegrationRemove);
     r.register(EmulatorRun);

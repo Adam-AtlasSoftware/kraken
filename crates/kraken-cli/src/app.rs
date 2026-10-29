@@ -170,23 +170,14 @@ impl OwnerSlot {
     }
 }
 
-/// Commands that need no open project.
-const PROJECTLESS: [&str; 14] = [
-    "integrations_list",
-    "integration_install",
-    "integration_use_path",
-    "integration_remove",
-    "binary_probe",
-    "ai_usage",
-    "ai_jobs",
-    "local_model_list",
-    "local_model_devices",
-    "local_model_status",
-    "local_model_start",
-    "local_model_hold",
-    "local_model_release",
-    "local_model_stop",
-];
+/// Commands that need no open project besides the machine-global ones (`Scope::Global`).
+const PROJECTLESS: [&str; 2] = ["ai_usage", "ai_jobs"];
+
+/// True when `name` works with no project: a machine-global command, or a job command naming a
+/// machine-global job.
+fn needs_no_project(env: &CliEnv, name: &str, args: &Value) -> bool {
+    PROJECTLESS.contains(&name) || kraken_host::backend::is_global_call(&env.registry, name, args)
+}
 
 impl CliEnv {
     /// The environment of the real binary.
@@ -237,6 +228,7 @@ impl CliEnv {
             if let Ok(lm) = kraken_host::local_models::LocalModels::system() {
                 s = s.with_local_models(Arc::new(lm));
             }
+            s = s.with_setup(Arc::new(kraken_host::setup::HostSetup::system()));
             s = s.with_serving(Arc::new(kraken_host::infer::ServingBridge::new(Arc::new(
                 self.owner_manager()
                     .holder(kraken_host::infer::Holder::Owner),
@@ -1068,7 +1060,7 @@ async fn run_registry_command(
     let setup = if creating {
         fill_project_dir(env, name, &mut args, project.as_deref())
     } else if project.is_none()
-        && !PROJECTLESS.contains(&name)
+        && !needs_no_project(env, name, &args)
         && !env.session.as_ref().is_some_and(|s| s.project().is_ok())
     {
         Err(bad(

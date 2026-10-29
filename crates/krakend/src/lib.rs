@@ -28,6 +28,7 @@ pub mod fake;
 
 pub use daemon::{
     Daemon, DaemonError, DaemonOptions, start, start_full, start_with, start_with_infer,
+    start_with_setup,
 };
 pub use events::EventHub;
 pub use host::{HostConfig, SessionHost};

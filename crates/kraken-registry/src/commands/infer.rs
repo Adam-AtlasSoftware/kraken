@@ -153,6 +153,7 @@ impl Command for LocalModelList {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Returns every model set up to run on this computer: id, state (stopped, loading, \
              ready, failed), address while running, who holds it, cards, memory and speed. The \
@@ -193,6 +194,7 @@ impl Command for LocalModelDevices {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Returns each graphics card with its vendor, name, video memory (total and used) and \
              state: usable, broken, or not supported yet (Intel cards, NPUs). Models run on the \
@@ -245,6 +247,7 @@ impl Command for LocalModelStatus {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "State of one model from `local_model_list` plus the last lines of its log, which \
              say why a start failed. Use it to follow a model that is loading.\n\
@@ -325,6 +328,7 @@ impl Command for LocalModelStart {
             CommandKind::Query,
             Permission::Mutating,
         )
+        .global()
         .doc(
             "Starts the model and returns while it loads (follow it with `local_model_status`). \
              It keeps running until `local_model_stop`, even when nobody uses it. If it would \
@@ -360,6 +364,7 @@ impl Command for LocalModelHold {
             CommandKind::Query,
             Permission::Mutating,
         )
+        .global()
         .doc(
             "Starts the model if it is not running and keeps it for this connection: when the \
              connection ends (or after `local_model_release`) and nobody else holds it, it stops \
@@ -400,6 +405,7 @@ impl Command for LocalModelRelease {
             CommandKind::Query,
             Permission::Mutating,
         )
+        .global()
         .doc(
             "Removes the hold made by `local_model_hold`. The model stops after the grace period \
              when nobody else holds it and it was not started by hand.\n\
@@ -439,6 +445,7 @@ impl Command for LocalModelStop {
             CommandKind::Query,
             Permission::Mutating,
         )
+        .global()
         .doc(
             "Stops the model's server at once and frees its memory. Anything using it (the \
              assistant, rewriting) starts it again on its next request if the model is assigned \

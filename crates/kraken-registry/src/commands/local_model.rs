@@ -445,6 +445,7 @@ impl Command for LocalModelRecommend {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Detects GPU, video memory, RAM, free disk and CPU cores and returns the engine \
              (llama-server on CPU, CUDA or Vulkan; the Strata engine only with 12 GiB video \
@@ -575,6 +576,7 @@ impl Command for LocalModelSetup {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Downloads the engine and the model from `local_model_recommend` (or the catalog \
              model you name), checks the model's SHA-256 against the catalog and points the \

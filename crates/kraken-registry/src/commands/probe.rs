@@ -939,6 +939,7 @@ impl Command for BinaryProbe {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, \
              COFF object, library archive, Intel HEX or S-record firmware, or unknown), the kind in plain words (`Linux shared \

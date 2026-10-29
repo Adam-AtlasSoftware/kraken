@@ -1976,6 +1976,7 @@ impl ViewModel {
             AppAction::AskAboutKraken => return Some(UiRequest::AskAboutKraken),
             AppAction::SetUpLocalModel => return Some(UiRequest::SetUpLocalModel),
             AppAction::ShowIntegrations => return Some(UiRequest::ShowIntegrations),
+            AppAction::ShowSetupStatus => return Some(UiRequest::ShowSetupStatus),
             AppAction::RunInEmulator => return Some(UiRequest::RunInEmulator),
             AppAction::LocalSetupNext => {
                 return Some(UiRequest::LocalSetup(crate::SetupButton::Next));

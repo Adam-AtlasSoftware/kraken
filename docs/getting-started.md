@@ -130,6 +130,21 @@ Everything above also works in the window. Start it with `kraken-gui`.
 
 The [GUI reference](gui.md) lists every menu, panel and shortcut. The same steps with the real program are in the [tutorial](tutorial.md).
 
+## Check what is installed
+
+**Help > Setup status** lists every part KRAKEN can use and whether it is ready: the Ghidra engine (Ghidra and a JDK), the native engine's Sleigh files, the .NET engine, the Rust toolchain, the emulators and local inference (llama.cpp, Strata). Each part that is not ready says how to fix it, and the ones KRAKEN can install itself have an **Install** button. Installs run in the background: the status bar shows how far they are, the window has a **Cancel** button, and a partial download is kept and resumed next time. None of this needs a project.
+
+The same is available as commands, so the command line, MCP clients, Python and the assistant can do it too:
+
+```sh
+kraken setup-status                  # what is installed and ready, with a fix for what is not
+kraken setup-ghidra --no-wait        # prints a job id such as job-g1; same work as `kraken setup`
+kraken job-status --job-id job-g1    # progress of that job
+kraken job-cancel --job-id job-g1    # stop it
+```
+
+`setup_native` and `setup_dotnet` are the same for `kraken setup --native` and `--dotnet`, and `integration_install_start` does the install of an emulator or tool as a job. Agents and MCP clients are asked before any of them downloads anything. `kraken setup` itself stays as the plain way to run an install in the terminal.
+
 ## Optional: the Ghidra engine
 
 The Ghidra engine opens every format KRAKEN knows (ELF, PE, Mach-O, 32-bit, other processors), reads debug-info types and demangles C++ names. It needs Java and a Ghidra download. Install it either way:

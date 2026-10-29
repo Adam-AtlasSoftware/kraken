@@ -196,6 +196,7 @@ impl Command for IntegrationsList {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Every catalogue entry (xemu, xenia-canary, shadPS4, RPCS3, PCSX2, PPSSPP, Dolphin, \
              DuckStation, mGBA, melonDS, Ryubing, Cemu, QEMU, Wine and the manifests in your \
@@ -252,6 +253,7 @@ impl Command for IntegrationInstall {
             CommandKind::Query,
             Permission::Mutating,
         )
+        .global()
         .doc(
             "Fetches the pinned upstream release of the catalogue entry `id` over HTTPS, checks \
              its SHA-256 and unpacks it under KRAKEN's data directory. `accept_licence` must be \
@@ -275,42 +277,53 @@ impl Command for IntegrationInstall {
         args: IntegrationInstallArgs,
     ) -> Result<IntegrationView, ProtoError> {
         let backend = s.integrations()?.clone();
-        let id = args.id.clone();
-        let list = {
-            let b = backend.clone();
-            blocking(move || b.list()).await?
-        };
-        let entry = list
-            .iter()
-            .find(|e| e.id == id)
-            .ok_or_else(|| ProtoError::new(ErrorCode::NotFound, format!("no entry `{id}`")))?;
-        if ctx.needs_user_approval() && entry.contains_key_material {
-            return Err(ProtoError::new(
-                ErrorCode::Unsupported,
-                format!(
-                    "`{id}` embeds key material: a person has to install it from Tools > Integrations or `kraken integration-install`"
-                ),
-            ));
-        }
-        if !args.accept_licence {
-            return Err(invalid(format!(
-                "read the licence ({}) and the notice of `{id}` and pass accept_licence: true. {}",
-                entry.license, entry.notice
-            )));
-        }
-        ctx.require_approval(
-            "integration_install",
-            format!(
-                "Download {} {} ({:.1} MiB) from its upstream release and install it",
-                entry.name,
-                entry.pinned_version.clone().unwrap_or_default(),
-                entry.download_bytes as f64 / (1 << 20) as f64
-            ),
-            serde_json::json!({ "id": id, "download_bytes": entry.download_bytes }),
-        )
-        .await?;
-        backend.install(&id, args.accept_licence).await
+        vet_install(&backend, ctx, "integration_install", &args).await?;
+        backend.install(&args.id, args.accept_licence).await
     }
+}
+
+/// The checks every install passes before it downloads: the entry exists, key material is not
+/// installed on an agent's say-so, the licence is accepted and the approval is given.
+pub(crate) async fn vet_install(
+    backend: &Arc<dyn IntegrationsBackend>,
+    ctx: &CallContext,
+    command: &str,
+    args: &IntegrationInstallArgs,
+) -> Result<(), ProtoError> {
+    let id = args.id.clone();
+    let list = {
+        let b = backend.clone();
+        blocking(move || b.list()).await?
+    };
+    let entry = list
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| ProtoError::new(ErrorCode::NotFound, format!("no entry `{id}`")))?;
+    if ctx.needs_user_approval() && entry.contains_key_material {
+        return Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!(
+                "`{id}` embeds key material: a person has to install it from Tools > Integrations or `kraken integration-install`"
+            ),
+        ));
+    }
+    if !args.accept_licence {
+        return Err(invalid(format!(
+            "read the licence ({}) and the notice of `{id}` and pass accept_licence: true. {}",
+            entry.license, entry.notice
+        )));
+    }
+    ctx.require_approval(
+        command,
+        format!(
+            "Download {} {} ({:.1} MiB) from its upstream release and install it",
+            entry.name,
+            entry.pinned_version.clone().unwrap_or_default(),
+            entry.download_bytes as f64 / (1 << 20) as f64
+        ),
+        serde_json::json!({ "id": id, "download_bytes": entry.download_bytes }),
+    )
+    .await
 }
 
 /// Arguments of `integration_use_path`.
@@ -338,6 +351,7 @@ impl Command for IntegrationUsePath {
             CommandKind::Query,
             Permission::Mutating,
         )
+        .global()
         .doc(
             "Points the entry `id` at an existing program (an AppImage, a binary, a wrapper \
              script). It must be an executable file. Nothing is downloaded or copied. Agents and \
@@ -394,6 +408,7 @@ impl Command for IntegrationRemove {
             CommandKind::Query,
             Permission::Dangerous,
         )
+        .global()
         .doc(
             "Deletes the files KRAKEN installed for `id` (only what its receipt lists) and drops \
              a path chosen with `integration_use_path`. A copy on your system is never touched. \

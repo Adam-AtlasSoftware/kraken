@@ -55,6 +55,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`history`](#history) | query | safe | Show the edit log, newest first |
 | [`imports`](#imports) | query | safe | List imported symbols (functions and data from other libraries) |
 | [`integration_install`](#integration_install) | query | mutating | Download upstream's release of an emulator or tool and install it under KRAKEN's data directory |
+| [`integration_install_start`](#integration_install_start) | job | mutating | Install an emulator or tool from the catalogue as a cancellable job |
 | [`integration_remove`](#integration_remove) | query | dangerous | Delete KRAKEN's installed copy of an emulator or tool and forget a chosen path |
 | [`integration_use_path`](#integration_use_path) | query | mutating | Use an emulator or tool you already have, at a path you choose |
 | [`integrations_list`](#integrations_list) | query | safe | List the emulators and tools KRAKEN can use, with what is installed |
@@ -124,6 +125,10 @@ logged; **dangerous** commands always ask for approval first.
 | [`set_comment`](#set_comment) | mutation | mutating | Set or clear a comment at an address |
 | [`set_function_bounds`](#set_function_bounds) | mutation | mutating | Change a function's address range |
 | [`set_type`](#set_type) | mutation | mutating | Set the prototype of a function or the type of a data item |
+| [`setup_dotnet`](#setup_dotnet) | job | mutating | Download the .NET runtime and install the managed-code sidecar (job) |
+| [`setup_ghidra`](#setup_ghidra) | job | mutating | Download Ghidra, a JDK and build the KRAKEN extension (job) |
+| [`setup_native`](#setup_native) | job | mutating | Fetch the native engine's sources and compile its Sleigh files (job) |
+| [`setup_status`](#setup_status) | query | safe | Show what is installed and ready on this computer, with a fix for what is not |
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
 | [`tainted_clear`](#tainted_clear) | mutation | mutating | Clear the stale marker of a function after refreshing it |
 | [`tainted_list`](#tainted_list) | query | safe | List functions whose derived data is stale after an undo |
@@ -7560,6 +7565,49 @@ Only catalogue ids are accepted, never a URL. The download resumes from a partia
     "argv"
   ],
   "title": "IntegrationView",
+  "type": "object"
+}
+```
+
+</details>
+
+## integration_install_start
+
+Install an emulator or tool from the catalogue as a cancellable job
+
+```sh
+kraken integration-install-start --id <string> [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Like `integration_install`, but returns a `job_id` at once: the download reports its progress in `job_status`, `job_cancel` stops it (the partial file is kept). `accept_licence` must be true; agents and MCP callers are asked first.
+
+Example: `integration_install_start {"id": "mgba", "accept_licence": true}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `id` | `--id` | string | yes | Catalogue id (see `integrations_list`). |
+| `accept_licence` | `--accept-licence` | boolean | no | Say you read the licence and notice of the entry (default false: the install is refused until it is true). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
   "type": "object"
 }
 ```
@@ -20839,6 +20887,269 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
     "versions"
   ],
   "title": "MutationOutput",
+  "type": "object"
+}
+```
+
+</details>
+
+## setup_dotnet
+
+Download the .NET runtime and install the managed-code sidecar (job)
+
+```sh
+kraken setup-dotnet [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Needs no project. Downloads the pinned .NET runtime over HTTPS, checks its SHA-256 and installs it with the KRAKEN .NET sidecar under KRAKEN's data directory. Returns a `job_id`: `job_status`, `job_await`, `job_cancel`. Agents and MCP callers are asked first.
+
+Example: `setup_dotnet {}`
+
+The same work as `kraken setup --dotnet`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `force` | `--force` | boolean | no | Install again even when it looks complete. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## setup_ghidra
+
+Download Ghidra, a JDK and build the KRAKEN extension (job)
+
+```sh
+kraken setup-ghidra [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Needs no project. Downloads the pinned Ghidra release and a JDK from their upstream hosts over HTTPS (about 700 MiB), checks their SHA-256 and installs them with the KRAKEN extension under KRAKEN's data directory. Returns a `job_id` (`job-gN`): watch it with `job_status`, wait with `job_await`, stop it with `job_cancel` (a partial download is kept and resumed next time). Agents and MCP callers are asked first.
+
+Example: `setup_ghidra {}`
+
+The same work as `kraken setup`. Skips parts that are installed unless `force` is true.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `force` | `--force` | boolean | no | Install again even when it looks complete. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## setup_native
+
+Fetch the native engine's sources and compile its Sleigh files (job)
+
+```sh
+kraken setup-native [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Needs no project. Makes the native engine usable: fetches the pinned Ghidra sources and compiles the Sleigh processor files with `cargo xtask`. That needs the source checkout this build came from; otherwise the job fails with the exact commands to run. Returns a `job_id`: `job_status`, `job_await`, `job_cancel`. Agents and MCP callers are asked first.
+
+Example: `setup_native {}`
+
+The same work as `kraken setup --native`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `force` | `--force` | boolean | no | Install again even when it looks complete. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## setup_status
+
+Show what is installed and ready on this computer, with a fix for what is not
+
+```sh
+kraken setup-status
+```
+
+- Kind: query
+- Permission: safe
+
+Needs no project. One row per part KRAKEN uses: the Ghidra engine (Ghidra and a JDK), the native engine (Sleigh files), the .NET engine, the Rust toolchain (for rewrites), emulators and local inference (llama.cpp, Strata). `state` is `ready`, `missing`, `partial` or `unavailable`; `fix` says what to do and `fix_command` names the command that does it.
+
+Example: `setup_status {}`
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "SetupItem": {
+      "description": "One tool or runtime KRAKEN can use.",
+      "properties": {
+        "detail": {
+          "description": "What was found (versions, paths) or what is wrong.",
+          "type": "string"
+        },
+        "fix": {
+          "description": "What to do when it is not ready, in words.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fix_command": {
+          "description": "The registry command that fixes it, when there is one (`setup_ghidra`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Stable id: `ghidra`, `native`, `dotnet`, `rust`, `emulators`, `llama`, `strata`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name.",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "What it is for, in one line.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SetupState",
+          "description": "Where it stands."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "purpose",
+        "state",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "SetupState": {
+      "description": "How ready one part is.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "Installed and usable.",
+          "type": "string"
+        },
+        {
+          "const": "missing",
+          "description": "Not installed.",
+          "type": "string"
+        },
+        {
+          "const": "partial",
+          "description": "Some pieces are there, others are not.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Cannot be set up on this computer or build.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of `setup_status`.",
+  "properties": {
+    "items": {
+      "description": "One row per part.",
+      "items": {
+        "$ref": "#/$defs/SetupItem"
+      },
+      "type": "array"
+    },
+    "not_ready": {
+      "description": "Parts that are not.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ready": {
+      "description": "Parts that are ready.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "ready",
+    "not_ready"
+  ],
+  "title": "SetupStatusOut",
   "type": "object"
 }
 ```

@@ -26,6 +26,7 @@ pub mod managed;
 pub mod native;
 pub mod paths;
 pub mod provision;
+pub mod setup;
 pub mod strata_setup;
 
 pub use author::{RunIdGen, agent_id_from_client, user_id};

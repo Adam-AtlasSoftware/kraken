@@ -243,7 +243,11 @@ pub fn current_text(vm: &ViewModel) -> Option<String> {
 }
 
 /// The strip along the bottom.
-pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
+pub fn status_bar(
+    ui: &mut Ui,
+    vm: &ViewModel,
+    setup: Option<&kraken_viewmodel::setup_status::SetupHub>,
+) {
     let p = pal(ui);
     ui.horizontal_centered(|ui| {
         ui.add_space(6.0);
@@ -306,6 +310,9 @@ pub fn status_bar(ui: &mut Ui, vm: &ViewModel) {
                         "Suggested changes waiting for your decision. Open the Proposals tab to accept or reject them.",
                     );
                 }
+            }
+            if let Some(hub) = setup {
+                crate::setup_status::status_chip(ui, hub);
             }
             crate::activity::status_chip(ui, vm);
             crate::ai_activity::status_chip(ui, vm);

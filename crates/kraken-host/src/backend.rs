@@ -49,6 +49,20 @@ fn is_project_command(name: &str) -> bool {
     matches!(name, "project_create" | "project_open")
 }
 
+/// True for a machine-global command, or a job command naming a machine-global job: it needs no
+/// project.
+pub fn is_global_call(registry: &Registry, name: &str, args: &Value) -> bool {
+    if matches!(name, "job_status" | "job_await" | "job_cancel") {
+        return args
+            .get("job_id")
+            .and_then(Value::as_str)
+            .is_some_and(kraken_registry::jobs::is_global_job);
+    }
+    registry
+        .get(name)
+        .is_some_and(|e| e.spec().scope == kraken_registry::Scope::Global)
+}
+
 fn no_project() -> ProtoError {
     ProtoError::new(
         ErrorCode::NotFound,
@@ -124,7 +138,7 @@ impl LocalBackend {
 #[async_trait]
 impl CommandBackend for LocalBackend {
     async fn call(&self, name: &str, ctx: &CallContext, args: Value) -> Result<Value, ProtoError> {
-        if !is_project_command(name) {
+        if !is_project_command(name) && !is_global_call(&self.registry, name, &args) {
             self.ensure_project().await?;
         }
         self.registry
@@ -328,6 +342,8 @@ impl CommandBackend for DaemonBackend {
                 .and_then(Value::as_str)
                 .map(PathBuf::from)
                 .ok_or_else(|| ProtoError::new(ErrorCode::InvalidArgument, "missing project_dir"))?
+        } else if is_global_call(&self.registry, name, &args) {
+            self.current_project().unwrap_or_default()
         } else {
             self.current_project().ok_or_else(no_project)?
         };

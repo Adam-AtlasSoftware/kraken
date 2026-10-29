@@ -936,6 +936,7 @@ mod integrations;
 mod loading;
 mod local_models;
 mod patches;
+mod setup_status;
 mod shell;
 mod shots;
 mod titlebar;

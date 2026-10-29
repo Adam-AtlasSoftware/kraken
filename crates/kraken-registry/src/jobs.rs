@@ -156,10 +156,21 @@ impl JobReporter {
 
 #[derive(Default)]
 struct Inner {
+    /// Ids are `<prefix><n>`; empty means `job-`.
+    prefix: &'static str,
     next: AtomicU64,
     /// Tracked jobs count separately (`open-1`, ...), so job numbers stay what they were.
     next_tracked: AtomicU64,
     jobs: Mutex<BTreeMap<u64, Arc<JobEntry>>>,
+}
+
+/// Id prefix of the daemon's machine-global jobs.
+pub const GLOBAL_PREFIX: &str = "job-g";
+
+/// True for the id of a machine-global job.
+pub fn is_global_job(id: &str) -> bool {
+    id.strip_prefix(GLOBAL_PREFIX)
+        .is_some_and(|n| n.parse::<u64>().is_ok())
 }
 
 /// Table keys of tracked jobs have this bit set.
@@ -181,6 +192,24 @@ impl JobTable {
         JobTable::default()
     }
 
+    /// An empty table whose ids are `job-g1`, `job-g2`, ...: the daemon's machine-global jobs.
+    pub fn global() -> JobTable {
+        JobTable {
+            inner: Arc::new(Inner {
+                prefix: GLOBAL_PREFIX,
+                ..Inner::default()
+            }),
+        }
+    }
+
+    fn prefix(&self) -> &'static str {
+        if self.inner.prefix.is_empty() {
+            "job-"
+        } else {
+            self.inner.prefix
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, BTreeMap<u64, Arc<JobEntry>>> {
         self.inner
             .jobs
@@ -194,7 +223,7 @@ impl JobTable {
                 .and_then(|n| n.parse::<u64>().ok())
                 .filter(|n| n & TRACKED == 0)
         };
-        let key = number("job-")
+        let key = number(self.prefix())
             .or_else(|| number("open-").map(|n| n | TRACKED))
             .ok_or_else(|| not_found(&id.0))?;
         self.lock()
@@ -247,7 +276,7 @@ impl JobTable {
             (n | TRACKED, JobId(format!("open-{n}")))
         } else {
             let n = self.inner.next.fetch_add(1, Ordering::Relaxed) + 1;
-            (n, JobId(format!("job-{n}")))
+            (n, JobId(format!("{}{n}", self.prefix())))
         };
         let (tx, _rx) = watch::channel(JobSnapshot {
             id: id.clone(),

@@ -170,6 +170,17 @@ pub fn start_full(
     rewrite: Option<Arc<dyn RewriteBackend>>,
     infer: Arc<InferManager>,
 ) -> Result<Daemon, DaemonError> {
+    start_with_setup(opts, rewrite, infer, None)
+}
+
+/// [`start_full`] with a given setup backend behind `setup_status` and the `setup_*` jobs (tests
+/// give one that downloads from a canned source); `None` is this machine's.
+pub fn start_with_setup(
+    opts: DaemonOptions,
+    rewrite: Option<Arc<dyn RewriteBackend>>,
+    infer: Arc<InferManager>,
+    setup: Option<Arc<dyn kraken_registry::commands::SetupBackend>>,
+) -> Result<Daemon, DaemonError> {
     let guard = DaemonGuard::acquire(&opts.runtime_dir, PROTOCOL_VERSION, &opts.build)?;
     let listener = Listener::bind(&opts.runtime_dir).map_err(DaemonError::Listen)?;
 
@@ -191,6 +202,7 @@ pub fn start_full(
             integrations: kraken_host::integrations::Integrations::system()
                 .ok()
                 .map(|i| Arc::new(i) as Arc<dyn kraken_registry::commands::IntegrationsBackend>),
+            setup: Some(setup.unwrap_or_else(|| Arc::new(kraken_host::setup::HostSetup::system()))),
         },
         opts.clock.clone(),
         hub.clone(),

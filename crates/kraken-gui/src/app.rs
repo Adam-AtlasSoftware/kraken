@@ -144,6 +144,10 @@ pub struct KrakenApp {
     integrations: Option<kraken_viewmodel::integrations::IntegrationsHub>,
     /// What the person asked for before the hub existed: the window or the run dialog.
     integrations_want: Option<IntegrationsWant>,
+    /// The Setup status window and the install jobs it started.
+    setup_hub: Option<kraken_viewmodel::setup_status::SetupHub>,
+    /// The window was asked for before the hub existed.
+    setup_want: bool,
     prefs: Prefs,
     /// The open project is the demo (not worth remembering).
     is_demo: bool,
@@ -234,6 +238,8 @@ impl KrakenApp {
             local_setup_error: None,
             integrations: None,
             integrations_want: None,
+            setup_hub: None,
+            setup_want: false,
             prefs,
             is_demo: false,
             recorded: false,
@@ -948,6 +954,7 @@ impl KrakenApp {
             AppAction::OpenSettings => Some(UiRequest::OpenSettings),
             AppAction::SetUpLocalModel => Some(UiRequest::SetUpLocalModel),
             AppAction::ShowIntegrations => Some(UiRequest::ShowIntegrations),
+            AppAction::ShowSetupStatus => Some(UiRequest::ShowSetupStatus),
             AppAction::LocalSetupNext => Some(UiRequest::LocalSetup(SetupButton::Next)),
             AppAction::LocalSetupBack => Some(UiRequest::LocalSetup(SetupButton::Back)),
             AppAction::LocalSetupCancel => Some(UiRequest::LocalSetup(SetupButton::Cancel)),
@@ -984,6 +991,7 @@ impl KrakenApp {
             UiRequest::SetUpLocalModel => self.open_local_setup(ctx),
             UiRequest::ShowIntegrations => self.want_integrations(IntegrationsWant::Window, ctx),
             UiRequest::RunInEmulator => self.want_integrations(IntegrationsWant::Run, ctx),
+            UiRequest::ShowSetupStatus => self.want_setup_status(ctx),
             UiRequest::LocalSetup(button) => {
                 let refused = match self.local_setup.as_mut() {
                     None => Some("The model setup is not open.".to_string()),
@@ -1310,6 +1318,7 @@ impl KrakenApp {
         self.keep_local_models_served(ctx);
         self.local_setup_window(ctx);
         self.integrations_windows(ctx);
+        self.setup_status_window(ctx);
         if self.settings.ai.take_policy_dirty()
             && let Some(vm) = self.vm.as_mut()
         {
@@ -1413,6 +1422,56 @@ impl KrakenApp {
             Slot::Ready(b) => Some(b.clone() as Arc<dyn kraken_viewmodel::Backend>),
             _ => None,
         }
+    }
+
+    /// Asks for the Setup status window; connects to the daemon first when there is no backend.
+    fn want_setup_status(&mut self, ctx: &egui::Context) {
+        self.setup_want = true;
+        if self.integrations_backend().is_some() {
+            return;
+        }
+        if self.services.mode == Mode::NoDaemon
+            && let Err(e) = self.ensure_private_daemon()
+        {
+            self.setup_want = false;
+            self.problem(e);
+            return;
+        }
+        if let Slot::Failed(_) = self.slot {
+            self.slot = Slot::Idle;
+        }
+        self.connect_daemon(ctx);
+    }
+
+    /// Draws the Setup status window; makes the hub on first use.
+    fn setup_status_window(&mut self, ctx: &egui::Context) {
+        if self.setup_hub.is_none() && self.setup_want {
+            match self.integrations_backend() {
+                Some(backend) => {
+                    let c = ctx.clone();
+                    self.setup_hub = Some(kraken_viewmodel::setup_status::SetupHub::new(
+                        backend,
+                        self.rt.handle().clone(),
+                        Arc::new(move || c.request_repaint()),
+                    ));
+                }
+                None => {
+                    if let Slot::Failed(e) = &self.slot {
+                        let msg = format!("KRAKEN cannot reach krakend: {e}");
+                        self.setup_want = false;
+                        self.problem(msg);
+                    }
+                    return;
+                }
+            }
+        }
+        let Some(hub) = self.setup_hub.clone() else {
+            return;
+        };
+        if std::mem::take(&mut self.setup_want) {
+            hub.open();
+        }
+        crate::setup_status::show(ctx, &hub);
     }
 
     /// Draws the Integrations window and the run dialog; makes the hub on first use.
@@ -1746,6 +1805,7 @@ impl KrakenApp {
             if let Some((key, action)) = chip_click {
                 self.settings.infer.chip_action(&key, action);
             }
+            let setup_hub = self.setup_hub.clone();
             egui::Panel::bottom("kraken_status")
                 .frame(
                     Frame::new()
@@ -1753,7 +1813,7 @@ impl KrakenApp {
                         .inner_margin(Margin::symmetric(14, 4)),
                 )
                 .exact_size(28.0)
-                .show(ui, |ui| chrome::status_bar(ui, vm));
+                .show(ui, |ui| chrome::status_bar(ui, vm, setup_hub.as_ref()));
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(pal.bg).inner_margin(6))
                 .show(ui, |ui| {

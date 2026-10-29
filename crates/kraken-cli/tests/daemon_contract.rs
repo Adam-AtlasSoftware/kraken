@@ -532,6 +532,43 @@ async fn every_registry_command_identical() {
         let r = cli_call(&s.daemon_cli, &s.cli_dir, name, &args).await;
         assert_eq!(r.1["code"], code, "{name}: {}", r.1);
     }
+    // Machine-global setup, on the daemon only: the report is read from this machine, and the
+    // installs are started with arguments that are refused before anything is downloaded (the
+    // job flow itself is tested in krakend/tests/global_jobs.rs).
+    for name in [
+        "setup_status",
+        "setup_ghidra",
+        "setup_native",
+        "setup_dotnet",
+        "integration_install_start",
+    ] {
+        covered.insert(name.to_string());
+    }
+    let status = cli_call(&s.daemon_cli, &s.cli_dir, "setup_status", &json!({})).await;
+    assert!(status.0, "{}", status.1);
+    let ids: Vec<&str> = status.1["items"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|i| i["id"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        ["ghidra", "native", "dotnet", "rust", "emulators"]
+            .iter()
+            .all(|w| ids.contains(w)),
+        "{ids:?}"
+    );
+    for (name, args, code) in [
+        ("setup_ghidra", json!({"force": "yes"}), "invalid_argument"),
+        ("setup_native", json!({"nope": 1}), "invalid_argument"),
+        ("setup_dotnet", json!({"force": 3}), "invalid_argument"),
+        (
+            "integration_install_start",
+            json!({"id": "no-such-emulator", "accept_licence": true}),
+            "not_found",
+        ),
+    ] {
+        let r = cli_call(&s.daemon_cli, &s.cli_dir, name, &args).await;
+        assert_eq!(r.1["code"], code, "{name}: {}", r.1);
+    }
     covered.extend(SERVING.iter().map(|n| n.to_string()));
     Box::pin(check_serving_commands(&s)).await;
     step!("search", json!({"query": "main", "kind": "names"}));

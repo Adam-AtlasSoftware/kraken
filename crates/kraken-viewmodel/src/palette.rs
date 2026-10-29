@@ -110,6 +110,8 @@ pub enum AppAction {
     SetUpLocalModel,
     /// Open the Integrations window: emulators and tools to install or point at.
     ShowIntegrations,
+    /// Open the Setup status window: what is installed and ready, with installs as background jobs.
+    ShowSetupStatus,
     /// Run the program, or a patched copy, in an installed emulator.
     RunInEmulator,
     /// In that setup: go on to the next step (the last one starts the download).
@@ -122,7 +124,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 53] = [
+    pub const ALL: [AppAction; 54] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -175,6 +177,7 @@ impl AppAction {
         AppAction::AskAboutKraken,
         AppAction::SetUpLocalModel,
         AppAction::ShowIntegrations,
+        AppAction::ShowSetupStatus,
         AppAction::RunInEmulator,
     ];
 
@@ -271,6 +274,7 @@ impl AppAction {
             AppAction::AskAboutKraken => "Ask the assistant about KRAKEN",
             AppAction::SetUpLocalModel => "Set up a model on this computer...",
             AppAction::ShowIntegrations => "Emulators and tools...",
+            AppAction::ShowSetupStatus => "Setup status...",
             AppAction::RunInEmulator => "Run in emulator...",
             AppAction::LocalSetupNext => "Model setup: next step",
             AppAction::LocalSetupBack => "Model setup: previous step",
@@ -361,6 +365,9 @@ impl AppAction {
             }
             AppAction::ShowIntegrations => {
                 "Install, find or remove the emulators KRAKEN can run programs in; nothing is bundled"
+            }
+            AppAction::ShowSetupStatus => {
+                "See which engines and tools are installed and ready, and install the missing ones"
             }
             AppAction::RunInEmulator => {
                 "Open the program, or a copy with your patches, in an installed emulator"
@@ -567,6 +574,8 @@ pub enum UiRequest {
     SetUpLocalModel,
     /// Show the Integrations window.
     ShowIntegrations,
+    /// Show the Setup status window.
+    ShowSetupStatus,
     /// Open the run-in-emulator dialog.
     RunInEmulator,
     /// Press a button of that setup.

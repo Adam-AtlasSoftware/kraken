@@ -394,6 +394,14 @@ impl Integrations {
     }
 }
 
+struct ClearProgress(Arc<Mutex<BTreeMap<String, InstallProgress>>>, String);
+
+impl Drop for ClearProgress {
+    fn drop(&mut self) {
+        lock(&self.0).remove(&self.1);
+    }
+}
+
 /// Unpacks `archive` into `<root>/<id>/<version>` through a staging directory; returns the bytes
 /// the installed copy uses. Other versions of the entry are deleted afterwards.
 fn stage(root: &Path, id: &str, a: &Artifact, archive: &Path) -> Result<u64, ProtoError> {
@@ -629,8 +637,11 @@ impl IntegrationsBackend for Integrations {
                 },
             );
         }
+        // Dropped with the future when the install is cancelled, so the entry can be installed
+        // again.
+        let clear = ClearProgress(self.progress.clone(), id.to_string());
         let result = self.install_entry(&entry, &artifact).await;
-        lock(&self.progress).remove(id);
+        drop(clear);
         result?;
         self.view_of(id)
     }

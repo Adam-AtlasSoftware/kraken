@@ -113,6 +113,7 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Search commands... | Find any action or command by typing part of its name | `Ctrl+K` |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Keyboard shortcuts | List every keyboard shortcut | `Ctrl+/` |
+| Setup status... | See which engines and tools are installed and ready, and install the missing ones |  |
 | User guide | Open the KRAKEN documentation in your browser |  |
 
 ### Patch

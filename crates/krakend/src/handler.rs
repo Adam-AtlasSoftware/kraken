@@ -58,6 +58,8 @@ pub struct DaemonHandler {
     shutdown: Shutdown,
     infer: Arc<InferManager>,
     approvals: ApprovalBoard,
+    /// The jobs of machine-global commands (`job-gN`); they belong to the daemon.
+    global_jobs: kraken_registry::JobTable,
     /// Projects a person has worked on or approved for agents. Agent-class connections reach
     /// only these, or ask first.
     granted: Arc<Mutex<HashSet<PathBuf>>>,
@@ -86,6 +88,7 @@ impl DaemonHandler {
             shutdown,
             infer: Arc::new(InferManager::with_registry(Default::default())),
             approvals,
+            global_jobs: kraken_registry::JobTable::global(),
             granted: Arc::default(),
             gui_selection: Mutex::default(),
         }
@@ -329,28 +332,23 @@ impl DaemonHandler {
             )
         })?;
         let spec = entry.spec().clone();
-        if matches!(
+        let global_job = matches!(
             p.command.as_str(),
-            "binary_probe"
-                | "kraken_help"
-                | "local_model_recommend"
-                | "local_model_setup"
-                | "local_model_list"
-                | "local_model_devices"
-                | "local_model_status"
-                | "local_model_start"
-                | "local_model_hold"
-                | "local_model_release"
-                | "local_model_stop"
-                | "integrations_list"
-                | "integration_install"
-                | "integration_use_path"
-                | "integration_remove"
-        ) {
-            // About a file, not a project: no session is made for it. The command applies the
+            "job_status" | "job_await" | "job_cancel"
+        ) && p
+            .args
+            .get("job_id")
+            .and_then(Value::as_str)
+            .is_some_and(kraken_registry::jobs::is_global_job);
+        if spec.scope == kraken_registry::Scope::Global || global_job {
+            // About the machine or a file, not a project: no project session is made for it. The command applies the
             // agent path policy itself.
             let ctx = context(&p, conn, &self.approvals, Path::new(&p.project_dir));
-            let mut session = kraken_registry::Session::new(self.host.factory().clone());
+            let mut session = kraken_registry::Session::new(self.host.factory().clone())
+                .with_jobs(self.global_jobs.clone());
+            if let Some(b) = &self.host.config().setup {
+                session = session.with_setup(b.clone());
+            }
             if let Some(i) = &self.host.config().integrations {
                 session = session.with_integrations(i.clone());
             }

@@ -65,6 +65,7 @@ impl Command for KrakenHelp {
             CommandKind::Query,
             Permission::Safe,
         )
+        .global()
         .doc(
             "Use it to answer questions about KRAKEN itself (how a feature works, which command \
              or setting to use, what a term means). Returns short sections; the MCP resource \

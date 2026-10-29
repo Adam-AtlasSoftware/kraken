@@ -30,7 +30,7 @@ pub mod views;
 pub mod views_data;
 
 pub use ai::{AiBoard, AiWork};
-pub use command::{Command, CommandKind, CommandSpec, Entry, Permission, Registry};
+pub use command::{Command, CommandKind, CommandSpec, Entry, Permission, Registry, Scope};
 pub use context::{
     ApprovalDecision, ApprovalRequest, ApprovalRequester, AutoApprove, CallContext, DenyApprover,
     OpenProgressSink, Surface,

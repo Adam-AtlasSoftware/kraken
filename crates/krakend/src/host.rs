@@ -77,6 +77,8 @@ pub struct HostConfig {
     pub local_models: Option<Arc<dyn kraken_registry::commands::LocalModelBackend>>,
     /// The integrations catalogue (emulators and tools), if any.
     pub integrations: Option<Arc<dyn kraken_registry::commands::IntegrationsBackend>>,
+    /// What `setup_status` probes and the `setup_*` jobs install, if any.
+    pub setup: Option<Arc<dyn kraken_registry::commands::SetupBackend>>,
 }
 
 impl Default for HostConfig {
@@ -88,6 +90,7 @@ impl Default for HostConfig {
             rewrite: None,
             local_models: None,
             integrations: None,
+            setup: None,
         }
     }
 }

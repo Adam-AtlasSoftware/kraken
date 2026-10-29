@@ -25,6 +25,7 @@ mod nav;
 pub mod navtools;
 mod palette;
 pub mod rewrite;
+pub mod setup_status;
 mod state;
 pub mod testing;
 mod tokens;

@@ -22,6 +22,7 @@ mod recent;
 mod rewrite;
 mod services;
 mod settings;
+mod setup_status;
 mod style;
 mod titlebar;
 mod tour;

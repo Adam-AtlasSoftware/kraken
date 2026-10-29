@@ -215,6 +215,7 @@ fn help_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     item(ui, AppAction::OpenPalette, env, out);
     toggle(ui, AppAction::ToggleLearnMode, env.learn_mode, env, out);
     item(ui, AppAction::ShowShortcuts, env, out);
+    item(ui, AppAction::ShowSetupStatus, env, out);
     ui.separator();
     item(ui, AppAction::OpenDocs, env, out);
 }

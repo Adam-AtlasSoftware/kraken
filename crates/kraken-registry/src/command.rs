@@ -39,6 +39,18 @@ pub enum Permission {
     Dangerous,
 }
 
+/// What a command works on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    /// An open project; the daemon opens the session of `project_dir`.
+    #[default]
+    Project,
+    /// This computer (installs, setup, local models, the file probe): runs with no project, and
+    /// its jobs (`job-gN`) belong to the daemon, not to a project.
+    Global,
+}
+
 /// Static description of a command.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandSpec {
@@ -60,6 +72,13 @@ pub struct CommandSpec {
     pub permission: Permission,
     /// Engine capabilities the command needs; surfaces hide it when the engine lacks one.
     pub needs: Vec<Cap>,
+    /// Whether the command works on a project or on the machine.
+    #[serde(default, skip_serializing_if = "is_project")]
+    pub scope: Scope,
+}
+
+fn is_project(s: &Scope) -> bool {
+    *s == Scope::Project
 }
 
 impl CommandSpec {
@@ -78,7 +97,14 @@ impl CommandSpec {
             kind,
             permission,
             needs: Vec::new(),
+            scope: Scope::Project,
         }
+    }
+
+    /// Marks the command as machine-global: it needs no project (see [`Scope::Global`]).
+    pub fn global(mut self) -> Self {
+        self.scope = Scope::Global;
+        self
     }
 
     /// Sets the long documentation.

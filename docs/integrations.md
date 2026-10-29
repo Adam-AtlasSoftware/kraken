@@ -39,6 +39,7 @@ kraken integration-remove --id mgba
 |---|---|
 | `integrations_list` | Every entry with status, version, source, licence and notice |
 | `integration_install` | Download and install the pinned upstream release (`accept_licence` required) |
+| `integration_install_start` | The same install as a background job: returns a `job_id` (`job-gN`) at once; `job_status` shows the download, `job_cancel` stops it (needs no project) |
 | `integration_use_path` | Use a program you already have |
 | `integration_remove` | Delete KRAKEN's copy (asks first) |
 | `emulator_run` | Run the original, the patched copy or any file in an emulator (asks first) |

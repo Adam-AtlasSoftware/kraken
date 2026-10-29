@@ -854,6 +854,7 @@ pub struct Session {
     debug: crate::commands::DebugTable,
     serving: Option<Arc<dyn crate::commands::ServingBackend>>,
     integrations: Option<Arc<dyn crate::commands::IntegrationsBackend>>,
+    setup: Option<Arc<dyn crate::commands::SetupBackend>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -877,7 +878,24 @@ impl Session {
             debug: crate::commands::DebugTable::default(),
             serving: None,
             integrations: None,
+            setup: None,
         }
+    }
+
+    /// Uses `jobs` as the job table (the daemon's machine-global one outlives every project).
+    pub fn with_jobs(mut self, jobs: JobTable) -> Session {
+        self.jobs = jobs;
+        self
+    }
+
+    /// Attaches what `setup_status` probes and the `setup_*` commands install.
+    pub fn with_setup(mut self, b: Arc<dyn crate::commands::SetupBackend>) -> Session {
+        self.setup = Some(b);
+        self
+    }
+
+    pub(crate) fn setup_backend(&self) -> Option<&Arc<dyn crate::commands::SetupBackend>> {
+        self.setup.as_ref()
     }
 
     /// Attaches what `local_model_setup` downloads and configures with.
