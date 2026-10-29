@@ -330,9 +330,13 @@ same code linked into a shared library, so the time goes to the analysis, not to
   unrelaxed, which is what they mean, and TLS relocations are not applied.
 - ARM: Thumb-only PLT entries (`--thumb-plt`) and the long BE8 forms are not named; a stripped
   program whose only pointer to an A32 function is computed at run time may decode it as Thumb.
-- PE: delay-load imports, resources, .NET metadata (managed assemblies go to the .NET engine),
-  and data symbols in the decompiler output (`uRam0040d03c` where Ghidra shows `tls_hits`).
-- DWARF variables (globals and locals); DWARF types and function prototypes are imported.
+- PE: delay-load imports, resources, and .NET metadata (managed assemblies go to the .NET engine).
+- Global variables are named in decompiled C from the symbol table (ELF `STT_OBJECT`, PE/COFF
+  data symbols) and named and typed from DWARF; a rename or `set_type` of a data address in the
+  listing reaches the decompiler too. A COFF symbol carries no size, so the variable is given
+  the room before the next symbol, at most four bytes. DWARF locals are not imported; static
+  variables inside functions and object files and archives get no global names yet.
+- DWARF types, function prototypes and global variables are imported.
 - Linux only.
 
 ## How it is kept honest

@@ -1234,6 +1234,37 @@ fn build_program(
         locked.insert(*at, decl);
     }
 
+    // data symbols: the symbol table's names and DWARF's names and types, so the decompiler prints
+    // the globals by name (`tls_hits`, not `uRam0040d03c`)
+    let global_addrs: BTreeSet<u64> = loaded
+        .data_symbols
+        .keys()
+        .chain(loaded.debug.globals.keys())
+        .copied()
+        .collect();
+    for at in global_addrs {
+        if loaded.is_code(at) || found.functions.contains_key(&at) {
+            continue;
+        }
+        let symbol = loaded.data_symbols.get(&at);
+        let dwarf = loaded.debug.globals.get(&at);
+        let Some(name) = dwarf
+            .map(|g| g.name.clone())
+            .or_else(|| symbol.map(|s| s.name.clone()))
+        else {
+            continue;
+        };
+        let decl = dwarf
+            .map(|g| types.global_decl(&g.ty, &name))
+            .unwrap_or_default();
+        let size = loaded.data_size(at) as u32;
+        // a declaration the decompiler refuses leaves the symbol untyped; one that overlaps
+        // another symbol is dropped
+        if session.set_global(at, &name, &decl, size).is_err() && !decl.is_empty() {
+            let _ = session.set_global(at, &name, "", size);
+        }
+    }
+
     let funcs = Arc::new(Funcs::new(found.functions));
     // straight-line code reached only through GOT slots (the lazy PLT entries)
     let mut orphans = Vec::new();

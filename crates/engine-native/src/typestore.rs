@@ -161,6 +161,13 @@ impl TypeModel {
         self.model.spell(&prototype(&p, name, &|n| self.knows(n)))
     }
 
+    /// The C declaration of a variable `name` of type `ty` (for `set_global`).
+    pub fn global_decl(&self, ty: &TypeRef, name: &str) -> String {
+        let ty = renamed(ty, &|n| self.decompiler_name(n));
+        self.model
+            .spell(&crate::ctypes::declarator(&ty, name, &|n| self.knows(n)))
+    }
+
     /// Names that are stored but not in the decompiler yet.
     pub fn pending(&self) -> impl Iterator<Item = &str> {
         self.pending.iter().map(String::as_str)

@@ -425,6 +425,21 @@ async fn decompiles_name_libc_calls_and_show_the_switch() {
     }
 }
 
+/// Variables of the ELF symbol table print by name (`kr_brk`, `kr_heap`), not as `DAT_` or
+/// `uRam` addresses.
+#[tokio::test(flavor = "multi_thread")]
+async fn elf_globals_decompile_by_name() {
+    let binary = "static_strops-riscv32-O0";
+    let Some((e, _)) = open("riscv32", binary).await else {
+        return;
+    };
+    let fns = listing(&e).await;
+    let sbrk = decompiled(&e, &fns, binary, "sbrk").await;
+    eprintln!("{sbrk}");
+    assert!(sbrk.contains("kr_brk"), "{sbrk}");
+    assert!(sbrk.contains("kr_heap"), "{sbrk}");
+}
+
 /// The engine contract suite on one binary of each set.
 #[tokio::test(flavor = "multi_thread")]
 async fn contract_suite_per_architecture() {

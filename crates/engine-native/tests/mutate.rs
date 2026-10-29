@@ -864,3 +864,71 @@ async fn dwarf_types_and_prototypes() {
     assert!(text.contains("int cmp_id(record *a,record *b)"), "{text}");
     assert!(text.contains("a->id - b->id"), "{text}");
 }
+
+/// Renames and types of data addresses reach the decompiler: a label replaces the symbol's
+/// name, `set_type` types the variable, and both replay on reopen.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_edits_reach_the_decompiler() {
+    use object::{Object, ObjectSymbol};
+    let path = root().join("corpus/riscv32/bin/static_strops-riscv32-O0");
+    let bytes = std::fs::read(&path).expect("corpus binary");
+    let file = object::File::parse(&*bytes).expect("elf");
+    let sym_at = |name: &str| {
+        file.symbols()
+            .find(|s| s.name() == Ok(name))
+            .map(|s| s.address())
+            .expect("symbol")
+    };
+    let (brk, sbrk) = (sym_at("kr_brk"), sym_at("sbrk"));
+    let state = tempfile::tempdir().expect("tmp");
+    let Some(cfg) = config(state.path()) else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let reopen = || async {
+        let e = NativeEngine::new(cfg.clone());
+        e.open_binary(&path, &LoaderSpec::default(), &c)
+            .await
+            .expect("open");
+        e
+    };
+    let e = reopen().await;
+    let before = decompiled(&e, sbrk).await;
+    assert!(before.contains("kr_brk"), "{before}");
+    apply(
+        &e,
+        LogOp::Rename {
+            anchor: anchor(brk, None),
+            old_name: None,
+            new_name: "heap_used".into(),
+        },
+    )
+    .await
+    .expect("label");
+    let after = decompiled(&e, sbrk).await;
+    assert!(
+        after.contains("heap_used") && !after.contains("kr_brk"),
+        "{after}"
+    );
+    apply(
+        &e,
+        LogOp::SetType {
+            anchor: anchor(brk, None),
+            old: None,
+            new: TypeRef::Primitive(Primitive {
+                class: PrimitiveClass::Int,
+                size: 4,
+                signed: true,
+            }),
+        },
+    )
+    .await
+    .expect("type");
+    let typed = decompiled(&e, sbrk).await;
+    eprintln!("{typed}");
+    assert!(typed.contains("heap_used"), "{typed}");
+    e.save(&c).await.expect("save");
+    drop(e);
+    let again = reopen().await;
+    assert_eq!(decompiled(&again, sbrk).await, typed);
+}

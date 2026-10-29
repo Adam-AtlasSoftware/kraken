@@ -465,6 +465,49 @@ fn refresh(p: &Program, e: &Edits, f: &Func) -> Result<(), EngineRejected> {
     Ok(())
 }
 
+/// What the decompiler's global scope holds at a data address: the user's label, else the symbol
+/// table's or DWARF's name; the type of the data the user defined there, else DWARF's. `None`
+/// when nothing names or types it, or when the address is code.
+fn global_at(p: &Program, e: &Edits, at: u64) -> Option<(String, String, u32)> {
+    if p.loaded.is_code(at) || p.funcs().containing(at).is_some() {
+        return None;
+    }
+    let symbol = p.loaded.data_symbols.get(&at);
+    let dwarf = p.loaded.debug.globals.get(&at);
+    let defined = match e.defined.get(&at) {
+        Some(Defined::Data { ty, len }) => Some((ty.as_ref(), *len)),
+        _ => None,
+    };
+    let name = e
+        .labels
+        .get(&at)
+        .cloned()
+        .or_else(|| dwarf.map(|g| g.name.clone()))
+        .or_else(|| symbol.map(|s| s.name.clone()))
+        .or_else(|| defined.map(|_| format!("DAT_{at:08x}")))?;
+    let ty = defined.and_then(|(t, _)| t).or(dwarf.map(|g| &g.ty));
+    let decl = ty
+        .map(|t| p.types().global_decl(t, &name))
+        .unwrap_or_default();
+    let size = defined
+        .map(|(_, len)| len)
+        .unwrap_or_else(|| p.loaded.data_size(at));
+    Some((name, decl, size.min(4096) as u32))
+}
+
+/// Brings the decompiler's global scope in line with the edits at the data address `at`.
+pub(crate) fn sync_global(p: &Program, e: &Edits, at: u64) {
+    let found = global_at(p, e, at);
+    let mut s = p.session();
+    // a declaration the decompiler refuses leaves the symbol untyped
+    let _ = match found {
+        Some((name, decl, size)) => s
+            .set_global(at, &name, &decl, size)
+            .or_else(|_| s.set_global(at, &name, "", size)),
+        None => s.remove_global(at),
+    };
+}
+
 fn rename(
     p: &Program,
     e: &mut Edits,
@@ -520,6 +563,7 @@ fn rename(
     } else {
         e.labels.insert(at, new.to_string());
     }
+    sync_global(p, e, at);
     Ok(())
 }
 
@@ -592,6 +636,7 @@ fn set_type(
     }
     if matches!(new, TypeRef::Named { name } if name == UNDEFINED) {
         e.defined.remove(&at);
+        sync_global(p, e, at);
         return Ok(());
     }
     let len = type_size(p, new, 0)
@@ -604,6 +649,7 @@ fn set_type(
             len,
         },
     );
+    sync_global(p, e, at);
     Ok(())
 }
 
@@ -817,6 +863,7 @@ fn set_code_data(
                     len,
                 },
             );
+            sync_global(p, e, at);
         }
     }
     Ok(())

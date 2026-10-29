@@ -509,6 +509,14 @@ mod real {
             fn decompile(self: Pin<&mut Session>, addr: u64, timeout_ms: u32) -> Result<DecompOut>;
             fn jump_tables(self: Pin<&mut Session>, addr: u64) -> Result<Vec<JumpEdgeOut>>;
             fn declare_type(self: Pin<&mut Session>, decl: &str) -> Result<()>;
+            fn set_global(
+                self: Pin<&mut Session>,
+                addr: u64,
+                name: &str,
+                decl: &str,
+                size: u32,
+            ) -> Result<()>;
+            fn remove_global(self: Pin<&mut Session>, addr: u64) -> Result<()>;
             fn set_prototype(self: Pin<&mut Session>, addr: u64, decl: &str) -> Result<()>;
             fn set_noreturn(self: Pin<&mut Session>, addr: u64, noreturn: bool) -> Result<()>;
             fn remove_function(self: Pin<&mut Session>, addr: u64) -> Result<()>;
@@ -602,6 +610,8 @@ enum Call {
     SetNoreturn(u64, bool),
     RemoveFunction(u64),
     SetConvention(u64, String),
+    SetGlobal(u64, String, String, u32),
+    RemoveGlobal(u64),
 }
 
 /// The edits made to a session (functions and their names, types, prototypes, marks and
@@ -713,6 +723,8 @@ impl Session {
                 Call::SetNoreturn(a, n) => self.set_noreturn(*a, *n),
                 Call::RemoveFunction(a) => self.remove_function(*a),
                 Call::SetConvention(a, n) => self.set_convention(*a, n),
+                Call::SetGlobal(a, n, d, z) => self.set_global(*a, n, d, *z),
+                Call::RemoveGlobal(a) => self.remove_global(*a),
             };
             if let Err(e @ NativeError::Unavailable(_)) = r {
                 return Err(e);
@@ -926,6 +938,45 @@ impl Session {
         t.sort_unstable();
         t.dedup();
         Ok(t)
+    }
+
+    /// Names the data at `addr` in the decompiler's global scope. `decl` is a C declaration of
+    /// the variable's type (`int x`, `char x[16]`); empty leaves the type to the decompiler,
+    /// which then sees `size` undefined bytes.
+    pub fn set_global(&mut self, addr: u64, name: &str, decl: &str, size: u32) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            self.journal.calls.push(Call::SetGlobal(
+                addr,
+                name.to_string(),
+                decl.to_string(),
+                size,
+            ));
+            let _g = lock();
+            self.pinned()?
+                .set_global(addr, name, decl, size)
+                .map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, name, decl, size);
+            Err(unavailable())
+        }
+    }
+
+    /// Takes the data symbol at `addr` out of the global scope.
+    pub fn remove_global(&mut self, addr: u64) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            self.journal.calls.push(Call::RemoveGlobal(addr));
+            let _g = lock_shared();
+            self.pinned()?.remove_global(addr).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = addr;
+            Err(unavailable())
+        }
     }
 
     /// Parses one C declaration (a typedef, struct, union or enum, in Ghidra's type names such

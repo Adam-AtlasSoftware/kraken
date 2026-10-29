@@ -57,6 +57,8 @@ public:
   void declare_type(rust::Str decl);
   // Parses a C prototype such as `int printf(char *format,...)` and locks it onto the function
   // at `addr` (created when unknown), so call sites use its parameter and return types.
+  void set_global(uint64_t addr, rust::Str name, rust::Str decl, uint32_t size);
+  void remove_global(uint64_t addr);
   void set_prototype(uint64_t addr, rust::Str decl);
   // Marks the function at `addr` (created when unknown) as never returning, or clears the mark.
   void set_noreturn(uint64_t addr, bool noreturn);

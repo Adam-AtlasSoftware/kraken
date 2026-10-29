@@ -948,6 +948,53 @@ void Session::declare_type(rust::Str decl) {
   });
 }
 
+// A data symbol of the global scope: the user's or the symbol table's name, name-locked, and
+// type-locked when `decl` ("int x", "char *x[4]") gives a type. Without one the symbol is an
+// undefined type of `size` bytes and the decompiler infers the type from the uses.
+void Session::set_global(uint64_t addr, rust::Str name, rust::Str decl, uint32_t size) {
+  guarded("set_global", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    Address at(a->getDefaultCodeSpace(), addr);
+    ghidra::Scope *global = a->symboltab->getGlobalScope();
+    ghidra::TypeFactory *tf = a->types;
+    ghidra::Datatype *ct = nullptr;
+    std::string text(decl);
+    if (!text.empty()) {
+      std::istringstream s{text};
+      std::string ignored;
+      ct = ghidra::parse_type(s, ignored, a);
+    }
+    bool typed = ct != nullptr;
+    if (!typed) {
+      if (size == 0 || size > 4096)
+        size = 1;
+      ct = size <= 8 ? tf->getBase(size, ghidra::TYPE_UNKNOWN)
+                     : tf->getTypeArray(size, tf->getBase(1, ghidra::TYPE_UNKNOWN));
+    }
+    // whatever data symbol is here goes first (function symbols are left alone)
+    ghidra::SymbolEntry *old = global->findAddr(at, Address());
+    if (old != nullptr && dynamic_cast<ghidra::FunctionSymbol *>(old->getSymbol()) == nullptr)
+      global->removeSymbol(old->getSymbol());
+    ghidra::SymbolEntry *e = global->addSymbol(std::string(name), ct, at, Address());
+    if (e == nullptr)
+      return;
+    global->setAttribute(e->getSymbol(),
+                         typed ? (ghidra::Varnode::namelock | ghidra::Varnode::typelock)
+                               : ghidra::Varnode::namelock);
+  });
+}
+
+void Session::remove_global(uint64_t addr) {
+  guarded("remove_global", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    Address at(a->getDefaultCodeSpace(), addr);
+    ghidra::Scope *global = a->symboltab->getGlobalScope();
+    ghidra::SymbolEntry *old = global->findAddr(at, Address());
+    if (old != nullptr && dynamic_cast<ghidra::FunctionSymbol *>(old->getSymbol()) == nullptr)
+      global->removeSymbol(old->getSymbol());
+  });
+}
+
 void Session::set_prototype(uint64_t addr, rust::Str decl) {
   guarded("set_prototype", [&]() {
     ghidra::Architecture *a = impl->arch.get();

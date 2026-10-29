@@ -40,6 +40,8 @@ pub struct Debug {
     pub types: Vec<TypeDef>,
     /// Functions by entry address (as in the file).
     pub functions: BTreeMap<u64, DebugFunction>,
+    /// File-level variables with a fixed address, by address (as in the file).
+    pub globals: BTreeMap<u64, DebugGlobal>,
     /// Type names as Ghidra shows them (`vector<double,_std::allocator<double>_>`,
     /// `__unique_ptr_t.conflict1`), by the identifier the type store uses, where they differ.
     pub display: BTreeMap<String, String>,
@@ -56,6 +58,15 @@ pub struct DebugFunction {
     pub prototype: FunctionPrototype,
 }
 
+/// One global variable with debug information.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DebugGlobal {
+    /// Its name (`DW_AT_name`, spaces as underscores).
+    pub name: String,
+    /// Its type.
+    pub ty: TypeRef,
+}
+
 /// One DIE with the attributes the importer reads.
 #[derive(Debug, Default, Clone)]
 struct Die {
@@ -68,6 +79,8 @@ struct Die {
     encoding: Option<u8>,
     ty: Option<usize>,
     low_pc: Option<u64>,
+    /// The address of a `DW_OP_addr` location.
+    location: Option<u64>,
     first_range: Option<u64>,
     member_location: Option<u64>,
     bit_size: bool,
@@ -257,6 +270,19 @@ fn read_die(
                 }
             }
             constants::DW_AT_low_pc => d.low_pc = dwarf.attr_address(unit, v).ok().flatten(),
+            constants::DW_AT_location => {
+                if let Some(e) = v.exprloc_value() {
+                    let b = e.0.slice();
+                    if b.first() == Some(&0x03) && b.len() == 9 {
+                        d.location = b[1..].try_into().ok().map(u64::from_le_bytes);
+                    } else if b.first() == Some(&0x03) && b.len() == 5 {
+                        d.location = b[1..]
+                            .try_into()
+                            .ok()
+                            .map(|x| u64::from(u32::from_le_bytes(x)));
+                    }
+                }
+            }
             constants::DW_AT_ranges => {
                 if let Ok(Some(off)) = dwarf.attr_ranges_offset(unit, v)
                     && let Ok(mut ranges) = dwarf.ranges(unit, off)
@@ -410,6 +436,7 @@ struct Importer {
     /// Struct names seen only as declarations.
     declared: BTreeSet<String>,
     functions: BTreeMap<u64, DebugFunction>,
+    globals: BTreeMap<u64, DebugGlobal>,
     display: BTreeMap<String, String>,
     /// Base name -> the scope of the first type that had it.
     scopes: HashMap<String, String>,
@@ -440,6 +467,7 @@ impl Importer {
                     self.type_ref(&mut u, Some(i), 0);
                 }
                 constants::DW_TAG_subprogram => self.function(&mut u, i),
+                constants::DW_TAG_variable => self.global(&mut u, i),
                 _ => {}
             }
         }
@@ -459,6 +487,7 @@ impl Importer {
         Debug {
             types: self.types,
             functions: self.functions,
+            globals: self.globals,
             display: self.display,
         }
     }
@@ -837,6 +866,32 @@ impl Importer {
             | constants::DW_TAG_union_type => d.by_reference || d.byte_size.is_some_and(|s| s > 16),
             _ => false,
         }
+    }
+
+    fn global(&mut self, u: &mut UnitImport<'_>, i: usize) {
+        let d = &u.dies[i];
+        let at_top = d.parent.is_some_and(|p| {
+            matches!(
+                DwTag(u.dies[p].tag),
+                constants::DW_TAG_compile_unit | constants::DW_TAG_namespace
+            )
+        });
+        let Some(addr) = d.location.filter(|a| *a != 0) else {
+            return;
+        };
+        if !at_top {
+            return;
+        }
+        let chain = chain(u.dies, i);
+        let Some(name) = chain.iter().find_map(|c| u.dies[*c].name.clone()) else {
+            return;
+        };
+        let ty_die = chain.iter().find_map(|c| u.dies[*c].ty);
+        let ty = self.type_ref(u, ty_die, 0);
+        self.globals.entry(addr).or_insert(DebugGlobal {
+            name: function_name(&name),
+            ty,
+        });
     }
 
     fn function(&mut self, u: &mut UnitImport<'_>, i: usize) {

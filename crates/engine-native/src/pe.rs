@@ -743,6 +743,36 @@ fn load_pe<Pe: ImageNtHeaders>(
         .into_iter()
         .map(|(a, f)| (at(a), f))
         .collect();
+    debug.globals = std::mem::take(&mut debug.globals)
+        .into_iter()
+        .map(|(a, g)| (at(a), g))
+        .collect();
+    let mut data_symbols: BTreeMap<u64, crate::elf::DataSymbol> = BTreeMap::new();
+    if let Ok(f) = object::File::parse(data) {
+        for sym in f.symbols() {
+            if sym.kind() != SymbolKind::Data
+                || !sym.is_definition()
+                || sym.address() == 0
+                || in_exec(sym.address())
+            {
+                continue;
+            }
+            let Ok(name) = sym.name() else { continue };
+            if name.is_empty() || name.starts_with('.') {
+                continue;
+            }
+            let name = match undecorate(name) {
+                Some(c) if ptr == 4 => c,
+                _ => name.to_string(),
+            };
+            data_symbols
+                .entry(at(sym.address()))
+                .or_insert(crate::elf::DataSymbol {
+                    name,
+                    size: sym.size(),
+                });
+        }
+    }
 
     let dll = nt.file_header().characteristics.get(LE) & pe::IMAGE_FILE_DLL != pe::FileFlags(0);
     Ok(Loaded {
@@ -761,6 +791,7 @@ fn load_pe<Pe: ImageNtHeaders>(
         blocks,
         functions,
         code_symbols,
+        data_symbols,
         debug,
         plt,
         import_slots,

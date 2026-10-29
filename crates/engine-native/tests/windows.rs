@@ -425,3 +425,30 @@ async fn contract_suite_on_pe_and_elf32() {
         }
     }
 }
+
+/// Globals the symbol table names print by name in decompiled C, as Ghidra shows them
+/// (`tls_hits = tls_hits + 1`), not as `DAT_` or `uRam` addresses.
+#[tokio::test(flavor = "multi_thread")]
+async fn pe_globals_decompile_by_name() {
+    for (binary, name) in [
+        ("win_tls-x64-O0.exe", "tls_callback_0"),
+        ("win_tls-x86-O0.exe", "on_tls"),
+    ] {
+        let Some((e, _)) = open("corpus/pe", binary).await else {
+            return;
+        };
+        let fns = listing(&e).await;
+        let name = fns
+            .values()
+            .map(|f| f.name.as_str())
+            .find(|n| n.trim_start_matches('_') == name.trim_start_matches('_'))
+            .unwrap_or(name)
+            .to_string();
+        let c = decompile(&e, &fns, &name).await;
+        eprintln!("{binary}:\n{c}");
+        assert!(
+            c.contains("tls_hits = ") && c.contains("tls_hits + 1;"),
+            "{c}"
+        );
+    }
+}

@@ -141,9 +141,54 @@ pub struct Loaded {
     pub default_names: BTreeMap<u64, String>,
     /// RISC-V's global pointer (`__global_pointer$`, which `gp` holds), after rebasing.
     pub global_pointer: Option<u64>,
+    /// Defined object symbols (variables) by address, for the decompiler's global scope.
+    pub data_symbols: BTreeMap<u64, DataSymbol>,
+}
+
+/// A variable the symbol table names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataSymbol {
+    pub name: String,
+    /// `st_size`; zero when unknown.
+    pub size: u64,
 }
 
 impl Loaded {
+    /// The size the decompiler gives the variable at `at`: the symbol's, else (COFF symbols carry
+    /// none) the room before the next named variable, at most four bytes, a power of two and aligned.
+    pub fn data_size(&self, at: u64) -> u64 {
+        if let Some(n) = self
+            .data_symbols
+            .get(&at)
+            .map(|s| s.size)
+            .filter(|n| *n > 0)
+        {
+            return n.min(4096);
+        }
+        let next = self
+            .data_symbols
+            .range(at + 1..)
+            .map(|(a, _)| *a)
+            .chain(self.debug.globals.range(at + 1..).map(|(a, _)| *a))
+            .min();
+        let block_end = self
+            .blocks
+            .iter()
+            .find(|b| b.start.0 <= at && at < b.end.0)
+            .map(|b| b.end.0);
+        let room = [next, block_end]
+            .into_iter()
+            .flatten()
+            .min()
+            .map_or(1, |e| e - at);
+        let size = match room {
+            0 | 1 => 1,
+            2 | 3 => 2,
+            _ => 4,
+        };
+        size.min(1 << at.trailing_zeros().min(2))
+    }
+
     /// Whether `addr` lies in an executable, initialized block.
     pub fn is_code(&self, addr: u64) -> bool {
         self.blocks
@@ -438,6 +483,27 @@ pub fn load_with(
         .into_iter()
         .map(|(a, f)| (at(a), f))
         .collect();
+    debug.globals = std::mem::take(&mut debug.globals)
+        .into_iter()
+        .map(|(a, g)| (at(a), g))
+        .collect();
+    let mut data_symbols: BTreeMap<u64, DataSymbol> = BTreeMap::new();
+    for sym in file.symbols().chain(file.dynamic_symbols()) {
+        if sym.kind() != SymbolKind::Data || !sym.is_definition() || sym.address() == 0 {
+            continue;
+        }
+        let Ok(name) = sym.name() else { continue };
+        let name = name.split('@').next().unwrap_or(name);
+        if name.is_empty() || name.starts_with('$') || name.starts_with('.') {
+            continue;
+        }
+        data_symbols
+            .entry(at(sym.address()))
+            .or_insert_with(|| DataSymbol {
+                name: name.to_string(),
+                size: sym.size(),
+            });
+    }
 
     let plt = plt_entries(&file, data, bias, &functions, ptr);
     for a in plt.keys() {
@@ -777,6 +843,7 @@ pub fn load_with(
         blocks,
         functions,
         code_symbols,
+        data_symbols,
         debug,
         plt,
         import_slots: BTreeMap::new(),
