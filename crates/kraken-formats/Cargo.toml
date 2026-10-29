@@ -1,0 +1,13 @@
+[package]
+name = "kraken-formats"
+description = "KRAKEN format and platform detector: identifies executables, console images, ROMs, firmware and containers by magic and structure (a pure parser, never decrypts)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1"

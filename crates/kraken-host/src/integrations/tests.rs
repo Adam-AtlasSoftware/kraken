@@ -294,3 +294,45 @@ fn tar_xz_archives_unpack() {
     assert_eq!(std::fs::read(out.join("a/b/prog")).unwrap(), SCRIPT);
     assert!(!dir.path().join("x.tar.unxz").exists());
 }
+
+/// Every emulator id the format detector suggests exists in the catalogue.
+#[test]
+fn emulators_suggested_by_the_format_detector_are_in_the_catalogue() {
+    let f = fixture(false);
+    let ids: Vec<String> = f
+        .catalogue
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|v| v.id)
+        .collect();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../kraken-formats/src");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        for line in text.lines() {
+            let wanted = line.contains("run_with(")
+                || line.contains("Some(\"qemu-user-")
+                || line.contains("emulators = vec![")
+                || line.contains("SNES_EMU: ")
+                || line.contains("push(q)");
+            if !wanted {
+                continue;
+            }
+            for quoted in line.split('"').skip(1).step_by(2) {
+                if quoted.contains(' ') || quoted.is_empty() {
+                    continue;
+                }
+                seen += 1;
+                assert!(
+                    ids.iter().any(|i| i == quoted),
+                    "`{quoted}` is not a catalogue emulator"
+                );
+            }
+        }
+    }
+    assert!(
+        seen >= 20,
+        "found only {seen} suggestions: did the detector's source change shape?"
+    );
+}

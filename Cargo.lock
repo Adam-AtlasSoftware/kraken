@@ -2891,6 +2891,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kraken-formats"
+version = "0.2.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "kraken-gui"
 version = "0.2.0"
 dependencies = [
@@ -3102,6 +3109,7 @@ dependencies = [
  "gdbstub",
  "kraken-emu",
  "kraken-engine",
+ "kraken-formats",
  "kraken-infer",
  "kraken-model",
  "kraken-proto",

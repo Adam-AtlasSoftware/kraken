@@ -80,6 +80,83 @@ pub struct BinaryProbeArgs {
     pub path: String,
 }
 
+/// What the format and platform detector (`kraken-formats`) recognised.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PlatformInfo {
+    /// Platform id: `linux`, `windows`, `xbox`, `xbox360`, `gamecube-wii`, `ps1`, `ps4`, `gba`,
+    /// `nes`, `switch`, `uefi`, `android`, `java`, `python`, `wasm` and so on.
+    pub id: String,
+    /// The platform in plain words.
+    pub name: String,
+    /// Format id: `elf`, `pe`, `xbe`, `xex2`, `dol`, `ps-exe`, `nes2`, `squashfs` and so on.
+    pub format_id: String,
+    /// The format in plain words.
+    pub format_name: String,
+    /// What the header says, in a sentence (`mapper 4, PRG 32 KiB`); empty when nothing more.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    /// `high` (magic or checksum), `medium` (several structure checks, no magic) or `low`.
+    pub confidence: String,
+    /// True when the code is encrypted. KRAKEN never decrypts anything.
+    pub encrypted: bool,
+    /// A Ghidra language id for a raw or Ghidra load, when one is sure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// How KRAKEN can open it: `program`, `raw`, `unpack`, `convert` or `none`.
+    pub loader: String,
+    /// Ids of the integrations-catalogue emulators that run it (`integrations_list`), best first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emulators: Vec<String>,
+    /// What KRAKEN can do with the file, one sentence each.
+    pub capabilities: Vec<String>,
+}
+
+fn platform_info(i: &kraken_formats::Identified, engine: Option<EngineKind>) -> PlatformInfo {
+    use kraken_formats::Loader;
+    let mut caps = Vec::new();
+    match i.loader {
+        Loader::Program => {
+            let e = engine.map(|e| e.as_str()).or(i.engine).unwrap_or("native");
+            caps.push(format!("Analyse it with the {e} engine."));
+        }
+        Loader::Raw => caps.push(match i.language {
+            Some(l) => format!(
+                "Open the code as a raw image (`loader: raw`, `language: {l}`); there is no loader for the container yet."
+            ),
+            None => "Open the code as a raw image once you know the processor.".into(),
+        }),
+        Loader::Unpack => caps.push(
+            "It is a container: unpack it and open the programs inside (`firmware_identify` lists the contents when available).".into(),
+        ),
+        Loader::Convert => caps.push(
+            "It is a text encoding of a memory image: convert it to a binary, then open it as a raw image.".into(),
+        ),
+        Loader::None => caps.push("KRAKEN has no loader for this format yet.".into()),
+    }
+    if i.encrypted {
+        caps.push("The code is encrypted. KRAKEN does not decrypt anything; open a decrypted copy that you made yourself.".into());
+    }
+    if !i.emulators.is_empty() {
+        caps.push(format!(
+            "Emulators that run it: {} (see `integrations_list`).",
+            i.emulators.join(", ")
+        ));
+    }
+    PlatformInfo {
+        id: i.platform.into(),
+        name: i.platform_name.into(),
+        format_id: i.format.into(),
+        format_name: i.format_name.into(),
+        detail: i.detail.clone(),
+        confidence: i.confidence.as_str().into(),
+        encrypted: i.encrypted,
+        language: i.language.map(Into::into),
+        loader: i.loader.as_str().into(),
+        emulators: i.emulators.iter().map(|e| e.to_string()).collect(),
+        capabilities: caps,
+    }
+}
+
 /// What `binary_probe` found.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BinaryProbeOut {
@@ -143,6 +220,10 @@ pub struct BinaryProbeOut {
     /// `loader: raw`), most likely first, recognised from the layouts of firmware and ROM images.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub raw_options: Vec<RawSuggestion>,
+    /// Format and platform as the detector recognised them, with what KRAKEN can do and which
+    /// emulators run it; absent when no known layout matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<PlatformInfo>,
 }
 
 /// Facts of an Intel HEX or S-record file; `None` when the file is neither.
@@ -705,6 +786,7 @@ pub fn probe_binary(
         crate::session::hash_file(&abs)?
     };
     let facts = facts_of(&data, whole);
+    let identified = kraken_formats::identify(&data);
     // only a file in no known format is looked at again, for raw-image layouts
     let head = if facts.format.is_none() {
         data
@@ -760,7 +842,10 @@ pub fn probe_binary(
     };
     let kind = facts.kind.unwrap_or("unknown").to_string();
     let description = match format {
-        BinaryFormat::Unknown => "not a program KRAKEN recognises".to_string(),
+        BinaryFormat::Unknown => match &identified {
+            Some(i) => i.describe(),
+            None => "not a program KRAKEN recognises".to_string(),
+        },
         _ => facts
             .description
             .clone()
@@ -784,7 +869,19 @@ pub fn probe_binary(
     } else {
         (Vec::new(), None)
     };
+    let platform = identified
+        .as_ref()
+        .map(|i| platform_info(i, recommended_engine));
     let problem = match (format, problem) {
+        (BinaryFormat::Unknown, Some(_)) if platform.is_some() => {
+            let caps = platform
+                .as_ref()
+                .map(|p| p.capabilities.join(" "))
+                .unwrap_or_default();
+            Some(format!(
+                "KRAKEN has no program loader for this file. It is {description}. {caps}"
+            ))
+        }
         (BinaryFormat::Unknown, Some(p)) => Some(match (container, raw_options.first()) {
             (Some(c), _) => format!("{p} It looks like {c}."),
             (None, Some(s)) => format!(
@@ -823,6 +920,7 @@ pub fn probe_binary(
         supported,
         problem,
         raw_options,
+        platform,
     })
 }
 
@@ -846,8 +944,10 @@ impl Command for BinaryProbe {
              COFF object, library archive, Intel HEX or S-record firmware, or unknown), the kind in plain words (`Linux shared \
              library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, \
              size, SHA-256, whether it is stripped or has debug info, the entry point, the \
-             recommended engine with the reason, and which engines are installed. Needs no open \
-             project. Agents may not probe files in hidden folders of the home directory.\n\
+             recommended engine with the reason, and which engines are installed. The `platform` \
+             block names what the file is beyond ELF/PE/Mach-O (console executables and ROMs, \
+             Xbox 360 NAND images, firmware and archive containers, bytecode), what KRAKEN can \
+             do with it and which catalogue emulators run it. Needs no open project. Agents may not probe files in hidden folders of the home directory.\n\
              Example: binary_probe {\"path\": \"/usr/bin/ls\"}",
         )
         .details(
@@ -856,7 +956,11 @@ impl Command for BinaryProbe {
              engine still has to be installed (`kraken setup`). For an archive, `members` lists \
              up to 200 member names and `member_count` has the total; a static library loads \
              all its members into one project, and an import library opens as its list of \
-             imported symbols. Archives need the native engine.",
+             imported symbols. Archives need the native engine. `platform` comes from the \
+             `kraken-formats` detector (magic numbers and header structure only; nothing is \
+             decrypted): `platform.loader` is `program`, `raw`, `unpack`, `convert` or `none`, \
+             `platform.encrypted` marks images KRAKEN cannot read, and `platform.emulators` are \
+             ids for `emulator_run`.",
         )
     }
 
@@ -1173,6 +1277,63 @@ mod tests {
         assert_eq!(missing.code, ErrorCode::NotFound);
         let folder = probe_binary(&OneEngine, dir.path()).unwrap_err();
         assert_eq!(folder.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn platforms_are_reported_with_what_kraken_can_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, bytes).unwrap();
+            p
+        };
+
+        // a Linux program carries its platform and a QEMU user-mode runner
+        let elf = probe_binary(&OneEngine, &corpus("bin/pie_list-O0")).unwrap();
+        let pl = elf.platform.unwrap();
+        assert_eq!((pl.id.as_str(), pl.format_id.as_str()), ("linux", "elf"));
+        assert_eq!(pl.emulators, ["qemu-user-x86-64"]);
+        assert!(pl.capabilities[0].contains("Analyse"));
+
+        // a GBA header: no program loader, but a raw-image recipe and emulators
+        let mut gba = vec![0u8; 0x200];
+        gba[3] = 0xea;
+        gba[4..16].copy_from_slice(&[
+            0x24, 0xff, 0xae, 0x51, 0x69, 0x9a, 0xa2, 0x21, 0x3d, 0x84, 0x82, 0x0a,
+        ]);
+        gba[0xb2] = 0x96;
+        let out = probe_binary(&OneEngine, &write("game.gba", &gba)).unwrap();
+        assert_eq!(out.format, BinaryFormat::Unknown);
+        assert!(out.description.contains("GBA ROM"), "{}", out.description);
+        let pl = out.platform.unwrap();
+        assert_eq!((pl.id.as_str(), pl.loader.as_str()), ("gba", "raw"));
+        assert_eq!(pl.language.as_deref(), Some("ARM:LE:32:v4t"));
+        assert_eq!(pl.emulators, ["mgba", "ares"]);
+        let problem = out.problem.unwrap();
+        assert!(
+            problem.contains("ARM:LE:32:v4t") && problem.contains("mgba"),
+            "{problem}"
+        );
+
+        // an encrypted Xbox 360 executable is named, and KRAKEN says it will not decrypt it
+        let mut xex = vec![0u8; 0x100];
+        xex[..4].copy_from_slice(b"XEX2");
+        xex[0x14..0x18].copy_from_slice(&1u32.to_be_bytes());
+        xex[0x18..0x1c].copy_from_slice(&0x3ffu32.to_be_bytes());
+        xex[0x1c..0x20].copy_from_slice(&0x80u32.to_be_bytes());
+        xex[0x84..0x86].copy_from_slice(&1u16.to_be_bytes());
+        let out = probe_binary(&OneEngine, &write("default.xex", &xex)).unwrap();
+        let pl = out.platform.unwrap();
+        assert!(pl.encrypted && pl.id == "xbox360");
+        assert!(out.problem.unwrap().contains("does not decrypt"));
+
+        // a container says to unpack it
+        let out = probe_binary(&OneEngine, &write("rootfs.sqsh", b"hsqs\0\0\0\0")).unwrap();
+        assert_eq!(out.platform.unwrap().loader, "unpack");
+
+        // plain text is still nothing
+        let out = probe_binary(&OneEngine, &write("n.txt", b"hello\n")).unwrap();
+        assert!(out.platform.is_none());
     }
 
     #[test]

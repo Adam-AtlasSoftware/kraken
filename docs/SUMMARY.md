@@ -16,6 +16,7 @@
 - [.NET assemblies](dotnet.md)
 - [The native engine](native-engine.md)
 - [Running the program in the emulator](emulation.md)
+- [File formats and platforms](formats.md)
 - [Emulators and tools](integrations.md)
 - [Debugging in the emulator](debugger.md)
 - [Byte patching](patching.md)

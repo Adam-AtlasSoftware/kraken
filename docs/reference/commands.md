@@ -1098,11 +1098,11 @@ kraken binary-probe --path <string>
 - Kind: query
 - Permission: safe
 
-Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, COFF object, library archive, Intel HEX or S-record firmware, or unknown), the kind in plain words (`Linux shared library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, size, SHA-256, whether it is stripped or has debug info, the entry point, the recommended engine with the reason, and which engines are installed. Needs no open project. Agents may not probe files in hidden folders of the home directory.
+Reads a file's headers before `project_create`: format (ELF, PE, Mach-O, .NET, COFF object, library archive, Intel HEX or S-record firmware, or unknown), the kind in plain words (`Linux shared library`, `Windows static library with 12 objects`), processor, 32 or 64 bit, size, SHA-256, whether it is stripped or has debug info, the entry point, the recommended engine with the reason, and which engines are installed. The `platform` block names what the file is beyond ELF/PE/Mach-O (console executables and ROMs, Xbox 360 NAND images, firmware and archive containers, bytecode), what KRAKEN can do with it and which catalogue emulators run it. Needs no open project. Agents may not probe files in hidden folders of the home directory.
 
 Example: `binary_probe {"path": "/usr/bin/ls"}`
 
-`recommended_engine` is what `project_create` picks with `engine: auto`. `supported` is false for files no engine opens; `problem` says why, or which engine still has to be installed (`kraken setup`). For an archive, `members` lists up to 200 member names and `member_count` has the total; a static library loads all its members into one project, and an import library opens as its list of imported symbols. Archives need the native engine.
+`recommended_engine` is what `project_create` picks with `engine: auto`. `supported` is false for files no engine opens; `problem` says why, or which engine still has to be installed (`kraken setup`). For an archive, `members` lists up to 200 member names and `member_count` has the total; a static library loads all its members into one project, and an import library opens as its list of imported symbols. Archives need the native engine. `platform` comes from the `kraken-formats` detector (magic numbers and header structure only; nothing is decrypted): `platform.loader` is `program`, `raw`, `unpack`, `convert` or `none`, `platform.encrypted` marks images KRAKEN cannot read, and `platform.emulators` are ids for `emulator_run`.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -1325,6 +1325,75 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
       ],
       "type": "object"
     },
+    "PlatformInfo": {
+      "description": "What the format and platform detector (`kraken-formats`) recognised.",
+      "properties": {
+        "capabilities": {
+          "description": "What KRAKEN can do with the file, one sentence each.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "description": "`high` (magic or checksum), `medium` (several structure checks, no magic) or `low`.",
+          "type": "string"
+        },
+        "detail": {
+          "description": "What the header says, in a sentence (`mapper 4, PRG 32 KiB`); empty when nothing more.",
+          "type": "string"
+        },
+        "emulators": {
+          "description": "Ids of the integrations-catalogue emulators that run it (`integrations_list`), best first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "encrypted": {
+          "description": "True when the code is encrypted. KRAKEN never decrypts anything.",
+          "type": "boolean"
+        },
+        "format_id": {
+          "description": "Format id: `elf`, `pe`, `xbe`, `xex2`, `dol`, `ps-exe`, `nes2`, `squashfs` and so on.",
+          "type": "string"
+        },
+        "format_name": {
+          "description": "The format in plain words.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Platform id: `linux`, `windows`, `xbox`, `xbox360`, `gamecube-wii`, `ps1`, `ps4`, `gba`,\n`nes`, `switch`, `uefi`, `android`, `java`, `python`, `wasm` and so on.",
+          "type": "string"
+        },
+        "language": {
+          "description": "A Ghidra language id for a raw or Ghidra load, when one is sure.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loader": {
+          "description": "How KRAKEN can open it: `program`, `raw`, `unpack`, `convert` or `none`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The platform in plain words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "format_id",
+        "format_name",
+        "confidence",
+        "encrypted",
+        "loader",
+        "capabilities"
+      ],
+      "type": "object"
+    },
     "RawSuggestion": {
       "description": "One way to open an unrecognised file as a raw image.",
       "properties": {
@@ -1486,6 +1555,17 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
     "path": {
       "$ref": "#/$defs/Untrusted_string",
       "description": "The absolute path that was read. Chosen by whoever supplied the file, so untrusted."
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlatformInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Format and platform as the detector recognised them, with what KRAKEN can do and which\nemulators run it; absent when no known layout matched."
     },
     "problem": {
       "description": "Why it cannot, when `supported` is false.",

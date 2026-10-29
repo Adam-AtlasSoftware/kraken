@@ -747,6 +747,23 @@ impl ImportDialog {
                 .color(pal.text_dim),
             );
         }
+        if let Some(pl) = &p.platform {
+            let head = if pl.detail.is_empty() {
+                format!("{} ({})", pl.format_name, pl.name)
+            } else {
+                format!("{} ({}): {}", pl.format_name, pl.name, pl.detail)
+            };
+            ui.label(RichText::new(head).size(12.0).color(pal.text_dim))
+                .on_hover_text(format!(
+                    "Recognised from the file's header ({} confidence). KRAKEN never decrypts \
+                     anything.",
+                    pl.confidence
+                ));
+            for c in &pl.capabilities {
+                ui.label(RichText::new(c.as_str()).size(12.0).color(pal.text_dim))
+                    .on_hover_text("What KRAKEN can do with this file.");
+            }
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new("On this computer:")
