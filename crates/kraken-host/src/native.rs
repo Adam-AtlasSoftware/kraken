@@ -319,6 +319,63 @@ pub fn choose(
     }
 }
 
+/// Whether the native engine has a raw loader for `language` (a short name or a Sleigh id).
+pub fn raw_native_supported(language: &str) -> bool {
+    engine_native::raw::resolve(language).is_some()
+}
+
+/// The engine for a raw image of `language` under `choice`: native for the processors it has a
+/// raw loader and compiled Sleigh files for, else Ghidra (an error under `native`).
+pub fn choose_raw(
+    choice: EngineChoice,
+    probe: &NativeProbe,
+    language: &str,
+) -> Result<EngineSelection, ProtoError> {
+    let language = kraken_engine::language_id(language);
+    let problem = probe
+        .problem()
+        .or_else(|| match engine_native::raw::sla_file(&language) {
+            None => Some(format!(
+                "it has no raw loader for {language} (it loads {})",
+                engine_native::raw::languages().join(", ")
+            )),
+            Some((dir, sla)) => probe.specs.as_deref().and_then(|root| {
+                let f = root
+                    .join("Ghidra/Processors")
+                    .join(dir)
+                    .join("data/languages")
+                    .join(sla);
+                (!f.is_file()).then(|| {
+                format!(
+                    "the compiled Sleigh files under {} lack {sla}; run `kraken setup --native`",
+                    root.display()
+                )
+            })
+            }),
+        });
+    match (choice, problem) {
+        (EngineChoice::Ghidra, _) => Ok(EngineSelection {
+            kind: EngineKind::Ghidra,
+            choice,
+            reason: "ghidra was requested".into(),
+        }),
+        (EngineChoice::Native, None) | (EngineChoice::Auto, None) => Ok(EngineSelection {
+            kind: EngineKind::Native,
+            choice,
+            reason: format!("a raw {language} image: the native engine has a raw loader for it"),
+        }),
+        (EngineChoice::Native, Some(why)) => Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!("the native engine was requested but {why}; use `--engine ghidra` instead"),
+        )),
+        (EngineChoice::Auto, Some(why)) => Ok(EngineSelection {
+            kind: EngineKind::Ghidra,
+            choice,
+            reason: format!("auto picked Ghidra for a raw {language} image: native {why}"),
+        }),
+    }
+}
+
 /// The native engine over the specs in `probe`, keeping its state in `engine_dir` and running
 /// where `isolation` says, or the reason there is none (including the recorded-engine hint, for
 /// projects reopened later).
@@ -470,6 +527,36 @@ mod tests {
         h.resize(18, 0);
         h.extend_from_slice(&machine.to_le_bytes());
         h
+    }
+
+    #[test]
+    fn raw_images_go_native_for_its_processors_and_to_ghidra_for_the_rest() {
+        let tree = tempfile::tempdir().unwrap();
+        let langs = tree.path().join("Ghidra/Processors/ARM/data/languages");
+        std::fs::create_dir_all(&langs).unwrap();
+        std::fs::write(langs.join("ARM7_le.sla"), b"").unwrap();
+        let p = NativeProbe {
+            library: true,
+            specs: Some(tree.path().to_path_buf()),
+            worker: true,
+        };
+        let s = choose_raw(EngineChoice::Auto, &p, "cortex-m").unwrap();
+        assert_eq!(s.kind, EngineKind::Native, "{}", s.reason);
+        // the tree lacks the x86 file
+        let s = choose_raw(EngineChoice::Auto, &p, "x86").unwrap();
+        assert_eq!(s.kind, EngineKind::Ghidra);
+        assert!(s.reason.contains("lack"), "{}", s.reason);
+        let s = choose_raw(EngineChoice::Auto, &p, "z80").unwrap();
+        assert_eq!(s.kind, EngineKind::Ghidra);
+        assert!(s.reason.contains("no raw loader"), "{}", s.reason);
+        let e = choose_raw(EngineChoice::Native, &p, "z80").unwrap_err();
+        assert_eq!(e.code, ErrorCode::Unsupported);
+        let s = choose_raw(EngineChoice::Ghidra, &p, "arm").unwrap();
+        assert_eq!(s.kind, EngineKind::Ghidra);
+        // no library: native is out for every processor
+        let s = choose_raw(EngineChoice::Auto, &probe(false, false), "arm").unwrap();
+        assert_eq!(s.kind, EngineKind::Ghidra);
+        assert!(raw_native_supported("x86-64") && !raw_native_supported("mips"));
     }
 
     #[test]

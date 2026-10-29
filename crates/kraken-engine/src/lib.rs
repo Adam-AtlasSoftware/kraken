@@ -31,6 +31,7 @@ pub use traits::{
     unsupported,
 };
 pub use types::{
-    AnalysisSummary, AnalyzeRequest, DisasmRequest, EngineRejected, LoaderSpec, ProgramInfo,
-    Progress, Stage, Step, StringsRequest, Watermark, XrefRequest, type_def_name,
+    AnalysisSummary, AnalyzeRequest, DisasmRequest, EngineRejected, LANGUAGE_ALIASES, LoaderSpec,
+    ProgramInfo, Progress, Stage, Step, StringsRequest, Watermark, XrefRequest, language_id,
+    type_def_name,
 };

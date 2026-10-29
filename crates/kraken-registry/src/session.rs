@@ -39,6 +39,17 @@ pub trait EngineFactory: Send + Sync {
     /// existing directory holds a warm cache from an earlier session.
     async fn create(&self, engine_dir: &Path) -> Result<SharedEngine, ProtoError>;
 
+    /// [`select_kind`](Self::select_kind) for a file loaded as `loader` says (a raw image is
+    /// not decided by its header). Factories that cannot tell keep the header-based choice.
+    fn select_kind_for(
+        &self,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+        _loader: &LoaderSpec,
+    ) -> Result<EngineSelection, ProtoError> {
+        self.select_kind(binary, choice)
+    }
+
     /// Which engine kind should open `binary`. Factories with a single engine keep the default.
     /// Reads the file's headers, so call it off the async threads.
     fn detect_kind(&self, _binary: &Path) -> Result<EngineKind, ProtoError> {
@@ -239,6 +250,10 @@ pub struct ProjectMeta {
     /// Why `engine_kind` was picked; absent in older projects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_reason: Option<String>,
+    /// How the file was loaded when the person gave loader options (a raw image's processor,
+    /// base and entry); used on every reopen and rebuild. Absent: auto-detected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loader: Option<LoaderSpec>,
 }
 
 /// Where analysis stands.
@@ -1042,8 +1057,22 @@ impl Session {
         choice: Option<EngineChoice>,
         opts: OpenOptions,
     ) -> Result<Arc<Project>, ProtoError> {
+        self.create_project_loaded(dir, binary, choice, LoaderSpec::default(), opts)
+            .await
+    }
+
+    /// [`create_project_opts`](Self::create_project_opts) with loader options: the spec is
+    /// recorded in `meta.json` and applied again on every open.
+    pub async fn create_project_loaded(
+        &self,
+        dir: &Path,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+        loader: LoaderSpec,
+        opts: OpenOptions,
+    ) -> Result<Arc<Project>, ProtoError> {
         let t = OpenTracker::new(&self.jobs, "project_create", binary, opts);
-        let r = self.create_tracked(dir, binary, choice, &t).await;
+        let r = self.create_tracked(dir, binary, choice, loader, &t).await;
         t.finish(&r);
         r
     }
@@ -1053,6 +1082,7 @@ impl Session {
         dir: &Path,
         binary: &Path,
         choice: Option<EngineChoice>,
+        loader: LoaderSpec,
         t: &Arc<OpenTracker>,
     ) -> Result<Arc<Project>, ProtoError> {
         t.stage(
@@ -1097,7 +1127,8 @@ impl Session {
         t.check()?;
         let selection = {
             let (factory, p) = (self.factory.clone(), binary_path.clone());
-            blocking(move || factory.select_kind(&p, choice)).await?
+            let spec = loader.clone();
+            blocking(move || factory.select_kind_for(&p, choice, &spec)).await?
         };
         let kind = selection.kind;
         t.set_engine(kind.as_str());
@@ -1107,7 +1138,7 @@ impl Session {
             .create_kind(kind, &dir.join(ENGINE_DIR))
             .await?;
         t.check()?;
-        let program = open_binary_tracked(&engine, &binary_path, t).await?;
+        let program = open_binary_tracked(&engine, &binary_path, &loader, t).await?;
         let db_path = dir.join(DB_FILE);
         let store = blocking(move || Store::open(db_path)).await?;
         let meta = ProjectMeta {
@@ -1124,6 +1155,7 @@ impl Session {
             engine_kind: kind,
             engine_choice: Some(selection.choice),
             engine_reason: Some(selection.reason),
+            loader: (loader != LoaderSpec::default()).then_some(loader),
         };
         {
             let (dir, meta) = (dir.clone(), meta.clone());
@@ -1212,7 +1244,8 @@ impl Session {
             .create_kind(meta.engine_kind, &engine_dir)
             .await?;
         t.check()?;
-        let program = open_binary_tracked(&engine, &binary_path, t).await?;
+        let loader = meta.loader.clone().unwrap_or_default();
+        let program = open_binary_tracked(&engine, &binary_path, &loader, t).await?;
         let db_path = dir.join(DB_FILE);
         let store = blocking(move || Store::open(db_path)).await?;
         // the last moment to stop: past here the project is attached
@@ -1306,10 +1339,11 @@ impl Session {
 pub(crate) async fn open_binary(
     engine: &SharedEngine,
     binary: &Path,
+    spec: &LoaderSpec,
 ) -> Result<ProgramInfo, ProtoError> {
     let loader = engine.loader().ok_or_else(|| unsupported("loader"))?;
     loader
-        .open_binary(binary, &LoaderSpec::default(), &CancellationToken::new())
+        .open_binary(binary, spec, &CancellationToken::new())
         .await
 }
 
@@ -1317,17 +1351,13 @@ pub(crate) async fn open_binary(
 async fn open_binary_tracked(
     engine: &SharedEngine,
     binary: &Path,
+    spec: &LoaderSpec,
     t: &Arc<OpenTracker>,
 ) -> Result<ProgramInfo, ProtoError> {
     let loader = engine.loader().ok_or_else(|| unsupported("loader"))?;
     t.stage(OpenStage::ReadFile, "Reading the file");
     let r = loader
-        .open_binary_reporting(
-            binary,
-            &LoaderSpec::default(),
-            t.cancel_token(),
-            t.reporter(),
-        )
+        .open_binary_reporting(binary, spec, t.cancel_token(), t.reporter())
         .await;
     // an engine that finished its open just as it was cancelled is not used
     match r {

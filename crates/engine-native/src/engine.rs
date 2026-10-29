@@ -912,6 +912,18 @@ pub(crate) fn release_free_memory() {
     }
 }
 
+/// Refuses a container format override the native engine has no loader for; the in-process
+/// engine and the worker client share it.
+pub(crate) fn check_format(spec: &LoaderSpec) -> EngineResult<()> {
+    match spec.format.as_deref() {
+        Some(f) if !matches!(f, "elf" | "pe" | "coff" | "ar" | "raw") => Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!("format {f:?} is not supported by the native engine"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Loads, discovers and prepares a program (blocking).
 fn build_program(
     path: &Path,
@@ -939,19 +951,24 @@ fn build_program(
             data.len() as f64 / 1e6
         ),
     );
-    // a stripped program keeps its names in a separate debug file when one is installed
-    let external = if config.use_symbols {
-        crate::debugfile::find(path, &data).and_then(|p| std::fs::read(p).ok())
+    let mut loaded = if spec.is_raw() {
+        crate::raw::load(&data, spec)?
     } else {
-        None
+        // a stripped program keeps its names in a separate debug file when one is installed
+        let external = if config.use_symbols {
+            crate::debugfile::find(path, &data).and_then(|p| std::fs::read(p).ok())
+        } else {
+            None
+        };
+        crate::elf::load_with(&data, spec.base.map(|b| b.0), external.as_deref())?
     };
-    let mut loaded = crate::elf::load_with(&data, spec.base.map(|b| b.0), external.as_deref())?;
     if !config.use_symbols {
         // a stripped binary has neither
         loaded.debug = crate::dwarf::Debug::default();
         loaded.code_symbols.clear();
     }
     if let Some(a) = spec.arch.as_deref()
+        && !spec.is_raw()
         && a != loaded.language.id
     {
         return Err(ProtoError::new(
@@ -1587,14 +1604,7 @@ impl InProcessEngine {
         report: Option<OpenReporter>,
     ) -> EngineResult<ProgramInfo> {
         check(cancel)?;
-        if let Some(f) = spec.format.as_deref()
-            && f != "elf"
-        {
-            return Err(ProtoError::new(
-                ErrorCode::Unsupported,
-                format!("format {f:?} is not supported by the native engine"),
-            ));
-        }
+        check_format(spec)?;
         let path = path.to_path_buf();
         let spec = spec.clone();
         let config = self.config.clone();

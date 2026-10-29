@@ -495,6 +495,29 @@ impl EngineFactory for HostEngineFactory {
         Ok(EngineKind::Dotnet)
     }
 
+    fn select_kind_for(
+        &self,
+        binary: &Path,
+        choice: Option<EngineChoice>,
+        loader: &kraken_engine::LoaderSpec,
+    ) -> Result<EngineSelection, ProtoError> {
+        if !loader.is_raw() {
+            return self.select_kind(binary, choice);
+        }
+        let choice = choice.unwrap_or(self.default_choice);
+        let language = loader.arch.as_deref().unwrap_or_default();
+        let probe = if choice == EngineChoice::Ghidra {
+            crate::native::NativeProbe {
+                library: false,
+                specs: None,
+                worker: false,
+            }
+        } else {
+            self.native.probe()
+        };
+        crate::native::choose_raw(choice, &probe, language)
+    }
+
     fn select_kind(
         &self,
         binary: &Path,

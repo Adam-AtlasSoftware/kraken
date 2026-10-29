@@ -130,6 +130,7 @@ final class Engine {
 
         String name = binary.getName();
         DomainFile existing = gp.getRootFolder().getFile(name);
+        Long rawEntry = null;
         if (existing == null) {
             ProgramLoader.Builder b =
                 ProgramLoader.builder()
@@ -141,13 +142,26 @@ final class Engine {
             if (loaderSpec != null && !loaderSpec.isEmpty()) {
                 String[] parts = loaderSpec.split(";");
                 if (!parts[0].isEmpty()) {
-                    b.loaders(parts[0]);
+                    b.loaders(loaderClassName(parts[0]));
                 }
                 if (parts.length > 1 && !parts[1].isEmpty()) {
                     b.language(parts[1]);
                 }
                 if (parts.length > 2 && !parts[2].isEmpty()) {
                     b.compiler(parts[2]);
+                }
+                // Raw Binary loader options (hex): base address, file offset, length
+                if (parts.length > 3 && !parts[3].isEmpty()) {
+                    b.addLoaderArg("-loader-baseAddr", "0x" + parts[3]);
+                }
+                if (parts.length > 4 && !parts[4].isEmpty()) {
+                    b.addLoaderArg("-loader-fileOffset", "0x" + parts[4]);
+                }
+                if (parts.length > 5 && !parts[5].isEmpty()) {
+                    b.addLoaderArg("-loader-length", "0x" + parts[5]);
+                }
+                if (parts.length > 6 && !parts[6].isEmpty()) {
+                    rawEntry = Long.parseUnsignedLong(parts[6], 16);
                 }
             }
             try (LoadResults<Program> results = b.load()) {
@@ -162,11 +176,50 @@ final class Engine {
             throw KrakenError.internal("imported program is missing from the project: " + name);
         }
         Program p = (Program) file.getDomainObject(this, true, false, TaskMonitor.DUMMY);
+        if (rawEntry != null) {
+            markEntry(p, rawEntry);
+        }
         program = p;
         programName = name;
         sourcePath = path;
         types = new TypeConv(p.getDataTypeManager());
         return programInfo();
+    }
+
+    /** ProgramLoader selects loaders by class name; the Rust side sends the display names. */
+    private static String loaderClassName(String name) {
+        return switch (name) {
+            case "Raw Binary" -> "BinaryLoader";
+            case "Executable and Linking Format (ELF)" -> "ElfLoader";
+            case "Portable Executable (PE)" -> "PeLoader";
+            case "Mac OS X Mach-O" -> "MachoLoader";
+            default -> name;
+        };
+    }
+
+    /** Makes `entry` an external entry point so analysis starts a function there. */
+    private static void markEntry(Program p, long entry) throws Exception {
+        boolean thumb = (entry & 1) == 1 && p.getLanguageID().getIdAsString().startsWith("ARM:");
+        long at = thumb ? entry & ~1L : entry;
+        var addr = p.getAddressFactory().getDefaultAddressSpace().getAddress(at);
+        int tx = p.startTransaction("kraken: entry point");
+        try {
+            if (thumb) {
+                var tmode = p.getLanguage().getRegister("TMode");
+                if (tmode != null) {
+                    p.getProgramContext()
+                        .setValue(tmode, addr, addr, java.math.BigInteger.ONE);
+                }
+            }
+            p.getSymbolTable().addExternalEntryPoint(addr);
+            new DisassembleCommand(addr, null, true).applyTo(p, TaskMonitor.DUMMY);
+            if (p.getFunctionManager().getFunctionAt(addr) == null) {
+                new CreateFunctionCmd(addr).applyTo(p, TaskMonitor.DUMMY);
+            }
+        } finally {
+            p.endTransaction(tx, true);
+        }
+        p.save("kraken: entry point", TaskMonitor.DUMMY);
     }
 
     private Program requireProgram() {

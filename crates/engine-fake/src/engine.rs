@@ -284,6 +284,7 @@ impl Loader for FakeEngine {
         let mut info = self.lock().program.clone();
         if let Some(f) = &spec.format
             && *f != info.format
+            && !spec.is_raw()
         {
             return Err(ProtoError::new(
                 ErrorCode::Unsupported,

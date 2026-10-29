@@ -101,26 +101,32 @@ pub fn normalize_format(ghidra: &str) -> String {
     }
 }
 
-/// `"<loader>;<language>"` for the sidecar, or `None` for full auto-detection.
+/// `"<loader>;<language>;<compiler>;<base>;<offset>;<length>;<entry>"` for the sidecar (numbers
+/// in hex, trailing empty fields dropped after the first two), or `None` for full auto-detection.
 fn loader_spec(spec: &LoaderSpec) -> EngineResult<Option<String>> {
-    if spec.base.is_some() {
-        return Err(unsupported("overriding the image base"));
-    }
     let loader = match spec.format.as_deref() {
         None => "",
         Some(f) => loader_name(f).ok_or_else(|| unsupported(&format!("loader format `{f}`")))?,
     };
-    let arch = spec.arch.as_deref().unwrap_or("");
-    if arch.contains(';') {
+    let text = |v: &Option<String>| v.clone().unwrap_or_default();
+    let num = |v: Option<Hex64>| v.map(|h| format!("{:x}", h.0)).unwrap_or_default();
+    let fields = [
+        loader.to_string(),
+        text(&spec.arch),
+        text(&spec.compiler),
+        num(spec.base),
+        num(spec.offset),
+        num(spec.length),
+        num(spec.entry),
+    ];
+    if fields.iter().any(|f| f.contains(';')) {
         return Err(ProtoError::new(
             ErrorCode::InvalidArgument,
-            "arch must not contain `;`",
+            "loader options must not contain `;`",
         ));
     }
-    if loader.is_empty() && arch.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(format!("{loader};{arch}")))
+    let used = fields.iter().rposition(|f| !f.is_empty()).map(|n| n.max(1));
+    Ok(used.map(|n| fields[..=n].join(";")))
 }
 
 /// Creates and canonicalises the project directory. Ghidra refuses project paths with an element
@@ -1005,7 +1011,7 @@ mod unit_tests {
         let elf = LoaderSpec {
             format: Some("elf".into()),
             arch: Some("x86:LE:64:default".into()),
-            base: None,
+            ..LoaderSpec::default()
         };
         assert_eq!(
             loader_spec(&elf).unwrap().as_deref(),
@@ -1024,13 +1030,17 @@ mod unit_tests {
             ..LoaderSpec::default()
         };
         assert_eq!(loader_spec(&bad).unwrap_err().code, ErrorCode::Unsupported);
-        let based = LoaderSpec {
-            base: Some(Hex64(0x1000)),
+        let raw = LoaderSpec {
+            format: Some("raw".into()),
+            arch: Some("ARM:LE:32:Cortex".into()),
+            base: Some(Hex64(0x0800_0000)),
+            offset: Some(Hex64(0x100)),
+            entry: Some(Hex64(0x0800_0101)),
             ..LoaderSpec::default()
         };
         assert_eq!(
-            loader_spec(&based).unwrap_err().code,
-            ErrorCode::Unsupported
+            loader_spec(&raw).unwrap().as_deref(),
+            Some("Raw Binary;ARM:LE:32:Cortex;;8000000;100;;8000101")
         );
     }
 

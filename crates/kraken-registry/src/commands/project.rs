@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use kraken_proto::{PageRequest, ProtoError, Untrusted, sanitize};
+use kraken_engine::LoaderSpec;
+use kraken_proto::{ErrorCode, Hex64, PageRequest, ProtoError, Untrusted, sanitize};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -195,6 +196,74 @@ pub struct ProjectCreateArgs {
     /// .NET assemblies always use the .NET engine.
     #[serde(default)]
     pub engine: Option<EngineChoice>,
+    /// How to read the file: `auto` (default: the file's own format) or `raw` (a flat image
+    /// with no header: firmware, a ROM, boot code; needs `language`).
+    #[serde(default)]
+    pub loader: Option<LoaderKind>,
+    /// Processor of a raw image, as a Sleigh language id (`ARM:LE:32:Cortex`) or a short name
+    /// (`cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`, `riscv64`). With `auto` it
+    /// overrides the detected processor.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Compiler spec (`gcc`, `windows`, `default`); the language's default when unset.
+    #[serde(default)]
+    pub compiler: Option<String>,
+    /// Address the image is mapped at (hex such as `0x08000000`); `0` for a raw image.
+    #[serde(default)]
+    pub base: Option<Hex64>,
+    /// Raw images: file offset where the image starts (skips a header); default 0.
+    #[serde(default)]
+    pub offset: Option<Hex64>,
+    /// Raw images: how many bytes to map from `offset`; default the rest of the file.
+    #[serde(default)]
+    pub length: Option<Hex64>,
+    /// Raw images: address where execution starts (a function entry; for Thumb code the low
+    /// bit may be set). Default: the reset vector of an ARM Cortex-M vector table, else `base`.
+    #[serde(default)]
+    pub entry: Option<Hex64>,
+}
+
+/// How `project_create` reads the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LoaderKind {
+    /// Detect the format (ELF, PE, Mach-O, archive).
+    Auto,
+    /// A flat memory image with no container.
+    Raw,
+}
+
+impl ProjectCreateArgs {
+    /// The loader hints these arguments ask for, or why they do not make sense together.
+    pub fn loader_spec(&self) -> Result<LoaderSpec, ProtoError> {
+        let invalid = |m: &str| ProtoError::new(ErrorCode::InvalidArgument, m.to_string());
+        let raw = self.loader == Some(LoaderKind::Raw);
+        if raw && self.language.as_deref().is_none_or(|l| l.trim().is_empty()) {
+            return Err(invalid(
+                "a raw image needs `language`, the processor it was built for (for example \
+                 `cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`; `binary_probe` \
+                 suggests one)",
+            ));
+        }
+        if !raw && (self.offset.is_some() || self.length.is_some() || self.entry.is_some()) {
+            return Err(invalid(
+                "`offset`, `length` and `entry` apply to a raw image only: add `loader: raw`",
+            ));
+        }
+        Ok(LoaderSpec {
+            arch: self
+                .language
+                .as_deref()
+                .filter(|l| !l.trim().is_empty())
+                .map(kraken_engine::language_id),
+            base: self.base,
+            format: raw.then(|| "raw".to_string()),
+            compiler: self.compiler.clone().filter(|c| !c.trim().is_empty()),
+            offset: self.offset,
+            length: self.length,
+            entry: self.entry,
+        })
+    }
 }
 
 /// Creates a project for a binary.
@@ -225,7 +294,15 @@ impl Command for ProjectCreate {
              The first load of a big program can take minutes: while it runs it is the job \
              `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon \
              sends `open_progress` events), and `job_cancel` stops it without leaving a \
-             project behind.",
+             project behind.\n\
+             Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a \
+             `language`: one memory block holds the file (or `offset`/`length` of it) at `base`, \
+             and execution starts at `entry`. An ARM Cortex-M vector table at the start names \
+             `Reset_Handler` and the interrupt handlers. `binary_probe` suggests these options \
+             for a file it cannot identify. The options are recorded in `meta.json` and used on \
+             every reopen and `rebuild`. The native engine loads raw x86, x86-64, ARM, \
+             Cortex-M, AArch64 and RISC-V images; `auto` falls back to Ghidra for other \
+             processors.",
         )
     }
 
@@ -241,11 +318,13 @@ impl Command for ProjectCreate {
             ctx,
         )
         .await?;
+        let loader = args.loader_spec()?;
         let project = s
-            .create_project_opts(
+            .create_project_loaded(
                 Path::new(&args.project_dir),
                 Path::new(&args.binary),
                 args.engine,
+                loader,
                 OpenOptions::from_context(ctx),
             )
             .await?;

@@ -296,14 +296,7 @@ impl NativeEngine {
             },
             w => {
                 check(cancel)?;
-                if let Some(f) = spec.format.as_deref()
-                    && !matches!(f, "elf" | "pe" | "coff" | "ar")
-                {
-                    return Err(kraken_proto::ProtoError::new(
-                        kraken_proto::ErrorCode::Unsupported,
-                        format!("format {f:?} is not supported by the native engine"),
-                    ));
-                }
+                crate::engine::check_format(spec)?;
                 // the worker may only read the binary itself, so resolve links here
                 let path = std::fs::canonicalize(path).map_err(|e| {
                     kraken_proto::ProtoError::new(

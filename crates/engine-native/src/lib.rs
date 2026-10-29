@@ -39,6 +39,7 @@ mod mutate;
 mod native;
 pub mod objfile;
 pub mod pe;
+pub mod raw;
 pub mod refs;
 mod relocs;
 pub mod strings;

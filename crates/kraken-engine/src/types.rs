@@ -15,6 +15,69 @@ pub struct LoaderSpec {
     /// Container format override such as `"elf"`; an unknown format is `unsupported`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    /// Compiler spec id such as `"gcc"` or `"windows"`; the language's default when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler: Option<String>,
+    /// Raw images: where the image starts in the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<Hex64>,
+    /// Raw images: how many bytes to map from `offset`; the rest of the file when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<Hex64>,
+    /// Raw images: the entry point (a function start); for Thumb code the low bit may be set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<Hex64>,
+}
+
+/// Short names for processors (what a person types) and the Sleigh language id each stands for.
+pub const LANGUAGE_ALIASES: &[(&str, &str)] = &[
+    ("x86-64", "x86:LE:64:default"),
+    ("amd64", "x86:LE:64:default"),
+    ("x64", "x86:LE:64:default"),
+    ("x86", "x86:LE:32:default"),
+    ("x86-32", "x86:LE:32:default"),
+    ("i386", "x86:LE:32:default"),
+    ("x86-16", "x86:LE:16:Real Mode"),
+    ("real-mode", "x86:LE:16:Real Mode"),
+    ("8086", "x86:LE:16:Real Mode"),
+    ("cortex-m", "ARM:LE:32:Cortex"),
+    ("cortex", "ARM:LE:32:Cortex"),
+    ("thumb", "ARM:LE:32:Cortex"),
+    ("arm", "ARM:LE:32:v8"),
+    ("arm32", "ARM:LE:32:v8"),
+    ("armv7", "ARM:LE:32:v7"),
+    ("aarch64", "AARCH64:LE:64:v8A"),
+    ("arm64", "AARCH64:LE:64:v8A"),
+    ("riscv32", "RISCV:LE:32:default"),
+    ("rv32", "RISCV:LE:32:default"),
+    ("riscv64", "RISCV:LE:64:default"),
+    ("rv64", "RISCV:LE:64:default"),
+    ("mips", "MIPS:BE:32:default"),
+    ("mipsel", "MIPS:LE:32:default"),
+    ("ppc", "PowerPC:BE:32:default"),
+    ("m68k", "68000:BE:32:default"),
+    ("68000", "68000:BE:32:default"),
+    ("z80", "Z80:LE:16:default"),
+    ("6502", "6502:LE:16:default"),
+    ("8051", "8051:BE:16:default"),
+    ("avr", "AVR8:LE:16:default"),
+];
+
+/// The language id for a short name such as `cortex-m` (case and `_` do not matter); anything
+/// else is returned as typed, for the engine to judge.
+pub fn language_id(name: &str) -> String {
+    let n = name.trim().to_ascii_lowercase().replace('_', "-");
+    LANGUAGE_ALIASES
+        .iter()
+        .find(|(a, _)| *a == n)
+        .map_or_else(|| name.trim().to_string(), |(_, id)| (*id).to_string())
+}
+
+impl LoaderSpec {
+    /// Whether this asks for a raw binary image (no container format).
+    pub fn is_raw(&self) -> bool {
+        self.format.as_deref() == Some("raw")
+    }
 }
 
 /// Facts about the loaded program.

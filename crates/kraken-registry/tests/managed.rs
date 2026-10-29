@@ -518,3 +518,59 @@ async fn the_engine_choice_is_recorded_and_reported_by_project_info() {
         .unwrap();
     assert_eq!(reopened["engine"], json!({"kind": "ghidra"}));
 }
+
+#[tokio::test]
+async fn raw_loader_options_are_checked_recorded_and_kept_on_reopen() {
+    let r = Rig::new();
+    let blob = r.write("fw.bin", &[0u8; 256]);
+
+    // a raw image needs its processor
+    let e = r
+        .call(
+            "project_create",
+            json!({"binary": blob, "project_dir": r.dir("a"), "loader": "raw"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, kraken_proto::ErrorCode::InvalidArgument);
+    assert!(e.message.contains("language"), "{e}");
+    // offset, length and entry mean nothing for a file with a header
+    let e = r
+        .call(
+            "project_create",
+            json!({"binary": blob, "project_dir": r.dir("a"), "offset": "0x10"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, kraken_proto::ErrorCode::InvalidArgument);
+    assert!(!r.tmp.path().join("a/meta.json").exists());
+
+    // the options go to meta.json (short names become language ids) and survive a reopen
+    let dir = r.dir("raw");
+    r.call(
+        "project_create",
+        json!({"binary": blob, "project_dir": dir, "loader": "raw", "language": "cortex-m",
+               "base": "0x08000000", "offset": "0x10", "entry": "0x08000041"}),
+    )
+    .await
+    .unwrap();
+    let loader = r.meta("raw")["loader"].clone();
+    assert_eq!(loader["format"], "raw");
+    assert_eq!(loader["arch"], "ARM:LE:32:Cortex");
+    assert_eq!(loader["base"], "0x8000000");
+    assert_eq!(loader["offset"], "0x10");
+    assert_eq!(loader["entry"], "0x8000041");
+    r.call("project_open", json!({"project_dir": dir}))
+        .await
+        .unwrap();
+    assert_eq!(r.meta("raw")["loader"], loader);
+
+    // a plain create records no loader
+    r.call(
+        "project_create",
+        json!({"binary": blob, "project_dir": r.dir("plain")}),
+    )
+    .await
+    .unwrap();
+    assert!(r.meta("plain").get("loader").is_none());
+}
