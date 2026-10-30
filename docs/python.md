@@ -71,6 +71,7 @@ A connection can have many projects open. A `Project` is cheap; keep as many as 
 | Functions | `proj.functions(filter=None)` is a lazy iterator of `Function`; `proj.function(address_or_name)` |
 | Per function | `fn.decompile()` returns `Decompiled(text, tokens, ...)`; `fn.rename(name)`, `fn.set_comment(kind, text)`, `fn.comments()`, `fn.callers()`, `fn.callees()`, `fn.disassemble()`, `fn.cfg()` |
 | Data | `proj.read_bytes(addr, n)`, `proj.disassemble(...)`, `proj.xrefs(addr, "to" or "from")`, `proj.cfg(fn)`, `proj.strings(filter)`, `proj.memory_map()`, `proj.imports()`, `proj.exports()` |
+| What next | `proj.next_steps(function=None)` returns `NextStep(id, title, reason, command, args, runnable)` suggestions, most useful first |
 | History | `proj.history(run_id=None)`, `proj.undo()`, `proj.undo_run(run_id)` |
 | Anything else | `proj.call("command_name", **args)` runs any registry command |
 

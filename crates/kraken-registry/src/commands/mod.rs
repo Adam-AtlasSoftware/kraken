@@ -23,6 +23,7 @@ mod emulate_call;
 mod emulate_call_types;
 mod firmware;
 mod gui_navigate;
+mod guide;
 mod help;
 mod history;
 mod infer;
@@ -125,6 +126,7 @@ pub use firmware::{
     FirmwareIdentify, FirmwareIdentifyArgs, FirmwareIdentifyOut, identify_firmware,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
+pub use guide::{DEFAULT_SUGGESTIONS, MAX_SUGGESTIONS, NextSteps, NextStepsArgs, NextStepsOut};
 pub use help::{
     DEFAULT_HELP_HITS, HelpSection, KrakenHelp, KrakenHelpArgs, KrakenHelpOut, MAX_HELP_HITS,
 };
@@ -324,6 +326,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(ProjectCreate);
     r.register(ProjectOpen);
     r.register(ProjectInfo);
+    r.register(NextSteps);
     r.register(Analyze);
     r.register(JobStatus);
     r.register(JobAwait);

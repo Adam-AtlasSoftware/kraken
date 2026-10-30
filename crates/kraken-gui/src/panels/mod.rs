@@ -9,6 +9,7 @@ pub mod emulation;
 pub mod graph;
 pub mod hex;
 pub mod listing;
+pub mod next_steps;
 pub use listing::{patch_color, patched_toggle};
 pub mod patches;
 pub mod search;

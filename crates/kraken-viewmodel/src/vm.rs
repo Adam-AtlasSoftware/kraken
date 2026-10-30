@@ -799,6 +799,7 @@ impl ViewModel {
     }
 
     pub(crate) fn refresh_after_edit(&mut self) {
+        self.refresh_next_steps();
         self.refresh_project();
         self.refresh_functions();
         self.refresh_history();

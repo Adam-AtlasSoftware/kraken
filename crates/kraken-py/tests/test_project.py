@@ -25,6 +25,14 @@ def test_info_and_analysis_with_progress(project) -> None:
     assert info.arch.startswith("x86") and info.format == "elf"
 
 
+def test_next_steps_start_with_analysis_and_carry_the_command(project) -> None:
+    steps = project.next_steps()
+    assert steps and isinstance(steps[0], kraken.NextStep)
+    assert steps[0].id == "analyze" and steps[0].command == "analyze" and steps[0].runnable
+    project.analyze()
+    assert "analyze" not in [s.id for s in project.next_steps(limit=10)]
+
+
 def test_analyze_without_waiting_returns_a_job(project) -> None:
     job = project.analyze(wait=False)
     assert isinstance(job, kraken.Job)

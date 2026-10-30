@@ -89,6 +89,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`local_model_status`](#local_model_status) | query | safe | Show one local model's state, memory, speed and recent log |
 | [`local_model_stop`](#local_model_stop) | query | mutating | Stop a local model now, whoever is using it |
 | [`memory_map`](#memory_map) | query | safe | List the memory blocks (segments and sections) with permissions |
+| [`next_steps`](#next_steps) | query | safe | Suggest what to do next in this project |
 | [`patch_asm`](#patch_asm) | mutation | mutating | Replace instructions with assembly you type, padded with NOPs to an instruction boundary |
 | [`patch_branch`](#patch_branch) | mutation | mutating | Invert, always take or never take a conditional branch |
 | [`patch_constant`](#patch_constant) | mutation | mutating | Change the constant (immediate) an instruction uses |
@@ -14503,6 +14504,271 @@ Arguments: none.
     "blocks"
   ],
   "title": "MemoryMapOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## next_steps
+
+Suggest what to do next in this project
+
+```sh
+kraken next-steps [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Looks at the open project (analysis, debug information, function names, patches, emulator setup, and the function in view) and returns up to a few suggestions, each with a title, the reason, and the command with arguments that does it. Start here when you do not know what to do next. Nothing is changed.
+
+Example: `next_steps {"function": "0x401136"}`
+
+Each suggestion has an `id` (stable, so a client can remember a dismissal), `title`, `reason`, `command` and `args`. `runnable: true` means `command` with `args` can be called as it stands; `false` means it still needs something from the person (a name for a variable) or the step is outside KRAKEN (`command` absent). `facts` shows what the rules saw. Paid steps such as `assist_auto_name` ask first when run. Pass `function` to also look at that function's variables: this decompiles it.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `function` | `--function` | json | no | The function in view, as `0x...`: adds suggestions about its variables. |
+| `limit` | `--limit` | integer | no | Most suggestions to return (default 5, at most 10). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "AutoLocal": {
+      "description": "A local variable the decompiler named itself.",
+      "properties": {
+        "name": {
+          "description": "The name the decompiler gave (`local_28`, `iVar1`).",
+          "type": "string"
+        },
+        "storage": {
+          "description": "Where it lives, as `set_local` takes it (`stack:0xffffffffffffffd8`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "storage"
+      ],
+      "type": "object"
+    },
+    "CurrentFunction": {
+      "description": "The function the person is looking at.",
+      "properties": {
+        "address": {
+          "description": "Entry address, as `0x...`.",
+          "type": "string"
+        },
+        "auto_locals": {
+          "description": "Variables the decompiler named itself, one per storage location.",
+          "items": {
+            "$ref": "#/$defs/AutoLocal"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "name",
+        "auto_locals"
+      ],
+      "type": "object"
+    },
+    "DebugFacts": {
+      "description": "How much a project has of its debug information.",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Not looked at (no probe result).",
+          "type": "string"
+        },
+        {
+          "const": "have",
+          "description": "The debug information is inside the program, or a debug file is attached.",
+          "type": "string"
+        },
+        {
+          "const": "file_found",
+          "description": "The program holds none and a matching separate file was found.",
+          "type": "string"
+        },
+        {
+          "const": "file_missing",
+          "description": "The program names a separate file (a PDB, a build-id) that was not found.",
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "The program neither holds nor names any.",
+          "type": "string"
+        }
+      ]
+    },
+    "Facts": {
+      "description": "What the rules look at.",
+      "properties": {
+        "analysed": {
+          "description": "Analysis has finished.",
+          "type": "boolean"
+        },
+        "analysis_failed": {
+          "description": "The last analysis failed.",
+          "type": "boolean"
+        },
+        "analysis_running": {
+          "description": "Analysis is running now.",
+          "type": "boolean"
+        },
+        "arch": {
+          "description": "Architecture or language id.",
+          "type": "string"
+        },
+        "auto_named": {
+          "description": "Functions that still carry an engine default name (`FUN_...`, `sub_...`).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "binary": {
+          "description": "Path of the analysed program.",
+          "type": "string"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CurrentFunction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The function in view, when the caller names one."
+        },
+        "debug": {
+          "$ref": "#/$defs/DebugFacts",
+          "description": "Where the program stands with its debug information."
+        },
+        "debug_candidate": {
+          "description": "A debug file that `debuginfo_attach` can use.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "Container format as the engine names it (`ELF`, `PE`).",
+          "type": "string"
+        },
+        "function_count": {
+          "description": "Functions the engine knows.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "names_pdb": {
+          "description": "The program names a PDB.",
+          "type": "boolean"
+        },
+        "needs_sysroot": {
+          "description": "A dynamically linked program that needs a sysroot to run in the emulator, and none is\ninstalled for this architecture.",
+          "type": "boolean"
+        },
+        "patches_on": {
+          "description": "Byte patches that are switched on.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "patches_verified": {
+          "description": "The patches that are on have a `patch_verify` verdict.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "binary",
+        "format",
+        "arch",
+        "analysed",
+        "analysis_running",
+        "analysis_failed",
+        "function_count",
+        "auto_named",
+        "debug",
+        "names_pdb",
+        "patches_on",
+        "patches_verified",
+        "needs_sysroot"
+      ],
+      "type": "object"
+    },
+    "Suggestion": {
+      "description": "One suggestion.",
+      "properties": {
+        "args": {
+          "default": null,
+          "description": "Arguments for `command`."
+        },
+        "command": {
+          "description": "The registry command that does it; absent when the step is outside KRAKEN.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Stable id of the rule (`analyze`, `debug_probe`); a person can dismiss it by id.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why it is worth doing now, in a sentence or two.",
+          "type": "string"
+        },
+        "runnable": {
+          "description": "True when `command` can run as it stands. False when it still needs something from\nthe person (a name, a file), so a client should open a dialog or ask instead.",
+          "type": "boolean"
+        },
+        "title": {
+          "description": "What to do, short.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "reason",
+        "runnable"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `next_steps`.",
+  "properties": {
+    "facts": {
+      "$ref": "#/$defs/Facts",
+      "description": "The facts the rules looked at."
+    },
+    "suggestions": {
+      "description": "What to do, most useful first. Empty when nothing stands out.",
+      "items": {
+        "$ref": "#/$defs/Suggestion"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "suggestions",
+    "facts"
+  ],
+  "title": "NextStepsOut",
   "type": "object"
 }
 ```

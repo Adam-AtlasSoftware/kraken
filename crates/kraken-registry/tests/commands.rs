@@ -83,6 +83,7 @@ const EXPECTED: &[&str] = &[
     "local_model_status",
     "local_model_stop",
     "memory_map",
+    "next_steps",
     "patch_asm",
     "patch_branch",
     "patch_constant",

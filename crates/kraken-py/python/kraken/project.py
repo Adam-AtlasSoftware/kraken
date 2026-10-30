@@ -34,6 +34,7 @@ from .types import (
     JobProgress,
     JobResult,
     MemoryBlock,
+    NextStep,
     ProjectInfo,
     Proposal,
     StringItem,
@@ -615,6 +616,20 @@ class Project:
     def info(self) -> ProjectInfo:
         """Program, engine and analysis state."""
         return ProjectInfo.from_json(self.call("project_info"))
+
+    def next_steps(self, function: Address | None = None, limit: int | None = None) -> list[NextStep]:
+        """What to do next, most useful first: each step names its reason and the command.
+
+        Give ``function`` (an address) to also look at that function's unnamed variables.
+
+        >>> [s.title for s in project.next_steps()]   # doctest: +SKIP
+        """
+        args: dict[str, Any] = {}
+        if function is not None:
+            args["function"] = function
+        if limit is not None:
+            args["limit"] = limit
+        return [NextStep.from_json(s) for s in self.call("next_steps", **args)["suggestions"]]
 
     def analyze(
         self,

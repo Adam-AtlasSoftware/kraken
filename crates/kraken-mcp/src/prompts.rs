@@ -280,6 +280,22 @@ pub(crate) async fn get(
 
 async fn getting_started(reader: &Reader<'_>) -> GetPromptResult {
     let summary = reader.summary().await;
+    let steps = reader.next_steps().await;
+    let now = if steps.is_empty() {
+        String::new()
+    } else {
+        let list: String = steps
+            .iter()
+            .map(|(title, reason, command)| {
+                let via = command
+                    .as_deref()
+                    .map(|c| format!(" (`{c}`)"))
+                    .unwrap_or_default();
+                format!("   - {title}{via}: {reason}\n")
+            })
+            .collect();
+        format!("   Right now `next_steps` suggests:\n{list}")
+    };
     let text = format!(
         "You are helping a person reverse-engineer the program that is open in KRAKEN. Work in \
          this order.\n\
@@ -291,9 +307,11 @@ async fn getting_started(reader: &Reader<'_>) -> GetPromptResult {
          strings and large functions that point to it.\n\
          3. Choose the three most promising functions, `decompile` each and explain what it does \
          in plain language.\n\
-         4. Finish with up to three concrete next steps and ask which to take (naming functions \
-         with `apply_edits`, the `rewrite-program` prompt, `gui_navigate` to show something). Do \
-         not rename everything unasked.\n\n\
+         4. Finish with up to three concrete next steps and ask which to take. Call `next_steps` \
+         (pass `function` for the one you read) for suggestions that carry the command and its \
+         arguments; other moves are naming functions with `apply_edits`, the `rewrite-program` \
+         prompt, `gui_navigate` to show something. Do not rename everything unasked.\n\
+         {now}\n\
          {RULES}"
     );
     GetPromptResult::new(vec![

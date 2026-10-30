@@ -979,6 +979,42 @@ fn ai_usage(v: &Value) -> String {
     s
 }
 
+/// `next_steps`: a numbered list, each with the reason and the command line that does it.
+fn next_steps(v: &Value) -> String {
+    let steps = v["suggestions"].as_array().cloned().unwrap_or_default();
+    if steps.is_empty() {
+        return "Nothing stands out right now.\n".into();
+    }
+    let mut s = String::new();
+    for (i, st) in steps.iter().enumerate() {
+        let text = |k: &str| st[k].as_str().unwrap_or("");
+        s.push_str(&format!(
+            "{}. {}\n   {}\n",
+            i + 1,
+            text("title"),
+            text("reason")
+        ));
+        if let Some(cmd) = st["command"].as_str() {
+            let mut line = format!("   kraken {}", cmd.replace('_', "-"));
+            if let Some(args) = st["args"].as_object() {
+                for (k, val) in args {
+                    let shown = match val {
+                        Value::String(t) => t.clone(),
+                        other => other.to_string(),
+                    };
+                    line.push_str(&format!(" --{} {}", k.replace('_', "-"), shown));
+                }
+            }
+            if st["runnable"] == false {
+                line.push_str("   (needs your input)");
+            }
+            s.push_str(&line);
+            s.push('\n');
+        }
+    }
+    s
+}
+
 fn ai_jobs(v: &Value) -> String {
     let jobs: Vec<kraken_proto::AiJobView> =
         serde_json::from_value(v["jobs"].clone()).unwrap_or_default();
@@ -1026,6 +1062,7 @@ pub fn render(name: &str, output: &Value) -> Rendered {
         "rewrite_program_status" => plain(rewrite_program_status(&v)),
         "ai_usage" => plain(ai_usage(&v)),
         "ai_jobs" => plain(ai_jobs(&v)),
+        "next_steps" => plain(next_steps(&v)),
         "rewrite_program"
             if v.get("result")
                 .is_some_and(|r| r.get("functions").is_some())
@@ -1087,6 +1124,25 @@ mod tests {
         );
         assert_eq!(lines[2], "0x401020  -     helper_with_long_name  -");
         assert_eq!(lines[3], "2 total; more: --cursor ram:401020");
+    }
+
+    #[test]
+    fn next_steps_print_the_reason_and_the_command_line() {
+        let v = json!({"suggestions": [
+            {"id": "debug_probe", "title": "Look for a debug file", "reason": "It is stripped.",
+             "command": "debuginfo_probe", "args": {"path": "/p/a.out"}, "runnable": true},
+            {"id": "sysroot", "title": "Install a sysroot", "reason": "Needed.", "runnable": false}
+        ]});
+        let r = render("next_steps", &v);
+        assert_eq!(
+            r.stdout,
+            "1. Look for a debug file\n   It is stripped.\n   kraken debuginfo-probe --path /p/a.out\n\
+             2. Install a sysroot\n   Needed.\n"
+        );
+        assert_eq!(
+            render("next_steps", &json!({"suggestions": []})).stdout,
+            "Nothing stands out right now.\n"
+        );
     }
 
     #[test]

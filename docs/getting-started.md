@@ -112,6 +112,8 @@ And see everything that happened, newest first:
 kraken history
 ```
 
+Not sure what to do next? `kraken next-steps` looks at the project and suggests up to five things, each with the reason and the command that does it. The window shows the same as a strip above the Decompiler.
+
 `kraken project-info` shows which engine the project uses. Your edits live in a log inside the project folder. Close the terminal, come back tomorrow, set `KRAKEN_PROJECT` again, and your work is there.
 
 ## Prefer the window?

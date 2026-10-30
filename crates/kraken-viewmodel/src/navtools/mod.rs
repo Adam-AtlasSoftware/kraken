@@ -8,6 +8,7 @@ pub mod ctype;
 mod edits;
 mod emulate;
 mod form;
+mod guide;
 mod patch_intents;
 mod patches;
 mod search;
@@ -32,6 +33,7 @@ pub use form::{
     CommandForm, CommandResult, FieldKind, FormField, ResultSegment, fields_for_schema,
     result_lines,
 };
+pub use guide::{NextStepsPanel, STRIP_MAX};
 pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
 pub use patches::{
     AsmState, EXPORT_FORMATS, ExportDialog, ExportDone, GroupDialog, ImportDialog, LintItem,
@@ -139,6 +141,8 @@ pub struct NavTools {
     pub search: SearchPanel,
     /// The Bookmarks tab.
     pub bookmarks: BookmarksPanel,
+    /// The next-steps strip above the Decompiler.
+    pub next_steps: NextStepsPanel,
     /// The Types tab.
     pub types: TypesPanel,
     /// The bookmark note dialog, when open.

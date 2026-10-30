@@ -377,6 +377,7 @@ async fn every_registry_command_identical() {
     assert_eq!(normalise(&direct.1, &s), normalise(&via_mcp.1, &s));
 
     step!("project_info", json!({}));
+    step!("next_steps", json!({"limit": 3}));
     step!("binary_probe", json!({"path": s.binary}));
     step!("firmware_identify", json!({"path": s.binary}));
     step!("debuginfo_probe", json!({"path": s.binary}));

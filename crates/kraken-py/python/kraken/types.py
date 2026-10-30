@@ -30,6 +30,7 @@ __all__ = [
     "JobResult",
     "MemoryBlock",
     "Operand",
+    "NextStep",
     "ProjectInfo",
     "Proposal",
     "StringItem",
@@ -83,6 +84,29 @@ def loads(text: str) -> Any:
 
 def _addr(v: Any) -> int | None:
     return None if v is None else int(v, 16)
+
+
+@dataclass(frozen=True)
+class NextStep:
+    """One suggestion from ``next_steps``: what to do, why, and the command that does it."""
+
+    id: str
+    title: str
+    reason: str
+    command: str | None
+    args: dict[str, Any]
+    runnable: bool
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> NextStep:
+        return cls(
+            id=d["id"],
+            title=d["title"],
+            reason=d["reason"],
+            command=d.get("command"),
+            args=d.get("args") or {},
+            runnable=bool(d["runnable"]),
+        )
 
 
 @dataclass(frozen=True)

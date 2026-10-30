@@ -36,6 +36,7 @@ from .types import (
     JobProgress as JobProgress,
     JobResult as JobResult,
     MemoryBlock as MemoryBlock,
+    NextStep as NextStep,
     ProjectInfo as ProjectInfo,
     Proposal as Proposal,
     StringItem as StringItem,

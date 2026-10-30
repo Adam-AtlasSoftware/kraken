@@ -227,6 +227,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     assert!(s.mcp_session.project().is_ok());
 
     step!("project_info", json!({}));
+    step!("next_steps", json!({"limit": 3}));
     step!("binary_probe", json!({"path": s.binary}));
     step!("firmware_identify", json!({"path": s.binary}));
     step!("debuginfo_probe", json!({"path": s.binary}));

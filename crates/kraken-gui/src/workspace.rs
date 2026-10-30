@@ -537,6 +537,7 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
     let mut acts: Vec<Act> = Vec::new();
+    panels::next_steps::strip(ui, vm);
     {
         let Some(cur) = vm.current.as_ref() else {
             empty_state(

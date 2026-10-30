@@ -321,6 +321,12 @@ pub struct CommandResult {
 impl ViewModel {
     /// Opens the generated form for `command`. A command without arguments runs at once.
     pub fn open_command_form(&mut self, command: &str) {
+        self.open_command_form_with(command, &Value::Null, false);
+    }
+
+    /// Opens the form for `command` with the fields named in `args` filled in; with `run` it
+    /// runs at once and shows the result.
+    pub fn open_command_form_with(&mut self, command: &str, args: &Value, run: bool) {
         let info: Option<CommandInfo> = self.commands().into_iter().find(|c| c.name == command);
         let entry = registry().get(command);
         let (fields, doc) = match entry {
@@ -361,9 +367,19 @@ impl ViewModel {
                 f.value = m.clone();
             }
         }
+        if let Some(given) = args.as_object() {
+            for f in &mut form.fields {
+                match given.get(&f.name) {
+                    Some(Value::Bool(b)) => f.flag = *b,
+                    Some(Value::String(t)) => f.value = t.clone(),
+                    Some(Value::Null) | None => {}
+                    Some(other) => f.value = other.to_string(),
+                }
+            }
+        }
         let no_inputs = form.fields.is_empty();
         self.tools.form = Some(form);
-        if no_inputs {
+        if no_inputs || run {
             self.submit_command_form();
         }
     }

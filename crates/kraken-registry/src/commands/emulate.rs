@@ -468,6 +468,11 @@ fn no_sysroot_note(arch: Arch) -> Option<&'static str> {
     )
 }
 
+/// A dynamically linked program whose architecture has no sysroot to run in.
+pub(super) fn needs_sysroot(path: &Path) -> bool {
+    super::guide::dynamic_elf_arch(path).is_some_and(|a| sysroot_for(a).is_none())
+}
+
 /// Whether this computer has a loader for programs of `arch`.
 fn host_libraries(arch: Arch) -> bool {
     if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {

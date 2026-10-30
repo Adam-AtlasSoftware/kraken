@@ -164,6 +164,26 @@ impl Reader<'_> {
         self.backend.call(name, self.ctx, args).await
     }
 
+    /// What `next_steps` suggests: title, reason and command of each. These are written by the
+    /// rules, not taken from the binary (no function is named, so no variable names appear).
+    /// Empty when no project is open or the call fails.
+    pub async fn next_steps(&self) -> Vec<(String, String, Option<String>)> {
+        let Ok(out) = self.call("next_steps", json!({"limit": 3})).await else {
+            return Vec::new();
+        };
+        let text = |s: &Value, k: &str| s.get(k).and_then(Value::as_str).map(str::to_string);
+        out.get("suggestions")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| {
+                        Some((text(s, "title")?, text(s, "reason")?, text(s, "command")))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Reads `uri`.
     pub async fn read(&self, uri: &str) -> Result<Vec<ResourceContents>, McpError> {
         match uri {

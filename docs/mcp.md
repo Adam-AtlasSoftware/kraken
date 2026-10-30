@@ -54,7 +54,7 @@ Beyond the tools, `kraken mcp` offers what an agent needs to start well. In Clau
 
 | Prompt | Arguments | What it sets up |
 | --- | --- | --- |
-| `getting-started` | none | Say what the program is, with the evidence, then decompile the three most promising functions. Attaches the program summary |
+| `getting-started` | none | Say what the program is, with the evidence, then decompile the three most promising functions. Attaches the program summary and lists what `next_steps` suggests |
 | `explain-function` | `address` (optional) | Explain one function in plain language: purpose, steps, inputs and outputs, doubts. Without an address it uses the function selected in the GUI. Attaches the decompile |
 | `name-components` | `max_functions` (optional, default 15, at most 50) | Group functions into components, name them bottom-up with `rename_symbol` and `set_comment`, and finish with a table of components. Attaches the program summary |
 | `prepare-rewrite` | `address` | Plan the Rust rewrite of a function: signature, behaviour, callees that must come first, unknowns. It stops and asks before running `rewrite_function` |
