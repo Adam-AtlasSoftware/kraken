@@ -134,10 +134,9 @@ fn isa_for(project: &Project, rows: &[DisasmRow]) -> Result<Isa, ProtoError> {
     })
 }
 
-/// Decodes `bytes` placed at `address` with the emulator's SLEIGH disassembler. `None` when the
-/// specs for the architecture are not installed.
-fn decode_new(isa: Isa, address: u64, bytes: &[u8]) -> Option<Vec<String>> {
-    use kraken_emu::{Arch, Machine, Perm, SpecRoots};
+/// A scratch emulator machine for `isa`; the caller maps memory.
+pub(crate) fn new_machine(isa: Isa) -> Option<kraken_emu::Machine> {
+    use kraken_emu::{Arch, Machine, SpecRoots};
     let arch = match isa {
         Isa::X86 => Arch::X86,
         Isa::X86_64 => Arch::X86_64,
@@ -146,7 +145,14 @@ fn decode_new(isa: Isa, address: u64, bytes: &[u8]) -> Option<Vec<String>> {
         Isa::Riscv32 => Arch::Riscv32,
         Isa::Riscv64 => Arch::Riscv64,
     };
-    let mut m = Machine::new(arch, &SpecRoots::discover()).ok()?;
+    Machine::new(arch, &SpecRoots::discover()).ok()
+}
+
+/// Decodes `bytes` placed at `address` with the emulator's SLEIGH disassembler. `None` when the
+/// specs for the architecture are not installed.
+fn decode_new(isa: Isa, address: u64, bytes: &[u8]) -> Option<Vec<String>> {
+    use kraken_emu::Perm;
+    let mut m = new_machine(isa)?;
     let page = address & !0xfff;
     m.map(page, 0x3000, Perm::RWX).ok()?;
     m.write_mem(address, bytes).ok()?;

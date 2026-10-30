@@ -105,6 +105,7 @@ impl ListingSource for Source<'_> {
                 mnemonic_kind: TokenKind::Function,
                 operands: Vec::new(),
                 comment: None,
+                patch: None,
             },
             Line::Insn(i) => {
                 let r = &self.rows[*i];
@@ -126,10 +127,56 @@ impl ListingSource for Source<'_> {
                         })
                         .collect(),
                     comment: r.comment.clone(),
+                    patch: r.patch.as_ref().map(|p| {
+                        let mut t = format!(
+                            "Patched. On disk: {}",
+                            kraken_gui_widgets::format_bytes(&p.original_bytes, 16)
+                        );
+                        if !p.note.is_empty() {
+                            t.push_str(&format!("\nNote: {}", p.note));
+                        }
+                        t.push_str(&format!(
+                            "\nPatch at {:#x}, set by {}",
+                            p.patch_address, p.author
+                        ));
+                        t
+                    }),
                 }
             }
         }
     }
+}
+
+/// The Original/Patched switch shared by the Listing and the Decompiler. Returns the new side
+/// when the user picks the other one.
+pub fn patched_toggle(ui: &mut Ui, patched: bool) -> Option<bool> {
+    let mut pick = None;
+    // Right-to-left layouts place the last widget leftmost.
+    if ui
+        .selectable_label(patched, "Patched")
+        .on_hover_text(
+            "Show the program as your byte patches would leave it. Nothing on disk changes \
+             until you export",
+        )
+        .clicked()
+        && !patched
+    {
+        pick = Some(true);
+    }
+    if ui
+        .selectable_label(!patched, "Original")
+        .on_hover_text("Show the code as it is in the file on disk")
+        .clicked()
+        && patched
+    {
+        pick = Some(false);
+    }
+    pick
+}
+
+/// Amber of the patched-code marks.
+pub fn patch_color() -> egui::Color32 {
+    kraken_gui_widgets::PATCH_COLOR
 }
 
 pub fn show(
@@ -160,6 +207,9 @@ pub fn show(
             ui.spinner();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(on) = patched_toggle(ui, vm.views.patched) {
+                vm.set_patched_view(on);
+            }
             let row = vm.views.listing.selected_row().is_some();
             if ui
                 .add_enabled(row, egui::Button::new("Patch bytes"))
@@ -313,6 +363,7 @@ mod unit {
             comment: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             flow: FlowKind::Fallthrough,
+            patch: None,
         }
     }
 

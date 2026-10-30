@@ -298,6 +298,7 @@ impl ListingSource for FakeListing {
             mnemonic_kind: kind,
             operands,
             comment,
+            patch: None,
         }
     }
 }

@@ -32,6 +32,9 @@ impl OperandToken {
     }
 }
 
+/// Gutter bar and tint of an instruction a byte patch changes.
+pub const PATCH_COLOR: egui::Color32 = egui::Color32::from_rgb(226, 160, 40);
+
 /// What the gutter of a row shows for a debugger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RowMark {
@@ -68,6 +71,9 @@ pub struct ListingRow {
     pub mnemonic_kind: TokenKind,
     pub operands: Vec<OperandToken>,
     pub comment: Option<String>,
+    /// Set when a byte patch changes this instruction: the hover text (original bytes, note).
+    /// The row gets an amber bar in the gutter and a tint.
+    pub patch: Option<String>,
 }
 
 /// Lazy provider of listing rows.
@@ -169,6 +175,17 @@ impl<'a> ListingView<'a> {
             if row.mark.is_current() {
                 painter.rect_filled(rect, 0.0, pal.accent.gamma_multiply(0.28));
             }
+            if row.patch.is_some() {
+                painter.rect_filled(rect, 0.0, PATCH_COLOR.gamma_multiply(0.14));
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        rect.left_top(),
+                        Pos2::new(rect.left() + 3.0, rect.bottom()),
+                    ),
+                    0.0,
+                    PATCH_COLOR,
+                );
+            }
             if row.mark.has_breakpoint() {
                 painter.circle_filled(
                     Pos2::new(rect.left() + 7.0, mid),
@@ -206,6 +223,17 @@ impl<'a> ListingView<'a> {
             let hovering_row = pointer.is_some_and(|p| rect.contains(p));
             if hovering_row {
                 out.row_hovered = Some(index);
+                if let Some(text) = &row.patch {
+                    egui::Tooltip::always_open(
+                        ui.ctx().clone(),
+                        ui.layer_id(),
+                        ui.id().with(("patch-tip", index)),
+                        egui::PopupAnchor::Pointer,
+                    )
+                    .show(|ui| {
+                        ui.label(text);
+                    });
+                }
             }
             for t in &row.operands {
                 job.append(

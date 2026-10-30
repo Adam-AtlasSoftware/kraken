@@ -1100,6 +1100,7 @@ impl kraken_registry::commands::SourcePatchBackend for DemoSourcePatch {
                     function: Some(args.address),
                     max_instructions: Some(4),
                     cursor: None,
+                    patched: false,
                 },
             )
             .await?;

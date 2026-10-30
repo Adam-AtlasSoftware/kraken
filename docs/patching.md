@@ -140,6 +140,27 @@ to disk and nothing runs — so they do not ask for approval. Producing a patche
 `patch_export` is the **dangerous** step and asks every time (ADR 0005), whether the caller is you
 or an agent.
 
+## Seeing what a patch does
+
+The Listing and the Decompiler show the file as it is on disk, because patches are an overlay the
+analysis engine never sees. To look at the patched program, flip the **Original / Patched** switch
+in the header of the Listing or the Decompiler (it is one switch for both).
+
+- **Listing, Patched.** Instructions a patch touches are decoded again from the patch bytes with
+  the emulator's SLEIGH disassembler. They get an amber bar and tint in the gutter, and hovering
+  one shows the bytes that are on disk, the patch's note and who set it. Flip a `jne` and it reads
+  `jz`; overwrite a long instruction with `90` bytes and it reads as a run of `nop`s.
+- **Decompiler, Patched.** The decompile stays the on-disk one until you press **Decompile
+  patched**. That writes the patches into a temporary copy of the binary, opens it in a second
+  engine of the project's kind and decompiles the function there (the first time takes a few
+  seconds; the result is kept until the patches change). Your renames and comments are not in the
+  copy. Nothing in the project or on disk changes.
+
+The commands: `disassemble {"function": "0x401000", "patched": true}` returns the patched
+instructions, each changed one with a `patch` entry (`original_bytes`, `patch_address`, `note`,
+`author`); `decompile_patched {"address": "0x401136"}` returns the same shape as `decompile`.
+Both are read-only and safe for agents. Without patches both equal their plain versions.
+
 ## Exporting a patched binary
 
 ```

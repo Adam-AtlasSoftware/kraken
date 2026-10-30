@@ -64,8 +64,8 @@ pub use tokens::tokenize;
 pub use views::{
     ByteCache, ByteState, FnRef, GraphBlock, GraphData, GraphEdgeKind, GraphState, HexState,
     ListingOperand, ListingRowItem, ListingState, MemoryBlockItem, MemoryMap, PagedList,
-    ProgramViews, ReferencesTo, Reveal, StringItem, SymbolItem, SymbolTable, XrefItem, XrefList,
-    XrefWhich, XrefsPanel, mnemonic_kind, operand_kind,
+    PatchedDecompile, ProgramViews, ReferencesTo, Reveal, RowPatch, StringItem, SymbolItem,
+    SymbolTable, XrefItem, XrefList, XrefWhich, XrefsPanel, mnemonic_kind, operand_kind,
 };
 pub use vm::{FUNCTION_PAGE, MAX_NAME_LEN, RawLoad, ViewModel, validate_name};
 

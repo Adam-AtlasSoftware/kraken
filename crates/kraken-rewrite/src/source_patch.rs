@@ -320,6 +320,7 @@ async fn instructions(s: &Session, ctx: &CallContext, entry: u64) -> Result<Vec<
                     function: Some(Hex64(entry)),
                     max_instructions: Some(2000),
                     cursor: cursor.take(),
+                    patched: false,
                 },
             )
             .await?;

@@ -233,3 +233,85 @@ fn the_context_menu_patch_items_preview_then_apply_a_nop() {
             .is_none()
     );
 }
+
+#[test]
+fn the_patched_toggle_shows_the_patch_in_the_listing_and_offers_a_patched_decompile() {
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    h.app.dispatch(AppAction::GoToMain, &ctx);
+    h.run_until("the listing of main", |a| {
+        a.view_model()
+            .is_some_and(|vm| vm.views.listing.loaded && !vm.views.listing.rows.is_empty())
+    });
+    let vm = h.app.view_model_mut().expect("vm");
+    vm.select_listing_row(0);
+    let row = vm.views.listing.selected_row().cloned().expect("row");
+    assert!(row.patch.is_none());
+
+    h.app.dispatch(AppAction::PatchHere, &ctx);
+    h.step();
+    let vm = h.app.view_model_mut().expect("vm");
+    vm.set_patch_input(spaced_hex(&vec![0x90; row.bytes.len()]));
+    h.step();
+    h.key(Key::Enter, Modifiers::NONE);
+    h.run_until("the patch to be listed", |a| {
+        a.view_model()
+            .is_some_and(|vm| vm.has_patches() && vm.tools.patch_dialog.is_none())
+    });
+
+    // Original side: the listing is the file on disk.
+    h.run_until("the listing reloaded", |a| {
+        a.view_model()
+            .is_some_and(|vm| vm.views.listing.loaded && !vm.views.listing.loading)
+    });
+    let vm = h.app.view_model_mut().expect("vm");
+    assert!(vm.views.listing.rows.iter().all(|r| r.patch.is_none()));
+
+    vm.set_patched_view(true);
+    h.run_until("the patched listing", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.views.listing.rows.iter().any(|r| r.patch.is_some()) && !vm.views.listing.loading
+        })
+    });
+    let vm = h.app.view_model().expect("vm");
+    let first = &vm.views.listing.rows[0];
+    assert_eq!(first.mnemonic, "nop", "{first:?}");
+    assert!(first.patch.is_some());
+    // The four NOPs together cover the instruction that was on disk.
+    let originals: Vec<u8> = vm
+        .views
+        .listing
+        .rows
+        .iter()
+        .filter_map(|r| r.patch.as_ref())
+        .flat_map(|p| p.original_bytes.clone())
+        .collect();
+    assert_eq!(originals, row.bytes);
+
+    // The Decompiler offers the patched decompile; asking settles into a result or a reason.
+    h.step();
+    h.step();
+    h.app
+        .view_model_mut()
+        .expect("vm")
+        .decompile_patched_current();
+    h.run_until("the patched decompile to settle", |a| {
+        a.view_model().is_some_and(|vm| {
+            !matches!(
+                vm.views.patched_decompile.state,
+                kraken_viewmodel::Load::Idle | kraken_viewmodel::Load::Loading
+            )
+        })
+    });
+    h.step();
+
+    // Back to Original.
+    h.app.view_model_mut().expect("vm").set_patched_view(false);
+    h.run_until("the original listing", |a| {
+        a.view_model().is_some_and(|vm| {
+            !vm.views.listing.loading && vm.views.listing.rows.iter().all(|r| r.patch.is_none())
+        })
+    });
+    let vm = h.app.view_model().expect("vm");
+    assert_ne!(vm.views.listing.rows[0].mnemonic, "nop");
+}

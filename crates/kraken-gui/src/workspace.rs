@@ -528,6 +528,8 @@ enum Act {
     RewriteThis,
     Signature,
     PatchThis,
+    SetPatched(bool),
+    DecompilePatched,
 }
 
 fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
@@ -567,6 +569,9 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                 ui.spinner();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(on) = crate::panels::patched_toggle(ui, vm.views.patched) {
+                    acts.push(Act::SetPatched(on));
+                }
                 if ui
                     .button("Comment")
                     .on_hover_text("Leave a note on this function")
@@ -634,26 +639,90 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
         ui.add_space(2.0);
         ui.separator();
 
-        match &cur.decompiled {
-            Load::Idle | Load::Loading => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(RichText::new("Decompiling...").color(p.text_dim));
-                });
-            }
-            Load::Failed(msg) => {
-                ui.add_space(8.0);
-                ui.label(RichText::new("This function could not be decompiled.").color(s.danger));
-                ui.label(RichText::new(msg).color(p.text_dim));
-                if ui
-                    .button("Try again")
-                    .on_hover_text("Ask for it again")
-                    .clicked()
-                {
-                    acts.push(Act::Retry);
+        let pd = &vm.views.patched_decompile;
+        let patched_here = vm.views.patched && pd.function == Some(cur.address);
+        if vm.views.patched && !patched_here {
+            ui.horizontal(|ui| {
+                if vm.has_patches() {
+                    ui.label(
+                        RichText::new("This is the code as it is on disk.")
+                            .size(12.0)
+                            .color(p.text_dim),
+                    );
+                    if ui
+                        .button("Decompile patched")
+                        .on_hover_text(
+                            "Apply the byte patches to a scratch copy of the program and decompile \
+                             this function there. Nothing on disk changes",
+                        )
+                        .clicked()
+                    {
+                        acts.push(Act::DecompilePatched);
+                    }
+                } else {
+                    ui.label(
+                        RichText::new("No byte patches yet, so there is nothing to decompile.")
+                            .size(12.0)
+                            .color(p.text_dim),
+                    );
+                }
+            });
+        }
+        if patched_here {
+            match &pd.state {
+                Load::Idle | Load::Loading => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(
+                            RichText::new("Decompiling the patched program...").color(p.text_dim),
+                        );
+                    });
+                }
+                Load::Failed(msg) => {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("The patched function could not be decompiled.")
+                            .color(s.danger),
+                    );
+                    ui.label(RichText::new(msg).color(p.text_dim));
+                    if ui
+                        .button("Try again")
+                        .on_hover_text("Ask for the patched decompile again")
+                        .clicked()
+                    {
+                        acts.push(Act::DecompilePatched);
+                    }
+                }
+                Load::Ready(d) => {
+                    chip(ui, "patched", crate::panels::patch_color())
+                        .on_hover_text("Decompiled from a copy of the program with your byte patches applied. Switch to Original to see the code on disk");
+                    code(ui, st, cur.address, d, &mut acts);
                 }
             }
-            Load::Ready(d) => code(ui, st, cur.address, d, &mut acts),
+        } else {
+            match &cur.decompiled {
+                Load::Idle | Load::Loading => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Decompiling...").color(p.text_dim));
+                    });
+                }
+                Load::Failed(msg) => {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("This function could not be decompiled.").color(s.danger),
+                    );
+                    ui.label(RichText::new(msg).color(p.text_dim));
+                    if ui
+                        .button("Try again")
+                        .on_hover_text("Ask for it again")
+                        .clicked()
+                    {
+                        acts.push(Act::Retry);
+                    }
+                }
+                Load::Ready(d) => code(ui, st, cur.address, d, &mut acts),
+            }
         }
     }
     for a in acts {
@@ -672,6 +741,8 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
                 st.bring_to_front = Some(Tab::Rewrite);
             }
             Act::PatchThis => vm.begin_source_edit(),
+            Act::SetPatched(on) => vm.set_patched_view(on),
+            Act::DecompilePatched => vm.decompile_patched_current(),
         }
     }
 }

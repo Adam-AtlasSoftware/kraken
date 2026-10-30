@@ -12,6 +12,7 @@ pub mod hex;
 pub mod listing;
 pub mod lists;
 pub mod nav;
+pub mod patched;
 pub mod xrefs;
 
 mod wire;
@@ -22,8 +23,11 @@ mod tests;
 pub use bytes::{ByteCache, ByteState};
 pub use graph::{GraphBlock, GraphData, GraphEdgeKind, GraphState};
 pub use hex::{HexState, MemoryBlockItem, MemoryMap};
-pub use listing::{ListingOperand, ListingRowItem, ListingState, mnemonic_kind, operand_kind};
+pub use listing::{
+    ListingOperand, ListingRowItem, ListingState, RowPatch, mnemonic_kind, operand_kind,
+};
 pub use lists::{PagedList, StringItem, SymbolItem, SymbolTable};
+pub use patched::PatchedDecompile;
 pub use xrefs::{FnRef, ReferencesTo, XrefItem, XrefList, XrefWhich, XrefsPanel};
 
 /// Which view the GUI should bring to the front after a navigation.
@@ -71,6 +75,10 @@ pub struct ProgramViews {
     /// Exported symbols.
     pub exports: PagedList<SymbolItem>,
     pub(crate) place_req: u64,
+    /// Show the program as the byte patches would leave it (the Patched side of the toggle).
+    pub patched: bool,
+    /// The patched decompile of the current function, when asked for.
+    pub patched_decompile: patched::PatchedDecompile,
 }
 
 impl ProgramViews {
@@ -108,6 +116,7 @@ impl crate::ViewModel {
             v.listing.stale = true;
             v.graph.stale = true;
             v.xrefs.stale = true;
+            v.patched_decompile = Default::default();
             return;
         }
         let size = self.functions.find(addr).and_then(|f| f.size).unwrap_or(64);
@@ -120,6 +129,7 @@ impl crate::ViewModel {
             ..ListingState::default()
         };
         v.graph = GraphState::default();
+        v.patched_decompile = Default::default();
         v.xrefs.function = None;
         v.xrefs.callers = XrefList::default();
         v.xrefs.callees = XrefList::default();

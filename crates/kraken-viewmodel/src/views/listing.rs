@@ -38,6 +38,21 @@ pub struct ListingRowItem {
     pub labels: Vec<String>,
     /// Control flow out of the instruction.
     pub flow: FlowKind,
+    /// The byte patch behind this row, in the patched view.
+    pub patch: Option<RowPatch>,
+}
+
+/// What a patch changed in an instruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowPatch {
+    /// The instruction's bytes on disk.
+    pub original_bytes: Vec<u8>,
+    /// Address of the patch entry.
+    pub patch_address: u64,
+    /// The patch's note.
+    pub note: String,
+    /// Who set the patch.
+    pub author: String,
 }
 
 impl ListingRowItem {
@@ -107,6 +122,12 @@ fn row(w: InsnWire) -> ListingRowItem {
         comment: w.comment.map(|c| c.0),
         labels: w.labels.into_iter().map(|l| l.0).collect(),
         flow: w.flow,
+        patch: w.patch.map(|p| RowPatch {
+            original_bytes: unhex(&p.original_bytes),
+            patch_address: p.patch_address.0,
+            note: p.note.map(|n| n.0).unwrap_or_default(),
+            author: p.author,
+        }),
     }
 }
 
@@ -232,6 +253,10 @@ impl ViewModel {
         let req = self.views.next_seq();
         let l = &mut self.views.listing;
         let mut args = json!({ "function": hex(addr), "max_instructions": l.page_size });
+        if self.views.patched {
+            args["patched"] = json!(true);
+        }
+        let l = &mut self.views.listing;
         if reset {
             l.function = Some(addr);
             l.next_cursor = None;

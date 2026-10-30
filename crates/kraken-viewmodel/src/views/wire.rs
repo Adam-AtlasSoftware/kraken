@@ -47,6 +47,19 @@ pub(crate) struct InsnWire {
     #[serde(default)]
     pub labels: Vec<Untrusted<String>>,
     pub flow: FlowKind,
+    #[serde(default)]
+    pub patch: Option<InsnPatchWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct InsnPatchWire {
+    #[serde(default)]
+    pub original_bytes: String,
+    pub patch_address: Hex64,
+    #[serde(default)]
+    pub note: Option<Untrusted<String>>,
+    #[serde(default)]
+    pub author: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

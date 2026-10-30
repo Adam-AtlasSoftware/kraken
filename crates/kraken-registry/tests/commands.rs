@@ -36,6 +36,7 @@ const EXPECTED: &[&str] = &[
     "debug_step_over",
     "debug_stop",
     "decompile",
+    "decompile_patched",
     "delete_function",
     "disassemble",
     "emulate_compare",

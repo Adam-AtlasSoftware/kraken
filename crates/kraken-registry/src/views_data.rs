@@ -199,6 +199,22 @@ pub struct InsnView {
     pub labels: Vec<Untrusted<String>>,
     /// Control flow out of the instruction.
     pub flow: FlowKind,
+    /// Set in the patched view when a byte patch changes this instruction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<InsnPatch>,
+}
+
+/// The byte patch behind an instruction of the patched view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct InsnPatch {
+    /// What the instruction's bytes are on disk, as contiguous lower-case hex.
+    pub original_bytes: String,
+    /// Address of the first byte of the patch entry that covers this instruction.
+    pub patch_address: Hex64,
+    /// The patch's note (user text).
+    pub note: Untrusted<String>,
+    /// Who set the patch: `user` or an agent run id.
+    pub author: String,
 }
 
 impl From<&DisasmRow> for InsnView {
@@ -211,6 +227,7 @@ impl From<&DisasmRow> for InsnView {
             comment: r.comment.as_deref().map(untrusted),
             labels: r.labels.iter().map(|l| untrusted(l)).collect(),
             flow: r.flow,
+            patch: None,
         }
     }
 }

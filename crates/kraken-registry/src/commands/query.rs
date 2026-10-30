@@ -6,7 +6,8 @@ use async_trait::async_trait;
 use kraken_engine::{Cap, unsupported};
 use kraken_model::StateValue;
 use kraken_proto::{
-    CommentKind, ErrorCode, Hex64, Page, PageRequest, ProtoError, Untrusted, sanitize,
+    CommentKind, Completeness, DecompileResult, ErrorCode, Hex64, Page, PageRequest, ProtoError,
+    Untrusted, sanitize,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -298,41 +299,52 @@ impl Command for Decompile {
                 &ctx.cancel,
             )
             .await?;
-        let (_, entry) = locator_parts(&r.function);
-        let clean = clean_decompile_text(&r, MAX_DECOMPILE_BYTES);
-        let mut seen = BTreeSet::new();
-        let mut references = Vec::new();
-        for t in &r.tokens {
-            if let Some(target) = &t.target {
-                let (_, address) = locator_parts(target);
-                let module = locator_module(target);
-                let name = sanitize(t.symbol.as_deref().unwrap_or(""));
-                if references.len() < MAX_REFERENCES
-                    && seen.insert((address.0, module.clone(), name.clone()))
-                {
-                    references.push(ReferenceView {
-                        name: untrusted(&name),
-                        address,
-                        module,
-                    });
-                }
+        Ok(build_decompile_view(
+            &r,
+            adjust_completeness(r.completeness.clone(), project.analysis_running()),
+        ))
+    }
+}
+
+/// The wire view of a decompile result.
+pub(crate) fn build_decompile_view(
+    r: &DecompileResult,
+    completeness: Completeness,
+) -> DecompileView {
+    let (_, entry) = locator_parts(&r.function);
+    let clean = clean_decompile_text(r, MAX_DECOMPILE_BYTES);
+    let mut seen = BTreeSet::new();
+    let mut references = Vec::new();
+    for t in &r.tokens {
+        if let Some(target) = &t.target {
+            let (_, address) = locator_parts(target);
+            let module = locator_module(target);
+            let name = sanitize(t.symbol.as_deref().unwrap_or(""));
+            if references.len() < MAX_REFERENCES
+                && seen.insert((address.0, module.clone(), name.clone()))
+            {
+                references.push(ReferenceView {
+                    name: untrusted(&name),
+                    address,
+                    module,
+                });
             }
         }
-        Ok(DecompileView {
-            address: entry,
-            module: locator_module(&r.function),
-            language: sanitize(&r.language),
-            text: Untrusted(clean.text),
-            truncated: clean.truncated,
-            tokens: clean.tokens,
-            references,
-            warnings: r
-                .warnings
-                .iter()
-                .map(|w| untrusted(w))
-                .chain(clean.token_warning.map(untrusted))
-                .collect(),
-            completeness: adjust_completeness(r.completeness, project.analysis_running()),
-        })
+    }
+    DecompileView {
+        address: entry,
+        module: locator_module(&r.function),
+        language: sanitize(&r.language),
+        text: Untrusted(clean.text),
+        truncated: clean.truncated,
+        tokens: clean.tokens,
+        references,
+        warnings: r
+            .warnings
+            .iter()
+            .map(|w| untrusted(w))
+            .chain(clean.token_warning.map(untrusted))
+            .collect(),
+        completeness,
     }
 }

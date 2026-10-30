@@ -24,6 +24,7 @@ mod local_model;
 mod patch;
 mod patch_intent;
 mod patch_source;
+mod patched_view;
 mod probe;
 mod project;
 mod query;
@@ -120,6 +121,7 @@ pub use patch_source::{
     PatchFromSourceArgs, PatchFromSourceResult, PlannedPatch, SourcePatchBackend, SourcePatchCheck,
     SourcePatchVerdict, source_patch_result,
 };
+pub use patched_view::{DecompilePatched, DecompilePatchedArgs};
 pub use probe::{BinaryFormat, BinaryProbe, BinaryProbeArgs, BinaryProbeOut, probe_binary};
 pub use project::{
     AnalysisView, ProjectClose, ProjectCloseOut, ProjectCreate, ProjectCreateArgs, ProjectInfo,
@@ -319,6 +321,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(PatchSet);
     r.register(Assemble);
     r.register(PatchFromSource);
+    r.register(DecompilePatched);
     r.register(PatchRemove);
     r.register(PatchNop);
     r.register(PatchBranch);

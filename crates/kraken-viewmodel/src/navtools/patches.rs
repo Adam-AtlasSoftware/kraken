@@ -275,6 +275,7 @@ impl ViewModel {
     pub fn refresh_patches(&mut self) {
         self.tools.patches.generation += 1;
         self.tools.patches.next_cursor = None;
+        self.patches_changed();
         self.fetch_patches(true);
     }
 

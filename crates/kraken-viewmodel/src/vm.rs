@@ -1391,7 +1391,12 @@ impl ViewModel {
         }
     }
 
-    fn build_decompiled(&mut self, addr: u64, name: &str, w: DecompileWire) -> Decompiled {
+    pub(crate) fn build_decompiled(
+        &mut self,
+        addr: u64,
+        name: &str,
+        w: DecompileWire,
+    ) -> Decompiled {
         let mut targets: HashMap<String, u64> = w
             .references
             .iter()
