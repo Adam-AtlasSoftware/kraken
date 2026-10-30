@@ -97,6 +97,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::ShowPatches
             | AppAction::ExportPatched
             | AppAction::ImportPatchFile
+            | AppAction::ImportSymbols
             | AppAction::RunInEmulator
             | AppAction::RunProgram
             | AppAction::RunPatched
@@ -203,6 +204,8 @@ fn file_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     .0
     .on_hover_text("Projects you opened before");
     item(ui, AppAction::OpenDemo, env, out);
+    ui.separator();
+    item(ui, AppAction::ImportSymbols, env, out);
     ui.separator();
     item(ui, AppAction::CloseProject, env, out);
     ui.separator();

@@ -13,6 +13,7 @@ mod patches;
 mod search;
 mod source_edit;
 mod string_edit;
+mod symbols;
 mod types;
 
 #[cfg(test)]
@@ -40,6 +41,9 @@ pub use patches::{
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
 pub use string_edit::StringDialog;
+pub use symbols::{
+    SYMBOL_CONFLICTS, SYMBOL_FORMATS, SymbolRow, SymbolsDialog, SymbolsReport, parse_offset,
+};
 pub use types::{ApplyDialog, DefineDialog, FieldRow, TypeDecl, TypeItem, TypesPanel};
 
 use kraken_proto::Page;
@@ -149,6 +153,8 @@ pub struct NavTools {
     pub export_dialog: Option<ExportDialog>,
     /// The dialog that reads a patch file, when open.
     pub import_dialog: Option<ImportDialog>,
+    /// The Import symbols dialog, when open.
+    pub symbols_dialog: Option<SymbolsDialog>,
     /// The one-click patch dialog (NOP, branch, return, fill), when open.
     pub intent_dialog: Option<IntentDialog>,
     /// The Run dialog, when open.
@@ -194,6 +200,7 @@ impl NavTools {
             || self.patch_dialog.is_some()
             || self.export_dialog.is_some()
             || self.import_dialog.is_some()
+            || self.symbols_dialog.is_some()
             || self.string_dialog.is_some()
             || self.intent_dialog.is_some()
             || self.type_dialog.is_some()

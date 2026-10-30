@@ -44,6 +44,8 @@ mod rewrite_preload;
 mod rewrite_program;
 mod search;
 mod setup;
+mod symbols;
+mod symbols_parse;
 mod typedit;
 mod types;
 mod ui;
@@ -209,6 +211,12 @@ pub use setup::{
     GlobalJobOut, IntegrationInstallStart, SetupArgs, SetupBackend, SetupDotnet, SetupGhidra,
     SetupItem, SetupNative, SetupState, SetupStatus, SetupStatusOut, SetupTask,
 };
+pub use symbols::{
+    ConflictPolicy, DEFAULT_PREVIEW, ExportFormat, MAX_EXPORT_TEXT_BYTES, MAX_IMPORT_EDITS,
+    MAX_PREVIEW, MAX_SYMBOL_FILE_BYTES, PlanAction, PlanStatus, PlannedSymbolEdit, SymbolsExport,
+    SymbolsExportArgs, SymbolsExportOut, SymbolsImport, SymbolsImportArgs, SymbolsImportOut,
+};
+pub use symbols_parse::SymbolFormat;
 pub use typedit::{
     TypeDefine, TypeDefineArgs, TypeDefineOut, TypeDelete, TypeDeleteArgs, TypeEditField,
     TypeEditFieldArgs,
@@ -341,6 +349,8 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewritePreloadBuild);
     // Card AI
     r.register(ApplyEdits);
+    r.register(SymbolsImport);
+    r.register(SymbolsExport);
     r.register(GuiNavigate);
     // Card ASSIST: the assistant drives the GUI, knows KRAKEN and sets up local models.
     r.register(UiAction);

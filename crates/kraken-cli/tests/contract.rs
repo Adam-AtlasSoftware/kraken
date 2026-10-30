@@ -320,6 +320,13 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         json!({"edits": [{"op": "rename", "address": "0x401040"}]})
     );
     assert_eq!(bulk["rejected"], 1, "{bulk}");
+    let sym = step!(
+        "symbols_import",
+        json!({"text": "0x401000,entry_main\n", "dry_run": true})
+    );
+    assert_eq!(sym["dry_run"], true, "{sym}");
+    step!("symbols_export", json!({"format": "csv"}));
+    step!("symbols_import", json!({"text": "x", "path": "y"}));
     let nav = step!(
         "gui_navigate",
         json!({"address": "0x401040", "tab": "listing"})

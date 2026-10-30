@@ -138,6 +138,8 @@ logged; **dangerous** commands always ask for approval first.
 | [`setup_native`](#setup_native) | job | mutating | Fetch the native engine's sources and compile its Sleigh files (job) |
 | [`setup_status`](#setup_status) | query | safe | Show what is installed and ready on this computer, with a fix for what is not |
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
+| [`symbols_export`](#symbols_export) | query | safe | Export names and comments as CSV or a .map-like text |
+| [`symbols_import`](#symbols_import) | mutation | mutating | Import names and comments from a link map, CSV, splat or IDA script |
 | [`tainted_clear`](#tainted_clear) | mutation | mutating | Clear the stale marker of a function after refreshing it |
 | [`tainted_list`](#tainted_list) | query | safe | List functions whose derived data is stale after an undo |
 | [`type_define`](#type_define) | mutation | mutating | Define structs, unions, enums and typedefs from C declarations |
@@ -23387,6 +23389,481 @@ Example: `strings {"filter": "password", "min_len": 6}`
     "items"
   ],
   "title": "Page",
+  "type": "object"
+}
+```
+
+</details>
+
+## symbols_export
+
+Export names and comments as CSV or a .map-like text
+
+```sh
+kraken symbols-export [options]
+```
+
+- Kind: query
+- Permission: safe
+- Engine needs: `FunctionLister`
+
+Writes every named function and label, with its size and comment, as CSV (`address,name,size,comment`) or GNU-map style lines, so another tool or another project can read them (`symbols_import` reads both back). Without `path` the text is returned (up to 8 MiB); only a person can write a file with `path`.
+
+Example: `symbols_export {"format": "csv", "path": "names.csv", "overwrite": true}`
+
+Names come from the engine's function list and the project's rename edits; comments from the edit log (plate first, then end-of-line, pre, post, repeatable; one per address). The map format carries no comments or sizes.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `base_offset` | `--base-offset` | integer | no | Subtracted from every address, the inverse of `base_offset` on import. |
+| `format` | `--format` | one of `csv`, `map` | no | `csv` (default) or `map`. |
+| `include_default` | `--include-default` | boolean | no | Also list functions that still have default names (`FUN_...`). |
+| `overwrite` | `--overwrite` | boolean | no | Replace an existing file at `path` (default false). |
+| `path` | `--path` | string | no | Write the text to this file (relative paths are taken against the project directory) instead of returning it. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "ExportFormat": {
+      "description": "Output format of `symbols_export`.",
+      "oneOf": [
+        {
+          "const": "csv",
+          "description": "`address,name,size,comment` with a header line (default).",
+          "type": "string"
+        },
+        {
+          "const": "map",
+          "description": "GNU ld style `0xADDRESS name` lines that `symbols_import` reads back as `gnu_map`.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `symbols_export`.",
+  "properties": {
+    "count": {
+      "description": "Symbols written.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "format": {
+      "$ref": "#/$defs/ExportFormat",
+      "description": "The format written."
+    },
+    "path": {
+      "description": "Absolute path of the file written, when `path` was given.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text": {
+      "description": "The text, when no `path` was given.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "format",
+    "count"
+  ],
+  "title": "SymbolsExportOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## symbols_import
+
+Import names and comments from a link map, CSV, splat or IDA script
+
+```sh
+kraken symbols-import [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Mutator`
+
+Reads function and label names and comments from a GNU ld or MSVC `.map`, a CSV (`address,name[,size,comment]`), a splat `symbol_addrs.txt` or an IDA script (`set_name`, `MakeName`, `set_cmt`, `MakeComm`, `set_func_cmt`), and applies them as one run: `undo_run` with the returned `run_id` reverts all of it. Use `dry_run` first to see the new names and conflicts. A function that already has another name is a conflict: `conflicts` is `skip` (default), `overwrite` or `propose`; an agent's replacements always become proposals. `base_offset` shifts addresses to the program's load base. A person gives `path`, an agent `text`.
+
+Example: `symbols_import {"path": "build/app.map", "dry_run": true, "base_offset": 0}`
+
+Formats: `gnu_map` reads the `0xADDRESS name` lines under `Linker script and memory map`; `msvc_map` reads `Publics by Value` using the `Rva+Base` column; `csv` takes `0x` or bare hex addresses, an optional header line and quoted fields, and its fourth column becomes a plate comment; `splat` reads `name = 0xADDR; // size:0x10`; `idc` reads the calls above (`set_cmt` and `MakeComm` are end-of-line comments, `set_func_cmt` a plate, a nonzero last argument makes either repeatable). Lines over 4096 bytes are skipped and a file may plan at most 100000 edits. A name over a default name (`FUN_...`, `sub_...`) is new, not a conflict. Existing comments are overwritten without a conflict check. `edits` lists conflicts and problems first and is cut to `preview_limit`; counts cover everything.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `base_offset` | `--base-offset` | integer | no | Added to every address of the file (negative values subtract), to match the load base of the program. |
+| `conflicts` | `--conflicts` | one of `skip`, `overwrite`, `propose` | no | What to do when a function already has another name: `skip` (default), `overwrite` or `propose`. |
+| `dry_run` | `--dry-run` | boolean | no | Plan only: list the edits and conflicts, change nothing. |
+| `format` | `--format` | one of `auto`, `gnu_map`, `msvc_map`, `csv`, `splat`, `idc` | no | `auto` (default), `gnu_map`, `msvc_map`, `csv`, `splat` or `idc`. |
+| `path` | `--path` | string | no | Symbol file to read (people only; an agent sends `text`). Relative paths are taken against the project directory. |
+| `preview_limit` | `--preview-limit` | integer | no | How many planned edits to return (default 500, at most 10000); conflicts come first. |
+| `text` | `--text` | string | no | The file's text, instead of `path`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "BulkOutcome": {
+      "description": "What happened to one edit.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged, pushed when analysis finishes.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Waiting for a person to accept it.",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "Refused; see `reason`.",
+          "type": "string"
+        }
+      ]
+    },
+    "CommentKind": {
+      "description": "Kind of listing comment.",
+      "oneOf": [
+        {
+          "const": "plate",
+          "description": "Comment above a function or label.",
+          "type": "string"
+        },
+        {
+          "const": "pre",
+          "description": "Comment on the line before an instruction.",
+          "type": "string"
+        },
+        {
+          "const": "eol",
+          "description": "End-of-line comment.",
+          "type": "string"
+        },
+        {
+          "const": "post",
+          "description": "Comment on the line after an instruction.",
+          "type": "string"
+        },
+        {
+          "const": "repeatable",
+          "description": "Repeatable comment shown at every reference.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "PlanAction": {
+      "description": "What the import does with a planned edit.",
+      "oneOf": [
+        {
+          "const": "apply",
+          "description": "Apply it.",
+          "type": "string"
+        },
+        {
+          "const": "propose",
+          "description": "File it as a proposal.",
+          "type": "string"
+        },
+        {
+          "const": "skip",
+          "description": "Leave it out.",
+          "type": "string"
+        }
+      ]
+    },
+    "PlanStatus": {
+      "description": "How a planned edit relates to the program as it is now.",
+      "oneOf": [
+        {
+          "const": "new",
+          "description": "Nothing but a default name (or no function) at the address.",
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The function already has this name.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "The function has a different name.",
+          "type": "string"
+        },
+        {
+          "const": "invalid",
+          "description": "The name or comment is not acceptable; see `reason`.",
+          "type": "string"
+        },
+        {
+          "const": "duplicate",
+          "description": "An earlier record of the file already names this address.",
+          "type": "string"
+        }
+      ]
+    },
+    "PlannedSymbolEdit": {
+      "description": "One edit the import plans (and, after a real run, its outcome).",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PlanAction",
+          "description": "What the import does with it."
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Address after rebasing."
+        },
+        "existing": {
+          "description": "The name the function has now, for a conflict or unchanged name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommentKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Comment slot (`comment`)."
+        },
+        "line": {
+          "description": "Line of the file.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "New name (`rename`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "description": "`rename` or `comment`.",
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BulkOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "After a real run: `applied`, `queued`, `proposed` or `rejected`."
+        },
+        "reason": {
+          "description": "Why it is invalid or was refused.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/PlanStatus",
+          "description": "How it relates to the program now."
+        },
+        "text": {
+          "description": "Comment text (`comment`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "address",
+        "status",
+        "action",
+        "line"
+      ],
+      "type": "object"
+    },
+    "SymbolFormat": {
+      "description": "The file formats `symbols_import` reads.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Look at the text and pick one of the others.",
+          "type": "string"
+        },
+        {
+          "const": "gnu_map",
+          "description": "GNU ld link map (`-Map`): lines of `0xADDRESS  name` in the output sections.",
+          "type": "string"
+        },
+        {
+          "const": "msvc_map",
+          "description": "MSVC link map (\"Publics by Value\"), using the `Rva+Base` column.",
+          "type": "string"
+        },
+        {
+          "const": "csv",
+          "description": "`address,name[,size,comment]`, one per line, optional header.",
+          "type": "string"
+        },
+        {
+          "const": "splat",
+          "description": "splat `symbol_addrs.txt`: `name = 0xADDRESS; // size:0x10`.",
+          "type": "string"
+        },
+        {
+          "const": "idc",
+          "description": "IDA script subset: `set_name`, `MakeName`, `set_cmt`, `MakeComm`, `set_func_cmt`.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `symbols_import`.",
+  "properties": {
+    "applied": {
+      "description": "Edits applied or queued.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "conflicts": {
+      "description": "Names that differ from the program's.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "dry_run": {
+      "description": "Whether nothing was changed.",
+      "type": "boolean"
+    },
+    "duplicates": {
+      "description": "Records whose address an earlier record already names.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "edits": {
+      "description": "The planned edits, conflicts and problems first, cut to `preview_limit`.",
+      "items": {
+        "$ref": "#/$defs/PlannedSymbolEdit"
+      },
+      "type": "array"
+    },
+    "edits_omitted": {
+      "description": "Planned edits left out of `edits`.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "format": {
+      "$ref": "#/$defs/SymbolFormat",
+      "description": "The format that was read (the detected one for `auto`)."
+    },
+    "ignored_lines": {
+      "description": "Lines that did not parse.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "invalid": {
+      "description": "Edits refused by validation.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "new": {
+      "description": "Planned edits at a new address or over a default name.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "proposed": {
+      "description": "Edits filed as proposals.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "records": {
+      "description": "Records read from the file.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "rejected": {
+      "description": "Edits the engine or the checks refused.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "run_id": {
+      "description": "Run id of the edits; `undo_run` with it reverts the import. Absent for a dry run.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unchanged": {
+      "description": "Names the program already has.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "warnings": {
+      "description": "Notes about the file (limits hit, lines skipped).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "format",
+    "dry_run",
+    "records",
+    "new",
+    "unchanged",
+    "conflicts",
+    "invalid",
+    "duplicates",
+    "applied",
+    "proposed",
+    "rejected",
+    "ignored_lines",
+    "warnings",
+    "edits",
+    "edits_omitted"
+  ],
+  "title": "SymbolsImportOut",
   "type": "object"
 }
 ```

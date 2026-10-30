@@ -60,6 +60,21 @@ fn patch_here_stages_from_the_listing_and_show_patches_opens_the_tab() {
         "opened on demand"
     );
 
+    h.app.dispatch(AppAction::ImportSymbols, &ctx);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .is_some_and(|vm| vm.tools.symbols_dialog.is_some())
+    );
+    h.key(Key::Escape, Modifiers::NONE);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .is_some_and(|vm| vm.tools.symbols_dialog.is_none())
+    );
+
     h.app.dispatch(AppAction::ExportPatched, &ctx);
     h.step();
     assert!(

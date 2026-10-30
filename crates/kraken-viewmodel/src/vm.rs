@@ -1932,6 +1932,7 @@ impl ViewModel {
                 | AppAction::ShowPatches
                 | AppAction::ExportPatched
                 | AppAction::ImportPatchFile
+                | AppAction::ImportSymbols
                 | AppAction::RunProgram
                 | AppAction::RunPatched
                 | AppAction::ComparePatched
@@ -2011,6 +2012,7 @@ impl ViewModel {
             AppAction::ShowPatches => self.show_patches(),
             AppAction::ExportPatched => self.begin_patch_export(),
             AppAction::ImportPatchFile => self.begin_patch_import(),
+            AppAction::ImportSymbols => self.begin_import_symbols(),
             AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
             AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
             AppAction::ComparePatched => self.begin_emulate(EmulateMode::Compare),

@@ -698,3 +698,36 @@ fn an_edit_of_the_decompile_is_planned_staged_and_listed() {
     r.vm.discard_source_edit();
     assert!(r.vm.tools.source_edit.is_none());
 }
+
+#[test]
+fn import_symbols_previews_then_applies_as_one_run() {
+    let mut r = rig();
+    let main = addr_of(&r.vm, "main");
+    let dir = std::env::temp_dir().join(format!("kraken-sym-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let file = dir.join("names.csv");
+    std::fs::write(&file, format!("address,name\n{main:#x},imported_entry\n")).expect("write");
+    r.vm.begin_import_symbols();
+    r.vm.edit_symbols_dialog(|d| d.path = file.to_string_lossy().into_owned());
+    r.vm.preview_import_symbols();
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .symbols_dialog
+            .as_ref()
+            .is_some_and(|d| d.preview.is_some() && !d.busy)
+    }));
+    let pv =
+        r.vm.tools
+            .symbols_dialog
+            .as_ref()
+            .and_then(|d| d.preview.clone())
+            .expect("preview");
+    assert_eq!(pv.conflicts, 1, "main already has a name: {pv:?}");
+    r.vm.edit_symbols_dialog(|d| d.conflicts = 1);
+    r.vm.submit_import_symbols();
+    assert!(r.vm.block_until(WAIT, |v| v.tools.symbols_dialog.is_none() && !v.busy()));
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.functions.items.iter().any(|f| f.name == "imported_entry")
+    }));
+    std::fs::remove_dir_all(&dir).ok();
+}

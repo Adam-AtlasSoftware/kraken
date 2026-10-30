@@ -88,6 +88,8 @@ pub enum AppAction {
     ExportPatched,
     /// Read a patch file (IPS, BPS or JSON) into patches.
     ImportPatchFile,
+    /// Read names and comments from a link map, CSV, splat file or IDA script.
+    ImportSymbols,
     /// Run the program in the emulator with arguments and input.
     RunProgram,
     /// Run the program with the byte patches applied.
@@ -130,7 +132,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 57] = [
+    pub const ALL: [AppAction; 58] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -145,6 +147,7 @@ impl AppAction {
         AppAction::ShowPatches,
         AppAction::ExportPatched,
         AppAction::ImportPatchFile,
+        AppAction::ImportSymbols,
         AppAction::RunProgram,
         AppAction::RunPatched,
         AppAction::ComparePatched,
@@ -272,6 +275,7 @@ impl AppAction {
             AppAction::ShowPatches => "Show patches",
             AppAction::ExportPatched => "Export patched binary...",
             AppAction::ImportPatchFile => "Import patch file...",
+            AppAction::ImportSymbols => "Import symbols...",
             AppAction::RunProgram => "Run program...",
             AppAction::RunPatched => "Run patched program...",
             AppAction::ComparePatched => "Compare original vs patched...",
@@ -352,6 +356,9 @@ impl AppAction {
             AppAction::ImportPatchFile => {
                 "Read an IPS, BPS or KRAKEN JSON patch file made for this program into staged \
                  patches"
+            }
+            AppAction::ImportSymbols => {
+                "Name functions from a link map, CSV, splat file or IDA script; preview first, undo as one step"
             }
             AppAction::RunProgram => {
                 "Run the program in the sandboxed emulator with the arguments, input, environment and files you give it"
@@ -444,6 +451,7 @@ impl AppAction {
             "patch_list" => AppAction::ShowPatches,
             "patch_export" | "patch_export_diff" => AppAction::ExportPatched,
             "patch_import" => AppAction::ImportPatchFile,
+            "symbols_import" => AppAction::ImportSymbols,
             "emulate_run" => AppAction::RunProgram,
             "emulate_compare" => AppAction::ComparePatched,
             "patch_verify" => AppAction::VerifyPatches,

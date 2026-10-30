@@ -21,6 +21,7 @@ Open and import programs and projects, and settings.
 | Open recent | Projects you opened before. |  |
 | Clear recent projects | Empty the list of recently opened projects |  |
 | Open demo project | Try KRAKEN on a small built-in program |  |
+| Import symbols... | Name functions from a link map, CSV, splat file or IDA script; preview first, undo as one step |  |
 | Close project | Stop working on this project and go back to the start | `Ctrl+W` |
 | Settings... | Engine paths, theme, daemon status and setup | `Ctrl+,` |
 | Quit | Close KRAKEN. Your work is already saved | `Ctrl+Q` |

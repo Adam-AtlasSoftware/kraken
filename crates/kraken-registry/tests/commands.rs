@@ -132,6 +132,8 @@ const EXPECTED: &[&str] = &[
     "setup_native",
     "setup_status",
     "strings",
+    "symbols_export",
+    "symbols_import",
     "tainted_clear",
     "tainted_list",
     "type_define",

@@ -25,6 +25,22 @@ A cross-reference says "this place uses that place": function A calls function B
 
 A **symbol** is a name attached to an address. Programs built for release are often stripped, so Ghidra invents names like `FUN_00101189`. Reading code full of `FUN_` names is miserable. Once you work out that a function builds a list node and call it `list_push`, every place that calls it becomes readable. Naming (and typing and commenting) is most of the work, and it is what you and your AI agents do with KRAKEN.
 
+## Importing symbols
+
+When you already have names (a linker map from your own build, an IDA database exported as a script, a decomp project's `symbol_addrs.txt`), `symbols-import` brings them in instead of retyping them. It reads:
+
+- **GNU ld maps** (`-Wl,-Map=out.map`): the `0xADDRESS  name` lines under *Linker script and memory map*.
+- **MSVC maps** (`/MAP`): the *Publics by Value* table, using the `Rva+Base` column.
+- **CSV**: `address,name[,size,comment]`, with or without a header; the fourth column becomes a plate comment. Addresses are `0x...` or bare hex.
+- **splat** `symbol_addrs.txt`: `name = 0x80001234; // size:0x20`.
+- **IDA scripts (IDC)**: `set_name`, `MakeName`, `set_cmt`, `MakeComm` and `set_func_cmt` calls. Anything else in the script is ignored.
+
+The format is detected from the text (`--format` overrides it). `--dry-run` lists what would change without changing anything: new names, names the program already has, and *conflicts*, where a function already carries a different name of its own. A default name (`FUN_...`) is not a conflict. `--conflicts skip` (the default) keeps the existing name, `overwrite` replaces it, and `propose` files each replacement as a proposal for you to accept; an agent's replacements always become proposals. `--base-offset` is added to every address, which matters for position-independent programs: a map says `0x1149`, the native engine loads the program at `0x100000`, so the offset is `0x100000`.
+
+A real import is one run: it prints a `run_id`, and `undo-run` with it removes every name and comment the import added in one step (History offers the same). Limits: lines over 4096 bytes are skipped, a file plans at most 100000 edits, and a person gives `--path` while an agent sends the file's contents as `text`. In the GUI, File > Import symbols... takes the file, format, offset and conflict choice, shows the preview table with conflicts first, and then imports.
+
+`symbols-export` writes the other direction, as CSV (with sizes and comments) or as GNU-map style lines, and `symbols-import` reads both back, so names can move between projects or tools.
+
 ## The edit log
 
 Every change you make (a rename, a comment, a type) is written to an **edit log** inside your project. The log is the source of truth. Ghidra's own project is only a cache that KRAKEN can rebuild from the log (`rebuild`). Each entry records who made the change: you, or a named AI agent and its run.

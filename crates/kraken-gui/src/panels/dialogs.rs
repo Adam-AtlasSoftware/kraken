@@ -4,8 +4,8 @@
 use egui::{Align2, Id, Key, Margin, Modifiers, RichText, vec2};
 use kraken_gui_widgets::{KrakenTheme, Palette};
 use kraken_viewmodel::navtools::{
-    AsmState, FieldKind, FunctionDialogKind, IntentKind, PatchOrigin, ResultSegment, TypeMode,
-    result_lines, spaced_hex,
+    AsmState, FieldKind, FunctionDialogKind, IntentKind, PatchOrigin, ResultSegment,
+    SYMBOL_CONFLICTS, SYMBOL_FORMATS, TypeMode, result_lines, spaced_hex,
 };
 use kraken_viewmodel::{Permission, ViewModel, humanize_command};
 
@@ -20,6 +20,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     group_dialog(ctx, vm);
     export_dialog(ctx, vm);
     import_dialog(ctx, vm);
+    symbols_dialog(ctx, vm);
     intent_dialog(ctx, vm);
     super::emulation::dialog(ctx, vm);
     super::emulation::call_dialog(ctx, vm);
@@ -1662,5 +1663,235 @@ fn command_result(ctx: &egui::Context, vm: &mut ViewModel) {
     }
     if !open || close {
         vm.close_command_result();
+    }
+}
+
+// ---------------------------------------------------------------- import symbols
+
+static SYMBOLS_PICK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn browse_symbols(vm: &ViewModel, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    let start = vm
+        .project
+        .as_ref()
+        .map(|p| p.project_dir.clone())
+        .filter(|d| std::path::Path::new(d).is_dir());
+    vm.runtime_handle().spawn(async move {
+        let mut d = rfd::AsyncFileDialog::new()
+            .set_title("Choose a map, CSV, splat or IDA script file")
+            .add_filter("Symbol files", &["map", "csv", "txt", "idc"]);
+        if let Some(s) = start {
+            d = d.set_directory(s);
+        }
+        if let Some(h) = d.pick_file().await {
+            if let Ok(mut p) = SYMBOLS_PICK.lock() {
+                *p = Some(h.path().to_string_lossy().into_owned());
+            }
+            ctx.request_repaint();
+        }
+    });
+}
+
+fn status_label(status: &str) -> &str {
+    match status {
+        "unchanged" => "same",
+        "duplicate" => "repeat",
+        other => other,
+    }
+}
+
+fn symbols_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.symbols_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut edited = d.clone();
+    if let Some(picked) = SYMBOLS_PICK.lock().ok().and_then(|mut x| x.take()) {
+        edited.path = picked;
+    }
+    let (mut go, mut cancel, mut browse, mut preview) = (false, false, false, false);
+    window("Import symbols", "kraken_import_symbols", 640.0).show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "Names functions and labels, and adds comments, from a GNU ld or MSVC map, a CSV \
+                 (address,name,size,comment), a splat symbol_addrs.txt or an IDA script. \
+                 Preview first; the import is one undoable run in History.",
+            )
+            .color(p.text_dim),
+        );
+        ui.label(RichText::new("File").size(12.0).color(p.text_dim));
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut edited.path)
+                    .id(Id::new("kraken_symbols_path"))
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width((ui.available_width() - 84.0).max(120.0)),
+            )
+            .on_hover_text("The symbol file; a relative path is taken from the project folder");
+            browse = ui
+                .button("Browse...")
+                .on_hover_text("Choose the file in an open dialog")
+                .clicked();
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Format").size(12.0).color(p.text_dim));
+            egui::ComboBox::from_id_salt("kraken_symbols_format")
+                .selected_text(SYMBOL_FORMATS[edited.format.min(SYMBOL_FORMATS.len() - 1)].1)
+                .show_ui(ui, |ui| {
+                    for (i, (_, label)) in SYMBOL_FORMATS.iter().enumerate() {
+                        ui.selectable_value(&mut edited.format, i, *label)
+                            .on_hover_text("Read the file as this format");
+                    }
+                })
+                .response
+                .on_hover_text("Detect looks at the text and picks the format");
+            ui.label(RichText::new("Offset").size(12.0).color(p.text_dim));
+            ui.add(
+                egui::TextEdit::singleline(&mut edited.offset)
+                    .id(Id::new("kraken_symbols_offset"))
+                    .hint_text("0x0")
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(110.0),
+            )
+            .on_hover_text(
+                "Added to every address of the file, such as 0x100000 for a position-independent \
+                 program loaded at that base; a minus sign subtracts",
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("A different name")
+                    .size(12.0)
+                    .color(p.text_dim),
+            );
+            egui::ComboBox::from_id_salt("kraken_symbols_conflicts")
+                .selected_text(SYMBOL_CONFLICTS[edited.conflicts.min(SYMBOL_CONFLICTS.len() - 1)].1)
+                .show_ui(ui, |ui| {
+                    for (i, (_, label)) in SYMBOL_CONFLICTS.iter().enumerate() {
+                        ui.selectable_value(&mut edited.conflicts, i, *label)
+                            .on_hover_text("What to do when a function already has another name");
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "What to do when a function already has another name than the file gives it",
+                );
+        });
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(s.danger));
+        }
+        if let Some(r) = &d.preview {
+            ui.separator();
+            ui.label(
+                RichText::new(format!(
+                    "{} records read as {}: {} new, {} same, {} conflicts, {} invalid, {} repeated",
+                    r.records, r.format, r.new, r.unchanged, r.conflicts, r.invalid, r.duplicates
+                ))
+                .strong(),
+            );
+            for w in &r.warnings {
+                ui.label(RichText::new(w).size(12.0).color(s.warning));
+            }
+            egui::ScrollArea::vertical()
+                .id_salt("kraken_symbols_rows")
+                .max_height(260.0)
+                .show(ui, |ui| {
+                    egui::Grid::new("kraken_symbols_grid")
+                        .num_columns(4)
+                        .striped(true)
+                        .spacing([12.0, 3.0])
+                        .show(ui, |ui| {
+                            for h in ["Address", "Status", "File says", "Program has"] {
+                                ui.label(RichText::new(h).size(12.0).color(p.text_dim));
+                            }
+                            ui.end_row();
+                            for row in &r.edits {
+                                ui.label(RichText::new(&row.address).monospace().size(12.0));
+                                let color = match row.status.as_str() {
+                                    "conflict" => s.warning,
+                                    "invalid" => s.danger,
+                                    _ => p.text,
+                                };
+                                let st = ui.label(
+                                    RichText::new(status_label(&row.status))
+                                        .size(12.0)
+                                        .color(color),
+                                );
+                                if let Some(why) = &row.reason {
+                                    st.on_hover_text(why.clone());
+                                }
+                                let says = match (&row.name, &row.text) {
+                                    (Some(n), _) => n.clone(),
+                                    (None, Some(t)) => format!("// {t}"),
+                                    _ => String::new(),
+                                };
+                                ui.label(RichText::new(says).monospace().size(12.0));
+                                ui.label(
+                                    RichText::new(row.existing.clone().unwrap_or_default())
+                                        .monospace()
+                                        .size(12.0)
+                                        .color(p.text_dim),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                    if r.edits_omitted > 0 {
+                        ui.label(
+                            RichText::new(format!("{} more not shown", r.edits_omitted))
+                                .size(12.0)
+                                .color(p.text_dim),
+                        );
+                    }
+                });
+        }
+        ui.add_space(6.0);
+        let ready = if edited.path.trim().is_empty() {
+            Err("Choose the symbol file".to_string())
+        } else {
+            Ok(())
+        };
+        ui.horizontal(|ui| {
+            let r = ui
+                .add_enabled(ready.is_ok() && !d.busy, egui::Button::new("Preview"))
+                .on_hover_text("Read the file and list what would change; nothing is changed yet")
+                .on_disabled_hover_text(ready.clone().err().unwrap_or_else(|| "Working...".into()));
+            if r.clicked() {
+                preview = true;
+            }
+        });
+        buttons(
+            ui,
+            "Import",
+            "Apply the names and comments as one undoable run (Enter)",
+            ready,
+            d.busy,
+            &mut go,
+            &mut cancel,
+        );
+    });
+    if browse {
+        browse_symbols(vm, ctx);
+    }
+    if edited != d {
+        let fresh = edited.clone();
+        vm.edit_symbols_dialog(move |x| {
+            x.path = fresh.path;
+            x.format = fresh.format;
+            x.conflicts = fresh.conflicts;
+            x.offset = fresh.offset;
+        });
+    }
+    if esc || cancel {
+        vm.cancel_import_symbols();
+    } else if preview {
+        vm.preview_import_symbols();
+    } else if go || enter {
+        if d.preview.is_some() || go {
+            vm.submit_import_symbols();
+        } else {
+            vm.preview_import_symbols();
+        }
     }
 }
