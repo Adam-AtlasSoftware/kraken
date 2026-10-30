@@ -53,6 +53,7 @@ public:
   // Follows the flow of the function at `addr` with the decompiler (which recovers switch jump
   // tables) and returns every (BRANCHIND address, target) pair of the tables it found.
   rust::Vec<JumpEdgeOut> jump_tables(uint64_t addr);
+  rust::Vec<JumpEdgeOut> jump_tables_deep(uint64_t addr, uint32_t timeout_ms);
   // Parses one C declaration (typedef, struct, union or enum) into the type factory.
   void declare_type(rust::Str decl);
   // Parses a C prototype such as `int printf(char *format,...)` and locks it onto the function

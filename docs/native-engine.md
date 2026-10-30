@@ -121,7 +121,8 @@ empty engine directory and replays the log.
 ## Big programs
 
 The first open of a big binary is dominated by the decompiler's switch analysis, one decompiler
-pass per jump table: a 7 MB library with 11 000 functions takes a few minutes, a library the size
+pass per function with a jump table (a switch nested in the cases of another one, which flow
+following alone does not recover, costs one more full analysis of that function): a 7 MB library with 11 000 functions takes a few minutes, a library the size
 of Qt Widgets about twenty. Discovery therefore runs on several decompiler sessions at once (one
 per CPU, at most 6 and one per 3 GB of free memory; `KRAKEN_NATIVE_THREADS` sets the number, 1 to 16) and keeps the answers in
 the project's engine directory (`discovery-cache.json`, next to `native-state.json`). Opening the

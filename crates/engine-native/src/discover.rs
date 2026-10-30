@@ -254,6 +254,9 @@ impl Lane<'_> {
     }
 }
 
+/// How long the analysis of a function may run when a jump without a table asks for all of it.
+const DEEP_TIMEOUT_MS: u32 = 20_000;
+
 /// A finished walk, with the facts the walker has to hand back to the discovery.
 struct Walked {
     walk: Walk,
@@ -297,15 +300,18 @@ fn walk(
     let mut sites = Vec::new();
     let mut switches: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
     let mut computed = Vec::new();
-    let mut switches_done = false;
+    let mut applied: BTreeSet<(u64, u64)> = BTreeSet::new();
+    let mut deep_done = false;
     let mut returns = false;
     let mut tables = None;
     let mut thunks: Vec<(u64, &'static str)> = Vec::new();
     loop {
         let Some(start) = work.pop() else {
+            if computed.is_empty() {
+                break;
+            }
             // computed jumps: ask the decompiler's switch analysis for the table targets
-            if !computed.is_empty() && !switches_done {
-                switches_done = true;
+            if tables.is_none() {
                 // the decompiler applies a thunk's call fixup by its name
                 for (a, n) in &thunks {
                     if lane.named.insert(*a) {
@@ -322,14 +328,44 @@ fn walk(
                         Err(e) => return Err(e),
                     },
                 };
-                for e in &found {
-                    if loaded.is_code(e.target) && computed.contains(&e.op) {
+                tables = Some((found, fresh));
+            }
+            // the tables of the jumps walked so far; the cases of one may hold more jumps
+            let mut grew = false;
+            if let Some((found, _)) = &tables {
+                for e in found {
+                    if loaded.is_code(e.target)
+                        && computed.contains(&e.op)
+                        && applied.insert((e.op, e.target))
+                    {
                         switches.entry(e.op).or_default().push(e.target);
                         work.push(e.target);
+                        grew = true;
                     }
                 }
-                tables = Some((found, fresh));
+            }
+            if grew {
                 continue;
+            }
+            // flow following alone leaves a switch nested in the cases of another one: a jump
+            // without a table sends the whole decompiler analysis over the function, once
+            // (a recovery taken from the cache has done that already)
+            if !deep_done && tables.as_ref().is_some_and(|(_, fresh)| *fresh) {
+                deep_done = true;
+                if computed.iter().any(|c| !switches.contains_key(c)) {
+                    match lane.session.jump_tables_deep(entry, DEEP_TIMEOUT_MS) {
+                        Ok(more) => {
+                            if let Some((found, _)) = &mut tables {
+                                found.extend(more);
+                                found.sort_unstable();
+                                found.dedup();
+                            }
+                            continue;
+                        }
+                        Err(NativeError::Native(_)) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
             }
             break;
         };

@@ -702,6 +702,14 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
         tables.get(j).is_some_and(|f| entries.contains(f))
             || blocks.iter().any(|(s, end)| (*s..*end).contains(j))
     });
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for p in theirs.difference(&mine) {
+            eprintln!("  {binary} MISSED jump {:#x} -> {:#x}", p.0, p.1);
+        }
+        for p in mine.difference(&theirs) {
+            eprintln!("  {binary} EXTRA jump {:#x} -> {:#x}", p.0, p.1);
+        }
+    }
     r.jump_tables.add(&theirs, &mine);
 }
 
@@ -1171,4 +1179,33 @@ async fn native_jump_tables_agree_with_the_recorded_switches() {
             assert!(!f.name.is_empty());
         }
     }
+}
+
+/// Switches nested in the cases of another one (glibc's `handle_amd` in a static executable) only
+/// recover once the decompiler's whole analysis has run over the function.
+#[tokio::test(flavor = "multi_thread")]
+async fn native_finds_switches_nested_in_the_cases_of_a_switch() {
+    let Some(c) = config() else { return };
+    let e = NativeEngine::new(c);
+    let cancel = CancellationToken::new();
+    e.open_binary(
+        &root().join("corpus/bin/static_strops-O2"),
+        &LoaderSpec::default(),
+        &cancel,
+    )
+    .await
+    .expect("open");
+    let fixture =
+        engine_fake::FixtureFile::from_path(&root().join("corpus/fixtures/static_strops-O2.json"))
+            .expect("fixture");
+    let theirs = jump_pairs(&engine_fake::FakeEngine::new(fixture), &cancel).await;
+    let mine = jump_pairs(&e, &cancel).await;
+    let missed: Vec<_> = theirs.difference(&mine).collect();
+    assert!(!theirs.is_empty());
+    assert!(
+        missed.is_empty(),
+        "missed {} pairs, first {:?}",
+        missed.len(),
+        missed[0]
+    );
 }

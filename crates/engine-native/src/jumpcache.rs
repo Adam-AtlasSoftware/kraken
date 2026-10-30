@@ -19,7 +19,7 @@ use crate::engine::SOURCE_TAG;
 pub const CACHE_FILE: &str = "discovery-cache.json";
 
 /// Bumped whenever a change to discovery alters which jump tables it asks for, or in which order.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct File {

@@ -1045,6 +1045,51 @@ rust::Vec<JumpEdgeOut> Session::jump_tables(uint64_t addr) {
   return out;
 }
 
+// The tables of a full decompile: switches nested in the cases of another one only recover
+// once the actions have propagated what the outer switch implies, which flow following alone
+// does not do. Stops at the deadline and returns what it has recovered by then.
+rust::Vec<JumpEdgeOut> Session::jump_tables_deep(uint64_t addr, uint32_t timeout_ms) {
+  const auto began = std::chrono::steady_clock::now();
+  auto out = guarded("jump_tables_deep", [&]() {
+    ghidra::Architecture *a = impl->arch.get();
+    Funcdata *fd = functionAt(a, addr);
+    if (fd->isProcStarted())
+      a->clearAnalysis(fd);
+    ghidra::Action *act = a->allacts.getCurrent();
+    if (impl->broken != act) {
+      breakEverywhere(act);
+      impl->broken = act;
+    }
+    CallbackLoadImage *img = static_cast<CallbackLoadImage *>(a->loader);
+    const auto deadline = began + std::chrono::milliseconds(timeout_ms);
+    DiscoveredGlobals discovered(a, fd);
+    act->reset(*fd);
+    while (act->perform(*fd) < 0) {
+      if (img->interrupted() ||
+          (timeout_ms != 0 && std::chrono::steady_clock::now() >= deadline))
+        break;
+    }
+    rust::Vec<JumpEdgeOut> out;
+    for (ghidra::int4 i = 0; i < fd->numJumpTables(); ++i) {
+      ghidra::JumpTable *jt = fd->getJumpTable(i);
+      for (ghidra::int4 j = 0; j < jt->numEntries(); ++j) {
+        JumpEdgeOut e;
+        e.op = jt->getOpAddress().getOffset();
+        e.target = jt->getAddressByIndex(j).getOffset();
+        out.push_back(e);
+      }
+    }
+    impl->errs.str(std::string());
+    a->clearAnalysis(fd);
+    return out;
+  });
+#ifdef __GLIBC__
+  if (std::chrono::steady_clock::now() - began > std::chrono::milliseconds(200))
+    malloc_trim(0);
+#endif
+  return out;
+}
+
 DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
   const auto began = std::chrono::steady_clock::now();
   DecompOut result = guarded("decompile", [&]() {

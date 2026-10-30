@@ -508,6 +508,11 @@ mod real {
             fn lift(self: Pin<&mut Session>, start: u64, end: u64) -> Result<Vec<PcodeOpOut>>;
             fn decompile(self: Pin<&mut Session>, addr: u64, timeout_ms: u32) -> Result<DecompOut>;
             fn jump_tables(self: Pin<&mut Session>, addr: u64) -> Result<Vec<JumpEdgeOut>>;
+            fn jump_tables_deep(
+                self: Pin<&mut Session>,
+                addr: u64,
+                timeout_ms: u32,
+            ) -> Result<Vec<JumpEdgeOut>>;
             fn declare_type(self: Pin<&mut Session>, decl: &str) -> Result<()>;
             fn set_global(
                 self: Pin<&mut Session>,
@@ -947,6 +952,34 @@ impl Session {
         #[cfg(not(kraken_native))]
         {
             let _ = addr;
+            Err(unavailable())
+        }
+    }
+
+    /// Like [`Session::jump_tables`] but runs the whole decompiler analysis (stopping after
+    /// `timeout_ms`), which also recovers switches nested in the cases of another one.
+    pub fn jump_tables_deep(&mut self, addr: u64, timeout_ms: u32) -> NativeResult<Vec<JumpEdge>> {
+        #[cfg(kraken_native)]
+        {
+            self.touch(addr);
+            let _g = lock_shared();
+            let mut t: Vec<JumpEdge> = self
+                .pinned()?
+                .jump_tables_deep(addr, timeout_ms)
+                .map_err(real::err)?
+                .into_iter()
+                .map(|e| JumpEdge {
+                    op: e.op,
+                    target: e.target,
+                })
+                .collect();
+            t.sort_unstable();
+            t.dedup();
+            Ok(t)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, timeout_ms);
             Err(unavailable())
         }
     }
