@@ -528,8 +528,13 @@ fn global_at(p: &Program, e: &Edits, at: u64) -> Option<(String, String, u32)> {
     if p.loaded.is_code(at) || p.funcs().containing(at).is_some() {
         return None;
     }
-    let symbol = p.loaded.data_symbols.get(&at);
+    let symbol = p
+        .loaded
+        .data_symbols
+        .get(&at)
+        .filter(|_| !crate::datalabels::symbol_ignored(&p.loaded, at));
     let dwarf = p.loaded.debug.globals.get(&at);
+    let auto = p.data_label(at);
     let defined = match e.defined.get(&at) {
         Some(Defined::Data { ty, len }) => Some((ty.as_ref(), *len)),
         _ => None,
@@ -540,14 +545,18 @@ fn global_at(p: &Program, e: &Edits, at: u64) -> Option<(String, String, u32)> {
         .cloned()
         .or_else(|| dwarf.map(|g| g.name.clone()))
         .or_else(|| symbol.map(|s| s.name.clone()))
+        .or_else(|| auto.as_ref().map(|l| l.name.clone()))
         .or_else(|| defined.map(|_| format!("DAT_{at:08x}")))?;
     let ty = defined.and_then(|(t, _)| t).or(dwarf.map(|g| &g.ty));
-    let decl = ty
-        .map(|t| p.types().global_decl(t, &name))
-        .unwrap_or_default();
-    let size = defined
-        .map(|(_, len)| len)
-        .unwrap_or_else(|| p.loaded.data_size(at));
+    let decl = match ty {
+        Some(t) => p.types().global_decl(t, &name),
+        None => auto.as_ref().map(|l| l.decl.clone()).unwrap_or_default(),
+    };
+    let size = match (defined, &auto) {
+        (Some((_, len)), _) => len,
+        (None, Some(l)) if symbol.is_none() => u64::from(l.size),
+        _ => p.loaded.data_size(at),
+    };
     Some((name, decl, size.min(4096) as u32))
 }
 

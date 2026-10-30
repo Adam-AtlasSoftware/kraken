@@ -31,7 +31,7 @@ test = "agrees_with_ghidra_on_the_guarded_binaries"
 capability = "decompile_text"
 set = "corpus"
 format = "ELF x86-64"
-threshold = 0.48
+threshold = 0.5
 status = "partial"
 test = "parity_report"
 
@@ -39,8 +39,8 @@ test = "parity_report"
 capability = "globals"
 set = "corpus"
 format = "ELF x86-64"
-threshold = 0.0
-status = "missing"
+threshold = 0.8
+status = "partial"
 test = "parity_report"
 
 [[row]]
@@ -97,7 +97,7 @@ test = "agrees_with_ghidra_on_pe_and_elf32"
 capability = "decompile_text"
 set = "corpus/pe"
 format = "PE x86-64 and x86"
-threshold = 0.66
+threshold = 0.7
 status = "partial"
 test = "parity_report"
 
@@ -105,8 +105,8 @@ test = "parity_report"
 capability = "globals"
 set = "corpus/pe"
 format = "PE x86-64 and x86"
-threshold = 0.0
-status = "missing"
+threshold = 0.8
+status = "partial"
 test = "parity_report"
 
 [[row]]
@@ -163,7 +163,7 @@ test = "agrees_with_ghidra_on_pe_and_elf32"
 capability = "decompile_text"
 set = "corpus/elf32"
 format = "ELF x86"
-threshold = 0.59
+threshold = 0.61
 status = "partial"
 test = "parity_report"
 
@@ -171,8 +171,8 @@ test = "parity_report"
 capability = "globals"
 set = "corpus/elf32"
 format = "ELF x86"
-threshold = 0.0
-status = "missing"
+threshold = 0.8
+status = "partial"
 test = "parity_report"
 
 [[row]]

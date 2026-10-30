@@ -239,6 +239,9 @@ pub(crate) struct Program {
     /// structural edits (see [`Program::reindex`]).
     refs: RwLock<Arc<RefIndex>>,
     pub(crate) imports: Vec<SymbolEntry>,
+    /// The automatic labels of data (see [`crate::datalabels`]), by address, as given to the
+    /// decompiler at load; they name an address again when a user's label on it is undone.
+    data_labels: Mutex<BTreeMap<u64, crate::datalabels::DataLabel>>,
     exports: RwLock<Arc<Vec<SymbolEntry>>>,
     /// Symbol-table names at function entries that differ from the function's name (mangled
     /// C++ names, aliases), shown as labels as Ghidra shows them.
@@ -434,6 +437,38 @@ impl Program {
             }
         }
         RefIndex::build(&self.loaded, &funcs.map, &insns, &loose, &self.computed)
+    }
+
+    /// Gives the decompiler Ghidra's automatic labels for the data the code refers to (see
+    /// [`crate::datalabels`]). They are derived from the references, so opening the program again
+    /// gives the same labels; edits made afterwards (a rename) replace them.
+    fn apply_data_labels(&self) {
+        let strings = self.strings(crate::analyze::CORE_STRING_MIN);
+        let funcs = self.funcs();
+        let labels = crate::datalabels::compute(
+            &self.loaded,
+            &self.refs(),
+            &self.insns(),
+            &|a| funcs.get(a).map(|f| f.name.clone()),
+            &strings,
+        );
+        let mut session = self.session();
+        for l in &labels {
+            if session.set_label(l.addr, &l.name, &l.decl, l.size).is_err() && !l.decl.is_empty() {
+                let _ = session.set_label(l.addr, &l.name, "", l.size);
+            }
+        }
+        *self.data_labels.lock().unwrap_or_else(|p| p.into_inner()) =
+            labels.into_iter().map(|l| (l.addr, l)).collect();
+    }
+
+    /// The automatic label of the data at `at`, if it got one.
+    pub(crate) fn data_label(&self, at: u64) -> Option<crate::datalabels::DataLabel> {
+        self.data_labels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&at)
+            .cloned()
     }
 
     /// Rebuilds what depends on the function table: the reference index (the bodies of the
@@ -1309,7 +1344,10 @@ fn build_program(
         .copied()
         .collect();
     for at in global_addrs {
-        if loaded.is_code(at) || found.functions.contains_key(&at) {
+        if loaded.is_code(at)
+            || found.functions.contains_key(&at)
+            || crate::datalabels::symbol_ignored(&loaded, at)
+        {
             continue;
         }
         let symbol = loaded.data_symbols.get(&at);
@@ -1372,6 +1410,7 @@ fn build_program(
         decompile_slot: tokio::sync::Mutex::new(()),
         refs: RwLock::new(Arc::new(RefIndex::default())),
         imports,
+        data_labels: Mutex::new(BTreeMap::new()),
         exports: RwLock::new(Arc::new(Vec::new())),
         symbol_labels,
         mangled: mangled_names,
@@ -1386,6 +1425,7 @@ fn build_program(
         epoch: AtomicU64::new(0),
     };
     p.reindex();
+    p.apply_data_labels();
     Ok(p)
 }
 

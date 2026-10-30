@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 use crate::engine::{InProcessEngine, Program, blocking, check, native, signature_of};
 
 /// Strings reported by the core stage are at least this long (the default of the CLI).
-const CORE_STRING_MIN: u32 = 4;
+pub(crate) const CORE_STRING_MIN: u32 = 4;
 
 /// Programs with fewer functions are decompiled on the program's own session: setting up
 /// another costs about a second.

@@ -578,6 +578,13 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
             .filter_map(|t| t.symbol.clone())
             .filter(|n| is_global_name(n))
             .collect();
+        if theirs_globals != our_globals && std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+            eprintln!(
+                "  {binary} globals differ at {entry:#x}: missed {:?}, extra {:?}",
+                theirs_globals.difference(&our_globals).collect::<Vec<_>>(),
+                our_globals.difference(&theirs_globals).collect::<Vec<_>>()
+            );
+        }
         r.globals.add(&theirs_globals, &our_globals);
     }
 

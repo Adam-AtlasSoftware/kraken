@@ -11,6 +11,7 @@
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -976,6 +977,35 @@ void applyLocalNames(Session::Impl *impl, Funcdata *fd, uint64_t fad,
   }
 }
 
+// The names Ghidra's Java side gives the stack variables of the frame: `local_<hex offset>` where
+// the decompiler alone says `uStack_<hex offset>` (any type prefix; the caller-allocated `X` and
+// unusual `Y` regions keep the decompiler's names).
+void nameStackLocals(Funcdata *fd) {
+  ghidra::AddrSpace *stack = fd->getArch()->getStackSpace();
+  if (stack == nullptr)
+    return;
+  ghidra::ScopeLocal *sc = fd->getScopeLocal();
+  std::set<ghidra::Symbol *> seen;
+  for (auto v = fd->beginLoc(stack); v != fd->endLoc(stack); ++v) {
+    ghidra::HighVariable *high = (*v)->getHigh();
+    ghidra::Symbol *sym = high != nullptr ? high->getSymbol() : nullptr;
+    if (sym == nullptr || sym->isNameLocked() || !seen.insert(sym).second)
+      continue;
+    const std::string &n = sym->getName();
+    size_t at = n.find("Stack_");
+    if (at == std::string::npos || n.size() == at + 6)
+      continue;
+    bool plain = n.find_first_not_of("abcdefghijklmnopqrstuvwxyz") >= at &&
+                 n.find_first_not_of("0123456789abcdef", at + 6) == std::string::npos;
+    if (!plain)
+      continue;
+    try {
+      sc->renameSymbol(sym, "local_" + n.substr(at + 6));
+    } catch (const ghidra::LowlevelError &) {
+    }
+  }
+}
+
 } // namespace
 
 void Session::ensure_function(uint64_t addr) {
@@ -1050,6 +1080,7 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
     }
 
     applyLocalNames(impl.get(), fd, addr, localWarnings);
+    nameStackLocals(fd);
     TokenEmit *te = impl->printer->tokens();
     te->reset();
     std::ostringstream sink;
@@ -1094,8 +1125,9 @@ void Session::declare_type(rust::Str decl) {
 // A data symbol of the global scope: the user's or the symbol table's name, name-locked, and
 // type-locked when `decl` ("int x", "char *x[4]") gives a type. Without one the symbol is an
 // undefined type of `size` bytes and the decompiler infers the type from the uses.
-void Session::set_global(uint64_t addr, rust::Str name, rust::Str decl, uint32_t size) {
-  guarded("set_global", [&]() {
+static void putGlobal(Session::Impl *impl, uint64_t addr, rust::Str name, rust::Str decl,
+                      uint32_t size, bool lockName) {
+  {
     ghidra::Architecture *a = impl->arch.get();
     Address at(a->getDefaultCodeSpace(), addr);
     ghidra::Scope *global = a->symboltab->getGlobalScope();
@@ -1121,10 +1153,20 @@ void Session::set_global(uint64_t addr, rust::Str name, rust::Str decl, uint32_t
     ghidra::SymbolEntry *e = global->addSymbol(std::string(name), ct, at, Address());
     if (e == nullptr)
       return;
-    global->setAttribute(e->getSymbol(),
-                         typed ? (ghidra::Varnode::namelock | ghidra::Varnode::typelock)
-                               : ghidra::Varnode::namelock);
-  });
+    uint32_t attr = (lockName ? uint32_t(ghidra::Varnode::namelock) : 0u) |
+                    (typed ? uint32_t(ghidra::Varnode::typelock) : 0u);
+    if (attr != 0)
+      global->setAttribute(e->getSymbol(), attr);
+  }
+}
+
+void Session::set_global(uint64_t addr, rust::Str name, rust::Str decl, uint32_t size) {
+  guarded("set_global", [&]() { putGlobal(impl.get(), addr, name, decl, size, true); });
+}
+
+// An automatic label (Ghidra's DAT_, PTR_ and s_ names): like `set_global`, without the name lock.
+void Session::set_label(uint64_t addr, rust::Str name, rust::Str decl, uint32_t size) {
+  guarded("set_label", [&]() { putGlobal(impl.get(), addr, name, decl, size, false); });
 }
 
 void Session::remove_global(uint64_t addr) {

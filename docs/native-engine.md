@@ -171,6 +171,12 @@ Rust names (both the legacy `_ZN...17h<hash>E` and the v0 `_R...` mangling) are 
 `core::ptr::drop_in_place<alloc::string::String>` is shown as `drop_in_place`, and the mangled
 name is kept the same way.
 
+Data the code refers to, and that the symbol table does not name, gets the labels Ghidra gives it:
+`DAT_00104020` for plain data, `PTR_<target>_<address>` for a pointer (`PTR_s_by_id_00103da0`,
+`PTR_FUN_00103da8`, `PTR_LOOP_00104018` for a pointer to itself) and `s_<text>` inside a pointer's
+name for a string. Stack variables are `local_<offset>` as in Ghidra. A name you give always
+replaces the label, and clearing it brings the label back.
+
 DWARF in compressed sections (zlib or zstd, as `-Wl,--compress-debug-sections` or
 `objcopy --compress-debug-sections` write them) is read like plain DWARF.
 

@@ -27,6 +27,7 @@ pub mod cfg;
 pub mod constprop;
 pub mod ctypes;
 mod data;
+pub mod datalabels;
 pub mod debugfile;
 pub mod demangle;
 pub mod discover;

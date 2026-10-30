@@ -405,6 +405,22 @@ impl RefIndex {
             .collect()
     }
 
+    /// Targets of every reference that touches data (taken addresses, reads, writes), ascending.
+    pub fn touched_targets(&self) -> Vec<u64> {
+        self.by_to
+            .iter()
+            .filter(|(_, refs)| {
+                refs.iter().any(|i| {
+                    matches!(
+                        self.by_from[*i as usize].kind,
+                        XrefKind::Data | XrefKind::Read | XrefKind::Write
+                    )
+                })
+            })
+            .map(|(to, _)| *to)
+            .collect()
+    }
+
     /// References pointing at `to`, ordered by (from, to, kind).
     pub fn to(&self, to: u64) -> Vec<Ref> {
         self.by_to
