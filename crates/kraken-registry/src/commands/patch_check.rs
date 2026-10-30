@@ -341,6 +341,8 @@ impl Command for PatchVerify {
     ) -> Result<PatchVerifyOut, ProtoError> {
         let project = s.project()?;
         let active = project.with_store(|st| st.active_patches(None)).await?;
+        // The run uses exactly the patches the verdict is stored for, even if the set changes
+        // while it runs.
         let set_hash = patch_set_hash(&active);
         let compare = compare_variants(
             s,
@@ -355,6 +357,7 @@ impl Command for PatchVerify {
                 a: None,
                 b: None,
             },
+            Some(active),
         )
         .await?;
         let same = compare.same;

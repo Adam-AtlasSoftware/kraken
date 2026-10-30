@@ -906,15 +906,17 @@ impl Command for EmulateCompare {
         _ctx: &CallContext,
         args: EmulateCompareArgs,
     ) -> Result<EmulateCompareOut, ProtoError> {
-        compare_variants(s, args).await
+        compare_variants(s, args, None).await
     }
 }
 
 /// Runs the two variants of `args` and compares them; the body of `emulate_compare`, also the
-/// run behind `patch_verify`.
+/// run behind `patch_verify`. `patches` is the patch set of the `patched` variant, read by the
+/// caller; `None` reads the patches that are on now.
 pub(crate) async fn compare_variants(
     s: &Session,
     args: EmulateCompareArgs,
+    patches: Option<Vec<kraken_model::Patch>>,
 ) -> Result<EmulateCompareOut, ProtoError> {
     let base = EmulateRunArgs {
         stdin: args.stdin,
@@ -933,7 +935,10 @@ pub(crate) async fn compare_variants(
     let project = s.project()?;
     let binary = PathBuf::from(project.meta().binary_path);
     let patches = if a == Variant::Patched || b == Variant::Patched {
-        let p = project.with_store(|st| st.active_patches(None)).await?;
+        let p = match patches {
+            Some(p) => p,
+            None => project.with_store(|st| st.active_patches(None)).await?,
+        };
         if p.is_empty() {
             return Err(invalid(
                 "the project has no byte patches to run; set one with patch_set or name \
