@@ -201,7 +201,7 @@ impl Command for DebugGdbServe {
             "Lets gdb, Ghidra's debugger, IDA or lldb debug the emulated program: registers, \
              memory, breakpoints, step and continue. Returns the socket path and the gdb command \
              that connects (gdb reaches a Unix socket through socat; `tcp: true` needs no helper). One client at a time; leaving it keeps the session where it is. \
-             `tcp: true` also listens on 127.0.0.1 only.\n\
+             `tcp: true` also listens on 127.0.0.1, without authentication (any local user can connect), so an agent needs approval for it.\n\
              Example: debug_gdb_serve {\"session\": 1}",
         )
         .details(
@@ -218,9 +218,21 @@ impl Command for DebugGdbServe {
     async fn run(
         &self,
         s: &Session,
-        _c: &CallContext,
+        ctx: &CallContext,
         a: DebugGdbServeArgs,
     ) -> Result<DebugGdbServeOut, ProtoError> {
+        if a.tcp {
+            // the loopback port has no authentication: any local user could drive the session
+            ctx.require_approval(
+                "debug_gdb_serve",
+                format!(
+                    "serve debug session {} to gdb on an unauthenticated 127.0.0.1 TCP port",
+                    a.session
+                ),
+                serde_json::json!({"session": a.session, "tcp": true}),
+            )
+            .await?;
+        }
         let table = s.debug().clone();
         blocking(move || {
             let id = session_arg(a.session)?;

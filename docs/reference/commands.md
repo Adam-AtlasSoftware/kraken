@@ -3015,7 +3015,7 @@ kraken debug-gdb-serve --session <integer> [options]
 - Kind: query
 - Permission: safe
 
-Lets gdb, Ghidra's debugger, IDA or lldb debug the emulated program: registers, memory, breakpoints, step and continue. Returns the socket path and the gdb command that connects (gdb reaches a Unix socket through socat; `tcp: true` needs no helper). One client at a time; leaving it keeps the session where it is. `tcp: true` also listens on 127.0.0.1 only.
+Lets gdb, Ghidra's debugger, IDA or lldb debug the emulated program: registers, memory, breakpoints, step and continue. Returns the socket path and the gdb command that connects (gdb reaches a Unix socket through socat; `tcp: true` needs no helper). One client at a time; leaving it keeps the session where it is. `tcp: true` also listens on 127.0.0.1, without authentication (any local user can connect), so an agent needs approval for it.
 
 Example: `debug_gdb_serve {"session": 1}`
 

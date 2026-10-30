@@ -136,6 +136,15 @@ async fn gdb_reads_registers_sets_a_breakpoint_and_hits_it() {
     assert!(served["tcp_port"].as_u64().is_some(), "{served}");
     let again = env.ok(&u, "debug_gdb_serve", json!({"session": id})).await;
     assert_eq!(again["socket"], served["socket"]);
+    // the TCP port has no authentication, so an agent must be approved for it
+    let e = env
+        .err(
+            &agent("r"),
+            "debug_gdb_serve",
+            json!({"session": id, "tcp": true}),
+        )
+        .await;
+    assert_eq!(e.details.as_ref().unwrap()["approval"], "denied", "{e}");
     let e = env.err(&u, "debug_gdb_serve", json!({"session": 99})).await;
     assert_eq!(e.code, ErrorCode::NotFound);
 
