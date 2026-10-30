@@ -441,7 +441,7 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         ui.add(
             egui::TextEdit::singleline(&mut note)
                 .id(Id::new("kraken_patch_note"))
-                .hint_text("Why, e.g. skip the licence check (optional)")
+                .hint_text("Why, e.g. remove the startup banner (optional)")
                 .desired_width(f32::INFINITY),
         )
         .on_hover_text("A note kept with the patch");

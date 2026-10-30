@@ -184,7 +184,7 @@ impl Command for PatchSet {
              patch where one exists replaces it. The edit is logged like a rename: it shows in \
              `history` and `undo`/`undo_run` take it back; an agent's new patch applies at once, \
              an agent replacing a patch makes a proposal.\n\
-             Example: patch_set {\"address\": \"0x401136\", \"bytes\": \"9090\", \"note\": \"skip the check\"}",
+             Example: patch_set {\"address\": \"0x401136\", \"bytes\": \"9090\", \"note\": \"no startup banner\"}",
         )
         .details(
             "The replacement length sets how many bytes are read for the originals; the address \

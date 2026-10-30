@@ -15155,7 +15155,7 @@ kraken patch-set --address <address> --bytes <string> [options]
 
 Records replacement bytes at an address. The bytes there now are read and kept as the originals, so the patch can be checked and undone. Setting a patch changes nothing on disk and does not run anything: it is a reversible overlay entry. `patch_export` (which writes a patched binary) is the step that asks for approval; `emulate_run {"patched": true}` runs a patched copy in the sandbox to check it. A patch where one exists replaces it. The edit is logged like a rename: it shows in `history` and `undo`/`undo_run` take it back; an agent's new patch applies at once, an agent replacing a patch makes a proposal.
 
-Example: `patch_set {"address": "0x401136", "bytes": "9090", "note": "skip the check"}`
+Example: `patch_set {"address": "0x401136", "bytes": "9090", "note": "no startup banner"}`
 
 The replacement length sets how many bytes are read for the originals; the address must be mapped and hold that many bytes. Give the bytes as hex, with or without spaces and a leading 0x. At most 4096 bytes per patch.
 

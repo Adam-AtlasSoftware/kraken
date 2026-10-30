@@ -19,7 +19,7 @@ async fn an_agents_patch_is_in_the_history_and_its_run_undoes_it() {
         .ok(
             &a,
             "patch_set",
-            json!({"address": "0x401040", "bytes": "9090", "note": "skip the check"}),
+            json!({"address": "0x401040", "bytes": "9090", "note": "no startup banner"}),
         )
         .await;
     assert_eq!(r["status"], "applied", "{r}");
