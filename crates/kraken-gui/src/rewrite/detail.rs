@@ -40,6 +40,7 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut A
         .show(ui, |ui| {
             title(ui, vm, &name, addr, status, acts);
             actions(ui, vm, d, addr, status, acts);
+            harvest(ui, vm, st, addr, acts);
             add_case(ui, vm, st, addr, acts);
             hints(ui, vm, st, addr, status, acts);
             plan_notes(ui, vm, d, &p);
@@ -434,6 +435,55 @@ fn coverage(ui: &mut Ui, v: &VersionItem, p: &Palette, acts: &mut Acts) {
             }
         });
     }
+}
+
+/// Recording real inputs of the function from a run of the program.
+fn harvest(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, addr: u64, acts: &mut Acts) {
+    let p = pal(ui);
+    let busy = vm.rewrite.harvesting(addr);
+    egui::CollapsingHeader::new(RichText::new("Real inputs").size(12.5))
+        .id_salt(("kraken_rewrite_harvest", addr))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "Run the program in the emulator and record what it calls this function with. The Rust is then tested on those inputs and on small variations of them; some are held back and only shown in the final check.",
+                )
+                .size(11.5)
+                .color(p.text_dim),
+            );
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Arguments").size(12.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut st.harvest_argv)
+                        .hint_text("-v input.txt")
+                        .desired_width((ui.available_width() - 20.0).max(120.0))
+                        .id_salt(("kraken_rewrite_harvest_argv", addr)),
+                )
+                .on_hover_text("Command-line arguments for the program, separated by spaces.");
+            });
+            ui.label(RichText::new("Standard input").size(12.0));
+            ui.add(
+                egui::TextEdit::multiline(&mut st.harvest_stdin)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .id_salt(("kraken_rewrite_harvest_stdin", addr)),
+            )
+            .on_hover_text("Text the program reads from its standard input.");
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Harvest inputs"))
+                    .on_hover_text("Run the program in the emulator with these arguments and input, stop at every call of this function and store its arguments and the memory they point to. No model is called.")
+                    .on_disabled_hover_text("A harvest of this function is already running.")
+                    .clicked()
+                {
+                    acts.harvest = Some((addr, st.harvest_argv.clone(), st.harvest_stdin.clone()));
+                }
+                if busy {
+                    ui.spinner();
+                }
+            });
+        });
 }
 
 /// The line where a person types a case of their own.

@@ -185,6 +185,22 @@ pub struct CoverageView {
     pub cases: u32,
 }
 
+/// The verdict on the held-out harvested cases of a function.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HeldOutView {
+    /// `pass`, `fail` or `inconclusive`.
+    pub verdict: String,
+    /// Held-out cases replayed on both sides.
+    pub cases_run: u32,
+    /// Cases that agreed.
+    pub passed: u32,
+    /// Cases the oracle could not evaluate.
+    pub skipped: u32,
+    /// The smallest disagreement, for a failed verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterexample: Option<CounterexampleView>,
+}
+
 /// Result of a finished `rewrite_verify` or `rewrite_add_case` job (the `result` of
 /// `job_status`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -219,6 +235,10 @@ pub struct RewriteVerifyResult {
     pub coverage_note: Option<String>,
     /// Cases a person added to this version.
     pub user_cases: u32,
+    /// The held-out harvested cases, replayed apart from the rest: the repair loop never saw
+    /// them. Absent when none were harvested or the emulator could not run them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_out: Option<HeldOutView>,
     /// How the translation was confined while it ran.
     pub sandbox: String,
 }

@@ -442,6 +442,11 @@ pub enum JobKind {
         /// The function.
         address: u64,
     },
+    /// `rewrite_harvest`: recording real inputs of a function.
+    Harvest {
+        /// The function.
+        address: u64,
+    },
 }
 
 /// A job started from the tab.

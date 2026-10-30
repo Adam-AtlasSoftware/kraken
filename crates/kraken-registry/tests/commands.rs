@@ -121,6 +121,7 @@ const EXPECTED: &[&str] = &[
     "rewrite_check",
     "rewrite_export",
     "rewrite_function",
+    "rewrite_harvest",
     "rewrite_hint_get",
     "rewrite_hint_set",
     "rewrite_plan",

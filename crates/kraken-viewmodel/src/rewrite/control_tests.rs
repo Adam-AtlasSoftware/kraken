@@ -191,3 +191,32 @@ fn a_daemon_without_rewrite_check_leaves_the_other_rows() {
     assert!(checks.iter().any(|c| c.title == "Assistant"));
     assert!(checks.iter().all(|c| c.title != "Spec files"));
 }
+
+#[test]
+fn harvesting_sends_the_input_and_reports_what_was_recorded_and_held_out() {
+    let b = base().reply("rewrite_harvest", json!({"job_id": "job-h"}));
+    let mut r = opened(b);
+    r.vm.rewrite_harvest(0x401240, "-v  in.txt", "hello\n");
+    r.idle();
+    assert_eq!(
+        r.backend.calls_to("rewrite_harvest")[0],
+        json!({"address": "0x401240", "argv": ["-v", "in.txt"], "stdin": "hello\n"})
+    );
+    assert!(r.vm.rewrite.harvesting(0x401240));
+    r.backend.emit(done(
+        "job-h",
+        "rewrite_harvest",
+        json!({"hits": 9, "total_train": 6, "total_held_out": 3}),
+    ));
+    r.until("harvest done", |vm| !vm.rewrite.harvesting(0x401240));
+    assert!(
+        r.vm.toasts
+            .iter()
+            .any(|t| t.text.contains("6 recorded inputs") && t.text.contains("3 held out")),
+        "{:?}",
+        r.vm.toasts
+            .iter()
+            .map(|t| t.text.clone())
+            .collect::<Vec<_>>()
+    );
+}

@@ -212,6 +212,7 @@ impl Backend for InProcessBackend {
                 | "rewrite_program"
                 | "rewrite_build"
                 | "rewrite_verify"
+                | "rewrite_harvest"
                 | "rewrite_add_case"
                 | "rewrite_preload_build"
         ) && let Some(id) = out.get("job_id").and_then(Value::as_str)

@@ -1139,6 +1139,17 @@ pub trait RewriteBackend: Send + Sync {
         Err(no_control())
     }
 
+    /// The body of a `rewrite_harvest` job.
+    async fn harvest(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: super::RewriteHarvestArgs,
+        _job: &JobReporter,
+    ) -> Result<super::RewriteHarvestResult, ProtoError> {
+        Err(no_control())
+    }
+
     /// `rewrite_cache`.
     async fn cache(
         &self,

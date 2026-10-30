@@ -127,6 +127,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`rewrite_check`](#rewrite_check) | query | safe | Check that this host can run the Rust rewrite workflow |
 | [`rewrite_export`](#rewrite_export) | job | mutating | Export accepted units as a Cargo workspace with an FFI shim (job) |
 | [`rewrite_function`](#rewrite_function) | job | mutating | Translate one function to Rust and verify it against the original (job) |
+| [`rewrite_harvest`](#rewrite_harvest) | job | mutating | Record real inputs of a function by running the program in the emulator (job) |
 | [`rewrite_hint_get`](#rewrite_hint_get) | query | safe | Show the hints that steer the translation of a function |
 | [`rewrite_hint_set`](#rewrite_hint_set) | mutation | mutating | Set the hints that steer the translation of a function |
 | [`rewrite_plan`](#rewrite_plan) | query | safe | Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged |
@@ -21023,6 +21024,58 @@ Decompiles the function, asks the configured provider (`[provider]` in config.to
 | `model` | `--model` | string | no | Use this model name instead of the configured one, for this run only (not saved). |
 | `provider` | `--provider` | string | no | Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else `[provider]`) or `assistant` (`[provider]`, the assistant's model). |
 | `seed` | `--seed` | integer | no | Seed of the random test cases (default fixed, so runs are reproducible). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_harvest
+
+Record real inputs of a function by running the program in the emulator (job)
+
+```sh
+kraken rewrite-harvest --address <address> [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Runs the program in the emulator with the arguments, input and environment you give, stops at every entry of the function and stores what it was called with: the argument registers and the memory they point to (a list node, a record, a buffer), to a bounded depth and size. Later translations of the function are tested on these cases, and on seeded variations of them; every n-th case is held out and only `rewrite_verify` runs it, to report a verdict the repair loop never saw. Returns a `job_id`; no model is called.
+
+Example: `rewrite_harvest {"address": "0x10124e", "stdin": "hello\n", "hold_out_every": 4}`
+
+Needs the emulator (the program must be a Linux x86-64 ELF) and the SLEIGH spec files. A case holds the function's arguments and the memory reachable from pointer arguments within `depth` hops and `max_bytes` per object; globals it reads are not recorded, and function pointer arguments become the oracle's stand-in callback. Harvesting again with other input adds cases (identical ones are skipped; a case keeps its train or held-out split); `replace` starts over. The program runs confined: no network, a private working directory, and only the environment you pass. It only adds evidence, so agents may run it.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | The function (any address inside it). |
+| `argv` | `--argv` | json | no | Command-line arguments after `argv[0]` (at most 64). |
+| `depth` | `--depth` | integer | no | Pointer hops followed from a pointer argument (default 2, at most 6). |
+| `env` | `--env` | json | no | The program's whole environment (nothing of this computer's is passed). |
+| `hold_out_every` | `--hold-out-every` | integer | no | Hold out every n-th case for the separate check (default 4: a quarter; 0: none). |
+| `max_bytes` | `--max-bytes` | integer | no | Most bytes recorded per pointed-to object (default 64, at most 4096). |
+| `max_cases` | `--max-cases` | integer | no | Most distinct cases to keep from this run (default 200, at most 2000). |
+| `replace` | `--replace` | boolean | no | Forget the cases stored for this function first. |
+| `stdin` | `--stdin` | string | no | Text for the program's standard input (at most 1 MiB). |
 
 <details>
 <summary>Output schema</summary>

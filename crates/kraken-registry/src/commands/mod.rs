@@ -45,6 +45,7 @@ mod rebuild;
 mod rewrite;
 mod rewrite_build;
 mod rewrite_control;
+mod rewrite_harvest;
 mod rewrite_hint;
 mod rewrite_preload;
 mod rewrite_program;
@@ -113,7 +114,7 @@ pub use edit::{
 pub use emulate::{
     DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateCompare, EmulateCompareArgs,
     EmulateCompareOut, EmulateDifference, EmulateExit, EmulateExitKind, EmulateFile, EmulateInput,
-    EmulateRun, EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS,
+    EmulateRun, EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS, with_sysroot,
 };
 #[cfg(unix)]
 pub use emulate_call::EmulateCall;
@@ -211,11 +212,15 @@ pub use rewrite_build::{
     manifest_kind,
 };
 pub use rewrite_control::{
-    CacheAction, CoverageView, Prereq, PrereqLevel, RewriteAddCase, RewriteAddCaseArgs,
-    RewriteCache, RewriteCacheArgs, RewriteCacheOut, RewriteCheck, RewriteCheckArgs,
-    RewriteCheckOut, RewriteReject, RewriteRejectArgs, RewriteSpecEdit, RewriteSpecEditArgs,
-    RewriteUnaccept, RewriteUnacceptCmd, RewriteVerify, RewriteVerifyArgs, RewriteVerifyResult,
-    UnitChangeOut,
+    CacheAction, CoverageView, HeldOutView, Prereq, PrereqLevel, RewriteAddCase,
+    RewriteAddCaseArgs, RewriteCache, RewriteCacheArgs, RewriteCacheOut, RewriteCheck,
+    RewriteCheckArgs, RewriteCheckOut, RewriteReject, RewriteRejectArgs, RewriteSpecEdit,
+    RewriteSpecEditArgs, RewriteUnaccept, RewriteUnacceptCmd, RewriteVerify, RewriteVerifyArgs,
+    RewriteVerifyResult, UnitChangeOut,
+};
+pub use rewrite_harvest::{
+    MAX_HARVEST_ARGV, MAX_HARVEST_CASES, MAX_HARVEST_STDIN, RewriteHarvest, RewriteHarvestArgs,
+    RewriteHarvestResult,
 };
 pub use rewrite_hint::{
     RewriteHintGet, RewriteHintGetArgs, RewriteHintSet, RewriteHintSetArgs, RewriteHints,
@@ -366,6 +371,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteCheck);
     r.register(RewriteCache);
     r.register(RewriteVerify);
+    r.register(RewriteHarvest);
     r.register(RewriteSpecEdit);
     r.register(RewriteSpec);
     r.register(RewriteExport);

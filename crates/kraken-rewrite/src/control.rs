@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted};
 use kraken_registry::commands::{
-    CfgArgs, CfgCommand, CoverageView, Prereq, PrereqLevel, RewriteAddCaseArgs, RewriteCheckOut,
-    RewriteRejectArgs, RewriteSpecEditArgs, RewriteSpecResult, RewriteUnaccept, RewriteVerifyArgs,
-    RewriteVerifyResult, UnitChangeOut, UnitStatus,
+    CfgArgs, CfgCommand, CounterexampleView, CoverageView, HeldOutView, Prereq, PrereqLevel,
+    RewriteAddCaseArgs, RewriteCheckOut, RewriteRejectArgs, RewriteSpecEditArgs, RewriteSpecResult,
+    RewriteUnaccept, RewriteVerifyArgs, RewriteVerifyResult, UnitChangeOut, UnitStatus,
 };
 use kraken_registry::{CallContext, Command, JobReporter, Session};
 use serde_json::Value;
@@ -293,6 +293,7 @@ fn view_of(unit: &RewriteUnit, note: Option<String>, sandbox: String) -> Rewrite
         coverage: unit.coverage.as_ref().map(coverage_view),
         coverage_note: if unit.coverage.is_none() { note } else { None },
         user_cases: unit.user_cases,
+        held_out: None,
         sandbox,
     }
 }
@@ -523,8 +524,9 @@ impl RewriteService {
             ..defaults
         };
         let (unit2, cases) = (unit.clone(), unit.test_cases.clone());
+        let (prelude2, opts2) = (prelude.clone(), opts.clone());
         let replayed =
-            tokio::task::spawn_blocking(move || replay_cases(&unit2, &prelude, &cases, &opts))
+            tokio::task::spawn_blocking(move || replay_cases(&unit2, &prelude2, &cases, &opts2))
                 .await
                 .map_err(|e| internal_task(&e))?
                 .map_err(proto)?;
@@ -532,6 +534,76 @@ impl RewriteService {
             mut replay,
             sandbox,
         } = replayed;
+
+        // The held-out harvested cases: the repair loop never saw them.
+        let held_out =
+            if oracle_ready.is_ok() && !matches!(replay.verdict, Verdict::Rejected { .. }) {
+                progress(
+                    job,
+                    "held_out",
+                    3,
+                    5,
+                    "replaying the held-out harvested cases",
+                );
+                let (sha4, addr4) = (sha.clone(), unit.anchor.address.clone());
+                let held = with_store(dir.clone(), move |st| {
+                    st.harvested(&sha4, &addr4, crate::store::HarvestSplit::HeldOut)
+                })
+                .await?;
+                if held.is_empty() {
+                    None
+                } else {
+                    let sig4 = sig.clone();
+                    let (records, skipped) = oracle
+                        .run(move |o| {
+                            let mut v = Vec::new();
+                            let mut skipped = 0usize;
+                            for args in held {
+                                if !crate::inputs::case_fits(&sig4, &args) {
+                                    skipped += 1;
+                                    continue;
+                                }
+                                let expected = o.call(entry, &sig4, &args)?;
+                                if matches!(
+                                    expected.termination,
+                                    crate::abi::Termination::Unsupported { .. }
+                                ) {
+                                    skipped += 1;
+                                } else {
+                                    v.push(CaseRecord { args, expected });
+                                }
+                            }
+                            Ok((v, skipped))
+                        })
+                        .await
+                        .map_err(proto)?;
+                    let (unit3, prelude3, opts3) = (unit.clone(), prelude.clone(), opts.clone());
+                    let r = tokio::task::spawn_blocking(move || {
+                        replay_cases(&unit3, &prelude3, &records, &opts3)
+                    })
+                    .await
+                    .map_err(|e| internal_task(&e))?
+                    .map_err(proto)?
+                    .replay;
+                    let (verdict, _) = verdict_name(&r.verdict);
+                    Some(HeldOutView {
+                        verdict: verdict.to_string(),
+                        cases_run: count(r.cases_run),
+                        passed: count(r.passed),
+                        skipped: count(skipped),
+                        counterexample: r.counterexamples.first().map(|c| CounterexampleView {
+                            args: c.args.iter().map(render_arg).collect(),
+                            differences: c
+                                .differences
+                                .iter()
+                                .map(|d| Untrusted::sanitized(d))
+                                .collect(),
+                        }),
+                    })
+                }
+            } else {
+                None
+            };
 
         // Coverage: run the cases through the oracle with the watch on.
         if oracle_ready.is_ok()
@@ -595,7 +667,9 @@ impl RewriteService {
         } else {
             sandbox
         };
-        Ok(view_of(&stored, note, sandbox))
+        let mut view = view_of(&stored, note, sandbox);
+        view.held_out = held_out;
+        Ok(view)
     }
 
     fn require_sandbox_inner(&self) -> Result<(), ProtoError> {

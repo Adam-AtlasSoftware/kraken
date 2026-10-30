@@ -392,8 +392,8 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
     }
 
     let st = RewriteStore::open(&path).expect("open migrates");
-    assert_eq!(st.schema_version().expect("version"), 7);
-    assert_eq!(SCHEMA_VERSION, 7);
+    assert_eq!(st.schema_version().expect("version"), 8);
+    assert_eq!(SCHEMA_VERSION, 8);
 
     // The old unit reads back intact, with the new column empty.
     let u = st.get("ru-old").expect("get").expect("unit");
@@ -435,7 +435,7 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
 
     // Opening again changes nothing.
     let again = RewriteStore::open(&path).expect("reopen");
-    assert_eq!(again.schema_version().expect("version"), 7);
+    assert_eq!(again.schema_version().expect("version"), 8);
     assert_eq!(again.versions("ab12", "0x10").expect("versions").len(), 2);
 }
 
@@ -594,4 +594,65 @@ fn the_translation_cache_keeps_counts_and_forgets() {
     st.cache_forget("k2").expect("forget");
     assert_eq!(st.cache_clear().expect("clear"), 1);
     assert_eq!(st.cache_summary().expect("empty").entries, 0);
+}
+
+#[test]
+fn harvested_cases_keep_their_split_and_are_stored_apart() {
+    use kraken_rewrite::store::HarvestSplit;
+    let st = RewriteStore::open_in_memory().expect("store");
+    let case = |n: u64| {
+        vec![
+            Arg::Int { value: n },
+            Arg::Buf {
+                data: vec![n as u8; 4],
+            },
+        ]
+    };
+    let first: Vec<_> = (0..5).map(case).collect();
+    // Every third case (positions 2, 5, ...) is held out.
+    assert_eq!(
+        st.add_harvest("sha", "0x10", "run", &first, 3)
+            .expect("add"),
+        (4, 1)
+    );
+    // A repeat adds nothing; new cases continue the count.
+    assert_eq!(
+        st.add_harvest("sha", "0x10", "run", &first, 3)
+            .expect("again"),
+        (0, 0)
+    );
+    let more: Vec<_> = (4..8).map(case).collect();
+    assert_eq!(
+        st.add_harvest("sha", "0x10", "run", &more, 3)
+            .expect("more"),
+        (2, 1)
+    );
+    let train = st
+        .harvested("sha", "0x10", HarvestSplit::Train)
+        .expect("train");
+    let held = st
+        .harvested("sha", "0x10", HarvestSplit::HeldOut)
+        .expect("held");
+    assert_eq!(held, vec![case(2), case(5)]);
+    assert_eq!(
+        train,
+        vec![case(0), case(1), case(3), case(4), case(6), case(7)]
+    );
+    // Other functions and programs are separate; stride 0 holds nothing out.
+    assert!(
+        st.harvested("sha", "0x20", HarvestSplit::Train)
+            .expect("none")
+            .is_empty()
+    );
+    assert_eq!(
+        st.add_harvest("sha", "0x20", "run", &first, 0)
+            .expect("none held"),
+        (5, 0)
+    );
+    assert_eq!(st.clear_harvest("sha", "0x10").expect("clear"), 8);
+    assert!(
+        st.harvested("sha", "0x10", HarvestSplit::Train)
+            .expect("gone")
+            .is_empty()
+    );
 }

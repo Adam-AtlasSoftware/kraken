@@ -56,6 +56,9 @@ mod program_mode;
 #[path = "control.rs"]
 mod control;
 
+#[path = "service_harvest.rs"]
+mod harvest_mode;
+
 /// Default cap on functions a new whole-program plan examines.
 const DEFAULT_PLAN_FUNCTIONS: u32 = 2000;
 /// Largest cap a caller may ask for.
@@ -1224,6 +1227,16 @@ impl RewriteBackend for RewriteService {
         self.add_case_job(s, ctx, args, job).await
     }
 
+    async fn harvest(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteHarvestArgs,
+        job: &JobReporter,
+    ) -> Result<kraken_registry::commands::RewriteHarvestResult, ProtoError> {
+        self.harvest_job(s, ctx, args, job).await
+    }
+
     async fn verify(
         &self,
         s: &Session,
@@ -1756,8 +1769,15 @@ impl RewriteService {
             confinement: self.cfg.confinement.clone(),
             ..defaults
         };
+        let train = {
+            let (sha, addr) = (f.program_sha256.clone(), format!("{:#x}", f.address));
+            with_store(dir.clone(), move |st| {
+                st.harvested(&sha, &addr, crate::store::HarvestSplit::Train)
+            })
+            .await?
+        };
         let work = Work {
-            inputs: generic_inputs(&sig),
+            inputs: harvest_mode::with_harvested(generic_inputs(&sig), train, &sig, opts.seed),
             function: f,
             signature: sig,
             task,

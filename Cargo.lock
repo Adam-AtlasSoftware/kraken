@@ -3145,6 +3145,7 @@ dependencies = [
  "kraken-model",
  "kraken-proto",
  "kraken-registry",
+ "kraken-sidecar",
  "landlock",
  "libc",
  "object 0.38.1",

@@ -639,7 +639,7 @@ fn emulate(
 /// Runs `run` on `spec`; a dynamically linked program that needs a sysroot gets one (an
 /// extracted one, or private copies of this computer's libraries) and `run` is called again. The
 /// returned directory holds those copies and must outlive whatever `run` started.
-pub(super) fn with_sysroot<T>(
+pub fn with_sysroot<T>(
     spec: &mut RunSpec,
     program: &Path,
     binary: &Path,

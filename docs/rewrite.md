@@ -57,6 +57,16 @@ Four controls in the detail view let you add to that evidence or overrule it:
 - **Reject** marks the newest version as wrong or unwanted although it passed. It stays in the history and is never exported.
 - **Unaccept** takes an acceptance back; the version goes back to verified.
 
+#### Verify with real inputs
+
+Generated inputs rarely look like what the program really passes: a list node whose `next` points at another node, a record read from a file, a buffer in the middle of a parse. **Real inputs** (the section above "Add a test case") runs the program in the emulator with the arguments and standard input you type, stops at every call of the function, and stores what it was called with: the argument registers and the memory they point to. Memory that holds pointers is followed for two hops (so a list node comes with its neighbours), up to 64 bytes per object. The command is `rewrite_harvest`; no model is called.
+
+- The next translation of the function is tested on these recorded inputs, then on seeded variations of them (a flipped bit, a neighbouring number, a swapped byte; the same seed always gives the same variations), then on the usual generated cases.
+- Every fourth recorded input is **held out**. The translation and the repair loop never see it. **Replay cases** runs the held-out inputs apart from the rest and reports their verdict on its own ("the 3 held-out recorded inputs, never used while repairing, agree too"), so a translation that was repaired until it fitted the training inputs cannot hide behind them. `hold_out_every` changes the share; 0 holds nothing out. A recorded input keeps its split when you harvest again.
+- Harvesting again with other input adds inputs; identical ones are skipped. `replace` starts over.
+
+A recorded input holds what the function was handed. Globals it reads are not recorded, and a function pointer argument is replaced by the oracle's own callback. The program must be a Linux x86-64 program.
+
 In the Spec view, **Edit the spec** lets you correct what the model wrote. KRAKEN checks that every fact cites an address, and stores the edit as the function's newest spec, which "Rewrite from the spec" then uses.
 
 ### 4. Accept
@@ -160,6 +170,7 @@ Everything above is a command, so an assistant connected through [MCP](mcp.md) o
 | `rewrite_check` | Check what the host provides: sandbox, Rust toolchain, spec files, program kind. |
 | `rewrite_accept`, `rewrite_unaccept`, `rewrite_reject` | Accept a verified version, take the acceptance back, or reject a version. People only. |
 | `rewrite_verify`, `rewrite_add_case` | Replay every stored case of a version and measure coverage, or add a case of your own first (jobs; no model is called). Agents may run them. |
+| `rewrite_harvest` | Run the program in the emulator with your arguments, input and environment and store what a function is called with, part of it held out (a job; no model is called). Agents may run it. |
 | `rewrite_spec_edit` | Store an edited spec of a function. |
 | `rewrite_export` | Write the accepted functions as a workspace (a job). |
 | `rewrite_hint_set`, `rewrite_hint_get` | Set or read the hints that steer the next translation of a function. Agents may set them. |

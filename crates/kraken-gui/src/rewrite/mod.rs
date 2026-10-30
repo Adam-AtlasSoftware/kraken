@@ -76,6 +76,10 @@ pub struct RewriteUi {
     pub case_text: String,
     /// Why the typed case was not understood.
     pub case_error: Option<String>,
+    /// The arguments a harvest run gets.
+    pub harvest_argv: String,
+    /// Text for the harvest run's standard input.
+    pub harvest_stdin: String,
     /// The spec being edited, when the editor is open.
     pub editing_spec: Option<String>,
     /// The hints being typed, by function.
@@ -97,6 +101,7 @@ pub(crate) struct Acts {
     pub unaccept: Option<u64>,
     pub verify: Option<u64>,
     pub add_case: Option<(u64, String)>,
+    pub harvest: Option<(u64, String, String)>,
     pub hints_load: Option<u64>,
     pub hints_save: Option<(u64, HintsDraft)>,
     pub hints_retranslate: Option<(u64, HintsDraft)>,
@@ -261,6 +266,9 @@ fn apply(vm: &mut ViewModel, st: &mut RewriteUi, acts: Acts, front: &mut Option<
     }
     if let Some(a) = acts.verify {
         vm.rewrite_verify(a);
+    }
+    if let Some((a, argv, stdin)) = acts.harvest {
+        vm.rewrite_harvest(a, &argv, &stdin);
     }
     if let Some((a, text)) = acts.add_case {
         match vm.rewrite_add_case(a, &text) {

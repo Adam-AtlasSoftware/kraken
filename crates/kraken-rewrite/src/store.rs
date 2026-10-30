@@ -19,7 +19,7 @@ use kraken_registry::commands::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::abi::Signature;
+use crate::abi::{Arg, Signature};
 use crate::difftest::{CaseRecord, Counterexample, Verdict};
 use crate::error::RewriteError;
 use kraken_registry::commands::RewriteHints;
@@ -234,7 +234,37 @@ pub const MIGRATIONS: &[&str] = &[
         created_at INTEGER NOT NULL,
         hits       INTEGER NOT NULL DEFAULT 0
      );",
+    // 8: inputs harvested from runs of the real program, per function. `split` is `train` (the
+    // repair loop may see it) or `held_out` (only the separate check does).
+    "CREATE TABLE harvested_cases (
+        program_sha256 TEXT NOT NULL,
+        address        TEXT NOT NULL,
+        ordinal        INTEGER NOT NULL,
+        split          TEXT NOT NULL,
+        case_json      TEXT NOT NULL,
+        run_label      TEXT NOT NULL,
+        created_at     INTEGER NOT NULL,
+        PRIMARY KEY (program_sha256, address, ordinal)
+     );",
 ];
+
+/// Which part of a function's harvested cases to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarvestSplit {
+    /// Cases the translation and repair may be tested with.
+    Train,
+    /// Cases kept back for the separate check.
+    HeldOut,
+}
+
+impl HarvestSplit {
+    fn as_str(self) -> &'static str {
+        match self {
+            HarvestSplit::Train => "train",
+            HarvestSplit::HeldOut => "held_out",
+        }
+    }
+}
 
 /// The newest schema version.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -1236,6 +1266,108 @@ impl RewriteStore {
             .execute("DELETE FROM translation_cache WHERE key = ?1", params![key])
             .map_err(db)?;
         Ok(())
+    }
+
+    /// Adds harvested cases of a function (those already stored are skipped). The case at
+    /// position `n` of the function's whole list is held out when `n % stride == stride - 1`
+    /// (`stride` 0 holds none out), so a case keeps its split when more are added later.
+    /// Returns how many were added to `train` and to `held_out`.
+    pub fn add_harvest(
+        &self,
+        sha: &str,
+        address: &str,
+        run_label: &str,
+        cases: &[Vec<Arg>],
+        stride: u32,
+    ) -> Result<(usize, usize), RewriteError> {
+        let mut conn = self.conn();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
+        let mut have: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        {
+            let mut q = tx
+                .prepare(
+                    "SELECT case_json FROM harvested_cases
+                     WHERE program_sha256 = ?1 AND address = ?2",
+                )
+                .map_err(db)?;
+            let rows = q
+                .query_map(params![sha, address], |r| r.get::<_, String>(0))
+                .map_err(db)?;
+            for r in rows {
+                have.insert(r.map_err(db)?);
+            }
+        }
+        let mut next = i64::try_from(have.len()).unwrap_or(0);
+        let (mut train, mut held) = (0, 0);
+        for case in cases {
+            let json = serde_json::to_string(case).map_err(js)?;
+            if !have.insert(json.clone()) {
+                continue;
+            }
+            let held_out = stride > 0 && next % i64::from(stride) == i64::from(stride) - 1;
+            tx.execute(
+                "INSERT INTO harvested_cases
+                    (program_sha256, address, ordinal, split, case_json, run_label, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    sha,
+                    address,
+                    next,
+                    if held_out { "held_out" } else { "train" },
+                    json,
+                    run_label,
+                    now()
+                ],
+            )
+            .map_err(db)?;
+            next += 1;
+            if held_out {
+                held += 1;
+            } else {
+                train += 1;
+            }
+        }
+        tx.commit().map_err(db)?;
+        Ok((train, held))
+    }
+
+    /// The harvested cases of a function in one split, in the order they were stored.
+    pub fn harvested(
+        &self,
+        sha: &str,
+        address: &str,
+        split: HarvestSplit,
+    ) -> Result<Vec<Vec<Arg>>, RewriteError> {
+        let conn = self.conn();
+        let mut q = conn
+            .prepare(
+                "SELECT case_json FROM harvested_cases
+                 WHERE program_sha256 = ?1 AND address = ?2 AND split = ?3
+                 ORDER BY ordinal",
+            )
+            .map_err(db)?;
+        let rows = q
+            .query_map(params![sha, address, split.as_str()], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(db)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(serde_json::from_str(&r.map_err(db)?).map_err(js)?);
+        }
+        Ok(out)
+    }
+
+    /// Forgets the harvested cases of a function; returns how many there were.
+    pub fn clear_harvest(&self, sha: &str, address: &str) -> Result<usize, RewriteError> {
+        self.conn()
+            .execute(
+                "DELETE FROM harvested_cases WHERE program_sha256 = ?1 AND address = ?2",
+                params![sha, address],
+            )
+            .map_err(db)
     }
 
     /// What the translation cache holds.

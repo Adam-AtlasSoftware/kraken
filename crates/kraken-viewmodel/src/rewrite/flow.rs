@@ -501,7 +501,7 @@ impl ViewModel {
                 self.rewrite.export.error = Some(why.clone());
             }
             JobKind::Spec { .. } => {}
-            JobKind::Verify { address } => {
+            JobKind::Verify { address } | JobKind::Harvest { address } => {
                 let name = self.rewrite_name(address);
                 let d = self
                     .rewrite
@@ -542,6 +542,7 @@ impl ViewModel {
             JobKind::Program => self.rewrite_program_done(result),
             JobKind::Build => self.rewrite_build_done(result),
             JobKind::Verify { address } => self.rewrite_verify_done(address, result),
+            JobKind::Harvest { address } => self.rewrite_harvest_done(address, result),
         };
         match outcome {
             Ok(text) => self.rewrite.jobs[idx].outcome = Some(text),

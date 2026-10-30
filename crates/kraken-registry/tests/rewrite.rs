@@ -1020,6 +1020,7 @@ fn the_unit_controls_have_the_right_kinds() {
         ),
         ("rewrite_add_case", CommandKind::Job, Permission::Mutating),
         ("rewrite_verify", CommandKind::Job, Permission::Mutating),
+        ("rewrite_harvest", CommandKind::Job, Permission::Mutating),
         (
             "rewrite_spec_edit",
             CommandKind::Mutation,
@@ -1086,6 +1087,7 @@ async fn deciding_about_a_unit_is_for_users_and_adding_evidence_is_open_to_agent
     for (cmd, args) in [
         ("rewrite_verify", json!({"unit": "ru-1"})),
         ("rewrite_add_case", json!({"unit": "ru-1", "args": [1]})),
+        ("rewrite_harvest", json!({"address": "0x401040"})),
     ] {
         let started = r
             .call(&agent, cmd, args)

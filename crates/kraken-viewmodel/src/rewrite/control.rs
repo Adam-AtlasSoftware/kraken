@@ -40,6 +40,13 @@ impl super::RewriteState {
             j.running() && matches!(&j.kind, JobKind::Verify { address: a } if *a == address)
         })
     }
+
+    /// Inputs are being harvested for the function.
+    pub fn harvesting(&self, address: u64) -> bool {
+        self.jobs.iter().any(|j| {
+            j.running() && matches!(&j.kind, JobKind::Harvest { address: a } if *a == address)
+        })
+    }
 }
 
 impl ViewModel {
@@ -209,11 +216,73 @@ impl ViewModel {
         Ok(())
     }
 
+    /// Runs the program in the emulator with `argv` (split at spaces) and `stdin` and records what
+    /// the function is called with; a job. Later translations are tested on those cases.
+    pub fn rewrite_harvest(&mut self, address: u64, argv: &str, stdin: &str) {
+        if self.rewrite.harvesting(address) {
+            return;
+        }
+        let name = self.rewrite_name(address);
+        if let Some(d) = self.rewrite.details.get_mut(&address) {
+            d.error = None;
+        }
+        let argv: Vec<&str> = argv.split_whitespace().collect();
+        self.rewrite_start_job(
+            JobKind::Harvest { address },
+            format!("Harvesting inputs of {name}"),
+            "rewrite_harvest",
+            json!({ "address": hex(address), "argv": argv, "stdin": stdin }),
+        );
+    }
+
+    pub(super) fn rewrite_harvest_done(
+        &mut self,
+        address: u64,
+        result: Value,
+    ) -> Result<String, String> {
+        let name = self.rewrite_name(address);
+        let n = |k: &str| result.get(k).and_then(Value::as_u64).unwrap_or(0);
+        let (hits, train, held) = (n("hits"), n("total_train"), n("total_held_out"));
+        let (text, level) = if hits == 0 {
+            (
+                format!(
+                    "{name}: the program never called it with that input. Try other arguments or input."
+                ),
+                ToastLevel::Warning,
+            )
+        } else {
+            (
+                format!(
+                    "{name}: {hits} calls seen. {train} recorded inputs for testing, {held} held out for the final check."
+                ),
+                ToastLevel::Success,
+            )
+        };
+        self.toast(level, text.clone());
+        Ok(text)
+    }
+
     pub(super) fn rewrite_verify_done(
         &mut self,
         address: u64,
         result: Value,
     ) -> Result<String, String> {
+        let held = result.get("held_out").map(|h| {
+            let s = |k: &str| h.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let n = |k: &str| h.get(k).and_then(Value::as_u64).unwrap_or(0);
+            match s("verdict").as_str() {
+                "pass" => format!(
+                    " The {} held-out recorded inputs, never used while repairing, agree too.",
+                    n("cases_run")
+                ),
+                "fail" => format!(
+                    " It differs on the held-out recorded inputs ({} of {} agree).",
+                    n("passed"),
+                    n("cases_run")
+                ),
+                _ => " The held-out recorded inputs could not be decided.".to_string(),
+            }
+        });
         let w = parse::<VersionWire>(result).map_err(|e| plain_error(&e))?;
         let v = version(w);
         let name = self.rewrite_name(address);
@@ -221,7 +290,8 @@ impl ViewModel {
             .coverage
             .as_ref()
             .map(|c| format!(" The cases reach {}.", c.line()))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            + &held.unwrap_or_default();
         let (text, level) = match v.verdict.as_str() {
             "pass" => (
                 format!("{name}: all {} cases agree.{cov}", v.cases_run),

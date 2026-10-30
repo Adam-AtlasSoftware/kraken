@@ -1932,3 +1932,143 @@ async fn rewrite_check_lists_what_the_host_and_the_program_provide() {
     }
     assert_eq!(out["ready"], rows.iter().all(|c| c["level"] != "blocked"));
 }
+
+// ---- rewrite_harvest ---------------------------------------------------------------------------
+
+/// The emulator's child program, built next to the test binaries (or named by `KRAKEN_EMU_RUN`).
+/// Without it the harvest test is skipped, unless `KRAKEN_REQUIRE_SANDBOX=1`.
+fn need_emu_runner() -> bool {
+    if kraken_emu::confined::find_runner().is_some_and(|p| p.is_file()) {
+        return true;
+    }
+    assert!(
+        !std::env::var("KRAKEN_REQUIRE_SANDBOX").is_ok_and(|v| !v.is_empty() && v != "0"),
+        "kraken-emu-run is not built (cargo build -p kraken-emu --bin kraken-emu-run)"
+    );
+    eprintln!("skipped: kraken-emu-run is not built");
+    false
+}
+
+#[tokio::test]
+async fn harvested_inputs_are_stored_replay_identically_and_a_part_is_held_out() {
+    if !common::need_specs() || !need_emu_runner() {
+        return;
+    }
+    let r = pie_rig().await;
+    let out = r
+        .job(
+            &user(),
+            "rewrite_harvest",
+            json!({"address": "0x10124e", "hold_out_every": 3}),
+        )
+        .await
+        .expect("rewrite_harvest");
+    assert_eq!(out["name"], "cmp_id");
+    let hits = out["hits"].as_u64().unwrap_or(0);
+    assert!(hits >= 3, "the program sorts four nodes by id: {out:#}");
+    let (train, held) = (
+        out["total_train"].as_u64().unwrap_or(0),
+        out["total_held_out"].as_u64().unwrap_or(0),
+    );
+    assert!(train >= 2 && held >= 1, "{out:#}");
+    assert_eq!(out["added_train"], out["total_train"]);
+    assert_eq!(
+        out["ended"],
+        json!("the program ended (Code { code: 0 })").clone(),
+        "{out:#}"
+    );
+
+    // The store round-trips them, split apart.
+    let sha = r.session.project().expect("project").program().sha256;
+    let st = r.store();
+    use kraken_rewrite::store::HarvestSplit;
+    let tr = st
+        .harvested(&sha, "0x10124e", HarvestSplit::Train)
+        .expect("train");
+    let he = st
+        .harvested(&sha, "0x10124e", HarvestSplit::HeldOut)
+        .expect("held out");
+    assert_eq!((tr.len() as u64, he.len() as u64), (train, held));
+    assert!(
+        tr.iter().all(|c| !he.contains(c)),
+        "the splits are disjoint"
+    );
+    // Each case holds two pointer arguments: the record and the memory behind its `next`.
+    assert!(
+        tr.iter().chain(&he).all(|c| c.len() == 2),
+        "{:?}",
+        tr.first()
+    );
+    drop(st);
+
+    // The recorded cases replay identically in the oracle.
+    let bin = corpus_bin("pie_list-O0");
+    let mut o = common::oracle(&bin);
+    let entry = o.elf_vaddr(0x10124e, 0x100000);
+    let sig = target("cmp_id").expect("target").signature;
+    for case in tr.iter().chain(&he) {
+        let a = o.call(entry, &sig, case).expect("first");
+        let b = o.call(entry, &sig, case).expect("second");
+        assert_eq!(a, b, "{case:?}");
+        assert!(
+            !matches!(
+                a.termination,
+                kraken_rewrite::abi::Termination::Unsupported { .. }
+            ),
+            "{a:?}"
+        );
+    }
+
+    // Harvesting again adds nothing and keeps the splits.
+    let again = r
+        .job(
+            &user(),
+            "rewrite_harvest",
+            json!({"address": "0x10124e", "hold_out_every": 3}),
+        )
+        .await
+        .expect("again");
+    assert_eq!(again["added_train"], 0);
+    assert_eq!(again["added_held_out"], 0);
+    assert_eq!(again["total_train"], out["total_train"]);
+
+    // The translation is tested on the training cases and their mutants, and the held-out
+    // cases are reported apart.
+    let run = r
+        .job(
+            &user(),
+            "rewrite_function",
+            json!({"address": "0x10124e", "cases": 40}),
+        )
+        .await
+        .expect("rewrite_function");
+    assert_eq!(run["verdict"], "pass", "{run:#}");
+    let unit = r
+        .store()
+        .latest(&sha, "0x10124e")
+        .expect("read")
+        .expect("unit");
+    let json_cases: Vec<String> = unit
+        .test_cases
+        .iter()
+        .map(|c| serde_json::to_string(&c.args).expect("json"))
+        .collect();
+    for c in &tr {
+        let j = serde_json::to_string(c).expect("json");
+        assert!(json_cases.contains(&j), "a training case ran");
+    }
+    for c in &he {
+        let j = serde_json::to_string(c).expect("json");
+        assert!(
+            !json_cases.contains(&j),
+            "a held-out case never reaches the repair loop"
+        );
+    }
+    let v = r
+        .job(&user(), "rewrite_verify", json!({"unit": run["unit"]}))
+        .await
+        .expect("rewrite_verify");
+    assert_eq!(v["verdict"], "pass", "{v:#}");
+    assert_eq!(v["held_out"]["verdict"], "pass", "{v:#}");
+    assert_eq!(v["held_out"]["cases_run"].as_u64(), Some(held), "{v:#}");
+}

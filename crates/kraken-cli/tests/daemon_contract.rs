@@ -847,6 +847,7 @@ async fn every_registry_command_identical() {
         ("rewrite_check", json!({})),
         ("rewrite_cache", json!({"action": "stats"})),
         ("rewrite_verify", json!({"unit": "ru-1"})),
+        ("rewrite_harvest", json!({"address": "0x401040"})),
         ("rewrite_add_case", json!({"unit": "ru-1", "args": [1]})),
         (
             "rewrite_spec_edit",
