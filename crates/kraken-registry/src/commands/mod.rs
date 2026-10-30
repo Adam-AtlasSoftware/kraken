@@ -15,6 +15,7 @@ mod data;
 #[cfg(unix)]
 mod debug;
 mod debuginfo;
+mod debuginfo_fetch;
 mod edit;
 mod emulate;
 #[cfg(unix)]
@@ -93,8 +94,14 @@ pub use debug::{
 };
 pub use debuginfo::{
     CandidateSource, DebugCandidate, DebugInfoAttach, DebugInfoAttachArgs, DebugInfoDetach,
-    DebugInfoProbe, DebugInfoProbeArgs, DebugInfoProbeOut, DebugStatus, Verdict, engine_accepts,
-    pdb_identity, probe as probe_debug_info, resolve_for_attach,
+    DebugInfoFind, DebugInfoFindArgs, DebugInfoProbe, DebugInfoProbeArgs, DebugInfoProbeOut,
+    DebugInfoServers, DebugInfoServersArgs, DebugServer, DebugServersOut, DebugStatus, Verdict,
+    engine_accepts, pdb_identity, probe as probe_debug_info, resolve_for_attach,
+};
+pub use debuginfo_fetch::{
+    DebugFindOut, FindAttempt, find as find_debug_file,
+    normalize_server as normalize_symbol_server, offline_env as symbols_offline_env,
+    servers_with_env as symbol_servers_with_env, wanted_of as debug_wanted,
 };
 pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
@@ -370,6 +377,8 @@ pub fn register_all(r: &mut Registry) {
     r.register(DebugInfoProbe);
     r.register(DebugInfoAttach);
     r.register(DebugInfoDetach);
+    r.register(DebugInfoFind);
+    r.register(DebugInfoServers);
     r.register(ProjectClose);
     // Card REWRITE
     r.register(RewriteBuild);

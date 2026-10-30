@@ -58,6 +58,21 @@ pub enum ConfigError {
     },
 }
 
+/// The `[debuginfo]` table: downloading debug files from symbol servers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DebugInfoSettings {
+    /// debuginfod and Microsoft-style symbol server addresses, asked in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<String>,
+    /// The person has agreed to send build-ids and PDB identities to those servers.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub consent: bool,
+    /// Ask no server at all.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub offline: bool,
+}
+
 /// The `[daemon]` table of the configuration (decisions 17, 40).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -244,6 +259,9 @@ pub struct KrakenConfig {
     pub projects_root: Option<PathBuf>,
     /// `krakend` tunables.
     pub daemon: DaemonSettings,
+    /// Symbol server downloads.
+    #[serde(skip_serializing_if = "is_default_debuginfo")]
+    pub debuginfo: DebugInfoSettings,
     /// Models set up on this computer (`[[local_models]]`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub local_models: Vec<LocalModel>,
@@ -280,6 +298,10 @@ pub struct KrakenConfig {
     /// Kept opaque; parsed by `kraken-agent` (`ThinkingConfig`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<serde_json::Value>,
+}
+
+fn is_default_debuginfo(s: &DebugInfoSettings) -> bool {
+    *s == DebugInfoSettings::default()
 }
 
 fn is_default_serving(s: &LocalServingSettings) -> bool {

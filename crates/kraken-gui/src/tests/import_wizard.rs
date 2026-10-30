@@ -327,3 +327,148 @@ fn a_firmware_image_asks_for_the_processor_and_skips_the_debug_step() {
 fn has(k: &Kit, text: &str) -> bool {
     k.h.query_all_by_label_contains(text).next().is_some()
 }
+
+/// `src` with the GNU build-id `[0x77; 20]` added.
+fn with_build_id(src: &Path, dst: &Path) -> bool {
+    let mut note = Vec::new();
+    note.extend_from_slice(&4u32.to_le_bytes());
+    note.extend_from_slice(&20u32.to_le_bytes());
+    note.extend_from_slice(&3u32.to_le_bytes());
+    note.extend_from_slice(b"GNU\0");
+    note.extend_from_slice(&[0x77; 20]);
+    let note_path = dst.with_extension("note");
+    std::fs::write(&note_path, &note).unwrap();
+    std::process::Command::new("objcopy")
+        .arg("--add-section")
+        .arg(format!(".note.gnu.build-id={}", note_path.display()))
+        .arg("--set-section-flags")
+        .arg(".note.gnu.build-id=alloc,readonly")
+        .arg(src)
+        .arg(dst)
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// A debuginfod stand-in that serves `body` for `path` and 404 for everything else.
+fn serve_debuginfod(path: String, body: Vec<u8>) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut req = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => req.extend_from_slice(&buf[..n]),
+                }
+            }
+            let text = String::from_utf8_lossy(&req).into_owned();
+            let asked = text.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let (status, data) = if asked == path {
+                ("200 OK", body.clone())
+            } else {
+                ("404 Not Found", b"no".to_vec())
+            };
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                data.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&data);
+        }
+    });
+    url
+}
+
+#[test]
+fn the_wizard_searches_symbol_servers_only_after_consent_and_uses_what_it_finds() {
+    let tmp = tempfile::Builder::new().prefix("wizsym").tempdir().unwrap();
+    let prog = tmp.path().join("prog");
+    let full = tmp.path().join("prog.full");
+    if !with_build_id(&corpus("bin/stripped_calc-O0-stripped"), &prog)
+        || !with_build_id(&corpus("bin/stripped_calc-O0"), &full)
+    {
+        eprintln!("skipped: objcopy is not available");
+        return;
+    }
+    let cache = tmp.path().join("cache");
+    // SAFETY: only this test reads the variable, and it is set before the wizard looks at it.
+    unsafe {
+        std::env::set_var("KRAKEN_DEBUGINFO_CACHE", &cache);
+        std::env::remove_var("KRAKEN_OFFLINE");
+    }
+    let id = "77".repeat(20);
+    let url = serve_debuginfod(
+        format!("/buildid/{id}/debuginfo"),
+        std::fs::read(&full).unwrap(),
+    );
+    let config = tmp.path().join("config.toml");
+
+    let mut services = crate::services::Services::offline();
+    services.cfg.native_in_process = true;
+    let mut k = kit_from(services, &options(false), false);
+    open_wizard(&mut k, &prog);
+    until(&mut k, "the probe", |k| {
+        k.h.state()
+            .import_wizard()
+            .and_then(|w| w.dialog.as_ref())
+            .is_some_and(|d| d.probed().is_some())
+    });
+    next(&mut k);
+    next(&mut k);
+    assert_eq!(step(&k), ImportStep::DebugInfo);
+    until(&mut k, "the debug probe", |k| {
+        k.h.state()
+            .import_wizard()
+            .is_some_and(|w| w.debug.answer().is_some())
+    });
+    k.h.run_steps(3);
+    assert!(has(&k, "Symbol servers"), "the search is offered");
+    k.h.state_mut().import_wizard_mut().unwrap().config_path = Some(config.clone());
+    k.h.state_mut()
+        .import_wizard_mut()
+        .unwrap()
+        .set_search(&url, false);
+    k.h.run_steps(3);
+    assert!(
+        k.h.get_by_label("Search symbol servers")
+            .accesskit_node()
+            .is_disabled(),
+        "nothing can be sent before the consent box is ticked"
+    );
+    assert!(!config.exists() && !cache.exists());
+
+    // the person ticks the box: the button works, the consent is recorded, the file arrives
+    k.h.state_mut()
+        .import_wizard_mut()
+        .unwrap()
+        .set_search(&url, true);
+    k.h.run_steps(3);
+    assert!(
+        !k.h.get_by_label("Search symbol servers")
+            .accesskit_node()
+            .is_disabled()
+    );
+    k.h.get_by_label("Search symbol servers").click();
+    until(&mut k, "the download", |k| has(k, "Matches"));
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        text.contains("consent = true") && text.contains(&url),
+        "{text}"
+    );
+    let file =
+        k.h.state()
+            .import_wizard()
+            .unwrap()
+            .debug_file()
+            .expect("the downloaded file is used");
+    assert!(file.contains(&id), "{file}");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        std::fs::read(&full).unwrap(),
+        "the cached file is the one the server sent"
+    );
+}

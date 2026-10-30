@@ -867,6 +867,12 @@ async fn every_registry_command_identical() {
         assert_eq!(r["code"], "invalid_argument", "{name}: {r}");
     }
     covered.extend(["config_get".to_string(), "config_set".to_string()]);
+    // debuginfo_find and debuginfo_servers read the consent in config.toml and download: they are
+    // tested in kraken-registry (tests/debuginfo_find.rs) against a local server.
+    covered.extend([
+        "debuginfo_find".to_string(),
+        "debuginfo_servers".to_string(),
+    ]);
     let denied = step!("rewrite_accept", json!({"unit": "ru-1"}));
     assert_eq!(denied["code"], "rejected_human_priority", "{denied}");
     for cmd in ["rewrite_reject", "rewrite_unaccept"] {

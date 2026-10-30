@@ -52,7 +52,9 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_watch_set`](#debug_watch_set) | query | safe | Stop the debugged program when it writes (or reads) a range of memory |
 | [`debuginfo_attach`](#debuginfo_attach) | job | mutating | Attach a separate debug file to the project and reopen the engine with it (job) |
 | [`debuginfo_detach`](#debuginfo_detach) | job | mutating | Remove the attached debug file and reopen the engine without it (job) |
+| [`debuginfo_find`](#debuginfo_find) | job | mutating | Download the program's debug file from debuginfod or a symbol server, checked (job; needs consent) |
 | [`debuginfo_probe`](#debuginfo_probe) | query | safe | Say what debug information a program refers to and where a matching file is |
+| [`debuginfo_servers`](#debuginfo_servers) | query | mutating | List or set the symbol servers, the download consent and the offline switch |
 | [`decompile`](#decompile) | query | safe | Decompile a function to C-like source |
 | [`decompile_patched`](#decompile_patched) | query | safe | Decompile a function with the byte patches applied |
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
@@ -5964,6 +5966,50 @@ Arguments: none.
 
 </details>
 
+## debuginfo_find
+
+Download the program's debug file from debuginfod or a symbol server, checked (job; needs consent)
+
+```sh
+kraken debuginfo-find [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Asks the configured servers for the debug file of a program: a debuginfod server for its GNU build-id, a Microsoft-style symbol server for its PDB (GUID and age). The file is checked against the program before it is kept in KRAKEN's download cache; `debuginfo_probe` then finds it and `debuginfo_attach` takes it. Needs consent recorded in the configuration (`debuginfo_servers`), is refused while offline, and an agent is asked first. Returns a `job_id`.
+
+Example: `debuginfo_find {"path": "./prog"}`
+
+Servers come from `debuginfo.servers` and `DEBUGINFOD_URLS`; see `debuginfo_servers`. Nothing is sent but the build-id, or the PDB's name, GUID and age. A file that does not carry the program's build-id (or GUID and age) is thrown away, and a file over 1 GiB is abandoned. A cached file is reused without asking any server, even offline. A PDB a server holds only as a compressed `.pd_` is reported and not unpacked. The job result is a `DebugFindOut`: `found`, the cached `file`, and what each server answered in `attempts`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `path` | `--path` | string | no | Path of the program; the open project's program when absent. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## debuginfo_probe
 
 Say what debug information a program refers to and where a matching file is
@@ -6008,6 +6054,11 @@ Example: `debuginfo_probe {"path": "/usr/bin/ls"}`
         {
           "const": "debuginfod",
           "description": "In the debuginfod download cache.",
+          "type": "string"
+        },
+        {
+          "const": "downloaded",
+          "description": "In KRAKEN's own download cache (`debuginfo_find`).",
           "type": "string"
         },
         {
@@ -6285,6 +6336,112 @@ Example: `debuginfo_probe {"path": "/usr/bin/ls"}`
     "candidates"
   ],
   "title": "DebugInfoProbeOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debuginfo_servers
+
+List or set the symbol servers, the download consent and the offline switch
+
+```sh
+kraken debuginfo-servers [options]
+```
+
+- Kind: query
+- Permission: mutating
+
+With no arguments, shows the servers `debuginfo_find` asks (the `debuginfo.servers` list, then `DEBUGINFOD_URLS`), whether consent to download is recorded, whether offline mode is on, and the cache folder. `servers`, `consent` and `offline` change the configuration; only a person may set them.
+
+Example: `debuginfo_servers {"servers": ["https://debuginfod.elfutils.org"], "consent": true}`
+
+Needs no project. Addresses must be http:// or https:// without credentials. Setting `consent` is how the import wizard's "Search symbol servers" box is remembered. Offline mode also follows the `KRAKEN_OFFLINE` environment variable.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `consent` | `--consent` | boolean | no | Record (true) or withdraw (false) your consent to download symbols. |
+| `offline` | `--offline` | boolean | no | Switch the offline mode on or off. |
+| `servers` | `--servers` | json | no | Replace the configured servers (http:// or https:// addresses); an empty list removes them. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugServer": {
+      "description": "One server `debuginfo_find` would ask.",
+      "properties": {
+        "source": {
+          "description": "`config` (`debuginfo.servers`) or `environment` (`DEBUGINFOD_URLS`).",
+          "type": "string"
+        },
+        "url": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The address."
+        }
+      },
+      "required": [
+        "url",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `debuginfo_servers` shows.",
+  "properties": {
+    "cache_dir": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Untrusted_string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Where downloaded files are kept."
+    },
+    "consent": {
+      "description": "Whether you have consented to downloads (an agent is asked every time instead).",
+      "type": "boolean"
+    },
+    "offline": {
+      "description": "True when no server is asked, from the configuration or `KRAKEN_OFFLINE`.",
+      "type": "boolean"
+    },
+    "servers": {
+      "description": "The servers, in the order they are asked.",
+      "items": {
+        "$ref": "#/$defs/DebugServer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "servers",
+    "consent",
+    "offline"
+  ],
+  "title": "DebugServersOut",
   "type": "object"
 }
 ```

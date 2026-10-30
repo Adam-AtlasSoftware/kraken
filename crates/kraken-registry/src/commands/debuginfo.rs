@@ -19,7 +19,7 @@ use crate::session::{AnalysisPhase, EngineKind, Session, blocking};
 use crate::trust;
 
 use super::probe::{debug_refs, format_guid};
-use super::{JobStarted, NoArgs};
+use super::{GlobalJobOut, JobStarted, NoArgs, debuginfo_fetch};
 
 /// A debug file larger than this is not read.
 const MAX_DEBUG_FILE: u64 = 2 << 30;
@@ -36,6 +36,8 @@ pub enum CandidateSource {
     System,
     /// In the debuginfod download cache.
     Debuginfod,
+    /// In KRAKEN's own download cache (`debuginfo_find`).
+    Downloaded,
     /// The file or folder the person named.
     Chosen,
 }
@@ -47,6 +49,7 @@ impl CandidateSource {
             CandidateSource::Beside => "beside the program",
             CandidateSource::System => "in the system debug directory",
             CandidateSource::Debuginfod => "in the debuginfod cache",
+            CandidateSource::Downloaded => "in KRAKEN's symbol download cache",
             CandidateSource::Chosen => "chosen by you",
         }
     }
@@ -201,7 +204,7 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn base_name(s: &str) -> &str {
+pub(super) fn base_name(s: &str) -> &str {
     s.rsplit(['/', '\\']).next().unwrap_or(s)
 }
 
@@ -229,7 +232,7 @@ fn wants_of(refs: &DebugRefs) -> Vec<String> {
 }
 
 /// Checks one file against what the program refers to.
-fn verify(refs: &DebugRefs, candidate: &Path) -> (Verdict, String) {
+pub(super) fn verify_file(refs: &DebugRefs, candidate: &Path) -> (Verdict, String) {
     let meta = match std::fs::metadata(candidate) {
         Ok(m) if m.is_file() => m,
         _ => return (Verdict::NotDebugInfo, "it is not a readable file".into()),
@@ -375,6 +378,14 @@ fn locations(binary: &Path, refs: &DebugRefs, system: &Path) -> Vec<(PathBuf, Ca
             CandidateSource::System,
         ));
     }
+    if let Some(root) = super::debuginfo_fetch::download_cache()
+        && let Some(w) = super::debuginfo_fetch::wanted_of(refs)
+    {
+        out.push((
+            super::debuginfo_fetch::cache_path(&root, &w),
+            CandidateSource::Downloaded,
+        ));
+    }
     let mut seen = Vec::new();
     out.retain(|(p, _)| {
         let new = !seen.contains(p);
@@ -464,7 +475,7 @@ fn add_candidate(
     if candidates.iter().any(|c| c.path.0 == shown) {
         return;
     }
-    let (verdict, detail) = verify(refs, &p);
+    let (verdict, detail) = verify_file(refs, &p);
     candidates.push(DebugCandidate {
         path: Untrusted::sanitized(&shown),
         source,
@@ -501,7 +512,7 @@ fn probe_in(
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut searched = Vec::new();
     let mut candidates: Vec<DebugCandidate> = Vec::new();
-    if refs.external() {
+    if refs.external() || (refs.build_id.is_some() && !refs.embedded()) {
         for (p, source) in locations(&abs, &refs, system) {
             searched.push(Untrusted::sanitized(&p.to_string_lossy()));
             if p.is_file() {
@@ -577,10 +588,18 @@ fn probe_in(
 /// it cannot be used.
 pub fn resolve_for_attach(binary: &Path, debug_file: &Path) -> Result<PathBuf, ProtoError> {
     let out = probe(binary, Some(debug_file))?;
+    // A file the search already found by itself (beside the program, in the download cache) is
+    // listed once, under its own source, and is still the one the person chose.
+    let named = debug_file
+        .is_file()
+        .then(|| std::fs::canonicalize(debug_file).ok())
+        .flatten();
     let chosen: Vec<_> = out
         .candidates
         .iter()
-        .filter(|c| c.source == CandidateSource::Chosen)
+        .filter(|c| {
+            c.source == CandidateSource::Chosen || named.as_deref() == Some(Path::new(&c.path.0))
+        })
         .collect();
     if let Some(c) = chosen
         .iter()
@@ -841,6 +860,343 @@ impl Command for DebugInfoDetach {
     }
 }
 
+/// The settings that govern downloads, read from `config.toml` and the environment.
+struct NetSettings {
+    config_servers: Vec<String>,
+    env_servers: Vec<String>,
+    consent: bool,
+    offline: bool,
+}
+
+impl NetSettings {
+    fn servers(&self) -> Vec<String> {
+        let mut all: Vec<String> = Vec::new();
+        for s in self.config_servers.iter().chain(&self.env_servers) {
+            if !all.contains(s) {
+                all.push(s.clone());
+            }
+        }
+        all
+    }
+}
+
+fn no_store() -> ProtoError {
+    ProtoError::new(
+        ErrorCode::Unsupported,
+        "the configuration file is not attached to this session, so the download settings \
+         cannot be read or changed; use the kraken CLI or krakend",
+    )
+}
+
+fn read_settings(s: &Session) -> Result<NetSettings, ProtoError> {
+    let store = s.config_store.as_ref().ok_or_else(no_store)?;
+    let entries = store.get(None)?;
+    let value = |k: &str| {
+        entries
+            .iter()
+            .find(|e| e.key == k)
+            .and_then(|e| e.value.clone())
+    };
+    let config_servers = value("debuginfo.servers")
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|u| debuginfo_fetch::normalize_server(u).ok())
+        .collect();
+    let env_servers = debuginfo_fetch::servers_with_env(&[]);
+    let env_offline = debuginfo_fetch::offline_env();
+    Ok(NetSettings {
+        config_servers,
+        env_servers,
+        consent: value("debuginfo.consent").and_then(|v| v.as_bool()) == Some(true),
+        offline: env_offline || value("debuginfo.offline").and_then(|v| v.as_bool()) == Some(true),
+    })
+}
+
+fn program_refs(path: &Path) -> Result<DebugRefs, ProtoError> {
+    trust::ensure_regular_file(path)?;
+    let data = std::fs::read(path).map_err(|e| {
+        ProtoError::new(
+            ErrorCode::Internal,
+            format!("cannot read {}: {e}", path.display()),
+        )
+    })?;
+    object::File::parse(&*data)
+        .map(|f| debug_refs(&f))
+        .map_err(|_| {
+            invalid(format!(
+                "{} is not an ELF, PE or Mach-O file",
+                path.display()
+            ))
+        })
+}
+
+/// Arguments of `debuginfo_find`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DebugInfoFindArgs {
+    /// Path of the program; the open project's program when absent.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Downloads a program's debug file from debuginfod or a symbol server.
+pub struct DebugInfoFind;
+
+#[async_trait]
+impl Command for DebugInfoFind {
+    type Args = DebugInfoFindArgs;
+    type Output = GlobalJobOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "debuginfo_find",
+            "Download the program's debug file from debuginfod or a symbol server, checked (job; needs consent)",
+            CommandKind::Job,
+            Permission::Mutating,
+        )
+        .global()
+        .doc(
+            "Asks the configured servers for the debug file of a program: a debuginfod server \
+             for its GNU build-id, a Microsoft-style symbol server for its PDB (GUID and age). \
+             The file is checked against the program before it is kept in KRAKEN's download \
+             cache; `debuginfo_probe` then finds it and `debuginfo_attach` takes it. Needs \
+             consent recorded in the configuration (`debuginfo_servers`), is refused while \
+             offline, and an agent is asked first. Returns a `job_id`.\n\
+             Example: debuginfo_find {\"path\": \"./prog\"}",
+        )
+        .details(
+            "Servers come from `debuginfo.servers` and `DEBUGINFOD_URLS`; see \
+             `debuginfo_servers`. Nothing is sent but the build-id, or the PDB's name, GUID and \
+             age. A file that does not carry the program's build-id (or GUID and age) is thrown \
+             away, and a file over 1 GiB is abandoned. A cached file is reused without asking \
+             any server, even offline. A PDB a server holds only as a compressed `.pd_` is \
+             reported and not unpacked. The job result is a `DebugFindOut`: `found`, the cached \
+             `file`, and what each server answered in `attempts`.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: DebugInfoFindArgs,
+    ) -> Result<GlobalJobOut, ProtoError> {
+        let path = match args.path.filter(|p| !p.trim().is_empty()) {
+            Some(p) => check_path(ctx, "path", &p)?,
+            None => PathBuf::from(
+                s.project()
+                    .map_err(|_| invalid("pass `path`: no project is open"))?
+                    .meta()
+                    .binary_path,
+            ),
+        };
+        let cache = debuginfo_fetch::download_cache().ok_or_else(|| {
+            invalid("cannot place the download cache: set HOME or KRAKEN_DEBUGINFO_CACHE")
+        })?;
+        let (refs, wanted, hit) = {
+            let (path, cache) = (path.clone(), cache.clone());
+            blocking(move || {
+                let refs = program_refs(&path)?;
+                let wanted = debuginfo_fetch::wanted_of(&refs).ok_or_else(|| {
+                    invalid(
+                        "the program carries no GNU build-id or PDB reference a server could be asked about",
+                    )
+                })?;
+                let hit = debuginfo_fetch::cached(&cache, &refs, &wanted);
+                Ok((refs, wanted, hit))
+            })
+            .await?
+        };
+        if let Some((file, bytes)) = hit {
+            let out = serde_json::to_value(debuginfo_fetch::DebugFindOut::hit(&file, bytes))
+                .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))?;
+            let id = s.jobs().spawn("debuginfo_find", |_| async move { Ok(out) });
+            return Ok(GlobalJobOut { job_id: id.0 });
+        }
+        let settings = read_settings(s)?;
+        if settings.offline {
+            return Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "KRAKEN is set to work offline (`debuginfo.offline` or KRAKEN_OFFLINE), so no \
+                 server is asked; turn it off with `debuginfo_servers` and `offline: false`",
+            ));
+        }
+        let servers = settings.servers();
+        if servers.is_empty() {
+            return Err(invalid(
+                "no symbol server is configured: set DEBUGINFOD_URLS or add servers with \
+                 `debuginfo_servers`",
+            ));
+        }
+        if !ctx.needs_user_approval() && !settings.consent {
+            return Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "downloading symbols needs your consent first: it tells the servers which \
+                 program you are looking at. Record it with `debuginfo_servers` and \
+                 `consent: true` (File > Import program, \"Search symbol servers\") and try again",
+            ));
+        }
+        ctx.require_approval(
+            "debuginfo_find",
+            format!(
+                "Send the build-id or PDB identity of {} to {} symbol server(s) and download the matching debug file",
+                path.display(),
+                servers.len()
+            ),
+            serde_json::json!({ "path": path.to_string_lossy(), "servers": servers }),
+        )
+        .await?;
+        let id = s.jobs().spawn("debuginfo_find", move |reporter| async move {
+            let token = reporter.cancel_token();
+            reporter.progress(crate::jobs::JobProgress {
+                phase: "download".into(),
+                message: format!("asking {} server(s)", servers.len()),
+                ..Default::default()
+            });
+            tokio::select! {
+                biased;
+                () = token.cancelled() => {
+                    Err(ProtoError::new(ErrorCode::Cancelled, "the symbol search was cancelled"))
+                }
+                out = debuginfo_fetch::fetch(&refs, &wanted, &servers, &cache) => {
+                    serde_json::to_value(out)
+                        .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))
+                }
+            }
+        });
+        Ok(GlobalJobOut { job_id: id.0 })
+    }
+}
+
+/// Arguments of `debuginfo_servers`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DebugInfoServersArgs {
+    /// Replace the configured servers (http:// or https:// addresses); an empty list removes them.
+    #[serde(default)]
+    pub servers: Option<Vec<String>>,
+    /// Record (true) or withdraw (false) your consent to download symbols.
+    #[serde(default)]
+    pub consent: Option<bool>,
+    /// Switch the offline mode on or off.
+    #[serde(default)]
+    pub offline: Option<bool>,
+}
+
+/// One server `debuginfo_find` would ask.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DebugServer {
+    /// The address.
+    pub url: Untrusted<String>,
+    /// `config` (`debuginfo.servers`) or `environment` (`DEBUGINFOD_URLS`).
+    pub source: String,
+}
+
+/// What `debuginfo_servers` shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DebugServersOut {
+    /// The servers, in the order they are asked.
+    pub servers: Vec<DebugServer>,
+    /// Whether you have consented to downloads (an agent is asked every time instead).
+    pub consent: bool,
+    /// True when no server is asked, from the configuration or `KRAKEN_OFFLINE`.
+    pub offline: bool,
+    /// Where downloaded files are kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_dir: Option<Untrusted<String>>,
+}
+
+/// Lists or changes the symbol servers, the download consent and the offline switch.
+pub struct DebugInfoServers;
+
+#[async_trait]
+impl Command for DebugInfoServers {
+    type Args = DebugInfoServersArgs;
+    type Output = DebugServersOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "debuginfo_servers",
+            "List or set the symbol servers, the download consent and the offline switch",
+            CommandKind::Query,
+            Permission::Mutating,
+        )
+        .global()
+        .doc(
+            "With no arguments, shows the servers `debuginfo_find` asks (the \
+             `debuginfo.servers` list, then `DEBUGINFOD_URLS`), whether consent to download is \
+             recorded, whether offline mode is on, and the cache folder. `servers`, `consent` \
+             and `offline` change the configuration; only a person may set them.\n\
+             Example: debuginfo_servers {\"servers\": [\"https://debuginfod.elfutils.org\"], \"consent\": true}",
+        )
+        .details(
+            "Needs no project. Addresses must be http:// or https:// without credentials. Setting \
+             `consent` is how the import wizard's \"Search symbol servers\" box is remembered. \
+             Offline mode also follows the `KRAKEN_OFFLINE` environment variable.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: DebugInfoServersArgs,
+    ) -> Result<DebugServersOut, ProtoError> {
+        let changes = args.servers.is_some() || args.consent.is_some() || args.offline.is_some();
+        if changes {
+            if ctx.needs_user_approval() {
+                return Err(ProtoError::new(
+                    ErrorCode::RejectedHumanPriority,
+                    "the symbol servers, the consent and the offline switch are reserved for \
+                     people; ask the person to run `kraken debuginfo-servers`",
+                ));
+            }
+            let store = s.config_store.as_ref().ok_or_else(no_store)?;
+            if let Some(list) = &args.servers {
+                let mut clean = Vec::new();
+                for u in list {
+                    clean.push(debuginfo_fetch::normalize_server(u).map_err(invalid)?);
+                }
+                let v = if clean.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::json!(clean)
+                };
+                store.set("debuginfo.servers", v)?;
+            }
+            if let Some(c) = args.consent {
+                store.set("debuginfo.consent", serde_json::json!(c))?;
+            }
+            if let Some(o) = args.offline {
+                store.set("debuginfo.offline", serde_json::json!(o))?;
+            }
+        }
+        let st = read_settings(s)?;
+        let mut servers: Vec<DebugServer> = Vec::new();
+        for (list, source) in [
+            (&st.config_servers, "config"),
+            (&st.env_servers, "environment"),
+        ] {
+            for u in list {
+                if !servers.iter().any(|d| d.url.0 == *u) {
+                    servers.push(DebugServer {
+                        url: Untrusted::sanitized(u),
+                        source: source.into(),
+                    });
+                }
+            }
+        }
+        Ok(DebugServersOut {
+            servers,
+            consent: st.consent,
+            offline: st.offline,
+            cache_dir: debuginfo_fetch::download_cache()
+                .map(|p| Untrusted::sanitized(&p.to_string_lossy())),
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -897,19 +1253,19 @@ pub(crate) mod tests {
             ..DebugRefs::default()
         };
         let same = "07070707-0707-0707-0707-070707070707";
-        assert_eq!(verify(&refs(same, 3), &file).0, Verdict::Match);
-        let (v, why) = verify(&refs(same, 2), &file);
+        assert_eq!(verify_file(&refs(same, 3), &file).0, Verdict::Match);
+        let (v, why) = verify_file(&refs(same, 2), &file);
         assert_eq!(v, Verdict::Mismatch);
         assert!(
             why.contains("age is 3") && why.contains("program's is 2"),
             "{why}"
         );
-        let (v, why) = verify(&refs("AAAAAAAA-0000-0000-0000-000000000000", 3), &file);
+        let (v, why) = verify_file(&refs("AAAAAAAA-0000-0000-0000-000000000000", 3), &file);
         assert_eq!(v, Verdict::Mismatch);
         assert!(why.contains("another build"), "{why}");
         let elf = dir.path().join("x");
         std::fs::write(&elf, b"\x7fELF nothing").unwrap();
-        assert_eq!(verify(&refs(same, 3), &elf).0, Verdict::NotDebugInfo);
+        assert_eq!(verify_file(&refs(same, 3), &elf).0, Verdict::NotDebugInfo);
         // the program's name for the PDB is a Windows path; the file beside it is found by base name
         assert_eq!(base_name("C:\\build\\a.pdb"), "a.pdb");
     }

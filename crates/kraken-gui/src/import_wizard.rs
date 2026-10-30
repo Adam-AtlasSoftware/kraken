@@ -13,7 +13,9 @@ use kraken_host::KrakenConfig;
 use kraken_proto::DwarfState;
 use kraken_registry::EngineChoice;
 use kraken_registry::commands::{
-    BinaryFormat, DebugCandidate, DebugInfoProbeOut, DebugStatus, Verdict,
+    BinaryFormat, ConfigStore, DebugCandidate, DebugFindOut, DebugInfoProbeOut, DebugStatus,
+    Verdict, debug_wanted, find_debug_file, normalize_symbol_server, symbol_servers_with_env,
+    symbols_offline_env,
 };
 use kraken_viewmodel::RawLoad;
 use kraken_viewmodel::wizard::WizardFlow;
@@ -50,8 +52,23 @@ enum DebugProbe {
     Running(Receiver<(Option<String>, Result<DebugInfoProbeOut, String>)>),
 }
 
+/// The "Search symbol servers" part of the debug-information step.
+struct SymbolSearch {
+    /// The person ticked the consent box.
+    consent: bool,
+    /// The servers, as typed (space separated); filled in the first time the step is shown.
+    servers: Option<String>,
+    /// A search in flight.
+    running: Option<Receiver<Result<DebugFindOut, String>>>,
+    /// What the last search found out.
+    last: Option<DebugFindOut>,
+    /// Why the last search could not run.
+    error: Option<String>,
+}
+
 /// The debug-information step's state.
 pub struct DebugState {
+    search: SymbolSearch,
     probe: DebugProbe,
     /// The last good answer.
     out: Option<Box<DebugInfoProbeOut>>,
@@ -68,6 +85,13 @@ pub struct DebugState {
 impl DebugState {
     fn new() -> Self {
         DebugState {
+            search: SymbolSearch {
+                consent: false,
+                servers: None,
+                running: None,
+                last: None,
+                error: None,
+            },
             probe: DebugProbe::Idle,
             out: None,
             chosen: None,
@@ -101,6 +125,8 @@ pub struct ImportWizard {
     ctx: egui::Context,
     /// The debug-information step.
     pub debug: DebugState,
+    /// Where `config.toml` is, to record the consent to search symbol servers.
+    pub config_path: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -129,12 +155,20 @@ impl ImportWizard {
             rt: rt.clone(),
             ctx: ctx.clone(),
             debug: DebugState::new(),
+            config_path: KrakenConfig::default_path(),
         };
         if path.is_some() {
             w.start_file();
             w.step = ImportStep::Kind;
         }
         w
+    }
+
+    /// Fills in the symbol search the way a person would, before pressing its button.
+    #[cfg(test)]
+    pub fn set_search(&mut self, servers: &str, consent: bool) {
+        self.debug.search.servers = Some(servers.to_string());
+        self.debug.search.consent = consent;
     }
 
     /// The current step.
@@ -184,8 +218,70 @@ impl ImportWizard {
         self.debug.probe = DebugProbe::Running(rx);
     }
 
+    /// Records the consent and the servers in `config.toml`, then asks them for the program's
+    /// debug file; the answer arrives through [`poll`](Self::poll).
+    fn start_search(&mut self, refs: kraken_proto::DebugRefs) {
+        let text = self.debug.search.servers.clone().unwrap_or_default();
+        let mut servers = Vec::new();
+        for u in text.split_whitespace() {
+            match normalize_symbol_server(u) {
+                Ok(u) => servers.push(u),
+                Err(e) => {
+                    self.debug.search.error = Some(e);
+                    return;
+                }
+            }
+        }
+        if servers.is_empty() {
+            self.debug.search.error = Some("Enter at least one server address.".into());
+            return;
+        }
+        let Some(path) = self.config_path.clone() else {
+            self.debug.search.error =
+                Some("Cannot tell where config.toml is, so the consent cannot be recorded.".into());
+            return;
+        };
+        let (tx, rx) = channel();
+        let ctx = self.ctx.clone();
+        self.debug.search.error = None;
+        self.debug.search.last = None;
+        self.rt.spawn(async move {
+            let store = kraken_host::config_keys::HostConfigStore::at(path);
+            let recorded = store
+                .set("debuginfo.servers", serde_json::json!(servers))
+                .and_then(|_| store.set("debuginfo.consent", serde_json::json!(true)))
+                .map_err(|e| format!("cannot record your consent: {}", e.message));
+            let r = match recorded {
+                Ok(_) => find_debug_file(&refs, &servers).await,
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(r);
+            ctx.request_repaint();
+        });
+        self.debug.search.running = Some(rx);
+    }
+
     /// Takes finished probes and folder picks; call every frame.
     pub fn poll(&mut self) {
+        if let Some(rx) = &self.debug.search.running {
+            match rx.try_recv() {
+                Ok(r) => {
+                    self.debug.search.running = None;
+                    match r {
+                        Ok(out) => {
+                            let found = out.found;
+                            self.debug.search.last = Some(out);
+                            if found {
+                                self.start_debug(None);
+                            }
+                        }
+                        Err(e) => self.debug.search.error = Some(e),
+                    }
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => self.debug.search.running = None,
+            }
+        }
         if let Some(d) = self.dialog.as_mut() {
             d.poll();
         }
@@ -832,6 +928,7 @@ fn debug_step(ui: &mut Ui, w: &mut ImportWizard) {
             );
         }
     }
+    symbol_search(ui, w, &out);
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let start = w
@@ -863,6 +960,128 @@ fn debug_step(ui: &mut Ui, w: &mut ImportWizard) {
             })
             .header_response
             .on_hover_text("Beside the program, in its .debug folder, under /usr/lib/debug and in the debuginfod cache.");
+    }
+}
+
+/// "Search symbol servers": offered when the program names debug information that is not on
+/// this computer. Nothing is sent until the person ticks the consent box and presses the button.
+fn symbol_search(ui: &mut Ui, w: &mut ImportWizard, out: &DebugInfoProbeOut) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    if out.best.is_some()
+        || out.status == DebugStatus::Embedded
+        || debug_wanted(&out.refs).is_none()
+    {
+        return;
+    }
+    let offline = w.cfg.debuginfo.offline || symbols_offline_env();
+    if w.debug.search.servers.is_none() {
+        let mut list = symbol_servers_with_env(&w.cfg.debuginfo.servers);
+        if list.is_empty() {
+            list.push(
+                if out.refs.pdb.is_some() {
+                    "https://msdl.microsoft.com/download/symbols"
+                } else {
+                    "https://debuginfod.elfutils.org"
+                }
+                .to_string(),
+            );
+        }
+        w.debug.search.servers = Some(list.join(" "));
+        w.debug.search.consent = w.cfg.debuginfo.consent;
+    }
+    ui.add_space(8.0);
+    ui.label(medium("Symbol servers", 13.0).color(p.text_strong));
+    let (ids, what) = match &out.refs.pdb {
+        Some(pdb) => (
+            format!(
+                "{}, GUID {} and age {}",
+                file_name(&pdb.name.0),
+                pdb.guid,
+                pdb.age
+            ),
+            "the PDB's name, GUID and age",
+        ),
+        None => (
+            out.refs.build_id.clone().unwrap_or_default(),
+            "the program's build-id",
+        ),
+    };
+    if offline {
+        ui.label(
+            RichText::new(
+                "Offline mode is on (debuginfo.offline or KRAKEN_OFFLINE): no server is asked.",
+            )
+            .size(12.0)
+            .color(s.warning),
+        );
+        return;
+    }
+    ui.label(
+        RichText::new(format!(
+            "Ask a server for the matching debug file. Only {what} ({ids}) is sent; whatever comes back is checked against the program before it is used."
+        ))
+        .size(12.0)
+        .color(p.text_dim),
+    );
+    let busy = w.debug.search.running.is_some();
+    let mut text = w.debug.search.servers.clone().unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Servers").color(p.text_dim));
+        ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width()))
+            .on_hover_text(
+                "debuginfod servers (ELF, by build-id) or Microsoft-style symbol servers (PDB), separated by spaces. Only http:// and https:// addresses are accepted.",
+            );
+    });
+    w.debug.search.servers = Some(text.clone());
+    ui.checkbox(
+        &mut w.debug.search.consent,
+        "I agree to send this to these servers",
+    )
+    .on_hover_text(
+        "Asking a server tells its operator which program you are looking at. Your agreement is saved in config.toml ([debuginfo] consent) and you can withdraw it with `kraken debuginfo-servers --consent false`.",
+    );
+    let ready = w.debug.search.consent && !busy && !text.trim().is_empty();
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(ready, egui::Button::new("Search symbol servers"))
+            .on_hover_text("Ask the servers above for this program's debug file. Nothing is sent before you tick the box.")
+            .clicked()
+        {
+            w.start_search(out.refs.clone());
+        }
+        if busy {
+            ui.spinner();
+            ui.label("Asking the servers...");
+        }
+    });
+    if let Some(e) = &w.debug.search.error {
+        ui.label(RichText::new(e).size(12.0).color(s.warning));
+    }
+    if let Some(last) = &w.debug.search.last {
+        let color = if last.found { s.success } else { s.warning };
+        ui.label(RichText::new(&last.summary).size(12.5).color(color));
+        if last.found
+            && out.refs.pdb.is_some()
+            && let Some(f) = &last.file
+        {
+            ui.label(
+                RichText::new(format!(
+                    "The PDB is at {}. The Ghidra engine reads a PDB that sits next to the program as <name>.pdb: copy it there.",
+                    f.0
+                ))
+                .size(12.0)
+                .color(p.text_dim),
+            );
+        }
+        for a in &last.attempts {
+            ui.label(
+                RichText::new(format!("{}: {}", a.url.0, a.outcome.0))
+                    .monospace()
+                    .size(11.0)
+                    .color(p.text_dim),
+            );
+        }
     }
 }
 

@@ -113,6 +113,24 @@ pub const CONFIG_KEYS: &[ConfigKey] = &[
         false,
     ),
     key(
+        "debuginfo.servers",
+        "a list of http:// or https:// addresses",
+        "debuginfod and Microsoft-style symbol servers `debuginfo_find` asks, in order",
+        true,
+    ),
+    key(
+        "debuginfo.consent",
+        "true or false",
+        "You agree to send build-ids and PDB identities to the symbol servers to download debug files",
+        true,
+    ),
+    key(
+        "debuginfo.offline",
+        "true or false",
+        "Ask no symbol server, whatever else is set",
+        false,
+    ),
+    key(
         "per_run_cap",
         "a whole number",
         "Agent edits applied per run before further ones become proposals",
@@ -286,5 +304,31 @@ mod tests {
         let secret = store.get(Some("provider.api_key")).expect_err("secret");
         assert!(secret.message.contains("credentials"));
         assert!(store.set("provider", json!({})).is_err());
+    }
+
+    #[test]
+    fn the_symbol_download_settings_round_trip_through_the_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let store = HostConfigStore::at(path.clone());
+        store
+            .set("debuginfo.servers", json!(["https://debuginfod.example"]))
+            .expect("servers");
+        store
+            .set("debuginfo.consent", json!(true))
+            .expect("consent");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            text.contains("[debuginfo]") && text.contains("consent = true"),
+            "{text}"
+        );
+        let got = store.get(Some("debuginfo.servers")).expect("get");
+        assert_eq!(got[0].value, Some(json!(["https://debuginfod.example"])));
+        assert!(store.set("debuginfo.servers", json!("not a list")).is_err());
+        store.set("debuginfo.consent", json!(null)).expect("unset");
+        assert_eq!(
+            store.get(Some("debuginfo.consent")).expect("get")[0].value,
+            None
+        );
     }
 }
