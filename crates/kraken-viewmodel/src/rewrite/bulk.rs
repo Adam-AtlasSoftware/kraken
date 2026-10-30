@@ -2,7 +2,9 @@
 //! accept every verified one.
 //!
 //! Translating runs one function at a time, in plan order, so callees are done before the
-//! functions that call them and the model is never asked for twenty things at once.
+//! functions that call them and the model is never asked for twenty things at once. A whole
+//! program rewrite (`rewrite_program`) overlaps the functions of one call-graph level instead
+//! (see `ProgramRunDetail::speed_note`); both reuse model answers the project has already cached.
 
 use std::collections::VecDeque;
 

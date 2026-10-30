@@ -397,6 +397,10 @@ fn summary(ui: &mut Ui, d: &ProgramRunDetail, acts: &mut ProgramActs) {
         if d.reused_from_store > 0 {
             notes.push(format!("{} accepted earlier", d.reused_from_store));
         }
+        let speed = d.speed_note();
+        if !speed.is_empty() {
+            notes.push(speed);
+        }
         let unverified = d.unverified();
         if unverified > 0 {
             notes.push(format!(

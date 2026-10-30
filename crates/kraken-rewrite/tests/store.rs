@@ -392,8 +392,8 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
     }
 
     let st = RewriteStore::open(&path).expect("open migrates");
-    assert_eq!(st.schema_version().expect("version"), 6);
-    assert_eq!(SCHEMA_VERSION, 6);
+    assert_eq!(st.schema_version().expect("version"), 7);
+    assert_eq!(SCHEMA_VERSION, 7);
 
     // The old unit reads back intact, with the new column empty.
     let u = st.get("ru-old").expect("get").expect("unit");
@@ -435,7 +435,7 @@ fn a_version_1_database_migrates_in_place_and_keeps_its_units() {
 
     // Opening again changes nothing.
     let again = RewriteStore::open(&path).expect("reopen");
-    assert_eq!(again.schema_version().expect("version"), 6);
+    assert_eq!(again.schema_version().expect("version"), 7);
     assert_eq!(again.versions("ab12", "0x10").expect("versions").len(), 2);
 }
 
@@ -571,4 +571,27 @@ fn a_version_4_database_migrates_to_the_human_control_columns() {
         .expect("origin column");
     c.prepare("SELECT coverage_json FROM verdicts")
         .expect("coverage column");
+}
+
+#[test]
+fn the_translation_cache_keeps_counts_and_forgets() {
+    use kraken_rewrite::store::CachedReply;
+    let st = RewriteStore::open_in_memory().expect("store");
+    assert_eq!(st.cache_summary().expect("empty").entries, 0);
+    let reply = CachedReply {
+        text: "<kraken-rust>fn f() {}</kraken-rust>".into(),
+        provider: "p".into(),
+        model: "m".into(),
+    };
+    assert_eq!(st.cache_get("k").expect("get"), None);
+    st.cache_put("k", &reply).expect("put");
+    st.cache_put("k2", &reply).expect("put");
+    assert_eq!(st.cache_get("k").expect("get"), Some(reply.clone()));
+    assert_eq!(st.cache_get("k").expect("get"), Some(reply.clone()));
+    let c = st.cache_summary().expect("summary");
+    assert_eq!((c.entries, c.hits), (2, 2));
+    assert_eq!(c.bytes, 2 * reply.text.len() as u64);
+    st.cache_forget("k2").expect("forget");
+    assert_eq!(st.cache_clear().expect("clear"), 1);
+    assert_eq!(st.cache_summary().expect("empty").entries, 0);
 }

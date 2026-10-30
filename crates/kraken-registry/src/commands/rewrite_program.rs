@@ -75,6 +75,11 @@ pub struct RewriteProgramArgs {
     /// Most translation attempts per function (default 3, 1 to 8).
     #[serde(default)]
     pub max_attempts: Option<u32>,
+    /// Functions translated at the same time: callees still finish before their callers, so the
+    /// crate and the verdicts do not depend on it. Default from `[rewrite] parallel` in the
+    /// config file, else 4 (1 to 16).
+    #[serde(default)]
+    pub parallel: Option<u32>,
     /// Run the function-level differential test (emulation oracle, needs the SLEIGH specs of a
     /// Ghidra install). Default true. With false, functions are only compiled; the program-level
     /// test is then the only evidence.
@@ -266,6 +271,13 @@ pub struct RewriteProgramResult {
     /// Functions taken from earlier runs: accepted units, and translations made from the same
     /// decompile that passed their own test or could not be compared.
     pub reused_from_store: u32,
+    /// Model replies this run took from the translation cache instead of asking the model
+    /// (`rewrite_cache`).
+    #[serde(default)]
+    pub cache_hits: u32,
+    /// Functions translated at the same time in this run.
+    #[serde(default)]
+    pub parallel: u32,
     /// Functions without a usable translation.
     pub failed: u32,
     /// Functions whose translation passed the function-level test against the original.

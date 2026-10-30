@@ -115,7 +115,13 @@ The test of each function on its own is a help, not a gate. A function whose own
 
 For example, two C++ audio simulators of about 30 and 47 functions (floats, globals, `std::vector`, `.wav` files) were rewritten this way and matched the original on all 11 cases, including the files they write. One needed a second run and two repair rounds. If a run stops part way, start it again: translations from earlier runs that are still valid are reused, so only the rest is translated.
 
-Limits: Linux x86-64 programs only; at most six integer and eight floating-point parameters per function; no varargs functions of the program itself; no threads, no `fork`, no network, no clock; exceptions that are caught are not modelled. A model run is slow: with a terminal agent each function takes one to two minutes.
+Limits: Linux x86-64 programs only; at most six integer and eight floating-point parameters per function; no varargs functions of the program itself; no threads, no `fork`, no network, no clock; exceptions that are caught are not modelled. A model run is slow: with a terminal agent each function takes one to two minutes, so a whole program translates several functions at once (below).
+
+### Faster: parallel levels and the cache
+
+- **Several functions at once.** A function is translated after everything it calls, so KRAKEN sorts the program into levels: the functions of the first level call nothing of the program, the next level calls only the first, and so on. Every function of a level is independent of the others, so up to **4** are translated and tested at the same time (the members of a recursive group still go one after another). Callees always finish before their callers, and the crate and the verdicts come out the same whether 1 or 16 run at once. Change the number with `parallel` in the `[rewrite]` table of `config.toml` (`[rewrite]` with only `parallel = 8` keeps using your normal model), or for one run with `--parallel` / the `parallel` argument of `rewrite_program` (1 to 16). The job strip shows how many of the level are done and how many run at once. A cloud model may rate-limit you; lower the number if it does.
+- **A cache of model answers.** Each answer is kept in the project, keyed by the exact prompt (which holds the function, its callees and your hints), the provider and the model. Asking the same thing again, for example a rewrite you start again after changing a setting, takes the answer from the cache: no model call, no cost. The answer is still built and tested like a new one, so the cache never replaces a check. An answer whose translation failed its test is dropped at once, so a repeat run asks again instead of repeating a mistake. The run summary says how many answers came from the cache.
+- **See or clear it.** `rewrite_cache` (`kraken rewrite-cache`) shows how many answers are kept, their size and how often they were used; `rewrite_cache --action clear` (users only) empties it. Clearing it never touches translations, verdicts or accepted units.
 
 ## Translate or spec
 
@@ -150,6 +156,7 @@ Everything above is a command, so an assistant connected through [MCP](mcp.md) o
 | `rewrite_spec` | Write a cited spec of a function or the program (a job). |
 | `rewrite_status`, `rewrite_unit` | Read the statuses, and the stored Rust, verdicts and versions of one function. |
 | `rewrite_program`, `rewrite_program_status` | Rewrite the whole program and compare it with the original (a job), and read the run. `inputs` takes test cases, `dir` the output folder and `verify_functions` the per-function check. |
+| `rewrite_cache` | Show how many model answers the project has cached, or clear them (clearing is users only). |
 | `rewrite_check` | Check what the host provides: sandbox, Rust toolchain, spec files, program kind. |
 | `rewrite_accept`, `rewrite_unaccept`, `rewrite_reject` | Accept a verified version, take the acceptance back, or reject a version. People only. |
 | `rewrite_verify`, `rewrite_add_case` | Replay every stored case of a version and measure coverage, or add a case of your own first (jobs; no model is called). Agents may run them. |

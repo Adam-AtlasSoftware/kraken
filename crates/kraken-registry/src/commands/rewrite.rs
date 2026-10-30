@@ -1139,6 +1139,16 @@ pub trait RewriteBackend: Send + Sync {
         Err(no_control())
     }
 
+    /// `rewrite_cache`.
+    async fn cache(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: super::RewriteCacheArgs,
+    ) -> Result<super::RewriteCacheOut, ProtoError> {
+        Err(no_control())
+    }
+
     /// `rewrite_check`.
     async fn check(&self, _s: &Session, _ctx: &CallContext) -> Result<RewriteCheckOut, ProtoError> {
         Err(no_control())

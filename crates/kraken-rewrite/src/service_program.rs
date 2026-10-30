@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
+use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
 use kraken_registry::commands::{
@@ -22,6 +23,7 @@ use super::*;
 use crate::blame::{
     Candidate, FeedbackInput, TraceSpec, feedback_text, parse_stack, rank, trace_for,
 };
+use crate::cache::{CacheCounters, CachingBackend};
 use crate::collect::collect_program;
 use crate::export::cargo_build_with;
 use crate::image::ProgramImage;
@@ -129,6 +131,32 @@ fn check_kind(u: &RewriteUnit) -> &'static str {
         "unchecked"
     } else {
         "differential"
+    }
+}
+
+/// A function ready for its model call, or already settled.
+enum Prepared {
+    Done(FunctionOutcome),
+    Work(Box<Work>),
+}
+
+/// What the model call and checks of a translation need from the run, cheap to share between
+/// the functions of a level.
+struct Runner {
+    backend: Arc<dyn AssistBackend>,
+    dir: PathBuf,
+    binary_path: String,
+    oracle: OracleThread,
+}
+
+impl Runner {
+    fn of(pc: &ProgramRun<'_>) -> Runner {
+        Runner {
+            backend: pc.backend.clone(),
+            dir: pc.dir.clone(),
+            binary_path: pc.binary_path.display().to_string(),
+            oracle: pc.oracle.clone(),
+        }
     }
 }
 
@@ -520,8 +548,17 @@ impl RewriteService {
         };
 
         // 2. Translate, callees first.
-        let backend = ai.backend()?;
-        let provider_info = backend.provider_info();
+        let provider_info = ai.backend()?.provider_info();
+        let counters = Arc::new(CacheCounters::default());
+        let backend: Arc<dyn AssistBackend> = Arc::new(CachingBackend::new(
+            ai.backend()?,
+            dir.clone(),
+            counters.clone(),
+        ));
+        let parallel = args
+            .parallel
+            .unwrap_or(self.cfg.parallel)
+            .clamp(1, MAX_PARALLEL) as usize;
         let defaults = DiffOptions::default();
         let opts = DiffOptions {
             seed: args.seed.unwrap_or(defaults.seed),
@@ -562,120 +599,168 @@ impl RewriteService {
         };
         let total = plan.entries.len() as u64;
         let mut chosen: BTreeMap<u64, String> = BTreeMap::new();
-        let mut rows: Vec<ProgramFunctionRow> = Vec::new();
+        let mut slots: Vec<Option<ProgramFunctionRow>> = vec![None; plan.entries.len()];
         let (mut translated, mut from_store) = (0u32, 0u32);
-        for (i, p) in plan.entries.iter().enumerate() {
-            if job.cancel_token().is_cancelled() {
-                return Err(ProtoError::new(ErrorCode::Cancelled, "job cancelled"));
-            }
-            progress(job, "translate", i as u64, total, &p.name);
-            let order = p.order;
-            if !reachable.contains(&p.address) {
-                rows.push(row_without_unit(
-                    order,
-                    p,
-                    UnitStatus::Planned,
-                    "skipped",
-                    "the entry point does not reach this function: no direct call, no function \
-                     pointer handed on, no table of function pointers in the program's data",
-                    0,
-                ));
-                continue;
-            }
-            let f = self.context_of(&pc.lift, &mut pc.cache, p.address).await?;
-
-            // An accepted translation made from this decompile, with its callees as they are.
-            {
-                let (sha2, addr, hash, cm) = (
-                    sha.clone(),
-                    format!("{:#x}", p.address),
-                    f.decompile_hash.clone(),
-                    chosen.clone(),
-                );
-                let stored = with_store(dir.clone(), move |st| {
-                    let Some(u) = st.accepted(&sha2, &addr)? else {
-                        return Ok(None);
-                    };
-                    let consistent = u.source_decompile_hash == hash
-                        && u.callees
-                            .iter()
-                            .filter_map(|c| c.reused.as_ref().map(|r| (c, r)))
-                            .all(|(c, r)| {
-                                cm.get(&parse_addr(&c.address))
-                                    .is_some_and(|id| *id == r.unit)
-                            });
-                    Ok(consistent.then_some(u))
-                })
-                .await?;
-                if let Some(u) = stored {
-                    chosen.insert(p.address, u.id.clone());
-                    rows.push(row_for_unit(order, p, &u, "stored", 0));
-                    from_store += 1;
+        let mut finished = 0u64;
+        // Level by level: every callee of a function is in an earlier level, so the functions of
+        // one level are independent of each other and their model calls and tests overlap. The
+        // members of a recursive group see each other's translations and go one after another.
+        for level in crate::plan::levels(&plan.entries) {
+            let mut batch: Vec<(usize, Work)> = Vec::new();
+            for i in level {
+                if job.cancel_token().is_cancelled() {
+                    return Err(ProtoError::new(ErrorCode::Cancelled, "job cancelled"));
+                }
+                let p = plan.entries[i].clone();
+                progress(job, "translate", finished, total, &p.name);
+                let order = p.order;
+                if !reachable.contains(&p.address) {
+                    slots[i] = Some(row_without_unit(
+                        order,
+                        &p,
+                        UnitStatus::Planned,
+                        "skipped",
+                        "the entry point does not reach this function: no direct call, no \
+                         function pointer handed on, no table of function pointers in the \
+                         program's data",
+                        0,
+                    ));
+                    finished += 1;
                     continue;
                 }
-            }
-            // A translation an earlier run made from this decompile, with the same Rust name and
-            // its callees as they are now, that passed its own test or could not be compared: a
-            // run that is started again picks up where the last one stopped. One that failed its
-            // test is translated again.
-            {
-                let (sha2, addr, hash, cm, name) = (
-                    sha.clone(),
-                    format!("{:#x}", p.address),
-                    f.decompile_hash.clone(),
-                    chosen.clone(),
-                    pc.names.get(&p.address).cloned().unwrap_or_default(),
-                );
-                let earlier = with_store(dir.clone(), move |st| {
-                    let found = st.versions(&sha2, &addr)?.into_iter().rev().find(|u| {
-                        matches!(u.status, UnitStatus::Translated | UnitStatus::Verified)
-                            && u.source_decompile_hash == hash
-                            && u.signature.name == name
+                let f = self.context_of(&pc.lift, &mut pc.cache, p.address).await?;
+
+                // An accepted translation made from this decompile, with its callees as they are.
+                {
+                    let (sha2, addr, hash, cm) = (
+                        sha.clone(),
+                        format!("{:#x}", p.address),
+                        f.decompile_hash.clone(),
+                        chosen.clone(),
+                    );
+                    let stored = with_store(dir.clone(), move |st| {
+                        let Some(u) = st.accepted(&sha2, &addr)? else {
+                            return Ok(None);
+                        };
+                        let consistent = u.source_decompile_hash == hash
                             && u.callees
                                 .iter()
                                 .filter_map(|c| c.reused.as_ref().map(|r| (c, r)))
                                 .all(|(c, r)| {
                                     cm.get(&parse_addr(&c.address))
                                         .is_some_and(|id| *id == r.unit)
-                                })
-                    });
-                    Ok(found)
-                })
-                .await?;
-                if let Some(u) = earlier {
-                    let u = self.maybe_accept(&pc, u).await?;
-                    chosen.insert(p.address, u.id.clone());
-                    rows.push(row_for_unit(order, p, &u, check_kind(&u), 0));
-                    from_store += 1;
-                    continue;
+                                });
+                        Ok(consistent.then_some(u))
+                    })
+                    .await?;
+                    if let Some(u) = stored {
+                        chosen.insert(p.address, u.id.clone());
+                        slots[i] = Some(row_for_unit(order, &p, &u, "stored", 0));
+                        from_store += 1;
+                        finished += 1;
+                        continue;
+                    }
+                }
+                // A translation an earlier run made from this decompile, with the same Rust name
+                // and its callees as they are now, that passed its own test or could not be
+                // compared: a run that is started again picks up where the last one stopped. One
+                // that failed its test is translated again.
+                {
+                    let (sha2, addr, hash, cm, name) = (
+                        sha.clone(),
+                        format!("{:#x}", p.address),
+                        f.decompile_hash.clone(),
+                        chosen.clone(),
+                        pc.names.get(&p.address).cloned().unwrap_or_default(),
+                    );
+                    let earlier = with_store(dir.clone(), move |st| {
+                        let found = st.versions(&sha2, &addr)?.into_iter().rev().find(|u| {
+                            matches!(u.status, UnitStatus::Translated | UnitStatus::Verified)
+                                && u.source_decompile_hash == hash
+                                && u.signature.name == name
+                                && u.callees
+                                    .iter()
+                                    .filter_map(|c| c.reused.as_ref().map(|r| (c, r)))
+                                    .all(|(c, r)| {
+                                        cm.get(&parse_addr(&c.address))
+                                            .is_some_and(|id| *id == r.unit)
+                                    })
+                        });
+                        Ok(found)
+                    })
+                    .await?;
+                    if let Some(u) = earlier {
+                        let u = self.maybe_accept(&pc, u).await?;
+                        chosen.insert(p.address, u.id.clone());
+                        slots[i] = Some(row_for_unit(order, &p, &u, check_kind(&u), 0));
+                        from_store += 1;
+                        finished += 1;
+                        continue;
+                    }
+                }
+
+                let max_attempts = pc.max_attempts;
+                match self
+                    .prepare_function(&mut pc, &p, &chosen, Vec::new(), max_attempts)
+                    .await?
+                {
+                    Prepared::Done(outcome) => {
+                        let (row, made) = self.finish(&pc, &mut chosen, &p, outcome).await?;
+                        translated += u32::from(made);
+                        slots[i] = Some(row);
+                        finished += 1;
+                    }
+                    Prepared::Work(w) if p.group_size > 1 => {
+                        let runner = Runner::of(&pc);
+                        let outcome = self.run_work(&runner, *w).await?;
+                        let (row, made) = self.finish(&pc, &mut chosen, &p, outcome).await?;
+                        translated += u32::from(made);
+                        slots[i] = Some(row);
+                        finished += 1;
+                    }
+                    Prepared::Work(w) => batch.push((i, *w)),
                 }
             }
-
-            let max_attempts = pc.max_attempts;
-            match self
-                .translate_function(&mut pc, p, &chosen, Vec::new(), max_attempts)
-                .await?
+            if batch.is_empty() {
+                continue;
+            }
+            let runner = Runner::of(&pc);
+            let runner = &runner;
+            let in_level = batch.len();
+            let mut outcomes: Vec<(usize, FunctionOutcome)> = Vec::with_capacity(in_level);
             {
-                FunctionOutcome::None {
-                    status,
-                    check,
-                    note,
-                    attempts,
-                } => rows.push(row_without_unit(order, p, status, check, &note, attempts)),
-                FunctionOutcome::Unit {
-                    unit,
-                    attempts,
-                    kind,
-                } => {
-                    translated += 1;
-                    let unit = self.maybe_accept(&pc, *unit).await?;
-                    if usable(&unit) {
-                        chosen.insert(p.address, unit.id.clone());
-                    }
-                    rows.push(row_for_unit(order, p, &unit, kind, attempts));
+                let mut running = futures_util::stream::iter(batch)
+                    .map(|(i, w)| async move { (i, self.run_work(runner, w).await) })
+                    .buffer_unordered(parallel);
+                while let Some((i, outcome)) = running.next().await {
+                    outcomes.push((i, outcome?));
+                    finished += 1;
+                    progress(
+                        job,
+                        "translate",
+                        finished,
+                        total,
+                        &format!(
+                            "{} of {} in this level translated, {} at once, {} answers from the \
+                             cache",
+                            outcomes.len(),
+                            in_level,
+                            parallel.min(in_level),
+                            counters.hits()
+                        ),
+                    );
                 }
+            }
+            // Finished in plan order, whatever order the answers arrived in.
+            outcomes.sort_by_key(|(i, _)| *i);
+            for (i, outcome) in outcomes {
+                let p = plan.entries[i].clone();
+                let (row, made) = self.finish(&pc, &mut chosen, &p, outcome).await?;
+                translated += u32::from(made);
+                slots[i] = Some(row);
             }
         }
+        let mut rows: Vec<ProgramFunctionRow> = slots.into_iter().flatten().collect();
 
         // 3. The crate, built and compared with the original.
         let mut stage = self
@@ -731,6 +816,8 @@ impl RewriteService {
             skipped,
             translated,
             reused_from_store: from_store,
+            cache_hits: counters.hits(),
+            parallel: u32::try_from(parallel).unwrap_or(1),
             failed,
             verified,
             unchecked,
@@ -767,6 +854,39 @@ impl RewriteService {
         }
     }
 
+    /// What a finished translation of `p` turns into: its row, the translation chosen for it
+    /// (accepted when the run was asked to), and whether the model made a unit.
+    async fn finish(
+        &self,
+        pc: &ProgramRun<'_>,
+        chosen: &mut BTreeMap<u64, String>,
+        p: &PlannedFunction,
+        outcome: FunctionOutcome,
+    ) -> Result<(ProgramFunctionRow, bool), ProtoError> {
+        Ok(match outcome {
+            FunctionOutcome::None {
+                status,
+                check,
+                note,
+                attempts,
+            } => (
+                row_without_unit(p.order, p, status, check, &note, attempts),
+                false,
+            ),
+            FunctionOutcome::Unit {
+                unit,
+                attempts,
+                kind,
+            } => {
+                let unit = self.maybe_accept(pc, *unit).await?;
+                if usable(&unit) {
+                    chosen.insert(p.address, unit.id.clone());
+                }
+                (row_for_unit(p.order, p, &unit, kind, attempts), true)
+            }
+        })
+    }
+
     /// Translates the function `p` with the translations in `chosen` for its callees, and
     /// repairs the translation while that helps (the loop of `rewrite_function`). `seeded` are
     /// repair rounds to start from: the earlier code and what is wrong with it.
@@ -778,13 +898,33 @@ impl RewriteService {
         seeded: Vec<RepairRound>,
         max_attempts: u32,
     ) -> Result<FunctionOutcome, ProtoError> {
+        match self
+            .prepare_function(pc, p, chosen, seeded, max_attempts)
+            .await?
+        {
+            Prepared::Done(outcome) => Ok(outcome),
+            Prepared::Work(w) => self.run_work(&Runner::of(pc), *w).await,
+        }
+    }
+
+    /// Everything that needs the run's state: the signature, the callees' translations, the
+    /// prompt. What is left is the model call and the checks (`run_work`), which can overlap
+    /// with those of other functions.
+    async fn prepare_function(
+        &self,
+        pc: &mut ProgramRun<'_>,
+        p: &PlannedFunction,
+        chosen: &BTreeMap<u64, String>,
+        seeded: Vec<RepairRound>,
+        max_attempts: u32,
+    ) -> Result<Prepared, ProtoError> {
         let none = |status, check, note: &str, attempts| {
-            Ok(FunctionOutcome::None {
+            Ok(Prepared::Done(FunctionOutcome::None {
                 status,
                 check,
                 note: note.to_string(),
                 attempts,
-            })
+            }))
         };
         let f = self.context_of(&pc.lift, &mut pc.cache, p.address).await?;
         let rname = pc
@@ -961,13 +1101,18 @@ impl RewriteService {
             opts: pc.opts.clone(),
             max_attempts,
         };
+        Ok(Prepared::Work(Box::new(work)))
+    }
+
+    /// The model call and the checks of a prepared translation.
+    async fn run_work(&self, r: &Runner, work: Work) -> Result<FunctionOutcome, ProtoError> {
         let run = match self
             .translate(
                 work,
-                &pc.dir,
-                &pc.binary_path.display().to_string(),
-                pc.backend.as_ref(),
-                &pc.oracle,
+                &r.dir,
+                &r.binary_path,
+                r.backend.as_ref(),
+                &r.oracle,
                 None,
             )
             .await
@@ -976,15 +1121,17 @@ impl RewriteService {
             // A reply that could not be used is this function's failure; anything else (the
             // provider is down, the job was cancelled) ends the run.
             Err(RewriteError::Output(why)) => {
-                return none(
-                    UnitStatus::Failed,
-                    "none",
-                    &format!("the model's reply could not be used: {why}"),
-                    1,
-                );
+                return Ok(FunctionOutcome::None {
+                    status: UnitStatus::Failed,
+                    check: "none",
+                    note: format!("the model's reply could not be used: {why}"),
+                    attempts: 1,
+                });
             }
             Err(e) => return Err(proto(e)),
         };
+        let units: Vec<&RewriteUnit> = run.attempts.iter().map(|(u, _)| u).collect();
+        crate::cache::forget_failed(&r.dir, &units);
         let attempts = u32::try_from(run.attempts.len()).unwrap_or(u32::MAX);
         let unit = best_attempt(&run);
         let kind = check_kind(&unit);

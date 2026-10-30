@@ -57,13 +57,10 @@ pub struct ModelReply {
     pub prompt_hash: String,
 }
 
-/// Runs one text-only request on the backend: no tools, nothing run on its side.
-pub async fn complete_text(
-    backend: &dyn AssistBackend,
-    req: ChatRequest,
-    cancel: CancellationToken,
-) -> Result<ModelReply, RewriteError> {
-    let prompt_hash = sha256_hex(&format!(
+/// SHA-256 of system prompt plus user messages: the `prompt_hash` a reply and a unit's
+/// provenance record.
+pub fn request_hash(req: &ChatRequest) -> String {
+    sha256_hex(&format!(
         "{}\n---\n{}",
         req.system,
         req.messages
@@ -74,7 +71,16 @@ pub async fn complete_text(
             })
             .collect::<Vec<_>>()
             .join("\n")
-    ));
+    ))
+}
+
+/// Runs one text-only request on the backend: no tools, nothing run on its side.
+pub async fn complete_text(
+    backend: &dyn AssistBackend,
+    req: ChatRequest,
+    cancel: CancellationToken,
+) -> Result<ModelReply, RewriteError> {
+    let prompt_hash = request_hash(&req);
     let reply = backend.complete_text(req, cancel).await?;
     Ok(ModelReply {
         text: reply.text,

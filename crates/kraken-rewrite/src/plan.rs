@@ -238,6 +238,33 @@ pub struct Collected {
     pub truncated: bool,
 }
 
+/// The entries of a plan as indices, grouped into levels that can be translated at the same
+/// time: a function is one level above its deepest callee outside its own recursive group, so
+/// every callee is in an earlier level. Within a level the indices are in plan order.
+pub fn levels(entries: &[PlannedFunction]) -> Vec<Vec<usize>> {
+    let group_of: BTreeMap<u64, u32> = entries.iter().map(|e| (e.address, e.group)).collect();
+    let mut level_of_group: BTreeMap<u32, usize> = BTreeMap::new();
+    // Callees come first in plan order, so a callee's group level is final when it is read.
+    for e in entries {
+        let mut level = level_of_group.get(&e.group).copied().unwrap_or(0);
+        for c in &e.callees {
+            if let Some(g) = group_of.get(c).filter(|g| **g != e.group) {
+                level = level.max(level_of_group.get(g).copied().unwrap_or(0) + 1);
+            }
+        }
+        level_of_group.insert(e.group, level);
+    }
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        let l = level_of_group[&e.group];
+        if out.len() <= l {
+            out.resize_with(l + 1, Vec::new);
+        }
+        out[l].push(i);
+    }
+    out
+}
+
 /// Assembles the stored form from a collection.
 pub fn to_plan(c: &Collected) -> StoredPlan {
     let ordered = order_functions(&c.nodes);
@@ -293,6 +320,43 @@ mod tests {
         }
         let main = &o.entries[5];
         assert_eq!(main.callees, vec![0x30, 0x40]);
+    }
+
+    #[test]
+    fn levels_put_every_callee_in_an_earlier_level() {
+        let nodes = vec![
+            node(0x10, "main", &[0x40, 0x30], &[]),
+            node(0x20, "fail", &[], &[]),
+            node(0x30, "name", &[], &[]),
+            node(0x40, "run", &[0x50, 0x60, 0x20], &[]),
+            node(0x50, "push", &[0x20], &[]),
+            node(0x60, "pop", &[0x20], &[]),
+        ];
+        let o = order_functions(&nodes);
+        let lv = levels(&o.entries);
+        let named =
+            |l: &[usize]| -> Vec<&str> { l.iter().map(|i| o.entries[*i].name.as_str()).collect() };
+        assert_eq!(lv.len(), 4);
+        assert_eq!(named(&lv[0]), ["name", "fail"]);
+        assert_eq!(named(&lv[1]), ["push", "pop"]);
+        assert_eq!(named(&lv[2]), ["run"]);
+        assert_eq!(named(&lv[3]), ["main"]);
+        assert_eq!(lv.iter().map(Vec::len).sum::<usize>(), o.entries.len());
+    }
+
+    #[test]
+    fn a_recursive_group_is_one_level() {
+        let nodes = vec![
+            node(1, "top", &[2, 4], &[]),
+            node(2, "even", &[3], &[]),
+            node(3, "odd", &[2], &[]),
+            node(4, "fact", &[4], &[]),
+        ];
+        let o = order_functions(&nodes);
+        let lv = levels(&o.entries);
+        assert_eq!(lv.len(), 2);
+        assert_eq!(lv[0].len(), 3);
+        assert_eq!(lv[1].len(), 1);
     }
 
     #[test]

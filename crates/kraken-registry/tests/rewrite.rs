@@ -272,6 +272,8 @@ fn program_result() -> RewriteProgramResult {
         skipped: 0,
         translated: 1,
         reused_from_store: 0,
+        cache_hits: 0,
+        parallel: 1,
         failed: 0,
         verified: 1,
         unchecked: 0,
@@ -1024,6 +1026,7 @@ fn the_unit_controls_have_the_right_kinds() {
             Permission::Mutating,
         ),
         ("rewrite_check", CommandKind::Query, Permission::Safe),
+        ("rewrite_cache", CommandKind::Mutation, Permission::Mutating),
         ("rewrite_hint_get", CommandKind::Query, Permission::Safe),
         (
             "rewrite_hint_set",
@@ -1069,6 +1072,11 @@ async fn deciding_about_a_unit_is_for_users_and_adding_evidence_is_open_to_agent
         )
         .await
         .expect_err("the mock has no spec editing");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    let e = r
+        .call(&agent, "rewrite_cache", json!({}))
+        .await
+        .expect_err("the mock has no cache");
     assert_eq!(e.code, ErrorCode::Unsupported);
     let e = r
         .call(&agent, "rewrite_check", json!({}))

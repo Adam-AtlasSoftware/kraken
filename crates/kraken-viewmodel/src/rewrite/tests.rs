@@ -748,6 +748,7 @@ fn program_run_json(run: u64, fail: bool) -> Value {
     json!({
         "run": run, "program_sha256": "00", "entry": "0x401500", "entry_name": u("main"),
         "functions_planned": 3, "skipped": 0, "translated": 3, "reused_from_store": 0,
+        "cache_hits": if run == 2 { 2 } else { 0 }, "parallel": 4,
         "failed": 0, "included": 3,
         "functions": [
             f(0, 0x401440, "xor_len", "differential", "pass", true),
@@ -808,6 +809,10 @@ fn the_program_view_lists_runs_the_function_table_and_the_failing_case() {
     assert_eq!(d.functions[2].check_label(), "compared with the original");
     assert!(d.functions[1].unverified() && !d.functions[0].unverified());
     assert_eq!(d.unverified(), 1);
+    assert_eq!(
+        d.speed_note(),
+        "4 functions at a time, 2 answers from the cache, no model call"
+    );
     // The failing case is on show at once.
     assert_eq!(p.selected_case, Some(0));
     let c = p.case().expect("case");

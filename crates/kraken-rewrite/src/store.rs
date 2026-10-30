@@ -40,6 +40,30 @@ pub struct StoredHints {
     pub by_agent: bool,
 }
 
+/// A model reply of the translation cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedReply {
+    /// The reply text.
+    pub text: String,
+    /// Provider id that wrote it.
+    pub provider: String,
+    /// Model that wrote it.
+    pub model: String,
+}
+
+/// What the translation cache holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CacheSummary {
+    /// Replies stored.
+    pub entries: u64,
+    /// Bytes of reply text.
+    pub bytes: u64,
+    /// Times a stored reply was used instead of a model call.
+    pub hits: u64,
+    /// Seconds since the epoch of the oldest reply (0 when empty).
+    pub oldest: u64,
+}
+
 /// File name inside the project directory.
 pub const DB_FILE: &str = "rewrite.sqlite";
 
@@ -200,6 +224,15 @@ pub const MIGRATIONS: &[&str] = &[
         by_agent       INTEGER NOT NULL,
         updated_at     INTEGER NOT NULL,
         PRIMARY KEY (program_sha256, address)
+     );",
+    // 7: model replies by a fingerprint of the prompt, the model and the hints.
+    "CREATE TABLE translation_cache (
+        key        TEXT PRIMARY KEY,
+        provider   TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        reply      TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        hits       INTEGER NOT NULL DEFAULT 0
      );",
 ];
 
@@ -431,7 +464,9 @@ impl RewriteStore {
     /// version is accepted. Older versions stay.
     pub fn put_unit(&self, mut unit: RewriteUnit) -> Result<RewriteUnit, RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         let prog = unit.anchor.program_sha256.clone();
         let addr = unit.anchor.address.clone();
         let previous: Option<(u32, Option<u32>, String)> = tx
@@ -655,7 +690,9 @@ impl RewriteStore {
         actor: &str,
     ) -> Result<(RewriteUnit, Option<u32>), RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         let row: Option<(String, String, u32, String)> = tx
             .query_row(
                 "SELECT program_sha256, address, version, status FROM unit_versions WHERE id = ?1",
@@ -740,7 +777,9 @@ impl RewriteStore {
         reason: Option<&str>,
     ) -> Result<RewriteUnit, RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         let (prog, addr, version, status) = version_row(&tx, id)?;
         match status.as_str() {
             "accepted" => {
@@ -785,7 +824,9 @@ impl RewriteStore {
     /// accepted version.
     pub fn unaccept(&self, id: &str, actor: &str) -> Result<RewriteUnit, RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         let (prog, addr, version, status) = version_row(&tx, id)?;
         if status != "accepted" {
             return Err(RewriteError::Store(format!(
@@ -827,7 +868,9 @@ impl RewriteStore {
         note: Option<&str>,
     ) -> Result<(), RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         version_row(&tx, id)?;
         let next: i64 = tx
             .query_row(
@@ -863,7 +906,9 @@ impl RewriteStore {
         actor: &str,
     ) -> Result<RewriteUnit, RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         let (prog, addr, version, status) = version_row(&tx, id)?;
         let (kind, detail) = verdict_parts(&replay.verdict);
         tx.execute(
@@ -1145,6 +1190,83 @@ impl RewriteStore {
         .transpose()
     }
 
+    /// The cached model reply under `key`, counting the hit.
+    pub fn cache_get(&self, key: &str) -> Result<Option<CachedReply>, RewriteError> {
+        let conn = self.conn();
+        let row: Option<CachedReply> = conn
+            .query_row(
+                "SELECT reply, provider, model FROM translation_cache WHERE key = ?1",
+                params![key],
+                |r| {
+                    Ok(CachedReply {
+                        text: r.get(0)?,
+                        provider: r.get(1)?,
+                        model: r.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(db)?;
+        if row.is_some() {
+            conn.execute(
+                "UPDATE translation_cache SET hits = hits + 1 WHERE key = ?1",
+                params![key],
+            )
+            .map_err(db)?;
+        }
+        Ok(row)
+    }
+
+    /// Caches a model reply under `key`, replacing an earlier one.
+    pub fn cache_put(&self, key: &str, reply: &CachedReply) -> Result<(), RewriteError> {
+        self.conn()
+            .execute(
+                "INSERT OR REPLACE INTO translation_cache
+                    (key, provider, model, reply, created_at, hits)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                params![key, reply.provider, reply.model, reply.text, now()],
+            )
+            .map_err(db)?;
+        Ok(())
+    }
+
+    /// Drops the reply under `key` (a translation that failed its test is asked for again).
+    pub fn cache_forget(&self, key: &str) -> Result<(), RewriteError> {
+        self.conn()
+            .execute("DELETE FROM translation_cache WHERE key = ?1", params![key])
+            .map_err(db)?;
+        Ok(())
+    }
+
+    /// What the translation cache holds.
+    pub fn cache_summary(&self) -> Result<CacheSummary, RewriteError> {
+        self.conn()
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(reply)), 0), COALESCE(SUM(hits), 0),
+                        COALESCE(MIN(created_at), 0)
+                 FROM translation_cache",
+                [],
+                |r| {
+                    Ok(CacheSummary {
+                        entries: r.get::<_, i64>(0)?.max(0).unsigned_abs(),
+                        bytes: r.get::<_, i64>(1)?.max(0).unsigned_abs(),
+                        hits: r.get::<_, i64>(2)?.max(0).unsigned_abs(),
+                        oldest: r.get::<_, i64>(3)?.max(0).unsigned_abs(),
+                    })
+                },
+            )
+            .map_err(db)
+    }
+
+    /// Empties the translation cache; returns the entries removed.
+    pub fn cache_clear(&self) -> Result<u64, RewriteError> {
+        let n = self
+            .conn()
+            .execute("DELETE FROM translation_cache", [])
+            .map_err(db)?;
+        Ok(n as u64)
+    }
+
     /// The newest spec for a function (`Some(address)`) or for the program (`None`).
     pub fn latest_spec(
         &self,
@@ -1270,7 +1392,9 @@ impl RewriteStore {
     /// Replaces the stored plan of the program.
     pub fn save_plan(&self, program_sha256: &str, plan: &StoredPlan) -> Result<(), RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         tx.execute(
             "DELETE FROM plan_entries WHERE program_sha256 = ?1",
             params![program_sha256],
@@ -1471,7 +1595,9 @@ impl RewriteStore {
         hashes: &[(String, String)],
     ) -> Result<(), RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         observe_in(&tx, program_sha256, hashes)?;
         tx.commit().map_err(db)
     }
@@ -1484,7 +1610,9 @@ impl RewriteStore {
         mut result: RewriteProgramResult,
     ) -> Result<RewriteProgramResult, RewriteError> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db)?;
         let at = now();
         tx.execute(
             "INSERT INTO program_runs (program_sha256, created_at, entry, verdict, cases_run,
@@ -1719,7 +1847,9 @@ fn current_version(conn: &Connection) -> Result<u32, RewriteError> {
 /// Applies the migrations after the database's current version, in one transaction. A database
 /// from a newer build is refused rather than half understood.
 pub fn migrate(conn: &mut Connection, migrations: &[&str]) -> Result<(), RewriteError> {
-    let tx = conn.transaction().map_err(db)?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(db)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
         .map_err(db)?;
     let current = current_version(&tx)?;

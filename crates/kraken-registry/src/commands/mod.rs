@@ -198,10 +198,11 @@ pub use rewrite_build::{
     manifest_kind,
 };
 pub use rewrite_control::{
-    CoverageView, Prereq, PrereqLevel, RewriteAddCase, RewriteAddCaseArgs, RewriteCheck,
-    RewriteCheckArgs, RewriteCheckOut, RewriteReject, RewriteRejectArgs, RewriteSpecEdit,
-    RewriteSpecEditArgs, RewriteUnaccept, RewriteUnacceptCmd, RewriteVerify, RewriteVerifyArgs,
-    RewriteVerifyResult, UnitChangeOut,
+    CacheAction, CoverageView, Prereq, PrereqLevel, RewriteAddCase, RewriteAddCaseArgs,
+    RewriteCache, RewriteCacheArgs, RewriteCacheOut, RewriteCheck, RewriteCheckArgs,
+    RewriteCheckOut, RewriteReject, RewriteRejectArgs, RewriteSpecEdit, RewriteSpecEditArgs,
+    RewriteUnaccept, RewriteUnacceptCmd, RewriteVerify, RewriteVerifyArgs, RewriteVerifyResult,
+    UnitChangeOut,
 };
 pub use rewrite_hint::{
     RewriteHintGet, RewriteHintGetArgs, RewriteHintSet, RewriteHintSetArgs, RewriteHints,
@@ -349,6 +350,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteUnacceptCmd);
     r.register(RewriteAddCase);
     r.register(RewriteCheck);
+    r.register(RewriteCache);
     r.register(RewriteVerify);
     r.register(RewriteSpecEdit);
     r.register(RewriteSpec);

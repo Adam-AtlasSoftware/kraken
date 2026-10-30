@@ -256,6 +256,10 @@ pub struct ProgramRunDetail {
     pub translated: u32,
     /// Functions taken from accepted units of earlier runs.
     pub reused_from_store: u32,
+    /// Model answers taken from the translation cache instead of asking again.
+    pub cache_hits: u32,
+    /// Functions translated at the same time in this run.
+    pub parallel: u32,
     /// Functions without a usable translation.
     pub failed: u32,
     /// Functions in the crate.
@@ -281,6 +285,23 @@ pub struct ProgramRunDetail {
 }
 
 impl ProgramRunDetail {
+    /// How the translation went in time and money: functions at once and answers that cost no
+    /// model call. Empty for a run that asked the model for everything one at a time.
+    pub fn speed_note(&self) -> String {
+        let mut parts = Vec::new();
+        if self.parallel > 1 {
+            parts.push(format!("{} functions at a time", self.parallel));
+        }
+        if self.cache_hits > 0 {
+            parts.push(format!(
+                "{} answer{} from the cache, no model call",
+                self.cache_hits,
+                if self.cache_hits == 1 { "" } else { "s" }
+            ));
+        }
+        parts.join(", ")
+    }
+
     fn new(r: RewriteProgramResult) -> ProgramRunDetail {
         ProgramRunDetail {
             run: r.run,
@@ -290,6 +311,8 @@ impl ProgramRunDetail {
             skipped: r.skipped,
             translated: r.translated,
             reused_from_store: r.reused_from_store,
+            cache_hits: r.cache_hits,
+            parallel: r.parallel,
             failed: r.failed,
             included: r.included,
             functions: r

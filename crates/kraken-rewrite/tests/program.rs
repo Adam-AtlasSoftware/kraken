@@ -15,6 +15,7 @@ mod common;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -1482,4 +1483,146 @@ async fn a_call_cap_stops_a_program_rewrite_cleanly_and_keeps_what_it_finished()
         .filter_map(|k| c[*k].as_u64())
         .sum();
     assert_eq!(made, 2, "{status:#}");
+}
+
+// ----- the translation cache and parallel levels -----
+
+/// Counts the requests that reach the wrapped provider.
+struct Counting {
+    inner: Arc<dyn ChatProvider>,
+    calls: Arc<AtomicU32>,
+}
+
+#[async_trait]
+impl ChatProvider for Counting {
+    fn info(&self) -> kraken_agent::ProviderInfo {
+        self.inner.info()
+    }
+
+    async fn complete(
+        &self,
+        req: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<kraken_agent::ChatStream, AgentError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.complete(req, cancel).await
+    }
+}
+
+/// Forgets every unit, verdict and run of the project but keeps the translation cache, as if the
+/// functions had never been translated.
+fn forget_units(dir: &Path) {
+    let conn = rusqlite::Connection::open(dir.join("rewrite.sqlite")).expect("open store");
+    for t in [
+        "verdicts",
+        "test_cases",
+        "unit_events",
+        "unit_repairs",
+        "unit_versions",
+        "units",
+        "observed_hashes",
+        "program_runs",
+    ] {
+        conn.execute(&format!("DELETE FROM {t}"), []).expect(t);
+    }
+}
+
+fn verdicts(out: &Value) -> Vec<(String, String, String)> {
+    out["functions"]
+        .as_array()
+        .expect("functions")
+        .iter()
+        .map(|f| {
+            (
+                f["name"]["value"].as_str().unwrap_or("").to_string(),
+                f["verdict"].as_str().unwrap_or("").to_string(),
+                f["check"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_second_run_is_served_from_the_cache_without_model_calls() {
+    if !sandbox_available() {
+        return;
+    }
+    let calls = Arc::new(AtomicU32::new(0));
+    let provider = Arc::new(Counting {
+        inner: cassette_provider("program-pie-list.json", "pie_list-O0", PIE_LIST).await,
+        calls: calls.clone(),
+    });
+    let r = rig("pie_list-O0", provider).await;
+    let args = json!({"verify_functions": false});
+    let first = r
+        .job(&user(), "rewrite_program", args.clone())
+        .await
+        .expect("first run");
+    let asked = calls.load(Ordering::SeqCst);
+    assert!(asked >= 11, "{asked} model calls for 11 functions");
+    assert_eq!(first["cache_hits"], 0);
+    let stats = r
+        .call(&user(), "rewrite_cache", json!({"action": "stats"}))
+        .await
+        .expect("stats");
+    assert_eq!(stats["entries"], asked, "{stats}");
+
+    // The units are forgotten but the cache is not: every function is translated again, from
+    // cached replies, and built and compared like the first time.
+    forget_units(&r.dir);
+    let second = r
+        .job(&user(), "rewrite_program", args)
+        .await
+        .expect("second run");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        asked,
+        "the model was asked again"
+    );
+    assert_eq!(second["cache_hits"], asked, "{second}");
+    assert_eq!(second["translated"], first["translated"]);
+    assert_eq!(second["crate_sha256"], first["crate_sha256"]);
+    assert_eq!(verdicts(&second), verdicts(&first));
+    assert_eq!(second["verdict"]["verdict"], "pass");
+
+    // Agents may look but not clear.
+    let e = r
+        .call(&agent(), "rewrite_cache", json!({"action": "clear"}))
+        .await
+        .expect_err("agents cannot clear");
+    assert_eq!(e.code, ErrorCode::RejectedHumanPriority);
+    let cleared = r
+        .call(&user(), "rewrite_cache", json!({"action": "clear"}))
+        .await
+        .expect("clear");
+    assert_eq!(cleared["removed"], asked);
+    assert_eq!(cleared["entries"], 0);
+    assert!(cleared["hits"].as_u64().unwrap_or(0) == 0, "{cleared}");
+}
+
+#[tokio::test]
+async fn parallel_levels_give_the_same_crate_and_verdicts_as_one_at_a_time() {
+    if !sandbox_available() {
+        return;
+    }
+    let mut results = Vec::new();
+    for parallel in [1, 4] {
+        let provider = cassette_provider("program-pie-list.json", "pie_list-O0", PIE_LIST).await;
+        let r = rig("pie_list-O0", provider).await;
+        let out = r
+            .job(
+                &user(),
+                "rewrite_program",
+                json!({"verify_functions": false, "parallel": parallel}),
+            )
+            .await
+            .expect("rewrite_program");
+        assert_eq!(out["parallel"], parallel);
+        assert_eq!(out["verdict"]["verdict"], "pass", "{}", table(&out));
+        results.push(out);
+    }
+    assert_eq!(results[0]["crate_sha256"], results[1]["crate_sha256"]);
+    assert_eq!(verdicts(&results[0]), verdicts(&results[1]));
+    assert_eq!(results[0]["included"], results[1]["included"]);
+    assert_eq!(results[0]["translated"], 11);
 }

@@ -209,7 +209,14 @@ pub struct RewriteConfig {
     pub max_callees: usize,
     /// Translation attempts of `rewrite_function` when the call does not say (1 = no repair).
     pub max_attempts: u32,
+    /// Functions of a program rewrite translated at once (`[rewrite] parallel`).
+    pub parallel: u32,
 }
+
+/// Functions translated at once when nothing says otherwise.
+pub const DEFAULT_PARALLEL: u32 = 4;
+/// Most functions translated at once.
+pub const MAX_PARALLEL: u32 = 16;
 
 impl Default for RewriteConfig {
     fn default() -> Self {
@@ -219,6 +226,7 @@ impl Default for RewriteConfig {
             budget: Budget::default(),
             max_callees: 6,
             max_attempts: DEFAULT_ATTEMPTS,
+            parallel: DEFAULT_PARALLEL,
         }
     }
 }
@@ -237,9 +245,14 @@ impl RewriteService {
 
     /// The service the CLI and `krakend` attach: provider from `config.toml`, default settings.
     pub fn standard() -> Self {
+        let path = kraken_assist::provider_config_path(&|k| std::env::var_os(k));
         Self::new(
             Arc::new(ConfigBackend::from_env()),
-            RewriteConfig::default(),
+            RewriteConfig {
+                parallel: kraken_assist::rewrite_parallel(path.as_deref())
+                    .unwrap_or(DEFAULT_PARALLEL),
+                ..RewriteConfig::default()
+            },
         )
     }
 
@@ -1221,6 +1234,31 @@ impl RewriteBackend for RewriteService {
         self.verify_unit_job(s, ctx, args, job).await
     }
 
+    async fn cache(
+        &self,
+        s: &Session,
+        _ctx: &CallContext,
+        args: kraken_registry::commands::RewriteCacheArgs,
+    ) -> Result<kraken_registry::commands::RewriteCacheOut, ProtoError> {
+        use kraken_registry::commands::{CacheAction, RewriteCacheOut};
+        let dir = s.project()?.dir().to_path_buf();
+        with_store(dir, move |st| {
+            let removed = match args.action {
+                CacheAction::Clear => st.cache_clear()?,
+                CacheAction::Stats => 0,
+            };
+            let c = st.cache_summary()?;
+            Ok(RewriteCacheOut {
+                entries: c.entries,
+                bytes: c.bytes,
+                hits: c.hits,
+                oldest: c.oldest,
+                removed,
+            })
+        })
+        .await
+    }
+
     async fn check(
         &self,
         s: &Session,
@@ -1733,18 +1771,15 @@ impl RewriteService {
         };
         let oracle = OracleThread::spawn(PathBuf::from(&binary_path), self.cfg.oracle.clone());
         progress(job, "translate", 1, 4, "asking the model for a translation");
-        let backend = ai.backend()?;
+        let backend = crate::cache::CachingBackend::new(ai.backend()?, dir.clone(), Arc::default());
         let run = self
-            .translate(
-                work,
-                &dir,
-                &binary_path,
-                backend.as_ref(),
-                &oracle,
-                Some(job),
-            )
+            .translate(work, &dir, &binary_path, &backend, &oracle, Some(job))
             .await
             .map_err(proto)?;
+        crate::cache::forget_failed(
+            &dir,
+            &run.attempts.iter().map(|(u, _)| u).collect::<Vec<_>>(),
+        );
 
         let (unit, out) = run.last();
         progress(job, "done", 4, 4, "finished");

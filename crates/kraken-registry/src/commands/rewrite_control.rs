@@ -393,6 +393,88 @@ impl Command for RewriteSpecEdit {
     }
 }
 
+// ---- rewrite_cache ------------------------------------------------------------------------------
+
+/// What `rewrite_cache` does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheAction {
+    /// Report what the cache holds.
+    #[default]
+    Stats,
+    /// Delete every cached reply.
+    Clear,
+}
+
+/// Arguments of `rewrite_cache`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RewriteCacheArgs {
+    /// `stats` (default) or `clear`.
+    #[serde(default)]
+    pub action: CacheAction,
+}
+
+/// What the translation cache of the project holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RewriteCacheOut {
+    /// Cached model replies.
+    pub entries: u64,
+    /// Bytes of reply text.
+    pub bytes: u64,
+    /// Times a cached reply was used instead of a model call, over the life of the entries.
+    pub hits: u64,
+    /// When the oldest reply was cached (seconds since the Unix epoch; 0 when empty).
+    pub oldest: u64,
+    /// Replies deleted by this call (`clear`).
+    #[serde(default)]
+    pub removed: u64,
+}
+
+/// Reports or empties the translation cache.
+pub struct RewriteCache;
+
+#[async_trait]
+impl Command for RewriteCache {
+    type Args = RewriteCacheArgs;
+    type Output = RewriteCacheOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "rewrite_cache",
+            "Show or clear the cache of model translations",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        )
+        .doc(
+            "Rewrites keep every model reply in the project, keyed by the prompt, the model and \
+             the function's hints. A repeated prompt is answered from the cache without asking \
+             the model, and the reply is still built and tested like a new one. `stats` counts \
+             the replies and the hits; `clear` deletes them, so the next run asks the model \
+             again (users only).\n\
+             Example: rewrite_cache {\"action\": \"stats\"}",
+        )
+        .details(
+            "The cache lives in `rewrite.sqlite` of the project. A reply whose translation \
+             failed its test is dropped from the cache at once, so repeating a run does not \
+             repeat a mistake. Clearing it never touches units, verdicts or accepted \
+             translations.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewriteCacheArgs,
+    ) -> Result<RewriteCacheOut, ProtoError> {
+        if args.action == CacheAction::Clear {
+            users_only(ctx, "clearing the translation cache")?;
+        }
+        s.rewrite()?.cache(s, ctx, args).await
+    }
+}
+
 // ---- rewrite_check -----------------------------------------------------------------------------
 
 /// How a prerequisite stands.

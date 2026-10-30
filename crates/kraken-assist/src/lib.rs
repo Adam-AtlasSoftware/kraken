@@ -65,7 +65,7 @@ pub use permissions::{DefaultMode, PermissionRules, Verdict as PermissionVerdict
 pub use pricing::{DEFAULT_PRICES, Price, Pricing};
 pub use provider::{
     SAMPLES, build_provider, load_provider_config, load_rewrite_config, no_provider_message,
-    provider_config_path, sample_config, text_backend, text_backend_from_config,
+    provider_config_path, rewrite_parallel, sample_config, text_backend, text_backend_from_config,
 };
 pub use shell::{
     PolicyFileError, SHELL_TOOL, ShellHost, ShellReview, ShellSession, add_project_allow,

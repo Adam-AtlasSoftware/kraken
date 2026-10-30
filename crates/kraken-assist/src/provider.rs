@@ -158,11 +158,27 @@ pub fn load_rewrite_config(path: Option<&Path>) -> Result<Option<ProviderConfig>
     let Some(rewrite) = table.get("rewrite") else {
         return Ok(None);
     };
+    // `parallel` configures the pipeline, not the provider; a table with only it is no override.
+    let mut rewrite = rewrite.clone();
+    if let Some(t) = rewrite.as_table_mut() {
+        t.remove("parallel");
+        if t.is_empty() {
+            return Ok(None);
+        }
+    }
     rewrite
-        .clone()
         .try_into::<ProviderConfig>()
         .map(Some)
         .map_err(|e| AssistError::Config(format!("{}: [rewrite]: {e}", p.display())))
+}
+
+/// `parallel` of the `[rewrite]` table: how many functions of a program rewrite are translated
+/// at once. `None` when the file, the table or the key is missing or not a positive integer.
+pub fn rewrite_parallel(path: Option<&Path>) -> Option<u32> {
+    let text = std::fs::read_to_string(path?).ok()?;
+    let table: toml::Table = text.parse().ok()?;
+    let n = table.get("rewrite")?.get("parallel")?.as_integer()?;
+    u32::try_from(n).ok().filter(|n| *n > 0)
 }
 
 /// The backend a text-only task (the rewrite pipeline) runs on: `[rewrite]` when the file has
@@ -249,5 +265,19 @@ mod tests {
             load_provider_config(None),
             Err(AssistError::NoProvider(m)) if m.contains("ollama") || m.contains("Ollama")
         ));
+    }
+
+    #[test]
+    fn rewrite_parallel_is_read_and_is_no_provider_override_on_its_own() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[rewrite]\nparallel = 8\n").expect("write");
+        assert_eq!(rewrite_parallel(Some(&path)), Some(8));
+        assert!(matches!(load_rewrite_config(Some(&path)), Ok(None)));
+        std::fs::write(&path, "[rewrite]\nparallel = 0\n").expect("write");
+        assert_eq!(rewrite_parallel(Some(&path)), None);
+        std::fs::write(&path, "[provider]\nkind = \"ollama\"\n").expect("write");
+        assert_eq!(rewrite_parallel(Some(&path)), None);
+        assert_eq!(rewrite_parallel(None), None);
     }
 }

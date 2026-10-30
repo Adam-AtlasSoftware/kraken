@@ -120,6 +120,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`rewrite_accept`](#rewrite_accept) | mutation | mutating | Accept a verified rewrite unit for export (users only) |
 | [`rewrite_add_case`](#rewrite_add_case) | job | mutating | Add a test case to a rewrite unit and replay all its cases (job) |
 | [`rewrite_build`](#rewrite_build) | job | mutating | Build and test an exported Rust rewrite inside the sandbox (job) |
+| [`rewrite_cache`](#rewrite_cache) | mutation | mutating | Show or clear the cache of model translations |
 | [`rewrite_check`](#rewrite_check) | query | safe | Check that this host can run the Rust rewrite workflow |
 | [`rewrite_export`](#rewrite_export) | job | mutating | Export accepted units as a Cargo workspace with an FFI shim (job) |
 | [`rewrite_function`](#rewrite_function) | job | mutating | Translate one function to Rust and verify it against the original (job) |
@@ -20430,6 +20431,80 @@ The folder must hold the marker file KRAKEN writes (`manifest.json` from `rewrit
 
 </details>
 
+## rewrite_cache
+
+Show or clear the cache of model translations
+
+```sh
+kraken rewrite-cache [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Rewrites keep every model reply in the project, keyed by the prompt, the model and the function's hints. A repeated prompt is answered from the cache without asking the model, and the reply is still built and tested like a new one. `stats` counts the replies and the hits; `clear` deletes them, so the next run asks the model again (users only).
+
+Example: `rewrite_cache {"action": "stats"}`
+
+The cache lives in `rewrite.sqlite` of the project. A reply whose translation failed its test is dropped from the cache at once, so repeating a run does not repeat a mistake. Clearing it never touches units, verdicts or accepted translations.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `action` | `--action` | one of `stats`, `clear` | no | `stats` (default) or `clear`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the translation cache of the project holds.",
+  "properties": {
+    "bytes": {
+      "description": "Bytes of reply text.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "entries": {
+      "description": "Cached model replies.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "hits": {
+      "description": "Times a cached reply was used instead of a model call, over the life of the entries.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "oldest": {
+      "description": "When the oldest reply was cached (seconds since the Unix epoch; 0 when empty).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "removed": {
+      "default": 0,
+      "description": "Replies deleted by this call (`clear`).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "entries",
+    "bytes",
+    "hits",
+    "oldest"
+  ],
+  "title": "RewriteCacheOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## rewrite_check
 
 Check that this host can run the Rust rewrite workflow
@@ -21271,6 +21346,7 @@ Plans the program bottom-up (callees first, recursive groups together), translat
 | `max_attempts` | `--max-attempts` | integer | no | Most translation attempts per function (default 3, 1 to 8). |
 | `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates decompiles. `spec` is not available for programs yet. |
 | `model` | `--model` | string | no | Use this model name instead of the configured one, for this run only (not saved). |
+| `parallel` | `--parallel` | integer | no | Functions translated at the same time: callees still finish before their callers, so the crate and the verdicts do not depend on it. Default from `[rewrite] parallel` in the config file, else 4 (1 to 16). |
 | `provider` | `--provider` | string | no | Which configured model: `rewrite` (default: the `[rewrite]` table of config.toml, else `[provider]`) or `assistant` (`[provider]`, the assistant's model). |
 | `repair_rounds` | `--repair-rounds` | integer | no | Rounds of program-level repair after a failed verdict (default 2, at most 4; 0 turns it off). Each round re-translates the functions likeliest to cause the first differing case. |
 | `scope` | `--scope` | one of `function`, `all` | no | `all` (the only scope today): every non-library function the entry point reaches. |
@@ -21696,6 +21772,13 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
           "description": "True when the crate was built in the sandbox.",
           "type": "boolean"
         },
+        "cache_hits": {
+          "default": 0,
+          "description": "Model replies this run took from the translation cache instead of asking the model\n(`rewrite_cache`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "crate_dir": {
           "description": "Where the crate was written (empty when nothing was).",
           "type": "string"
@@ -21749,6 +21832,13 @@ Reads `rewrite.sqlite`; nothing is generated or run. Lists the stored program re
           "default": "",
           "description": "Model name.",
           "type": "string"
+        },
+        "parallel": {
+          "default": 0,
+          "description": "Functions translated at the same time in this run.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "program_sha256": {
           "description": "SHA-256 of the analysed binary.",

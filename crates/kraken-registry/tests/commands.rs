@@ -114,6 +114,7 @@ const EXPECTED: &[&str] = &[
     "rewrite_accept",
     "rewrite_add_case",
     "rewrite_build",
+    "rewrite_cache",
     "rewrite_check",
     "rewrite_export",
     "rewrite_function",
