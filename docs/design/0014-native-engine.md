@@ -186,27 +186,27 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 | Capability | Set | Format | Recall | Precision | Threshold | Status |
 |---|---|---|---|---|---|---|
 | functions | `corpus` | ELF x86-64 | 99.8% | 81.8% | 99.0% | parity |
-| names | `corpus` | ELF x86-64 | 88.9% | 88.9% | 87.0% | partial |
-| decompile_text | `corpus` | ELF x86-64 | 50.0% | 51.6% | 48.0% | partial |
-| globals | `corpus` | ELF x86-64 | 0.0% | 100.0% | 0.0% | missing |
-| types | `corpus` | ELF x86-64 | 42.1% | 5.6% | 40.0% | partial |
-| memory | `corpus` | ELF x86-64 | 71.2% | 75.8% | 69.0% | partial |
-| disassembly | `corpus` | ELF x86-64 | 98.8% | 100.0% | 98.0% | parity |
-| jump_tables | `corpus` | ELF x86-64 | 68.2% | 89.6% | 66.0% | partial |
+| names | `corpus` | ELF x86-64 | 99.8% | 99.8% | 99.0% | parity |
+| decompile_text | `corpus` | ELF x86-64 | 53.6% | 54.2% | 50.0% | partial |
+| globals | `corpus` | ELF x86-64 | 85.2% | 74.2% | 80.0% | partial |
+| types | `corpus` | ELF x86-64 | 90.0% | 13.1% | 89.0% | partial |
+| memory | `corpus` | ELF x86-64 | 100.0% | 100.0% | 99.0% | parity |
+| disassembly | `corpus` | ELF x86-64 | 99.4% | 100.0% | 98.0% | parity |
+| jump_tables | `corpus` | ELF x86-64 | 100.0% | 92.7% | 98.0% | parity |
 | functions | `corpus/pe` | PE x86-64 and x86 | 100.0% | 82.9% | 99.0% | parity |
-| names | `corpus/pe` | PE x86-64 and x86 | 95.6% | 95.6% | 93.0% | parity |
-| decompile_text | `corpus/pe` | PE x86-64 and x86 | 68.6% | 63.5% | 66.0% | partial |
-| globals | `corpus/pe` | PE x86-64 and x86 | 0.0% | 100.0% | 0.0% | missing |
-| types | `corpus/pe` | PE x86-64 and x86 | 45.3% | 3.8% | 43.0% | partial |
-| memory | `corpus/pe` | PE x86-64 and x86 | 16.0% | 16.0% | 14.0% | partial |
+| names | `corpus/pe` | PE x86-64 and x86 | 99.4% | 99.4% | 99.0% | parity |
+| decompile_text | `corpus/pe` | PE x86-64 and x86 | 74.6% | 68.4% | 70.0% | partial |
+| globals | `corpus/pe` | PE x86-64 and x86 | 87.9% | 76.3% | 80.0% | partial |
+| types | `corpus/pe` | PE x86-64 and x86 | 100.0% | 7.7% | 99.0% | parity |
+| memory | `corpus/pe` | PE x86-64 and x86 | 100.0% | 100.0% | 95.0% | parity |
 | disassembly | `corpus/pe` | PE x86-64 and x86 | 99.9% | 100.0% | 98.0% | parity |
 | jump_tables | `corpus/pe` | PE x86-64 and x86 | 100.0% | 100.0% | 98.0% | parity |
 | functions | `corpus/elf32` | ELF x86 | 100.0% | 96.1% | 99.0% | parity |
 | names | `corpus/elf32` | ELF x86 | 99.5% | 99.5% | 98.0% | parity |
-| decompile_text | `corpus/elf32` | ELF x86 | 61.5% | 56.2% | 59.0% | partial |
-| globals | `corpus/elf32` | ELF x86 | 0.0% | 100.0% | 0.0% | missing |
-| types | `corpus/elf32` | ELF x86 | 63.6% | 15.9% | 61.0% | partial |
-| memory | `corpus/elf32` | ELF x86 | 71.7% | 77.5% | 70.0% | partial |
+| decompile_text | `corpus/elf32` | ELF x86 | 63.2% | 57.8% | 61.0% | partial |
+| globals | `corpus/elf32` | ELF x86 | 88.9% | 100.0% | 80.0% | partial |
+| types | `corpus/elf32` | ELF x86 | 93.9% | 16.3% | 93.0% | partial |
+| memory | `corpus/elf32` | ELF x86 | 100.0% | 100.0% | 99.0% | parity |
 | disassembly | `corpus/elf32` | ELF x86 | 98.5% | 100.0% | 98.0% | parity |
 | jump_tables | `corpus/elf32` | ELF x86 | 100.0% | 87.5% | 98.0% | parity |
 
