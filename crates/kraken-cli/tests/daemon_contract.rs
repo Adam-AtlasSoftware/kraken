@@ -330,10 +330,22 @@ async fn check_serving_commands(s: &Surfaces) {
     assert_eq!(direct.1["code"], "unsupported", "{}", direct.1);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn every_registry_command_is_identical_direct_and_through_the_daemon() {
-    // The body is a very large future; on the heap it cannot overflow the test thread's stack.
-    Box::pin(every_registry_command_identical()).await;
+#[test]
+fn every_registry_command_is_identical_direct_and_through_the_daemon() {
+    // The body is one very large future whose poll frame alone (every step's JSON built
+    // inline) outgrows the 2 MiB test thread in a debug build, boxed or not; give it room.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(Box::pin(every_registry_command_identical()));
+        })
+        .expect("test thread")
+        .join()
+        .expect("the contract steps passed");
 }
 
 async fn every_registry_command_identical() {
