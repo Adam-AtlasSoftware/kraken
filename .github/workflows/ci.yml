@@ -287,7 +287,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        # macOS is paused (lowest priority); add macos-14 back to resume it.
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       KRAKEN_NO_DAEMON: "1"
