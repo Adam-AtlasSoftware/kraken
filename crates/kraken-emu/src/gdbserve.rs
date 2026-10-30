@@ -429,8 +429,12 @@ impl<L: DebugLink> TargetDescriptionXmlOverride for GdbTarget<L> {
             return Err(TargetError::NonFatal);
         }
         let xml = self.xml.as_bytes();
-        let start = (offset as usize).min(xml.len());
-        let end = (start + length).min(xml.len()).min(start + buf.len());
+        // offset and length come from the client unchecked
+        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(xml.len());
+        let end = start
+            .saturating_add(length)
+            .min(xml.len())
+            .min(start.saturating_add(buf.len()));
         buf[..end - start].copy_from_slice(&xml[start..end]);
         Ok(end - start)
     }
@@ -651,6 +655,35 @@ mod tests {
             assert_eq!(xml.matches("<reg ").count(), regs + pads, "{arch:?}");
             let total: usize = slots.iter().map(|s| s.bytes).sum();
             assert!(total >= arch.ptr_size() * 16, "{arch:?}");
+        }
+    }
+
+    struct NoLink;
+
+    impl DebugLink for NoLink {
+        fn request(&mut self, _req: &DebugRequest) -> Result<DebugReply, EmuError> {
+            Err(EmuError::Unsupported("no session".into()))
+        }
+    }
+
+    #[test]
+    fn hostile_xml_reads_do_not_panic() {
+        let t = GdbTarget::new(NoLink, Arch::X86_64);
+        let len = t.description().len();
+        let mut buf = [0u8; 64];
+        // qXfer:features:read:target.xml:1,ffffffffffffffff
+        let n = t
+            .target_description_xml(b"target.xml", 1, usize::MAX, &mut buf)
+            .ok()
+            .unwrap();
+        assert_eq!(n, 64);
+        assert_eq!(&buf[..], &t.description().as_bytes()[1..65]);
+        for offset in [len as u64, u64::MAX, u64::MAX - 1] {
+            let n = t
+                .target_description_xml(b"target.xml", offset, usize::MAX, &mut buf)
+                .ok()
+                .unwrap();
+            assert_eq!(n, 0);
         }
     }
 }
