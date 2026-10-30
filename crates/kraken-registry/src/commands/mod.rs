@@ -69,10 +69,12 @@ pub use debug::{
     DebugBreakArgs, DebugBreakList, DebugBreakOut, DebugBreakRemove, DebugBreakSet, DebugContinue,
     DebugDisasm, DebugDisasmArgs, DebugDisasmOut, DebugGdbServe, DebugGdbServeArgs,
     DebugGdbServeOut, DebugInsn, DebugMemOut, DebugMemRead, DebugMemReadArgs, DebugRegister,
-    DebugRegs, DebugRegsOut, DebugRunArgs, DebugRunTo, DebugRunToArgs, DebugSessionArgs,
-    DebugSessions, DebugSessionsOut, DebugStart, DebugStartArgs, DebugStartOut, DebugStateCommand,
-    DebugStateOut, DebugStep, DebugStepArgs, DebugStepOut, DebugStepOver, DebugStop, DebugStopOut,
-    DebugStopSession, DebugStopSessionOut, DebugTable,
+    DebugRegs, DebugRegsOut, DebugReverseContinue, DebugReverseStep, DebugReverseStepArgs,
+    DebugRunArgs, DebugRunTo, DebugRunToArgs, DebugSessionArgs, DebugSessions, DebugSessionsOut,
+    DebugStart, DebugStartArgs, DebugStartOut, DebugStateCommand, DebugStateOut, DebugStep,
+    DebugStepArgs, DebugStepOut, DebugStepOver, DebugStop, DebugStopOut, DebugStopSession,
+    DebugStopSessionOut, DebugTable, DebugWatch, DebugWatchArgs, DebugWatchHit, DebugWatchOut,
+    DebugWatchRemove, DebugWatchSet,
 };
 pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
@@ -406,6 +408,10 @@ pub fn register_all(r: &mut Registry) {
         r.register(DebugBreakSet);
         r.register(DebugBreakRemove);
         r.register(DebugBreakList);
+        r.register(DebugWatchSet);
+        r.register(DebugWatchRemove);
+        r.register(DebugReverseStep);
+        r.register(DebugReverseContinue);
         r.register(DebugRegs);
         r.register(DebugMemRead);
         r.register(DebugDisasm);

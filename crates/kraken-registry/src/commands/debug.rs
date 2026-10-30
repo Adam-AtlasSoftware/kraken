@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use kraken_emu::confined::{
     DebugChild, DebugReply, DebugRequest, DebugState as EmuState, RUNNER, find_runner,
 };
+use kraken_emu::session::{WatchKind, WatchSpec};
 use kraken_emu::{EmuError, Exit, RunSpec, SessionStop};
 use kraken_proto::{ErrorCode, Hex64, ProtoError, Untrusted, hex_bytes, sanitize};
 use kraken_sidecar::ConfinementOptions;
@@ -257,7 +258,8 @@ impl Drop for Slot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DebugStop {
     /// `stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the
-    /// wall-clock limit), `fault` or `import`.
+    /// wall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`
+    /// (reverse execution reached the first instruction).
     pub kind: String,
     /// Program counter (listing address) where it stopped.
     pub pc: Hex64,
@@ -265,12 +267,49 @@ pub struct DebugStop {
     pub detail: Option<String>,
     /// How the program ended, when `kind` is `exited`.
     pub exit: Option<EmulateExit>,
+    /// The watchpoint that fired, when `kind` is `watch`.
+    #[serde(default)]
+    pub watch: Option<DebugWatchHit>,
+}
+
+/// A watchpoint that fired.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DebugWatchHit {
+    /// First byte of the watched range (listing address).
+    pub address: Hex64,
+    /// Length of the range in bytes.
+    pub length: u64,
+    /// What happened: `read` or `write`.
+    pub access: String,
+    /// The range before the write, as hex (the current contents for a read).
+    pub old: String,
+    /// The range after the write, as hex.
+    pub new: String,
 }
 
 fn present_stop(stop: &SessionStop, state: &EmuState, live: &Live) -> DebugStop {
     let pc = Hex64(live.to_listing(state.pc));
+    let mut watch = None;
     let (kind, detail, exit) = match stop {
         SessionStop::Stepped => ("stepped", None, None),
+        SessionStop::HistoryStart => ("history_start", None, None),
+        SessionStop::Watch {
+            addr,
+            len,
+            access,
+            old,
+            new,
+            ..
+        } => {
+            watch = Some(DebugWatchHit {
+                address: Hex64(live.to_listing(*addr)),
+                length: *len,
+                access: access.name().into(),
+                old: hex_bytes(old),
+                new: hex_bytes(new),
+            });
+            ("watch", None, None)
+        }
         SessionStop::Breakpoint { .. } => ("breakpoint", None, None),
         SessionStop::Reached { .. } => ("reached", None, None),
         SessionStop::Returned { .. } => ("returned", None, None),
@@ -304,6 +343,7 @@ fn present_stop(stop: &SessionStop, state: &EmuState, live: &Live) -> DebugStop 
         pc,
         detail,
         exit,
+        watch,
     }
 }
 
@@ -1042,6 +1082,257 @@ impl Command for DebugBreakList {
 }
 
 // ---------------------------------------------------------------------------------------------
+// watchpoints and reverse execution
+
+/// One watchpoint of a session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DebugWatch {
+    /// First byte (listing address).
+    pub address: Hex64,
+    /// Length in bytes.
+    pub length: u64,
+    /// `read`, `write` or `access`.
+    pub kind: String,
+}
+
+fn watch_list(live: &Live, specs: &[WatchSpec]) -> Vec<DebugWatch> {
+    specs
+        .iter()
+        .map(|w| DebugWatch {
+            address: Hex64(live.to_listing(w.addr)),
+            length: w.len,
+            kind: w.kind.name().into(),
+        })
+        .collect()
+}
+
+/// Arguments of `debug_watch_set` and `debug_watch_remove`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DebugWatchArgs {
+    /// The session.
+    pub session: u64,
+    /// First byte to watch: a listing address, or with `emulator_address` a pointer taken from
+    /// a register (a stack slot, a heap node).
+    pub address: Hex64,
+    /// Bytes to watch (default 8, at most 4096).
+    #[serde(default)]
+    pub length: Option<u64>,
+    /// `write` (default), `read` or `access` (both).
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// `address` is the emulator's own address, not a listing address.
+    #[serde(default)]
+    pub emulator_address: bool,
+}
+
+/// The watchpoints of a session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DebugWatchOut {
+    /// The session.
+    pub session: u64,
+    /// Whether the set changed.
+    pub changed: bool,
+    /// Every watchpoint.
+    pub watchpoints: Vec<DebugWatch>,
+}
+
+fn watch_op(
+    s: &Session,
+    a: DebugWatchArgs,
+    add: bool,
+) -> impl std::future::Future<Output = Result<DebugWatchOut, ProtoError>> {
+    let table = s.debug().clone();
+    blocking(move || {
+        let len = a.length.unwrap_or(8);
+        if len == 0 || len > kraken_emu::session::MAX_WATCH_LEN {
+            return Err(invalid(format!(
+                "length must be between 1 and {}",
+                kraken_emu::session::MAX_WATCH_LEN
+            )));
+        }
+        let kind = match a.kind.as_deref() {
+            None => WatchKind::Write,
+            Some(k) => WatchKind::parse(k)
+                .ok_or_else(|| invalid("kind must be `write`, `read` or `access`"))?,
+        };
+        let live = table.get(session_arg(a.session)?)?;
+        let mut live = lock(&live);
+        let addr = if a.emulator_address {
+            a.address.0
+        } else {
+            live.to_emu(a.address.0)
+        };
+        let req = if add {
+            DebugRequest::AddWatch { addr, len, kind }
+        } else {
+            DebugRequest::RemoveWatch { addr, len, kind }
+        };
+        let DebugReply::Changed { changed } = ask(&mut live, &req)? else {
+            return Err(unexpected());
+        };
+        let DebugReply::State { state } = ask(&mut live, &DebugRequest::State)? else {
+            return Err(unexpected());
+        };
+        Ok(DebugWatchOut {
+            session: a.session,
+            changed,
+            watchpoints: watch_list(&live, &state.watchpoints),
+        })
+    })
+}
+
+/// Sets a watchpoint.
+pub struct DebugWatchSet;
+
+#[async_trait]
+impl Command for DebugWatchSet {
+    type Args = DebugWatchArgs;
+    type Output = DebugWatchOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "debug_watch_set",
+            "Stop the debugged program when it writes (or reads) a range of memory",
+            CommandKind::Query,
+            Permission::Safe,
+        )
+        .doc(
+            "Watches `length` bytes (default 8) at `address` for `write` (default), `read` or \
+             `access`. `debug_continue` then stops with kind `watch`, after the instruction that \
+             touched the range, with the old and new bytes; `debug_reverse_continue` goes back \
+             to the previous such access. Runs with a watchpoint execute one instruction at a \
+             time, so they are slower. Use `emulator_address` for a pointer read from a \
+             register.\n\
+             Example: debug_watch_set {\"session\": 1, \"address\": \"0x7ffffff0\", \
+             \"emulator_address\": true, \"length\": 8, \"kind\": \"write\"}",
+        )
+        .details(
+            "At most 16 watchpoints per session, each at most 4096 bytes. A write is reported \
+             even when it stores the same value (old equals new). Watchpoints belong to the \
+             session, not the project, and `debug_state` lists them.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        _c: &CallContext,
+        a: DebugWatchArgs,
+    ) -> Result<DebugWatchOut, ProtoError> {
+        watch_op(s, a, true).await
+    }
+}
+
+/// Removes a watchpoint.
+pub struct DebugWatchRemove;
+
+#[async_trait]
+impl Command for DebugWatchRemove {
+    type Args = DebugWatchArgs;
+    type Output = DebugWatchOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "debug_watch_remove",
+            "Remove a watchpoint of the debugged program",
+            CommandKind::Query,
+            Permission::Safe,
+        )
+        .doc(
+            "Removes the watchpoint with the same address, length and kind; `changed` says \
+             whether there was one.\n\
+             Example: debug_watch_remove {\"session\": 1, \"address\": \"0x7ffffff0\", \
+             \"emulator_address\": true}",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        _c: &CallContext,
+        a: DebugWatchArgs,
+    ) -> Result<DebugWatchOut, ProtoError> {
+        watch_op(s, a, false).await
+    }
+}
+
+/// Arguments of `debug_reverse_step`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DebugReverseStepArgs {
+    /// The session.
+    pub session: u64,
+    /// Instructions to go back (default 1, at most 1000000).
+    #[serde(default)]
+    pub count: Option<u64>,
+}
+
+/// Goes back in time by instructions.
+pub struct DebugReverseStep;
+
+#[async_trait]
+impl Command for DebugReverseStep {
+    type Args = DebugReverseStepArgs;
+    type Output = DebugStopOut;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "debug_reverse_step",
+            "Step the debugged program backwards by one instruction (or `count`)",
+            CommandKind::Query,
+            Permission::Safe,
+        )
+        .doc(
+            "Restores the registers and memory the program had `count` instructions ago (default \
+             1): the nearest recorded snapshot is restored and the program replays forward to \
+             that point. Reports kind `history_start` when fewer instructions were executed.\n\
+             Example: debug_reverse_step {\"session\": 1, \"count\": 100}",
+        )
+        .details(
+            "Snapshots are taken every 20000 instructions (thinned for very long runs). \
+             Registers, memory, the program break, the mapping cursor and the output length come \
+             back; open files and their contents do not, so a window that read input or changed \
+             files may replay differently. Setting a register or writing memory starts a new \
+             history from that point.",
+        )
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        _c: &CallContext,
+        a: DebugReverseStepArgs,
+    ) -> Result<DebugStopOut, ProtoError> {
+        let n = a.count.unwrap_or(1);
+        if n == 0 || n > MAX_STEP_COUNT {
+            return Err(invalid(format!(
+                "count must be between 1 and {MAX_STEP_COUNT}"
+            )));
+        }
+        run_request(s, a.session, move |_| {
+            Ok(DebugRequest::ReverseStep {
+                n,
+                wall_ms: DEFAULT_WALL_SECONDS * 1000,
+            })
+        })
+        .await
+    }
+}
+
+run_command!(
+    DebugReverseContinue,
+    "debug_reverse_continue",
+    "Run the debugged program backwards to the previous breakpoint or watchpoint access",
+    "Goes back to the latest earlier breakpoint or watchpoint access and stands before that \
+     instruction (before the accessing instruction for a watchpoint, with its old and new \
+     bytes), or at the start of the run (kind `history_start`). `max_steps` bounds the \
+     instructions replayed to find it.\n\
+     Example: debug_reverse_continue {\"session\": 1}",
+    |budget, wall_ms| DebugRequest::ReverseContinue { budget, wall_ms }
+);
+
+// ---------------------------------------------------------------------------------------------
 // inspection
 
 /// One register.
@@ -1344,6 +1635,9 @@ pub struct DebugStateOut {
     pub finished: bool,
     /// Breakpoints (listing addresses).
     pub breakpoints: Vec<Hex64>,
+    /// Watchpoints.
+    #[serde(default)]
+    pub watchpoints: Vec<DebugWatch>,
     /// All standard output so far (last 4000 characters). Untrusted.
     pub stdout: Untrusted<String>,
     /// All standard error so far (last 4000 characters). Untrusted.
@@ -1380,6 +1674,7 @@ fn state_of(live: &mut Live, id: u64) -> Result<DebugStateOut, ProtoError> {
             .iter()
             .map(|a| Hex64(live.to_listing(*a)))
             .collect(),
+        watchpoints: watch_list(live, &state.watchpoints),
         stdout: cut(&out, true),
         stderr: cut(&err, true),
     })

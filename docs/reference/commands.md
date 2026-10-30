@@ -33,6 +33,8 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_gdb_serve`](#debug_gdb_serve) | query | safe | Serve a debug session to gdb over the GDB remote protocol (Unix socket, optional loopback TCP) |
 | [`debug_mem_read`](#debug_mem_read) | query | safe | Read bytes of the debugged program's memory |
 | [`debug_regs`](#debug_regs) | query | safe | Read the registers of the debugged program |
+| [`debug_reverse_continue`](#debug_reverse_continue) | query | safe | Run the debugged program backwards to the previous breakpoint or watchpoint access |
+| [`debug_reverse_step`](#debug_reverse_step) | query | safe | Step the debugged program backwards by one instruction (or `count`) |
 | [`debug_run_to`](#debug_run_to) | query | safe | Run the debugged program to an address or function, ignoring no breakpoints |
 | [`debug_sessions`](#debug_sessions) | query | safe | List the open debug sessions of the project |
 | [`debug_start`](#debug_start) | query | safe | Start a debugger session on the program in the emulator, stopped before its first instruction |
@@ -41,6 +43,8 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_step_out`](#debug_step_out) | query | safe | Run the debugged program until the current function returns |
 | [`debug_step_over`](#debug_step_over) | query | safe | Execute one instruction of the debugged program, running a call to its return |
 | [`debug_stop`](#debug_stop) | query | safe | End a debug session and its emulator child |
+| [`debug_watch_remove`](#debug_watch_remove) | query | safe | Remove a watchpoint of the debugged program |
+| [`debug_watch_set`](#debug_watch_set) | query | safe | Stop the debugged program when it writes (or reads) a range of memory |
 | [`decompile`](#decompile) | query | safe | Decompile a function to C-like source |
 | [`decompile_patched`](#decompile_patched) | query | safe | Decompile a function with the byte patches applied |
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
@@ -2786,17 +2790,64 @@ Example: `debug_continue {"session": 1, "timeout_seconds": 30}`
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -3019,7 +3070,7 @@ Lets gdb, Ghidra's debugger, IDA or lldb debug the emulated program: registers, 
 
 Example: `debug_gdb_serve {"session": 1}`
 
-The socket is in a private directory (mode 0700, under KRAKEN_RUNTIME_DIR or XDG_RUNTIME_DIR when set) and goes away with the session. Addresses seen by gdb are the emulator's: for a position-independent program they differ from the listing's by `address_delta`. Registers: the general purpose set, flags/cpsr and segment registers; x87 and vector registers read as zero. Software breakpoints only; no watchpoints or reverse execution. The `debug_*` commands keep working while a client is attached, but mixing both on one session is confusing.
+The socket is in a private directory (mode 0700, under KRAKEN_RUNTIME_DIR or XDG_RUNTIME_DIR when set) and goes away with the session. Addresses seen by gdb are the emulator's: for a position-independent program they differ from the listing's by `address_delta`. Registers: the general purpose set, flags/cpsr and segment registers; x87 and vector registers read as zero. Software breakpoints, hardware watchpoints (Z2, Z3, Z4 map to `debug_watch_set`) and reverse execution (`reverse-stepi`, `reverse-continue`). The `debug_*` commands keep working while a client is attached, but mixing both on one session is confusing.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -3258,6 +3309,457 @@ Example: `debug_regs {"session": 1}`
 
 </details>
 
+## debug_reverse_continue
+
+Run the debugged program backwards to the previous breakpoint or watchpoint access
+
+```sh
+kraken debug-reverse-continue --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Goes back to the latest earlier breakpoint or watchpoint access and stands before that instruction (before the accessing instruction for a watchpoint, with its old and new bytes), or at the start of the run (kind `history_start`). `max_steps` bounds the instructions replayed to find it.
+
+Example: `debug_reverse_continue {"session": 1}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget (default 100000000, at most 1000000000). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 10, at most 120); the program stops with kind `interrupted` and the session stays usable. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_reverse_step
+
+Step the debugged program backwards by one instruction (or `count`)
+
+```sh
+kraken debug-reverse-step --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Restores the registers and memory the program had `count` instructions ago (default 1): the nearest recorded snapshot is restored and the program replays forward to that point. Reports kind `history_start` when fewer instructions were executed.
+
+Example: `debug_reverse_step {"session": 1, "count": 100}`
+
+Snapshots are taken every 20000 instructions (thinned for very long runs). Registers, memory, the program break, the mapping cursor and the output length come back; open files and their contents do not, so a window that read input or changed files may replay differently. Setting a register or writing memory starts a new history from that point.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `count` | `--count` | integer | no | Instructions to go back (default 1, at most 1000000). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugStop": {
+      "description": "Why the program stopped.",
+      "properties": {
+        "detail": {
+          "description": "Fault text or the name of the import.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the program ended, when `kind` is `exited`."
+        },
+        "kind": {
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
+          "type": "string"
+        },
+        "pc": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
+        }
+      },
+      "required": [
+        "kind",
+        "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
+      ],
+      "type": "object"
+    },
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of a command that runs the program.",
+  "properties": {
+    "instructions": {
+      "description": "Instructions executed since the session started.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stderr_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard error since the last stop. Untrusted."
+    },
+    "stdout_new": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "What the program wrote to standard output since the last stop (first 4000 characters).\nProgram data, so untrusted."
+    },
+    "stop": {
+      "$ref": "#/$defs/DebugStop",
+      "description": "Why the program stopped, and where."
+    }
+  },
+  "required": [
+    "session",
+    "stop",
+    "instructions",
+    "stdout_new",
+    "stderr_new"
+  ],
+  "title": "DebugStopOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## debug_run_to
 
 Run the debugged program to an address or function, ignoring no breakpoints
@@ -3309,17 +3811,64 @@ Example: `debug_run_to {"session": 1, "symbol": "main"}`
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -3525,6 +4074,14 @@ Arguments: none.
         "stdout": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "All standard output so far (last 4000 characters). Untrusted."
+        },
+        "watchpoints": {
+          "default": [],
+          "description": "Watchpoints.",
+          "items": {
+            "$ref": "#/$defs/DebugWatch"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -3564,17 +4121,89 @@ Arguments: none.
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatch": {
+      "description": "One watchpoint of a session.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte (listing address)."
+        },
+        "kind": {
+          "description": "`read`, `write` or `access`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -3797,17 +4426,89 @@ Example: `debug_state {"session": 1}`
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatch": {
+      "description": "One watchpoint of a session.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte (listing address)."
+        },
+        "kind": {
+          "description": "`read`, `write` or `access`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -3948,6 +4649,14 @@ Example: `debug_state {"session": 1}`
     "stdout": {
       "$ref": "#/$defs/Untrusted_string",
       "description": "All standard output so far (last 4000 characters). Untrusted."
+    },
+    "watchpoints": {
+      "default": [],
+      "description": "Watchpoints.",
+      "items": {
+        "$ref": "#/$defs/DebugWatch"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -4018,17 +4727,64 @@ Example: `debug_step {"session": 1, "count": 5}`
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -4196,17 +4952,64 @@ Example: `debug_step_out {"session": 1}`
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -4374,17 +5177,64 @@ Example: `debug_step_over {"session": 1}`
           "description": "How the program ended, when `kind` is `exited`."
         },
         "kind": {
-          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault` or `import`.",
+          "description": "`stepped`, `breakpoint`, `reached`, `returned`, `exited`, `budget`, `interrupted` (the\nwall-clock limit), `fault`, `import`, `watch` (a watchpoint fired) or `history_start`\n(reverse execution reached the first instruction).",
           "type": "string"
         },
         "pc": {
           "$ref": "#/$defs/Hex64",
           "description": "Program counter (listing address) where it stopped."
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugWatchHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The watchpoint that fired, when `kind` is `watch`."
         }
       },
       "required": [
         "kind",
         "pc"
+      ],
+      "type": "object"
+    },
+    "DebugWatchHit": {
+      "description": "A watchpoint that fired.",
+      "properties": {
+        "access": {
+          "description": "What happened: `read` or `write`.",
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte of the watched range (listing address)."
+        },
+        "length": {
+          "description": "Length of the range in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new": {
+          "description": "The range after the write, as hex.",
+          "type": "string"
+        },
+        "old": {
+          "description": "The range before the write, as hex (the current contents for a read).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "access",
+        "old",
+        "new"
       ],
       "type": "object"
     },
@@ -4546,6 +5396,194 @@ Example: `debug_stop {"session": 1}`
     "ended"
   ],
   "title": "DebugStopSessionOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_watch_remove
+
+Remove a watchpoint of the debugged program
+
+```sh
+kraken debug-watch-remove --address <address> --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Removes the watchpoint with the same address, length and kind; `changed` says whether there was one.
+
+Example: `debug_watch_remove {"session": 1, "address": "0x7ffffff0", "emulator_address": true}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | First byte to watch: a listing address, or with `emulator_address` a pointer taken from a register (a stack slot, a heap node). |
+| `session` | `--session` | integer | yes | The session. |
+| `emulator_address` | `--emulator-address` | boolean | no | `address` is the emulator's own address, not a listing address. |
+| `kind` | `--kind` | string | no | `write` (default), `read` or `access` (both). |
+| `length` | `--length` | integer | no | Bytes to watch (default 8, at most 4096). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugWatch": {
+      "description": "One watchpoint of a session.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte (listing address)."
+        },
+        "kind": {
+          "description": "`read`, `write` or `access`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The watchpoints of a session.",
+  "properties": {
+    "changed": {
+      "description": "Whether the set changed.",
+      "type": "boolean"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "watchpoints": {
+      "description": "Every watchpoint.",
+      "items": {
+        "$ref": "#/$defs/DebugWatch"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "session",
+    "changed",
+    "watchpoints"
+  ],
+  "title": "DebugWatchOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_watch_set
+
+Stop the debugged program when it writes (or reads) a range of memory
+
+```sh
+kraken debug-watch-set --address <address> --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Watches `length` bytes (default 8) at `address` for `write` (default), `read` or `access`. `debug_continue` then stops with kind `watch`, after the instruction that touched the range, with the old and new bytes; `debug_reverse_continue` goes back to the previous such access. Runs with a watchpoint execute one instruction at a time, so they are slower. Use `emulator_address` for a pointer read from a register.
+
+Example: `debug_watch_set {"session": 1, "address": "0x7ffffff0", "emulator_address": true, "length": 8, "kind": "write"}`
+
+At most 16 watchpoints per session, each at most 4096 bytes. A write is reported even when it stores the same value (old equals new). Watchpoints belong to the session, not the project, and `debug_state` lists them.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | First byte to watch: a listing address, or with `emulator_address` a pointer taken from a register (a stack slot, a heap node). |
+| `session` | `--session` | integer | yes | The session. |
+| `emulator_address` | `--emulator-address` | boolean | no | `address` is the emulator's own address, not a listing address. |
+| `kind` | `--kind` | string | no | `write` (default), `read` or `access` (both). |
+| `length` | `--length` | integer | no | Bytes to watch (default 8, at most 4096). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "DebugWatch": {
+      "description": "One watchpoint of a session.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "First byte (listing address)."
+        },
+        "kind": {
+          "description": "`read`, `write` or `access`.",
+          "type": "string"
+        },
+        "length": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The watchpoints of a session.",
+  "properties": {
+    "changed": {
+      "description": "Whether the set changed.",
+      "type": "boolean"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "watchpoints": {
+      "description": "Every watchpoint.",
+      "items": {
+        "$ref": "#/$defs/DebugWatch"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "session",
+    "changed",
+    "watchpoints"
+  ],
+  "title": "DebugWatchOut",
   "type": "object"
 }
 ```

@@ -140,12 +140,69 @@ fn the_debug_tab_steps_a_live_program() {
     assert_eq!(vm(&mut k).debug.pc, second);
     assert_ne!(second, main_pc);
 
+    // A write watch on the stack just below the stack pointer: main's first call pushes its return
+    // address there. Then one step back and a reverse-continue.
+    let rsp = vm(&mut k)
+        .debug
+        .regs
+        .iter()
+        .find(|r| r.name == "RSP")
+        .expect("RSP")
+        .value;
+    {
+        let d = &mut vm(&mut k).debug;
+        d.watch_address = format!("{:#x}", rsp - 4096);
+        d.watch_length = "4096".into();
+        d.watch_emulator = true;
+    }
+    vm(&mut k).debug_watch_add();
+    until(&mut k, "the watchpoint", |a| {
+        a.view_model().is_some_and(|vm| vm.debug.watches.len() == 1)
+    });
     vm(&mut k).debug_toggle_breakpoint(second);
+    vm(&mut k).debug_step(DebugStep::Continue);
+    until(&mut k, "the watchpoint to fire", |a| {
+        a.view_model()
+            .is_some_and(|vm| !vm.debug.busy && vm.debug.status.starts_with("Watchpoint"))
+    });
+    let at_watch = vm(&mut k).debug.instructions;
+    if let Some(dir) = &shots {
+        save(&mut k, dir, "debug-watch.png");
+    }
+    vm(&mut k).debug_step(DebugStep::Back);
+    until(&mut k, "the step back", |a| {
+        a.view_model()
+            .is_some_and(|vm| !vm.debug.busy && vm.debug.status.starts_with("Stopped at"))
+    });
+    assert_eq!(vm(&mut k).debug.instructions, at_watch - 1);
+    vm(&mut k).debug_step(DebugStep::ReverseContinue);
+    until(&mut k, "the reverse run", |a| {
+        a.view_model().is_some_and(|vm| {
+            !vm.debug.busy
+                && (vm.debug.status.starts_with("Watchpoint")
+                    || vm.debug.status.starts_with("At the start"))
+        })
+    });
+    assert!(vm(&mut k).debug.instructions < at_watch);
+    vm(&mut k).debug_watch_remove(0);
+    until(&mut k, "the watchpoint to go", |a| {
+        a.view_model().is_some_and(|vm| vm.debug.watches.is_empty())
+    });
     vm(&mut k).debug_step(DebugStep::Continue);
     until(&mut k, "the program to end", |a| {
         a.view_model().is_some_and(|vm| vm.debug.finished)
     });
     assert!(vm(&mut k).debug.stdout.contains("hash=6490"));
+    // Going back works after the end, too.
+    vm(&mut k).debug_step(DebugStep::Back);
+    until(&mut k, "the step back from the end", |a| {
+        a.view_model()
+            .is_some_and(|vm| !vm.debug.busy && !vm.debug.finished)
+    });
+    vm(&mut k).debug_step(DebugStep::Continue);
+    until(&mut k, "the program to end again", |a| {
+        a.view_model().is_some_and(|vm| vm.debug.finished)
+    });
     k.h.run_steps(4);
     if let Some(dir) = &shots {
         save(&mut k, dir, "debug-done.png");

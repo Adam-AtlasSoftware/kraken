@@ -21,8 +21,8 @@ use crate::call::{
     setup_call,
 };
 use crate::error::EmuError;
-use crate::linux::{Exit, LinuxProcess, RunSpec, fault_exit};
-use crate::machine::{Machine, Stop};
+use crate::linux::{Exit, KernelScalars, LinuxProcess, RunSpec, fault_exit};
+use crate::machine::{AccessHooks, Machine, Stop};
 use crate::specs::SpecRoots;
 
 /// What a session runs.
@@ -72,7 +72,78 @@ pub enum SessionStop {
     Interrupted,
     /// The guest faulted (it stays stopped at the faulting instruction).
     Fault { detail: String, pc: u64 },
+    /// A watchpoint fired. Forward, the session stands after the accessing instruction (`pc` is
+    /// the next one); in reverse it stands before it (`pc` is the accessing instruction).
+    Watch {
+        /// The program counter.
+        pc: u64,
+        /// First byte of the watched range.
+        addr: u64,
+        /// Length of the watched range.
+        len: u64,
+        /// What happened: [`WatchKind::Read`] or [`WatchKind::Write`].
+        access: WatchKind,
+        /// The range before a write (the current contents for a read).
+        old: Vec<u8>,
+        /// The range after the write (the same for a read).
+        new: Vec<u8>,
+    },
+    /// Reverse execution reached the start of the recorded history.
+    HistoryStart,
 }
+
+/// What a watchpoint reacts to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchKind {
+    /// Loads.
+    Read,
+    /// Stores.
+    Write,
+    /// Loads and stores.
+    Access,
+}
+
+impl WatchKind {
+    /// The lowercase name (`read`, `write`, `access`).
+    pub fn name(self) -> &'static str {
+        match self {
+            WatchKind::Read => "read",
+            WatchKind::Write => "write",
+            WatchKind::Access => "access",
+        }
+    }
+
+    /// Parses [`name`](WatchKind::name).
+    pub fn parse(s: &str) -> Option<WatchKind> {
+        match s {
+            "read" => Some(WatchKind::Read),
+            "write" => Some(WatchKind::Write),
+            "access" => Some(WatchKind::Access),
+            _ => None,
+        }
+    }
+}
+
+/// A watched memory range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WatchSpec {
+    /// First byte.
+    pub addr: u64,
+    /// Length in bytes.
+    pub len: u64,
+    /// What it reacts to.
+    pub kind: WatchKind,
+}
+
+/// Most bytes one watchpoint covers.
+pub const MAX_WATCH_LEN: u64 = 4096;
+/// Most watchpoints at once.
+pub const MAX_WATCHES: usize = 16;
+/// Instructions between history snapshots at first (doubles when the history is thinned).
+const HISTORY_EVERY: u64 = 20_000;
+/// History snapshots kept before every other one is dropped.
+const HISTORY_MAX: usize = 512;
 
 /// One disassembled instruction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +173,13 @@ enum Kind {
 struct KernelMark {
     stdout: usize,
     stderr: usize,
+    scalars: Option<KernelScalars>,
+}
+
+struct Watch {
+    spec: WatchSpec,
+    shadow: Vec<u8>,
+    hooks: AccessHooks,
 }
 
 struct Inner {
@@ -109,6 +187,12 @@ struct Inner {
     symbols: BTreeMap<String, u64>,
     snapshots: Vec<(icicle_vm::Snapshot, KernelMark)>,
     done: Option<SessionStop>,
+    watches: Vec<Watch>,
+    /// Snapshots by instruction count, ascending, for reverse execution.
+    history: Vec<(u64, icicle_vm::Snapshot, KernelMark)>,
+    history_every: u64,
+    /// Replaying recorded history: breakpoints and watchpoints are ignored.
+    replaying: bool,
 }
 
 type Job = Box<dyn FnOnce(&mut Inner) + Send>;
@@ -180,6 +264,10 @@ impl Inner {
                         symbols,
                         snapshots: Vec::new(),
                         done: None,
+                        watches: Vec::new(),
+                        history: Vec::new(),
+                        history_every: HISTORY_EVERY,
+                        replaying: false,
                     },
                     arch,
                 ))
@@ -217,6 +305,10 @@ impl Inner {
                         symbols,
                         snapshots: Vec::new(),
                         done: None,
+                        watches: Vec::new(),
+                        history: Vec::new(),
+                        history_every: HISTORY_EVERY,
+                        replaying: false,
                     },
                     arch,
                 ))
@@ -246,12 +338,18 @@ impl Inner {
             self.m().add_breakpoint(a);
             true
         });
+        let watching = !self.watches.is_empty() && !self.replaying;
         let result = loop {
+            self.record_history();
             let used = self.m().icount() - start;
             if used >= budget {
                 break SessionStop::Stepped;
             }
-            let chunk = if first { 1 } else { budget - used };
+            let chunk = if first || watching { 1 } else { budget - used };
+            let chunk = chunk.min(self.history_gap());
+            if watching {
+                self.m().take_accesses();
+            }
             if first {
                 self.m().remove_breakpoint(pc0);
             }
@@ -262,6 +360,9 @@ impl Inner {
             }
             match stop {
                 Stop::Budget => {
+                    if watching && let Some(hit) = self.watch_hit() {
+                        break hit;
+                    }
                     if self.m().icount() - start >= budget {
                         break SessionStop::Stepped;
                     }
@@ -275,6 +376,9 @@ impl Inner {
                     };
                     if let Some(e) = ended {
                         break SessionStop::Exited { exit: e };
+                    }
+                    if watching && let Some(hit) = self.watch_hit() {
+                        break hit;
                     }
                     if self.m().icount() - start >= budget {
                         break SessionStop::Stepped;
@@ -326,6 +430,290 @@ impl Inner {
             self.done = Some(result.clone());
         }
         result
+    }
+
+    fn mark(&self) -> KernelMark {
+        match &self.kind {
+            Kind::Process(p) => KernelMark {
+                stdout: p.stdout().len(),
+                stderr: p.stderr().len(),
+                scalars: Some(p.kernel_scalars()),
+            },
+            Kind::Function { .. } => KernelMark {
+                stdout: 0,
+                stderr: 0,
+                scalars: None,
+            },
+        }
+    }
+
+    fn records_history(&self) -> bool {
+        matches!(self.kind, Kind::Process(_))
+    }
+
+    /// Instructions until the next history snapshot is due.
+    fn history_gap(&mut self) -> u64 {
+        if !self.records_history() {
+            return u64::MAX;
+        }
+        let every = self.history_every;
+        every - self.m().icount() % every
+    }
+
+    /// Keeps a snapshot at every multiple of `history_every` instructions (and at the start).
+    fn record_history(&mut self) {
+        if !self.records_history() {
+            return;
+        }
+        let at = self.m().icount();
+        if !at.is_multiple_of(self.history_every) {
+            return;
+        }
+        if let Err(pos) = self.history.binary_search_by_key(&at, |h| h.0) {
+            let (snap, mark) = (self.m().snapshot(), self.mark());
+            self.history.insert(pos, (at, snap, mark));
+        }
+        if self.history.len() > HISTORY_MAX {
+            let mut i = 0;
+            self.history.retain(|_| {
+                i += 1;
+                i % 2 == 1
+            });
+            self.history_every *= 2;
+        }
+    }
+
+    /// After a change the recorded history cannot reproduce (a register or memory write): the
+    /// entries from here on are void and a fresh snapshot starts the new line.
+    fn history_break(&mut self) {
+        if !self.records_history() {
+            return;
+        }
+        let at = self.m().icount();
+        self.history.retain(|h| h.0 < at);
+        let (snap, mark) = (self.m().snapshot(), self.mark());
+        self.history.push((at, snap, mark));
+    }
+
+    fn read_watch(&mut self, spec: &WatchSpec) -> Vec<u8> {
+        self.m()
+            .read_vec(spec.addr, spec.len as usize)
+            .unwrap_or_else(|_| vec![0; spec.len as usize])
+    }
+
+    fn refresh_shadows(&mut self) {
+        for i in 0..self.watches.len() {
+            let spec = self.watches[i].spec;
+            self.watches[i].shadow = self.read_watch(&spec);
+        }
+    }
+
+    /// The first watchpoint the accesses of the instruction just run trigger.
+    fn watch_hit(&mut self) -> Option<SessionStop> {
+        let accesses = self.m().take_accesses();
+        if accesses.is_empty() {
+            return None;
+        }
+        let pc = self.m().pc();
+        let mut hit = None;
+        for i in 0..self.watches.len() {
+            let spec = self.watches[i].spec;
+            let new = self.read_watch(&spec);
+            let old = std::mem::replace(&mut self.watches[i].shadow, new.clone());
+            if hit.is_some() {
+                continue;
+            }
+            for a in &accesses {
+                let overlaps = a.addr < spec.addr + spec.len && spec.addr < a.addr + a.len;
+                let wanted = match spec.kind {
+                    WatchKind::Read => !a.write,
+                    WatchKind::Write => a.write,
+                    WatchKind::Access => true,
+                };
+                if overlaps && wanted {
+                    hit = Some(SessionStop::Watch {
+                        pc,
+                        addr: spec.addr,
+                        len: spec.len,
+                        access: if a.write {
+                            WatchKind::Write
+                        } else {
+                            WatchKind::Read
+                        },
+                        old: if a.write { old.clone() } else { new.clone() },
+                        new: new.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+        hit
+    }
+
+    /// Restores history entry `i` (registers, memory, output length).
+    fn restore_history(&mut self, i: usize) {
+        let hist = std::mem::take(&mut self.history);
+        self.m().restore(&hist[i].1);
+        let (out, err, scalars) = (hist[i].2.stdout, hist[i].2.stderr, hist[i].2.scalars);
+        self.history = hist;
+        if let Kind::Process(p) = &mut self.kind {
+            p.truncate_output(out, err);
+            if let Some(v) = &scalars {
+                p.set_kernel_scalars(v);
+            }
+        }
+        self.done = None;
+    }
+
+    /// Runs forward `n` instructions through recorded history: no breakpoints, no watchpoints.
+    fn replay(&mut self, n: u64) -> SessionStop {
+        let bps = self.m().breakpoints();
+        for b in &bps {
+            self.m().remove_breakpoint(*b);
+        }
+        self.replaying = true;
+        let r = self.run(n, None);
+        self.replaying = false;
+        for b in bps {
+            self.m().add_breakpoint(b);
+        }
+        r
+    }
+
+    /// Moves to instruction count `target` (at or before the current one) from the nearest
+    /// snapshot.
+    fn go_to(&mut self, target: u64) -> SessionStop {
+        let Some(i) = self.history.iter().rposition(|h| h.0 <= target) else {
+            return SessionStop::HistoryStart;
+        };
+        let from = self.history[i].0;
+        self.restore_history(i);
+        let r = self.replay(target - from);
+        self.refresh_shadows();
+        r
+    }
+
+    fn reverse_unsupported(&self) -> Option<EmuError> {
+        (!self.records_history()).then(|| {
+            EmuError::Unsupported("reverse execution works on program sessions only".into())
+        })
+    }
+
+    fn reverse_step(&mut self, n: u64) -> Result<SessionStop, EmuError> {
+        if let Some(e) = self.reverse_unsupported() {
+            return Err(e);
+        }
+        let cur = self.m().icount();
+        if n == 0 {
+            return Ok(SessionStop::Stepped);
+        }
+        if cur == 0 {
+            return Ok(SessionStop::HistoryStart);
+        }
+        let r = self.go_to(cur.saturating_sub(n));
+        Ok(match r {
+            SessionStop::Stepped if n > cur => SessionStop::HistoryStart,
+            other => other,
+        })
+    }
+
+    /// Back to the latest breakpoint or watchpoint event before the current instruction
+    /// (`budget` bounds the instructions replayed to find it).
+    fn reverse_continue(&mut self, budget: u64) -> Result<SessionStop, EmuError> {
+        if let Some(e) = self.reverse_unsupported() {
+            return Err(e);
+        }
+        let cur = self.m().icount();
+        let bps = self.m().breakpoints();
+        let mut spent = 0u64;
+        for i in (0..self.history.len()).rev() {
+            let s = self.history[i].0;
+            if s >= cur {
+                continue;
+            }
+            let end = self.history.get(i + 1).map_or(cur, |h| h.0).min(cur);
+            spent += end - s;
+            if spent > budget {
+                return Ok(SessionStop::Budget);
+            }
+            self.restore_history(i);
+            self.refresh_shadows();
+            let mut last: Option<(u64, SessionStop)> = None;
+            let pc = self.m().pc();
+            if bps.contains(&pc) {
+                last = Some((s, SessionStop::Breakpoint { pc }));
+            }
+            while self.m().icount() < end {
+                let left = end - self.m().icount();
+                match self.run(left, None) {
+                    SessionStop::Breakpoint { pc } => {
+                        last = Some((self.m().icount(), SessionStop::Breakpoint { pc }));
+                    }
+                    w @ SessionStop::Watch { .. } => {
+                        let at = self.m().icount() - 1;
+                        last = Some((at, w));
+                    }
+                    SessionStop::Stepped => break,
+                    other => return Ok(other),
+                }
+            }
+            if let Some((at, mut stop)) = last {
+                self.restore_history(i);
+                let r = self.replay(at - s);
+                self.refresh_shadows();
+                if r != SessionStop::Stepped {
+                    return Ok(r);
+                }
+                if let SessionStop::Watch { pc, .. } = &mut stop {
+                    *pc = self.m().pc();
+                }
+                return Ok(stop);
+            }
+        }
+        let r = self.go_to(0);
+        Ok(if r == SessionStop::Stepped {
+            SessionStop::HistoryStart
+        } else {
+            r
+        })
+    }
+
+    fn add_watch(&mut self, spec: WatchSpec) -> Result<bool, EmuError> {
+        if spec.len == 0 || spec.len > MAX_WATCH_LEN {
+            return Err(EmuError::Unsupported(format!(
+                "a watchpoint covers 1 to {MAX_WATCH_LEN} bytes"
+            )));
+        }
+        if self.watches.iter().any(|w| w.spec == spec) {
+            return Ok(false);
+        }
+        if self.watches.len() >= MAX_WATCHES {
+            return Err(EmuError::Unsupported(format!(
+                "at most {MAX_WATCHES} watchpoints"
+            )));
+        }
+        let shadow = self.read_watch(&spec);
+        let (read, write) = match spec.kind {
+            WatchKind::Read => (true, false),
+            WatchKind::Write => (false, true),
+            WatchKind::Access => (true, true),
+        };
+        let hooks = self.m().add_access_hooks(spec.addr, spec.len, read, write);
+        self.watches.push(Watch {
+            spec,
+            shadow,
+            hooks,
+        });
+        Ok(true)
+    }
+
+    fn remove_watch(&mut self, spec: WatchSpec) -> bool {
+        let Some(i) = self.watches.iter().position(|w| w.spec == spec) else {
+            return false;
+        };
+        let w = self.watches.remove(i);
+        self.m().remove_access_hooks(&w.hooks);
+        true
     }
 
     /// The return address of a call that was just entered, and the stack pointer the caller
@@ -407,6 +795,7 @@ impl Session {
             .spawn(move || {
                 let mut inner = match Inner::build(target) {
                     Ok((mut inner, arch)) => {
+                        inner.record_history();
                         let _ = ready_tx.send(Ok((arch, inner.m().interrupt_handle())));
                         inner
                     }
@@ -535,6 +924,43 @@ impl Session {
         self.call(|i| i.m().breakpoints())
     }
 
+    /// Adds a watchpoint: the run stops with [`SessionStop::Watch`] after an instruction that
+    /// reads or writes the range. Returns false if it already exists. Runs with watchpoints
+    /// execute one instruction at a time, so they are slower.
+    pub fn add_watchpoint(&self, addr: u64, len: u64, kind: WatchKind) -> Result<bool, EmuError> {
+        self.call(move |i| i.add_watch(WatchSpec { addr, len, kind }))?
+    }
+
+    /// Removes a watchpoint added with the same range and kind.
+    pub fn remove_watchpoint(
+        &self,
+        addr: u64,
+        len: u64,
+        kind: WatchKind,
+    ) -> Result<bool, EmuError> {
+        self.call(move |i| i.remove_watch(WatchSpec { addr, len, kind }))
+    }
+
+    /// The watchpoints.
+    pub fn watchpoints(&self) -> Result<Vec<WatchSpec>, EmuError> {
+        self.call(|i| i.watches.iter().map(|w| w.spec).collect())
+    }
+
+    /// Goes back `n` instructions (program sessions): restores the nearest recorded snapshot
+    /// and replays forward. File descriptors and the input position are not part of a snapshot,
+    /// so a window that read input or changed files may not replay identically. Returns
+    /// [`SessionStop::HistoryStart`] when fewer than `n` instructions are recorded.
+    pub fn reverse_step(&self, n: u64) -> Result<SessionStop, EmuError> {
+        self.call(move |i| i.reverse_step(n))?
+    }
+
+    /// Goes back to the latest earlier breakpoint or watchpoint event, standing before the
+    /// instruction (before the accessing instruction for a watchpoint), or to the start of the
+    /// history. `budget` bounds the instructions replayed to find it.
+    pub fn reverse_continue(&self, budget: u64) -> Result<SessionStop, EmuError> {
+        self.call(move |i| i.reverse_continue(budget))?
+    }
+
     /// The general purpose registers in display order with their values.
     pub fn registers(&self) -> Result<Vec<(String, u64)>, EmuError> {
         self.call(|i| {
@@ -555,7 +981,11 @@ impl Session {
     /// Sets a register.
     pub fn write_reg(&self, name: &str, v: u64) -> Result<(), EmuError> {
         let n = name.to_string();
-        self.call(move |i| i.m().write_reg(&n, v))?
+        self.call(move |i| {
+            let r = i.m().write_reg(&n, v);
+            i.history_break();
+            r
+        })?
     }
 
     /// Reads memory.
@@ -568,7 +998,12 @@ impl Session {
 
     /// Writes memory.
     pub fn write_memory(&self, addr: u64, data: Vec<u8>) -> Result<(), EmuError> {
-        self.call(move |i| i.m().write_mem(addr, &data))?
+        self.call(move |i| {
+            let r = i.m().write_mem(addr, &data);
+            i.refresh_shadows();
+            i.history_break();
+            r
+        })?
     }
 
     /// Disassembles `count` instructions from `addr` (`None`: the program counter) in the current
@@ -627,16 +1062,7 @@ impl Session {
     /// dropped on restore.
     pub fn snapshot(&self) -> Result<SnapshotId, EmuError> {
         self.call(|i| {
-            let mark = match &i.kind {
-                Kind::Process(p) => KernelMark {
-                    stdout: p.stdout().len(),
-                    stderr: p.stderr().len(),
-                },
-                Kind::Function { .. } => KernelMark {
-                    stdout: 0,
-                    stderr: 0,
-                },
-            };
+            let mark = i.mark();
             let s = i.m().snapshot();
             i.snapshots.push((s, mark));
             SnapshotId(i.snapshots.len() - 1)
@@ -646,7 +1072,11 @@ impl Session {
     /// Restores a snapshot.
     pub fn restore(&self, id: SnapshotId) -> Result<(), EmuError> {
         self.call(move |i| {
-            let Some((out, err)) = i.snapshots.get(id.0).map(|(_, m)| (m.stdout, m.stderr)) else {
+            let Some((out, err, scalars)) = i
+                .snapshots
+                .get(id.0)
+                .map(|(_, m)| (m.stdout, m.stderr, m.scalars))
+            else {
                 return Err(EmuError::Unsupported(format!("no snapshot {}", id.0)));
             };
             // Restoring needs the machine and the snapshot at once.
@@ -655,8 +1085,12 @@ impl Session {
             i.snapshots = snaps;
             if let Kind::Process(p) = &mut i.kind {
                 p.truncate_output(out, err);
+                if let Some(v) = &scalars {
+                    p.set_kernel_scalars(v);
+                }
             }
             i.done = None;
+            i.refresh_shadows();
             Ok(())
         })?
     }

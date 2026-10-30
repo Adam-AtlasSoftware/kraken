@@ -122,6 +122,52 @@ pub struct Machine {
     regs: HashMap<String, pcode::VarNode>,
     pc: pcode::VarNode,
     sp: pcode::VarNode,
+    accesses: AccessLog,
+}
+
+/// One guest memory access seen by a hook ([`Machine::add_access_hooks`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Access {
+    /// First byte.
+    pub addr: u64,
+    /// Length in bytes.
+    pub len: u64,
+    /// A store (otherwise a load).
+    pub write: bool,
+}
+
+/// The accesses the memory hooks saw since the last [`Machine::take_accesses`].
+type AccessLog = std::rc::Rc<std::cell::RefCell<Vec<Access>>>;
+
+/// Hooks installed for one watched range.
+#[derive(Debug, Clone, Default)]
+pub struct AccessHooks {
+    reads: Option<u32>,
+    writes: Option<u32>,
+}
+
+struct LogWrites(AccessLog);
+
+impl icicle_cpu::mem::WriteHook for LogWrites {
+    fn write(&mut self, _: &mut icicle_cpu::Mmu, addr: u64, value: &[u8]) {
+        self.0.borrow_mut().push(Access {
+            addr,
+            len: value.len() as u64,
+            write: true,
+        });
+    }
+}
+
+struct LogReads(AccessLog);
+
+impl icicle_cpu::mem::ReadAfterHook for LogReads {
+    fn read(&mut self, _: &mut icicle_cpu::Mmu, addr: u64, value: &[u8]) {
+        self.0.borrow_mut().push(Access {
+            addr,
+            len: value.len() as u64,
+            write: false,
+        });
+    }
 }
 
 /// The watched addresses that ran since the last [`take`](BlockLog::take)
@@ -275,6 +321,7 @@ impl Machine {
             regs: HashMap::new(),
             pc,
             sp,
+            accesses: AccessLog::default(),
         };
         if arch == Arch::Arm {
             // The Thumb `mrc` passes its CRn/CRm operands as the coprocessor registers
@@ -606,6 +653,51 @@ impl Machine {
                 sink.borrow_mut().insert(addr);
             });
         log
+    }
+
+    /// Starts logging loads and/or stores that touch `[addr, addr + len)` (see
+    /// [`take_accesses`](Machine::take_accesses)). icicle only matches the first byte of an
+    /// access, so the hooked range starts a little earlier and callers filter by overlap.
+    pub fn add_access_hooks(
+        &mut self,
+        addr: u64,
+        len: u64,
+        read: bool,
+        write: bool,
+    ) -> AccessHooks {
+        let start = addr.saturating_sub(15);
+        let end = addr.saturating_add(len.max(1));
+        let mut h = AccessHooks::default();
+        if read {
+            h.reads = self.vm.cpu.mem.add_read_after_hook(
+                start,
+                end,
+                Box::new(LogReads(self.accesses.clone())),
+            );
+        }
+        if write {
+            h.writes = self.vm.cpu.mem.add_write_hook(
+                start,
+                end,
+                Box::new(LogWrites(self.accesses.clone())),
+            );
+        }
+        h
+    }
+
+    /// Removes the hooks of one watched range.
+    pub fn remove_access_hooks(&mut self, h: &AccessHooks) {
+        if let Some(id) = h.reads {
+            self.vm.cpu.mem.remove_read_after_hook(id);
+        }
+        if let Some(id) = h.writes {
+            self.vm.cpu.mem.remove_write_hook(id);
+        }
+    }
+
+    /// The accesses logged since the last call, and forgets them.
+    pub fn take_accesses(&mut self) -> Vec<Access> {
+        std::mem::take(&mut *self.accesses.borrow_mut())
     }
 
     /// Adds a breakpoint (an instruction address, no Thumb bit).

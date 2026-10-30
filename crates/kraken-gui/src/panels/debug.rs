@@ -20,6 +20,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         return;
     }
     gdb_box(ui, vm);
+    watch_box(ui, vm);
     ui.horizontal_wrapped(|ui| {
         let d = &vm.debug;
         let color = if d.finished {
@@ -114,6 +115,39 @@ fn toolbar(ui: &mut Ui, vm: &mut ViewModel) {
             {
                 vm.debug_step(how);
             }
+        }
+        let back = vm.debug.can_reverse();
+        for (label, tip, how) in [
+            (
+                "Step back",
+                "Go back one instruction: registers and memory return to what they were",
+                DebugStep::Back,
+            ),
+            (
+                "Reverse continue",
+                "Run backwards to the previous breakpoint or watchpoint access (or the start)",
+                DebugStep::ReverseContinue,
+            ),
+        ] {
+            if ui
+                .add_enabled(back, egui::Button::new(label))
+                .on_hover_text(tip)
+                .on_disabled_hover_text("Start the program first")
+                .clicked()
+            {
+                vm.debug_step(how);
+            }
+        }
+        if ui
+            .add_enabled(active, egui::Button::new("Watch..."))
+            .on_hover_text(
+                "Stop the program when it writes or reads a range of memory; shows the \
+                 watchpoints",
+            )
+            .on_disabled_hover_text("Start the program first")
+            .clicked()
+        {
+            vm.debug.watch_open = !vm.debug.watch_open;
         }
         if ui
             .add_enabled(can, egui::Button::new("To main"))
@@ -440,5 +474,105 @@ fn gdb_box(ui: &mut Ui, vm: &mut ViewModel) {
     });
     if close {
         vm.debug.gdb = None;
+    }
+}
+
+fn watch_box(ui: &mut Ui, vm: &mut ViewModel) {
+    if !vm.debug.watch_open {
+        return;
+    }
+    let p = pal(ui);
+    let mut close = false;
+    let mut add = false;
+    let mut remove = None;
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(medium("Watchpoints", 13.0).color(p.text_strong));
+            if ui
+                .small_button("Close")
+                .on_hover_text("Hide this box; the watchpoints stay set")
+                .clicked()
+            {
+                close = true;
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Continue stops after the instruction that touches the range and shows the old \
+                 and new bytes; Reverse continue goes back to the previous access. Runs with a \
+                 watchpoint are slower.",
+            )
+            .size(11.0)
+            .color(p.text_dim),
+        );
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Address");
+            ui.add(
+                egui::TextEdit::singleline(&mut vm.debug.watch_address)
+                    .hint_text("0x404040")
+                    .desired_width(130.0)
+                    .font(egui::TextStyle::Monospace),
+            )
+            .on_hover_text("Hex address to watch, from the Listing (or a pointer, see below)");
+            ui.label("Bytes");
+            ui.add(egui::TextEdit::singleline(&mut vm.debug.watch_length).desired_width(40.0))
+                .on_hover_text("How many bytes to watch (1 to 4096)");
+            egui::ComboBox::from_id_salt("kraken_watch_kind")
+                .selected_text(vm.debug.watch_kind.clone())
+                .width(70.0)
+                .show_ui(ui, |ui| {
+                    for k in ["write", "read", "access"] {
+                        ui.selectable_value(&mut vm.debug.watch_kind, k.to_string(), k)
+                            .on_hover_text(match k {
+                                "write" => "Stop when the program stores to the range",
+                                "read" => "Stop when the program loads from the range",
+                                _ => "Stop on any load or store",
+                            });
+                    }
+                })
+                .response
+                .on_hover_text("Stop on writes, reads, or both (access)");
+            ui.checkbox(&mut vm.debug.watch_emulator, "Pointer value")
+                .on_hover_text(
+                    "The address is a value taken from a register (a stack slot, a heap \
+                     object), not a Listing address",
+                );
+            if ui
+                .add_enabled(!vm.debug.busy, egui::Button::new("Add"))
+                .on_hover_text("Set the watchpoint")
+                .on_disabled_hover_text("Wait for the program to stop")
+                .clicked()
+            {
+                add = true;
+            }
+        });
+        for (i, w) in vm.debug.watches.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{:08x}  {} bytes  {}",
+                        w.address.0, w.length, w.kind
+                    ))
+                    .monospace()
+                    .size(12.0),
+                );
+                if ui
+                    .small_button("Remove")
+                    .on_hover_text("Delete this watchpoint")
+                    .clicked()
+                {
+                    remove = Some(i);
+                }
+            });
+        }
+    });
+    if add {
+        vm.debug_watch_add();
+    }
+    if let Some(i) = remove {
+        vm.debug_watch_remove(i);
+    }
+    if close {
+        vm.debug.watch_open = false;
     }
 }

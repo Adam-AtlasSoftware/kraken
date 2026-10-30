@@ -329,6 +329,55 @@ class Debugger:
         """The breakpoints."""
         return [parse_address(a) for a in self._call("debug_break_list")["breakpoints"]]
 
+    def watch(
+        self,
+        address: int,
+        length: int = 8,
+        kind: str = "write",
+        *,
+        emulator_address: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Stops the program when it writes, reads or accesses (both) the range.
+
+        ``kind`` is ``write``, ``read`` or ``access``. ``cont`` then returns a stop of kind
+        ``watch`` whose ``watch`` entry has the old and new bytes as hex. ``emulator_address`` for
+        a pointer taken from a register. Returns all watchpoints.
+        """
+        out = self._call(
+            "debug_watch_set",
+            address=address,
+            length=length,
+            kind=kind,
+            emulator_address=emulator_address,
+        )
+        return out["watchpoints"]  # type: ignore[no-any-return]
+
+    def unwatch(
+        self,
+        address: int,
+        length: int = 8,
+        kind: str = "write",
+        *,
+        emulator_address: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Removes a watchpoint set with the same arguments; returns the remaining ones."""
+        out = self._call(
+            "debug_watch_remove",
+            address=address,
+            length=length,
+            kind=kind,
+            emulator_address=emulator_address,
+        )
+        return out["watchpoints"]  # type: ignore[no-any-return]
+
+    def reverse_step(self, count: int = 1) -> dict[str, Any]:
+        """Goes back ``count`` instructions: registers and memory return to what they were."""
+        return self._call("debug_reverse_step", count=count)  # type: ignore[no-any-return]
+
+    def reverse_continue(self, *, timeout_seconds: int | None = None) -> dict[str, Any]:
+        """Runs backwards to the previous breakpoint or watchpoint access, or the start."""
+        return self._call("debug_reverse_continue", timeout_seconds=timeout_seconds)  # type: ignore[no-any-return]
+
     def registers(self) -> dict[str, int]:
         """Register values by name (the emulator's own addresses)."""
         out = self._call("debug_regs")

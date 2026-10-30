@@ -271,3 +271,74 @@ async fn real_gdb_stops_at_main() {
     assert!(text.contains("Breakpoint 1, "), "{text}");
     assert!(text.contains("<main"), "{text}");
 }
+
+#[tokio::test]
+#[ignore = "needs KRAKEN_NATIVE_SPECS=~/.cache/kraken-dev/native-sla/Ghidra_12.2_build, Landlock \
+            and `cargo build -p kraken-emu --bin kraken-emu-run`"]
+async fn gdb_sets_a_watchpoint_and_steps_and_continues_backwards() {
+    let env = Setup::new(tiny()).start().await;
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/bin/static_strops-O0"),
+        &env.binary,
+    )
+    .expect("copy corpus binary");
+    // SAFETY: this test is the only one in the binary that touches the variable.
+    unsafe { std::env::set_var("KRAKEN_EMU_RUN", runner()) };
+    let u = user();
+    let id = env.ok(&u, "debug_start", json!({"argv": ["x"]})).await["session"]
+        .as_u64()
+        .expect("session");
+    let main = env
+        .ok(
+            &u,
+            "debug_break_set",
+            json!({"session": id, "symbol": "main"}),
+        )
+        .await["breakpoints"][0]
+        .as_str()
+        .expect("main")
+        .to_string();
+    let main_addr = u64::from_str_radix(main.trim_start_matches("0x"), 16).expect("hex");
+    let served = env.ok(&u, "debug_gdb_serve", json!({"session": id})).await;
+    let socket = served["socket"].as_str().expect("socket").to_string();
+
+    let mut c = Rsp::connect(&socket);
+    let sup = c.call("qSupported:swbreak+;hwbreak+;xmlRegisters=i386");
+    assert!(sup.contains("ReverseStep+"), "{sup}");
+    assert!(sup.contains("ReverseContinue+"), "{sup}");
+    let first = c.call("c");
+    assert!(first.starts_with("T05") || first == "S05", "{first}");
+    let g = c.call("g");
+    assert_eq!(le_hex(&g, 16 * 8, 8), main_addr, "stopped at main");
+    let sp = le_hex(&g, 7 * 8, 8);
+    assert_eq!(c.call(&format!("z0,{main_addr:x},1")), "OK");
+
+    // The first push of main writes just below the stack pointer.
+    let slot = sp - 8;
+    assert_eq!(c.call(&format!("Z2,{slot:x},8")), "OK");
+    let hit = c.call("c");
+    assert!(hit.starts_with("T05"), "{hit}");
+    assert!(hit.contains(&format!("watch:{slot:x};")), "{hit}");
+    let after = c.call("g");
+    assert_ne!(le_hex(&after, 16 * 8, 8), main_addr);
+    assert_ne!(le_hex(&c.call(&format!("m{slot:x},8")), 0, 8), 0);
+    assert_eq!(c.call(&format!("z2,{slot:x},8")), "OK");
+
+    // Step back one instruction, then reverse-continue to the start of the history.
+    let back = c.call("bs");
+    assert!(back.starts_with("T05") || back == "S05", "{back}");
+    let g = c.call("g");
+    assert!(le_hex(&g, 16 * 8, 8) <= main_addr + 8, "{g}");
+    let begin = c.call("bc");
+    assert!(begin.contains("replaylog:begin"), "{begin}");
+    let g = c.call("g");
+    assert_ne!(le_hex(&g, 16 * 8, 8), main_addr, "back at the entry point");
+
+    // Forward again with the watchpoint set from the start: the slot was written by the start-up
+    // code before main, so the first stop is not main's push.
+    assert_eq!(c.call(&format!("Z2,{slot:x},8")), "OK");
+    let again = c.call("c");
+    assert!(again.contains(&format!("watch:{slot:x};")), "{again}");
+    assert_ne!(c.call("g"), after);
+    env.ok(&u, "debug_stop", json!({"session": id})).await;
+}

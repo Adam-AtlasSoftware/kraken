@@ -10,7 +10,7 @@ use common::*;
 use kraken_proto::ErrorCode;
 use serde_json::json;
 
-const NAMES: [&str; 16] = [
+const NAMES: [&str; 20] = [
     "debug_start",
     "debug_step",
     "debug_step_over",
@@ -27,6 +27,10 @@ const NAMES: [&str; 16] = [
     "debug_sessions",
     "debug_stop",
     "debug_gdb_serve",
+    "debug_watch_set",
+    "debug_watch_remove",
+    "debug_reverse_step",
+    "debug_reverse_continue",
 ];
 
 #[tokio::test]
@@ -53,6 +57,15 @@ async fn the_commands_are_safe_documented_and_bounded() {
         ("debug_disasm", json!({"session": 1, "count": 201})),
         ("debug_start", json!({"argv": ["a\u{0}b"]})),
         ("debug_regs", json!({"session": 0})),
+        ("debug_reverse_step", json!({"session": 1, "count": 0})),
+        (
+            "debug_watch_set",
+            json!({"session": 1, "address": "0x10", "length": 0}),
+        ),
+        (
+            "debug_watch_set",
+            json!({"session": 1, "address": "0x10", "kind": "sideways"}),
+        ),
     ] {
         let e = env.err(&u, name, args.clone()).await;
         assert_eq!(e.code, ErrorCode::InvalidArgument, "{name} {args}: {e}");
@@ -217,4 +230,98 @@ async fn a_corpus_program_is_stepped_to_main() {
     }
     let e = env.err(&u, "debug_start", json!({})).await;
     assert_eq!(e.code, ErrorCode::InvalidArgument, "{e}");
+}
+
+#[tokio::test]
+#[ignore = "needs KRAKEN_NATIVE_SPECS=~/.cache/kraken-dev/native-sla/Ghidra_12.2_build, Landlock \
+            and `cargo build -p kraken-emu --bin kraken-emu-run`"]
+async fn a_watchpoint_stops_the_program_and_it_runs_backwards() {
+    let env = Setup::new(tiny()).start().await;
+    std::fs::copy(corpus_binary("static_strops-O0"), &env.binary).expect("copy corpus binary");
+    // SAFETY: this test is the only one in the binary that touches the variable.
+    unsafe { std::env::set_var("KRAKEN_EMU_RUN", runner()) };
+    let u = user();
+    let id = env.ok(&u, "debug_start", json!({"argv": ["x"]})).await["session"]
+        .as_u64()
+        .expect("session");
+    env.ok(&u, "debug_run_to", json!({"session": id, "symbol": "main"}))
+        .await;
+    let regs = env.ok(&u, "debug_regs", json!({"session": id})).await;
+    let rsp = regs["registers"]
+        .as_array()
+        .expect("registers")
+        .iter()
+        .find(|r| r["name"] == "RSP")
+        .expect("RSP")["value"]
+        .as_str()
+        .expect("value")
+        .to_string();
+    let slot = u64::from_str_radix(rsp.trim_start_matches("0x"), 16).expect("hex") - 8;
+    let slot = format!("{slot:#x}");
+
+    // Main's first push writes the slot just below the stack pointer.
+    let set = env
+        .ok(
+            &u,
+            "debug_watch_set",
+            json!({"session": id, "address": slot, "emulator_address": true, "length": 8}),
+        )
+        .await;
+    assert_eq!(set["changed"], true, "{set}");
+    assert_eq!(set["watchpoints"][0]["kind"], "write", "{set}");
+    let hit = env.ok(&u, "debug_continue", json!({"session": id})).await;
+    assert_eq!(hit["stop"]["kind"], "watch", "{hit}");
+    assert_eq!(hit["stop"]["watch"]["access"], "write", "{hit}");
+    assert_eq!(hit["stop"]["watch"]["length"], 8, "{hit}");
+    let new = hit["stop"]["watch"]["new"]
+        .as_str()
+        .expect("new")
+        .to_string();
+    assert_ne!(
+        new,
+        hit["stop"]["watch"]["old"].as_str().expect("old"),
+        "{hit}"
+    );
+    let mem = env
+        .ok(
+            &u,
+            "debug_mem_read",
+            json!({"session": id, "address": slot, "emulator_address": true, "length": 8}),
+        )
+        .await;
+    assert_eq!(mem["hex"].as_str().expect("hex"), new);
+    let state = env.ok(&u, "debug_state", json!({"session": id})).await;
+    assert_eq!(state["watchpoints"].as_array().expect("watches").len(), 1);
+
+    // One instruction back, then back to the watch event before it (or the start).
+    let back = env
+        .ok(&u, "debug_reverse_step", json!({"session": id, "count": 1}))
+        .await;
+    assert_eq!(back["stop"]["kind"], "stepped", "{back}");
+    let before = env
+        .ok(&u, "debug_reverse_continue", json!({"session": id}))
+        .await;
+    assert!(
+        ["watch", "history_start"].contains(&before["stop"]["kind"].as_str().expect("kind")),
+        "{before}"
+    );
+    let rm = env
+        .ok(
+            &u,
+            "debug_watch_remove",
+            json!({"session": id, "address": slot, "emulator_address": true, "length": 8}),
+        )
+        .await;
+    assert_eq!(rm["changed"], true);
+    assert_eq!(rm["watchpoints"], json!([]));
+    let end = env.ok(&u, "debug_continue", json!({"session": id})).await;
+    assert_eq!(end["stop"]["kind"], "exited", "{end}");
+    assert!(
+        end["stdout_new"]["value"]
+            .as_str()
+            .expect("stdout")
+            .contains("hash=6490"),
+        "{end}"
+    );
+    env.ok(&u, "debug_stop", json!({"session": id})).await;
 }

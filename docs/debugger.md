@@ -21,6 +21,9 @@ first instruction.
 | Over | F10 | One instruction; a call runs to its return. |
 | Out | Shift+F11 | Runs until the current function returns. |
 | Continue | F5 | Runs to the next breakpoint or the end. |
+| Step back | | Goes back one instruction; registers and memory return to what they were. |
+| Reverse continue | | Runs backwards to the previous breakpoint or watchpoint access, or to the start. |
+| Watch... | | Opens the watchpoint box: stop when the program writes or reads a range of memory. |
 | To main | | Runs to the function `main` (programs with symbols). |
 | Stop | | Ends the session. |
 
@@ -34,6 +37,26 @@ Click a register value to see the memory it points at; type a hex address in the
 elsewhere (empty follows the stack pointer). Registers that changed at the last stop are
 highlighted. Everything the program wrote to standard output and error is in the Output box; it is
 program data, so it is shown as text and never acted on.
+
+## Watchpoints and going back
+
+**Watch...** takes an address (hex, from the Listing; tick *Pointer value* for a value copied from a
+register such as a stack slot or a heap node), a length in bytes and `write`, `read` or `access`.
+**Continue** then stops right after the instruction that touched the range; the status line shows
+the old and new bytes (`debug_continue` returns them in `stop.watch`). Programs run one instruction
+at a time while a watchpoint is set, so they are slower. Up to 16 watchpoints of up to 4096 bytes.
+
+**Step back** and **Reverse continue** move the program backwards. KRAKEN keeps a snapshot every
+20000 instructions (thinned out for very long runs); going back restores the nearest one and
+replays forward to the instruction you asked for, so it is exact and takes milliseconds.
+*Reverse continue* stands before the previous breakpoint or before the instruction that last touched
+a watched range, with the old and new bytes shown, or at the start of the run. Stepping back also
+works after the program has ended.
+
+What a snapshot holds: registers, memory, the program break and mapping cursor, and the length of
+the output. Open files and their contents are not part of it, so a stretch that read input or
+changed files can replay differently. Writing a register or memory from the commands starts a new
+history from that point. Going back needs a whole-program session (not a single-function call).
 
 ## From the command line, MCP and Python
 
@@ -52,7 +75,8 @@ kraken debug-stop --session 1
 
 `debug_start`, `debug_step`, `debug_step_over`, `debug_step_out`, `debug_continue`, `debug_run_to`,
 `debug_break_set`, `debug_break_remove`, `debug_break_list`, `debug_regs`, `debug_mem_read`,
-`debug_disasm`, `debug_state`, `debug_sessions`, `debug_gdb_serve` and `debug_stop` are listed in the
+`debug_disasm`, `debug_state`, `debug_sessions`, `debug_gdb_serve`, `debug_watch_set`,
+`debug_watch_remove`, `debug_reverse_step`, `debug_reverse_continue` and `debug_stop` are listed in the
 [command reference](reference/commands.md). Sessions live in the daemon (`krakend`), so they last
 across CLI calls; without the daemon (`--no-daemon`) each call is its own process and a session ends
 with it. At most four sessions are open at once, an idle one closes after 30 minutes, and closing
@@ -68,13 +92,21 @@ with project.debug(argv=["-v"]) as dbg:
     dbg.set_breakpoint(0x1189)
     dbg.cont()
     print(dbg.state()["stdout"])
+
+with project.debug() as dbg:                    # a write watch, then back in time
+    dbg.run_to("main")
+    sp = dbg.registers()["RSP"]
+    dbg.watch(sp - 8, 8, "write", emulator_address=True)
+    hit = dbg.cont()["stop"]["watch"]           # {"old": ..., "new": ..., "address": ...}
+    dbg.reverse_step(100)
+    dbg.reverse_continue()
 ```
 
 ## Attach gdb, Ghidra's debugger or IDA
 
 `debug_gdb_serve` (the **Attach gdb...** button on the Debug tab) exposes a running session over the
 GDB Remote Serial Protocol, so the tools you already know can debug the emulated program: registers,
-memory, breakpoints, step and continue.
+memory, breakpoints, watchpoints, step, continue and reverse execution.
 
 ```
 kraken debug-start
@@ -96,8 +128,9 @@ kraken debug-gdb-serve --session 1 --tcp true
   listens on 127.0.0.1, never on other interfaces; any program on this computer can connect to it, so
   prefer the socket on a shared machine.
 - One client at a time; leaving gdb (or `detach`) keeps the session where it is. `kill` is
-  accepted and leaves the session as is. Software breakpoints, step and continue are supported;
-  hardware watchpoints, reverse execution and multiple threads are not. x87 and vector registers
+  accepted and leaves the session as is. Software breakpoints, hardware watchpoints (`watch`, `rwatch`,
+  `awatch`), step, continue and reverse execution (`reverse-stepi`, `reverse-continue`) are supported;
+  multiple threads are not. x87 and vector registers
   read as zero. Ctrl-C is honoured between slices of five million instructions.
 - gdb sees the emulator's addresses: add `address_delta` to a Listing address for a
   position-independent program. x86-64 was exercised with a real gdb; the other architectures use
@@ -116,5 +149,5 @@ own addresses, so a pointer from a register can be read as is.
   wall-clock limit (`timeout_seconds`, default 10): the program then stops with kind
   `interrupted` or `budget` and the session stays usable.
 - Reading memory is capped at 4096 bytes per call and disassembly at 200 instructions.
-- You cannot change registers or memory from the window yet, and there are no watchpoints or
-  reverse stepping.
+- You cannot change registers or memory from the window yet.
+- Reverse execution replays from snapshots (see above): files and input are not rewound.

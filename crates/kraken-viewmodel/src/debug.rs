@@ -39,6 +39,10 @@ pub enum DebugStep {
     Out,
     /// To the next breakpoint or the end.
     Continue,
+    /// One instruction back.
+    Back,
+    /// Back to the previous breakpoint or watchpoint access.
+    ReverseContinue,
 }
 
 impl DebugStep {
@@ -48,8 +52,26 @@ impl DebugStep {
             DebugStep::Over => "debug_step_over",
             DebugStep::Out => "debug_step_out",
             DebugStep::Continue => "debug_continue",
+            DebugStep::Back => "debug_reverse_step",
+            DebugStep::ReverseContinue => "debug_reverse_continue",
         }
     }
+
+    /// Going back works after the program has ended too.
+    fn is_reverse(self) -> bool {
+        matches!(self, DebugStep::Back | DebugStep::ReverseContinue)
+    }
+}
+
+/// One watchpoint of the session.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WatchItem {
+    /// First byte (listing address).
+    pub address: Hex64,
+    /// Length in bytes.
+    pub length: u64,
+    /// `read`, `write` or `access`.
+    pub kind: String,
 }
 
 /// One register.
@@ -160,6 +182,18 @@ pub struct DebugPanel {
     pub notes: Vec<String>,
     /// How to attach gdb, once `debug_gdb_serve` has answered.
     pub gdb: Option<GdbAttach>,
+    /// The watchpoints of the session.
+    pub watches: Vec<WatchItem>,
+    /// The watchpoint box is shown.
+    pub watch_open: bool,
+    /// Address field of the watchpoint box (hex).
+    pub watch_address: String,
+    /// Length field of the watchpoint box (decimal bytes).
+    pub watch_length: String,
+    /// `write`, `read` or `access`.
+    pub watch_kind: String,
+    /// The address is a pointer value from a register, not a Listing address.
+    pub watch_emulator: bool,
     generation: u64,
     break_pending: u32,
     queued: Option<DebugStep>,
@@ -191,6 +225,12 @@ impl Default for DebugPanel {
             follow_listing: true,
             notes: Vec::new(),
             gdb: None,
+            watches: Vec::new(),
+            watch_open: false,
+            watch_address: String::new(),
+            watch_length: "8".into(),
+            watch_kind: "write".into(),
+            watch_emulator: false,
             generation: 0,
             break_pending: 0,
             queued: None,
@@ -207,6 +247,11 @@ impl DebugPanel {
     /// The program can be moved on.
     pub fn can_step(&self) -> bool {
         self.session.is_some() && !self.busy && !self.finished
+    }
+
+    /// The program can be taken back in time (also after it ended).
+    pub fn can_reverse(&self) -> bool {
+        self.session.is_some() && !self.busy
     }
 
     /// Whether there is a breakpoint at `addr`.
@@ -231,6 +276,7 @@ impl DebugPanel {
         self.memory = MemDump::default();
         self.status.clear();
         self.gdb = None;
+        self.watches.clear();
         self.instructions = 0;
         self.generation += 1;
         self.break_pending = 0;
@@ -259,6 +305,22 @@ struct StopWire {
     pc: Hex64,
     detail: Option<String>,
     exit: Option<ExitWire>,
+    #[serde(default)]
+    watch: Option<WatchHitWire>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchHitWire {
+    address: Hex64,
+    length: u64,
+    access: String,
+    old: String,
+    new: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchListWire {
+    watchpoints: Vec<WatchItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,6 +373,24 @@ fn describe(stop: &StopWire) -> String {
         "breakpoint" => format!("Hit a breakpoint at {}", hex(stop.pc.0)),
         "reached" => format!("Reached {}", hex(stop.pc.0)),
         "returned" => format!("Returned to {}", hex(stop.pc.0)),
+        "watch" => match &stop.watch {
+            Some(w) if w.access == "write" => format!(
+                "Watchpoint: {} bytes at {} changed {} -> {} (pc {})",
+                w.length,
+                hex(w.address.0),
+                shorten(&w.old),
+                shorten(&w.new),
+                hex(stop.pc.0)
+            ),
+            Some(w) => format!(
+                "Watchpoint: {} bytes at {} were read (pc {})",
+                w.length,
+                hex(w.address.0),
+                hex(stop.pc.0)
+            ),
+            None => format!("Watchpoint hit at {}", hex(stop.pc.0)),
+        },
+        "history_start" => "At the start of the run: nothing earlier to go back to".into(),
         "budget" => "Paused: the instruction budget ran out".into(),
         "interrupted" => "Paused: the time limit of this command ran out".into(),
         "import" => format!(
@@ -333,6 +413,14 @@ fn describe(stop: &StopWire) -> String {
             None => "The program ended".into(),
         },
         other => other.to_string(),
+    }
+}
+
+fn shorten(h: &str) -> String {
+    if h.len() > 16 {
+        format!("{}...", &h[..16])
+    } else {
+        h.to_string()
     }
 }
 
@@ -398,7 +486,12 @@ impl ViewModel {
 
     /// Moves the program on.
     pub fn debug_step(&mut self, how: DebugStep) {
-        let Some(session) = self.debug.session.filter(|_| self.debug.can_step()) else {
+        let allowed = if how.is_reverse() {
+            self.debug.can_reverse()
+        } else {
+            self.debug.can_step()
+        };
+        let Some(session) = self.debug.session.filter(|_| allowed) else {
             return;
         };
         if self.debug.break_pending > 0 {
@@ -416,6 +509,60 @@ impl ViewModel {
                 vm.debug_applied(generation, res);
             },
         );
+    }
+
+    /// Reads the watchpoint box and sets the watchpoint it describes.
+    pub fn debug_watch_add(&mut self) {
+        let Some(session) = self.debug.session.filter(|_| !self.debug.busy) else {
+            return;
+        };
+        let t = self.debug.watch_address.trim();
+        let Ok(addr) = u64::from_str_radix(t.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        else {
+            self.debug.error = Some("Type the address to watch in hex, like 0x404040.".into());
+            return;
+        };
+        let Ok(len) = self.debug.watch_length.trim().parse::<u64>() else {
+            self.debug.error = Some("Type the length in bytes as a number, like 8.".into());
+            return;
+        };
+        self.debug.error = None;
+        let args = json!({
+            "session": session,
+            "address": hex(addr),
+            "length": len,
+            "kind": self.debug.watch_kind,
+            "emulator_address": self.debug.watch_emulator,
+        });
+        self.watch_call("debug_watch_set", args);
+    }
+
+    /// Removes the watchpoint at `index` of [`DebugPanel::watches`].
+    pub fn debug_watch_remove(&mut self, index: usize) {
+        let (Some(session), Some(w)) = (self.debug.session, self.debug.watches.get(index).cloned())
+        else {
+            return;
+        };
+        let args = json!({
+            "session": session,
+            "address": hex(w.address.0),
+            "length": w.length,
+            "kind": w.kind,
+        });
+        self.watch_call("debug_watch_remove", args);
+    }
+
+    fn watch_call(&mut self, command: &'static str, args: serde_json::Value) {
+        let generation = self.debug.generation;
+        self.call(command, args, move |vm, res| {
+            if vm.debug.generation != generation {
+                return;
+            }
+            match res.and_then(parse::<WatchListWire>) {
+                Ok(w) => vm.debug.watches = w.watchpoints,
+                Err(e) => vm.debug.error = Some(plain_error(&e)),
+            }
+        });
     }
 
     /// Runs to `addr` (a listing address), stopping at breakpoints on the way.

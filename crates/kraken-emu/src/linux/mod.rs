@@ -378,6 +378,17 @@ struct Kernel {
     exit: Option<Exit>,
 }
 
+/// The scalar kernel state a snapshot carries ([`LinuxProcess::kernel_scalars`]).
+#[derive(Debug, Clone, Copy)]
+pub struct KernelScalars {
+    brk_cur: u64,
+    brk_max: u64,
+    mmap_next: u64,
+    stdin_pos: usize,
+    rng: u64,
+    file_bytes: u64,
+}
+
 /// A started Linux process under emulation: the CPU plus the kernel side. The stepping API
 /// drives one of these too.
 pub struct LinuxProcess {
@@ -631,6 +642,29 @@ impl LinuxProcess {
     /// Standard error so far.
     pub fn stderr(&self) -> &[u8] {
         &self.k.stderr
+    }
+
+    /// The scalar kernel state a snapshot has to carry for a replay to see the same answers
+    /// (program break, mapping cursor, input position, random state, written bytes).
+    pub fn kernel_scalars(&self) -> KernelScalars {
+        KernelScalars {
+            brk_cur: self.k.brk_cur,
+            brk_max: self.k.brk_max,
+            mmap_next: self.k.mmap_next,
+            stdin_pos: self.k.stdin_pos,
+            rng: self.k.rng,
+            file_bytes: self.k.file_bytes,
+        }
+    }
+
+    /// Puts back what [`kernel_scalars`](LinuxProcess::kernel_scalars) took.
+    pub fn set_kernel_scalars(&mut self, v: &KernelScalars) {
+        self.k.brk_cur = v.brk_cur;
+        self.k.brk_max = v.brk_max;
+        self.k.mmap_next = v.mmap_next;
+        self.k.stdin_pos = v.stdin_pos;
+        self.k.rng = v.rng;
+        self.k.file_bytes = v.file_bytes;
     }
 
     /// Drops output beyond these lengths (a restored snapshot).

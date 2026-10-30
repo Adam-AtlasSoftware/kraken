@@ -209,8 +209,8 @@ impl Command for DebugGdbServe {
              and goes away with the session. Addresses seen by gdb are the emulator's: for a \
              position-independent program they differ from the listing's by `address_delta`. \
              Registers: the general purpose set, flags/cpsr and segment registers; x87 and \
-             vector registers read as zero. Software breakpoints only; no watchpoints or reverse \
-             execution. The `debug_*` commands keep working while a client is attached, but \
+             vector registers read as zero. Software breakpoints, hardware watchpoints (Z2, Z3, Z4 map to \
+             `debug_watch_set`) and reverse execution (`reverse-stepi`, `reverse-continue`). The `debug_*` commands keep working while a client is attached, but \
              mixing both on one session is confusing.",
         )
     }

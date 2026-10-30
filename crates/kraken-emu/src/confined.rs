@@ -22,7 +22,7 @@ use crate::arch::Arch;
 use crate::call::{CallOutcome, CallSpec, Callee, FunctionCaller, RetKind, StartAt, Value};
 use crate::error::EmuError;
 use crate::linux::{ProgramOutcome, RunSpec};
-use crate::session::{Insn, Session, SessionStop, Target};
+use crate::session::{Insn, Session, SessionStop, Target, WatchKind, WatchSpec};
 use crate::specs::SpecRoots;
 use serde::{Deserialize, Serialize};
 
@@ -363,6 +363,22 @@ pub enum DebugRequest {
     AddBreakpoint { addr: u64 },
     /// Remove a breakpoint.
     RemoveBreakpoint { addr: u64 },
+    /// Watch a memory range.
+    AddWatch {
+        addr: u64,
+        len: u64,
+        kind: WatchKind,
+    },
+    /// Remove a watchpoint.
+    RemoveWatch {
+        addr: u64,
+        len: u64,
+        kind: WatchKind,
+    },
+    /// Go back `n` instructions.
+    ReverseStep { n: u64, wall_ms: u64 },
+    /// Go back to the latest earlier breakpoint or watchpoint event.
+    ReverseContinue { budget: u64, wall_ms: u64 },
     /// Registers, in display order.
     Registers,
     /// Write a register.
@@ -396,6 +412,9 @@ pub struct DebugState {
     pub arch: String,
     /// Breakpoints.
     pub breakpoints: Vec<u64>,
+    /// Watchpoints.
+    #[serde(default)]
+    pub watchpoints: Vec<WatchSpec>,
     /// Bytes of standard output so far.
     pub stdout_len: usize,
     /// Bytes of standard error so far.
@@ -442,6 +461,7 @@ fn debug_state(s: &Session) -> Result<DebugState, EmuError> {
         main_bias: s.main_bias()?,
         arch: s.arch().name().to_string(),
         breakpoints: s.breakpoints()?,
+        watchpoints: s.watchpoints()?,
         stdout_len: out.len(),
         stderr_len: err.len(),
     })
@@ -484,6 +504,18 @@ fn handle(s: &Session, req: DebugRequest) -> Result<DebugReply, EmuError> {
             wall_ms,
         } => with_deadline(s, wall_ms, || s.run_to(addr, budget))?,
         DebugRequest::Finish { budget, wall_ms } => with_deadline(s, wall_ms, || s.finish(budget))?,
+        DebugRequest::ReverseStep { n, wall_ms } => {
+            with_deadline(s, wall_ms, || s.reverse_step(n))?
+        }
+        DebugRequest::ReverseContinue { budget, wall_ms } => {
+            with_deadline(s, wall_ms, || s.reverse_continue(budget))?
+        }
+        DebugRequest::AddWatch { addr, len, kind } => DebugReply::Changed {
+            changed: s.add_watchpoint(addr, len, kind)?,
+        },
+        DebugRequest::RemoveWatch { addr, len, kind } => DebugReply::Changed {
+            changed: s.remove_watchpoint(addr, len, kind)?,
+        },
         DebugRequest::AddBreakpoint { addr } => DebugReply::Changed {
             changed: s.add_breakpoint(addr)?,
         },
@@ -586,6 +618,7 @@ impl DebugChild {
                 main_bias: 0,
                 arch: String::new(),
                 breakpoints: Vec::new(),
+                watchpoints: Vec::new(),
                 stdout_len: 0,
                 stderr_len: 0,
             },
@@ -622,7 +655,9 @@ impl DebugChild {
             | DebugRequest::StepOver { wall_ms, .. }
             | DebugRequest::Run { wall_ms, .. }
             | DebugRequest::RunTo { wall_ms, .. }
-            | DebugRequest::Finish { wall_ms, .. } => *wall_ms,
+            | DebugRequest::Finish { wall_ms, .. }
+            | DebugRequest::ReverseStep { wall_ms, .. }
+            | DebugRequest::ReverseContinue { wall_ms, .. } => *wall_ms,
             _ => 0,
         };
         if self.sandbox.is_none() {

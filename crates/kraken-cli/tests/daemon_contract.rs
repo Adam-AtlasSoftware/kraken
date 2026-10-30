@@ -738,6 +738,16 @@ async fn every_registry_command_identical() {
         ("debug_disasm", json!({"session": 99})),
         ("debug_state", json!({"session": 99})),
         ("debug_gdb_serve", json!({"session": 99})),
+        (
+            "debug_watch_set",
+            json!({"session": 99, "address": "0x401040"}),
+        ),
+        (
+            "debug_watch_remove",
+            json!({"session": 99, "address": "0x401040"}),
+        ),
+        ("debug_reverse_step", json!({"session": 99})),
+        ("debug_reverse_continue", json!({"session": 99})),
         ("debug_stop", json!({"session": 99})),
     ] {
         step!(name, args);

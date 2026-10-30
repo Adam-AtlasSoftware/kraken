@@ -117,7 +117,8 @@ Python warnings of class `kraken.KrakenWarning`.
 
 `project.debug(argv=[...], stdin="...")` starts a session on the emulator and returns a
 `kraken.Debugger` (`run_to`, `step`, `step_over`, `step_out`, `cont`, `set_breakpoint`,
-`registers`, `read_memory`, `disassemble`, `state`, `stop`); use it in a `with` block. See
+`watch`, `unwatch`, `reverse_step`, `reverse_continue`, `registers`, `read_memory`, `disassemble`,
+`state`, `stop`); use it in a `with` block. See
 [Debugging in the emulator](debugger.md).
 
 ## Authors: you, or an agent

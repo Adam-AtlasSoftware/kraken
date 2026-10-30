@@ -16,12 +16,16 @@ use gdbstub::conn::{Connection, ConnectionExt};
 use gdbstub::stub::run_blocking::{BlockingEventLoop, Event, WaitForStopReasonError};
 use gdbstub::stub::{DisconnectReason, GdbStub, SingleThreadStopReason};
 use gdbstub::target::ext::base::BaseOps;
+use gdbstub::target::ext::base::reverse_exec::{
+    ReplayLogPosition, ReverseCont, ReverseContOps, ReverseStep, ReverseStepOps,
+};
 use gdbstub::target::ext::base::singlethread::{
     SingleThreadBase, SingleThreadResume, SingleThreadResumeOps, SingleThreadSingleStep,
     SingleThreadSingleStepOps,
 };
 use gdbstub::target::ext::breakpoints::{
-    Breakpoints, BreakpointsOps, SwBreakpoint, SwBreakpointOps,
+    Breakpoints, BreakpointsOps, HwWatchpoint, HwWatchpointOps, SwBreakpoint, SwBreakpointOps,
+    WatchKind as GdbWatchKind,
 };
 use gdbstub::target::ext::target_description_xml_override::{
     TargetDescriptionXmlOverride, TargetDescriptionXmlOverrideOps,
@@ -32,7 +36,7 @@ use crate::arch::Arch;
 use crate::confined::{DebugChild, DebugReply, DebugRequest};
 use crate::error::EmuError;
 use crate::linux::Exit;
-use crate::session::SessionStop;
+use crate::session::{SessionStop, WatchKind};
 
 /// The way the server reaches the session.
 pub trait DebugLink {
@@ -44,6 +48,15 @@ impl DebugLink for DebugChild {
     fn request(&mut self, req: &DebugRequest) -> Result<DebugReply, EmuError> {
         DebugChild::request(self, req)
     }
+}
+
+/// What the next resume does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Continue,
+    Step,
+    ReverseStep,
+    ReverseContinue,
 }
 
 /// Where a register's value comes from.
@@ -300,7 +313,8 @@ pub struct GdbTarget<L: DebugLink> {
     link: L,
     slots: Vec<Slot>,
     xml: String,
-    stepping: bool,
+    mode: Mode,
+    watches: Vec<(u64, u64, WatchKind)>,
 }
 
 impl<L: DebugLink> GdbTarget<L> {
@@ -312,7 +326,8 @@ impl<L: DebugLink> GdbTarget<L> {
             link,
             slots,
             xml,
-            stepping: false,
+            mode: Mode::Continue,
+            watches: Vec::new(),
         }
     }
 
@@ -371,8 +386,30 @@ impl<L: DebugLink> GdbTarget<L> {
     }
 
     /// The stop to report for a run request's end; `None` when the run only paused.
-    fn after(stop: SessionStop) -> Option<SingleThreadStopReason<u64>> {
+    fn after(&self, stop: SessionStop) -> Option<SingleThreadStopReason<u64>> {
         Some(match stop {
+            SessionStop::Watch {
+                addr, len, access, ..
+            } => {
+                let both = self
+                    .watches
+                    .iter()
+                    .any(|w| w.0 == addr && w.1 == len && w.2 == WatchKind::Access);
+                let kind = match (both, access) {
+                    (true, _) => GdbWatchKind::ReadWrite,
+                    (false, WatchKind::Read) => GdbWatchKind::Read,
+                    (false, _) => GdbWatchKind::Write,
+                };
+                SingleThreadStopReason::Watch {
+                    tid: (),
+                    kind,
+                    addr,
+                }
+            }
+            SessionStop::HistoryStart => SingleThreadStopReason::ReplayLog {
+                tid: None,
+                pos: ReplayLogPosition::Begin,
+            },
             SessionStop::Stepped | SessionStop::Returned { .. } => SingleThreadStopReason::DoneStep,
             SessionStop::Breakpoint { .. } | SessionStop::Reached { .. } => {
                 SingleThreadStopReason::SwBreak(())
@@ -508,8 +545,18 @@ impl<L: DebugLink> SingleThreadBase for GdbTarget<L> {
 
 impl<L: DebugLink> SingleThreadResume for GdbTarget<L> {
     fn resume(&mut self, _signal: Option<Signal>) -> Result<(), String> {
-        self.stepping = false;
+        self.mode = Mode::Continue;
         Ok(())
+    }
+
+    #[inline(always)]
+    fn support_reverse_step(&mut self) -> Option<ReverseStepOps<'_, (), Self>> {
+        Some(self)
+    }
+
+    #[inline(always)]
+    fn support_reverse_cont(&mut self) -> Option<ReverseContOps<'_, (), Self>> {
+        Some(self)
     }
 
     #[inline(always)]
@@ -520,7 +567,21 @@ impl<L: DebugLink> SingleThreadResume for GdbTarget<L> {
 
 impl<L: DebugLink> SingleThreadSingleStep for GdbTarget<L> {
     fn step(&mut self, _signal: Option<Signal>) -> Result<(), String> {
-        self.stepping = true;
+        self.mode = Mode::Step;
+        Ok(())
+    }
+}
+
+impl<L: DebugLink> ReverseStep<()> for GdbTarget<L> {
+    fn reverse_step(&mut self, _tid: ()) -> Result<(), String> {
+        self.mode = Mode::ReverseStep;
+        Ok(())
+    }
+}
+
+impl<L: DebugLink> ReverseCont<()> for GdbTarget<L> {
+    fn reverse_cont(&mut self) -> Result<(), String> {
+        self.mode = Mode::ReverseContinue;
         Ok(())
     }
 }
@@ -529,6 +590,60 @@ impl<L: DebugLink> Breakpoints for GdbTarget<L> {
     #[inline(always)]
     fn support_sw_breakpoint(&mut self) -> Option<SwBreakpointOps<'_, Self>> {
         Some(self)
+    }
+
+    #[inline(always)]
+    fn support_hw_watchpoint(&mut self) -> Option<HwWatchpointOps<'_, Self>> {
+        Some(self)
+    }
+}
+
+fn session_kind(kind: GdbWatchKind) -> WatchKind {
+    match kind {
+        GdbWatchKind::Write => WatchKind::Write,
+        GdbWatchKind::Read => WatchKind::Read,
+        GdbWatchKind::ReadWrite => WatchKind::Access,
+    }
+}
+
+impl<L: DebugLink> HwWatchpoint for GdbTarget<L> {
+    fn add_hw_watchpoint(
+        &mut self,
+        addr: u64,
+        len: u64,
+        kind: GdbWatchKind,
+    ) -> TargetResult<bool, Self> {
+        let kind = session_kind(kind);
+        match self
+            .link
+            .request(&DebugRequest::AddWatch { addr, len, kind })
+        {
+            Ok(_) => {
+                self.watches.push((addr, len, kind));
+                Ok(true)
+            }
+            Err(EmuError::Io(e)) => Err(TargetError::Fatal(e)),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn remove_hw_watchpoint(
+        &mut self,
+        addr: u64,
+        len: u64,
+        kind: GdbWatchKind,
+    ) -> TargetResult<bool, Self> {
+        let kind = session_kind(kind);
+        self.watches.retain(|w| *w != (addr, len, kind));
+        match self
+            .link
+            .request(&DebugRequest::RemoveWatch { addr, len, kind })
+        {
+            Ok(DebugReply::Changed { changed }) => Ok(changed),
+            Ok(_) => Ok(false),
+            Err(EmuError::Io(e)) => Err(TargetError::Fatal(e)),
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -574,16 +689,23 @@ impl<L: DebugLink> BlockingEventLoop for Loop<L> {
         WaitForStopReasonError<String, <Conn as Connection>::Error>,
     > {
         loop {
-            let req = if target.stepping {
-                DebugRequest::Step {
+            let req = match target.mode {
+                Mode::Step => DebugRequest::Step {
                     n: 1,
                     wall_ms: 5_000,
-                }
-            } else {
-                DebugRequest::Run {
+                },
+                Mode::Continue => DebugRequest::Run {
                     budget: RUN_BUDGET,
                     wall_ms: SLICE_MS,
-                }
+                },
+                Mode::ReverseStep => DebugRequest::ReverseStep {
+                    n: 1,
+                    wall_ms: 20_000,
+                },
+                Mode::ReverseContinue => DebugRequest::ReverseContinue {
+                    budget: 2_000_000_000,
+                    wall_ms: SLICE_MS,
+                },
             };
             let reply = target.ask(req).map_err(WaitForStopReasonError::Target)?;
             let DebugReply::Stop { stop, .. } = reply else {
@@ -591,7 +713,7 @@ impl<L: DebugLink> BlockingEventLoop for Loop<L> {
                     "unexpected reply to a run request".into(),
                 ));
             };
-            if let Some(reason) = GdbTarget::<L>::after(stop) {
+            if let Some(reason) = target.after(stop) {
                 return Ok(Event::TargetStopped(reason));
             }
             if conn
