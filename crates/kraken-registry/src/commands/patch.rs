@@ -257,6 +257,20 @@ pub(crate) async fn set_patch(
     note: String,
     group: Option<String>,
 ) -> Result<PatchEditOut, ProtoError> {
+    set_patch_vetted(s, ctx, address, replacement, note, group, None).await
+}
+
+/// [`set_patch`] where `vet` (a reason) makes an agent's patch a proposal rather than applying
+/// at once; see `mutate::submit_vetted`.
+pub(crate) async fn set_patch_vetted(
+    s: &Session,
+    ctx: &CallContext,
+    address: Hex64,
+    replacement: Vec<u8>,
+    note: String,
+    group: Option<String>,
+    vet: Option<&str>,
+) -> Result<PatchEditOut, ProtoError> {
     let project = s.project()?;
     let start = address.0;
     let end = start.saturating_add(replacement.len() as u64);
@@ -301,7 +315,10 @@ pub(crate) async fn set_patch(
         old: old.as_ref().map(patch_bytes),
         new: Some(new),
     };
-    let edit = crate::mutate::submit(s, ctx, op, None).await?;
+    let edit = match vet {
+        Some(reason) => crate::mutate::submit_vetted(s, ctx, op, reason).await?,
+        None => crate::mutate::submit(s, ctx, op, None).await?,
+    };
     let patch = Patch {
         address: start,
         original: original[..replacement.len()].to_vec(),

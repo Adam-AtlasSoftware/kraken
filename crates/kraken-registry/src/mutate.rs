@@ -202,6 +202,29 @@ pub(crate) async fn submit_as(
     expect: Option<BTreeMap<String, u64>>,
     run_id: Option<RunId>,
 ) -> Result<MutationOutput, ProtoError> {
+    submit_inner(s, ctx, op, expect, run_id, None).await
+}
+
+/// [`submit`] for an edit that comes from outside the program's own analysis (a patch file from
+/// someone else): an agent's edit always waits as a proposal, with `reason`, even when it would
+/// be additive. A person's edit applies as usual.
+pub(crate) async fn submit_vetted(
+    s: &Session,
+    ctx: &CallContext,
+    op: LogOp,
+    reason: &str,
+) -> Result<MutationOutput, ProtoError> {
+    submit_inner(s, ctx, op, None, effective_run(ctx), Some(reason)).await
+}
+
+async fn submit_inner(
+    s: &Session,
+    ctx: &CallContext,
+    op: LogOp,
+    expect: Option<BTreeMap<String, u64>>,
+    run_id: Option<RunId>,
+    vet: Option<&str>,
+) -> Result<MutationOutput, ProtoError> {
     let project = s.project()?;
     if project.engine().mutator().is_none() {
         return Err(kraken_engine::unsupported("mutator"));
@@ -217,6 +240,7 @@ pub(crate) async fn submit_as(
     let quota_used = quota_key.as_deref().map_or(0, |k| project.quota_used(k));
     let op = VersionedLogOp::new(op);
     let draft_key = key.clone();
+    let vet = vet.map(str::to_string);
     let appended = project
         .with_store(move |st| {
             let read_set = match expect {
@@ -244,7 +268,9 @@ pub(crate) async fn submit_as(
                     Some(r) => st.count_applied_agent_entries(r)?,
                     None => 0,
                 };
-                let reason = if classify(&op.op, &state) == Classification::Overwrite {
+                let reason = if let Some(v) = vet {
+                    Some(v)
+                } else if classify(&op.op, &state) == Classification::Overwrite {
                     Some("changes an existing annotation or the program structure; needs user approval".to_string())
                 } else if used >= cap || quota_used >= cap {
                     Some(format!(

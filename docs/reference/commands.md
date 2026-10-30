@@ -82,6 +82,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`patch_branch`](#patch_branch) | mutation | mutating | Invert, always take or never take a conditional branch |
 | [`patch_constant`](#patch_constant) | mutation | mutating | Change the constant (immediate) an instruction uses |
 | [`patch_export`](#patch_export) | query | dangerous | Write a copy of the binary with every byte patch applied |
+| [`patch_export_diff`](#patch_export_diff) | query | dangerous | Write the byte patches as an IPS, BPS, JSON or other patch file against the original binary |
 | [`patch_fill`](#patch_fill) | mutation | mutating | Fill a range of bytes with a repeated pattern |
 | [`patch_from_source`](#patch_from_source) | job | safe | Plan a byte patch from an edit of a function's decompiled C (experimental, job) |
 | [`patch_group_assign`](#patch_group_assign) | mutation | mutating | Move patches into a patch set, or out of any set with an empty group |
@@ -89,6 +90,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`patch_group_list`](#patch_group_list) | query | safe | List the patch sets with how many patches each holds and whether they are on |
 | [`patch_group_remove`](#patch_group_remove) | mutation | mutating | Delete a patch set that has no patches in it |
 | [`patch_group_set`](#patch_group_set) | mutation | mutating | Create a patch set (a named group of patches) or change its description |
+| [`patch_import`](#patch_import) | mutation | mutating | Stage the changes of an IPS, BPS or JSON patch file as byte patches |
 | [`patch_lint`](#patch_lint) | query | safe | Warn about patches over loader-rewritten bytes, across function ends, or on signed files |
 | [`patch_list`](#patch_list) | query | safe | List byte patches ordered by address, one page at a time |
 | [`patch_nop`](#patch_nop) | mutation | mutating | Patch instructions out with NOPs in the processor's own encoding |
@@ -14552,6 +14554,114 @@ Addresses map through ELF program headers or PE/Mach-O sections. The file's own 
 
 </details>
 
+## patch_export_diff
+
+Write the byte patches as an IPS, BPS, JSON or other patch file against the original binary
+
+```sh
+kraken patch-export-diff --output-path <string> [options]
+```
+
+- Kind: query
+- Permission: dangerous
+
+Writes the byte patches that are switched on (all of them, or one patch set) as a patch file other tools can apply to the original binary: `ips`, `ips32`, `bps`, `1337`, `dif` or `json`. Each patch's address is mapped to a file offset the same way `patch_export` does it and the recorded original bytes are checked first. Unlike `patch_export` the result holds only the changes, not the program, so it can be shared. `ips` reaches 16 MiB (use `ips32`, `bps` or `json` for bigger files); `bps` carries the checksum of the original so a wrong file is refused; `json` keeps addresses and notes and can be read back with `patch_import`. Always asks for approval.
+
+Example: `patch_export_diff {"output_path": "fix.ips"}`
+
+The format comes from `format`, or from the extension of `output_path`. `1337` and `dif` list one line per changed byte and cannot be imported. With no patches on, the command is refused. A relative `output_path` is taken relative to the project directory.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `output_path` | `--output-path` | string | yes | Where to write the patch file. A relative path is resolved against the project directory. |
+| `format` | `--format` | json | no | The format. Absent takes it from the file extension of `output_path` (`.ips`, `.ips32`, `.bps`, `.1337`, `.dif`, `.json`). |
+| `group` | `--group` | string | no | Export only the patches of this patch set. Absent exports every patch that is on. |
+| `overwrite` | `--overwrite` | boolean | no | Overwrite an existing file at `output_path` (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "PatchFileFormat": {
+      "description": "A patch file format, as named in arguments.",
+      "oneOf": [
+        {
+          "const": "ips",
+          "description": "IPS: 3-byte offsets (files up to 16 MiB).",
+          "type": "string"
+        },
+        {
+          "const": "ips32",
+          "description": "IPS32: 4-byte offsets.",
+          "type": "string"
+        },
+        {
+          "const": "bps",
+          "description": "BPS: a delta with checksums; importing refuses a file it was not made for.",
+          "type": "string"
+        },
+        {
+          "const": "1337",
+          "description": "`.1337`: text lines `offset:old->new` (export only).",
+          "type": "string"
+        },
+        {
+          "const": "dif",
+          "description": "DIF: IDA's text difference file (export only).",
+          "type": "string"
+        },
+        {
+          "const": "json",
+          "description": "KRAKEN's JSON with offsets, addresses and notes.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `patch_export_diff`.",
+  "properties": {
+    "bytes_written": {
+      "description": "Size of the file in bytes.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "format": {
+      "$ref": "#/$defs/PatchFileFormat",
+      "description": "The format written."
+    },
+    "output_path": {
+      "description": "Absolute path of the file written.",
+      "type": "string"
+    },
+    "patches": {
+      "description": "Number of patches in the file.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sha256": {
+      "description": "SHA-256 of the file, lower-case hex.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "output_path",
+    "format",
+    "patches",
+    "bytes_written",
+    "sha256"
+  ],
+  "title": "PatchExportDiffOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## patch_fill
 
 Fill a range of bytes with a repeated pattern
@@ -15402,6 +15512,164 @@ Example: `patch_group_set {"name": "debug logging", "description": "Log every re
     "state"
   ],
   "title": "PatchGroupView",
+  "type": "object"
+}
+```
+
+</details>
+
+## patch_import
+
+Stage the changes of an IPS, BPS or JSON patch file as byte patches
+
+```sh
+kraken patch-import --path <string> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Memory`
+
+Reads an IPS, IPS32, BPS or KRAKEN JSON patch file made for the project's binary and stages each run of changed bytes as a byte patch (like `patch_set`). A person's patches apply at once under one run, so `undo_run` takes the whole import back; an agent's become proposals for the person to accept. The file is checked first and nothing is staged if anything is wrong: a BPS or JSON file made for another file (size, CRC-32 or SHA-256 differ), a record outside the file, a patch that grows the file, an overlap with a patch already staged, or more than 500 patches. `preview` lists what would be staged.
+
+Example: `patch_import {"path": "fix.ips", "preview": true}`
+
+Patch files come from other people, so the readers are bounded: at most 16 MiB, 100,000 records, 64 MiB of expanded run-length data, and every offset is checked against the original file. Formats are recognised by their first bytes unless `format` is given. `1337` and `dif` files cannot be read. Nothing on disk changes; `patch_export` writes the patched program.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `path` | `--path` | string | yes | The patch file to read. A relative path is resolved against the project directory. |
+| `format` | `--format` | json | no | The format. Absent is recognised from the file's first bytes. |
+| `group` | `--group` | string | no | The patch set to put the patches in (see `patch_group_set`). |
+| `preview` | `--preview` | boolean | no | Only report what would be staged; record nothing (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "ImportedPatch": {
+      "description": "One patch an import stages.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Where it goes."
+        },
+        "file_offset": {
+          "$ref": "#/$defs/Hex64",
+          "description": "The file offset it came from."
+        },
+        "length": {
+          "description": "Number of bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "proposal_id": {
+          "description": "The proposal, when proposed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "`applied`, `proposed` (an agent's, waiting for the person), or `preview`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "length",
+        "file_offset",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PatchFileFormat": {
+      "description": "A patch file format, as named in arguments.",
+      "oneOf": [
+        {
+          "const": "ips",
+          "description": "IPS: 3-byte offsets (files up to 16 MiB).",
+          "type": "string"
+        },
+        {
+          "const": "ips32",
+          "description": "IPS32: 4-byte offsets.",
+          "type": "string"
+        },
+        {
+          "const": "bps",
+          "description": "BPS: a delta with checksums; importing refuses a file it was not made for.",
+          "type": "string"
+        },
+        {
+          "const": "1337",
+          "description": "`.1337`: text lines `offset:old->new` (export only).",
+          "type": "string"
+        },
+        {
+          "const": "dif",
+          "description": "DIF: IDA's text difference file (export only).",
+          "type": "string"
+        },
+        {
+          "const": "json",
+          "description": "KRAKEN's JSON with offsets, addresses and notes.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `patch_import`.",
+  "properties": {
+    "applied": {
+      "description": "How many were applied at once.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "format": {
+      "$ref": "#/$defs/PatchFileFormat",
+      "description": "The format read."
+    },
+    "patches": {
+      "description": "The patches staged (or that would be, with `preview`).",
+      "items": {
+        "$ref": "#/$defs/ImportedPatch"
+      },
+      "type": "array"
+    },
+    "proposed": {
+      "description": "How many wait as proposals.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "run_id": {
+      "description": "The run the entries belong to; `undo_run` takes the whole import back. Absent for a\npreview.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "format",
+    "patches",
+    "applied",
+    "proposed"
+  ],
+  "title": "PatchImportOut",
   "type": "object"
 }
 ```

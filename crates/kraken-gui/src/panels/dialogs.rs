@@ -19,6 +19,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     string_dialog(ctx, vm);
     group_dialog(ctx, vm);
     export_dialog(ctx, vm);
+    import_dialog(ctx, vm);
     intent_dialog(ctx, vm);
     super::emulation::dialog(ctx, vm);
     super::emulation::call_dialog(ctx, vm);
@@ -824,15 +825,25 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     if let Some(done) = &d.done {
         let mut copy = false;
         let mut folder = false;
-        window("Patched binary written", "kraken_patch_export", 540.0).show(ctx, |ui| {
+        let title = if done.format.is_some() {
+            "Patch file written"
+        } else {
+            "Patched binary written"
+        };
+        window(title, "kraken_patch_export", 540.0).show(ctx, |ui| {
             ui.label(
                 RichText::new(format!(
-                    "Wrote {} with {} applied ({} bytes).",
+                    "Wrote {} with {} {} ({} bytes).",
                     done.output_path,
                     match done.applied {
                         0 => "no patches".to_string(),
                         1 => "1 patch".to_string(),
                         n => format!("{n} patches"),
+                    },
+                    if done.format.is_some() {
+                        "in it"
+                    } else {
+                        "applied"
                     },
                     done.bytes_written
                 ))
@@ -869,15 +880,22 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     }
     let title = match &d.group {
         Some(g) => format!("Export patch set {g}"),
-        None => "Export patched binary".to_string(),
+        None => "Export patches".to_string(),
     };
+    let mut format = d.format.clone();
+    let binary = d.format == "binary";
     window(&title, "kraken_patch_export", 520.0).show(ctx, |ui| {
         ui.label(
             RichText::new(format!(
-                "Writes a copy of the program with {} applied (patches that are switched off are \
-                 left out). Each address is mapped to its \
-                 place in the file and the original bytes are checked first; if anything does \
-                 not line up nothing is written. The original file is never touched.",
+                "Writes {} {} (patches that are switched off are left out). Each address is \
+                 mapped to its place in the file and the original bytes are checked first; if \
+                 anything does not line up nothing is written. The original file is never \
+                 touched.",
+                if binary {
+                    "a copy of the program with"
+                } else {
+                    "a patch file holding only"
+                },
                 match n {
                     0 => "no patches (an exact copy)".to_string(),
                     1 => "1 patch".to_string(),
@@ -886,6 +904,34 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             ))
             .color(p.text_dim),
         );
+        ui.label(RichText::new("Format").size(12.0).color(p.text_dim));
+        let shown = kraken_viewmodel::navtools::EXPORT_FORMATS
+            .iter()
+            .find(|(f, _)| *f == format)
+            .map_or("", |(_, t)| *t);
+        egui::ComboBox::from_id_salt("kraken_patch_export_format")
+            .selected_text(shown)
+            .width(ui.available_width().min(420.0))
+            .show_ui(ui, |ui| {
+                for (f, text) in kraken_viewmodel::navtools::EXPORT_FORMATS {
+                    ui.selectable_value(&mut format, f.to_string(), text)
+                        .on_hover_text(match f {
+                            "binary" => "The whole program with the patches applied",
+                            "ips" | "ips32" => {
+                                "A small file of changes most patchers and emulators read"
+                            }
+                            "bps" => "Changes plus checksums, so it refuses the wrong file",
+                            "json" => {
+                                "Changes with addresses and notes; Patch > Import reads it back"
+                            }
+                            _ => "A text list of every changed byte, to read or paste elsewhere",
+                        });
+                }
+            })
+            .response
+            .on_hover_text(
+                "Write the whole patched program, or just the patches as a file to share",
+            );
         ui.label(RichText::new("Write to").size(12.0).color(p.text_dim));
         ui.horizontal(|ui| {
             let r = ui
@@ -912,8 +958,12 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         ui.add_space(6.0);
         buttons(
             ui,
-            "Write patched binary",
-            "Write the copy (Enter). You are asked to confirm first",
+            if binary {
+                "Write patched binary"
+            } else {
+                "Write patch file"
+            },
+            "Write the file (Enter). You are asked to confirm first",
             if path.trim().is_empty() {
                 Err("Choose where to write it".into())
             } else {
@@ -927,7 +977,9 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     if browse {
         browse_export(vm, ctx, &path);
     }
-    if path != d.output_path {
+    if format != d.format {
+        vm.set_export_format(&format);
+    } else if path != d.output_path {
         vm.set_export_path(path);
     }
     if overwrite != d.overwrite {
@@ -937,6 +989,131 @@ fn export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.cancel_patch_export();
     } else if save || enter {
         vm.submit_patch_export();
+    }
+}
+
+// ---------------------------------------------------------------- import a patch file
+
+/// The patch file chosen in the system open dialog, waiting for the import dialog to take it.
+static IMPORT_PICK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn browse_import(vm: &ViewModel, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    let start = vm
+        .project
+        .as_ref()
+        .map(|p| p.project_dir.clone())
+        .filter(|d| std::path::Path::new(d).is_dir());
+    vm.runtime_handle().spawn(async move {
+        let mut d = rfd::AsyncFileDialog::new()
+            .set_title("Which patch file should be read?")
+            .add_filter("Patch files", &["ips", "bps", "json"]);
+        if let Some(s) = start {
+            d = d.set_directory(s);
+        }
+        if let Some(h) = d.pick_file().await {
+            if let Ok(mut p) = IMPORT_PICK.lock() {
+                *p = Some(h.path().to_string_lossy().into_owned());
+            }
+            ctx.request_repaint();
+        }
+    });
+}
+
+fn import_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.import_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut path = d.path.clone();
+    if let Some(picked) = IMPORT_PICK.lock().ok().and_then(|mut x| x.take()) {
+        path = picked;
+    }
+    let (mut go, mut check, mut cancel, mut browse) = (false, false, false, false);
+    window("Import patch file", "kraken_patch_import", 520.0).show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "Reads an IPS, BPS or KRAKEN JSON patch file made for this program and stages \
+                 its changes as patches. The file is checked first: one made for a different \
+                 file, or that reaches outside this one, is refused and nothing is staged. \
+                 Nothing on disk changes.",
+            )
+            .color(p.text_dim),
+        );
+        ui.label(RichText::new("Patch file").size(12.0).color(p.text_dim));
+        ui.horizontal(|ui| {
+            let r = ui
+                .add(
+                    egui::TextEdit::singleline(&mut path)
+                        .id(Id::new("kraken_patch_import_path"))
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width((ui.available_width() - 84.0).max(120.0)),
+                )
+                .on_hover_text("A file path; a relative one is taken from the project folder");
+            if !r.has_focus() && !d.submitting {
+                r.request_focus();
+            }
+            browse = ui
+                .button("Browse...")
+                .on_hover_text("Choose the patch file in an open dialog")
+                .clicked();
+        });
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(s.danger));
+        }
+        if !d.preview.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "This file would stage {} patch{}:",
+                    d.preview.len(),
+                    if d.preview.len() == 1 { "" } else { "es" }
+                ))
+                .color(s.success),
+            );
+            egui::ScrollArea::vertical()
+                .max_height(120.0)
+                .show(ui, |ui| {
+                    for line in &d.preview {
+                        ui.label(RichText::new(line).monospace().size(11.5));
+                    }
+                });
+        }
+        ui.add_space(6.0);
+        let empty = path.trim().is_empty();
+        ui.horizontal(|ui| {
+            check = ui
+                .add_enabled(!empty && !d.submitting, egui::Button::new("Check file"))
+                .on_hover_text("List the patches the file would stage, without staging them")
+                .on_disabled_hover_text("Choose a patch file first")
+                .clicked();
+        });
+        buttons(
+            ui,
+            "Import patches",
+            "Stage the file's changes as patches (Enter)",
+            if empty {
+                Err("Choose a patch file first".into())
+            } else {
+                Ok(())
+            },
+            d.submitting,
+            &mut go,
+            &mut cancel,
+        );
+    });
+    if browse {
+        browse_import(vm, ctx);
+    }
+    if path != d.path {
+        vm.set_import_path(path);
+    }
+    if esc || cancel {
+        vm.cancel_patch_import();
+    } else if check {
+        vm.submit_patch_import(true);
+    } else if go || enter {
+        vm.submit_patch_import(false);
     }
 }
 

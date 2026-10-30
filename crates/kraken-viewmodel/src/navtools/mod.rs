@@ -33,9 +33,9 @@ pub use form::{
 };
 pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
 pub use patches::{
-    AsmState, ExportDialog, ExportDone, GroupDialog, LintItem, LintReport, MAX_PATCH_BYTES,
-    PatchDialog, PatchGroupItem, PatchItem, PatchOrigin, PatchesPanel, VerdictItem, parse_hex,
-    spaced_hex,
+    AsmState, EXPORT_FORMATS, ExportDialog, ExportDone, GroupDialog, ImportDialog, LintItem,
+    LintReport, MAX_PATCH_BYTES, PatchDialog, PatchGroupItem, PatchItem, PatchOrigin,
+    PatchesPanel, VerdictItem, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
@@ -147,6 +147,8 @@ pub struct NavTools {
     pub string_dialog: Option<StringDialog>,
     /// The dialog that exports the patched binary, when open.
     pub export_dialog: Option<ExportDialog>,
+    /// The dialog that reads a patch file, when open.
+    pub import_dialog: Option<ImportDialog>,
     /// The one-click patch dialog (NOP, branch, return, fill), when open.
     pub intent_dialog: Option<IntentDialog>,
     /// The Run dialog, when open.
@@ -191,6 +193,7 @@ impl NavTools {
             || self.bookmark_dialog.is_some()
             || self.patch_dialog.is_some()
             || self.export_dialog.is_some()
+            || self.import_dialog.is_some()
             || self.string_dialog.is_some()
             || self.intent_dialog.is_some()
             || self.type_dialog.is_some()

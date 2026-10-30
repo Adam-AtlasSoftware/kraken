@@ -122,7 +122,8 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 |---|---|---|
 | Patch bytes here... | Replace the bytes of the selected instruction or Hex selection; nothing on disk changes until you export |  |
 | Show patches | See every staged byte patch, run them and export |  |
-| Export patched binary... | Write a copy of the program with every patch applied; the original is untouched |  |
+| Export patched binary... | Write a copy of the program with every patch applied, or the patches as an IPS, BPS or JSON file to share; the original is untouched |  |
+| Import patch file... | Read an IPS, BPS or KRAKEN JSON patch file made for this program into staged patches |  |
 | Run in emulator... | Open the program, or a copy with your patches, in an installed emulator |  |
 
 ### Emulate

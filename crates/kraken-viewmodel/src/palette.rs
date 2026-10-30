@@ -86,6 +86,8 @@ pub enum AppAction {
     ShowPatches,
     /// Write a copy of the binary with the patches applied.
     ExportPatched,
+    /// Read a patch file (IPS, BPS or JSON) into patches.
+    ImportPatchFile,
     /// Run the program in the emulator with arguments and input.
     RunProgram,
     /// Run the program with the byte patches applied.
@@ -128,7 +130,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 56] = [
+    pub const ALL: [AppAction; 57] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -142,6 +144,7 @@ impl AppAction {
         AppAction::PatchHere,
         AppAction::ShowPatches,
         AppAction::ExportPatched,
+        AppAction::ImportPatchFile,
         AppAction::RunProgram,
         AppAction::RunPatched,
         AppAction::ComparePatched,
@@ -268,6 +271,7 @@ impl AppAction {
             AppAction::PatchHere => "Patch bytes here...",
             AppAction::ShowPatches => "Show patches",
             AppAction::ExportPatched => "Export patched binary...",
+            AppAction::ImportPatchFile => "Import patch file...",
             AppAction::RunProgram => "Run program...",
             AppAction::RunPatched => "Run patched program...",
             AppAction::ComparePatched => "Compare original vs patched...",
@@ -342,7 +346,12 @@ impl AppAction {
             }
             AppAction::ShowPatches => "See every staged byte patch, run them and export",
             AppAction::ExportPatched => {
-                "Write a copy of the program with every patch applied; the original is untouched"
+                "Write a copy of the program with every patch applied, or the patches as an IPS, \
+                 BPS or JSON file to share; the original is untouched"
+            }
+            AppAction::ImportPatchFile => {
+                "Read an IPS, BPS or KRAKEN JSON patch file made for this program into staged \
+                 patches"
             }
             AppAction::RunProgram => {
                 "Run the program in the sandboxed emulator with the arguments, input, environment and files you give it"
@@ -433,7 +442,8 @@ impl AppAction {
             "bookmark_add" => AppAction::AddBookmark,
             "patch_set" => AppAction::PatchHere,
             "patch_list" => AppAction::ShowPatches,
-            "patch_export" => AppAction::ExportPatched,
+            "patch_export" | "patch_export_diff" => AppAction::ExportPatched,
+            "patch_import" => AppAction::ImportPatchFile,
             "emulate_run" => AppAction::RunProgram,
             "emulate_compare" => AppAction::ComparePatched,
             "patch_verify" => AppAction::VerifyPatches,

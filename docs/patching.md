@@ -212,6 +212,51 @@ checksum the loader or a driver check looks at stays valid. An Authenticode sign
 it stays in the file and no longer verifies, which `patch_lint` says (below). Mach-O code signatures
 are not handled.
 
+## Sharing patches as files
+
+A patched copy of a program is large and cannot always be shared. A patch file holds only the
+changes, as offsets into the original file, and is what patchers, emulators and other tools read.
+
+In the window, **Patch > Export patched binary...** has a **Format** choice: the whole patched
+binary, or one of the patch file formats below. **Patch > Import patch file...** reads one back
+(**Check file** lists what it would stage first).
+
+```
+patch_export_diff {"output_path": "fix.ips"}
+patch_export_diff {"output_path": "fix.json", "group": "banner"}
+patch_import {"path": "fix.ips", "preview": true}
+patch_import {"path": "fix.ips"}
+```
+
+| Format | Extension | Write | Read | Notes |
+| ------ | --------- | ----- | ---- | ----- |
+| IPS | `.ips` | yes | yes | 3-byte offsets, so only the first 16 MiB of a file; run-length records are read |
+| IPS32 | `.ips32` | yes | yes | 4-byte offsets |
+| BPS | `.bps` | yes | yes | carries CRC-32 of the original, the result and itself; a file made for another binary is refused |
+| JSON | `.json` | yes | yes | KRAKEN's own: offsets, addresses, originals, notes, and the file's size and SHA-256 |
+| `.1337` | `.1337` | yes | no | text, one `offset:old->new` line per changed byte |
+| DIF | `.dif` | yes | no | IDA's text difference file |
+
+`patch_export_diff` writes the patches that are switched on (or one patch set) through the same
+address-to-file-offset mapping as `patch_export`, with the same check of the recorded original
+bytes. It is dangerous and asks every time. The format comes from `format`, or from the file's
+extension. IPS cannot hold an offset past 16 MiB; the writer says so and asks for IPS32, BPS or
+JSON. An offset that spells `EOF` in IPS is written one byte early so the file is not cut short.
+
+`patch_import` is for files from other people, so it is strict. It reads at most 16 MiB and
+100,000 records and expands at most 64 MiB of run-length data. Every offset is checked against the
+project's binary with checked arithmetic. A BPS or JSON file whose original does not match the
+binary is refused, as is a patch that would grow the file or change its size, a change in a part
+of the file that is not loaded into memory, an overlap with a patch already staged, and a file
+with more than 500 separate changes. The file is read whole, laid over the original, and only the
+bytes that really change become patches, so records that overlap or repeat settle to a clean
+set. Nothing is staged unless the whole file is acceptable.
+
+A person's import applies at once as ordinary patches under one run, so `undo_run` with the
+returned `run_id` takes the whole import back. An agent's import never applies by itself: every
+patch becomes a proposal for you to accept in Proposals, even though a new patch is otherwise
+additive, because the file came from outside the project.
+
 ## Running a patched copy in the emulator
 
 Pass `patched: true` to [`emulate_run`](emulation.md) to run a copy with the patches applied instead

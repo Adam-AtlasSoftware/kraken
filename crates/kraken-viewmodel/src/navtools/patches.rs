@@ -126,7 +126,40 @@ pub struct ExportDone {
     pub bytes_written: u64,
     /// SHA-256 of the file, lower-case hex.
     pub sha256: String,
+    /// The patch file format written (`ips`, `bps`...); `None` for a patched binary.
+    pub format: Option<String>,
 }
+
+/// The dialog that reads a patch file (`patch_import`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportDialog {
+    /// The file to read; relative paths are taken from the project directory.
+    pub path: String,
+    /// Why reading failed.
+    pub error: Option<String>,
+    /// The call is running.
+    pub submitting: bool,
+    /// What a check of the file found: one line per patch it would stage.
+    pub preview: Vec<String>,
+}
+
+/// The ways the export dialog can write the patches: `binary` is the whole patched program, the
+/// others are patch files (`patch_export_diff`).
+pub const EXPORT_FORMATS: [(&str, &str); 7] = [
+    ("binary", "Patched binary (a whole copy of the program)"),
+    ("ips", "IPS patch file"),
+    ("ips32", "IPS32 patch file (files over 16 MiB)"),
+    (
+        "bps",
+        "BPS patch file (checks it is applied to the right file)",
+    ),
+    (
+        "json",
+        "JSON patch file (addresses and notes; KRAKEN can import it)",
+    ),
+    ("1337", ".1337 text (x64dbg style, one line per byte)"),
+    ("dif", "DIF text (IDA difference file)"),
+];
 
 /// State of the Patches tab.
 #[derive(Debug, Clone, Default)]
@@ -280,6 +313,8 @@ pub struct ExportDialog {
     pub overwrite: bool,
     /// Export only this patch set; `None` exports every patch that is on.
     pub group: Option<String>,
+    /// What to write: `binary` or one of the patch file formats in [`EXPORT_FORMATS`].
+    pub format: String,
     /// Why writing failed.
     pub error: Option<String>,
     /// The call is running.
@@ -342,9 +377,26 @@ struct GroupListWire {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct ImportWire {
+    patches: Vec<ImportRow>,
+    #[serde(default)]
+    proposed: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ImportRow {
+    address: Hex64,
+    length: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct ExportWire {
     output_path: String,
+    #[serde(default)]
     applied: Vec<serde_json::Value>,
+    /// `patch_export_diff`: the number of patches in the file.
+    #[serde(default)]
+    patches: Option<usize>,
     bytes_written: u64,
     #[serde(default)]
     sha256: String,
@@ -896,11 +948,38 @@ impl ViewModel {
         self.tools.export_dialog = Some(ExportDialog {
             output_path,
             group,
+            format: "binary".into(),
             overwrite: false,
             error: None,
             submitting: false,
             done: None,
         });
+    }
+
+    /// Chooses what the export dialog writes (`binary`, `ips`, `bps`...) and changes the
+    /// suggested file name's ending to match.
+    pub fn set_export_format(&mut self, format: &str) {
+        let Some(d) = self.tools.export_dialog.as_mut() else {
+            return;
+        };
+        if !EXPORT_FORMATS.iter().any(|(f, _)| *f == format) {
+            return;
+        }
+        let path = d.output_path.clone();
+        let stem = EXPORT_FORMATS
+            .iter()
+            .skip(1)
+            .map(|(f, _)| format!(".{f}"))
+            .chain([".patched".to_string()])
+            .find_map(|ext| path.strip_suffix(&ext).map(str::to_string))
+            .unwrap_or(path);
+        d.output_path = if format == "binary" {
+            format!("{stem}.patched")
+        } else {
+            format!("{stem}.{format}")
+        };
+        d.format = format.into();
+        d.error = None;
     }
 
     /// Updates the export path being typed.
@@ -919,6 +998,91 @@ impl ViewModel {
         }
     }
 
+    /// Opens the dialog that reads a patch file (IPS, BPS or KRAKEN JSON) into patches.
+    pub fn begin_patch_import(&mut self) {
+        self.tools.import_dialog = Some(ImportDialog {
+            path: String::new(),
+            error: None,
+            submitting: false,
+            preview: Vec::new(),
+        });
+    }
+
+    /// Updates the patch file path being typed.
+    pub fn set_import_path(&mut self, text: impl Into<String>) {
+        if let Some(d) = self.tools.import_dialog.as_mut() {
+            d.path = text.into();
+            d.error = None;
+            d.preview.clear();
+        }
+    }
+
+    /// Closes the import dialog.
+    pub fn cancel_patch_import(&mut self) {
+        self.tools.import_dialog = None;
+    }
+
+    /// Checks the file (`preview`) or stages its patches (`patch_import`).
+    pub fn submit_patch_import(&mut self, preview: bool) {
+        let Some(d) = self.tools.import_dialog.as_mut().filter(|d| !d.submitting) else {
+            return;
+        };
+        let path = d.path.trim().to_string();
+        if path.is_empty() {
+            d.error = Some("Choose the patch file to read.".into());
+            return;
+        }
+        d.submitting = true;
+        d.error = None;
+        let args = json!({"path": path, "preview": preview});
+        self.call("patch_import", args, move |vm, res| {
+            match res.and_then(parse::<ImportWire>) {
+                Ok(out) => {
+                    let n = out.patches.len();
+                    if preview {
+                        if let Some(d) = vm.tools.import_dialog.as_mut() {
+                            d.submitting = false;
+                            d.preview = out
+                                .patches
+                                .iter()
+                                .map(|p| {
+                                    format!(
+                                        "{}  {} byte{}",
+                                        p.address.to_hex(),
+                                        p.length,
+                                        if p.length == 1 { "" } else { "s" }
+                                    )
+                                })
+                                .collect();
+                        }
+                        return;
+                    }
+                    vm.tools.import_dialog = None;
+                    vm.toast(
+                        ToastLevel::Success,
+                        if out.proposed > 0 {
+                            format!("{n} patches wait in Proposals for you to accept.")
+                        } else {
+                            format!(
+                                "Staged {n} patch{}. Nothing on disk changes until you export.",
+                                if n == 1 { "" } else { "es" }
+                            )
+                        },
+                    );
+                    vm.refresh_patches();
+                    vm.refresh_history();
+                    vm.refresh_project();
+                }
+                Err(e) => {
+                    if let Some(d) = vm.tools.import_dialog.as_mut() {
+                        d.submitting = false;
+                        d.error = Some(plain_error(&e));
+                    }
+                }
+            }
+        });
+    }
+
     /// Closes the export dialog.
     pub fn cancel_patch_export(&mut self) {
         self.tools.export_dialog = None;
@@ -931,7 +1095,7 @@ impl ViewModel {
         };
         let path = d.output_path.trim().to_string();
         if path.is_empty() {
-            d.error = Some("Choose where to write the patched binary.".into());
+            d.error = Some("Choose where to write the file.".into());
             return;
         }
         d.submitting = true;
@@ -939,14 +1103,24 @@ impl ViewModel {
         if let Some(g) = &d.group {
             args["group"] = json!(g);
         }
-        self.call("patch_export", args, move |vm, res| {
+        let file_format = (d.format != "binary").then(|| d.format.clone());
+        if let Some(f) = &file_format {
+            args["format"] = json!(f);
+        }
+        let command = if file_format.is_some() {
+            "patch_export_diff"
+        } else {
+            "patch_export"
+        };
+        self.call(command, args, move |vm, res| {
             match res.and_then(parse::<ExportWire>) {
                 Ok(out) => {
                     let done = ExportDone {
                         output_path: out.output_path,
-                        applied: out.applied.len(),
+                        applied: out.patches.unwrap_or(out.applied.len()),
                         bytes_written: out.bytes_written,
                         sha256: out.sha256,
+                        format: file_format,
                     };
                     if let Some(d) = vm.tools.export_dialog.as_mut() {
                         d.submitting = false;

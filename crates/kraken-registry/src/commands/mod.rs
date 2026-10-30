@@ -25,6 +25,7 @@ mod jobs;
 mod local_model;
 mod patch;
 mod patch_check;
+mod patch_formats;
 mod patch_group;
 mod patch_intent;
 mod patch_source;
@@ -130,6 +131,10 @@ pub use patch::{
 pub use patch_check::{
     LintFinding, PatchLint, PatchLintArgs, PatchLintOut, PatchVerdictView, PatchVerify,
     PatchVerifyArgs, PatchVerifyOut,
+};
+pub use patch_formats::{
+    ImportedPatch, MAX_IMPORT_PATCHES, PatchExportDiff, PatchExportDiffArgs, PatchExportDiffOut,
+    PatchFileFormat, PatchImport, PatchImportArgs, PatchImportOut,
 };
 pub use patch_group::{
     MAX_ASSIGN, MAX_GROUP_DESCRIPTION, MAX_GROUP_NAME, PatchGroupAssign, PatchGroupAssignArgs,
@@ -396,6 +401,8 @@ pub fn register_all(r: &mut Registry) {
     r.register(PatchExport);
     r.register(PatchLint);
     r.register(PatchVerify);
+    r.register(PatchExportDiff);
+    r.register(PatchImport);
     // Card COST: what AI work costs and what runs.
     r.register(AiUsage);
     r.register(AiJobs);

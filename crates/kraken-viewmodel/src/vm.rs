@@ -1931,6 +1931,7 @@ impl ViewModel {
                 | AppAction::PatchHere
                 | AppAction::ShowPatches
                 | AppAction::ExportPatched
+                | AppAction::ImportPatchFile
                 | AppAction::RunProgram
                 | AppAction::RunPatched
                 | AppAction::ComparePatched
@@ -2009,6 +2010,7 @@ impl ViewModel {
             }
             AppAction::ShowPatches => self.show_patches(),
             AppAction::ExportPatched => self.begin_patch_export(),
+            AppAction::ImportPatchFile => self.begin_patch_import(),
             AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
             AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
             AppAction::ComparePatched => self.begin_emulate(EmulateMode::Compare),

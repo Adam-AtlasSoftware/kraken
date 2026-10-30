@@ -456,6 +456,37 @@ pub fn image_findings(image: &[u8], applied: &[AppliedPatch]) -> Vec<ImageFindin
     out
 }
 
+/// The reverse of the export mapping: file offsets to the addresses the engine shows them at.
+/// Used to bring patches from a patch file (which speaks in file offsets) into the project.
+pub struct OffsetMap {
+    segs: Vec<Segment>,
+    shift: u64,
+}
+
+impl OffsetMap {
+    /// Reads the segments of `image`; `engine_base` is the program's load base in the engine.
+    pub fn new(image: &[u8], engine_base: u64) -> Result<OffsetMap, PatchError> {
+        let segs = segments(image)?;
+        let lowest = segs.iter().map(|s| s.vaddr).min().unwrap_or(0);
+        let shift = engine_base.saturating_sub(lowest);
+        Ok(OffsetMap { segs, shift })
+    }
+
+    /// The address of file offset `offset` and how many of the next `len` bytes lie in the same
+    /// loaded segment (at least one), or `None` when the offset is not loaded memory.
+    pub fn address(&self, offset: u64, len: u64) -> Option<(u64, u64)> {
+        for s in &self.segs {
+            let end = s.file_off.checked_add(s.file_len)?;
+            if offset >= s.file_off && offset < end {
+                let within = offset - s.file_off;
+                let addr = s.vaddr.checked_add(within)?.checked_add(self.shift)?;
+                return Some((addr, len.min(end - offset)));
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -668,6 +668,11 @@ async fn every_registry_command_identical() {
         json!({"address": "0x401040", "text": "frobnicate"})
     );
     step!("patch_export", json!({"output_path": "patched.bin"}));
+    step!("patch_export_diff", json!({"output_path": "patched.ips"}));
+    step!(
+        "patch_import",
+        json!({"path": "missing.ips", "preview": true})
+    );
     step!("emulate_run", json!({"patched": true}));
     step!(
         "disassemble",

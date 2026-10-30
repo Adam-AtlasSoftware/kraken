@@ -420,3 +420,56 @@ fn the_patches_tab_lists_two_sets_and_switching_one_off_marks_its_patches() {
     assert_eq!(e.group.as_deref(), Some("banner"));
     assert!(e.output_path.contains("banner"), "{}", e.output_path);
 }
+
+#[test]
+fn the_export_dialog_writes_patch_files_and_the_import_dialog_reads_them() {
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    h.app.dispatch(AppAction::ExportPatched, &ctx);
+    h.step();
+    let vm = h.app.view_model_mut().expect("vm");
+    let before = vm.tools.export_dialog.clone().expect("export dialog");
+    assert_eq!(before.format, "binary");
+    assert!(
+        before.output_path.ends_with(".patched"),
+        "{}",
+        before.output_path
+    );
+    vm.set_export_format("bps");
+    let d = vm.tools.export_dialog.clone().expect("export dialog");
+    assert_eq!(d.format, "bps");
+    assert!(d.output_path.ends_with(".bps"), "{}", d.output_path);
+    assert!(!d.output_path.contains(".patched"), "{}", d.output_path);
+    vm.set_export_format("binary");
+    let d = vm.tools.export_dialog.clone().expect("export dialog");
+    assert_eq!(d.output_path, before.output_path);
+    h.step();
+    h.key(Key::Escape, Modifiers::NONE);
+    h.step();
+
+    h.app.dispatch(AppAction::ImportPatchFile, &ctx);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .is_some_and(|vm| vm.tools.import_dialog.is_some())
+    );
+    let vm = h.app.view_model_mut().expect("vm");
+    vm.set_import_path("/nonexistent/none.ips");
+    vm.submit_patch_import(true);
+    h.run_until("the missing file to be reported", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools
+                .import_dialog
+                .as_ref()
+                .is_some_and(|d| !d.submitting && d.error.is_some())
+        })
+    });
+    h.key(Key::Escape, Modifiers::NONE);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .is_some_and(|vm| vm.tools.import_dialog.is_none())
+    );
+}
