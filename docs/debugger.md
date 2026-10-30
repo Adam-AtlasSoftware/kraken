@@ -54,8 +54,8 @@ a watched range, with the old and new bytes shown, or at the start of the run. I
 out of instructions or time first, the program stays where it was and you can ask again. Stepping
 back also works after the program has ended.
 
-What a snapshot holds: registers, memory, the program break and mapping cursor, and the length of
-the output. Open files and their contents are not part of it, so a stretch that read input or
+What a snapshot holds: registers, memory, the program break and mapping cursor, the guest clock
+and the length of the output. Open files and their contents are not part of it, so a stretch that read input or
 changed files can replay differently. Writing a register or memory from the commands starts a new
 history from that point. Going back needs a whole-program session (not a single-function call).
 

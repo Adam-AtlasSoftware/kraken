@@ -81,3 +81,34 @@ fn directories_made_by_the_guest_stay_in_its_work_directory() {
     assert!(dir.path().join("inner2").is_dir());
     assert!(!dir.path().join("a.txt").exists());
 }
+
+#[test]
+#[ignore = "needs Ghidra processor sources for the SLEIGH specs (KRAKEN_GHIDRA_HOME or the dev cache)"]
+fn stepping_back_over_sleeps_replays_the_same_clock() {
+    use kraken_emu::session::{Session, SessionStop, Target};
+    let _ = specs(Arch::X86_64);
+    let spec = RunSpec::new(bin("linux-rt", "sleeping-x86_64"));
+    let whole = Session::new(Target::Program(spec.clone())).expect("session");
+    assert!(matches!(
+        whole.run(10_000_000).expect("run"),
+        SessionStop::Exited { .. }
+    ));
+    let end = whole.icount().expect("icount");
+    // Just before the exit: every sleep and clock read is behind, their times on the stack.
+    let s = Session::new(Target::Program(spec)).expect("session");
+    let state = |s: &Session| {
+        let sp = s.read_reg("RSP").expect("sp");
+        (
+            s.registers().expect("registers"),
+            s.read_memory(sp - 0x200, 0x400).expect("stack"),
+        )
+    };
+    assert_eq!(s.step(end - 20).expect("step"), SessionStop::Stepped);
+    let first = state(&s);
+    assert_eq!(
+        s.reverse_step(end).expect("back"),
+        SessionStop::HistoryStart
+    );
+    assert_eq!(s.step(end - 20).expect("again"), SessionStop::Stepped);
+    assert_eq!(state(&s), first, "the replay read the same clock");
+}

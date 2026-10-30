@@ -387,6 +387,8 @@ pub struct KernelScalars {
     stdin_pos: usize,
     rng: u64,
     file_bytes: u64,
+    skew_ns: u64,
+    dirs_made: u32,
 }
 
 /// A started Linux process under emulation: the CPU plus the kernel side. The stepping API
@@ -645,7 +647,8 @@ impl LinuxProcess {
     }
 
     /// The scalar kernel state a snapshot has to carry for a replay to see the same answers
-    /// (program break, mapping cursor, input position, random state, written bytes).
+    /// (program break, mapping cursor, input position, random state, written bytes, the time
+    /// sleeps added to the guest clock, directories made).
     pub fn kernel_scalars(&self) -> KernelScalars {
         KernelScalars {
             brk_cur: self.k.brk_cur,
@@ -654,6 +657,8 @@ impl LinuxProcess {
             stdin_pos: self.k.stdin_pos,
             rng: self.k.rng,
             file_bytes: self.k.file_bytes,
+            skew_ns: self.k.skew_ns,
+            dirs_made: self.k.dirs_made,
         }
     }
 
@@ -665,6 +670,8 @@ impl LinuxProcess {
         self.k.stdin_pos = v.stdin_pos;
         self.k.rng = v.rng;
         self.k.file_bytes = v.file_bytes;
+        self.k.skew_ns = v.skew_ns;
+        self.k.dirs_made = v.dirs_made;
     }
 
     /// Drops output beyond these lengths (a restored snapshot).
