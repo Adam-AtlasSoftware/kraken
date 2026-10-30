@@ -423,6 +423,13 @@ impl<L: DebugLink> GdbTarget<L> {
             },
             SessionStop::Fault { .. } => SingleThreadStopReason::Signal(Signal::SIGSEGV),
             SessionStop::Import { .. } => SingleThreadStopReason::Signal(Signal::SIGTRAP),
+            // A reverse search that ran out of time is back where it started; repeating it
+            // would only redo the same search, so gdb gets a stop and can ask again.
+            SessionStop::Budget | SessionStop::Interrupted
+                if matches!(self.mode, Mode::ReverseContinue | Mode::ReverseStep) =>
+            {
+                SingleThreadStopReason::Signal(Signal::SIGINT)
+            }
             SessionStop::Budget | SessionStop::Interrupted => return None,
         })
     }

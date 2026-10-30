@@ -50,8 +50,9 @@ at a time while a watchpoint is set, so they are slower. Up to 16 watchpoints of
 20000 instructions (thinned out for very long runs); going back restores the nearest one and
 replays forward to the instruction you asked for, so it is exact and takes milliseconds.
 *Reverse continue* stands before the previous breakpoint or before the instruction that last touched
-a watched range, with the old and new bytes shown, or at the start of the run. Stepping back also
-works after the program has ended.
+a watched range, with the old and new bytes shown, or at the start of the run. If its search runs
+out of instructions or time first, the program stays where it was and you can ask again. Stepping
+back also works after the program has ended.
 
 What a snapshot holds: registers, memory, the program break and mapping cursor, and the length of
 the output. Open files and their contents are not part of it, so a stretch that read input or
@@ -131,7 +132,8 @@ kraken debug-gdb-serve --session 1 --tcp true
   accepted and leaves the session as is. Software breakpoints, hardware watchpoints (`watch`, `rwatch`,
   `awatch`), step, continue and reverse execution (`reverse-stepi`, `reverse-continue`) are supported;
   multiple threads are not. x87 and vector registers
-  read as zero. Ctrl-C is honoured between slices of five million instructions.
+  read as zero. Ctrl-C is honoured between slices of five million instructions. A
+  `reverse-continue` that finds nothing within two minutes stops with SIGINT where it began.
 - gdb sees the emulator's addresses: add `address_delta` to a Listing address for a
   position-independent program. x86-64 was exercised with a real gdb; the other architectures use
   generated target descriptions that are unit-checked but not yet tried against a client.

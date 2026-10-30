@@ -172,3 +172,27 @@ fn reverse_continue_finds_the_earlier_write_and_the_breakpoint() {
     );
     assert_eq!(s.pc().expect("pc"), push);
 }
+
+#[test]
+#[ignore = "needs Ghidra processor sources for the SLEIGH specs and the x86_64 emulator sysroot"]
+fn a_reverse_continue_that_runs_out_of_budget_stays_where_it_started() {
+    let Some(s) = start() else { return };
+    let main = s.symbol("main").expect("symbols").expect("main");
+    s.add_breakpoint(main).expect("bp");
+    s.run(BUDGET).expect("to main");
+    s.remove_breakpoint(main).expect("remove bp");
+    let here = state(&s);
+    assert!(here.2 > 40_000, "the loader ran first: {}", here.2);
+    // No event to find: the search scans the last two history segments, then the budget ends it
+    // partway through the history.
+    let budget = here.2 % 20_000 + 20_000 + 1;
+    assert_eq!(
+        s.reverse_continue(budget).expect("reverse"),
+        SessionStop::Budget
+    );
+    assert_eq!(
+        state(&s),
+        here,
+        "the session is back where the search began"
+    );
+}

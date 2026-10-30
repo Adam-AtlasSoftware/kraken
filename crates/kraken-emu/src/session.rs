@@ -588,7 +588,13 @@ impl Inner {
         };
         let from = self.history[i].0;
         self.restore_history(i);
-        let r = self.replay(target - from);
+        let mut r = self.replay(target - from);
+        // An interrupt (the wall clock) does not leave the session partway through history:
+        // the replay is at most one history gap, so it goes on to the target.
+        while r == SessionStop::Interrupted && self.m().icount() < target {
+            let left = target - self.m().icount();
+            r = self.replay(left);
+        }
         self.refresh_shadows();
         r
     }
@@ -634,7 +640,7 @@ impl Inner {
             let end = self.history.get(i + 1).map_or(cur, |h| h.0).min(cur);
             spent += end - s;
             if spent > budget {
-                return Ok(SessionStop::Budget);
+                return Ok(self.abandon_reverse(cur, SessionStop::Budget));
             }
             self.restore_history(i);
             self.refresh_shadows();
@@ -654,7 +660,7 @@ impl Inner {
                         last = Some((at, w));
                     }
                     SessionStop::Stepped => break,
-                    other => return Ok(other),
+                    other => return Ok(self.abandon_reverse(cur, other)),
                 }
             }
             if let Some((at, mut stop)) = last {
@@ -676,6 +682,15 @@ impl Inner {
         } else {
             r
         })
+    }
+
+    /// A reverse search that stopped without finding an event (budget, interrupt) goes back to
+    /// where it started, `cur`, so the caller can repeat it and no event is skipped.
+    fn abandon_reverse(&mut self, cur: u64, stop: SessionStop) -> SessionStop {
+        match self.go_to(cur) {
+            SessionStop::Stepped | SessionStop::Interrupted => stop,
+            other => other,
+        }
     }
 
     fn add_watch(&mut self, spec: WatchSpec) -> Result<bool, EmuError> {
