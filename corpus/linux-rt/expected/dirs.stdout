@@ -1,0 +1,39 @@
+dirs
+mkdir sub = 0
+mkdir sub again (EEXIST) = -17
+mkdirat = 0
+mkdir without a parent (ENOENT) = -2
+ls .
+  ./
+  ../
+  a.txt
+  prog
+  sub/
+ls sub
+  ./
+  ../
+  b.txt
+  inner/
+rename a file = 0
+renameat into a directory = 0
+rename a missing file (ENOENT) = -2
+rename a directory = 0
+ls .
+  ./
+  ../
+  inner2/
+  prog
+  sub/
+ls sub
+  ./
+  ../
+  b.txt
+  d.txt
+renamed file keeps its content = 5
+alpha
+ok   mkdir outside the work directory fails
+ok   rename out of the work directory fails
+getdents64 with a tiny buffer (EINVAL) = -22
+getdents64 after rewinding = 1
+getdents64 on a file (ENOTDIR) = -20
+getdents64 on a bad descriptor = -9

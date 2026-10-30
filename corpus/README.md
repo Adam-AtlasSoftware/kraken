@@ -212,3 +212,13 @@ tests; that is not part of this first corpus drop.
 `rust_hello` (Rust, `no_std`) is built with legacy and v0 symbol mangling, with symbols and
 stripped, by `corpus/lang/build.sh` using the host's `rustc` (no container). `legacy` needs
 `RUSTC_BOOTSTRAP=1`, which the script sets.
+
+## The Linux runtime set (`linux-rt/`)
+
+Five freestanding programs (`fd_dup`, `pipes`, `dirs`, `sleeping`, `polling`) that call `dup*`,
+`fcntl`, `pipe*`, `getdents64`, `mkdir*`, `rename*`, `nanosleep`/`clock_nanosleep`, `poll`/`ppoll`
+and `sched_yield` through raw system calls (no libc; `src/rt.h`). `build.sh` builds static
+`bin/<name>-x86_64` and `bin/<name>-aarch64` with clang and lld and, with `record`, rewrites
+`expected/<name>.stdout` and `.exit` from the native x86-64 run (a fresh directory holding the program
+as `prog`, standard input `go`). qemu-user was not available when the AArch64 builds were added: they
+are checked against the same expected output under `kraken-emu` only.

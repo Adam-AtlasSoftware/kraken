@@ -1,0 +1,28 @@
+fd_dup
+ok   open
+ok   dup returns the lowest free descriptor
+read via original = 3
+read via dup continues the shared offset = 3
+ok   offset shared
+offset after both = 6
+dup2 target = 20
+dup3 onto itself is EINVAL = -22
+ok   dup2 onto itself returns the descriptor
+dup3 target = 21
+FD_CLOEXEC of dup3 with O_CLOEXEC = 1
+FD_CLOEXEC of dup2 copy = 0
+dup of a bad descriptor = -9
+F_SETFD then F_GETFD = 1
+original untouched = 0
+F_GETFL access mode = 2
+F_GETFL nonblock bit = 1
+nonblock bit on the dup (shared description) = 1
+F_DUPFD at or above 30 = 30
+F_DUPFD_CLOEXEC next free above 30 = 31
+its close-on-exec flag = 1
+F_DUPFD on a bad descriptor = -9
+unknown fcntl command = -22
+through a dup of stdout
+stdout is back
+dup still reads after the original closed = 2
+close twice = -9

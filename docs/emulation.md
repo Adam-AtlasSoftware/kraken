@@ -98,6 +98,38 @@ emulate_run {"env": {"MODE": "fast"}, "inputs": [{"name": "in.txt", "text": "abc
 System calls the emulator does not implement are named by architecture in `notes`
 (`socket (41)`, not `41`).
 
+### What programs can do
+
+Beyond reading and writing files and standard streams, the emulated Linux layer answers these calls
+on every architecture it runs (x86, x86-64, ARM, AArch64, RISC-V), including the time64 forms on
+the 32-bit ones:
+
+- **Descriptors:** `dup`, `dup2`, `dup3` and `fcntl` (`F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL`,
+  `F_DUPFD`, `F_DUPFD_CLOEXEC`). Duplicates share the file offset and the `O_NONBLOCK` flag;
+  close-on-exec belongs to each descriptor. Locks (`F_GETLK`) are not modelled.
+- **Pipes:** `pipe` and `pipe2` make in-process buffers of 64 KiB. Reading after the last writer
+  closed gives end of file; writing with no reader gives `EPIPE` (the signal is not raised). A
+  non-blocking empty read gives `EAGAIN`.
+- **Directories:** `getdents64` lists `/work` (with `prog`) and the directories of the sysroot, `.`
+  and `..` first and then sorted by name; `mkdir` and `mkdirat` create directories, and `rename`,
+  `renameat` and `renameat2` (no flags) move files and directories, only inside `/work`. Everything
+  else is refused with `EROFS`.
+- **Time:** `nanosleep` and `clock_nanosleep` (relative or absolute) and `poll`/`ppoll` timeouts
+  advance the program's clock without waiting, so a program that sleeps ten seconds finishes at
+  once and sees the clock move by ten seconds. `sched_yield` returns at once.
+- **Waiting:** `poll` and `ppoll` report pipes, files, directories, the devices and standard input
+  (a pipe whose writer has gone: readable while input remains, always hung up).
+
+The program is the only process, so a call that would wait for something no one can do (a blocking
+read from an empty pipe whose writer is still open, a `poll` with no timeout and nothing ready) ends
+the run as `unsupported` with that reason instead of hanging. Snapshots of a stepping session cover
+registers and memory only; descriptors, pipes and slept time are not rolled back.
+
+`corpus/linux-rt/` holds small freestanding programs that use each of these calls, built for x86-64
+and AArch64 by `corpus/linux-rt/build.sh`; their expected output was recorded by running the
+x86-64 build natively, and `crates/kraken-emu/tests/linux_rt.rs` checks that both builds print the
+same under emulation.
+
 ## Comparing two runs
 
 `emulate_compare` runs two variants with the same stdin, arguments, environment and files and says

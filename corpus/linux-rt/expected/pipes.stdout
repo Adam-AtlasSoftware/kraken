@@ -1,0 +1,22 @@
+pipes
+pipe2 = 0
+ok   two new descriptors
+write = 10
+short read = 5
+hello
+rest = 5
+ pipe
+empty non-blocking read = -11
+ok   pipe read end is not seekable
+write 3 = 3
+drain after the writer closed = 3
+end of file = 0
+write to a read end = -9
+pipe2 with flags = 0
+read end FD_CLOEXEC = 1
+write end nonblock bit = 1
+read from the write end = -9
+write with no reader (EPIPE) = -32
+ok   the old pipe call works where it exists
+writer still open through a dup = -11
+all writers closed = 0

@@ -1,0 +1,16 @@
+sleeping
+sched_yield = 0
+nanosleep 30 ms = 0
+ok   the clock advanced by at least 30 ms
+nanosleep 2.5 s = 0
+ok   the clock advanced by at least 2.5 s
+nanosleep with a remainder pointer = 0
+ok   remainder untouched when the sleep finished
+nanosleep with tv_nsec out of range (EINVAL) = -22
+nanosleep with a negative second (EINVAL) = -22
+clock_nanosleep relative 1 s = 0
+ok   the clock advanced by at least 1 s
+clock_nanosleep absolute, 3 s ahead = 0
+ok   the clock reached the deadline
+clock_nanosleep absolute in the past returns at once = 0
+clock_nanosleep with an unknown clock (EINVAL) = -22

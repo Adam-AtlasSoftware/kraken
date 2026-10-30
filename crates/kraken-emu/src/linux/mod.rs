@@ -10,6 +10,7 @@
 //! (read-write) and the optional sysroot (read-only), see [`fs`]. Time and randomness are
 //! deterministic, so two runs of the same program on the same input agree byte for byte.
 
+mod fdops;
 pub mod fs;
 mod isa_marker;
 pub mod sysno;
@@ -241,7 +242,31 @@ enum Fd {
         /// Counted against the guest's file quota.
         work: bool,
     },
-    Dir(PathBuf),
+    Dir {
+        path: PathBuf,
+        /// The next entry `getdents64` returns (an index into the sorted listing).
+        pos: usize,
+    },
+    /// The read end of an in-process pipe.
+    PipeRead {
+        buf: fdops::PipeBuf,
+        readers: std::sync::Arc<()>,
+        writers: std::sync::Weak<()>,
+    },
+    /// The write end of an in-process pipe.
+    PipeWrite {
+        buf: fdops::PipeBuf,
+        writers: std::sync::Arc<()>,
+        readers: std::sync::Weak<()>,
+    },
+}
+
+/// What belongs to a descriptor rather than to the open file description it names.
+#[derive(Debug, Clone, Default)]
+struct FdMeta {
+    cloexec: bool,
+    /// Status flags (`O_NONBLOCK`), shared by the descriptors `dup` made from one another.
+    status: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 
 /// Stat facts, independent of the struct layout.
@@ -282,6 +307,10 @@ const ESPIPE: u64 = 29;
 const EROFS: u64 = 30;
 const ERANGE: u64 = 34;
 const ENOSYS: u64 = 38;
+const EEXIST: u64 = 17;
+const ENOTDIR: u64 = 20;
+const EPIPE: u64 = 32;
+const ENOSPC: u64 = 28;
 
 type SysResult = Result<u64, u64>;
 
@@ -327,6 +356,11 @@ struct Kernel {
     arch: Arch,
     vfs: Vfs,
     fds: Vec<Option<Fd>>,
+    /// Parallel to `fds`.
+    meta: Vec<FdMeta>,
+    /// Virtual time slept away (`nanosleep`, poll timeouts), added to the instruction clock.
+    skew_ns: u64,
+    dirs_made: u32,
     brk_start: u64,
     brk_cur: u64,
     brk_max: u64,
@@ -504,6 +538,9 @@ impl LinuxProcess {
             arch,
             vfs,
             fds: vec![Some(Fd::Stdin), Some(Fd::Stdout), Some(Fd::Stderr)],
+            meta: vec![FdMeta::default(); 3],
+            skew_ns: 0,
+            dirs_made: 0,
             brk_start,
             brk_cur: brk_start,
             brk_max: brk_start + (256 << 20),
@@ -798,18 +835,23 @@ impl LinuxProcess {
             }
             "open" => {
                 let (path, flags) = (self.arg(0), self.arg(1));
-                self.sys_open(path, flags)
+                let fd = self.sys_open(path, flags)?;
+                self.apply_open_flags(fd, flags);
+                Ok(fd)
             }
             "openat" => {
                 let (dirfd, path, flags) = (self.arg(0), self.arg(1), self.arg(2));
                 self.check_dirfd(dirfd, at_fdcwd, path)?;
-                self.sys_open(path, flags)
+                let fd = self.sys_open(path, flags)?;
+                self.apply_open_flags(fd, flags);
+                Ok(fd)
             }
             "close" => {
                 let fd = self.arg(0) as usize;
                 match self.k.fds.get_mut(fd) {
                     Some(slot @ Some(_)) => {
                         *slot = None;
+                        self.k.meta[fd] = FdMeta::default();
                         Ok(0)
                     }
                     _ => Err(EBADF),
@@ -1070,7 +1112,7 @@ impl LinuxProcess {
                 if ts == 0 {
                     return Ok(0);
                 }
-                let ns = self.m.icount();
+                let ns = self.now_ns();
                 let (sec, sub) = (EPOCH + ns / 1_000_000_000, ns % 1_000_000_000);
                 let sub = if name == "gettimeofday" {
                     sub / 1000
@@ -1120,6 +1162,26 @@ impl LinuxProcess {
                 self.m.write_uint(ARM_TLS_CELL, 4, v).map_err(|_| EFAULT)?;
                 Ok(0)
             }
+            "dup"
+            | "dup2"
+            | "dup3"
+            | "fcntl"
+            | "fcntl64"
+            | "pipe"
+            | "pipe2"
+            | "getdents64"
+            | "mkdir"
+            | "mkdirat"
+            | "rename"
+            | "renameat"
+            | "renameat2"
+            | "nanosleep"
+            | "clock_nanosleep"
+            | "clock_nanosleep_time64"
+            | "poll"
+            | "ppoll"
+            | "ppoll_time64"
+            | "sched_yield" => self.dispatch_fd(name, at_fdcwd),
             _ => Err(ENOSYS),
         }
     }
@@ -1143,15 +1205,7 @@ impl LinuxProcess {
     }
 
     fn alloc_fd(&mut self, fd: Fd) -> SysResult {
-        if let Some(i) = self.k.fds.iter().position(Option::is_none) {
-            self.k.fds[i] = Some(fd);
-            return Ok(i as u64);
-        }
-        if self.k.fds.len() >= MAX_FDS {
-            return Err(EMFILE);
-        }
-        self.k.fds.push(Some(fd));
-        Ok(self.k.fds.len() as u64 - 1)
+        self.alloc_fd_from(0, fd, FdMeta::default())
     }
 
     fn sys_open(&mut self, path: u64, flags: u64) -> SysResult {
@@ -1173,7 +1227,7 @@ impl LinuxProcess {
                 if writable {
                     Err(EISDIR)
                 } else {
-                    self.alloc_fd(Fd::Dir(d))
+                    self.alloc_fd(Fd::Dir { path: d, pos: 0 })
                 }
             }
             Node::Prog | Node::Sys(_) if wants_write => Err(EROFS),
@@ -1210,7 +1264,7 @@ impl LinuxProcess {
                     return if writable {
                         Err(EISDIR)
                     } else {
-                        self.alloc_fd(Fd::Dir(host))
+                        self.alloc_fd(Fd::Dir { path: host, pos: 0 })
                     };
                 }
                 self.alloc_fd(Fd::File {
@@ -1259,7 +1313,8 @@ impl LinuxProcess {
                 d.truncate(got);
                 d
             }
-            Some(Some(Fd::Dir(_))) => return Err(EISDIR),
+            Some(Some(Fd::Dir { .. })) => return Err(EISDIR),
+            Some(Some(Fd::PipeRead { .. })) => return self.pipe_read(fd, buf, n),
             Some(Some(_)) => return Err(EBADF),
             _ => return Err(EBADF),
         };
@@ -1307,6 +1362,7 @@ impl LinuxProcess {
                 file.write_all(&data).map_err(io_errno)?;
                 Ok(n as u64)
             }
+            Some(Some(Fd::PipeWrite { .. })) => self.pipe_write(fd, &data),
             Some(Some(_)) => Err(EBADF),
             _ => Err(EBADF),
         }
@@ -1324,6 +1380,13 @@ impl LinuxProcess {
                 file.seek(pos).map_err(|_| EINVAL)
             }
             Some(Some(Fd::Null | Fd::Zero | Fd::Random)) => Ok(0),
+            Some(Some(Fd::Dir { pos, .. })) => match (whence, usize::try_from(off)) {
+                (0, Ok(o)) => {
+                    *pos = o;
+                    Ok(o as u64)
+                }
+                _ => Err(EINVAL),
+            },
             Some(Some(_)) => Err(ESPIPE),
             _ => Err(EBADF),
         }
@@ -1470,7 +1533,9 @@ impl LinuxProcess {
             ..StatInfo::default()
         };
         match self.k.fds.get(fd as usize) {
-            Some(Some(Fd::Stdin | Fd::Stdout | Fd::Stderr)) => Ok(fifo),
+            Some(Some(
+                Fd::Stdin | Fd::Stdout | Fd::Stderr | Fd::PipeRead { .. } | Fd::PipeWrite { .. },
+            )) => Ok(fifo),
             Some(Some(Fd::Null | Fd::Zero | Fd::Random)) => Ok(StatInfo {
                 mode: S_IFCHR | 0o666,
                 rdev: 0x103,
@@ -1481,7 +1546,7 @@ impl LinuxProcess {
                 let m = file.metadata().map_err(io_errno)?;
                 Ok(host_stat(&m))
             }
-            Some(Some(Fd::Dir(p))) => {
+            Some(Some(Fd::Dir { path: p, .. })) => {
                 let m = std::fs::metadata(p).map_err(io_errno)?;
                 Ok(host_stat(&m))
             }

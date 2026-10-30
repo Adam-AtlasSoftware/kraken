@@ -33,14 +33,8 @@ pub fn describe(arch: Arch, nr: u64) -> String {
 
 /// Linux x86-64 calls the layer does not implement (named for reports only).
 const X86_64_EXTRA: &[(u64, &str)] = &[
-    (7, "poll"),
-    (22, "pipe"),
     (23, "select"),
-    (24, "sched_yield"),
     (25, "mremap"),
-    (32, "dup"),
-    (33, "dup2"),
-    (35, "nanosleep"),
     (38, "setitimer"),
     (41, "socket"),
     (42, "connect"),
@@ -61,12 +55,9 @@ const X86_64_EXTRA: &[(u64, &str)] = &[
     (58, "vfork"),
     (59, "execve"),
     (61, "wait4"),
-    (72, "fcntl"),
     (74, "fsync"),
     (78, "getdents"),
     (80, "chdir"),
-    (82, "rename"),
-    (83, "mkdir"),
     (84, "rmdir"),
     (90, "chmod"),
     (95, "umask"),
@@ -75,16 +66,11 @@ const X86_64_EXTRA: &[(u64, &str)] = &[
     (100, "times"),
     (203, "sched_setaffinity"),
     (204, "sched_getaffinity"),
-    (217, "getdents64"),
-    (230, "clock_nanosleep"),
     (270, "pselect6"),
-    (271, "ppoll"),
     (281, "epoll_pwait"),
     (288, "accept4"),
     (290, "eventfd2"),
     (291, "epoll_create1"),
-    (292, "dup3"),
-    (293, "pipe2"),
     (319, "memfd_create"),
     (435, "clone3"),
 ];
@@ -95,20 +81,9 @@ const GENERIC_EXTRA: &[(u64, &str)] = &[
     (20, "epoll_create1"),
     (21, "epoll_ctl"),
     (22, "epoll_pwait"),
-    (23, "dup"),
-    (24, "dup3"),
-    (25, "fcntl"),
-    (34, "mkdirat"),
-    (38, "renameat"),
-    (59, "pipe2"),
-    (61, "getdents64"),
-    (73, "ppoll"),
     (82, "fsync"),
-    (101, "nanosleep"),
-    (115, "clock_nanosleep"),
     (122, "sched_setaffinity"),
     (123, "sched_getaffinity"),
-    (124, "sched_yield"),
     (153, "times"),
     (165, "getrusage"),
     (166, "umask"),
@@ -141,7 +116,6 @@ const ARM_EXTRA: &[(u64, &str)] = &[
     (11, "execve"),
     (114, "wait4"),
     (120, "clone"),
-    (162, "nanosleep"),
     (281, "socket"),
     (283, "connect"),
 ];
@@ -153,8 +127,6 @@ const I386_EXTRA: &[(u64, &str)] = &[
     (102, "socketcall"),
     (114, "wait4"),
     (120, "clone"),
-    (158, "sched_yield"),
-    (162, "nanosleep"),
 ];
 
 fn tables(arch: Arch) -> &'static [&'static [(u64, &'static str)]] {
@@ -213,6 +185,17 @@ const GENERIC: &[(u64, &str)] = &[
     (293, "rseq"),
     (403, "clock_gettime64"),
     (439, "faccessat2"),
+    (23, "dup"),
+    (24, "dup3"),
+    (25, "fcntl"),
+    (34, "mkdirat"),
+    (38, "renameat"),
+    (59, "pipe2"),
+    (61, "getdents64"),
+    (124, "sched_yield"),
+    (276, "renameat2"),
+    (407, "clock_nanosleep_time64"),
+    (414, "ppoll_time64"),
 ];
 
 const GENERIC64: &[(u64, &str)] = &[
@@ -222,6 +205,9 @@ const GENERIC64: &[(u64, &str)] = &[
     (113, "clock_gettime"),
     (169, "gettimeofday"),
     (222, "mmap"),
+    (73, "ppoll"),
+    (101, "nanosleep"),
+    (115, "clock_nanosleep"),
 ];
 
 /// The 32-bit generic table: `_llseek` under the lseek number, `mmap2` under mmap's, and only the
@@ -285,6 +271,26 @@ const ARM_EABI: &[(u64, &str)] = &[
     (403, "clock_gettime64"),
     (439, "faccessat2"),
     (0xf0005, "set_tls"),
+    (38, "rename"),
+    (39, "mkdir"),
+    (41, "dup"),
+    (42, "pipe"),
+    (55, "fcntl"),
+    (63, "dup2"),
+    (168, "poll"),
+    (221, "fcntl64"),
+    (407, "clock_nanosleep_time64"),
+    (414, "ppoll_time64"),
+    (158, "sched_yield"),
+    (162, "nanosleep"),
+    (217, "getdents64"),
+    (265, "clock_nanosleep"),
+    (323, "mkdirat"),
+    (329, "renameat"),
+    (336, "ppoll"),
+    (358, "dup3"),
+    (359, "pipe2"),
+    (382, "renameat2"),
 ];
 
 const X86_64: &[(u64, &str)] = &[
@@ -343,6 +349,25 @@ const X86_64: &[(u64, &str)] = &[
     (332, "statx"),
     (334, "rseq"),
     (439, "faccessat2"),
+    (7, "poll"),
+    (22, "pipe"),
+    (24, "sched_yield"),
+    (32, "dup"),
+    (33, "dup2"),
+    (35, "nanosleep"),
+    (72, "fcntl"),
+    (82, "rename"),
+    (83, "mkdir"),
+    (217, "getdents64"),
+    (230, "clock_nanosleep"),
+    (258, "mkdirat"),
+    (264, "renameat"),
+    (271, "ppoll"),
+    (292, "dup3"),
+    (293, "pipe2"),
+    (316, "renameat2"),
+    (407, "clock_nanosleep_time64"),
+    (414, "ppoll_time64"),
 ];
 
 const I386: &[(u64, &str)] = &[
@@ -402,6 +427,26 @@ const I386: &[(u64, &str)] = &[
     (386, "rseq"),
     (403, "clock_gettime64"),
     (439, "faccessat2"),
+    (38, "rename"),
+    (39, "mkdir"),
+    (41, "dup"),
+    (42, "pipe"),
+    (55, "fcntl"),
+    (63, "dup2"),
+    (168, "poll"),
+    (221, "fcntl64"),
+    (407, "clock_nanosleep_time64"),
+    (414, "ppoll_time64"),
+    (158, "sched_yield"),
+    (162, "nanosleep"),
+    (220, "getdents64"),
+    (267, "clock_nanosleep"),
+    (296, "mkdirat"),
+    (302, "renameat"),
+    (309, "ppoll"),
+    (330, "dup3"),
+    (331, "pipe2"),
+    (353, "renameat2"),
 ];
 
 #[cfg(test)]
@@ -421,6 +466,11 @@ mod tests {
         assert_eq!(name(Arch::X86, 252), Some("exit_group"));
         assert_eq!(name(Arch::X86_64, 9999), None);
         assert_eq!(describe(Arch::X86_64, 41), "socket");
+        assert_eq!(name(Arch::X86_64, 293), Some("pipe2"));
+        assert_eq!(name(Arch::Aarch64, 61), Some("getdents64"));
+        assert_eq!(name(Arch::Arm, 336), Some("ppoll"));
+        assert_eq!(name(Arch::X86, 220), Some("getdents64"));
+        assert_eq!(name(Arch::Riscv32, 407), Some("clock_nanosleep_time64"));
         assert_eq!(describe(Arch::Aarch64, 220), "clone");
         assert_eq!(describe(Arch::X86_64, 9999), "syscall 9999");
         assert_eq!(describe(Arch::X86_64, 1), "write");

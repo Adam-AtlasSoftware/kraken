@@ -1,0 +1,15 @@
+polling
+empty pipe, read end: ready = 0, revents = 0
+empty pipe, write end: ready = 1, revents = 4
+empty pipe, read end, 250 ms timeout: ready = 0, revents = 0
+pipe with data, read end: ready = 1, revents = 1
+pipe with data, read end, POLLIN|POLLOUT asked: ready = 1, revents = 1
+drained pipe: ready = 0, revents = 0
+writer closed, read end: ready = 1, revents = 16
+regular file: ready = 1, revents = 5
+standard input holding data: ready = 1, revents = 17
+a descriptor that is not open: ready = 1, revents = 32
+a negative descriptor is skipped: ready = 0, revents = 0
+two pipes, one with data = 1
+  first revents = 0
+  second revents = 1
