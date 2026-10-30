@@ -409,3 +409,35 @@ async fn renaming_follows_recorded_labels_and_references() {
         "entry_point"
     );
 }
+
+#[tokio::test]
+async fn a_switch_block_shared_by_two_functions_is_one_jump_table() {
+    let mut fx = recorded();
+    let switch = |to: u64| CfgEdge {
+        from: Hex64(0x401006),
+        to: Hex64(to),
+        kind: CfgEdgeKind::Switch,
+    };
+    let main = &mut fx.functions[0];
+    let cfg = main.cfg.as_mut().unwrap();
+    cfg.edges.push(switch(0x40100b));
+    let (listing, mut shared) = (main.disassembly.clone(), cfg.clone());
+    shared.function = Hex64(0x401040);
+    shared.edges.push(switch(0x401000));
+    let other = &mut fx.functions[1];
+    other.disassembly = listing;
+    other.cfg = Some(shared);
+
+    let engine = FakeEngine::new(fx);
+    let cancel = CancellationToken::new();
+    let tables = engine
+        .jump_tables()
+        .unwrap()
+        .list_jump_tables(&page(50), &cancel)
+        .await
+        .unwrap()
+        .items;
+    assert_eq!(tables.len(), 1, "{tables:?}");
+    assert_eq!(tables[0].jump, Hex64(0x401006));
+    assert_eq!(tables[0].targets, vec![Hex64(0x401000), Hex64(0x40100b)]);
+}

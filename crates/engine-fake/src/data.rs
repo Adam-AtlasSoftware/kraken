@@ -564,8 +564,20 @@ impl DataView<'_> {
                 }
             }
         }
-        all.sort_by_key(|t| t.jump.0);
-        page_vec(&all, page)
+        // Two functions' CFGs can share a block; the contract wants one table per jump.
+        all.sort_by_key(|t| (t.jump.0, t.function.0));
+        let mut merged: Vec<JumpTable> = Vec::with_capacity(all.len());
+        for t in all {
+            match merged.last_mut() {
+                Some(prev) if prev.jump == t.jump => {
+                    prev.targets.extend(t.targets);
+                    prev.targets.sort_unstable_by_key(|h| h.0);
+                    prev.targets.dedup();
+                }
+                _ => merged.push(t),
+            }
+        }
+        page_vec(&merged, page)
     }
 
     // ---- strings and symbols --------------------------------------------------------
