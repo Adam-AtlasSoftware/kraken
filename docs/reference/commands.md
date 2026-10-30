@@ -16231,7 +16231,7 @@ Reads an IPS, IPS32, BPS or KRAKEN JSON patch file made for the project's binary
 
 Example: `patch_import {"path": "fix.ips", "preview": true}`
 
-Patch files come from other people, so the readers are bounded: at most 16 MiB, 100,000 records, 64 MiB of expanded run-length data, and every offset is checked against the original file. Formats are recognised by their first bytes unless `format` is given. `1337` and `dif` files cannot be read. Nothing on disk changes; `patch_export` writes the patched program.
+Patch files come from other people, so the readers are bounded: at most 16 MiB, 100,000 records, 64 MiB of expanded run-length data, and every offset is checked against the original file. Formats are recognised by their first bytes unless `format` is given. `1337` and `dif` files cannot be read. An agent's path may not be in /proc, /sys, /dev or a hidden directory of the home directory. Nothing on disk changes; `patch_export` writes the patched program.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|

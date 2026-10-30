@@ -385,8 +385,9 @@ impl Command for PatchImport {
             "Patch files come from other people, so the readers are bounded: at most 16 MiB, \
              100,000 records, 64 MiB of expanded run-length data, and every offset is checked \
              against the original file. Formats are recognised by their first bytes unless \
-             `format` is given. `1337` and `dif` files cannot be read. Nothing on disk changes; \
-             `patch_export` writes the patched program.",
+             `format` is given. `1337` and `dif` files cannot be read. An agent's path may not be \
+             in /proc, /sys, /dev or a hidden directory of the home directory. Nothing on disk \
+             changes; `patch_export` writes the patched program.",
         )
         .needs(&[Cap::Memory])
     }
@@ -402,7 +403,11 @@ impl Command for PatchImport {
         }
         let project = s.project()?;
         let binary = PathBuf::from(project.meta().binary_path);
-        let file = resolve_path(&project, &args.path);
+        let mut file = resolve_path(&project, &args.path);
+        // An agent may not use the import to learn about files it should not see.
+        if ctx.needs_user_approval() {
+            file = crate::trust::check_agent_path("path", &file)?;
+        }
         let base = project.program().base.0;
         let wanted: Option<Format> = args.format.map(Into::into);
         let pieces = blocking(move || plan_import(&binary, &file, wanted, base)).await?;

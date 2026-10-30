@@ -340,3 +340,18 @@ async fn an_import_that_overlaps_a_staged_patch_stages_nothing() {
     assert!(e.message.contains("overlaps"), "{}", e.message);
     assert_eq!(patch_rows(&env).await.len(), 1, "only the earlier patch");
 }
+
+#[tokio::test]
+async fn an_agent_cannot_import_from_a_kernel_file_system() {
+    let env = Setup::new(tiny()).start().await;
+    real_binary(&env).await;
+    let e = env
+        .err(
+            &agent("run-probe"),
+            "patch_import",
+            json!({"path": "/proc/self/environ", "preview": true}),
+        )
+        .await;
+    assert!(e.message.contains("kernel"), "{}", e.message);
+    assert!(patch_rows(&env).await.is_empty());
+}
