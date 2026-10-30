@@ -346,6 +346,11 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                     "Runs a copy with your staged byte patches applied. The file on disk is not \
                      changed."
                 }
+                EmulateMode::Verify => {
+                    "Runs the original and a patched copy with the same input, shows what \
+                     differs and keeps the result with the patches, so the Patches tab says \
+                     whether this exact set was verified."
+                }
                 EmulateMode::Compare => {
                     "Runs the original and a patched copy with exactly the same input, then shows \
                      what differs."

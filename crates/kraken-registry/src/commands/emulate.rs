@@ -906,52 +906,61 @@ impl Command for EmulateCompare {
         _ctx: &CallContext,
         args: EmulateCompareArgs,
     ) -> Result<EmulateCompareOut, ProtoError> {
-        let base = EmulateRunArgs {
-            stdin: args.stdin,
-            argv: args.argv,
-            max_steps: args.max_steps,
-            timeout_seconds: args.timeout_seconds,
-            patched: false,
-            env: args.env,
-            argv0: args.argv0,
-            inputs: args.inputs,
-            return_files: true,
-        };
-        let limits = validate(&base)?;
-        let a = Variant::parse(args.a.as_deref().unwrap_or("original"))?;
-        let b = Variant::parse(args.b.as_deref().unwrap_or("patched"))?;
-        let project = s.project()?;
-        let binary = PathBuf::from(project.meta().binary_path);
-        let patches = if a == Variant::Patched || b == Variant::Patched {
-            let p = project.with_store(|st| st.active_patches(None)).await?;
-            if p.is_empty() {
-                return Err(invalid(
-                    "the project has no byte patches to run; set one with patch_set or name \
-                     another executable as variant a or b",
-                ));
-            }
-            p
-        } else {
-            Vec::new()
-        };
-        let patched = Patched {
-            patches,
-            engine_base: project.program().base.0,
-        };
-        blocking(move || {
-            let runner = find_runner();
-            let (ra, rb) = std::thread::scope(|sc| {
-                let ha = sc.spawn(|| run_variant(&a, &binary, &base, limits, &patched, &runner));
-                let rb = run_variant(&b, &binary, &base, limits, &patched, &runner);
-                let ra = ha.join().unwrap_or_else(|_| {
-                    Err(problem(ErrorCode::Internal, "a comparison run panicked"))
-                });
-                (ra, rb)
-            });
-            Ok(compare(ra?, rb?, &base.inputs))
-        })
-        .await
+        compare_variants(s, args).await
     }
+}
+
+/// Runs the two variants of `args` and compares them; the body of `emulate_compare`, also the
+/// run behind `patch_verify`.
+pub(crate) async fn compare_variants(
+    s: &Session,
+    args: EmulateCompareArgs,
+) -> Result<EmulateCompareOut, ProtoError> {
+    let base = EmulateRunArgs {
+        stdin: args.stdin,
+        argv: args.argv,
+        max_steps: args.max_steps,
+        timeout_seconds: args.timeout_seconds,
+        patched: false,
+        env: args.env,
+        argv0: args.argv0,
+        inputs: args.inputs,
+        return_files: true,
+    };
+    let limits = validate(&base)?;
+    let a = Variant::parse(args.a.as_deref().unwrap_or("original"))?;
+    let b = Variant::parse(args.b.as_deref().unwrap_or("patched"))?;
+    let project = s.project()?;
+    let binary = PathBuf::from(project.meta().binary_path);
+    let patches = if a == Variant::Patched || b == Variant::Patched {
+        let p = project.with_store(|st| st.active_patches(None)).await?;
+        if p.is_empty() {
+            return Err(invalid(
+                "the project has no byte patches to run; set one with patch_set or name \
+                     another executable as variant a or b",
+            ));
+        }
+        p
+    } else {
+        Vec::new()
+    };
+    let patched = Patched {
+        patches,
+        engine_base: project.program().base.0,
+    };
+    blocking(move || {
+        let runner = find_runner();
+        let (ra, rb) = std::thread::scope(|sc| {
+            let ha = sc.spawn(|| run_variant(&a, &binary, &base, limits, &patched, &runner));
+            let rb = run_variant(&b, &binary, &base, limits, &patched, &runner);
+            let ra = ha
+                .join()
+                .unwrap_or_else(|_| Err(problem(ErrorCode::Internal, "a comparison run panicked")));
+            (ra, rb)
+        });
+        Ok(compare(ra?, rb?, &base.inputs))
+    })
+    .await
 }
 
 /// One side of a comparison.

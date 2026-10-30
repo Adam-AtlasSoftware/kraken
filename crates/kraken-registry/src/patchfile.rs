@@ -234,12 +234,353 @@ pub fn patch_file_bytes_at(
         out[off..off + p.replacement.len()].copy_from_slice(&p.replacement);
     }
     applied.sort_by_key(|a| a.address);
+    if let Some(h) = pe_headers(&out) {
+        let sum = pe_checksum_of(&out, h.checksum_off);
+        out[h.checksum_off..h.checksum_off + 4].copy_from_slice(&sum.to_le_bytes());
+    }
     Ok((out, applied))
+}
+
+fn le16(b: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(b.get(at..at + 2)?.try_into().ok()?))
+}
+
+fn le32(b: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// The parts of a PE file's headers the checksum and the lint need.
+struct PeHeaders {
+    /// File offset of the optional header's `CheckSum` field.
+    checksum_off: usize,
+    /// File offset of the data directory table.
+    dirs_off: usize,
+    /// Entries in it.
+    dirs: usize,
+    /// Sections as (virtual address, virtual size, raw offset, raw size).
+    sections: Vec<(u32, u32, u32, u32)>,
+}
+
+fn pe_headers(image: &[u8]) -> Option<PeHeaders> {
+    if image.get(..2)? != b"MZ" {
+        return None;
+    }
+    let nt = le32(image, 0x3c)? as usize;
+    if image.get(nt..nt + 4)? != b"PE\0\0" {
+        return None;
+    }
+    let sections = le16(image, nt + 6)? as usize;
+    let opt_size = le16(image, nt + 20)? as usize;
+    let opt = nt + 24;
+    let dirs_off = opt
+        + match le16(image, opt)? {
+            0x10b => 96,
+            0x20b => 112,
+            _ => return None,
+        };
+    let dirs = (le32(image, dirs_off - 4)? as usize).min(16);
+    let mut table = Vec::new();
+    for i in 0..sections {
+        let at = opt + opt_size + i * 40;
+        table.push((
+            le32(image, at + 12)?,
+            le32(image, at + 8)?,
+            le32(image, at + 20)?,
+            le32(image, at + 16)?,
+        ));
+    }
+    Some(PeHeaders {
+        checksum_off: opt + 64,
+        dirs_off,
+        dirs,
+        sections: table,
+    })
+}
+
+impl PeHeaders {
+    fn dir(&self, image: &[u8], index: usize) -> Option<(u32, u32)> {
+        if index >= self.dirs {
+            return None;
+        }
+        let at = self.dirs_off + index * 8;
+        Some((le32(image, at)?, le32(image, at + 4)?)).filter(|&(a, s)| a != 0 && s != 0)
+    }
+
+    fn rva_to_offset(&self, rva: u32) -> Option<u32> {
+        self.sections.iter().find_map(|&(va, _, raw, rs)| {
+            (rva >= va && rva - va < rs).then(|| raw.saturating_add(rva - va))
+        })
+    }
+}
+
+/// The PE checksum of `image` as the Windows loader computes it: the 16-bit words summed with
+/// the carry folded back in, the `CheckSum` field counted as zero, plus the file length.
+fn pe_checksum_of(image: &[u8], checksum_off: usize) -> u32 {
+    let mut sum: u64 = 0;
+    for (i, chunk) in image.chunks(2).enumerate() {
+        let at = i * 2;
+        if (checksum_off..checksum_off + 4).contains(&at) {
+            continue;
+        }
+        let word = u64::from(chunk[0]) | chunk.get(1).map_or(0, |&b| u64::from(b) << 8);
+        sum += word;
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    sum = (sum & 0xffff) + (sum >> 16);
+    (sum + image.len() as u64) as u32
+}
+
+/// The checksum a PE file should carry, or `None` when `image` is not a PE file.
+pub fn pe_checksum(image: &[u8]) -> Option<u32> {
+    pe_headers(image).map(|h| pe_checksum_of(image, h.checksum_off))
+}
+
+/// What a lint of the patched file found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageFinding {
+    /// `relocation`, `pe_checksum` or `signature`.
+    pub kind: &'static str,
+    /// The patch (its address) the finding is about, when it is about one.
+    pub address: Option<u64>,
+    /// Plain-language description.
+    pub message: String,
+}
+
+/// File ranges the loader rewrites at load time: PE base relocations and ELF dynamic
+/// relocations, as (file offset, length, what it is).
+fn relocation_slots(image: &[u8]) -> Vec<(u64, u64, String)> {
+    use object::read::pe::RelocationBlockIterator;
+    let mut out = Vec::new();
+    if let Some(h) = pe_headers(image) {
+        let Some((rva, size)) = h.dir(image, 5) else {
+            return out;
+        };
+        let Some(off) = h.rva_to_offset(rva) else {
+            return out;
+        };
+        let end = (off as usize)
+            .saturating_add(size as usize)
+            .min(image.len());
+        let mut blocks = RelocationBlockIterator::new(&image[(off as usize).min(end)..end]);
+        while let Ok(Some(block)) = blocks.next() {
+            for r in block {
+                let len = match r.typ.0 {
+                    3 => 4,
+                    10 => 8,
+                    1 | 2 => 2,
+                    _ => continue,
+                };
+                if let Some(at) = h.rva_to_offset(r.virtual_address) {
+                    out.push((
+                        u64::from(at),
+                        len,
+                        format!("a base relocation at RVA {:#x}", r.virtual_address),
+                    ));
+                }
+            }
+        }
+        return out;
+    }
+    let (Ok(file), Ok(segs)) = (object::File::parse(image), segments(image)) else {
+        return out;
+    };
+    if !matches!(file.format(), object::BinaryFormat::Elf) {
+        return out;
+    }
+    let word = if file.is_64() { 8 } else { 4 };
+    for (vaddr, rel) in file.dynamic_relocations().into_iter().flatten() {
+        let len = match rel.size() {
+            0 => word,
+            bits => u64::from(bits) / 8,
+        };
+        if let Some(at) = offset_of(&segs, vaddr, len as usize, image.len()) {
+            out.push((at, len, format!("a dynamic relocation at {vaddr:#x}")));
+        }
+    }
+    out
+}
+
+/// Warnings about patches `applied` to `image` that the bytes alone show: patches over a slot
+/// the loader rewrites, and for a PE file the checksum and any Authenticode signature.
+pub fn image_findings(image: &[u8], applied: &[AppliedPatch]) -> Vec<ImageFinding> {
+    let mut out = Vec::new();
+    let slots = relocation_slots(image);
+    for a in applied {
+        let (lo, hi) = (a.file_offset, a.file_offset + a.len as u64);
+        for (at, len, what) in &slots {
+            if lo < at + len && *at < hi {
+                out.push(ImageFinding {
+                    kind: "relocation",
+                    address: Some(a.address),
+                    message: format!(
+                        "the patch at {:#x} overlaps {what}: the loader overwrites those bytes \
+                         at start-up, so the patch will not take effect there",
+                        a.address
+                    ),
+                });
+                break;
+            }
+        }
+    }
+    if let Some(h) = pe_headers(image)
+        && !applied.is_empty()
+    {
+        if let Some(stored) = le32(image, h.checksum_off).filter(|&c| c != 0) {
+            let right = pe_checksum_of(image, h.checksum_off);
+            out.push(ImageFinding {
+                kind: "pe_checksum",
+                address: None,
+                message: if stored == right {
+                    format!(
+                        "the PE checksum ({stored:#x}) is set and goes stale with any patch; \
+                         patch_export recomputes it"
+                    )
+                } else {
+                    format!(
+                        "the PE checksum field ({stored:#x}) is set but already wrong \
+                         (expected {right:#x}); patch_export writes the right one"
+                    )
+                },
+            });
+        }
+        if h.dir(image, 4).is_some() {
+            out.push(ImageFinding {
+                kind: "signature",
+                address: None,
+                message: "the file carries an Authenticode signature; any patch invalidates it \
+                          (it is left in place, not stripped)"
+                    .into(),
+            });
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn corpus_pe(name: &str) -> Vec<u8> {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/pe/bin")
+            .join(name);
+        std::fs::read(p).expect("corpus binary")
+    }
+
+    #[test]
+    fn the_pe_checksum_matches_the_linkers_value_and_is_recomputed_on_export() {
+        // Values from an independent implementation (the linker's own field, which agrees).
+        let dll = corpus_pe("win_dll-x64-O0.dll");
+        assert_eq!(pe_checksum(&dll), Some(0x12eb2));
+        assert_eq!(pe_checksum(&corpus_pe("win_dll-x86-O0.dll")), Some(0x1297f));
+        assert_eq!(
+            pe_checksum(&corpus_pe("switch_vm-x64-O0.exe")),
+            Some(0x1f087)
+        );
+
+        // Patching a code byte makes the stored value stale; export fixes it.
+        let off = 0x400usize;
+        let patch = FilePatch {
+            address: 0x2ca150000 + 0x1000,
+            original: dll[off..off + 1].to_vec(),
+            replacement: vec![dll[off] ^ 0xff],
+        };
+        let (out, _) = patch_file_bytes(&dll, &[patch]).expect("patched");
+        let h = pe_headers(&out).expect("pe");
+        let stored = le32(&out, h.checksum_off).expect("field");
+        assert_eq!(Some(stored), pe_checksum(&out));
+        assert_ne!(stored, 0x12eb2, "the sum changed with the byte");
+    }
+
+    #[test]
+    fn a_patch_on_a_base_relocation_slot_is_flagged_and_a_clean_one_is_not() {
+        let dll = corpus_pe("win_dll-x64-O0.dll");
+        let slot = AppliedPatch {
+            address: 0x2ca153010,
+            file_offset: 0x1a10,
+            len: 4,
+        };
+        let f = image_findings(&dll, &[slot]);
+        let rel: Vec<_> = f.iter().filter(|f| f.kind == "relocation").collect();
+        assert_eq!(rel.len(), 1, "{f:?}");
+        assert!(rel[0].message.contains("0x2ca153010"), "{f:?}");
+        assert!(f.iter().any(|f| f.kind == "pe_checksum"), "{f:?}");
+        assert!(!f.iter().any(|f| f.kind == "signature"), "{f:?}");
+
+        let clean = AppliedPatch {
+            address: 0x2ca151000,
+            file_offset: 0x400,
+            len: 2,
+        };
+        let f = image_findings(&dll, &[clean]);
+        assert!(!f.iter().any(|f| f.kind == "relocation"), "{f:?}");
+        let before = AppliedPatch {
+            address: 0,
+            file_offset: 0x1a0e,
+            len: 2,
+        };
+        assert!(
+            image_findings(&dll, &[before])
+                .iter()
+                .all(|f| f.kind != "relocation")
+        );
+    }
+
+    #[test]
+    fn an_elf_dynamic_relocation_slot_is_flagged() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/bin/stripped_calc-O0");
+        let elf = std::fs::read(p).expect("corpus binary");
+        // R_X86_64_RELATIVE at 0x3da0 (file offset 0x2da0) and a GLOB_DAT at 0x3fb8 (0x2fb8).
+        for (off, flagged) in [
+            (0x2da0u64, true),
+            (0x2da4, true),
+            (0x2fb8, true),
+            (0x2da8, true),
+            (0x1446, false),
+        ] {
+            let a = AppliedPatch {
+                address: off + 0x400000,
+                file_offset: off,
+                len: 4,
+            };
+            let hit = image_findings(&elf, &[a])
+                .iter()
+                .any(|f| f.kind == "relocation");
+            assert_eq!(hit, flagged, "offset {off:#x}");
+        }
+        // Just before the first slot of the table (0x2d98 is the previous 8-byte slot, 0x2d9c its
+        // upper half), so 0x2d98..0x2d9c is covered too, but the bytes before it are not.
+        let before = AppliedPatch {
+            address: 0,
+            file_offset: 0x2d88,
+            len: 4,
+        };
+        assert!(
+            image_findings(&elf, &[before])
+                .iter()
+                .all(|f| f.kind != "relocation")
+        );
+    }
+
+    #[test]
+    fn an_authenticode_directory_is_reported() {
+        let mut dll = corpus_pe("win_dll-x64-O0.dll");
+        let h = pe_headers(&dll).expect("pe");
+        let at = h.dirs_off + 4 * 8;
+        dll[at..at + 4].copy_from_slice(&0x1000u32.to_le_bytes());
+        dll[at + 4..at + 8].copy_from_slice(&0x200u32.to_le_bytes());
+        let p = AppliedPatch {
+            address: 0x2ca151000,
+            file_offset: 0x400,
+            len: 1,
+        };
+        assert!(
+            image_findings(&dll, &[p])
+                .iter()
+                .any(|f| f.kind == "signature")
+        );
+    }
 
     // A tiny ET_EXEC ELF64 with one PT_LOAD at vaddr 0x400000 covering the whole file.
     fn elf_exec() -> Vec<u8> {

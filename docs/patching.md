@@ -207,6 +207,11 @@ that is in no part of the file that holds bytes, or bytes that are not what the 
 export is refused with that patch named, rather than a corrupted file being written. The result lists
 each patch and the offset it landed at.
 
+For a PE file the optional-header **checksum** is recomputed over the patched bytes, so a file whose
+checksum the loader or a driver check looks at stays valid. An Authenticode signature is not touched:
+it stays in the file and no longer verifies, which `patch_lint` says (below). Mach-O code signatures
+are not handled.
+
 ## Running a patched copy in the emulator
 
 Pass `patched: true` to [`emulate_run`](emulation.md) to run a copy with the patches applied instead
@@ -220,3 +225,39 @@ The patched copy is built in the run's private directory and, like any emulated 
 confined — nothing runs on your computer and nothing in the project changes. The `notes` say how many
 patches were applied. It is the quickest way to tell whether a patch does what you intended before
 you export a binary from it.
+
+## Checking patches before you export
+
+`patch_lint` (the **Check patches** button in the Patches tab, or Emulate > Check patches) looks at
+what the patches that are on sit on, without running anything. Findings are warnings, never errors:
+
+- a patch over a **PE base-relocation slot** or an **ELF dynamic relocation** — the loader overwrites
+  those bytes at start-up, so the patch does not take effect there;
+- a patch that **spans the end of a function** (or starts in none and ends in one), which usually
+  means the address or length is off (functions without a known size are not checked);
+- a PE whose **checksum** field is set: it goes stale with any patch, and `patch_export` recomputes
+  it (a note, not a warning);
+- a PE with an **Authenticode signature**: any patch invalidates it. It is left in place, not
+  stripped.
+
+```
+patch_lint {}
+```
+
+## Verifying a patch with inputs
+
+`patch_verify` (the **Verify...** button in the Patches tab, or Emulate > Verify patches...) is
+`emulate_compare` of the original against the patches that are on, with the arguments, standard
+input, environment and files you give, and it keeps the result:
+
+```
+patch_verify {"stdin": "1 + 2\n", "argv": ["-v"], "env": {"MODE": "fast"}}
+```
+
+The answer is the comparison — both runs, each difference and the first point they diverge, shown
+line by line in the Emulation tab — plus a **verdict** for exactly this set of patches. The verdict is
+keyed by a hash of the addresses and bytes of the patches that are on (not their notes or sets), so
+`patch_list` and the Patches tab show it on every patch of that set, and it disappears as soon as
+a patch is added, removed, switched or changed, and comes back if the same bytes come back. "Changes
+behavior" is what a patch usually aims for; "no change" means the input you gave did not exercise
+it. The verdict is project state, not an edit-log entry, so `undo` does not remove it.

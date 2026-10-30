@@ -34,6 +34,14 @@ pub(crate) const MIGRATION_GROUPS: &str = "
         description TEXT NOT NULL
     );";
 
+/// What running the patched program against the original concluded, one row per patch-set hash.
+pub(crate) const MIGRATION_VERDICTS: &str = "CREATE TABLE patch_verdicts (
+        set_hash TEXT PRIMARY KEY,
+        same INTEGER NOT NULL,
+        summary TEXT NOT NULL,
+        ts INTEGER NOT NULL
+    );";
+
 type Result<T> = std::result::Result<T, ProtoError>;
 
 /// One stored byte patch. `original` and `replacement` are always the same length.
@@ -54,6 +62,19 @@ pub struct Patch {
     /// Who set it last.
     pub author: Author,
     /// When it was set last, milliseconds since the Unix epoch.
+    pub ts_ms: i64,
+}
+
+/// The verdict of a verification run, kept for the patch set it was made on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchVerdict {
+    /// Hash of the patches that were on when it ran.
+    pub set_hash: String,
+    /// True when the original and the patched program behaved the same on the inputs given.
+    pub same: bool,
+    /// The first difference, or empty when the runs agree.
+    pub summary: String,
+    /// When it ran, milliseconds since the Unix epoch.
     pub ts_ms: i64,
 }
 
@@ -315,6 +336,39 @@ impl Store {
             .collect())
     }
 
+    /// Records the verdict of a verification run for the patch-set hash `set_hash`, replacing
+    /// an earlier one.
+    pub fn patch_verdict_put(&mut self, set_hash: &str, same: bool, summary: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO patch_verdicts(set_hash, same, summary, ts) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(set_hash) DO UPDATE SET
+                     same = excluded.same, summary = excluded.summary, ts = excluded.ts",
+                params![set_hash, same, summary, now_ms()],
+            )
+            .map_err(db)?;
+        Ok(())
+    }
+
+    /// The verdict recorded for the patch-set hash `set_hash`, if one was.
+    pub fn patch_verdict(&self, set_hash: &str) -> Result<Option<PatchVerdict>> {
+        self.conn
+            .query_row(
+                "SELECT same, summary, ts FROM patch_verdicts WHERE set_hash = ?1",
+                [set_hash],
+                |r| {
+                    Ok(PatchVerdict {
+                        set_hash: set_hash.to_string(),
+                        same: r.get(0)?,
+                        summary: r.get(1)?,
+                        ts_ms: r.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(db)
+    }
+
     /// Creates the patch set `name` or changes its description.
     pub fn patch_group_put(&mut self, name: &str, description: &str) -> Result<()> {
         self.conn
@@ -501,6 +555,19 @@ mod tests {
         let me = Author::user("me");
         assert!(s.patch_set(0x10, &[], &[], "", &me).is_err());
         assert!(s.patch_set(0x10, &[0x00], &[0x01, 0x02], "", &me).is_err());
+    }
+
+    #[test]
+    fn a_verdict_is_kept_per_set_hash_and_replaced() {
+        let mut s = Store::open_in_memory().expect("store");
+        assert!(s.patch_verdict("abc").expect("none").is_none());
+        s.patch_verdict_put("abc", false, "stdout: line 1")
+            .expect("put");
+        s.patch_verdict_put("def", true, "").expect("put");
+        s.patch_verdict_put("abc", true, "").expect("replace");
+        let v = s.patch_verdict("abc").expect("get").expect("kept");
+        assert!(v.same && v.summary.is_empty());
+        assert!(s.patch_verdict("def").expect("get").is_some());
     }
 
     #[test]

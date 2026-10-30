@@ -92,6 +92,10 @@ pub enum AppAction {
     RunPatched,
     /// Run the original and the patched program with the same input and compare them.
     ComparePatched,
+    /// Run original and patched with the same input and keep whether they agree.
+    VerifyPatches,
+    /// Check the patches for loader-rewritten bytes, function ends and signatures.
+    CheckPatches,
     /// Call the current function in the emulator with arguments you give.
     CallFunction,
     /// Show the Emulation tab.
@@ -124,7 +128,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 54] = [
+    pub const ALL: [AppAction; 56] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -141,6 +145,8 @@ impl AppAction {
         AppAction::RunProgram,
         AppAction::RunPatched,
         AppAction::ComparePatched,
+        AppAction::VerifyPatches,
+        AppAction::CheckPatches,
         AppAction::CallFunction,
         AppAction::ShowEmulation,
         AppAction::EmulationHelp,
@@ -265,6 +271,8 @@ impl AppAction {
             AppAction::RunProgram => "Run program...",
             AppAction::RunPatched => "Run patched program...",
             AppAction::ComparePatched => "Compare original vs patched...",
+            AppAction::VerifyPatches => "Verify patches...",
+            AppAction::CheckPatches => "Check patches",
             AppAction::CallFunction => "Call this function...",
             AppAction::ShowEmulation => "Show emulation results",
             AppAction::EmulationHelp => "About running programs",
@@ -345,6 +353,12 @@ impl AppAction {
             AppAction::ComparePatched => {
                 "Run the original and the patched program with the same input and see what changed"
             }
+            AppAction::VerifyPatches => {
+                "Run the original and the patched program with the same input and record whether the patches changed anything"
+            }
+            AppAction::CheckPatches => {
+                "Look for patches over bytes the loader rewrites, across function ends, or on a signed file"
+            }
             AppAction::CallFunction => {
                 "Run just this function in the emulator with arguments you give; shows its return value and what it wrote"
             }
@@ -422,6 +436,8 @@ impl AppAction {
             "patch_export" => AppAction::ExportPatched,
             "emulate_run" => AppAction::RunProgram,
             "emulate_compare" => AppAction::ComparePatched,
+            "patch_verify" => AppAction::VerifyPatches,
+            "patch_lint" => AppAction::CheckPatches,
             "emulate_call" => AppAction::CallFunction,
             "create_function" => AppAction::CreateFunctionHere,
             "delete_function" => AppAction::DeleteFunction,

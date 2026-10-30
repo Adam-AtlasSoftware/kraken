@@ -38,6 +38,37 @@ pub struct PatchItem {
     pub group: String,
     /// False when it is switched off: not exported or emulated.
     pub enabled: bool,
+    /// What verifying the patches that are on concluded, when it was done for this exact set.
+    pub verdict: Option<VerdictItem>,
+}
+
+/// The result of verifying the patches that are on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerdictItem {
+    /// True when the original and the patched program behaved the same.
+    pub same: bool,
+    /// The first difference between the runs; empty when they agree.
+    pub summary: String,
+}
+
+/// One thing the patch check noticed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LintItem {
+    /// `warning` or `info`.
+    pub severity: String,
+    /// The patch it is about, when it is about one.
+    pub address: Option<u64>,
+    /// What it means.
+    pub message: String,
+}
+
+/// What the last patch check found.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LintReport {
+    /// Patches checked.
+    pub checked: u32,
+    /// Findings, by address.
+    pub findings: Vec<LintItem>,
 }
 
 /// A patch set as the Patches tab lists it.
@@ -116,6 +147,10 @@ pub struct PatchesPanel {
     pub groups: Vec<PatchGroupItem>,
     /// The new-set dialog, when open.
     pub group_dialog: Option<GroupDialog>,
+    /// What the last patch check found; cleared when the patches change.
+    pub lint: Option<LintReport>,
+    /// A patch check is running.
+    pub linting: bool,
     generation: u64,
 }
 
@@ -265,6 +300,28 @@ struct PatchWire {
     group: Untrusted<String>,
     #[serde(default = "yes")]
     enabled: bool,
+    #[serde(default)]
+    verdict: Option<VerdictWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct VerdictWire {
+    same: bool,
+    summary: Untrusted<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LintWire {
+    patches_checked: u32,
+    findings: Vec<LintFindingWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LintFindingWire {
+    severity: String,
+    #[serde(default)]
+    address: Option<Hex64>,
+    message: String,
 }
 
 fn yes() -> bool {
@@ -345,6 +402,7 @@ impl ViewModel {
     pub fn refresh_patches(&mut self) {
         self.tools.patches.generation += 1;
         self.tools.patches.next_cursor = None;
+        self.tools.patches.lint = None;
         self.patches_changed();
         self.fetch_patches(true);
         self.fetch_patch_groups();
@@ -508,6 +566,10 @@ impl ViewModel {
                         },
                         group: w.group.0,
                         enabled: w.enabled,
+                        verdict: w.verdict.map(|v| VerdictItem {
+                            same: v.same,
+                            summary: v.summary.0,
+                        }),
                     });
                     if reset {
                         p.items = rows.collect();
@@ -518,6 +580,35 @@ impl ViewModel {
                     p.next_cursor = page.next_cursor;
                 }
                 Err(e) => p.error = Some(plain_error(&e)),
+            }
+        });
+    }
+
+    /// Checks the patches that are on for things that make them misbehave (`patch_lint`).
+    pub fn check_patches(&mut self) {
+        if self.tools.patches.linting {
+            return;
+        }
+        self.tools.patches.linting = true;
+        self.call("patch_lint", json!({}), |vm, res| {
+            let p = &mut vm.tools.patches;
+            p.linting = false;
+            match res.and_then(parse::<LintWire>) {
+                Ok(l) => {
+                    p.lint = Some(LintReport {
+                        checked: l.patches_checked,
+                        findings: l
+                            .findings
+                            .into_iter()
+                            .map(|f| LintItem {
+                                severity: f.severity,
+                                address: f.address.map(|a| a.0),
+                                message: f.message,
+                            })
+                            .collect(),
+                    });
+                }
+                Err(e) => vm.toast(ToastLevel::Warning, plain_error(&e)),
             }
         });
     }

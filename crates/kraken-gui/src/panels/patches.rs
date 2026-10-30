@@ -142,6 +142,31 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
             vm.begin_emulate(kraken_viewmodel::navtools::EmulateMode::Compare);
         }
         if ui
+            .add_enabled(count > 0, egui::Button::new("Verify..."))
+            .on_hover_text(
+                "Run the original and the patched program with the arguments, input and \
+                 environment you give, show what differs, and keep the verdict with the patches",
+            )
+            .on_disabled_hover_text("Stage a patch first")
+            .clicked()
+        {
+            vm.begin_emulate(kraken_viewmodel::navtools::EmulateMode::Verify);
+        }
+        if ui
+            .add_enabled(
+                count > 0 && !vm.tools.patches.linting,
+                egui::Button::new("Check patches"),
+            )
+            .on_hover_text(
+                "Look for patches over bytes the loader rewrites at start-up, across the end of \
+                 a function, or on a signed file. Nothing is run or changed",
+            )
+            .on_disabled_hover_text("Stage a patch first")
+            .clicked()
+        {
+            vm.check_patches();
+        }
+        if ui
             .button("New patch set...")
             .on_hover_text(
                 "Make a named group for the patches of one change, so you can switch them on \
@@ -192,6 +217,38 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
     }
     if let Some(e) = &vm.tools.patches.error {
         ui.label(RichText::new(e).color(s.danger));
+    }
+    if let Some(l) = &vm.tools.patches.lint {
+        if l.findings.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "Checked {} patch{}: nothing to warn about.",
+                    l.checked,
+                    if l.checked == 1 { "" } else { "es" }
+                ))
+                .size(12.0)
+                .color(s.success),
+            );
+        }
+        for f in &l.findings {
+            ui.horizontal_wrapped(|ui| {
+                let (label, color) = if f.severity == "warning" {
+                    ("warning", s.warning)
+                } else {
+                    ("note", s.info)
+                };
+                chip(ui, label, color);
+                if let Some(a) = f.address {
+                    ui.label(
+                        RichText::new(format!("{a:08x}"))
+                            .monospace()
+                            .size(12.0)
+                            .color(p.address),
+                    );
+                }
+                ui.label(RichText::new(&f.message).size(12.0).color(p.text));
+            });
+        }
     }
     ui.separator();
     sets(ui, vm);
@@ -321,6 +378,19 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
                                 chip(ui, "off", s.warning).on_hover_text(
                                     "Switched off with its set: not exported or emulated",
                                 );
+                            }
+                            if let Some(v) = &it.verdict {
+                                let (text, color) = if v.same {
+                                    ("verified: no change", s.warning)
+                                } else {
+                                    ("verified: changes behavior", s.success)
+                                };
+                                chip(ui, text, color).on_hover_text(if v.same {
+                                    "The last verification of exactly these patches found no \
+                                     difference on the input it was given"
+                                } else {
+                                    v.summary.as_str()
+                                });
                             }
                         });
                         if it.by_agent {

@@ -2012,6 +2012,11 @@ impl ViewModel {
             AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
             AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
             AppAction::ComparePatched => self.begin_emulate(EmulateMode::Compare),
+            AppAction::VerifyPatches => self.begin_emulate(EmulateMode::Verify),
+            AppAction::CheckPatches => {
+                self.show_patches();
+                self.check_patches();
+            }
             AppAction::CallFunction => self.begin_call_current(),
             AppAction::ShowEmulation => self.show_emulation(),
             AppAction::EmulationHelp => return Some(UiRequest::ShowEmulationHelp),

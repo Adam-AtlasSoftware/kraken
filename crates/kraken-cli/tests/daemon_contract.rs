@@ -676,6 +676,8 @@ async fn every_registry_command_identical() {
     step!("decompile_patched", json!({"address": "0x401040"}));
     step!("emulate_call", json!({"address": "0x401040"}));
     step!("emulate_compare", json!({}));
+    step!("patch_lint", json!({}));
+    step!("patch_verify", json!({}));
     // Patch intents in preview record nothing; a branch edit on a non-branch is refused alike.
     step!("patch_nop", json!({"address": "0x401040", "preview": true}));
     step!(

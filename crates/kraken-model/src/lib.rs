@@ -23,7 +23,7 @@ pub use ai_usage::{DailyLedger, ProjectLedger, UsageFilter, UsageGroup, UsageSin
 pub use bookmarks::Bookmark;
 pub use keys::{anchor_key, entity_key, op_anchor, op_aspect, op_key, op_kind_name};
 pub use lineage::{Dependent, TaintedKey, UndoPlan, UndoPolicy, key_address};
-pub use patches::Patch;
+pub use patches::{Patch, PatchVerdict};
 pub use policy::{Classification, classify, is_default_name};
 pub use proposals::{NewProposal, ProposalId, ProposalStatus, ProposalView};
 pub use state::{AnnotationState, StateValue, UNDEFINED_TYPE, apply_op, invert_op};

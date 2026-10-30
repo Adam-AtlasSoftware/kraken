@@ -24,6 +24,8 @@ pub enum EmulateMode {
     RunPatched,
     /// Both, with the same input, side by side.
     Compare,
+    /// The same comparison, kept as the verdict of the patches that are on.
+    Verify,
 }
 
 impl EmulateMode {
@@ -33,6 +35,7 @@ impl EmulateMode {
             EmulateMode::Run => "Run the program",
             EmulateMode::RunPatched => "Run the patched program",
             EmulateMode::Compare => "Compare original and patched",
+            EmulateMode::Verify => "Verify the patches",
         }
     }
 
@@ -41,6 +44,7 @@ impl EmulateMode {
         match self {
             EmulateMode::Run | EmulateMode::RunPatched => "Run",
             EmulateMode::Compare => "Run both and compare",
+            EmulateMode::Verify => "Verify",
         }
     }
 }
@@ -400,12 +404,15 @@ impl ViewModel {
                 "emulate_run"
             }
             EmulateMode::Compare => "emulate_compare",
+            EmulateMode::Verify => "patch_verify",
         };
         self.tools.emulation.running = true;
         self.tools.emulation.doing = match mode {
             EmulateMode::Run => "Running the program".into(),
             EmulateMode::RunPatched => "Running the patched program".into(),
-            EmulateMode::Compare => "Running the original and the patched program".into(),
+            EmulateMode::Compare | EmulateMode::Verify => {
+                "Running the original and the patched program".into()
+            }
         };
         self.call(command, Value::Object(args), move |vm, res| {
             vm.tools.emulation.running = false;
@@ -424,6 +431,9 @@ impl ViewModel {
                     vm.tools.emulation.error = None;
                     vm.tools.emulation.result = Some(result);
                     vm.tools.request_tab(NavTab::Emulation);
+                    if mode == EmulateMode::Verify {
+                        vm.refresh_patches();
+                    }
                 }
                 Err(e) => match vm.tools.emulate_dialog.as_mut() {
                     Some(d) => {
@@ -462,7 +472,7 @@ fn accept(
             given,
             run: Box::new(parse::<EmulateRunOut>(v)?.into()),
         },
-        EmulateMode::Compare => {
+        EmulateMode::Compare | EmulateMode::Verify => {
             let c = parse::<EmulateCompareOut>(v)?;
             EmulationResult::Compare {
                 given,

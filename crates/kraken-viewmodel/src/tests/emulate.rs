@@ -182,3 +182,89 @@ fn a_call_that_fails_stays_in_the_dialog_with_the_reason() {
         "{d:?}"
     );
 }
+
+#[test]
+fn verifying_sends_the_inputs_to_patch_verify_and_reloads_the_patches_with_the_verdict() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let verified = std::sync::Arc::new(AtomicBool::new(false));
+    let (seen, listed) = (verified.clone(), verified.clone());
+    let mut r = opened(
+        base_backend()
+            .on("patch_verify", move |a| {
+                assert_eq!(a["argv"], json!(["-v"]));
+                assert_eq!(a["stdin"], "1 + 2\n");
+                assert_eq!(a["env"], json!({"MODE": "fast"}));
+                seen.store(true, Ordering::SeqCst);
+                Ok(json!({
+                    "a": run_out("= 7\n", 0),
+                    "b": run_out("= 5\n", 0),
+                    "same": false,
+                    "differences": [{"field": "stdout", "summary": u("line 1: \"= 7\" vs \"= 5\"")}],
+                    "first_divergence": u("stdout: line 1: \"= 7\" vs \"= 5\""),
+                    "verdict": {
+                        "set_hash": "0123456789abcdef", "same": false,
+                        "summary": u("stdout: line 1: \"= 7\" vs \"= 5\""), "ts_ms": 1,
+                    },
+                }))
+            })
+            .on("patch_list", move |_| {
+                let mut p = json!({
+                    "address": "0x401446", "original": "4801d0", "replacement": "4829d0",
+                    "length": 3, "note": u(""), "author_kind": "user", "author_id": "adam",
+                    "ts_ms": 1, "group": u(""), "enabled": true,
+                });
+                if listed.load(Ordering::SeqCst) {
+                    p["verdict"] = json!({
+                        "set_hash": "0123456789abcdef", "same": false,
+                        "summary": u("stdout: line 1"), "ts_ms": 1,
+                    });
+                }
+                Ok(json!({"items": [p], "next_cursor": null, "total": 1}))
+            }),
+    );
+    r.vm.refresh_patches();
+    assert!(r.vm.block_until_idle(WAIT));
+    assert!(r.vm.tools.patches.items[0].verdict.is_none());
+
+    r.vm.begin_emulate(EmulateMode::Verify);
+    let d = r.vm.tools.emulate_dialog.as_mut().expect("dialog");
+    d.argv = "-v".into();
+    d.stdin = "1 + 2\n".into();
+    d.env = "MODE=fast".into();
+    r.vm.submit_emulate();
+    assert!(r.vm.block_until_idle(WAIT));
+
+    let Some(EmulationResult::Compare { same, a, b, .. }) = r.vm.tools.emulation.result.clone()
+    else {
+        panic!("the comparison");
+    };
+    assert!(!same);
+    assert_eq!((a.stdout.as_str(), b.stdout.as_str()), ("= 7\n", "= 5\n"));
+    let v = r.vm.tools.patches.items[0]
+        .verdict
+        .clone()
+        .expect("the verdict shows after the reload");
+    assert!(!v.same);
+    assert!(v.summary.starts_with("stdout: line 1"));
+}
+
+#[test]
+fn checking_patches_keeps_the_findings_until_the_patches_change() {
+    let mut r = opened(base_backend().on("patch_lint", |_| {
+        Ok(json!({
+            "patches_checked": 2,
+            "findings": [{
+                "kind": "relocation", "severity": "warning", "address": "0x403010",
+                "message": "the patch at 0x403010 overlaps a base relocation",
+            }],
+        }))
+    }));
+    r.vm.check_patches();
+    assert!(r.vm.block_until_idle(WAIT));
+    let l = r.vm.tools.patches.lint.clone().expect("a report");
+    assert_eq!(l.checked, 2);
+    assert_eq!(l.findings[0].address, Some(0x403010));
+    assert_eq!(l.findings[0].severity, "warning");
+    r.vm.refresh_patches();
+    assert!(r.vm.tools.patches.lint.is_none(), "stale after a reload");
+}

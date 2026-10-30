@@ -24,6 +24,7 @@ mod integrations;
 mod jobs;
 mod local_model;
 mod patch;
+mod patch_check;
 mod patch_group;
 mod patch_intent;
 mod patch_source;
@@ -125,6 +126,10 @@ pub use patch::{
     MAX_PATCH_BYTES, MAX_PATCH_NOTE, PATCH_PAGE_CAP, PatchEditOut, PatchExport, PatchExportArgs,
     PatchExportOut, PatchList, PatchListArgs, PatchRemove, PatchRemoveArgs, PatchSet, PatchSetArgs,
     PatchView,
+};
+pub use patch_check::{
+    LintFinding, PatchLint, PatchLintArgs, PatchLintOut, PatchVerdictView, PatchVerify,
+    PatchVerifyArgs, PatchVerifyOut,
 };
 pub use patch_group::{
     MAX_ASSIGN, MAX_GROUP_DESCRIPTION, MAX_GROUP_NAME, PatchGroupAssign, PatchGroupAssignArgs,
@@ -389,6 +394,8 @@ pub fn register_all(r: &mut Registry) {
     r.register(PatchGroupEnable);
     r.register(PatchList);
     r.register(PatchExport);
+    r.register(PatchLint);
+    r.register(PatchVerify);
     // Card COST: what AI work costs and what runs.
     r.register(AiUsage);
     r.register(AiJobs);
