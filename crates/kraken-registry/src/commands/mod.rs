@@ -58,11 +58,12 @@ pub use data::{
 #[cfg(unix)]
 pub use debug::{
     DebugBreakArgs, DebugBreakList, DebugBreakOut, DebugBreakRemove, DebugBreakSet, DebugContinue,
-    DebugDisasm, DebugDisasmArgs, DebugDisasmOut, DebugInsn, DebugMemOut, DebugMemRead,
-    DebugMemReadArgs, DebugRegister, DebugRegs, DebugRegsOut, DebugRunArgs, DebugRunTo,
-    DebugRunToArgs, DebugSessionArgs, DebugSessions, DebugSessionsOut, DebugStart, DebugStartArgs,
-    DebugStartOut, DebugStateCommand, DebugStateOut, DebugStep, DebugStepArgs, DebugStepOut,
-    DebugStepOver, DebugStop, DebugStopOut, DebugStopSession, DebugStopSessionOut, DebugTable,
+    DebugDisasm, DebugDisasmArgs, DebugDisasmOut, DebugGdbServe, DebugGdbServeArgs,
+    DebugGdbServeOut, DebugInsn, DebugMemOut, DebugMemRead, DebugMemReadArgs, DebugRegister,
+    DebugRegs, DebugRegsOut, DebugRunArgs, DebugRunTo, DebugRunToArgs, DebugSessionArgs,
+    DebugSessions, DebugSessionsOut, DebugStart, DebugStartArgs, DebugStartOut, DebugStateCommand,
+    DebugStateOut, DebugStep, DebugStepArgs, DebugStepOut, DebugStepOver, DebugStop, DebugStopOut,
+    DebugStopSession, DebugStopSessionOut, DebugTable,
 };
 pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
@@ -350,6 +351,7 @@ pub fn register_all(r: &mut Registry) {
         r.register(DebugStateCommand);
         r.register(DebugSessions);
         r.register(DebugStopSession);
+        r.register(DebugGdbServe);
     }
 }
 

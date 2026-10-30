@@ -98,6 +98,19 @@ pub struct MemDump {
     pub error: Option<String>,
 }
 
+/// The GDB remote server of a session (`debug_gdb_serve`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GdbAttach {
+    /// The Unix socket.
+    pub socket: String,
+    /// The loopback TCP port.
+    pub tcp_port: Option<u16>,
+    /// gdb command for the socket (needs `socat`).
+    pub gdb_command: String,
+    /// gdb command for the TCP port.
+    pub gdb_tcp_command: Option<String>,
+}
+
 /// State of the Debug tab.
 #[derive(Debug, Clone)]
 pub struct DebugPanel {
@@ -145,6 +158,8 @@ pub struct DebugPanel {
     pub follow_listing: bool,
     /// Facts from `debug_start`.
     pub notes: Vec<String>,
+    /// How to attach gdb, once `debug_gdb_serve` has answered.
+    pub gdb: Option<GdbAttach>,
     generation: u64,
     break_pending: u32,
     queued: Option<DebugStep>,
@@ -175,6 +190,7 @@ impl Default for DebugPanel {
             patched: false,
             follow_listing: true,
             notes: Vec::new(),
+            gdb: None,
             generation: 0,
             break_pending: 0,
             queued: None,
@@ -214,6 +230,7 @@ impl DebugPanel {
         self.disasm.clear();
         self.memory = MemDump::default();
         self.status.clear();
+        self.gdb = None;
         self.instructions = 0;
         self.generation += 1;
         self.break_pending = 0;
@@ -653,6 +670,22 @@ impl ViewModel {
                 vm.toast(ToastLevel::Warning, plain_error(&e));
             }
         });
+    }
+
+    /// Starts serving the session to gdb and keeps the answer for the Debug tab to show.
+    pub fn debug_gdb_serve(&mut self) {
+        let Some(session) = self.debug.session else {
+            return;
+        };
+        self.call(
+            "debug_gdb_serve",
+            json!({"session": session, "tcp": true}),
+            move |vm, res| match res.and_then(parse::<GdbAttach>) {
+                Ok(g) if vm.debug.session == Some(session) => vm.debug.gdb = Some(g),
+                Ok(_) => {}
+                Err(e) => vm.toast(ToastLevel::Warning, plain_error(&e)),
+            },
+        );
     }
 
     /// Shows the Debug tab.

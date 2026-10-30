@@ -15,6 +15,8 @@
 //! position-independent program they differ from the emulator's by `address_delta`. Register
 //! values are the emulator's own.
 
+mod gdb;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -76,6 +78,7 @@ struct Live {
     err_seen: usize,
     last_used: Instant,
     last_stop: Option<DebugStop>,
+    gdb: Option<gdb::GdbServer>,
 }
 
 impl Live {
@@ -556,6 +559,7 @@ fn start(
         err_seen: 0,
         last_used: Instant::now(),
         last_stop: None,
+        gdb: None,
     };
     let pc = Hex64(live.to_listing(initial.pc));
     let id = table.insert(slot, live);
@@ -989,6 +993,8 @@ impl Command for DebugBreakRemove {
         break_op(s, a, false).await
     }
 }
+
+pub use gdb::{DebugGdbServe, DebugGdbServeArgs, DebugGdbServeOut};
 
 /// Arguments of the commands that take only a session.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

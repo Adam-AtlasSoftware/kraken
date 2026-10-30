@@ -112,6 +112,26 @@ fn the_debug_tab_steps_a_live_program() {
         save(&mut k, dir, "debug-main.png");
     }
 
+    // "Attach gdb..." serves the session and shows the commands.
+    vm(&mut k).debug_gdb_serve();
+    until(&mut k, "the gdb server", |a| {
+        a.view_model().is_some_and(|vm| vm.debug.gdb.is_some())
+    });
+    {
+        let g = vm(&mut k).debug.gdb.clone().expect("gdb");
+        assert!(g.gdb_command.contains(&g.socket), "{g:?}");
+        let port = g.tcp_port.expect("port");
+        assert_eq!(
+            g.gdb_tcp_command.as_deref(),
+            Some(format!("gdb -ex 'target remote 127.0.0.1:{port}'").as_str())
+        );
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+    }
+    k.h.run_steps(4);
+    if let Some(dir) = &shots {
+        save(&mut k, dir, "debug-gdb.png");
+    }
+
     vm(&mut k).debug_step(DebugStep::Continue);
     until(&mut k, "the breakpoint", |a| {
         a.view_model()

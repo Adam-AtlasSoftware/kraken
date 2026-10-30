@@ -24,6 +24,7 @@ const EXPECTED: &[&str] = &[
     "debug_break_set",
     "debug_continue",
     "debug_disasm",
+    "debug_gdb_serve",
     "debug_mem_read",
     "debug_regs",
     "debug_run_to",

@@ -653,6 +653,7 @@ async fn every_registry_command_identical() {
         ),
         ("debug_disasm", json!({"session": 99})),
         ("debug_state", json!({"session": 99})),
+        ("debug_gdb_serve", json!({"session": 99})),
         ("debug_stop", json!({"session": 99})),
     ] {
         step!(name, args);

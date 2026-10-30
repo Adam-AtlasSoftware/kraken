@@ -19,6 +19,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         start_page(ui, vm);
         return;
     }
+    gdb_box(ui, vm);
     ui.horizontal_wrapped(|ui| {
         let d = &vm.debug;
         let color = if d.finished {
@@ -129,6 +130,17 @@ fn toolbar(ui: &mut Ui, vm: &mut ViewModel) {
             .clicked()
         {
             vm.debug_stop();
+        }
+        if ui
+            .add_enabled(active, egui::Button::new("Attach gdb..."))
+            .on_hover_text(
+                "Let gdb, Ghidra's debugger or IDA debug this session over the GDB remote \
+                 protocol; shows the command to run",
+            )
+            .on_disabled_hover_text("Start the program first")
+            .clicked()
+        {
+            vm.debug_gdb_serve();
         }
         if active {
             ui.checkbox(&mut vm.debug.follow_listing, "Follow in Listing")
@@ -380,4 +392,53 @@ fn output(ui: &mut Ui, vm: &ViewModel) {
                 );
             }
         });
+}
+
+fn gdb_box(ui: &mut Ui, vm: &mut ViewModel) {
+    let Some(g) = vm.debug.gdb.clone() else {
+        return;
+    };
+    let p = pal(ui);
+    let mut close = false;
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(medium("Attach gdb", 13.0).color(p.text_strong));
+            if ui
+                .small_button("Close")
+                .on_hover_text("Hide this box; the gdb server keeps running until the session ends")
+                .clicked()
+            {
+                close = true;
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Run one of these in a terminal. gdb sees the emulator's addresses (the \
+                 Listing's plus the session's address delta for a position-independent \
+                 program). Leaving gdb keeps the session where it is.",
+            )
+            .size(11.0)
+            .color(p.text_dim),
+        );
+        let line = |ui: &mut Ui, what: &str, cmd: &str| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(what).size(11.0).color(p.text_dim));
+                ui.add(egui::Label::new(RichText::new(cmd).monospace()).selectable(true));
+                if ui
+                    .small_button("Copy")
+                    .on_hover_text("Copy the command to the clipboard")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(cmd.to_string());
+                }
+            });
+        };
+        if let Some(t) = &g.gdb_tcp_command {
+            line(ui, "TCP (127.0.0.1 only)", t);
+        }
+        line(ui, "Unix socket (needs socat)", &g.gdb_command);
+    });
+    if close {
+        vm.debug.gdb = None;
+    }
 }

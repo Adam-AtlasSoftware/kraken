@@ -10,7 +10,7 @@ use common::*;
 use kraken_proto::ErrorCode;
 use serde_json::json;
 
-const NAMES: [&str; 15] = [
+const NAMES: [&str; 16] = [
     "debug_start",
     "debug_step",
     "debug_step_over",
@@ -26,6 +26,7 @@ const NAMES: [&str; 15] = [
     "debug_state",
     "debug_sessions",
     "debug_stop",
+    "debug_gdb_serve",
 ];
 
 #[tokio::test]

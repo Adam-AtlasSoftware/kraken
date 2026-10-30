@@ -28,6 +28,8 @@ pub mod call;
 #[cfg(unix)]
 pub mod confined;
 pub mod error;
+#[cfg(unix)]
+pub mod gdbserve;
 pub mod hostlibs;
 pub mod linux;
 pub mod loader;

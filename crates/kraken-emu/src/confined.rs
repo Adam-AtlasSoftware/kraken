@@ -193,6 +193,10 @@ pub enum DebugRequest {
     Registers,
     /// Write a register.
     WriteReg { name: String, value: u64 },
+    /// Read the named registers (the ones that exist; the rest are left out of the answer).
+    ReadRegs { names: Vec<String> },
+    /// Write guest memory.
+    WriteMemory { addr: u64, data: Vec<u8> },
     /// Read guest memory.
     ReadMemory { addr: u64, len: usize },
     /// Disassemble `count` instructions from `addr` (default: the program counter).
@@ -317,6 +321,16 @@ fn handle(s: &Session, req: DebugRequest) -> Result<DebugReply, EmuError> {
         },
         DebugRequest::WriteReg { name, value } => {
             s.write_reg(&name, value)?;
+            DebugReply::Done
+        }
+        DebugRequest::ReadRegs { names } => DebugReply::Registers {
+            regs: names
+                .into_iter()
+                .filter_map(|n| s.read_reg(&n).ok().map(|v| (n, v)))
+                .collect(),
+        },
+        DebugRequest::WriteMemory { addr, data } => {
+            s.write_memory(addr, data)?;
             DebugReply::Done
         }
         DebugRequest::ReadMemory { addr, len } => DebugReply::Bytes {

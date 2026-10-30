@@ -52,7 +52,7 @@ kraken debug-stop --session 1
 
 `debug_start`, `debug_step`, `debug_step_over`, `debug_step_out`, `debug_continue`, `debug_run_to`,
 `debug_break_set`, `debug_break_remove`, `debug_break_list`, `debug_regs`, `debug_mem_read`,
-`debug_disasm`, `debug_state`, `debug_sessions` and `debug_stop` are listed in the
+`debug_disasm`, `debug_state`, `debug_sessions`, `debug_gdb_serve` and `debug_stop` are listed in the
 [command reference](reference/commands.md). Sessions live in the daemon (`krakend`), so they last
 across CLI calls; without the daemon (`--no-daemon`) each call is its own process and a session ends
 with it. At most four sessions are open at once, an idle one closes after 30 minutes, and closing
@@ -69,6 +69,39 @@ with project.debug(argv=["-v"]) as dbg:
     dbg.cont()
     print(dbg.state()["stdout"])
 ```
+
+## Attach gdb, Ghidra's debugger or IDA
+
+`debug_gdb_serve` (the **Attach gdb...** button on the Debug tab) exposes a running session over the
+GDB Remote Serial Protocol, so the tools you already know can debug the emulated program: registers,
+memory, breakpoints, step and continue.
+
+```
+kraken debug-start
+kraken debug-gdb-serve --session 1 --tcp true
+# {"socket": "/run/user/1000/kraken-gdb-Ab12/gdb.sock", "tcp_port": 41233,
+#  "gdb_tcp_command": "gdb -ex 'target remote 127.0.0.1:41233'",
+#  "gdb_command": "gdb -ex 'target remote | socat - UNIX-CONNECT:/run/user/1000/kraken-gdb-Ab12/gdb.sock'"}
+```
+
+- **gdb**: pass the program for symbols, `gdb ./prog -ex 'target remote 127.0.0.1:41233'`. gdb 18
+  was checked: `break *0x401a5e`, `continue`, `info registers`, `x/2i $pc` and source lines (when the
+  program has DWARF) work. Use `gdb-multiarch` for a non-x86 program. gdb cannot open a Unix socket
+  by itself; the socket command goes through `socat`.
+- **Ghidra's debugger**: Debugger, Connect, "gdb" connector, "Connect to an existing gdb ... via
+  a remote target" and give it `127.0.0.1:<port>`. IDA: Debugger, Select debugger, "Remote GDB
+  debugger", host 127.0.0.1 and the port.
+- The socket lives in a private directory (mode 0700, under `KRAKEN_RUNTIME_DIR` or
+  `XDG_RUNTIME_DIR` when set) and goes away with the session. The TCP port, only when asked for,
+  listens on 127.0.0.1, never on other interfaces; any program on this computer can connect to it, so
+  prefer the socket on a shared machine.
+- One client at a time; leaving gdb (or `detach`) keeps the session where it is. `kill` is
+  accepted and leaves the session as is. Software breakpoints, step and continue are supported;
+  hardware watchpoints, reverse execution and multiple threads are not. x87 and vector registers
+  read as zero. Ctrl-C is honoured between slices of five million instructions.
+- gdb sees the emulator's addresses: add `address_delta` to a Listing address for a
+  position-independent program. x86-64 was exercised with a real gdb; the other architectures use
+  generated target descriptions that are unit-checked but not yet tried against a client.
 
 ## Addresses
 

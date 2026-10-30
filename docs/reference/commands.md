@@ -30,6 +30,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_break_set`](#debug_break_set) | query | safe | Set a breakpoint in the debugged program at an address or function |
 | [`debug_continue`](#debug_continue) | query | safe | Run the debugged program to the next breakpoint or its end |
 | [`debug_disasm`](#debug_disasm) | query | safe | Disassemble the debugged program's memory from the program counter or an address |
+| [`debug_gdb_serve`](#debug_gdb_serve) | query | safe | Serve a debug session to gdb over the GDB remote protocol (Unix socket, optional loopback TCP) |
 | [`debug_mem_read`](#debug_mem_read) | query | safe | Read bytes of the debugged program's memory |
 | [`debug_regs`](#debug_regs) | query | safe | Read the registers of the debugged program |
 | [`debug_run_to`](#debug_run_to) | query | safe | Run the debugged program to an address or function, ignoring no breakpoints |
@@ -2887,6 +2888,93 @@ Example: `debug_disasm {"session": 1, "count": 8}`
     "instructions"
   ],
   "title": "DebugDisasmOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_gdb_serve
+
+Serve a debug session to gdb over the GDB remote protocol (Unix socket, optional loopback TCP)
+
+```sh
+kraken debug-gdb-serve --session <integer> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Lets gdb, Ghidra's debugger, IDA or lldb debug the emulated program: registers, memory, breakpoints, step and continue. Returns the socket path and the gdb command that connects (gdb reaches a Unix socket through socat; `tcp: true` needs no helper). One client at a time; leaving it keeps the session where it is. `tcp: true` also listens on 127.0.0.1 only.
+
+Example: `debug_gdb_serve {"session": 1}`
+
+The socket is in a private directory (mode 0700, under KRAKEN_RUNTIME_DIR or XDG_RUNTIME_DIR when set) and goes away with the session. Addresses seen by gdb are the emulator's: for a position-independent program they differ from the listing's by `address_delta`. Registers: the general purpose set, flags/cpsr and segment registers; x87 and vector registers read as zero. Software breakpoints only; no watchpoints or reverse execution. The `debug_*` commands keep working while a client is attached, but mixing both on one session is confusing.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `session` | `--session` | integer | yes | The session. |
+| `tcp` | `--tcp` | boolean | no | Also listen on a loopback TCP port (127.0.0.1 only, never other interfaces). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debug_gdb_serve`.",
+  "properties": {
+    "arch": {
+      "description": "The architecture.",
+      "type": "string"
+    },
+    "gdb_command": {
+      "description": "A shell command that starts gdb and connects over the socket.",
+      "type": "string"
+    },
+    "gdb_tcp_command": {
+      "description": "The same over TCP, when asked for.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "notes": {
+      "description": "Facts about the server (addresses are the emulator's, not the listing's).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "session": {
+      "description": "The session.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "socket": {
+      "description": "The Unix socket gdb connects to (in a private directory).",
+      "type": "string"
+    },
+    "tcp_port": {
+      "description": "The loopback TCP port, when asked for.",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "session",
+    "arch",
+    "socket",
+    "gdb_command",
+    "notes"
+  ],
+  "title": "DebugGdbServeOut",
   "type": "object"
 }
 ```

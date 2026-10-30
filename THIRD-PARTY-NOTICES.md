@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-602 crates in 31 license groups.
+604 crates in 32 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -710,6 +710,25 @@ No license file in the source of: epaint_default_fonts 0.36.2. They are distribu
     not be used in advertising or otherwise to promote the sale, use or other
     dealings in these Data Files or Software without prior written
     authorization of the copyright holder.
+
+### 0BSD
+
+- managed 0.8.0 (<https://github.com/m-labs/rust-managed.git>)
+
+**LICENSE-0BSD.txt** — managed 0.8.0
+
+    Copyright (C) 2017 whitequark@whitequark.org
+
+    Permission to use, copy, modify, and/or distribute this software for
+    any purpose with or without fee is hereby granted.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+    AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+    OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### 0BSD OR MIT OR Apache-2.0
 
@@ -9714,6 +9733,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - futures-sink 0.3.34 (<https://github.com/rust-lang/futures-rs>)
 - futures-task 0.3.34 (<https://github.com/rust-lang/futures-rs>)
 - futures-util 0.3.34 (<https://github.com/rust-lang/futures-rs>)
+- gdbstub 0.7.10 (<https://github.com/daniel5151/gdbstub>)
 - getrandom 0.2.17 (<https://github.com/rust-random/getrandom>)
 - getrandom 0.3.4 (<https://github.com/rust-random/getrandom>)
 - getrandom 0.4.3 (<https://github.com/rust-random/getrandom>)
@@ -20318,6 +20338,15 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
+
+**LICENSE** — gdbstub 0.7.10
+
+    gdbstub is dual-licensed under either
+
+    * MIT License (docs/LICENSE-MIT or http://opensource.org/licenses/MIT)
+    * Apache License, Version 2.0 (docs/LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0)
+
+    at your option.
 
 No license file in the source of: accesskit 0.24.1, crc-catalog 2.5.0, ecolor 0.36.2, eframe 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, egui_glow 0.36.2, emath 0.36.2, epaint 0.36.2, jni 0.22.4, jni-macros 0.22.4, jni-sys-macros 0.4.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, profiling 1.0.18. They are distributed under the SPDX expression `MIT OR Apache-2.0` above.
 
