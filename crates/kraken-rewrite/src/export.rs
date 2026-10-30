@@ -107,6 +107,9 @@ pub struct OriginalCall {
     pub address: String,
     /// The original function's name.
     pub original_name: String,
+    /// The name the call is linked by, when it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_name: Option<String>,
     /// True when the call is linked to the original by that name; false when the name is not a
     /// C symbol (a C++ method, a function without a name), and the call stops the program with a
     /// message instead.
@@ -141,6 +144,9 @@ pub struct ManifestEntry {
     /// What weakens the evidence for it (stale, unchecked, partly covered); empty when nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caveats: Vec<String>,
+    /// The ABI the function was verified at (the preload library rebuilds its wrapper from it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Signature>,
 }
 
 /// The manifest written next to the workspace.
@@ -221,6 +227,7 @@ fn original_module(u: &RewriteUnit, symbol: Option<&str>) -> (String, OriginalCa
             symbol: sig.name.clone(),
             address: u.anchor.address.clone(),
             original_name: shown.clone(),
+            link_name: linkable.then(|| name.to_string()),
             linked: linkable,
         },
     )
@@ -312,6 +319,11 @@ pub fn c_prototype(sig: &Signature) -> String {
 
 /// The shim function for `sig`, calling `path`.
 fn shim_fn(sig: &Signature, path: &str) -> String {
+    shim_fn_with(sig, path, "")
+}
+
+/// [`shim_fn`] with `pre`, a statement, run first in the body.
+pub(crate) fn shim_fn_with(sig: &Signature, path: &str, pre: &str) -> String {
     let args: Vec<String> = sig
         .params
         .iter()
@@ -332,7 +344,7 @@ fn shim_fn(sig: &Signature, path: &str) -> String {
         Ret::Double | Ret::Float => format!("unsafe {{ {call} }}"),
     };
     format!(
-        "#[unsafe(no_mangle)]\n{} {{\n    {body}\n}}\n",
+        "#[unsafe(no_mangle)]\n{} {{\n    {pre}{body}\n}}\n",
         sig.rust_prototype()
     )
 }
@@ -362,11 +374,11 @@ fn module_code(unit: &RewriteUnit, uses: &str) -> Result<String, RewriteError> {
     ))
 }
 
-fn io(what: &str, e: std::io::Error) -> RewriteError {
+pub(crate) fn io(what: &str, e: std::io::Error) -> RewriteError {
     RewriteError::Store(format!("{what}: {e}"))
 }
 
-fn write(path: &Path, text: &str) -> Result<(), RewriteError> {
+pub(crate) fn write(path: &Path, text: &str) -> Result<(), RewriteError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| io(&parent.display().to_string(), e))?;
     }
@@ -508,6 +520,7 @@ pub fn write_workspace(
                 .get(&u.anchor.address)
                 .cloned()
                 .unwrap_or_default(),
+            signature: Some(u.signature.clone()),
         });
     }
 
@@ -1040,6 +1053,7 @@ mod tests {
                 provider: None,
                 model: None,
                 caveats: info.caveats.get("0x10").cloned().unwrap_or_default(),
+                signature: None,
             }],
             accepted: 1,
             planned: 0,

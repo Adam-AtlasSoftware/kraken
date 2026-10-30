@@ -666,6 +666,9 @@ impl ViewModel {
         }
         let mut args = json!({ "address": hex(address), "mode": mode.as_str() });
         self.ai_rewrite_args(&mut args);
+        if let Some(h) = self.rewrite_take_pending_hints(address) {
+            args["hints"] = h;
+        }
         self.rewrite_start_job(
             JobKind::Function { address, mode },
             label,

@@ -106,7 +106,10 @@ logged; **dangerous** commands always ask for approval first.
 | [`rewrite_check`](#rewrite_check) | query | safe | Check that this host can run the Rust rewrite workflow |
 | [`rewrite_export`](#rewrite_export) | job | mutating | Export accepted units as a Cargo workspace with an FFI shim (job) |
 | [`rewrite_function`](#rewrite_function) | job | mutating | Translate one function to Rust and verify it against the original (job) |
+| [`rewrite_hint_get`](#rewrite_hint_get) | query | safe | Show the hints that steer the translation of a function |
+| [`rewrite_hint_set`](#rewrite_hint_set) | mutation | mutating | Set the hints that steer the translation of a function |
 | [`rewrite_plan`](#rewrite_plan) | query | safe | Plan the rewrite order: call graph bottom-up, with functions that need stubs flagged |
+| [`rewrite_preload_build`](#rewrite_preload_build) | job | mutating | Build an LD_PRELOAD library so the original program runs the accepted Rust (job) |
 | [`rewrite_program`](#rewrite_program) | job | mutating | Rewrite a whole program to a standalone Rust crate and verify it against the original (job) |
 | [`rewrite_program_status`](#rewrite_program_status) | query | safe | Show a stored whole-program rewrite: functions, crate and the program-level verdict with per-case diffs |
 | [`rewrite_reject`](#rewrite_reject) | mutation | mutating | Reject a rewrite unit version so it is never exported (users only) |
@@ -17771,6 +17774,7 @@ Decompiles the function, asks the configured provider (`[provider]` in config.to
 |---|---|---|---|---|
 | `address` | `--address` | address | yes | The function (any address inside it). |
 | `cases` | `--cases` | integer | no | Random test cases to run (default 200, at most 2000). |
+| `hints` | `--hints` | json | no | Hints for this translation: stored for the function first (as `rewrite_hint_set` does), then used. Without it the stored hints, if any, are used. |
 | `max_attempts` | `--max-attempts` | integer | no | Most translation attempts (default 3, at most 8). A failed attempt's compiler output or counterexample goes back to the model; 1 turns the repair loop off. |
 | `mode` | `--mode` | one of `incremental`, `spec` | no | `incremental` (default) translates the decompile; `spec` reimplements from the function's spec, writing it first if none is stored. |
 | `model` | `--model` | string | no | Use this model name instead of the configured one, for this run only (not saved). |
@@ -17794,6 +17798,291 @@ Decompiles the function, asks the configured provider (`[provider]` in config.to
     "job_id"
   ],
   "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_hint_get
+
+Show the hints that steer the translation of a function
+
+```sh
+kraken rewrite-hint-get --address <address>
+```
+
+- Kind: query
+- Permission: safe
+
+Reads the stored hints of one function: notes, variable names, Rust types, `use` lines and the unsafe ban. Empty when none were set.
+
+Example: `rewrite_hint_get {"address": "0x401136"}`
+
+Reads `rewrite.sqlite`. `address` may be any address inside the function. The hints are the operator's text, not model output.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | The function (any address inside it). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "RewriteHints": {
+      "additionalProperties": false,
+      "description": "The hints of one function.",
+      "properties": {
+        "forbid_unsafe": {
+          "default": false,
+          "description": "Keep `unsafe` to what dereferencing the given pointers needs: no `transmute`,\n`static mut`, inline assembly or unchecked indexing. A translation that does is rejected\nand goes back to the model.",
+          "type": "boolean"
+        },
+        "notes": {
+          "default": "",
+          "description": "Free text for the model (at most 2000 characters).",
+          "type": "string"
+        },
+        "rename_vars": {
+          "default": [],
+          "description": "Names for variables of the decompile.",
+          "items": {
+            "$ref": "#/$defs/VarRename"
+          },
+          "type": "array"
+        },
+        "types": {
+          "default": [],
+          "description": "Rust types for variables and parameters.",
+          "items": {
+            "$ref": "#/$defs/TypeHint"
+          },
+          "type": "array"
+        },
+        "uses": {
+          "default": [],
+          "description": "Paths to import, each starting with `std::`, `core::` or `alloc::`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "TypeHint": {
+      "additionalProperties": false,
+      "description": "The Rust type a variable or parameter should have.",
+      "properties": {
+        "rust_type": {
+          "description": "The Rust type, for example `&mut [u32]` or `usize`.",
+          "type": "string"
+        },
+        "target": {
+          "description": "The variable or parameter (`a0`, `local_10`, or the renamed name).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "rust_type"
+      ],
+      "type": "object"
+    },
+    "VarRename": {
+      "additionalProperties": false,
+      "description": "A name for a variable of the decompile.",
+      "properties": {
+        "from": {
+          "description": "The name in the decompile (`local_10`, `param_1`, `a0`).",
+          "type": "string"
+        },
+        "to": {
+          "description": "The name to use in the Rust code.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The hints of a function.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The function's entry."
+    },
+    "hints": {
+      "$ref": "#/$defs/RewriteHints",
+      "description": "The stored hints (empty when none)."
+    },
+    "updated_by": {
+      "description": "Who stored them last (`user` or an agent run id); absent when none are stored.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "address",
+    "hints"
+  ],
+  "title": "RewriteHintsOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_hint_set
+
+Set the hints that steer the translation of a function
+
+```sh
+kraken rewrite-hint-set --address <address> --hints <json>
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Stores guidance for the next translation of a function: free `notes`, `rename_vars` (decompile name to Rust name), `types` (Rust type per variable or parameter), `uses` (paths in std) and `forbid_unsafe`. The hints go into the prompt of `rewrite_function`, which then makes a new version; they replace the stored ones, and empty hints remove them. They never change what counts as correct: the tests and `rewrite_accept` still decide.
+
+Example: `rewrite_hint_set {"address": "0x401136", "hints": {"notes": "the buffer holds UTF-8", "rename_vars": [{"from": "local_10", "to": "count"}], "forbid_unsafe": true}}`
+
+Hints are kept per function in `rewrite.sqlite`, with who set them. They are sent to the provider as trusted instructions in the translation prompt, after the function's layout notes: variable names to use, the Rust type a parameter or variable should have, imports to add, and (`forbid_unsafe`) a ban on `transmute`, `static mut`, inline assembly and unchecked indexing, enforced on the reply. Names must be identifiers, types plain Rust type text and imports paths in `std`, `core` or `alloc`; `notes` is at most 2000 characters. Setting hints makes no model call and sends nothing; the next `rewrite_function` (or a retranslation in the Rewrite tab) uses them. Agents may set hints: they only steer a translation that still has to pass the tests and be accepted by a person.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | The function (any address inside it). |
+| `hints` | `--hints` | json | yes | The hints. They replace the stored ones; empty hints remove them. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "RewriteHints": {
+      "additionalProperties": false,
+      "description": "The hints of one function.",
+      "properties": {
+        "forbid_unsafe": {
+          "default": false,
+          "description": "Keep `unsafe` to what dereferencing the given pointers needs: no `transmute`,\n`static mut`, inline assembly or unchecked indexing. A translation that does is rejected\nand goes back to the model.",
+          "type": "boolean"
+        },
+        "notes": {
+          "default": "",
+          "description": "Free text for the model (at most 2000 characters).",
+          "type": "string"
+        },
+        "rename_vars": {
+          "default": [],
+          "description": "Names for variables of the decompile.",
+          "items": {
+            "$ref": "#/$defs/VarRename"
+          },
+          "type": "array"
+        },
+        "types": {
+          "default": [],
+          "description": "Rust types for variables and parameters.",
+          "items": {
+            "$ref": "#/$defs/TypeHint"
+          },
+          "type": "array"
+        },
+        "uses": {
+          "default": [],
+          "description": "Paths to import, each starting with `std::`, `core::` or `alloc::`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "TypeHint": {
+      "additionalProperties": false,
+      "description": "The Rust type a variable or parameter should have.",
+      "properties": {
+        "rust_type": {
+          "description": "The Rust type, for example `&mut [u32]` or `usize`.",
+          "type": "string"
+        },
+        "target": {
+          "description": "The variable or parameter (`a0`, `local_10`, or the renamed name).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "rust_type"
+      ],
+      "type": "object"
+    },
+    "VarRename": {
+      "additionalProperties": false,
+      "description": "A name for a variable of the decompile.",
+      "properties": {
+        "from": {
+          "description": "The name in the decompile (`local_10`, `param_1`, `a0`).",
+          "type": "string"
+        },
+        "to": {
+          "description": "The name to use in the Rust code.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The hints of a function.",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Hex64",
+      "description": "The function's entry."
+    },
+    "hints": {
+      "$ref": "#/$defs/RewriteHints",
+      "description": "The stored hints (empty when none)."
+    },
+    "updated_by": {
+      "description": "Who stored them last (`user` or an agent run id); absent when none are stored.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "address",
+    "hints"
+  ],
+  "title": "RewriteHintsOut",
   "type": "object"
 }
 ```
@@ -18071,6 +18360,52 @@ Orders the program's functions so that callees come before their callers; functi
     "entries"
   ],
   "title": "RewritePlanOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## rewrite_preload_build
+
+Build an LD_PRELOAD library so the original program runs the accepted Rust (job)
+
+```sh
+kraken rewrite-preload-build --dir <string> [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Takes an export from `rewrite_export` and builds a shared library plus a launcher script. With `LD_PRELOAD` the original x86-64 Linux program then calls the Rust version of every accepted function, including static ones, with the rest running as before. `check_args` also runs the original with and without the library and compares output. Returns a `job_id`. Runs generated code, so a person is asked to approve a call from an agent.
+
+Example: `rewrite_preload_build {"dir": "export", "check_args": []}`
+
+The folder must hold the `manifest.json` of `rewrite_export`. A crate `<name>-preload` is added to the workspace and built in the sandbox (offline, read-only file system). The library does two things when the program loads it: every accepted function is exported under its own name, so calls that go through the dynamic symbol table reach the Rust version, and at start-up the entry of each accepted function in the running program is overwritten with a 14-byte jump to the Rust function, which also covers static functions and calls through function pointers. Functions that are not accepted but that the Rust code calls are reached through small trampolines to the original function's address. Limits: x86-64 ELF only; the library compares the size of `/proc/self/exe` with the analysed file and leaves the program alone when it differs; a function shorter than 14 bytes is skipped; functions that use the C library's `stdin`, `stdout` or `stderr` objects through the program's data are not supported, and functions that print buffer differently from the original when output is not a terminal; programs under another loader, or whose code pages cannot be made writable, are not supported. `KRAKEN_PRELOAD_DISABLE=1` turns the library off; `KRAKEN_PRELOAD_LOG=1` makes it report on standard error, at exit, how often each Rust function ran. With `check_args` the original is run twice under the sandbox and the results are compared; its output is untrusted data.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `dir` | `--dir` | string | yes | The export: the `dir` that `rewrite_export` wrote. Relative paths are inside the project directory. |
+| `check_args` | `--check-args` | json | no | When given, the original program is run twice in the sandbox with these arguments (at most 32), once as it is and once with the library preloaded, and the two are compared (exit status, standard output and standard error). |
+| `check_stdin` | `--check-stdin` | string | no | Text for the standard input of the checked runs. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
   "type": "object"
 }
 ```

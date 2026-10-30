@@ -34,6 +34,10 @@ The plan lists the program's functions with the ones that call nothing else firs
 
 For each function the assistant reads the decompiled C and writes Rust. KRAKEN builds that Rust in the sandbox. If it does not build, or is refused because it uses something not allowed (files, network, processes), the assistant gets the error and tries again, up to three times.
 
+#### Steer a translation with hints
+
+Open **Hints for the model** in a function's detail view to guide the next translation of that function: free notes ("the buffer holds UTF-8"), names for variables (`local_10 -> count`), the Rust type a parameter or variable should have (`a0: &mut [u32]`), `std` paths to import, and **Keep unsafe to pointer reads and writes**. **Save hints** keeps them with the project. **Retranslate with these hints** asks the model again with them and adds a new version; the older versions stay. The hints go into the prompt as instructions from you. They only change how the Rust is written: the tests and your acceptance still decide whether it is right. With the unsafe option on, a reply that uses `transmute`, `static mut`, inline assembly or unchecked indexing is rejected and sent back to the model like any failed attempt. Hints an agent set are passed to the model as data rather than as instructions. From a script: `rewrite_hint_set` and `rewrite_hint_get`, or the `hints` argument of `rewrite_function`.
+
 ### 3. Verify
 
 KRAKEN runs the original function (in an emulator) and the Rust function on the same inputs, and compares the results and what they write to memory. A function that returns a pointer is compared by what the pointer leads to: the heap object it allocated (byte for byte, so a struct laid out differently is caught), or the string it points at. The status of a function says what came out:
@@ -62,6 +66,26 @@ Accepting marks one version of a function as the one to export. Accept a functio
 ### 5. Export
 
 The export writes a Rust workspace with two crates: a library with the accepted functions, and a shim that exposes each one under its original name. You can link the shim in place of the original functions one at a time, and the functions you have not rewritten keep running from the original program. When an accepted function calls one you have not accepted, the export calls the original function by its name; the README lists these calls, and a section **Check these before relying on them** lists accepted functions with weak evidence: stale (the decompile changed since), only compiled, no case compared, or cases that leave blocks of the function unreached. Functions that use globals need to know where the original program's data is: call `kraken_attach_image` once first (the README says how). The folder must be empty or an earlier export. A folder inside the project needs no question; a folder outside it asks first.
+
+#### Run the Rust inside the original (Linux, x86-64)
+
+`rewrite_preload_build` turns an export into a shared library for `LD_PRELOAD` and a launcher script, so the original program itself runs the accepted Rust. Nothing needs to be relinked:
+
+```sh
+kraken rewrite-export --dir export
+kraken rewrite-preload-build --dir export --check-args '[]'
+export/preload/run-with-preload.sh ./original-program args...
+```
+
+When the program starts, the library overwrites the entry of each accepted function in the running program with a jump to its Rust version. That covers static functions and calls through function pointers, which symbol interposition cannot reach, and the library also exports each function under its own name for calls that go through the dynamic symbol table. Functions that are not accepted but that the Rust calls are reached through trampolines to the original code. The data the Rust reads and writes is the program's own. With `--check-args` (a JSON list of the arguments to run with; `'[]'` for none) KRAKEN also runs the original twice in the sandbox, plain and preloaded, and reports whether exit status, output and error output are identical, plus how often each Rust function ran. `KRAKEN_PRELOAD_LOG=1` makes the library report the same on standard error; `KRAKEN_PRELOAD_DISABLE=1` turns it off.
+
+Limits:
+
+- x86-64 ELF programs on Linux. The library compares the size of the running program with the analysed file and leaves everything alone, with a message on standard error, when they differ.
+- A function shorter than 14 bytes (the size of the jump) stays in the original. The result lists these.
+- Functions that use the program's own `stdin`, `stdout` or `stderr` objects are not supported. A replaced function that prints writes through Rust's buffer, not the C library's, so its output can interleave differently with the original's when output goes to a pipe.
+- A program that does not allow its code pages to be made writable, or that runs under another loader, is left unchanged. Statically linked programs ignore `LD_PRELOAD`.
+- Export again after you accept more functions, then build the preload library again. Building and the checked runs happen in the sandbox; running the launcher by hand does not.
 
 ### 6. Build and test
 
@@ -131,9 +155,11 @@ Everything above is a command, so an assistant connected through [MCP](mcp.md) o
 | `rewrite_verify`, `rewrite_add_case` | Replay every stored case of a version and measure coverage, or add a case of your own first (jobs; no model is called). Agents may run them. |
 | `rewrite_spec_edit` | Store an edited spec of a function. |
 | `rewrite_export` | Write the accepted functions as a workspace (a job). |
+| `rewrite_hint_set`, `rewrite_hint_get` | Set or read the hints that steer the next translation of a function. Agents may set them. |
+| `rewrite_preload_build` | Build the `LD_PRELOAD` library that runs the accepted Rust inside the original program, and optionally compare a run with and without it (a job). |
 | `rewrite_build` | Build and test an exported folder in the sandbox, and optionally run a program crate with `run_args` (a job). |
 
-Jobs return a `job_id`; read progress and the result with `job_status` or `job_await`. `rewrite_program` and `rewrite_build` run generated code, so a call from an agent asks for your approval first. The [command reference](reference/commands.md) has every argument.
+Jobs return a `job_id`; read progress and the result with `job_status` or `job_await`. `rewrite_program`, `rewrite_build` and `rewrite_preload_build` run generated code, so a call from an agent asks for your approval first. The [command reference](reference/commands.md) has every argument.
 
 ## If something does not work
 

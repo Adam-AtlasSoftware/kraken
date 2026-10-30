@@ -760,6 +760,12 @@ async fn every_registry_command_identical() {
         ("rewrite_spec", json!({"scope": "all"})),
         ("rewrite_export", json!({"dir": "out"})),
         ("rewrite_build", json!({"dir": "out"})),
+        ("rewrite_preload_build", json!({"dir": "out"})),
+        ("rewrite_hint_get", json!({"address": "0x401040"})),
+        (
+            "rewrite_hint_set",
+            json!({"address": "0x401040", "hints": {"notes": "x"}}),
+        ),
         ("rewrite_program", json!({"scope": "all"})),
         ("rewrite_program_status", json!({})),
         ("rewrite_check", json!({})),

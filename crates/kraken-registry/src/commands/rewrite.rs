@@ -26,6 +26,8 @@ use super::rewrite_control::{
     RewriteAddCaseArgs, RewriteCheckOut, RewriteRejectArgs, RewriteSpecEditArgs, RewriteUnaccept,
     RewriteVerifyArgs, RewriteVerifyResult, UnitChangeOut,
 };
+use super::rewrite_hint::{RewriteHintGetArgs, RewriteHintSetArgs, RewriteHints, RewriteHintsOut};
+use super::rewrite_preload::{RewritePreloadBuildArgs, RewritePreloadBuildResult};
 use super::rewrite_program::{
     RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
 };
@@ -567,6 +569,10 @@ pub struct RewriteFunctionArgs {
     /// Use this model name instead of the configured one, for this run only (not saved).
     #[serde(default)]
     pub model: Option<String>,
+    /// Hints for this translation: stored for the function first (as `rewrite_hint_set` does),
+    /// then used. Without it the stored hints, if any, are used.
+    #[serde(default)]
+    pub hints: Option<RewriteHints>,
 }
 
 /// A case on which the translation and the original disagreed.
@@ -625,6 +631,9 @@ pub struct RewriteFunctionResult {
     /// Rust names of accepted callees the translation calls instead of re-translating.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reused_callees: Vec<String>,
+    /// True when the prompt carried the function's hints (`rewrite_hint_set`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hints_used: bool,
 }
 
 fn one() -> u32 {
@@ -678,7 +687,7 @@ impl Command for RewriteFunction {
         &self,
         s: &Session,
         ctx: &CallContext,
-        args: RewriteFunctionArgs,
+        mut args: RewriteFunctionArgs,
     ) -> Result<JobStarted, ProtoError> {
         let backend = s.rewrite()?.clone();
         backend.require_sandbox()?;
@@ -690,6 +699,9 @@ impl Command for RewriteFunction {
             return Err(invalid("`max_attempts` is between 1 and 8"));
         }
         check_provider(args.provider.as_deref())?;
+        if let Some(h) = args.hints.take() {
+            args.hints = Some(h.validated()?);
+        }
         backend.check_budget()?;
         let (s2, ctx2) = (s.clone(), ctx.clone());
         let id = s
@@ -1204,6 +1216,41 @@ pub trait RewriteBackend: Send + Sync {
         Err(ProtoError::new(
             ErrorCode::Unsupported,
             "this rewrite backend does not build exported crates",
+        ))
+    }
+
+    /// `rewrite_hint_get`.
+    async fn hint_get(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteHintGetArgs,
+    ) -> Result<RewriteHintsOut, ProtoError> {
+        Err(no_control())
+    }
+
+    /// `rewrite_hint_set` (the hints are already validated).
+    async fn hint_set(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewriteHintSetArgs,
+    ) -> Result<RewriteHintsOut, ProtoError> {
+        Err(no_control())
+    }
+
+    /// The body of a `rewrite_preload_build` job (the directory is resolved and checked to be an
+    /// export; the caller is approved).
+    async fn preload_build(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        _args: RewritePreloadBuildArgs,
+        _job: &JobReporter,
+    ) -> Result<RewritePreloadBuildResult, ProtoError> {
+        Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            "this rewrite backend does not build preload libraries",
         ))
     }
 

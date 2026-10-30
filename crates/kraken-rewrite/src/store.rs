@@ -22,10 +22,23 @@ use serde::{Deserialize, Serialize};
 use crate::abi::Signature;
 use crate::difftest::{CaseRecord, Counterexample, Verdict};
 use crate::error::RewriteError;
+use kraken_registry::commands::RewriteHints;
+
 use crate::unit::{
     CalleeRef, Coverage, FunctionAnchor, OracleInfo, Provenance, RepairLink, RewriteUnit,
     RunSummary, UNIT_SCHEMA,
 };
+
+/// The hints of a function as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredHints {
+    /// The hints.
+    pub hints: RewriteHints,
+    /// Who set them last.
+    pub updated_by: String,
+    /// True when an agent set them (their text goes into the prompt as data).
+    pub by_agent: bool,
+}
 
 /// File name inside the project directory.
 pub const DB_FILE: &str = "rewrite.sqlite";
@@ -177,6 +190,17 @@ pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE test_cases ADD COLUMN origin TEXT NOT NULL DEFAULT 'oracle';
      ALTER TABLE test_cases ADD COLUMN note TEXT;
      ALTER TABLE verdicts ADD COLUMN coverage_json TEXT;",
+    // 6: hints that steer the translation of a function (JSON of `RewriteHints`), with who set
+    // them last.
+    "CREATE TABLE unit_hints (
+        program_sha256 TEXT NOT NULL,
+        address        TEXT NOT NULL,
+        hints_json     TEXT NOT NULL,
+        updated_by     TEXT NOT NULL,
+        by_agent       INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        PRIMARY KEY (program_sha256, address)
+     );",
 ];
 
 /// The newest schema version.
@@ -1058,6 +1082,67 @@ impl RewriteStore {
         .map_err(db)?;
         u64::try_from(conn.last_insert_rowid())
             .map_err(|_| RewriteError::Store("bad spec row id".into()))
+    }
+
+    /// Stores the hints of a function, replacing the earlier ones; empty hints delete the row.
+    pub fn put_hints(
+        &self,
+        program_sha256: &str,
+        address: &str,
+        hints: &RewriteHints,
+        actor: &str,
+        by_agent: bool,
+    ) -> Result<(), RewriteError> {
+        let conn = self.conn();
+        if hints.is_empty() {
+            conn.execute(
+                "DELETE FROM unit_hints WHERE program_sha256 = ?1 AND address = ?2",
+                params![program_sha256, address],
+            )
+            .map_err(db)?;
+            return Ok(());
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO unit_hints
+                (program_sha256, address, hints_json, updated_by, by_agent, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                program_sha256,
+                address,
+                serde_json::to_string(hints).map_err(js)?,
+                actor,
+                by_agent,
+                now()
+            ],
+        )
+        .map_err(db)?;
+        Ok(())
+    }
+
+    /// The hints of a function, with who set them and whether that was an agent.
+    pub fn hints(
+        &self,
+        program_sha256: &str,
+        address: &str,
+    ) -> Result<Option<StoredHints>, RewriteError> {
+        let conn = self.conn();
+        let row: Option<(String, String, bool)> = conn
+            .query_row(
+                "SELECT hints_json, updated_by, by_agent FROM unit_hints
+                 WHERE program_sha256 = ?1 AND address = ?2",
+                params![program_sha256, address],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(db)?;
+        row.map(|(json, updated_by, by_agent)| {
+            Ok(StoredHints {
+                hints: serde_json::from_str(&json).map_err(js)?,
+                updated_by,
+                by_agent,
+            })
+        })
+        .transpose()
     }
 
     /// The newest spec for a function (`Some(address)`) or for the program (`None`).

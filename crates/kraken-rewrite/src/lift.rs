@@ -144,6 +144,23 @@ impl<'a> Lift<'a> {
         })
     }
 
+    /// The size of the function body at `address`, if the engine knows it.
+    pub async fn size(&self, address: u64) -> Option<u64> {
+        GetFunction
+            .run(
+                self.s,
+                self.ctx,
+                GetFunctionArgs {
+                    address: Hex64(address),
+                    module: None,
+                },
+            )
+            .await
+            .ok()?
+            .function
+            .size
+    }
+
     /// Up to `cap` functions in address order, and whether more exist.
     pub async fn functions(&self, cap: usize) -> Result<(Vec<ListedFunction>, bool), RewriteError> {
         let mut out = Vec::new();

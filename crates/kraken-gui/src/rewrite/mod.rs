@@ -4,7 +4,7 @@
 use egui::{Color32, Id, Rect, RichText, Sense, Shape, Ui, vec2};
 use kraken_gui_widgets::Palette;
 use kraken_viewmodel::rewrite::{
-    Availability, Flag, RewriteJob, RewriteMode, UnitItem, UnitStatus,
+    Availability, Flag, HintsDraft, RewriteJob, RewriteMode, UnitItem, UnitStatus,
 };
 use kraken_viewmodel::{ViewModel, rewrite::status_explain};
 
@@ -78,6 +78,12 @@ pub struct RewriteUi {
     pub case_error: Option<String>,
     /// The spec being edited, when the editor is open.
     pub editing_spec: Option<String>,
+    /// The hints being typed, by function.
+    pub hints: std::collections::HashMap<u64, HintsDraft>,
+    /// Functions whose typed hints started from what the daemon stores.
+    pub hints_synced: std::collections::HashSet<u64>,
+    /// Why the typed hints were not understood.
+    pub hints_error: Option<String>,
 }
 
 /// What the person asked for in one frame; applied after the drawing borrow ends.
@@ -91,6 +97,9 @@ pub(crate) struct Acts {
     pub unaccept: Option<u64>,
     pub verify: Option<u64>,
     pub add_case: Option<(u64, String)>,
+    pub hints_load: Option<u64>,
+    pub hints_save: Option<(u64, HintsDraft)>,
+    pub hints_retranslate: Option<(u64, HintsDraft)>,
     pub spec_edit: Option<(u64, String)>,
     pub spec: Option<Option<u64>>,
     pub show_version: Option<(u64, u32)>,
@@ -261,6 +270,15 @@ fn apply(vm: &mut ViewModel, st: &mut RewriteUi, acts: Acts, front: &mut Option<
             }
             Err(e) => st.case_error = Some(e),
         }
+    }
+    if let Some(a) = acts.hints_load {
+        vm.rewrite_hints_load(a);
+    }
+    if let Some((a, draft)) = acts.hints_save {
+        st.hints_error = vm.rewrite_hints_save(a, &draft).err();
+    }
+    if let Some((a, draft)) = acts.hints_retranslate {
+        st.hints_error = vm.rewrite_retranslate_with_hints(a, &draft).err();
     }
     if let Some((a, md)) = acts.spec_edit {
         vm.rewrite_edit_spec(a, md);

@@ -41,6 +41,7 @@ pub(super) fn show(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, acts: &mut A
             title(ui, vm, &name, addr, status, acts);
             actions(ui, vm, d, addr, status, acts);
             add_case(ui, vm, st, addr, acts);
+            hints(ui, vm, st, addr, status, acts);
             plan_notes(ui, vm, d, &p);
             if let Some(e) = &d.error {
                 let s = style::status(style::dark(ui));
@@ -477,6 +478,120 @@ fn add_case(ui: &mut Ui, vm: &ViewModel, st: &mut RewriteUi, addr: u64, acts: &m
                 ui.label(RichText::new(e).size(12.0).color(s.danger));
             }
         });
+}
+
+/// The hints that steer the next translation of the function.
+fn hints(
+    ui: &mut Ui,
+    vm: &ViewModel,
+    st: &mut RewriteUi,
+    addr: u64,
+    status: UnitStatus,
+    acts: &mut Acts,
+) {
+    let p = pal(ui);
+    let stored = vm.rewrite.hints.stored.get(&addr);
+    let active = stored.is_some_and(|d| !d.is_empty());
+    let title = if active {
+        "Hints for the model (set)"
+    } else {
+        "Hints for the model"
+    };
+    let can = vm.rewrite.can_run() && vm.rewrite.running_for(addr).is_none();
+    let open = egui::CollapsingHeader::new(RichText::new(title).size(12.5))
+        .id_salt(("kraken_rewrite_hints", addr))
+        .default_open(false)
+        .show(ui, |ui| {
+            // Start from what the daemon stores, once it has answered.
+            if let Some(d) = stored
+                && st.hints_synced.insert(addr)
+            {
+                st.hints.insert(addr, d.clone());
+            }
+            let draft = st.hints.entry(addr).or_default();
+            ui.label(
+                RichText::new(
+                    "Guidance for the next translation of this function. It goes into the prompt; the tests and your acceptance still decide whether the Rust is right.",
+                )
+                .size(11.5)
+                .color(p.text_dim),
+            );
+            ui.label(RichText::new("Notes").size(12.0));
+            ui.add(
+                egui::TextEdit::multiline(&mut draft.notes)
+                    .hint_text("The buffer holds UTF-8. The loop stops at the first zero byte.")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .id_salt(("kraken_rewrite_hint_notes", addr)),
+            )
+            .on_hover_text("Free text for the model, at most 2000 characters.");
+            ui.label(RichText::new("Variable names (one per line, old -> new)").size(12.0));
+            ui.add(
+                egui::TextEdit::multiline(&mut draft.renames)
+                    .hint_text("local_10 -> count")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .id_salt(("kraken_rewrite_hint_renames", addr)),
+            )
+            .on_hover_text("Names from the decompile and the names the Rust should use for them.");
+            ui.label(RichText::new("Rust types (one per line, variable: type)").size(12.0));
+            ui.add(
+                egui::TextEdit::multiline(&mut draft.types)
+                    .hint_text("a0: &mut [u32]")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .id_salt(("kraken_rewrite_hint_types", addr)),
+            )
+            .on_hover_text("The type a parameter or variable should have inside the Rust. The extern \"C\" prototype stays as it is.");
+            ui.label(RichText::new("Imports (one per line, std paths)").size(12.0));
+            ui.add(
+                egui::TextEdit::multiline(&mut draft.uses)
+                    .hint_text("std::collections::HashMap")
+                    .desired_rows(1)
+                    .desired_width(f32::INFINITY)
+                    .id_salt(("kraken_rewrite_hint_uses", addr)),
+            )
+            .on_hover_text("Paths in std, core or alloc that the code may use.");
+            ui.checkbox(&mut draft.forbid_unsafe, "Keep unsafe to pointer reads and writes")
+                .on_hover_text("A reply that uses transmute, static mut, inline assembly or unchecked indexing is rejected and sent back to the model.");
+            let draft = draft.clone();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(can, egui::Button::new("Retranslate with these hints"))
+                    .on_hover_text(
+                        match status {
+                            UnitStatus::Planned => "Ask the model for a Rust version of this function with these hints. This sends the decompile to the model and may cost money.",
+                            _ => "Ask the model for a new version with these hints. The earlier versions stay in the list. This sends the decompile to the model and may cost money.",
+                        },
+                    )
+                    .on_disabled_hover_text("A translation of this function is already running, or code cannot run on this computer.")
+                    .clicked()
+                {
+                    acts.hints_retranslate = Some((addr, draft.clone()));
+                }
+                if ui
+                    .button("Save hints")
+                    .on_hover_text("Keep the hints with the project without translating. Emptying every field removes them.")
+                    .clicked()
+                {
+                    acts.hints_save = Some((addr, draft));
+                }
+            });
+            if let Some(who) = vm.rewrite.hints.updated_by.get(&addr) {
+                ui.label(
+                    RichText::new(format!("Last saved by {who}."))
+                        .size(11.5)
+                        .color(p.text_dim),
+                );
+            }
+            if let Some(e) = &st.hints_error {
+                let s = style::status(style::dark(ui));
+                ui.label(RichText::new(e).size(12.0).color(s.danger));
+            }
+        });
+    if open.openness > 0.0 && !vm.rewrite.hints.stored.contains_key(&addr) {
+        acts.hints_load = Some(addr);
+    }
 }
 
 fn counterexample(ui: &mut Ui, cx: &Counterexample, p: &Palette) {

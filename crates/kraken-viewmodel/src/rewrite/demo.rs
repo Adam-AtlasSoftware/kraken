@@ -15,11 +15,11 @@ use kraken_proto::{ErrorCode, ProtoError};
 use kraken_registry::commands::{
     ExportRequest, RewriteAcceptArgs, RewriteAcceptOut, RewriteAddCaseArgs, RewriteBackend,
     RewriteBuildArgs, RewriteBuildResult, RewriteCheckOut, RewriteExportResult,
-    RewriteFunctionArgs, RewriteFunctionResult, RewritePlanArgs, RewritePlanOut,
-    RewriteProgramArgs, RewriteProgramResult, RewriteProgramStatusArgs, RewriteProgramStatusOut,
-    RewriteRejectArgs, RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut,
-    RewriteUnaccept, RewriteUnitArgs, RewriteUnitOut, RewriteVerifyArgs, RewriteVerifyResult,
-    UnitChangeOut,
+    RewriteFunctionArgs, RewriteFunctionResult, RewriteHintGetArgs, RewriteHintSetArgs,
+    RewriteHintsOut, RewritePlanArgs, RewritePlanOut, RewriteProgramArgs, RewriteProgramResult,
+    RewriteProgramStatusArgs, RewriteProgramStatusOut, RewriteRejectArgs, RewriteSpecArgs,
+    RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnaccept, RewriteUnitArgs,
+    RewriteUnitOut, RewriteVerifyArgs, RewriteVerifyResult, UnitChangeOut,
 };
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 use serde::de::DeserializeOwned;
@@ -188,6 +188,8 @@ struct Inner {
     user_cases: BTreeMap<String, u32>,
     /// The coverage a replay measured, per unit.
     coverage: BTreeMap<String, Value>,
+    /// Hints stored per function, as the daemon would answer them.
+    hints: BTreeMap<u64, kraken_registry::commands::RewriteHints>,
 }
 
 /// The scripted pipeline. Clones share state.
@@ -689,6 +691,17 @@ impl RewriteBackend for DemoRewrite {
         job: &JobReporter,
     ) -> Result<RewriteFunctionResult, ProtoError> {
         let f = Self::func(args.address.0)?;
+        let hints_used = {
+            let mut st = self.lock();
+            if let Some(h) = args.hints.clone() {
+                if h.is_empty() {
+                    st.hints.remove(&f.addr);
+                } else {
+                    st.hints.insert(f.addr, h);
+                }
+            }
+            st.hints.contains_key(&f.addr)
+        };
         let phases = [
             (
                 "Decompiling",
@@ -732,9 +745,47 @@ impl RewriteBackend for DemoRewrite {
             code,
             assumptions: Vec::new(),
         };
-        let json = version_json(f.addr, &v, false);
+        let mut json = version_json(f.addr, &v, false);
+        if hints_used {
+            json["hints_used"] = json!(true);
+        }
         list.push(v);
         typed(json)
+    }
+
+    async fn hint_get(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteHintGetArgs,
+    ) -> Result<RewriteHintsOut, ProtoError> {
+        let f = Self::func(args.address.0)?;
+        let hints = self.lock().hints.get(&f.addr).cloned().unwrap_or_default();
+        Ok(RewriteHintsOut {
+            address: kraken_proto::Hex64(f.addr),
+            updated_by: (!hints.is_empty()).then(|| "demo".to_string()),
+            hints,
+        })
+    }
+
+    async fn hint_set(
+        &self,
+        _s: &Session,
+        _ctx: &CallContext,
+        args: RewriteHintSetArgs,
+    ) -> Result<RewriteHintsOut, ProtoError> {
+        let f = Self::func(args.address.0)?;
+        let mut st = self.lock();
+        if args.hints.is_empty() {
+            st.hints.remove(&f.addr);
+        } else {
+            st.hints.insert(f.addr, args.hints.clone());
+        }
+        Ok(RewriteHintsOut {
+            address: kraken_proto::Hex64(f.addr),
+            updated_by: (!args.hints.is_empty()).then(|| "demo".to_string()),
+            hints: args.hints,
+        })
     }
 
     async fn accept(

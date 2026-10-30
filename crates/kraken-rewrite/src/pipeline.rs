@@ -48,6 +48,8 @@ impl RewriteJob {
             spec: None,
             reused: Vec::new(),
             repairs: Vec::new(),
+            hints: None,
+            hints_from_agent: false,
             budget: Budget::default(),
         }
     }

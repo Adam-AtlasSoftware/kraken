@@ -22,6 +22,10 @@ use kraken_registry::commands::{
     RewriteSpecArgs, RewriteSpecResult, RewriteStatusArgs, RewriteStatusOut, RewriteUnitArgs,
     RewriteUnitOut, StatusCounts, UnitRow, UnitSpecView, UnitStatus, UnitVersionView,
 };
+use kraken_registry::commands::{
+    PreloadCalls, PreloadCheck, PreloadHook, PreloadSkip, RewritePreloadBuildArgs,
+    RewritePreloadBuildResult,
+};
 use kraken_registry::{CallContext, JobProgress, JobReporter, Session};
 
 use crate::abi::{Arg, Signature};
@@ -282,7 +286,7 @@ pub(crate) fn progress(job: &JobReporter, phase: &str, done: u64, total: u64, me
 }
 
 /// Runs `f` on the project's store off the async threads.
-async fn with_store<T, F>(dir: PathBuf, f: F) -> Result<T, ProtoError>
+pub(crate) async fn with_store<T, F>(dir: PathBuf, f: F) -> Result<T, ProtoError>
 where
     T: Send + 'static,
     F: FnOnce(&RewriteStore) -> Result<T, RewriteError> + Send + 'static,
@@ -410,6 +414,7 @@ fn function_result(
             .collect(),
         attempts: u32::try_from(attempts).unwrap_or(u32::MAX),
         reused_callees: reused_symbols(unit),
+        hints_used: false,
     }
 }
 
@@ -518,6 +523,8 @@ impl RewriteService {
             spec: None,
             reused: Vec::new(),
             repairs: Vec::new(),
+            hints: None,
+            hints_from_agent: false,
             budget: self.cfg.budget.clone(),
         };
         Ok(Prepared {
@@ -541,6 +548,7 @@ impl RewriteService {
         let (f, callees) = self.function_with_callees(&lift, address).await?;
         let mut p = self.prepared(f, callees)?;
         add_layouts(s, &mut p.task, &ctx.cancel).await;
+        crate::hints::add_hints(s.project()?.dir(), &mut p.task).await?;
         Ok(p)
     }
 
@@ -1175,6 +1183,24 @@ impl RewriteBackend for RewriteService {
         self.unaccept_unit(s, ctx, args).await
     }
 
+    async fn hint_get(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteHintGetArgs,
+    ) -> Result<kraken_registry::commands::RewriteHintsOut, ProtoError> {
+        self.hint_get_unit(s, ctx, args).await
+    }
+
+    async fn hint_set(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: kraken_registry::commands::RewriteHintSetArgs,
+    ) -> Result<kraken_registry::commands::RewriteHintsOut, ProtoError> {
+        self.hint_set_unit(s, ctx, args).await
+    }
+
     async fn add_case(
         &self,
         s: &Session,
@@ -1392,6 +1418,110 @@ impl RewriteBackend for RewriteService {
         out
     }
 
+    async fn preload_build(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: RewritePreloadBuildArgs,
+        job: &JobReporter,
+    ) -> Result<RewritePreloadBuildResult, ProtoError> {
+        self.require_sandbox()?;
+        let dir = PathBuf::from(&args.dir);
+        let lift = Lift::new(s, ctx);
+        let (binary, image_base) = lift.binary().map_err(proto)?;
+        crate::link::require_x86_64_elf(&binary).map_err(proto)?;
+        let binary_len = std::fs::metadata(&binary)
+            .map_err(|e| internal(format!("{}: {e}", binary.display())))?
+            .len();
+        progress(job, "lift", 0, 3, "reading the function sizes");
+        let manifest = crate::link::read_manifest(&dir).map_err(proto)?;
+        let mut sizes = BTreeMap::new();
+        for e in &manifest.exports {
+            if let Some(a) = u64::from_str_radix(e.address.trim_start_matches("0x"), 16).ok()
+                && let Some(size) = lift.size(a).await
+            {
+                sizes.insert(e.address.clone(), size);
+            }
+        }
+        let input = crate::link::PreloadInput {
+            image_base,
+            binary_len,
+            sizes,
+        };
+        let confinement = self.cfg.confinement.clone();
+        let check_args = args.check_args.clone();
+        let check_stdin = args.check_stdin.clone();
+        let job2 = job.clone();
+        let done = tokio::task::spawn_blocking(move || -> Result<_, RewriteError> {
+            progress(&job2, "write", 1, 3, "writing the preload crate");
+            let plan = crate::link::write_preload(&dir, &input)?;
+            progress(
+                &job2,
+                "build",
+                2,
+                3,
+                "building the preload library in the sandbox",
+            );
+            let built = crate::link::build_preload(&dir, &plan, &confinement)?;
+            let check = match &check_args {
+                Some(a) => Some(crate::link::check_run(
+                    &binary,
+                    &built.library,
+                    a,
+                    check_stdin.as_deref(),
+                    &confinement,
+                )?),
+                None => None,
+            };
+            Ok((dir, plan, built, check))
+        })
+        .await
+        .map_err(|e| internal(format!("preload task failed: {e}")))?
+        .map_err(proto)?;
+        let (dir, plan, built, check) = done;
+        progress(job, "done", 3, 3, "finished");
+        Ok(RewritePreloadBuildResult {
+            dir: dir.display().to_string(),
+            library: Untrusted::sanitized(&built.library.display().to_string()),
+            launcher: Untrusted::sanitized(&built.launcher.display().to_string()),
+            hooked: plan
+                .hooks
+                .iter()
+                .map(|h| PreloadHook {
+                    symbol: h.symbol.clone(),
+                    address: h.address.clone(),
+                    size: h.size,
+                })
+                .collect(),
+            skipped: plan
+                .skipped
+                .iter()
+                .map(|(symbol, reason)| PreloadSkip {
+                    symbol: symbol.clone(),
+                    reason: reason.clone(),
+                })
+                .collect(),
+            sandbox: built.sandbox,
+            check: check.map(|c| PreloadCheck {
+                original_exit: c.original.exit.clone(),
+                preload_exit: c.preloaded.exit.clone(),
+                identical: c.identical(),
+                stdout_bytes: c.original.stdout.len() as u64,
+                calls: c
+                    .preloaded
+                    .calls
+                    .iter()
+                    .map(|(symbol, calls)| PreloadCalls {
+                        symbol: symbol.clone(),
+                        calls: *calls,
+                    })
+                    .collect(),
+                difference: c.difference().map(|d| Untrusted::sanitized(&d)),
+            }),
+            limits: crate::link::limits(),
+        })
+    }
+
     async fn build(
         &self,
         _s: &Session,
@@ -1528,6 +1658,21 @@ impl RewriteService {
         let (f, callees) = self.function_with_callees(&lift, args.address.0).await?;
         let mut prepared = self.prepared(f, callees)?;
         add_layouts(s, &mut prepared.task, &job.cancel_token()).await;
+        if let Some(h) = args.hints.clone() {
+            let (sha, addr) = (
+                prepared.function.program_sha256.clone(),
+                format!("{:#x}", prepared.function.address),
+            );
+            let (actor, by_agent) = (
+                ctx.author.id.clone(),
+                ctx.author.kind != kraken_model::AuthorKind::User,
+            );
+            with_store(dir.clone(), move |st| {
+                st.put_hints(&sha, &addr, &h, &actor, by_agent)
+            })
+            .await?;
+        }
+        let hints_used = crate::hints::add_hints(&dir, &mut prepared.task).await?;
 
         let mut task = prepared.task.clone();
         let mut spec_id = None;
@@ -1603,7 +1748,9 @@ impl RewriteService {
 
         let (unit, out) = run.last();
         progress(job, "done", 4, 4, "finished");
-        Ok(function_result(unit, out, run.attempts.len()))
+        let mut result = function_result(unit, out, run.attempts.len());
+        result.hints_used = hints_used;
+        Ok(result)
     }
 
     async fn accept_unit(

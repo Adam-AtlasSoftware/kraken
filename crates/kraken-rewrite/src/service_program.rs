@@ -937,10 +937,13 @@ impl RewriteService {
             spec: None,
             reused: direct.clone(),
             repairs: seeded,
+            hints: None,
+            hints_from_agent: false,
             budget,
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         crate::service::add_layouts(pc.lift.session(), &mut task, &cancel).await;
+        crate::hints::add_hints(&pc.dir, &mut task).await?;
         let work = Work {
             function: f.clone(),
             signature,

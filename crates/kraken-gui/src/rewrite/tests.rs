@@ -815,6 +815,53 @@ fn a_replay_shows_coverage_and_a_typed_case_reaches_more_of_the_function() {
 }
 
 #[test]
+fn hints_can_be_saved_and_the_function_translated_again_with_them() {
+    use kraken_viewmodel::rewrite::HintsDraft;
+    let mut r = Rig::new();
+    r.settle(|vm| vm.rewrite.loaded);
+    r.vm.rewrite_select(CHECKSUM);
+    let t = r.settle(|vm| {
+        vm.rewrite
+            .selected_detail()
+            .is_some_and(|d| !d.loading && d.versions().len() == 2)
+    });
+    assert!(has(&t, "Hints for the model"), "{t:?}");
+    assert!(!has(&t, "Hints for the model (set)"), "{t:?}");
+
+    let draft = HintsDraft {
+        notes: "the bytes are read as signed".into(),
+        renames: "local_10 -> sum".into(),
+        forbid_unsafe: true,
+        ..HintsDraft::default()
+    };
+    assert!(
+        r.vm.rewrite_hints_save(
+            CHECKSUM,
+            &HintsDraft {
+                types: "no colon".into(),
+                ..HintsDraft::default()
+            }
+        )
+        .is_err()
+    );
+    r.vm.rewrite_hints_save(CHECKSUM, &draft).expect("saved");
+    let t = r.settle(|vm| vm.rewrite.hints.stored.contains_key(&CHECKSUM));
+    assert!(has(&t, "Hints for the model (set)"), "{t:?}");
+
+    // The function is translated again with them: a third version arrives.
+    r.vm.rewrite_retranslate_with_hints(CHECKSUM, &draft)
+        .expect("valid");
+    let t = r.settle(|vm| {
+        vm.rewrite.running_for(CHECKSUM).is_none()
+            && vm
+                .rewrite
+                .selected_detail()
+                .is_some_and(|d| d.versions().len() == 3)
+    });
+    assert!(has(&t, "Hints for the model (set)"), "{t:?}");
+}
+
+#[test]
 fn reject_and_unaccept_change_the_list_and_the_buttons_say_who_can_do_it() {
     let mut r = Rig::new();
     r.settle(|vm| vm.rewrite.loaded && !vm.rewrite.rows.is_empty());

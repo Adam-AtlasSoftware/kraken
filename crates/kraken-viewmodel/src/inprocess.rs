@@ -213,6 +213,7 @@ impl Backend for InProcessBackend {
                 | "rewrite_build"
                 | "rewrite_verify"
                 | "rewrite_add_case"
+                | "rewrite_preload_build"
         ) && let Some(id) = out.get("job_id").and_then(Value::as_str)
         {
             self.watch_job(id.to_string());

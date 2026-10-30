@@ -27,6 +27,7 @@ mod control;
 mod control_tests;
 mod flow;
 mod highlight;
+mod hints;
 mod program;
 mod spec;
 #[cfg(test)]
@@ -41,6 +42,7 @@ mod demo_tests;
 
 pub use build::{BuildOutcome, BuildState, BuildStepItem};
 pub use highlight::highlight_rust;
+pub use hints::{HintsDraft, HintsState};
 pub use program::{
     DEFAULT_REPAIR_ROUNDS, DiffKind, DiffLine, MAX_REPAIR_ROUNDS, ProgramCaseItem,
     ProgramFunctionItem, ProgramInput, ProgramRepairItem, ProgramRunDetail, ProgramRunItem,
@@ -681,6 +683,8 @@ pub struct RewriteState {
     pub bulk: bulk::BulkState,
     /// The window should show the Program section of the Rewrite tab.
     pub show_program_request: bool,
+    /// Hints that steer the translation of single functions.
+    pub hints: HintsState,
     pub(crate) generation: u64,
     pub(crate) next_seq: u64,
     pub(crate) stash: Vec<(String, crate::backend::JobInfo)>,
@@ -715,6 +719,7 @@ impl Default for RewriteState {
             prereqs_loading: false,
             bulk: bulk::BulkState::default(),
             show_program_request: false,
+            hints: HintsState::default(),
             generation: 0,
             next_seq: 1,
             stash: Vec::new(),

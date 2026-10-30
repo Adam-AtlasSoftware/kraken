@@ -37,6 +37,8 @@ mod rebuild;
 mod rewrite;
 mod rewrite_build;
 mod rewrite_control;
+mod rewrite_hint;
+mod rewrite_preload;
 mod rewrite_program;
 mod search;
 mod typedit;
@@ -170,6 +172,14 @@ pub use rewrite_control::{
     RewriteCheckArgs, RewriteCheckOut, RewriteReject, RewriteRejectArgs, RewriteSpecEdit,
     RewriteSpecEditArgs, RewriteUnaccept, RewriteUnacceptCmd, RewriteVerify, RewriteVerifyArgs,
     RewriteVerifyResult, UnitChangeOut,
+};
+pub use rewrite_hint::{
+    RewriteHintGet, RewriteHintGetArgs, RewriteHintSet, RewriteHintSetArgs, RewriteHints,
+    RewriteHintsOut, TypeHint, VarRename,
+};
+pub use rewrite_preload::{
+    PreloadCalls, PreloadCheck, PreloadHook, PreloadSkip, RewritePreloadBuild,
+    RewritePreloadBuildArgs, RewritePreloadBuildResult,
 };
 pub use rewrite_program::{
     DEFAULT_PROGRAM_DIR, DEFAULT_REPAIR_ROUNDS, MAX_GENERATED_CASES, MAX_REPAIR_ROUNDS,
@@ -309,6 +319,9 @@ pub fn register_all(r: &mut Registry) {
     r.register(ProjectClose);
     // Card REWRITE
     r.register(RewriteBuild);
+    r.register(RewriteHintGet);
+    r.register(RewriteHintSet);
+    r.register(RewritePreloadBuild);
     // Card AI
     r.register(ApplyEdits);
     r.register(GuiNavigate);

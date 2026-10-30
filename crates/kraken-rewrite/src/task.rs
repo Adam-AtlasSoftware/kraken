@@ -17,6 +17,8 @@ use kraken_assist::AssistBackend;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use kraken_registry::commands::RewriteHints;
+
 use crate::abi::Signature;
 use crate::error::RewriteError;
 use crate::fetch::FunctionContext;
@@ -139,6 +141,65 @@ block of JSON between <kraken-result> and </kraken-result> tags of the form \
 about types and layout that the decompile does not prove, `unsupported` lists original \
 behaviour you could not translate (empty if none). Nothing after the result block.";
 
+/// What `forbid_unsafe` rules out, found in `code`.
+fn unsafe_beyond_pointers(code: &str) -> Option<&'static str> {
+    [
+        "transmute",
+        "static mut",
+        "asm!",
+        "get_unchecked",
+        "unsafe impl",
+        "unsafe trait",
+    ]
+    .into_iter()
+    .find(|p| code.contains(p))
+}
+
+/// The prompt text of a function's hints. Operator hints are instructions; hints an agent wrote
+/// are marked as data, since an agent may have copied text from the program into them.
+pub fn hints_text(h: &RewriteHints, from_agent: bool) -> String {
+    let mut s = String::new();
+    if !h.rename_vars.is_empty() {
+        s.push_str("Names to use for variables of the decompile:\n");
+        for r in &h.rename_vars {
+            s.push_str(&format!("- `{}` is called `{}`\n", r.from, r.to));
+        }
+    }
+    if !h.types.is_empty() {
+        s.push_str("Rust types to use (the extern \"C\" prototype above stays as it is):\n");
+        for t in &h.types {
+            s.push_str(&format!("- `{}`: `{}`\n", t.target, t.rust_type));
+        }
+    }
+    if !h.uses.is_empty() {
+        s.push_str("Imports to add:\n");
+        for u in &h.uses {
+            s.push_str(&format!("- `use {u};`\n"));
+        }
+    }
+    if h.forbid_unsafe {
+        s.push_str(
+            "Keep `unsafe` to what dereferencing the given pointers needs. Do not use \
+             `transmute`, `static mut`, inline assembly, `get_unchecked`, `unsafe impl` or \
+             `unsafe trait`; a reply that does will be rejected.\n",
+        );
+    }
+    if !h.notes.trim().is_empty() {
+        s.push_str(&format!("Notes:\n{}\n", h.notes.trim()));
+    }
+    if s.is_empty() {
+        return s;
+    }
+    if from_agent {
+        format!("<hints untrusted=\"true\">\n{s}</hints>\n\n")
+    } else {
+        format!(
+            "Hints from the person running the translation (follow them where they do not \
+             conflict with the rules above):\n{s}\n"
+        )
+    }
+}
+
 /// Translate one function to Rust.
 #[derive(Debug, Clone)]
 pub struct RewriteTask {
@@ -159,6 +220,10 @@ pub struct RewriteTask {
     pub reused: Vec<ReusedCallee>,
     /// Failed earlier attempts of this run, oldest first, with what was wrong.
     pub repairs: Vec<RepairRound>,
+    /// The operator's hints for this function (`rewrite_hint_set`).
+    pub hints: Option<RewriteHints>,
+    /// True when an agent wrote the hints: they go into the prompt as data, not as instructions.
+    pub hints_from_agent: bool,
     /// Limits.
     pub budget: Budget,
 }
@@ -221,6 +286,9 @@ impl RewriteTask {
         );
         if !self.layout_notes.trim().is_empty() {
             user.push_str(&format!("Layout notes:\n{}\n\n", self.layout_notes.trim()));
+        }
+        if let Some(h) = &self.hints {
+            user.push_str(&hints_text(h, self.hints_from_agent));
         }
         if let Some(spec) = &self.spec {
             user.push_str(&format!(
@@ -314,6 +382,13 @@ impl RewriteTask {
                     r.symbol()
                 )));
             }
+        }
+        if self.hints.as_ref().is_some_and(|h| h.forbid_unsafe)
+            && let Some(what) = unsafe_beyond_pointers(code)
+        {
+            return Err(RewriteError::Output(format!(
+                "the hints forbid `{what}`: keep `unsafe` to dereferencing the given pointers"
+            )));
         }
         let block: ResultBlock = match between(text, RESULT_OPEN, RESULT_CLOSE) {
             Some(j) => serde_json::from_str(j.trim())

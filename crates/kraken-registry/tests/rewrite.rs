@@ -149,6 +149,7 @@ impl RewriteBackend for Mock {
             unsupported: vec![],
             attempts: 1,
             reused_callees: vec![],
+            hints_used: false,
         })
     }
 
@@ -1023,6 +1024,17 @@ fn the_unit_controls_have_the_right_kinds() {
             Permission::Mutating,
         ),
         ("rewrite_check", CommandKind::Query, Permission::Safe),
+        ("rewrite_hint_get", CommandKind::Query, Permission::Safe),
+        (
+            "rewrite_hint_set",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        ),
+        (
+            "rewrite_preload_build",
+            CommandKind::Job,
+            Permission::Mutating,
+        ),
     ] {
         let spec = r.get(name).unwrap_or_else(|| panic!("{name}")).spec();
         assert_eq!((spec.kind, spec.permission), (kind, permission), "{name}");
@@ -1081,6 +1093,35 @@ async fn deciding_about_a_unit_is_for_users_and_adding_evidence_is_open_to_agent
         )
         .await
         .expect_err("too many arguments");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+}
+
+#[tokio::test]
+async fn hints_are_checked_before_the_backend_and_agents_may_set_them() {
+    let r = rig(true).await;
+    let agent = CallContext::agent("bot", "run-1", Surface::Test);
+    let e = r
+        .call(
+            &agent,
+            "rewrite_hint_set",
+            json!({"address": "0x10", "hints": {"uses": ["libc::system"]}}),
+        )
+        .await
+        .expect_err("not a std path");
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    let e = r
+        .call(
+            &agent,
+            "rewrite_hint_set",
+            json!({"address": "0x10", "hints": {"notes": "ok"}}),
+        )
+        .await
+        .expect_err("the mock stores no hints");
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    let e = r
+        .call(&agent, "rewrite_preload_build", json!({"dir": "nowhere"}))
+        .await
+        .expect_err("not an export");
     assert_eq!(e.code, ErrorCode::InvalidArgument);
 }
 
