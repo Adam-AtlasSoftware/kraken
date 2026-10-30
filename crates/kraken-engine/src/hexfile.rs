@@ -200,6 +200,10 @@ pub fn parse(data: &[u8], kind: HexKind) -> Result<HexImage, ProtoError> {
                     .first()
                     .copied()
                     .ok_or_else(|| bad(n, "short record"))?;
+                // a non-ASCII type byte would leave `body[1..]` inside a character
+                if !ty.is_ascii() {
+                    return Err(bad(n, "unknown record type"));
+                }
                 let r = bytes_of(&body[1..], n)?;
                 if r.len() < 2 || r.len() != r[0] as usize + 1 {
                     return Err(bad(n, "record length does not match"));
@@ -315,6 +319,13 @@ mod tests {
         assert_eq!(i.entry, Some(0x0800_0001));
         let broken = t.replacen("0102", "0103", 1);
         assert!(parse(broken.as_bytes(), HexKind::Srec).is_err());
+        // a multi-byte character after the 'S' mark is refused, not a panic
+        for hostile in ["S\u{e9}00\n", "S0030000FC\nS\u{e9}00\n", "S\u{1f600}\n"] {
+            assert!(
+                parse(hostile.as_bytes(), HexKind::Srec).is_err(),
+                "{hostile}"
+            );
+        }
     }
 
     #[test]
