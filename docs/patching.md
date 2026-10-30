@@ -242,12 +242,15 @@ address-to-file-offset mapping as `patch_export`, with the same check of the rec
 bytes. It is dangerous and asks every time. The format comes from `format`, or from the file's
 extension. IPS cannot hold an offset past 16 MiB; the writer says so and asks for IPS32, BPS or
 JSON. An offset that spells `EOF` in IPS is written one byte early so the file is not cut short.
+For a PE file the recomputed checksum goes into the patch file as one more change, so applying
+it gives the same file `patch_export` writes (and a BPS file passes its own target checksum).
 
 `patch_import` is for files from other people, so it is strict. It reads at most 16 MiB and
 100,000 records and expands at most 64 MiB of run-length data. Every offset is checked against the
 project's binary with checked arithmetic. A BPS or JSON file whose original does not match the
 binary is refused, as is a patch that would grow the file or change its size, a change in a part
-of the file that is not loaded into memory, an overlap with a patch already staged, and a file
+of the file that is not loaded into memory (except a PE checksum, which is left out because export
+recomputes it), an overlap with a patch already staged, and a file
 with more than 500 separate changes. The file is read whole, laid over the original, and only the
 bytes that really change become patches, so records that overlap or repeat settle to a clean
 set. Nothing is staged unless the whole file is acceptable.

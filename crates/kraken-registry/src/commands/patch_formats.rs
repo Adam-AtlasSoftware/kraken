@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::context::CallContext;
-use crate::patchfile::{OffsetMap, apply_project_patches};
+use crate::patchfile::{OffsetMap, apply_project_patches, pe_checksum_field};
 use crate::patchformats::{self as formats, Files, Format, FormatError, Record, WriteRecord};
 use crate::session::{Session, blocking};
 use crate::views::MutationStatus;
@@ -252,6 +252,22 @@ fn export_diff(
             }
         })
         .collect();
+    // The export recomputes a PE file's checksum; the patch file carries the new value too, or
+    // applying it gives a file that fails its own target checksum (BPS) or a stale one.
+    if let Some(field) = pe_checksum_field(&original)
+        && original[field.clone()] != patched[field.clone()]
+        && !records.iter().any(|r| {
+            (r.offset as usize) < field.end && r.offset as usize + r.original.len() > field.start
+        })
+    {
+        records.push(WriteRecord {
+            address: engine_base.saturating_add(field.start as u64),
+            offset: field.start as u64,
+            original: original[field.clone()].to_vec(),
+            replacement: patched[field].to_vec(),
+            note: "PE checksum, recomputed".into(),
+        });
+    }
     records.sort_by_key(|r| r.offset);
     let name = binary
         .file_name()
@@ -555,6 +571,7 @@ fn plan_import(
     };
     let records = formats::read(format, &data, &image).map_err(format_error)?;
     let runs = formats::normalize(&image, &records).map_err(format_error)?;
+    let runs = without_pe_checksum(&image, runs);
     let map = OffsetMap::new(&image, engine_base)
         .map_err(|e| ProtoError::new(ErrorCode::Unsupported, e.to_string()))?;
     let mut patches = Vec::new();
@@ -583,6 +600,38 @@ fn plan_import(
 }
 
 /// Maps a run of changed bytes to addresses, cutting it at segment ends and patch size.
+/// `runs` without the bytes of a PE file's `CheckSum` field: an export recomputes it and writes
+/// it into the patch file, and it is not loaded memory, so there is nothing to stage for it.
+fn without_pe_checksum(image: &[u8], runs: Vec<Record>) -> Vec<Record> {
+    let Some(field) = pe_checksum_field(image) else {
+        return runs;
+    };
+    let (lo, hi) = (field.start as u64, field.end as u64);
+    let mut out = Vec::with_capacity(runs.len());
+    for r in runs {
+        let end = r.offset + r.bytes.len() as u64;
+        if end <= lo || r.offset >= hi {
+            out.push(r);
+            continue;
+        }
+        let piece = |from: u64, to: u64| Record {
+            offset: from,
+            bytes: r.bytes[(from - r.offset) as usize..(to - r.offset) as usize].to_vec(),
+            original: r
+                .original
+                .as_ref()
+                .map(|o| o[(from - r.offset) as usize..(to - r.offset) as usize].to_vec()),
+        };
+        if r.offset < lo {
+            out.push(piece(r.offset, lo));
+        }
+        if end > hi {
+            out.push(piece(hi, end));
+        }
+    }
+    out
+}
+
 fn split_run(map: &OffsetMap, r: &Record, out: &mut Vec<Piece>) -> Result<(), ProtoError> {
     let mut done = 0usize;
     while done < r.bytes.len() {
@@ -603,4 +652,70 @@ fn split_run(map: &OffsetMap, r: &Record, out: &mut Vec<Piece>) -> Result<(), Pr
         done += len;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::patchformats::normalize;
+
+    const DLL_BASE: u64 = 0x2ca150000;
+
+    #[test]
+    fn a_patched_pe_file_exports_with_its_new_checksum_and_imports_without_it() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/pe/bin/win_dll-x64-O0.dll");
+        let dir = tempfile::tempdir().expect("tmp");
+        let binary = dir.path().join("win_dll-x64-O0.dll");
+        fs::copy(&src, &binary).expect("copy");
+        let image = fs::read(&binary).expect("read");
+        let off = 0x400usize;
+        let patch = Patch {
+            address: DLL_BASE + 0x1000,
+            original: image[off..off + 1].to_vec(),
+            replacement: vec![image[off] ^ 0xff],
+            note: String::new(),
+            group: String::new(),
+            disabled: false,
+            author: kraken_model::Author::user("t"),
+            ts_ms: 0,
+        };
+        let (patched, _) =
+            apply_project_patches(&binary, std::slice::from_ref(&patch), DLL_BASE).expect("apply");
+        let field = pe_checksum_field(&image).expect("pe");
+        assert_ne!(image[field.clone()], patched[field], "the checksum changes");
+
+        for (format, name) in [
+            (Format::Bps, "p.bps"),
+            (Format::Ips, "p.ips"),
+            (Format::Json, "p.json"),
+        ] {
+            let out = dir.path().join(name);
+            let r = export_diff(
+                &binary,
+                &out,
+                std::slice::from_ref(&patch),
+                format,
+                false,
+                DLL_BASE,
+            )
+            .expect("export");
+            assert_eq!(r.patches, 2, "{format:?}: the byte and the checksum");
+            // Reading a BPS file checks its target CRC, so this fails on a stale checksum.
+            let data = fs::read(&out).expect("written");
+            let records = formats::read(format, &data, &image).expect("read back");
+            let runs = normalize(&image, &records).expect("normalize");
+            let mut applied = image.clone();
+            for run in &runs {
+                let o = run.offset as usize;
+                applied[o..o + run.bytes.len()].copy_from_slice(&run.bytes);
+            }
+            assert!(applied == patched, "{format:?} gives the exported file");
+
+            // Importing stages the byte only: the checksum is not loaded memory.
+            let plan = plan_import(&binary, &out, None, DLL_BASE).expect("import");
+            assert_eq!(plan.patches.len(), 1, "{format:?}");
+            assert_eq!(plan.patches[0].address, DLL_BASE + 0x1000);
+        }
+    }
 }

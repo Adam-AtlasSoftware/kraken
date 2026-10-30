@@ -335,6 +335,13 @@ pub fn pe_checksum(image: &[u8]) -> Option<u32> {
     pe_headers(image).map(|h| pe_checksum_of(image, h.checksum_off))
 }
 
+/// File offsets of a PE file's `CheckSum` field, which an export recomputes.
+pub fn pe_checksum_field(image: &[u8]) -> Option<std::ops::Range<usize>> {
+    pe_headers(image)
+        .map(|h| h.checksum_off..h.checksum_off + 4)
+        .filter(|r| r.end <= image.len())
+}
+
 /// What a lint of the patched file found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageFinding {
