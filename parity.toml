@@ -23,8 +23,8 @@ test = "finds_the_functions_ghidra_finds_in_stripped_binaries"
 capability = "names"
 set = "corpus"
 format = "ELF x86-64"
-threshold = 0.87
-status = "partial"
+threshold = 0.99
+status = "parity"
 test = "agrees_with_ghidra_on_the_guarded_binaries"
 
 [[row]]
@@ -55,8 +55,8 @@ test = "cpp_names_and_dwarf_signatures_agree_with_ghidra"
 capability = "memory"
 set = "corpus"
 format = "ELF x86-64"
-threshold = 0.69
-status = "partial"
+threshold = 0.99
+status = "parity"
 test = "parity_report"
 
 [[row]]
@@ -187,8 +187,8 @@ test = "parity_report"
 capability = "memory"
 set = "corpus/elf32"
 format = "ELF x86"
-threshold = 0.70
-status = "partial"
+threshold = 0.99
+status = "parity"
 test = "parity_report"
 
 [[row]]

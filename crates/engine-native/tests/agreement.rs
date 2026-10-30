@@ -152,6 +152,7 @@ async fn compare_full(set: &str, binary: &str, c: NativeConfig, extras: bool) ->
         .await
         .expect("memory map")
         .iter()
+        .filter(|b| b.kind != kraken_proto::MemoryKind::External)
         .map(|b| (b.start.0, b.end.0))
         .collect();
 

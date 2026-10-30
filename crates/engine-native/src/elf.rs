@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
 use object::elf::{
-    PF_W, PF_X, ProgramFlags, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE,
-    R_ARM_IRELATIVE, R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC,
-    SHF_EXECINSTR, SHF_WRITE, SectionFlags as ElfSectionFlags,
+    PF_W, ProgramFlags, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE, R_ARM_IRELATIVE,
+    R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE,
+    SectionFlags as ElfSectionFlags,
 };
 use object::read::{Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable};
 use object::{
@@ -254,6 +254,82 @@ impl Loaded {
     }
 }
 
+const PT_LOAD: u32 = 1;
+const PT_GNU_RELRO: u32 = 0x6474_e552;
+
+struct ProgramHeader {
+    kind: u32,
+    flags: u32,
+    vaddr: u64,
+    memsz: u64,
+}
+
+/// The program header table of a little-endian ELF file, in file order (the numbering Ghidra's
+/// `segment_<n>.<m>` blocks use).
+fn program_headers(data: &[u8]) -> Vec<ProgramHeader> {
+    let word = |at: usize, n: usize| -> Option<u64> {
+        let b = data.get(at..at.checked_add(n)?)?;
+        Some(b.iter().rev().fold(0u64, |a, x| a << 8 | u64::from(*x)))
+    };
+    let is64 = data.get(4) == Some(&2);
+    let (phoff, entsize, num) = if is64 {
+        (word(0x20, 8), word(0x36, 2), word(0x38, 2))
+    } else {
+        (word(0x1c, 4), word(0x2a, 2), word(0x2c, 2))
+    };
+    let (Some(phoff), Some(entsize), Some(num)) = (phoff, entsize, num) else {
+        return Vec::new();
+    };
+    (0..num)
+        .map_while(|i| {
+            let at = (phoff + i * entsize) as usize;
+            Some(if is64 {
+                ProgramHeader {
+                    kind: word(at, 4)? as u32,
+                    flags: word(at + 4, 4)? as u32,
+                    vaddr: word(at + 16, 8)?,
+                    memsz: word(at + 40, 8)?,
+                }
+            } else {
+                ProgramHeader {
+                    kind: word(at, 4)? as u32,
+                    vaddr: word(at + 8, 4)?,
+                    memsz: word(at + 20, 4)?,
+                    flags: word(at + 24, 4)? as u32,
+                }
+            })
+        })
+        .collect()
+}
+
+/// Splits a writable segment so the part inside `[lo, hi)` (the RELRO range) is read-only.
+fn split_relro(seg: Segment, lo: u64, hi: u64) -> Vec<Segment> {
+    let end = seg.start + seg.mem_size;
+    let (cut_lo, cut_hi) = (lo.max(seg.start), hi.min(end));
+    if cut_lo >= cut_hi {
+        return vec![seg];
+    }
+    let piece = |from: u64, to: u64, readonly: bool| Segment {
+        start: from,
+        data: seg
+            .data
+            .get((from - seg.start) as usize..(to - seg.start).min(seg.data.len() as u64) as usize)
+            .unwrap_or(&[])
+            .to_vec(),
+        mem_size: to - from,
+        readonly,
+    };
+    let mut out = Vec::new();
+    if seg.start < cut_lo {
+        out.push(piece(seg.start, cut_lo, false));
+    }
+    out.push(piece(cut_lo, cut_hi, true));
+    if cut_hi < end {
+        out.push(piece(cut_hi, end, false));
+    }
+    out
+}
+
 fn bad(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
 }
@@ -356,6 +432,11 @@ pub fn load_with(
     let bias = base.wrapping_sub(lowest);
     let at = |a: u64| a.wrapping_add(bias);
 
+    let phdrs = program_headers(data);
+    let relro = phdrs
+        .iter()
+        .find(|h| h.kind == PT_GNU_RELRO && h.memsz > 0)
+        .map(|h| (at(h.vaddr), at(h.vaddr + h.memsz)));
     let mut segments = Vec::new();
     for seg in file.segments() {
         if seg.size() == 0 {
@@ -366,12 +447,16 @@ pub fn load_with(
             _ => ProgramFlags(0),
         };
         let bytes = seg.data().map_err(|e| bad(format!("bad segment: {e}")))?;
-        segments.push(Segment {
+        let whole = Segment {
             start: at(seg.address()),
             data: bytes.to_vec(),
             mem_size: seg.size().max(bytes.len() as u64),
             readonly: !flags.contains(PF_W),
-        });
+        };
+        match relro {
+            Some((lo, hi)) if !whole.readonly => segments.extend(split_relro(whole, lo, hi)),
+            _ => segments.push(whole),
+        }
     }
     segments.sort_by_key(|s| s.start);
     let mut image = Image {
@@ -386,10 +471,17 @@ pub fn load_with(
             SectionFlags::Elf { sh_flags, .. } => sh_flags,
             _ => ElfSectionFlags(0),
         };
-        if !sh_flags.contains(SHF_ALLOC) || sec.size() == 0 {
+        // Ghidra gives .tbss no block: its range overlaps the sections that follow it
+        if !sh_flags.contains(SHF_ALLOC)
+            || sec.size() == 0
+            || sec.kind() == SectionKind::UninitializedTls
+        {
             continue;
         }
         let name = sec.name().unwrap_or("").to_string();
+        // the loader makes the RELRO range read-only once it has relocated it
+        let in_relro =
+            relro.is_some_and(|(lo, hi)| lo <= at(sec.address()) && at(sec.address()) < hi);
         blocks.push(MemoryBlock {
             name: if name.is_empty() {
                 format!("section_{:x}", sec.address())
@@ -401,25 +493,37 @@ pub fn load_with(
             end: at(sec.address() + sec.size()).into(),
             perms: MemoryBlock::perms_string(
                 true,
-                sh_flags.contains(SHF_WRITE),
+                sh_flags.contains(SHF_WRITE) && !in_relro,
                 sh_flags.contains(SHF_EXECINSTR),
             ),
             initialized: sec.kind() != SectionKind::UninitializedData,
             kind: MemoryKind::Default,
         });
     }
-    if blocks.is_empty() {
-        for (i, seg) in file.segments().filter(|s| s.size() > 0).enumerate() {
-            let flags = match seg.flags() {
-                SegmentFlags::Elf { p_flags, .. } => p_flags,
-                _ => ProgramFlags(0),
-            };
+    // Ghidra fills the part of a loaded segment that lies before its first section
+    for (i, h) in phdrs.iter().enumerate() {
+        if h.kind != PT_LOAD || h.memsz == 0 {
+            continue;
+        }
+        let (lo, hi) = (at(h.vaddr), at(h.vaddr + h.memsz));
+        let first = blocks
+            .iter()
+            .map(|b| b.start.0)
+            .filter(|s| (lo..hi).contains(s))
+            .min()
+            .unwrap_or(hi);
+        if first > lo {
             blocks.push(MemoryBlock {
-                name: format!("segment_{i}"),
+                name: format!("segment_{i}.1"),
                 space: "ram".into(),
-                start: at(seg.address()).into(),
-                end: at(seg.address() + seg.size()).into(),
-                perms: MemoryBlock::perms_string(true, flags.contains(PF_W), flags.contains(PF_X)),
+                start: lo.into(),
+                end: first.into(),
+                perms: MemoryBlock::perms_string(
+                    true,
+                    ProgramFlags(h.flags).contains(PF_W),
+                    // headers are never code, whatever the segment says
+                    false,
+                ),
                 initialized: true,
                 kind: MemoryKind::Default,
             });
@@ -561,9 +665,13 @@ pub fn load_with(
             if v != 0 && v != all_ones {
                 let v = code_at(at(v), crate::arm::rank::KNOWN);
                 init_pointers.push(v);
-                default_names
-                    .entry(v)
-                    .or_insert_with(|| format!("{prefix}{i}"));
+                // Ghidra names the targets only of pointers a relocation produced, which a
+                // fixed-address executable has none of
+                if file.kind() != ObjectKind::Executable {
+                    default_names
+                        .entry(v)
+                        .or_insert_with(|| format!("{prefix}{i}"));
+                }
             }
         }
     }
@@ -831,6 +939,21 @@ pub fn load_with(
         .chain(file.dynamic_symbols())
         .find(|s| s.name() == Ok("__global_pointer$"))
         .map(|s| at(s.address()));
+    // Ghidra stands the imported symbols up as one pointer-sized slot each in an EXTERNAL block on
+    // the next page after the image
+    if !imports.is_empty() {
+        let top = blocks.iter().map(|b| b.end.0).max().unwrap_or(0);
+        let start = top.div_ceil(0x1000) * 0x1000;
+        blocks.push(MemoryBlock {
+            name: "EXTERNAL".into(),
+            space: "ram".into(),
+            start: start.into(),
+            end: (start + (imports.len() * ptr) as u64).into(),
+            perms: "rw-".into(),
+            initialized: false,
+            kind: MemoryKind::External,
+        });
+    }
     Ok(Loaded {
         global_pointer,
         format: "elf",
@@ -898,6 +1021,7 @@ fn plt_entries(
         _ => return BTreeMap::new(),
     };
     let arm = file.architecture() == Architecture::Arm;
+    let ifuncs = ifunc_names(file, bias);
     let mut slots: BTreeMap<u64, Option<String>> = BTreeMap::new();
     let dynsyms = file.dynamic_symbol_table();
     for (off, rel) in file.dynamic_relocations().into_iter().flatten() {
@@ -949,15 +1073,40 @@ fn plt_entries(
             .wrapping_add(bias);
             // a Thumb resolver has the low bit set
             let resolver = if arm { resolver & !1 } else { resolver };
-            slots
-                .entry(word(0))
-                .or_insert_with(|| functions.get(&resolver).cloned());
+            slots.entry(word(0)).or_insert_with(|| {
+                ifuncs
+                    .get(&resolver)
+                    .or_else(|| functions.get(&resolver))
+                    .cloned()
+                    .or_else(|| Some(format!("thunk_FUN_{resolver:08x}")))
+            });
         }
     }
     match file.architecture() {
         Architecture::X86_64 | Architecture::I386 => x86_plt(file, data, bias, &slots, ptr),
         _ => risc_plt(file, data, bias, &slots, ptr),
     }
+}
+
+/// The name Ghidra gives the IRELATIVE stub of each resolver: of the IFUNC symbols at an address
+/// the last one in symbol-table order, preferring those with the fewest leading underscores.
+fn ifunc_names(file: &object::File<'_>, bias: u64) -> BTreeMap<u64, String> {
+    let mut best: BTreeMap<u64, (usize, String)> = BTreeMap::new();
+    for sym in file.symbols() {
+        let object::SymbolFlags::Elf { st_info, .. } = sym.flags() else {
+            continue;
+        };
+        let Ok(name) = sym.name() else { continue };
+        if st_info.st_type() != object::elf::STT_GNU_IFUNC || name.is_empty() {
+            continue;
+        }
+        let rank = name.len() - name.trim_start_matches('_').len();
+        let at = sym.address().wrapping_add(bias);
+        if best.get(&at).is_none_or(|(r, _)| rank <= *r) {
+            best.insert(at, (rank, name.to_string()));
+        }
+    }
+    best.into_iter().map(|(a, (_, n))| (a, n)).collect()
 }
 
 /// The section's bytes as in the file (none for `SHT_NOBITS`).
@@ -1124,6 +1273,57 @@ mod tests {
             .join("../../corpus/bin")
             .join(name);
         std::fs::read(p).expect("corpus binary")
+    }
+
+    fn block<'a>(l: &'a Loaded, name: &str) -> &'a MemoryBlock {
+        l.blocks.iter().find(|b| b.name == name).expect(name)
+    }
+
+    #[test]
+    fn memory_blocks_match_ghidra() {
+        let l = load(&corpus("stripped_calc-O0-stripped"), None).expect("load");
+        let seg = block(&l, "segment_2.1");
+        assert_eq!((seg.start.0, seg.end.0), (0x100000, 0x100318));
+        assert_eq!(seg.perms, "r--");
+        // the RELRO range is read-only, including the GOT under BIND_NOW
+        for n in [
+            ".init_array",
+            ".data.rel.ro",
+            ".dynamic",
+            ".got",
+            ".got.plt",
+        ] {
+            assert_eq!(block(&l, n).perms, "r--", "{n}");
+        }
+        assert_eq!(block(&l, ".data").perms, "rw-");
+        let ext = block(&l, "EXTERNAL");
+        assert_eq!((ext.start.0, ext.end.0), (0x105000, 0x105038));
+        assert_eq!(ext.kind, MemoryKind::External);
+        let got = l
+            .image
+            .segments
+            .iter()
+            .find(|s| s.start <= 0x103fb8 && 0x103fb8 < s.start + s.mem_size);
+        assert!(got.is_some_and(|s| s.readonly));
+        let data = l
+            .image
+            .segments
+            .iter()
+            .find(|s| s.start <= 0x104010 && 0x104010 < s.start + s.mem_size);
+        assert!(data.is_some_and(|s| !s.readonly));
+    }
+
+    #[test]
+    fn static_ifunc_stubs_take_the_ifunc_symbol_name() {
+        let l = load(&corpus("static_strops-O0"), None).expect("load");
+        assert_eq!(l.plt.get(&0x401018).map(String::as_str), Some("strcpy"));
+        assert_eq!(l.plt.get(&0x401040).map(String::as_str), Some("rindex"));
+        assert!(l.blocks.iter().all(|b| b.name != ".tbss"));
+        let s = load(&corpus("static_strops-O0-stripped"), None).expect("load");
+        assert_eq!(
+            s.plt.get(&0x401018).map(String::as_str),
+            Some("thunk_FUN_004174b0")
+        );
     }
 
     #[test]
