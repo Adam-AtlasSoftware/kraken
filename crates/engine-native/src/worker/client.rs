@@ -50,7 +50,10 @@ impl Live {
     }
 
     fn usable(&self) -> bool {
-        !self.killed.load(Ordering::SeqCst) && !self.client.is_closed()
+        // the process can be seen to exit before the channel is seen to close
+        !self.killed.load(Ordering::SeqCst)
+            && !self.client.is_closed()
+            && self.sandbox.exit_watch().borrow().is_none()
     }
 }
 
