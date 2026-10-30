@@ -273,13 +273,13 @@ fn sysroot(f: &Facts) -> Vec<Suggestion> {
         "Install an emulator sysroot",
         format!(
             "This program is dynamically linked for {} and the emulator needs that \
-             architecture's loader and libraries to run it. Run `cargo xtask emu-sysroots` \
-             (or set KRAKEN_EMU_SYSROOTS).",
+             architecture's loader and libraries to run it. Setup downloads them (about \
+             20 MB from deb.debian.org); `kraken setup --sysroots` does the same.",
             f.arch
         ),
-        None,
-        Value::Null,
-        false,
+        Some("setup_sysroots"),
+        json!({}),
+        true,
     )]
 }
 

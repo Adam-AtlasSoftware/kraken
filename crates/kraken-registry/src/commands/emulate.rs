@@ -468,9 +468,11 @@ fn no_sysroot_note(arch: Arch) -> Option<&'static str> {
     )
 }
 
-/// A dynamically linked program whose architecture has no sysroot to run in.
+/// A dynamically linked program whose architecture has no sysroot to run in, and one that
+/// `setup_sysroots` can install (there is none for riscv32).
 pub(super) fn needs_sysroot(path: &Path) -> bool {
-    super::guide::dynamic_elf_arch(path).is_some_and(|a| sysroot_for(a).is_none())
+    super::guide::dynamic_elf_arch(path)
+        .is_some_and(|a| a != Arch::Riscv32 && sysroot_for(a).is_none())
 }
 
 /// Whether this computer has a loader for programs of `arch`.
