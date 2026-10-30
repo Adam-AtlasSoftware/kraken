@@ -365,11 +365,11 @@ impl ImportWizard {
         }
     }
 
-    /// The debug file the project will get, when the person left "use it" on: separate DWARF
-    /// only (a PDB is read by Ghidra from beside the program).
+    /// The debug file the project will get, when the person left "use it" on: a separate DWARF
+    /// file or a PDB, both read by the native engine.
     pub fn debug_file(&self) -> Option<String> {
         let out = self.debug.out.as_deref()?;
-        if !self.debug_applies() || !self.debug.use_file || out.refs.pdb.is_some() {
+        if !self.debug_applies() || !self.debug.use_file {
             return None;
         }
         out.best.as_ref().map(|b| b.0.clone())
@@ -1013,7 +1013,7 @@ fn debug_step(ui: &mut Ui, w: &mut ImportWizard) {
         ui.add_space(4.0);
         ui.label(
             RichText::new(
-                "A PDB is read by the Ghidra engine when it sits next to the program as <name>.pdb. Put the matching PDB there; the native engine does not read PDB files yet.",
+                "The native engine reads the matching PDB from wherever it is. The Ghidra engine reads it only when it sits next to the program as <name>.pdb.",
             )
             .size(12.0)
             .color(p.text_dim),
@@ -1027,11 +1027,9 @@ fn debug_step(ui: &mut Ui, w: &mut ImportWizard) {
             ui.add_space(3.0);
         }
     }
-    if let Some(best) = &out.best
-        && out.refs.pdb.is_none()
-    {
-        // A separate DWARF file is read by the native engine only: switch to it when it is
-        // installed, and say so.
+    if let Some(best) = &out.best {
+        // A separate DWARF file or PDB is attached through the native engine only: switch to it
+        // when it is installed, and say so.
         if w.debug.use_file
             && let Some(d) = w.dialog.as_mut()
             && d.engine == EngineChoice::Ghidra
@@ -1051,7 +1049,7 @@ fn debug_step(ui: &mut Ui, w: &mut ImportWizard) {
         if w.debug.switched && w.debug.use_file {
             ui.label(
                 RichText::new(
-                    "The engine was switched to Native, which reads separate DWARF. You can change it on the Engine step.",
+                    "The engine was switched to Native, which reads separate DWARF and PDB files. You can change it on the Engine step.",
                 )
                 .size(12.0)
                 .color(p.text_dim),
@@ -1068,7 +1066,7 @@ fn debug_step(ui: &mut Ui, w: &mut ImportWizard) {
         if engine_ghidra && w.debug.use_file {
             ui.label(
                 RichText::new(format!(
-                    "The {} engine is chosen; it does not read separate DWARF.",
+                    "The {} engine is chosen; it does not read a separate debug file (a PDB only from beside the program).",
                     engine_label(EngineChoice::Ghidra)
                 ))
                 .size(12.0)
@@ -1215,7 +1213,7 @@ fn symbol_search(ui: &mut Ui, w: &mut ImportWizard, out: &DebugInfoProbeOut) {
         {
             ui.label(
                 RichText::new(format!(
-                    "The PDB is at {}. The Ghidra engine reads a PDB that sits next to the program as <name>.pdb: copy it there.",
+                    "The PDB is at {}. The native engine reads it from there; the Ghidra engine reads a PDB only beside the program as <name>.pdb.",
                     f.0
                 ))
                 .size(12.0)
