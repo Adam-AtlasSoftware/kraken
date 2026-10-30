@@ -602,6 +602,14 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
             None => break,
         }
     }
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for t in theirs.difference(&mine) {
+            eprintln!("  {binary} MISSED type {t}");
+        }
+        for t in mine.difference(&theirs) {
+            eprintln!("  {binary} EXTRA type {t}");
+        }
+    }
     r.types.add(&theirs, &mine);
 
     // memory blocks (not the debug-section overlays) by extent and permissions

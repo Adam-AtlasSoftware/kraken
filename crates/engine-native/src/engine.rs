@@ -1189,6 +1189,7 @@ fn build_program(
     for d in base {
         types.define(d, &mut session, &named)?;
     }
+    types.add_markup(crate::markup::definitions(&data));
     let mut noreturn: BTreeSet<u64> = found
         .functions
         .values()
@@ -1274,6 +1275,7 @@ fn build_program(
     }
     // listed signatures show the type names as Ghidra does
     let display = &loaded.debug.display;
+    types.set_display(display.clone());
     let by_display: BTreeMap<&str, &str> = display
         .iter()
         .map(|(c, g)| (g.as_str(), c.as_str()))

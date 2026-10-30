@@ -240,8 +240,7 @@ impl TypeStore for InProcessEngine {
         check(cancel)?;
         let p = self.program()?;
         let t = p.types();
-        t.get(name)
-            .cloned()
+        t.get_shown(name)
             .ok_or_else(|| ProtoError::new(ErrorCode::NotFound, format!("no type named {name}")))
     }
 

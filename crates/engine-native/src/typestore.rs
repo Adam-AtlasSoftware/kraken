@@ -63,6 +63,21 @@ pub struct TypeModel {
     pending: BTreeSet<String>,
     /// Typedefs of named types: typedef name -> the name the decompiler knows the type by.
     aliases: BTreeMap<String, String>,
+    /// Canonical (C identifier) name -> the name Ghidra shows, for DWARF template names.
+    display: BTreeMap<String, String>,
+    /// Types of the loader's markup (ELF and PE headers): listed, never given to the decompiler.
+    markup: BTreeMap<String, TypeDef>,
+}
+
+/// `def` under the name `name`.
+fn named_as(mut def: TypeDef, name: &str) -> TypeDef {
+    match &mut def {
+        TypeDef::Struct(c) | TypeDef::Union(c) => c.name = name.to_string(),
+        TypeDef::Typedef(t) => t.name = name.to_string(),
+        TypeDef::Enum(e) => e.name = name.to_string(),
+        TypeDef::Function(p) => p.name = Some(name.to_string()),
+    }
+    def
 }
 
 /// `ty` with every named type replaced through `rename`.
@@ -126,22 +141,84 @@ impl TypeModel {
         self.model
     }
 
-    /// The definition named `name`.
+    /// Keeps the names Ghidra shows for DWARF types whose C identifier differs.
+    pub fn set_display(&mut self, display: BTreeMap<String, String>) {
+        self.display = display;
+    }
+
+    /// Adds the loader's markup types to the listing. A definition of the same name from the
+    /// program's own debug information wins.
+    pub fn add_markup(&mut self, defs: Vec<TypeDef>) {
+        for d in defs {
+            if let Some(n) = type_def_name(&d) {
+                self.markup.entry(n.to_string()).or_insert(d);
+            }
+        }
+    }
+
+    /// The canonical name behind a name as shown.
+    fn canonical<'a>(&'a self, name: &'a str) -> &'a str {
+        self.display
+            .iter()
+            .find(|(_, shown)| shown.as_str() == name)
+            .map_or(name, |(c, _)| c.as_str())
+    }
+
+    /// `def` with its own name and the names it refers to as Ghidra shows them.
+    fn shown(&self, def: &TypeDef) -> TypeDef {
+        if self.display.is_empty() {
+            return def.clone();
+        }
+        let rename = |n: &str| {
+            self.display
+                .get(n)
+                .cloned()
+                .unwrap_or_else(|| n.to_string())
+        };
+        let out = renamed_def(def, &rename);
+        match type_def_name(def) {
+            Some(n) if self.display.contains_key(n) => named_as(out, &rename(n)),
+            _ => out,
+        }
+    }
+
+    /// The definition named `name`, by its C identifier.
     pub fn get(&self, name: &str) -> Option<&TypeDef> {
         self.defs.get(name)
+    }
+
+    /// The definition named `name` as shown or as the C identifier, in the names Ghidra shows.
+    pub fn get_shown(&self, name: &str) -> Option<TypeDef> {
+        let canonical = self.canonical(name);
+        match self.defs.get(canonical) {
+            Some(d) => Some(self.shown(d)),
+            None => self.markup.get(name).cloned(),
+        }
     }
 
     /// Forgets the definition named `name`; the decompiler keeps what it already accepted.
     /// False when there was none.
     pub fn remove(&mut self, name: &str) -> bool {
+        let name = self.canonical(name).to_string();
+        let name = name.as_str();
         self.pending.remove(name);
         self.aliases.remove(name);
-        self.defs.remove(name).is_some()
+        let marked = self.markup.remove(name).is_some();
+        self.defs.remove(name).is_some() || marked
     }
 
     /// Definitions ordered by name.
     pub fn all(&self) -> Vec<TypeDef> {
-        self.defs.values().cloned().collect()
+        let mut out: BTreeMap<String, TypeDef> = BTreeMap::new();
+        for d in self.defs.values().map(|d| self.shown(d)) {
+            if let Some(n) = type_def_name(&d) {
+                out.insert(n.to_string(), d);
+            }
+        }
+        for (n, d) in &self.markup {
+            out.entry(n.clone()).or_insert_with(|| d.clone());
+        }
+        out.into_values().collect()
     }
 
     /// Whether the decompiler knows the type named `name` (a core type or an accepted

@@ -37,6 +37,7 @@ mod engine;
 mod jumpcache;
 pub mod libc;
 pub mod listing;
+pub mod markup;
 mod mutate;
 mod native;
 pub mod objfile;

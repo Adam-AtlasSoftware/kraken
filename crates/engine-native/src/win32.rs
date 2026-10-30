@@ -165,6 +165,13 @@ pub const PROTOTYPES: &[&str] = &[
     "void _lock_file(FILE *_File)",
     "void _unlock_file(FILE *_File)",
     "void _fpreset(void)",
+    // the mingw start-up code (`pseudo-reloc.c`, `crt_handler.c`, `tlssup.c`), as Ghidra's
+    // function identification names it; x86-64 drops one underscore
+    "BOOL __ValidateImageBase(PBYTE pImageBase)",
+    "PIMAGE_SECTION_HEADER __FindPESection(PBYTE pImageBase, DWORD_PTR rva)",
+    "PIMAGE_SECTION_HEADER _FindPESection(PBYTE pImageBase, DWORD_PTR rva)",
+    "BOOL __IsNonwritableInCurrentImage(PBYTE pTarget)",
+    "int __matherr(_exception *_Except)",
 ];
 
 /// The parameter names of the Microsoft C runtime headers for C library functions, which the
@@ -290,7 +297,62 @@ pub fn base_definitions(model: DataModel) -> Vec<TypeDef> {
         )))
     };
     let void = || prim(Void, 0, false);
+    // the mingw start-up code's structures, defined before the typedefs that point at them
+    let field = |name: &str, offset: u64, ty: TypeRef| kraken_proto::Field {
+        name: name.into(),
+        offset,
+        ty,
+        bitfield: None,
+    };
+    let dword = || named("DWORD");
+    // Ghidra numbers its anonymous unions; these are the ones of the mingw section header
+    let misc = if ptr == 8 { "_union_238" } else { "_union_226" };
     let mut defs = vec![
+        TypeDef::Union(Composite {
+            name: misc.into(),
+            size: 4,
+            align: 4,
+            fields: vec![
+                field("PhysicalAddress", 0, dword()),
+                field("VirtualSize", 0, dword()),
+            ],
+        }),
+        TypeDef::Struct(Composite {
+            name: "_IMAGE_SECTION_HEADER".into(),
+            size: 40,
+            align: 4,
+            fields: vec![
+                field(
+                    "Name",
+                    0,
+                    TypeRef::Array {
+                        element: Box::new(named("BYTE")),
+                        count: 8,
+                    },
+                ),
+                field("Misc", 8, named(misc)),
+                field("VirtualAddress", 12, dword()),
+                field("SizeOfRawData", 16, dword()),
+                field("PointerToRawData", 20, dword()),
+                field("PointerToRelocations", 24, dword()),
+                field("PointerToLinenumbers", 28, dword()),
+                field("NumberOfRelocations", 32, named("WORD")),
+                field("NumberOfLinenumbers", 34, named("WORD")),
+                field("Characteristics", 36, dword()),
+            ],
+        }),
+        TypeDef::Struct(Composite {
+            name: "_exception".into(),
+            size: if ptr == 8 { 40 } else { 32 },
+            align: 8,
+            fields: vec![
+                field("type", 0, prim(Int, 4, true)),
+                field("name", u64::from(ptr), to(prim(Char, 1, true))),
+                field("arg1", 8 + u64::from(ptr), prim(Float, 8, true)),
+                field("arg2", 16 + u64::from(ptr), prim(Float, 8, true)),
+                field("retval", 24 + u64::from(ptr), prim(Float, 8, true)),
+            ],
+        }),
         td("BYTE", prim(Int, 1, false)),
         td("WORD", prim(Int, 2, false)),
         td("DWORD", prim(Int, 4, false)),
@@ -358,6 +420,12 @@ pub fn base_definitions(model: DataModel) -> Vec<TypeDef> {
     ] {
         defs.push(td(alias, to(named(target))));
     }
+    defs.push(td("CHAR", prim(Char, 1, true)));
+    defs.push(td("PBYTE", to(named("BYTE"))));
+    defs.push(td(
+        "PIMAGE_SECTION_HEADER",
+        to(named("_IMAGE_SECTION_HEADER")),
+    ));
     defs
 }
 

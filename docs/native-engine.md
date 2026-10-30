@@ -156,6 +156,17 @@ engine imports its structs, unions, enums and typedefs into the project's types 
 function its declared name and prototype, so decompiled C reads
 `int cmp_id(record *a,record *b) { return a->id - b->id; }` without any typing on your part.
 
+C++ template types are listed with the names Ghidra gives them (spaces become underscores:
+`unique_ptr<Circle,_std::default_delete<Circle>_>`).
+
+The loader's header markup is listed in the types as Ghidra lists it, only when the file has the
+sections it describes: for x86 and x86-64 ELF files `Elf64_Ehdr` / `Elf32_Ehdr`, `Phdr`, `Shdr`,
+`Rela` or `Rel`, `Sym`, `Dyn` with `Elf64_DynTag`, `Elf_ProgramHeaderType`,
+`Elf_SectionHeaderType`, `NoteAbiTag`, `NoteGnuProperty_4`, `eh_frame_hdr` and `fde_table_entry`;
+for PE `IMAGE_DOS_HEADER`, `IMAGE_SECTION_HEADER` and `SectionFlags`. They are for browsing; the
+decompiler does not use them. Other architectures do not have them yet (Ghidra gives their tag
+and type names a processor suffix).
+
 Rust names (both the legacy `_ZN...17h<hash>E` and the v0 `_R...` mangling) are demangled too:
 `core::ptr::drop_in_place<alloc::string::String>` is shown as `drop_in_place`, and the mangled
 name is kept the same way.
