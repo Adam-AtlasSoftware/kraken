@@ -146,7 +146,7 @@ impl Command for Rebuild {
     }
 }
 
-async fn run_rebuild(
+pub(crate) async fn run_rebuild(
     project: Arc<Project>,
     factory: Arc<dyn EngineFactory>,
     reporter: JobReporter,

@@ -32,6 +32,7 @@ mod tokens;
 pub mod views;
 mod vm;
 mod wire;
+pub mod wizard;
 
 #[cfg(feature = "daemon")]
 pub mod daemon;

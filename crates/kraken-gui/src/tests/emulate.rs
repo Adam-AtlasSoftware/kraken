@@ -233,6 +233,8 @@ fn the_call_dialog_opens_from_the_menu_and_a_failed_call_says_why() {
         assert!(std::time::Instant::now() < deadline, "no answer");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    // the error line grows the dialog: let the layout settle before aiming at Cancel
+    k.h.run_steps(4);
     k.h.get_by_label("Cancel").click();
     k.h.run_steps(3);
     assert!(

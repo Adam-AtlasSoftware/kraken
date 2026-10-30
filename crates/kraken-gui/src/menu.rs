@@ -178,6 +178,7 @@ fn tab_item(ui: &mut Ui, tab: Tab, label: &str, env: &MenuEnv<'_>, out: &mut Vec
 
 fn file_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     item(ui, AppAction::NewProject, env, out);
+    item(ui, AppAction::ImportProgram, env, out);
     item(ui, AppAction::OpenProject, env, out);
     // The default submenu arrow is not in the bundled fonts.
     egui::containers::menu::SubMenuButton::from_button(

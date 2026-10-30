@@ -17,6 +17,7 @@ Open and import programs and projects, and settings.
 | Item | What it does | Shortcut |
 |---|---|---|
 | Open program... | Import an executable or library into a new project | `Ctrl+O` |
+| Import program... | Import a program step by step: what it is, which engine, and its debug information |  |
 | Open project... | Open a KRAKEN project folder | `Ctrl+Shift+O` |
 | Open recent | Projects you opened before. |  |
 | Clear recent projects | Empty the list of recently opened projects |  |

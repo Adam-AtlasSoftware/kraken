@@ -121,6 +121,7 @@ Everything above also works in the window. Start it with `kraken-gui`.
 ![The welcome screen with the menu bar, the demo, the import box and the project box](images/tutorial/welcome.png)
 
 1. **Open a program.** Choose **File > Open program** (`Ctrl+O`), type or browse to a program, or drop an executable or library on the window. KRAKEN looks at the file first. The import dialog shows what it found (the format, the processor and a recommended engine) and says why when something is not possible. Press **Import**. No program at hand? Press **Open demo project**.
+   For a guided import, choose **File > Import program...**: a wizard walks through the file, what it is (format, platform, which emulator could run it), the engine, the loader options (only for a raw or Intel HEX file), the program's debug information, the project folder and a summary with the same commands for the command line. Back and Next move between steps (`Alt+Left`, `Alt+Right`), Next says why it is off when it is, and `Esc` cancels. The [debug-information page](debug-info.md) explains the fifth step.
 2. **Wait for the analysis.** The status bar shows the stage, the step the engine is on (with Ghidra, the analyzer running and its own count, such as `GCC Exception Handlers  8,818 of 10,253`), how long it has run and how busy the engine is (`engine busy 100% CPU`). Hover over the bar for the list of stages. Some steps of a large C++ program run for minutes; if the engine uses no processor time and reports nothing for a minute, the status bar says `no engine activity for …`, and the run may be stuck. You can read while it runs. **Analysis > Cancel analysis** stops it.
 3. **Find your way.** **Navigate > Go to main** opens the program's `main`. Press `G` to go to any address or name, and `Ctrl+Shift+F` to search names, strings, bytes and instructions.
 4. **Read and rename.** The Decompiler shows the function as C-like code. Click a name, press `N` and type a better one. Right-click for the rest: change type, comment, show references, bookmark, ask the assistant. `Ctrl+Z` undoes.
@@ -176,6 +177,7 @@ The [full comparison](native-engine.md#native-or-ghidra) has the details.
 
 ## Next steps
 
+- [Debug information](debug-info.md): separate `.debug` and PDB files, and how KRAKEN checks that they match.
 - [The GUI reference](gui.md) lists every menu, panel and shortcut.
 - [Concepts](concepts.md) explains the words used above.
 - [Connect an AI agent](mcp.md) to do the naming for you.

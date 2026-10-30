@@ -25,6 +25,10 @@ pub enum Picked {
     Project(String),
     /// A folder to save a new project in.
     Location(String),
+    /// A debug file for the program being imported.
+    DebugFile(String),
+    /// A folder that may hold the debug file.
+    DebugFolder(String),
 }
 
 /// File dialogs run off the UI thread; their answers arrive here.
@@ -102,6 +106,24 @@ impl Picker {
         self.spawn(rt, ctx, d, true, Picked::Location);
     }
 
+    /// Asks for the debug file (`.debug`, `.pdb`) of a program.
+    pub fn debug_file(&self, rt: &Handle, ctx: &egui::Context, start: Option<PathBuf>) {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Choose the debug file of the program");
+        if let Some(s) = start.filter(|s| s.is_dir()) {
+            d = d.set_directory(s);
+        }
+        self.spawn(rt, ctx, d, false, Picked::DebugFile);
+    }
+
+    /// Asks for a folder that may hold the debug file.
+    pub fn debug_folder(&self, rt: &Handle, ctx: &egui::Context, start: Option<PathBuf>) {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Choose the folder with the debug file");
+        if let Some(s) = start.filter(|s| s.is_dir()) {
+            d = d.set_directory(s);
+        }
+        self.spawn(rt, ctx, d, true, Picked::DebugFolder);
+    }
+
     /// Answers that arrived since the last call.
     pub fn drain(&self) -> Vec<Picked> {
         self.rx.try_iter().collect()
@@ -131,6 +153,7 @@ pub enum ProbeState {
 
 /// What the dialog asks the app to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ImportAction {
     /// Create the project.
     Import(Choice),
@@ -462,6 +485,7 @@ impl ImportDialog {
             offset: s.offset.map_or_else(String::new, |o| format!("{:#x}", o.0)),
             length: String::new(),
             entry: s.entry.map_or_else(String::new, |e| format!("{:#x}", e.0)),
+            records: false,
         };
     }
 
@@ -520,21 +544,24 @@ impl ImportDialog {
             .into_owned()
     }
 
+    /// Why the file cannot be imported at all (still being read, unreadable, no loader).
+    pub fn probe_blocker(&self) -> Option<String> {
+        match &self.probe {
+            ProbeState::Probing(_) => Some("Wait until KRAKEN has looked at the file.".into()),
+            ProbeState::Failed(e) => Some(format!("The file could not be read: {e}")),
+            ProbeState::Ready(p) if !p.supported && p.format != BinaryFormat::Unknown => Some(
+                p.problem
+                    .clone()
+                    .unwrap_or_else(|| "KRAKEN cannot open this file.".into()),
+            ),
+            ProbeState::Ready(_) => None,
+        }
+    }
+
     /// Why Import cannot be pressed yet, if so.
     pub fn blocker(&self) -> Option<String> {
-        match &self.probe {
-            ProbeState::Probing(_) => {
-                return Some("Wait until KRAKEN has looked at the file.".into());
-            }
-            ProbeState::Failed(e) => return Some(format!("The file could not be read: {e}")),
-            ProbeState::Ready(p) if !p.supported && p.format != BinaryFormat::Unknown => {
-                return Some(
-                    p.problem
-                        .clone()
-                        .unwrap_or_else(|| "KRAKEN cannot open this file.".into()),
-                );
-            }
-            ProbeState::Ready(_) => {}
+        if let Some(why) = self.probe_blocker() {
+            return Some(why);
         }
         if self.raw_active()
             && let Some(why) = self.raw_problem()
@@ -565,12 +592,13 @@ impl ImportDialog {
             engine: self.engine,
             analyze: self.analyze,
             raw: self.raw_active().then(|| self.raw_load.clone()),
+            debug_file: None,
         })
     }
 
     /// The "Raw binary" part of the dialog: processor, base address, file offset, length and
     /// entry point, with what the probe recognised offered as one-click choices.
-    fn raw_section(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
+    pub(crate) fn raw_section(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
         let pal = pal(ui);
         let forced = p.format == BinaryFormat::Unknown;
         if forced {
@@ -688,7 +716,7 @@ impl ImportDialog {
             });
     }
 
-    fn engine_row(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
+    pub(crate) fn engine_row(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
         let pal = pal(ui);
         let s = style::status(style::dark(ui));
         ui.label(medium("Engine", 13.0).color(pal.text_strong));

@@ -45,6 +45,9 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_stop`](#debug_stop) | query | safe | End a debug session and its emulator child |
 | [`debug_watch_remove`](#debug_watch_remove) | query | safe | Remove a watchpoint of the debugged program |
 | [`debug_watch_set`](#debug_watch_set) | query | safe | Stop the debugged program when it writes (or reads) a range of memory |
+| [`debuginfo_attach`](#debuginfo_attach) | job | mutating | Attach a separate debug file to the project and reopen the engine with it (job) |
+| [`debuginfo_detach`](#debuginfo_detach) | job | mutating | Remove the attached debug file and reopen the engine without it (job) |
+| [`debuginfo_probe`](#debuginfo_probe) | query | safe | Say what debug information a program refers to and where a matching file is |
 | [`decompile`](#decompile) | query | safe | Decompile a function to C-like source |
 | [`decompile_patched`](#decompile_patched) | query | safe | Decompile a function with the byte patches applied |
 | [`delete_function`](#delete_function) | mutation | mutating | Delete a function (its code stays) |
@@ -5591,6 +5594,419 @@ At most 16 watchpoints per session, each at most 4096 bytes. A write is reported
     "watchpoints"
   ],
   "title": "DebugWatchOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debuginfo_attach
+
+Attach a separate debug file to the project and reopen the engine with it (job)
+
+```sh
+kraken debuginfo-attach --debug-file <string>
+```
+
+- Kind: job
+- Permission: mutating
+
+Checks that the file is this program's own debug file (build-id or debug-link CRC for DWARF; GUID and age for a PDB), records it in the project, and rebuilds the engine project with it, which re-analyses and replays your edits. Returns a `job_id`. Undo it with `debuginfo_detach`.
+
+Example: `debuginfo_attach {"debug_file": "./prog.debug"}`
+
+A file that belongs to another build is refused with the reason (`debuginfo_probe` shows the comparison). The native engine reads separate DWARF (ELF); Ghidra reads a PDB that sits beside the program as `<name>.pdb`. The path is kept in `meta.json` (`loader.debug_file`) and used on every reopen and `rebuild`. The job result is a `RebuildReport`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `debug_file` | `--debug-file` | string | yes | The debug file (an ELF `.debug` file with DWARF), or a folder that holds it. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## debuginfo_detach
+
+Remove the attached debug file and reopen the engine without it (job)
+
+```sh
+kraken debuginfo-detach
+```
+
+- Kind: job
+- Permission: mutating
+
+Forgets the debug file attached with `debuginfo_attach` and rebuilds the engine project without it. The file itself is not touched. Fails when none is attached.
+
+Example: `debuginfo_detach {}`
+
+Returns a `job_id` like `rebuild`. A file the engine finds on its own (beside the program, under `/usr/lib/debug`) is still used after detaching.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## debuginfo_probe
+
+Say what debug information a program refers to and where a matching file is
+
+```sh
+kraken debuginfo-probe --path <string> [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Reads a program's PDB reference (name, GUID, age), GNU build-id, debug link and DWARF state, then looks where such files live (beside the program, `.debug`, `/usr/lib/debug`, the debuginfod cache) and checks every file it finds: the build-id, the debug-link CRC or the PDB's GUID and age must agree. Pass `debug_file` (a file or a folder) to check one you have. Needs no project.
+
+Example: `debuginfo_probe {"path": "/usr/bin/ls"}`
+
+`status` is `embedded` (inside the program), `found` (a separate file matched or could not be disproved), `missing` or `none`. Each candidate has a `verdict`: `match`, `unverified` (the program has nothing to compare), `mismatch` (another build; `detail` says what differs) or `not_debug_info`. `best` is what `debuginfo_attach` or `project_create` with `debug_file` would use. Nothing is attached and no file is changed. Agents may not read files in hidden folders of the home directory.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `path` | `--path` | string | yes | Path of the program. |
+| `debug_file` | `--debug-file` | string | no | A debug file, or a folder to look in, to check against the program as well. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "CandidateSource": {
+      "description": "Where a candidate file was found.",
+      "oneOf": [
+        {
+          "const": "beside",
+          "description": "Next to the program (or in its `.debug` directory).",
+          "type": "string"
+        },
+        {
+          "const": "system",
+          "description": "Under `/usr/lib/debug` (installed debug packages).",
+          "type": "string"
+        },
+        {
+          "const": "debuginfod",
+          "description": "In the debuginfod download cache.",
+          "type": "string"
+        },
+        {
+          "const": "chosen",
+          "description": "The file or folder the person named.",
+          "type": "string"
+        }
+      ]
+    },
+    "DebugCandidate": {
+      "description": "One file that might hold the program's debug information.",
+      "properties": {
+        "detail": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "What was compared, in a sentence a person can read; on a mismatch it says why."
+        },
+        "path": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "Absolute path of the file."
+        },
+        "source": {
+          "$ref": "#/$defs/CandidateSource",
+          "description": "Where it was found."
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict",
+          "description": "The result of the check."
+        }
+      },
+      "required": [
+        "path",
+        "source",
+        "verdict",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "DebugLink": {
+      "description": "A `.gnu_debuglink` section: the name of a separate debug file and the CRC-32 of its bytes.",
+      "properties": {
+        "crc": {
+          "description": "CRC-32 of the debug file's contents.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "File name of the debug file."
+        }
+      },
+      "required": [
+        "name",
+        "crc"
+      ],
+      "type": "object"
+    },
+    "DebugRefs": {
+      "description": "The debug-information references of a binary. Every field is absent when the file has none.",
+      "properties": {
+        "build_id": {
+          "description": "The GNU build-id, lower-case hex: the key of `/usr/lib/debug/.build-id/..` files.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "debuglink": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugLink"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The separate debug file named by `.gnu_debuglink`."
+        },
+        "dwarf": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DwarfState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "DWARF inside (or beside) the file."
+        },
+        "pdb": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PdbRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The PDB a PE image names."
+        }
+      },
+      "type": "object"
+    },
+    "DebugStatus": {
+      "description": "How the program stands with its debug information.",
+      "oneOf": [
+        {
+          "const": "embedded",
+          "description": "The debug information is inside the program.",
+          "type": "string"
+        },
+        {
+          "const": "found",
+          "description": "It is in a separate file and a matching file was found.",
+          "type": "string"
+        },
+        {
+          "const": "missing",
+          "description": "It is in a separate file and none was found.",
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "The program neither holds nor names any.",
+          "type": "string"
+        }
+      ]
+    },
+    "DwarfState": {
+      "description": "Where DWARF is, when the file has some.",
+      "oneOf": [
+        {
+          "const": "embedded",
+          "description": "Plain DWARF sections inside the file.",
+          "type": "string"
+        },
+        {
+          "const": "compressed",
+          "description": "DWARF sections inside the file that are compressed (zlib or zstd).",
+          "type": "string"
+        },
+        {
+          "const": "split",
+          "description": "The file points at DWARF kept in another file (`.gnu_debugaltlink`, `.debug_sup`, `.dwo`).",
+          "type": "string"
+        }
+      ]
+    },
+    "PdbRef": {
+      "description": "A PDB that a PE image points at (its CodeView record).",
+      "properties": {
+        "age": {
+          "description": "The PDB's age (how often it was updated).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "guid": {
+          "description": "The PDB's GUID, upper-case with dashes (`DEADBEEF-...`).",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The path the linker recorded."
+        }
+      },
+      "required": [
+        "name",
+        "guid",
+        "age"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Verdict": {
+      "description": "Whether a candidate is the program's own debug file.",
+      "oneOf": [
+        {
+          "const": "match",
+          "description": "The build-id, CRC or GUID and age agree.",
+          "type": "string"
+        },
+        {
+          "const": "unverified",
+          "description": "The program carries nothing to check against, but the file holds debug information.",
+          "type": "string"
+        },
+        {
+          "const": "mismatch",
+          "description": "The file belongs to another build.",
+          "type": "string"
+        },
+        {
+          "const": "not_debug_info",
+          "description": "The file holds no debug information, or is not a format KRAKEN reads.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `debuginfo_probe` found.",
+  "properties": {
+    "best": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Untrusted_string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The first candidate that matches, or is unverified; what `debuginfo_attach` would use."
+    },
+    "candidates": {
+      "description": "Files that exist at those places (and the one that was chosen), each checked.",
+      "items": {
+        "$ref": "#/$defs/DebugCandidate"
+      },
+      "type": "array"
+    },
+    "path": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "The program that was read."
+    },
+    "refs": {
+      "$ref": "#/$defs/DebugRefs",
+      "description": "What the program says about its debug information."
+    },
+    "searched": {
+      "description": "The places that were searched.",
+      "items": {
+        "$ref": "#/$defs/Untrusted_string"
+      },
+      "type": "array"
+    },
+    "status": {
+      "$ref": "#/$defs/DebugStatus",
+      "description": "Where the program stands."
+    },
+    "summary": {
+      "description": "One or two sentences in plain words.",
+      "type": "string"
+    },
+    "wants": {
+      "description": "What a matching file must carry, one line each (`GNU build-id ...`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "path",
+    "refs",
+    "status",
+    "summary",
+    "wants",
+    "searched",
+    "candidates"
+  ],
+  "title": "DebugInfoProbeOut",
   "type": "object"
 }
 ```
@@ -17798,6 +18214,7 @@ Example: `project_create {"binary": "./a.out", "project_dir": "./a.kraken"}`
 Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary. `engine` picks the engine and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it. The first load of a big program can take minutes: while it runs it is the job `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon sends `open_progress` events), and `job_cancel` stops it without leaving a project behind.
 Intel HEX and Motorola S-record files are detected: their blocks load at the addresses the records give and the start record becomes the entry; give `language` (or let a recognisable vector table choose it).
 Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a `language`: one memory block holds the file (or `offset`/`length` of it) at `base`, and execution starts at `entry`. An ARM Cortex-M vector table at the start names `Reset_Handler` and the interrupt handlers. `binary_probe` suggests these options for a file it cannot identify. The options are recorded in `meta.json` and used on every reopen and `rebuild`. The native engine loads raw x86, x86-64, ARM, Cortex-M, AArch64 and RISC-V images; `auto` falls back to Ghidra for other processors.
+`debug_file` names the program's separate debug file (or a folder with it; `debuginfo_probe` finds it); it is checked against the program first and kept in `meta.json`. The native engine reads separate DWARF.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -17805,6 +18222,7 @@ Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a `
 | `project_dir` | `--project-dir` | string | yes | Directory for the new project; created if missing and must not hold a project yet. |
 | `base` | `--base` | json | no | Raw images only: address the image is mapped at (hex such as `0x08000000`); default `0`. |
 | `compiler` | `--compiler` | string | no | Compiler spec (`gcc`, `windows`, `default`); the language's default when unset. |
+| `debug_file` | `--debug-file` | string | no | A separate debug file for the program (DWARF for the native engine), usually found with `debuginfo_probe`. It must match the program (build-id or debug-link CRC). |
 | `engine` | `--engine` | json | no | Engine for native code: `ghidra`, `native` (JVM-free; ELF and PE, x86 and x86-64) or `auto` (native when it can open the file, else Ghidra). Default: the `engine` setting. .NET assemblies always use the .NET engine. |
 | `entry` | `--entry` | json | no | Raw images: address where execution starts (a function entry; for Thumb code the low bit may be set). Default: the reset vector of an ARM Cortex-M vector table, else `base`. |
 | `language` | `--language` | string | no | Processor of a raw image, as a Sleigh language id (`ARM:LE:32:Cortex`) or a short name (`cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`, `riscv64`). With `auto` it overrides the detected processor. |

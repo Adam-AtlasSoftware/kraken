@@ -118,6 +118,8 @@ pub enum AppAction {
     SetUpLocalModel,
     /// Open the Integrations window: emulators and tools to install or point at.
     ShowIntegrations,
+    /// Open the guided Import wizard: file, what it is, engine, debug information, create.
+    ImportProgram,
     /// Open the Setup status window: what is installed and ready, with installs as background jobs.
     ShowSetupStatus,
     /// Run the program, or a patched copy, in an installed emulator.
@@ -132,7 +134,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 58] = [
+    pub const ALL: [AppAction; 59] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -170,6 +172,7 @@ impl AppAction {
         AppAction::ToggleTheme,
         AppAction::OpenProject,
         AppAction::NewProject,
+        AppAction::ImportProgram,
         AppAction::OpenDemo,
         AppAction::OpenSettings,
         AppAction::CloseProject,
@@ -290,6 +293,7 @@ impl AppAction {
             AppAction::AskAboutKraken => "Ask the assistant about KRAKEN",
             AppAction::SetUpLocalModel => "Set up a model on this computer...",
             AppAction::ShowIntegrations => "Emulators and tools...",
+            AppAction::ImportProgram => "Import program...",
             AppAction::ShowSetupStatus => "Setup status...",
             AppAction::RunInEmulator => "Run in emulator...",
             AppAction::LocalSetupNext => "Model setup: next step",
@@ -395,6 +399,9 @@ impl AppAction {
             }
             AppAction::ShowIntegrations => {
                 "Install, find or remove the emulators KRAKEN can run programs in; nothing is bundled"
+            }
+            AppAction::ImportProgram => {
+                "Import a program step by step: what it is, which engine, and its debug information"
             }
             AppAction::ShowSetupStatus => {
                 "See which engines and tools are installed and ready, and install the missing ones"
@@ -608,6 +615,8 @@ pub enum UiRequest {
     SetUpLocalModel,
     /// Show the Integrations window.
     ShowIntegrations,
+    /// Open the Import wizard.
+    ImportProgram,
     /// Show the Setup status window.
     ShowSetupStatus,
     /// Open the run-in-emulator dialog.

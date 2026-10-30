@@ -228,6 +228,12 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
 
     step!("project_info", json!({}));
     step!("binary_probe", json!({"path": s.binary}));
+    step!("debuginfo_probe", json!({"path": s.binary}));
+    step!(
+        "debuginfo_attach",
+        json!({"debug_file": "/nonexistent/prog.debug"})
+    );
+    step!("debuginfo_detach", json!({}));
 
     covered.extend(["analyze".to_string(), "job_await".to_string()]);
     let analysis = both_job(&s, "analyze").await;

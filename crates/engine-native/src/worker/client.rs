@@ -331,9 +331,12 @@ impl WorkerEngine {
         let binary = open.path.clone();
         let state_dir = open.state_dir.clone();
         // a separate debug file next to the program or in its .debug directory is read too
-        let debug_file = std::fs::read(&binary)
-            .ok()
-            .and_then(|d| crate::debugfile::find(&binary, &d));
+        let debug_file = match &open.spec.debug_file {
+            Some(attached) => Some(PathBuf::from(attached)),
+            None => std::fs::read(&binary)
+                .ok()
+                .and_then(|d| crate::debugfile::find(&binary, &d)),
+        };
         let (sandbox, home, log, channel) = tokio::task::spawn_blocking(move || {
             let root = opts.temp_root.clone().unwrap_or_else(std::env::temp_dir);
             let home = tempfile::Builder::new()

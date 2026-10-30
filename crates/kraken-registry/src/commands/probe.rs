@@ -643,7 +643,7 @@ fn facts_of(data: &[u8], whole: bool) -> Facts {
 }
 
 /// A CodeView GUID as text: Data1 (LE u32), Data2 and Data3 (LE u16), then Data4 byte by byte.
-fn format_guid(g: &[u8; 16]) -> String {
+pub(super) fn format_guid(g: &[u8; 16]) -> String {
     format!(
         "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
         u32::from_le_bytes([g[0], g[1], g[2], g[3]]),
@@ -661,7 +661,7 @@ fn format_guid(g: &[u8; 16]) -> String {
 }
 
 /// The debug references of a parsed file.
-fn debug_refs(f: &object::File) -> DebugRefs {
+pub(super) fn debug_refs(f: &object::File) -> DebugRefs {
     let mut refs = DebugRefs::default();
     if let Ok(Some(p)) = f.pdb_info() {
         refs.pdb = Some(PdbRef {

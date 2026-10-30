@@ -995,7 +995,15 @@ fn build_program(
     } else {
         // a stripped program keeps its names in a separate debug file when one is installed
         let external = if config.use_symbols {
-            crate::debugfile::find(path, &data).and_then(|p| std::fs::read(p).ok())
+            match spec.debug_file.as_deref() {
+                Some(attached) => Some(std::fs::read(attached).map_err(|e| {
+                    ProtoError::new(
+                        ErrorCode::NotFound,
+                        format!("cannot read the attached debug file {attached}: {e}"),
+                    )
+                })?),
+                None => crate::debugfile::find(path, &data).and_then(|p| std::fs::read(p).ok()),
+            }
         } else {
             None
         };

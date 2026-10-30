@@ -21,6 +21,7 @@ use crate::args::{Options, Scene};
 use crate::assist::{self, AssistRequest, AssistSetup, Change};
 use crate::help::{self, HelpDo, HelpEnv, HelpUi};
 use crate::import::{ImportAction, ImportDialog, Picked, Picker, is_project_dir};
+use crate::import_wizard::ImportWizard;
 use crate::menu::{self, MenuCmd, MenuEnv};
 use crate::private::{self, PrivateDaemon};
 use crate::recent::{self, Prefs};
@@ -28,6 +29,7 @@ use crate::services::{Mode, Services};
 use crate::settings::{Settings, SettingsAction, SettingsEnv};
 use crate::tour::{self, Spot, Tour, TourEvent};
 use crate::welcome::{self, Choice, Welcome, WelcomeAction};
+use crate::wizard::WizardEvent;
 use crate::workspace::{self, Tab, UiState};
 use crate::{chrome, overlays};
 
@@ -35,6 +37,7 @@ const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// A step that stops a running job, waiting for the person to agree.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Pending {
     /// Open or create another project.
     Open(Choice),
@@ -166,6 +169,8 @@ pub struct KrakenApp {
     shot: Option<Shot>,
     /// The import dialog, when open.
     import: Option<ImportDialog>,
+    /// The Import wizard (File > Import program...), when open.
+    import_wizard: Option<ImportWizard>,
     /// File dialogs opened from the menus and shortcuts.
     picker: Picker,
     /// A step waiting for the person to agree to stop a running job.
@@ -258,6 +263,7 @@ impl KrakenApp {
             auto_analyze: false,
             function: opts.function.clone(),
             import: None,
+            import_wizard: None,
             picker: Picker::default(),
             confirm: None,
             confirm_ai: None,
@@ -385,6 +391,25 @@ impl KrakenApp {
         let mut cfg = self.services.cfg.clone();
         cfg.engine = Some(self.welcome.engine);
         self.import = Some(ImportDialog::start(&cfg, &binary, self.rt.handle(), ctx));
+    }
+
+    /// Opens the Import wizard, on its second step when `path` is already known.
+    pub(crate) fn start_import_wizard(&mut self, path: Option<String>, ctx: &egui::Context) {
+        let mut cfg = self.services.cfg.clone();
+        cfg.engine = Some(self.welcome.engine);
+        self.import_wizard = Some(ImportWizard::open(&cfg, path, self.rt.handle(), ctx));
+    }
+
+    /// The Import wizard, when open.
+    #[cfg(test)]
+    pub fn import_wizard(&self) -> Option<&ImportWizard> {
+        self.import_wizard.as_ref()
+    }
+
+    /// The Import wizard, when open, for tests.
+    #[cfg(test)]
+    pub fn import_wizard_mut(&mut self) -> Option<&mut ImportWizard> {
+        self.import_wizard.as_mut()
     }
 
     /// True while a job would be stopped by closing or switching the project.
@@ -762,8 +787,9 @@ impl KrakenApp {
                 engine,
                 analyze,
                 raw,
+                debug_file,
             } => {
-                vm.create_project_raw(binary, project_dir, Some(engine), raw);
+                vm.create_project_full(binary, project_dir, Some(engine), raw, debug_file);
                 self.auto_analyze = analyze;
             }
             Choice::Demo => return,
@@ -954,6 +980,7 @@ impl KrakenApp {
             AppAction::OpenSettings => Some(UiRequest::OpenSettings),
             AppAction::SetUpLocalModel => Some(UiRequest::SetUpLocalModel),
             AppAction::ShowIntegrations => Some(UiRequest::ShowIntegrations),
+            AppAction::ImportProgram => Some(UiRequest::ImportProgram),
             AppAction::ShowSetupStatus => Some(UiRequest::ShowSetupStatus),
             AppAction::LocalSetupNext => Some(UiRequest::LocalSetup(SetupButton::Next)),
             AppAction::LocalSetupBack => Some(UiRequest::LocalSetup(SetupButton::Back)),
@@ -986,6 +1013,7 @@ impl KrakenApp {
                 self.picker.project(self.rt.handle(), ctx, start);
             }
             UiRequest::NewProject => self.picker.binary(self.rt.handle(), ctx),
+            UiRequest::ImportProgram => self.start_import_wizard(None, ctx),
             UiRequest::OpenDemo => self.request(Pending::Open(Choice::Demo), ctx),
             UiRequest::OpenSettings => self.settings.show_window(),
             UiRequest::SetUpLocalModel => self.open_local_setup(ctx),
@@ -1062,7 +1090,7 @@ impl KrakenApp {
             match p {
                 Picked::Binary(b) => self.start_import(b, ctx),
                 Picked::Project(dir) => self.open_path(Path::new(&dir), ctx),
-                Picked::Location(_) => {}
+                Picked::Location(_) | Picked::DebugFile(_) | Picked::DebugFolder(_) => {}
             }
         }
     }
@@ -1165,6 +1193,21 @@ impl KrakenApp {
                 }
                 Some(ImportAction::Cancel) => self.import = None,
                 None => {}
+            }
+        }
+        if let Some(w) = self.import_wizard.as_mut() {
+            w.poll();
+            let ev = crate::wizard::show(ctx, "Import a program", w, crate::import_wizard::body);
+            match ev {
+                WizardEvent::Finish => {
+                    let choice = w.choice();
+                    self.import_wizard = None;
+                    if let Some(c) = choice {
+                        self.request(Pending::Open(c), ctx);
+                    }
+                }
+                WizardEvent::Cancel => self.import_wizard = None,
+                WizardEvent::None => {}
             }
         }
         if let Some(step) = self.confirm_ai.clone() {

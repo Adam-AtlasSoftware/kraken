@@ -28,6 +28,8 @@ pub enum Choice {
         analyze: bool,
         /// Open the file as a raw image (firmware, a ROM) with these options.
         raw: Option<RawLoad>,
+        /// The program's separate debug file, already checked against it.
+        debug_file: Option<String>,
     },
 }
 
@@ -164,7 +166,7 @@ impl Welcome {
                     self.binary_path = b.clone();
                     actions.push(WelcomeAction::Import(b));
                 }
-                Picked::Location(_) => {}
+                Picked::Location(_) | Picked::DebugFile(_) | Picked::DebugFolder(_) => {}
             }
         }
     }

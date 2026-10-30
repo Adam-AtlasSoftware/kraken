@@ -9,6 +9,7 @@
 - [Getting started](getting-started.md)
 - [The GUI, menu by menu](gui.md)
 - [Concepts](concepts.md)
+- [Debug information (PDB, DWARF, separate files)](debug-info.md)
 - [Rewrite a program in Rust](rewrite.md)
 - [Connecting AI agents (MCP)](mcp.md)
 - [The built-in assistant (AI models and terminal agents)](assistant.md)

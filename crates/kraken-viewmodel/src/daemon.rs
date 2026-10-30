@@ -431,7 +431,7 @@ fn local_setup_summary(args: &Value) -> String {
 /// GUI's working directory.
 fn absolutize(command: &str, args: &mut Value) {
     let keys: &[&str] = match command {
-        "project_create" => &["binary", "project_dir"],
+        "project_create" => &["binary", "project_dir", "debug_file"],
         "project_open" => &["project_dir"],
         _ => &[],
     };

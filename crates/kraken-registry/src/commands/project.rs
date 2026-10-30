@@ -221,6 +221,10 @@ pub struct ProjectCreateArgs {
     /// bit may be set). Default: the reset vector of an ARM Cortex-M vector table, else `base`.
     #[serde(default)]
     pub entry: Option<Hex64>,
+    /// A separate debug file for the program (DWARF for the native engine), usually found with
+    /// `debuginfo_probe`. It must match the program (build-id or debug-link CRC).
+    #[serde(default)]
+    pub debug_file: Option<String>,
 }
 
 /// How `project_create` reads the file.
@@ -268,6 +272,7 @@ impl ProjectCreateArgs {
             offset: self.offset,
             length: self.length,
             entry: self.entry,
+            debug_file: self.debug_file.clone().filter(|d| !d.trim().is_empty()),
         })
     }
 }
@@ -339,7 +344,10 @@ impl Command for ProjectCreate {
              for a file it cannot identify. The options are recorded in `meta.json` and used on \
              every reopen and `rebuild`. The native engine loads raw x86, x86-64, ARM, \
              Cortex-M, AArch64 and RISC-V images; `auto` falls back to Ghidra for other \
-             processors.",
+             processors.\n\
+             `debug_file` names the program's separate debug file (or a folder with it; \
+             `debuginfo_probe` finds it); it is checked against the program first and kept in \
+             `meta.json`. The native engine reads separate DWARF.",
         )
     }
 
@@ -372,6 +380,29 @@ impl Command for ProjectCreate {
                     })?);
                 }
             }
+        }
+        if let Some(given) = loader.debug_file.clone() {
+            if args.loader == Some(LoaderKind::Raw) {
+                return Err(ProtoError::new(
+                    ErrorCode::InvalidArgument,
+                    "`debug_file` applies to programs with a header, not to a raw image",
+                ));
+            }
+            if args.engine == Some(crate::session::EngineChoice::Ghidra) {
+                return Err(ProtoError::new(
+                    ErrorCode::InvalidArgument,
+                    "`debug_file` works with the native engine (it reads separate DWARF); Ghidra reads a PDB beside the program by itself",
+                ));
+            }
+            let binary = args.binary.clone();
+            let given = if ctx.needs_user_approval() {
+                crate::trust::check_agent_path("debug_file", Path::new(&given))?
+            } else {
+                std::path::PathBuf::from(given)
+            };
+            let file =
+                blocking(move || super::resolve_for_attach(Path::new(&binary), &given)).await?;
+            loader.debug_file = Some(file.to_string_lossy().into_owned());
         }
         let project = s
             .create_project_loaded(

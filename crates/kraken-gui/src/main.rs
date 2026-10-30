@@ -10,6 +10,7 @@ mod fonts;
 mod help;
 mod history;
 mod import;
+mod import_wizard;
 mod infer;
 mod integrations;
 mod loading;
@@ -27,6 +28,7 @@ mod style;
 mod titlebar;
 mod tour;
 mod welcome;
+mod wizard;
 mod workspace;
 
 #[cfg(test)]

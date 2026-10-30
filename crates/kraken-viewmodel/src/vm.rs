@@ -296,13 +296,19 @@ pub struct RawLoad {
     pub length: String,
     /// Where execution starts.
     pub entry: String,
+    /// A firmware record file (Intel HEX, S-record): it loads by its own format and only the
+    /// processor is sent.
+    pub records: bool,
 }
 
 impl RawLoad {
     /// Adds the `project_create` arguments for this image to `args`.
     pub fn add_to(&self, args: &mut Value) {
-        args["loader"] = json!("raw");
         args["language"] = json!(self.language.trim());
+        if self.records {
+            return;
+        }
+        args["loader"] = json!("raw");
         for (key, v) in [
             ("base", &self.base),
             ("offset", &self.offset),
@@ -680,6 +686,19 @@ impl ViewModel {
         engine: Option<EngineChoice>,
         raw: Option<RawLoad>,
     ) {
+        self.create_project_full(binary, project_dir, engine, raw, None);
+    }
+
+    /// [`create_project_raw`](Self::create_project_raw) that also attaches the program's
+    /// separate debug file (`debug_file` of `project_create`).
+    pub fn create_project_full(
+        &mut self,
+        binary: impl Into<String>,
+        project_dir: impl Into<String>,
+        engine: Option<EngineChoice>,
+        raw: Option<RawLoad>,
+        debug_file: Option<String>,
+    ) {
         let binary = binary.into();
         self.connection = Connection::Opening(format!("Loading {}...", file_name(&binary)));
         self.loading = Some(LoadingState::new(file_name(&binary), true));
@@ -689,6 +708,9 @@ impl ViewModel {
         }
         if let Some(r) = raw {
             r.add_to(&mut args);
+        }
+        if let Some(d) = debug_file {
+            args["debug_file"] = json!(d);
         }
         self.call("project_create", args, |vm, res| vm.project_opened(res));
     }
@@ -1978,6 +2000,7 @@ impl ViewModel {
             AppAction::AskAboutKraken => return Some(UiRequest::AskAboutKraken),
             AppAction::SetUpLocalModel => return Some(UiRequest::SetUpLocalModel),
             AppAction::ShowIntegrations => return Some(UiRequest::ShowIntegrations),
+            AppAction::ImportProgram => return Some(UiRequest::ImportProgram),
             AppAction::ShowSetupStatus => return Some(UiRequest::ShowSetupStatus),
             AppAction::RunInEmulator => return Some(UiRequest::RunInEmulator),
             AppAction::LocalSetupNext => {

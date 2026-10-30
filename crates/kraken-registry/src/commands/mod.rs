@@ -12,6 +12,7 @@ mod bulk;
 mod data;
 #[cfg(unix)]
 mod debug;
+mod debuginfo;
 mod edit;
 mod emulate;
 #[cfg(unix)]
@@ -79,6 +80,11 @@ pub use debug::{
     DebugStepArgs, DebugStepOut, DebugStepOver, DebugStop, DebugStopOut, DebugStopSession,
     DebugStopSessionOut, DebugTable, DebugWatch, DebugWatchArgs, DebugWatchHit, DebugWatchOut,
     DebugWatchRemove, DebugWatchSet,
+};
+pub use debuginfo::{
+    CandidateSource, DebugCandidate, DebugInfoAttach, DebugInfoAttachArgs, DebugInfoDetach,
+    DebugInfoProbe, DebugInfoProbeArgs, DebugInfoProbeOut, DebugStatus, Verdict, engine_accepts,
+    pdb_identity, probe as probe_debug_info, resolve_for_attach,
 };
 pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
@@ -342,6 +348,9 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteProgramStatus);
     // Card SHELL: the open/import workflow.
     r.register(BinaryProbe);
+    r.register(DebugInfoProbe);
+    r.register(DebugInfoAttach);
+    r.register(DebugInfoDetach);
     r.register(ProjectClose);
     // Card REWRITE
     r.register(RewriteBuild);

@@ -610,6 +610,7 @@ mod live {
                 engine: Default::default(),
                 analyze: true,
                 raw: None,
+                debug_file: None,
             },
             &ctx,
         );
@@ -696,6 +697,7 @@ mod live {
                 engine: Default::default(),
                 analyze: true,
                 raw: None,
+                debug_file: None,
             },
             &ctx,
         );
@@ -776,6 +778,7 @@ mod live {
                 engine: Default::default(),
                 analyze: false,
                 raw: None,
+                debug_file: None,
             },
             &ctx,
         );
@@ -819,6 +822,7 @@ mod live {
                 engine: Default::default(),
                 analyze: true,
                 raw: None,
+                debug_file: None,
             },
             &ctx,
         );
@@ -932,6 +936,7 @@ mod bench;
 mod debug;
 mod emulate;
 mod help;
+mod import_wizard;
 mod integrations;
 mod loading;
 mod local_models;
