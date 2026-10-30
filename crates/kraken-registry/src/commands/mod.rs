@@ -19,6 +19,7 @@ mod edit;
 mod emulate;
 #[cfg(unix)]
 mod emulate_call;
+mod emulate_call_types;
 mod gui_navigate;
 mod help;
 mod history;
@@ -107,8 +108,9 @@ pub use emulate::{
     EmulateRun, EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS,
 };
 #[cfg(unix)]
-pub use emulate_call::{
-    CallArgIn, CallBufferOut, CallValue, EmulateCall, EmulateCallArgs, EmulateCallOut, IntText,
+pub use emulate_call::EmulateCall;
+pub use emulate_call_types::{
+    CallArgIn, CallBufferOut, CallValue, EmulateCallArgs, EmulateCallOut, IntText,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
 pub use help::{
