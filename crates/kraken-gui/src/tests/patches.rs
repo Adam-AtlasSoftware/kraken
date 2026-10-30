@@ -254,7 +254,7 @@ fn the_patched_toggle_shows_the_patch_in_the_listing_and_offers_a_patched_decomp
     let vm = h.app.view_model_mut().expect("vm");
     vm.set_patch_input(spaced_hex(&vec![0x90; row.bytes.len()]));
     h.step();
-    h.key(Key::Enter, Modifiers::NONE);
+    h.key(Key::Enter, Modifiers::COMMAND);
     h.run_until("the patch to be listed", |a| {
         a.view_model()
             .is_some_and(|vm| vm.has_patches() && vm.tools.patch_dialog.is_none())
