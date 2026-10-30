@@ -124,11 +124,15 @@ fn cancel_on_the_loading_screen_goes_back_to_the_welcome_screen() {
 
 #[test]
 fn a_quick_open_never_shows_the_loading_screen() {
+    let start = std::time::Instant::now();
     let mut k = opening(Duration::ZERO);
     let mut saw = false;
     for _ in 0..2000 {
         k.h.run_steps(1);
-        saw |= k.h.query_by_label("Finding functions").is_some();
+        // A busy machine can take longer than the threshold even for an instant open; the
+        // screen may show then, so only a sighting before the threshold counts.
+        saw |= start.elapsed() < crate::loading::SHOW_AFTER
+            && k.h.query_by_label("Finding functions").is_some();
         if k.h
             .state()
             .view_model()
