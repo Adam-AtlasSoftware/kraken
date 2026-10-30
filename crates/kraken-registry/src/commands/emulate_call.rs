@@ -312,7 +312,7 @@ impl Command for EmulateCall {
             None
         };
         let patches = if args.patched {
-            project.with_store(|st| st.all_patches()).await?
+            project.with_store(|st| st.active_patches(None)).await?
         } else {
             Vec::new()
         };

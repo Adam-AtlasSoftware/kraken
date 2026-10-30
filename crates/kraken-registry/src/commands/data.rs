@@ -266,7 +266,7 @@ impl Command for Disassemble {
             }
         }
         if args.patched {
-            let patches = project.with_store(|st| st.all_patches()).await?;
+            let patches = project.with_store(|st| st.active_patches(None)).await?;
             if !patches.is_empty() {
                 let arch = project.program().arch.clone();
                 rows = tokio::task::spawn_blocking(move || {

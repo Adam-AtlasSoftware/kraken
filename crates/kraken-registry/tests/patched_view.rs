@@ -114,3 +114,40 @@ async fn decompile_patched_without_patches_is_the_plain_decompile() {
         .await;
     assert_eq!(plain["text"], same["text"]);
 }
+
+#[tokio::test]
+async fn switched_off_patches_are_not_shown_as_patched() {
+    let env = Setup::new(x86()).start().await;
+    let u = user();
+    let plain = env
+        .ok(&u, "disassemble", json!({"function": "0x401000"}))
+        .await;
+    let plain_c = env
+        .ok(&u, "decompile", json!({"address": "0x401000"}))
+        .await;
+    env.ok(&u, "patch_group_set", json!({"name": "flip"})).await;
+    env.ok(
+        &u,
+        "patch_set",
+        json!({"address": "0x401003", "bytes": "7410", "group": "flip"}),
+    )
+    .await;
+    env.ok(
+        &u,
+        "patch_group_enable",
+        json!({"name": "flip", "enabled": false}),
+    )
+    .await;
+    let patched = env
+        .ok(
+            &u,
+            "disassemble",
+            json!({"function": "0x401000", "patched": true}),
+        )
+        .await;
+    assert_eq!(patched, plain);
+    let c = env
+        .ok(&u, "decompile_patched", json!({"address": "0x401000"}))
+        .await;
+    assert_eq!(c["text"], plain_c["text"]);
+}

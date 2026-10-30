@@ -290,7 +290,7 @@ impl Command for DecompilePatched {
         args: DecompilePatchedArgs,
     ) -> Result<DecompileView, ProtoError> {
         let project = s.project()?;
-        let patches = project.with_store(|st| st.all_patches()).await?;
+        let patches = project.with_store(|st| st.active_patches(None)).await?;
         if patches.is_empty() {
             return super::query::Decompile
                 .run(
