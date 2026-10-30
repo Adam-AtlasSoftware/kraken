@@ -146,6 +146,14 @@ pub fn compute(
     // the decompiler prints a string in read-only data as the text
     let min_string = if loaded.container == "pe" { 5 } else { 1 };
     let readonly_string = |a: u64| {
+        // a relocated pointer in RELRO data can look like a short string (`2c 20 00`)
+        if loaded
+            .pointer_slots
+            .binary_search_by_key(&a, |(s, _)| *s)
+            .is_ok()
+        {
+            return false;
+        }
         let Some(b) = block_of(a).filter(|b| b.initialized && !b.perms.contains('w')) else {
             return false;
         };

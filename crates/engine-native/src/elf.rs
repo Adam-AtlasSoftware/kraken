@@ -302,34 +302,6 @@ fn program_headers(data: &[u8]) -> Vec<ProgramHeader> {
         .collect()
 }
 
-/// Splits a writable segment so the part inside `[lo, hi)` (the RELRO range) is read-only.
-fn split_relro(seg: Segment, lo: u64, hi: u64) -> Vec<Segment> {
-    let end = seg.start + seg.mem_size;
-    let (cut_lo, cut_hi) = (lo.max(seg.start), hi.min(end));
-    if cut_lo >= cut_hi {
-        return vec![seg];
-    }
-    let piece = |from: u64, to: u64, readonly: bool| Segment {
-        start: from,
-        data: seg
-            .data
-            .get((from - seg.start) as usize..(to - seg.start).min(seg.data.len() as u64) as usize)
-            .unwrap_or(&[])
-            .to_vec(),
-        mem_size: to - from,
-        readonly,
-    };
-    let mut out = Vec::new();
-    if seg.start < cut_lo {
-        out.push(piece(seg.start, cut_lo, false));
-    }
-    out.push(piece(cut_lo, cut_hi, true));
-    if cut_hi < end {
-        out.push(piece(cut_hi, end, false));
-    }
-    out
-}
-
 fn bad(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
 }
@@ -453,10 +425,9 @@ pub fn load_with(
             mem_size: seg.size().max(bytes.len() as u64),
             readonly: !flags.contains(PF_W),
         };
-        match relro {
-            Some((lo, hi)) if !whole.readonly => segments.extend(split_relro(whole, lo, hi)),
-            _ => segments.push(whole),
-        }
+        // RELRO stays writable here, unlike its blocks: the GOT slots of imports hold 0, not
+        // Ghidra's EXTERNAL addresses, so folding them would drop code a weak import guards
+        segments.push(whole);
     }
     segments.sort_by_key(|s| s.start);
     let mut image = Image {
@@ -1304,13 +1275,7 @@ mod tests {
             .segments
             .iter()
             .find(|s| s.start <= 0x103fb8 && 0x103fb8 < s.start + s.mem_size);
-        assert!(got.is_some_and(|s| s.readonly));
-        let data = l
-            .image
-            .segments
-            .iter()
-            .find(|s| s.start <= 0x104010 && 0x104010 < s.start + s.mem_size);
-        assert!(data.is_some_and(|s| !s.readonly));
+        assert!(got.is_some_and(|s| !s.readonly));
     }
 
     #[test]
