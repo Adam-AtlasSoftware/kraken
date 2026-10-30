@@ -179,6 +179,14 @@ Everything above is a command, so an assistant connected through [MCP](mcp.md) o
 
 Jobs return a `job_id`; read progress and the result with `job_status` or `job_await`. `rewrite_program`, `rewrite_build` and `rewrite_preload_build` run generated code, so a call from an agent asks for your approval first. The [command reference](reference/commands.md) has every argument.
 
+## Measuring the quality of translations
+
+`kraken eval run --suite rewrite` turns the differential verdict into a tracked number: for a set of corpus functions and programs it runs the pipeline with your model, and reports the pass rate, the cases that agreed with the original, the repair rounds the repair loop needed, the model calls and the cost. Run it before and after changing the model or the prompts. With `--backend ci-replay` it replays recorded replies offline (no model, no network) to check the pipeline itself. See [Measuring rewrite quality](assistant.md#measuring-rewrite-quality).
+
+```sh
+kraken eval run --suite rewrite --backend ci-replay --out /tmp/eval-rewrite
+```
+
 ## If something does not work
 
 - **A row of the Check step says Stop or Note.** Each row says what is missing. No Rust toolchain: install Rust with rustup so that `rustc` and `cargo` are on `PATH`. No spec files: run `kraken setup --native` (or `cargo xtask native-sla` in a source checkout, or set `KRAKEN_NATIVE_SPECS`); without them a translation is only built, never compared with the program. The same rows are available as the `rewrite_check` command.

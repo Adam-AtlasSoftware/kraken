@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "suite": "rewrite",
+  "mode": "ci-replay",
+  "backend": {
+    "kind": "api",
+    "id": "replay",
+    "name": "replay",
+    "model": "kraken-eval rewrite: reference translations of kraken-rewrite (not a model)"
+  },
+  "engine": "recorded fixtures (engine-fake); generated code built and run in the sandbox",
+  "summary": {
+    "tasks": 3,
+    "mean_score": 1.0,
+    "correct": 3,
+    "problems": 0,
+    "by_kind": {
+      "rewrite_program": {
+        "tasks": 3,
+        "mean_score": 1.0,
+        "correct": 3
+      }
+    },
+    "tool_calls": 3,
+    "rewrite": {
+      "tasks": 3,
+      "passed": 3,
+      "pass_rate": 1.0,
+      "cases_run": 67,
+      "cases_passed": 67,
+      "case_pass_rate": 1.0,
+      "repair_rounds": 0,
+      "model_calls": 26,
+      "units": 26,
+      "units_failed": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "rw-prog/pie_list",
+      "kind": "rewrite_program",
+      "binary": "pie_list-O0",
+      "score": 1.0,
+      "correct": true,
+      "detail": {
+        "verdict": "pass",
+        "units": 11,
+        "units_failed": 0,
+        "cases_run": 23,
+        "cases_passed": 23,
+        "repair_rounds": 0,
+        "model_calls": 11
+      },
+      "reply": "pass: 23 of 23 cases agreed, 0 repair round(s), 11 model call(s)",
+      "stop": "completed",
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "transcript": [
+        {
+          "type": "prompt",
+          "text": "<kraken-eval id=\"rw-prog/pie_list\" kind=\"rewrite_program\">\nRewrite the whole program `pie_list-O0` to a Rust crate and check it against the original."
+        },
+        {
+          "type": "tool_call",
+          "name": "rewrite_program",
+          "arguments": {
+            "scope": "all",
+            "parallel": 1,
+            "verify_functions": false
+          },
+          "result": "pass: 23 of 23 cases agreed, 0 repair round(s), 11 model call(s)",
+          "is_error": false
+        },
+        {
+          "type": "done",
+          "stop": "completed"
+        }
+      ],
+      "rewrite": {
+        "verdict": "pass",
+        "units": 11,
+        "units_failed": 0,
+        "cases_run": 23,
+        "cases_passed": 23,
+        "repair_rounds": 0,
+        "model_calls": 11
+      }
+    },
+    {
+      "id": "rw-prog/static_strops",
+      "kind": "rewrite_program",
+      "binary": "static_strops-O0",
+      "score": 1.0,
+      "correct": true,
+      "detail": {
+        "verdict": "pass",
+        "units": 8,
+        "units_failed": 0,
+        "cases_run": 22,
+        "cases_passed": 22,
+        "repair_rounds": 0,
+        "model_calls": 8
+      },
+      "reply": "pass: 22 of 22 cases agreed, 0 repair round(s), 8 model call(s)",
+      "stop": "completed",
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "transcript": [
+        {
+          "type": "prompt",
+          "text": "<kraken-eval id=\"rw-prog/static_strops\" kind=\"rewrite_program\">\nRewrite the whole program `static_strops-O0` to a Rust crate and check it against the original."
+        },
+        {
+          "type": "tool_call",
+          "name": "rewrite_program",
+          "arguments": {
+            "scope": "all",
+            "parallel": 1,
+            "verify_functions": false
+          },
+          "result": "pass: 22 of 22 cases agreed, 0 repair round(s), 8 model call(s)",
+          "is_error": false
+        },
+        {
+          "type": "done",
+          "stop": "completed"
+        }
+      ],
+      "rewrite": {
+        "verdict": "pass",
+        "units": 8,
+        "units_failed": 0,
+        "cases_run": 22,
+        "cases_passed": 22,
+        "repair_rounds": 0,
+        "model_calls": 8
+      }
+    },
+    {
+      "id": "rw-prog/stripped_calc",
+      "kind": "rewrite_program",
+      "binary": "stripped_calc-O0",
+      "score": 1.0,
+      "correct": true,
+      "detail": {
+        "verdict": "pass",
+        "units": 7,
+        "units_failed": 0,
+        "cases_run": 22,
+        "cases_passed": 22,
+        "repair_rounds": 0,
+        "model_calls": 7
+      },
+      "reply": "pass: 22 of 22 cases agreed, 0 repair round(s), 7 model call(s)",
+      "stop": "completed",
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "transcript": [
+        {
+          "type": "prompt",
+          "text": "<kraken-eval id=\"rw-prog/stripped_calc\" kind=\"rewrite_program\">\nRewrite the whole program `stripped_calc-O0` to a Rust crate and check it against the original."
+        },
+        {
+          "type": "tool_call",
+          "name": "rewrite_program",
+          "arguments": {
+            "scope": "all",
+            "parallel": 1,
+            "verify_functions": false
+          },
+          "result": "pass: 22 of 22 cases agreed, 0 repair round(s), 7 model call(s)",
+          "is_error": false
+        },
+        {
+          "type": "done",
+          "stop": "completed"
+        }
+      ],
+      "rewrite": {
+        "verdict": "pass",
+        "units": 7,
+        "units_failed": 0,
+        "cases_run": 22,
+        "cases_passed": 22,
+        "repair_rounds": 0,
+        "model_calls": 7
+      }
+    }
+  ]
+}

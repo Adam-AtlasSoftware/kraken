@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "rewrite",
+  "tasks": [
+    {"id": "rw-fn/pie_list/cmp_id", "kind": "rewrite_function", "binary": "pie_list-O0", "function": "cmp_id", "cases": 60},
+    {"id": "rw-fn/pie_list/cmp_dist", "kind": "rewrite_function", "binary": "pie_list-O0", "function": "cmp_dist", "cases": 60},
+    {"id": "rw-fn/static_strops/hash_str", "kind": "rewrite_function", "binary": "static_strops-O0", "function": "hash_str", "cases": 60},
+    {"id": "rw-fn/static_strops/str_count_char", "kind": "rewrite_function", "binary": "static_strops-O0", "function": "str_count_char", "cases": 60},
+    {"id": "rw-fn/static_strops/caesar", "kind": "rewrite_function", "binary": "static_strops-O0", "function": "caesar", "cases": 60},
+    {"id": "rw-fn/static_strops/str_upper", "kind": "rewrite_function", "binary": "static_strops-O0", "function": "str_upper", "cases": 60},
+    {"id": "rw-prog/pie_list", "kind": "rewrite_program", "binary": "pie_list-O0"},
+    {"id": "rw-prog/static_strops", "kind": "rewrite_program", "binary": "static_strops-O0"},
+    {"id": "rw-prog/stripped_calc", "kind": "rewrite_program", "binary": "stripped_calc-O0"}
+  ]
+}

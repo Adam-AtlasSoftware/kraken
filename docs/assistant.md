@@ -708,6 +708,18 @@ kraken eval run --backend ci-replay --cassette results/run1/cassette.json --out 
 
 `--record` saves every exchange of a model API as an eval cassette: the responses of each task's model calls, in order. Replaying it runs the same tasks against the fixtures with the recorded answers, so a scoring change can be checked on real answers without paying for them again. A cassette is keyed by task id and call number, not by a hash of the request, so changing a tool description does not invalidate it. If the tools would have behaved differently, the replay shows it.
 
+### Measuring rewrite quality
+
+`--suite rewrite` runs the built-in rewrite suite instead: the tasks are `rewrite_function` (one function) and `rewrite_program` (a whole program), and the model's work is judged by the differential test, not by an answer block. Each task opens the corpus binary on the recorded fixtures, runs the same pipeline as `rewrite_function` and `rewrite_program` (the model is asked through the text-only request of the [rewrite pipeline](rewrite.md)), builds the Rust in the sandbox and compares it with the original machine code or the original program. The report adds a "Rewrite quality" block: pass rate, cases that agreed, repair rounds, model calls, and tokens and cost where the backend reports them.
+
+```sh
+kraken eval run --suite rewrite --backend ci-replay --out /tmp/eval-rewrite   # offline, from a cassette
+kraken eval run --suite rewrite --out results/rewrite-qwen3                  # the model in [provider]
+kraken eval run --suite rewrite --kind rewrite_program --record results/rewrite.json
+```
+
+The suite has six function units of `pie_list` and `static_strops` and the three whole programs `pie_list`, `static_strops` and `stripped_calc` (`crates/kraken-eval/data/rewrite.json`). The rewrite suite needs the sandbox (Linux with Landlock); function units also need the SLEIGH specs (see [Rewrite a program in Rust](rewrite.md)). `ci-replay` replays `data/rewrite-cassette.json`, whose replies are the hand-checked reference translations of `kraken-rewrite`, keyed by task and call number; it proves the harness and the pipeline, not a model. `KRAKEN_EVAL_BLESS=1 cargo test -p kraken-eval --test rewrite -- the_program` rewrites the cassette and the expected report. A live run measures the model in `[provider]` (an API, not a terminal agent) and `--record` saves its replies as a new cassette.
+
 ### Your own tasks
 
 A suite is a JSON file passed with `--suite`. Each task has an `id`, a `kind`, a corpus `binary`, a `question` and an `expect` (`function`, `yes_no`, `set` or `text`); naming tasks need only a `sample` size. See `crates/kraken-eval/data/corpus.json`. Names are only a test on a stripped binary, so `name_functions` refuses an unstripped one.

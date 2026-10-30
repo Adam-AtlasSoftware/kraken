@@ -113,7 +113,7 @@ fn budget_for(kind: Kind) -> Budget {
     let (steps, calls) = match kind {
         Kind::NameFunctions => (40, 60),
         Kind::FindFunction => (24, 30),
-        Kind::Question => (16, 20),
+        Kind::Question | Kind::RewriteFunction | Kind::RewriteProgram => (16, 20),
     };
     Budget {
         max_steps: steps,
@@ -278,6 +278,7 @@ impl Runner<'_> {
             tool_errors: result.tool_calls.iter().filter(|c| c.is_error).count(),
             duration_ms,
             transcript,
+            rewrite: None,
         }
     }
 }

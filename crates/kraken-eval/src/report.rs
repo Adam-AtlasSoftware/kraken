@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::EvalError;
+use crate::rewrite::{RewriteMetrics, RewriteSummary};
 use crate::suite::Kind;
 
 /// Version of the report format.
@@ -130,6 +131,9 @@ pub struct TaskReport {
     pub duration_ms: Option<u64>,
     /// Everything that happened.
     pub transcript: Vec<TranscriptEntry>,
+    /// The differential verdict and its numbers, for rewrite tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite: Option<RewriteMetrics>,
 }
 
 /// Totals for one kind of task.
@@ -167,6 +171,9 @@ pub struct Summary {
     /// Wall time of the run, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Pass rate, cases, repair rounds and model calls of the rewrite tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite: Option<RewriteSummary>,
 }
 
 /// A whole run.
@@ -250,6 +257,7 @@ impl Summary {
             cost_usd: cost.map(round4),
             tool_calls: tasks.iter().map(|t| t.tool_calls).sum(),
             duration_ms,
+            rewrite: RewriteSummary::of(tasks),
         }
     }
 }
@@ -308,7 +316,9 @@ impl Report {
                 let _ = writeln!(out, "- Tokens: not reported by this backend");
             }
         }
-        let _ = writeln!(out, "- Tool calls: {}", s.tool_calls);
+        if s.rewrite.is_none() {
+            let _ = writeln!(out, "- Tool calls: {}", s.tool_calls);
+        }
         if let Some(ms) = s.duration_ms {
             let _ = writeln!(out, "- Time: {:.1} s", ms as f64 / 1000.0);
         }
@@ -324,6 +334,43 @@ impl Report {
                 pct(v.mean_score),
                 v.correct
             );
+        }
+
+        if let Some(r) = &s.rewrite {
+            let _ = writeln!(
+                out,
+                "\n## Rewrite quality\n\n- **Pass rate: {}** ({} of {} tasks passed the differential test)\n\
+                 - Cases: {} of {} agreed ({})\n- Functions translated: {} ({} did not pass)\n\
+                 - Repair rounds: {}\n- Model calls: {}",
+                pct(r.pass_rate),
+                r.passed,
+                r.tasks,
+                r.cases_passed,
+                r.cases_run,
+                pct(r.case_pass_rate),
+                r.units,
+                r.units_failed,
+                r.repair_rounds,
+                r.model_calls
+            );
+            out.push_str(
+                "\n| Task | Verdict | Cases agreed | Repair rounds | Model calls | Tokens |\n|---|---|---:|---:|---:|---:|\n",
+            );
+            for t in &self.tasks {
+                let Some(m) = &t.rewrite else { continue };
+                let _ = writeln!(
+                    out,
+                    "| [{}](transcripts/{}.md) | {} | {}/{} | {} | {} | {} |",
+                    t.id,
+                    file_stem(&t.id),
+                    m.verdict,
+                    m.cases_passed,
+                    m.cases_run,
+                    m.repair_rounds,
+                    m.model_calls,
+                    t.tokens.map_or("-".to_string(), |u| u.total().to_string())
+                );
+            }
         }
 
         out.push_str("\n## Tasks\n\n| Task | Binary | Score | Tokens | Tools | Note |\n|---|---|---:|---:|---:|---|\n");
@@ -485,6 +532,7 @@ mod tests {
             transcript: vec![TranscriptEntry::Done {
                 stop: "completed".into(),
             }],
+            rewrite: None,
         }
     }
 

@@ -302,3 +302,48 @@ async fn bad_arguments_are_refused() {
         assert_eq!(run.code, 2, "{args:?}: {}{}", run.stdout, run.stderr);
     }
 }
+
+#[tokio::test]
+async fn the_rewrite_suite_replays_and_reports_the_differential_numbers() {
+    if !kraken_rewrite::sandbox::enforced_or_skip() {
+        return;
+    }
+    let r = plain_rig();
+    let list = kraken_with(&r.env, None, &["eval", "list", "--suite", "rewrite"]).await;
+    assert_eq!(list.code, 0, "{}", list.stderr);
+    assert!(list.stdout.contains("rw-prog/pie_list"), "{}", list.stdout);
+
+    let out = tempfile::tempdir().expect("tempdir");
+    let dir = path_str(&out.path().join("rw"));
+    let run = kraken_with(
+        &r.env,
+        None,
+        &[
+            "eval",
+            "run",
+            "--suite",
+            "rewrite",
+            "--backend",
+            "ci-replay",
+            "--kind",
+            "rewrite_program",
+            "--out",
+            &dir,
+        ],
+    )
+    .await;
+    assert_eq!(run.code, 0, "{}{}", run.stdout, run.stderr);
+    assert!(
+        run.stdout.contains("3 of 3 rewrite tasks passed"),
+        "{}",
+        run.stdout
+    );
+    let report: Value = serde_json::from_str(
+        &std::fs::read_to_string(Path::new(&dir).join("report.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["summary"]["rewrite"]["pass_rate"], 1.0);
+    assert_eq!(report["summary"]["rewrite"]["repair_rounds"], 0);
+    let md = std::fs::read_to_string(Path::new(&dir).join("report.md")).unwrap();
+    assert!(md.contains("## Rewrite quality"), "{md}");
+}

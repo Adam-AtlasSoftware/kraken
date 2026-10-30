@@ -2877,6 +2877,7 @@ version = "0.3.0"
 dependencies = [
  "async-trait",
  "engine-fake",
+ "futures-util",
  "kraken-acp",
  "kraken-agent",
  "kraken-assist",
@@ -2884,6 +2885,7 @@ dependencies = [
  "kraken-host",
  "kraken-proto",
  "kraken-registry",
+ "kraken-rewrite",
  "serde",
  "serde_json",
  "tempfile",

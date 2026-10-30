@@ -21,6 +21,7 @@ use crate::corpus::{Corpus, Truth, engine_address};
 use crate::error::EvalError;
 
 const BUILTIN: &str = include_str!("../data/corpus.json");
+const REWRITE: &str = include_str!("../data/rewrite.json");
 
 /// Functions shorter than this are left out of naming tasks: a four-instruction stub says too
 /// little to name.
@@ -37,6 +38,10 @@ pub enum Kind {
     FindFunction,
     /// Answer a question about strings or imports.
     Question,
+    /// Rewrite one function to Rust; scored by the differential verdict (see `rewrite.rs`).
+    RewriteFunction,
+    /// Rewrite a whole program to a Rust crate; scored by the program-level verdict.
+    RewriteProgram,
 }
 
 impl Kind {
@@ -46,7 +51,14 @@ impl Kind {
             Kind::NameFunctions => "name_functions",
             Kind::FindFunction => "find_function",
             Kind::Question => "question",
+            Kind::RewriteFunction => "rewrite_function",
+            Kind::RewriteProgram => "rewrite_program",
         }
+    }
+
+    /// True for the kinds the rewrite runner scores, not the assistant runner.
+    pub fn is_rewrite(self) -> bool {
+        matches!(self, Kind::RewriteFunction | Kind::RewriteProgram)
     }
 }
 
@@ -111,6 +123,12 @@ pub struct TaskDef {
     /// How [`Suite::validate`] checks `expect`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<Check>,
+    /// For `rewrite_function`: the function to rewrite, by its name in the truth file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    /// For rewrite tasks: random function-level cases (default: the pipeline's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cases: Option<u32>,
 }
 
 /// A suite of tasks.
@@ -196,6 +214,29 @@ impl Suite {
         })
     }
 
+    /// The built-in rewrite suite (`--suite rewrite`).
+    pub fn rewrite_builtin() -> Suite {
+        serde_json::from_str(REWRITE).unwrap_or(Suite {
+            version: 1,
+            name: "rewrite".into(),
+            tasks: Vec::new(),
+        })
+    }
+
+    /// A built-in suite by name (`corpus`, `rewrite`).
+    pub fn named(name: &str) -> Option<Suite> {
+        match name {
+            "corpus" => Some(Suite::builtin()),
+            "rewrite" => Some(Suite::rewrite_builtin()),
+            _ => None,
+        }
+    }
+
+    /// True when every task is a rewrite task (the suite runs through the rewrite runner).
+    pub fn is_rewrite(&self) -> bool {
+        !self.tasks.is_empty() && self.tasks.iter().all(|t| t.kind.is_rewrite())
+    }
+
     /// Reads a suite from a JSON file.
     pub fn from_path(path: &Path) -> Result<Suite, EvalError> {
         let text = std::fs::read_to_string(path)
@@ -235,6 +276,16 @@ impl Suite {
                 )));
             }
             match (t.kind, &t.expect) {
+                (Kind::RewriteFunction, _) => {
+                    if t.function.as_deref().is_none_or(str::is_empty) {
+                        return Err(EvalError::Suite(format!(
+                            "`{}`: a rewrite_function task names its `function`",
+                            t.id
+                        )));
+                    }
+                    continue;
+                }
+                (Kind::RewriteProgram, _) => continue,
                 (Kind::NameFunctions, _) => {
                     if !t.binary.ends_with("-stripped") {
                         return Err(EvalError::Suite(format!(
@@ -276,6 +327,11 @@ impl Suite {
             }
             let truth = corpus.truth(&t.binary)?;
             let fixture = corpus.fixture(&t.binary)?;
+            if let Some(name) = &t.function
+                && !truth.functions.iter().any(|f| &f.name == name)
+            {
+                return Err(bad(format!("`{name}` is not a function of the truth file")));
+            }
             if let Some(Expect::Function { name }) = &t.expect
                 && !truth.functions.iter().any(|f| &f.name == name)
             {
@@ -337,6 +393,9 @@ impl TaskDef {
     /// Works out the addresses for an engine that loads the binary at `base`.
     pub fn resolve(&self, truth: &Truth, base: u64) -> Result<ResolvedTask, EvalError> {
         let bad = |m: String| EvalError::Suite(format!("`{}`: {m}", self.id));
+        if self.kind.is_rewrite() {
+            return Err(bad("rewrite tasks run through the rewrite runner".into()));
+        }
         let expected = match (&self.kind, &self.expect) {
             (Kind::NameFunctions, _) => {
                 let n = self.sample.unwrap_or(DEFAULT_SAMPLE).max(1);

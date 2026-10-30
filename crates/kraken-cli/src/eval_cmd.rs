@@ -16,19 +16,26 @@ use kraken_agent::ChatProvider;
 use kraken_assist::{AgentChoice, AssistBackend, Assistant, UnusedBackend};
 use kraken_eval::ci::{self, FixtureEnvironment};
 use kraken_eval::{
-    ApiSource, AssistantSource, Corpus, Environment as EvalEnvironment, EvalCassette, EvalError,
-    FakeAgentSource, Kind, Prepared, Price, RecordingSource, ReplaySource, ResolvedTask,
-    RunOptions, Runner, Suite, write_report,
+    Answers, ApiSource, AssistantSource, Corpus, Environment as EvalEnvironment, EvalCassette,
+    EvalError, FakeAgentSource, Kind, Prepared, Price, RecordingSource, ReplaySource, ResolvedTask,
+    RewriteRunner, RunOptions, Runner, Suite, write_report,
 };
 use kraken_proto::ProtoError;
 use kraken_registry::Registry;
+use kraken_rewrite::oracle::OracleConfig;
 use serde_json::json;
 
 use crate::app::{CliEnv, DaemonMode, bad, emit, fail};
 use crate::assist_cmd::{Selection, agent_backend, selection_from_config};
 
 const BACKENDS: [&str; 3] = ["config", "ci-replay", "ci-agent"];
-const KINDS: [&str; 3] = ["name_functions", "find_function", "question"];
+const KINDS: [&str; 5] = [
+    "name_functions",
+    "find_function",
+    "question",
+    "rewrite_function",
+    "rewrite_program",
+];
 
 /// The clap tree of `kraken eval`.
 pub(crate) fn command() -> Command {
@@ -36,7 +43,7 @@ pub(crate) fn command() -> Command {
         Arg::new("suite")
             .long("suite")
             .value_name("FILE")
-            .help("A task suite (JSON). Default: the built-in suite over the corpus")
+            .help("A task suite: a JSON file, or `rewrite` for the built-in rewrite suite. Default: the built-in suite over the corpus")
     };
     let corpus = || {
         Arg::new("corpus")
@@ -153,7 +160,10 @@ fn proto(e: EvalError) -> ProtoError {
 
 fn load_suite(sm: &ArgMatches) -> Result<Suite, ProtoError> {
     match sm.get_one::<String>("suite") {
-        Some(p) => Suite::from_path(Path::new(p)).map_err(proto),
+        Some(p) => match Suite::named(p) {
+            Some(s) if !Path::new(p).exists() => Ok(s),
+            _ => Suite::from_path(Path::new(p)).map_err(proto),
+        },
         None => Ok(Suite::builtin()),
     }
 }
@@ -205,6 +215,8 @@ fn parse_kinds(sm: &ArgMatches) -> Vec<Kind> {
             "name_functions" => Some(Kind::NameFunctions),
             "find_function" => Some(Kind::FindFunction),
             "question" => Some(Kind::Question),
+            "rewrite_function" => Some(Kind::RewriteFunction),
+            "rewrite_program" => Some(Kind::RewriteProgram),
             _ => None,
         })
         .collect()
@@ -268,6 +280,22 @@ async fn run(
             _ => "live".to_string(),
         },
     };
+    if suite.is_rewrite() {
+        return run_rewrite(
+            sm,
+            &suite,
+            &corpus,
+            backend_name,
+            options,
+            out_dir,
+            env,
+            json_out,
+            provider,
+            out,
+            err,
+        )
+        .await;
+    }
     let registry = env.registry.clone();
     let record_to = sm.get_one::<String>("record").map(PathBuf::from);
     let mut recorder: Option<Arc<RecordingSource>> = None;
@@ -458,6 +486,145 @@ async fn run(
                 ),
             ),
             None => emit(out, "tokens: not reported by this backend\n"),
+        }
+        emit(out, &format!("report: {}\n", written.markdown.display()));
+    }
+    if let Some(min) = sm.get_one::<f64>("min-score")
+        && report.summary.mean_score < *min
+    {
+        emit(
+            err,
+            &format!(
+                "mean score {:.3} is below --min-score {min}\n",
+                report.summary.mean_score
+            ),
+        );
+        return Ok(1);
+    }
+    Ok(0)
+}
+
+/// Runs a suite of rewrite tasks: the rewrite pipeline asks the model (or replays a cassette),
+/// and each task is scored by the differential verdict.
+#[allow(clippy::too_many_arguments)]
+async fn run_rewrite(
+    sm: &ArgMatches,
+    suite: &Suite,
+    corpus: &Corpus,
+    backend_name: &str,
+    options: RunOptions,
+    out_dir: PathBuf,
+    env: &CliEnv,
+    json_out: bool,
+    provider: Option<Arc<dyn ChatProvider>>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<i32, ProtoError> {
+    let record_to = sm.get_one::<String>("record").map(PathBuf::from);
+    let answers = match backend_name {
+        "ci-replay" => {
+            if record_to.is_some() {
+                return Err(bad("--record needs a model API (--backend config)"));
+            }
+            Answers::Replay(match sm.get_one::<String>("cassette") {
+                Some(p) => EvalCassette::load(Path::new(p)).map_err(proto)?,
+                None => kraken_eval::rewrite::committed_cassette().map_err(proto)?,
+            })
+        }
+        "ci-agent" => {
+            return Err(bad(
+                "the rewrite suite has no fake terminal agent; use ci-replay",
+            ));
+        }
+        _ => {
+            let provider = match provider {
+                Some(p) => p,
+                None => match selection_from_config(env)? {
+                    Selection::Api(p) => p,
+                    Selection::Agent(_) => {
+                        return Err(bad(
+                            "the rewrite suite measures a model API; set a `[provider]` of an API kind",
+                        ));
+                    }
+                },
+            };
+            let info = provider.info();
+            Answers::Live {
+                note: format!("{} / {} (recorded by kraken eval)", info.id, info.model),
+                provider,
+            }
+        }
+    };
+    let total = suite
+        .tasks
+        .iter()
+        .filter(|t| options.selects(&t.id, t.kind))
+        .count()
+        .min(options.limit.unwrap_or(usize::MAX));
+    let ghidra_home = env.var("KRAKEN_GHIDRA_HOME").map(PathBuf::from);
+    let mut runner = RewriteRunner::new(corpus, out_dir.clone(), answers, options, ghidra_home);
+    runner.verify_functions = backend_name == "config"
+        && kraken_rewrite::oracle::find_processors(&OracleConfig {
+            ghidra_home: runner.ghidra_home.clone(),
+            ..OracleConfig::default()
+        })
+        .is_ok();
+    let mut done = 0usize;
+    let report = runner
+        .run(suite, &mut |t| {
+            done += 1;
+            emit(
+                err,
+                &format!(
+                    "[{done}/{total}] {:<30} {:<12}{}\n",
+                    t.id,
+                    t.rewrite.as_ref().map_or("error", |m| m.verdict.as_str()),
+                    t.problem
+                        .as_deref()
+                        .map(|p| format!("  ({p})"))
+                        .unwrap_or_default()
+                ),
+            );
+        })
+        .await
+        .map_err(proto)?;
+    if let (Some(cassette), Some(path)) = (runner.recorded(), &record_to) {
+        cassette.save(path).map_err(proto)?;
+        emit(err, &format!("cassette written to {}\n", path.display()));
+    }
+    let written = write_report(&report, &out_dir).map_err(proto)?;
+    if json_out {
+        emit(out, &report.to_json().map_err(proto)?);
+    } else if let Some(r) = &report.summary.rewrite {
+        emit(
+            out,
+            &format!(
+                "{} / {}: {} of {} rewrite tasks passed ({:.1}%)\n  cases agreed {} of {}, repair rounds {}, model calls {}\n",
+                report.backend.title(),
+                report.mode,
+                r.passed,
+                r.tasks,
+                r.pass_rate * 100.0,
+                r.cases_passed,
+                r.cases_run,
+                r.repair_rounds,
+                r.model_calls
+            ),
+        );
+        if let Some(t) = report.summary.tokens {
+            emit(
+                out,
+                &format!(
+                    "tokens: {} in, {} out{}\n",
+                    t.input,
+                    t.output,
+                    report
+                        .summary
+                        .cost_usd
+                        .map(|c| format!(", about ${c:.4}"))
+                        .unwrap_or_default()
+                ),
+            );
         }
         emit(out, &format!("report: {}\n", written.markdown.display()));
     }

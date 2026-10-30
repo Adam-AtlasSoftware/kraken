@@ -17,6 +17,8 @@ kraken-engine = { path = "../kraken-engine", version = "0.3.0" }
 kraken-host = { path = "../kraken-host", version = "0.3.0" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.3.0" }
+kraken-rewrite = { path = "../kraken-rewrite", version = "0.3.0" }
+futures-util = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -1,0 +1,344 @@
+{
+  "version": 1,
+  "recorded_with": "kraken-eval rewrite: reference translations of kraken-rewrite (not a model)",
+  "tasks": {
+    "rw-fn/pie_list/cmp_dist": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_dist` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\nfn dist2(p: &Point) -> i32 {\n    p.x.wrapping_mul(p.x).wrapping_add(p.y.wrapping_mul(p.y))\n}\n\n/// Squared distance from the origin of each record's position; returns their difference.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_dist(a: *const Record, b: *const Record) -> i32 {\n    unsafe { dist2(&(*a).pos).wrapping_sub(dist2(&(*b).pos)) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-fn/pie_list/cmp_id": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id`: the difference of the ids (called through a\n// function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-fn/static_strops/caesar": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `caesar`: shifts lower-case letters, returns how many.\n// C `%` keeps the sign of the dividend, as Rust's does.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn caesar(s: *mut u8, shift: i32) -> i32 {\n    let mut changed: i32 = 0;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p >= b'a' && *p <= b'z' {\n                let v = (i32::from(*p) - i32::from(b'a')).wrapping_add(shift) % 26;\n                *p = i32::from(b'a').wrapping_add(v) as u8;\n                changed += 1;\n            }\n            p = p.add(1);\n        }\n    }\n    changed\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-fn/static_strops/hash_str": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `hash_str` (corpus/src/static_strops.c): djb2 xor variant.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn hash_str(s: *const u8) -> u64 {\n    let mut h: u64 = 5381;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            h = h.wrapping_shl(5).wrapping_add(h) ^ u64::from(*p);\n            p = p.add(1);\n        }\n    }\n    h\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-fn/static_strops/str_count_char": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_count_char`: occurrences of `c` in a C string.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_count_char(s: *const u8, c: i8) -> i32 {\n    let mut count: i32 = 0;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p as i8 == c {\n                count += 1;\n            }\n            p = p.add(1);\n        }\n    }\n    count\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-fn/static_strops/str_upper": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_upper`: ASCII upper-casing in place.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_upper(s: *mut u8) {\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p >= b'a' && *p <= b'z' {\n                *p = *p - b'a' + b'A';\n            }\n            p = p.add(1);\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-prog/pie_list": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `node_new`: allocates a zeroed node and fills its record.\n// It returns a pointer, so the function-level test only compiles it.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n/// `calloc(1, sizeof *n)`, `exit(3)` when it fails, then the fields; the name is copied with\n/// `strncpy` into at most 15 bytes (the last byte of the field stays NUL from `calloc`).\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn node_new(\n    id: i32,\n    name: *const u8,\n    x: i32,\n    y: i32,\n    w: f64,\n) -> *const u8 {\n    unsafe {\n        let n = rt::calloc(1, std::mem::size_of::<Node>()) as *mut Node;\n        if n.is_null() {\n            rt::exit(3);\n        }\n        (*n).rec.id = id;\n        rt::strncpy((*n).rec.name.as_mut_ptr(), name, 15);\n        (*n).rec.pos.x = x;\n        (*n).rec.pos.y = y;\n        (*n).rec.weight = w;\n        n as *const u8\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_push`: puts a node at the head of the list.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\n/// `n->next = l->head; l->head = n; l->count++;`\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_push(l: *mut List, n: *mut Node) {\n    unsafe {\n        (*n).next = (*l).head;\n        (*l).head = n;\n        (*l).count = (*l).count.wrapping_add(1);\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id`: the difference of the ids (called through a\n// function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_name`: `strcmp` of the names (called through a function\n// pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_name(a: *const Record, b: *const Record) -> i32 {\n    unsafe { rt::strcmp((*a).name.as_ptr(), (*b).name.as_ptr()) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_dist` (corpus/src/pie_list.c).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\nfn dist2(p: &Point) -> i32 {\n    p.x.wrapping_mul(p.x).wrapping_add(p.y.wrapping_mul(p.y))\n}\n\n/// Squared distance from the origin of each record's position; returns their difference.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_dist(a: *const Record, b: *const Record) -> i32 {\n    unsafe { dist2(&(*a).pos).wrapping_sub(dist2(&(*b).pos)) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_sort`: bubble sort of the linked list by relinking\n// nodes, with a comparison callback that receives the two records.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\npub type CmpFn = unsafe extern \"C\" fn(*const Record, *const Record) -> i32;\n\n/// Passes over the list until nothing is swapped; two neighbours swap when `cmp(a, b) > 0`.\n/// `pp` points at the link that points at `a`, which is how the swap relinks without a\n/// previous-node pointer.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_sort(l: *mut List, cmp: Option<CmpFn>) {\n    unsafe {\n        loop {\n            let mut swapped = false;\n            let mut pp: *mut *mut Node = &mut (*l).head;\n            while !(*pp).is_null() && !(**pp).next.is_null() {\n                let a = *pp;\n                let b = (*a).next;\n                if cmp.expect(\"comparison callback\")(&(*a).rec, &(*b).rec) > 0 {\n                    (*a).next = (*b).next;\n                    (*b).next = a;\n                    *pp = b;\n                    swapped = true;\n                }\n                pp = &mut (**pp).next;\n            }\n            if !swapped {\n                break;\n            }\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_each`: calls a visitor on each record, head first.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\npub type VisitFn = unsafe extern \"C\" fn(*const Record, *mut u8);\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_each(l: *const List, f: Option<VisitFn>, ctx: *mut u8) {\n    unsafe {\n        let mut n = (*l).head;\n        while !n.is_null() {\n            f.expect(\"visit callback\")(&(*n).rec, ctx);\n            n = (*n).next;\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `print_rec`: one line per record (called through a function\n// pointer only). The decompile lists the arguments of the variadic call in register order; the C\n// source passes id, name, x, y and weight.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn print_rec(r: *const Record, _ctx: *mut u8) {\n    unsafe {\n        rt::printf(\n            b\"  #%d %-6s (%d,%d) %.1f\\n\\0\".as_ptr(),\n            &[\n                rt::Arg::Int(i64::from((*r).id)),\n                rt::Arg::Ptr((*r).name.as_ptr()),\n                rt::Arg::Int(i64::from((*r).pos.x)),\n                rt::Arg::Int(i64::from((*r).pos.y)),\n                rt::Arg::Double((*r).weight),\n            ],\n        );\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `sum_weight`: adds a record's weight to the double `ctx`\n// points to (called through a function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn sum_weight(r: *const Record, ctx: *mut u8) {\n    unsafe {\n        *(ctx as *mut f64) += (*r).weight;\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `list_free`: frees every node and empties the list.\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[repr(C)]\npub struct Node {\n    pub rec: Record,\n    pub next: *mut Node,\n}\n\n#[repr(C)]\npub struct List {\n    pub head: *mut Node,\n    pub count: i32,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn list_free(l: *mut List) {\n    unsafe {\n        while !(*l).head.is_null() {\n            let n = (*l).head;\n            (*l).head = (*n).next;\n            rt::free(n as *mut u8);\n        }\n        (*l).count = 0;\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `main`; the entry point of the program. Builds a list of four\n// records, sorts it three ways through comparison callbacks, prints it with a visitor and sums the\n// weights with another. The callbacks are other translated functions passed by address.\n\n#[repr(C)]\npub struct List {\n    pub head: *mut u8,\n    pub count: i32,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn fn_1014da() -> i32 {\n    let mut l = List {\n        head: std::ptr::null_mut(),\n        count: 0,\n    };\n    let lp = &mut l as *mut List;\n    unsafe {\n        list_push(lp as _, node_new(3, b\"gamma\\0\".as_ptr() as _, 5, 1, 2.5) as _);\n        list_push(lp as _, node_new(1, b\"delta\\0\".as_ptr() as _, -2, 7, 1.25) as _);\n        list_push(lp as _, node_new(2, b\"alpha\\0\".as_ptr() as _, 0, 3, 9.0) as _);\n        list_push(lp as _, node_new(4, b\"beta\\0\".as_ptr() as _, 1, 1, 0.5) as _);\n\n        // The table of orders: a label and the comparison function, as addresses.\n        let orders: [(&[u8], usize); 3] = [\n            (b\"by id\\0\", cmp_id as usize),\n            (b\"by name\\0\", cmp_name as usize),\n            (b\"by distance\\0\", cmp_dist as usize),\n        ];\n        for (label, cmp) in orders.iter() {\n            rt::printf(b\"%s:\\n\\0\".as_ptr(), &[rt::Arg::Ptr(label.as_ptr())]);\n            list_sort(lp as _, std::mem::transmute::<usize, _>(*cmp));\n            list_each(\n                lp as _,\n                std::mem::transmute::<usize, _>(print_rec as usize),\n                std::ptr::null_mut(),\n            );\n        }\n        let mut total: f64 = 0.0;\n        list_each(\n            lp as _,\n            std::mem::transmute::<usize, _>(sum_weight as usize),\n            &mut total as *mut f64 as _,\n        );\n        rt::printf(\n            b\"count=%d total=%.2f\\n\\0\".as_ptr(),\n            &[rt::Arg::Int(i64::from(l.count)), rt::Arg::Double(total)],\n        );\n        list_free(lp as _);\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-prog/static_strops": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `hash_str` (corpus/src/static_strops.c): djb2 xor variant.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn hash_str(s: *const u8) -> u64 {\n    let mut h: u64 = 5381;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            h = h.wrapping_shl(5).wrapping_add(h) ^ u64::from(*p);\n            p = p.add(1);\n        }\n    }\n    h\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_reverse`: reverses a C string in place.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_reverse(s: *mut u8) {\n    unsafe {\n        let n = rt::strlen(s);\n        let mut i = 0usize;\n        while i < n / 2 {\n            let t = *s.add(i);\n            *s.add(i) = *s.add(n - 1 - i);\n            *s.add(n - 1 - i) = t;\n            i += 1;\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_count_char`: occurrences of `c` in a C string.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_count_char(s: *const u8, c: i8) -> i32 {\n    let mut count: i32 = 0;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p as i8 == c {\n                count += 1;\n            }\n            p = p.add(1);\n        }\n    }\n    count\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `str_upper`: ASCII upper-casing in place.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn str_upper(s: *mut u8) {\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p >= b'a' && *p <= b'z' {\n                *p = *p - b'a' + b'A';\n            }\n            p = p.add(1);\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `is_palindrome`.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn is_palindrome(s: *const u8) -> i32 {\n    unsafe {\n        let n = rt::strlen(s);\n        let mut i = 0usize;\n        while i < n / 2 {\n            if *s.add(i) != *s.add(n - 1 - i) {\n                return 0;\n            }\n            i += 1;\n        }\n    }\n    1\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `caesar`: shifts lower-case letters, returns how many.\n// C `%` keeps the sign of the dividend, as Rust's does.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn caesar(s: *mut u8, shift: i32) -> i32 {\n    let mut changed: i32 = 0;\n    let mut p = s;\n    unsafe {\n        while *p != 0 {\n            if *p >= b'a' && *p <= b'z' {\n                let v = (i32::from(*p) - i32::from(b'a')).wrapping_add(shift) % 26;\n                *p = i32::from(b'a').wrapping_add(v) as u8;\n                changed += 1;\n            }\n            p = p.add(1);\n        }\n    }\n    changed\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `join_words`: joins `n` words with `sep` into `out`\n// (capacity `cap`); returns the length, or -1 when it would not fit.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn join_words(\n    out: *mut u8,\n    cap: u64,\n    words: *const *const u8,\n    n: i32,\n    sep: i8,\n) -> i32 {\n    let cap = cap as usize;\n    let mut used: usize = 0;\n    let mut i: i32 = 0;\n    unsafe {\n        while i < n {\n            let w = *words.add(i as usize);\n            let wl = rt::strlen(w);\n            if used.wrapping_add(wl).wrapping_add(2) > cap {\n                return -1;\n            }\n            rt::memcpy(out.add(used), w, wl);\n            used += wl;\n            if i + 1 < n {\n                *out.add(used) = sep as u8;\n                used += 1;\n            }\n            i += 1;\n        }\n        *out.add(used) = 0;\n    }\n    used as i32\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of static_strops `main`; the entry point of the program. Calls the\n// translated helpers and prints through the runtime shim.\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn fn_401a5e() -> i32 {\n    let words: [*const u8; 5] = [\n        b\"static\\0\".as_ptr(),\n        b\"linking\\0\".as_ptr(),\n        b\"keeps\\0\".as_ptr(),\n        b\"libc\\0\".as_ptr(),\n        b\"inside\\0\".as_ptr(),\n    ];\n    let mut buf = [0u8; 128];\n    let mut tmp = [0u8; 128];\n    let mut total: u64 = 0;\n    unsafe {\n        let len = join_words(buf.as_mut_ptr() as _, 128, words.as_ptr() as _, 5, 32);\n        if len < 0 {\n            return 1;\n        }\n        rt::printf(\n            b\"joined: %s (%d)\\n\\0\".as_ptr(),\n            &[rt::Arg::Ptr(buf.as_ptr()), rt::Arg::Int(i64::from(len))],\n        );\n        total = total.wrapping_add(hash_str(buf.as_ptr() as _));\n\n        rt::strcpy(tmp.as_mut_ptr(), buf.as_ptr());\n        str_reverse(tmp.as_mut_ptr() as _);\n        rt::printf(b\"reversed: %s\\n\\0\".as_ptr(), &[rt::Arg::Ptr(tmp.as_ptr())]);\n        total = total.wrapping_add(hash_str(tmp.as_ptr() as _));\n\n        str_upper(tmp.as_mut_ptr() as _);\n        rt::printf(b\"upper: %s\\n\\0\".as_ptr(), &[rt::Arg::Ptr(tmp.as_ptr())]);\n        rt::printf(\n            b\"count of i: %d\\n\\0\".as_ptr(),\n            &[rt::Arg::Int(i64::from(str_count_char(\n                buf.as_ptr() as _,\n                b'i' as _,\n            )))],\n        );\n        rt::printf(\n            b\"palindrome(level)=%d palindrome(buf)=%d\\n\\0\".as_ptr(),\n            &[\n                rt::Arg::Int(i64::from(is_palindrome(b\"level\\0\".as_ptr() as _))),\n                rt::Arg::Int(i64::from(is_palindrome(buf.as_ptr() as _))),\n            ],\n        );\n\n        let ch = caesar(buf.as_mut_ptr() as _, 3);\n        rt::printf(\n            b\"caesar changed %d chars: %s\\n\\0\".as_ptr(),\n            &[rt::Arg::Int(i64::from(ch)), rt::Arg::Ptr(buf.as_ptr())],\n        );\n\n        let heap = rt::malloc(64);\n        if heap.is_null() {\n            return 2;\n        }\n        rt::snprintf(\n            heap,\n            64,\n            b\"hash=%lu\\0\".as_ptr(),\n            &[rt::Arg::UInt(total % 100_000)],\n        );\n        rt::printf(b\"%s\\n\\0\".as_ptr(), &[rt::Arg::Ptr(heap)]);\n        rt::free(heap);\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ],
+    "rw-prog/stripped_calc": [
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `skip_ws` (corpus/src/stripped_calc.c), written by hand\n// and checked against the C source; program mode (the runtime shim `rt` is in scope).\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// Advances `ps.p` past C-locale whitespace.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn skip_ws(ps: *mut Parser) {\n    unsafe {\n        while rt::isspace(i32::from(*(*ps).p)) != 0 {\n            (*ps).p = (*ps).p.add(1);\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `parse_number`; calls the translated `skip_ws`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// Reads decimal digits (after whitespace); sets `err` when there are none.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn parse_number(ps: *mut Parser) -> i64 {\n    let mut v: i64 = 0;\n    let mut any = false;\n    unsafe {\n        skip_ws(ps as _);\n        while rt::isdigit(i32::from(*(*ps).p)) != 0 {\n            v = v\n                .wrapping_mul(10)\n                .wrapping_add(i64::from(*(*ps).p - b'0'));\n            (*ps).p = (*ps).p.add(1);\n            any = true;\n        }\n        if !any {\n            (*ps).err = 1;\n        }\n    }\n    v\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `parse_atom`. parse_atom, parse_term and parse_expr\n// call each other, so this translation carries the other two as private helpers; it calls the\n// translated `skip_ws` and `parse_number`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\nunsafe fn cur(ps: *mut Parser) -> u8 {\n    unsafe { *(*ps).p }\n}\n\nunsafe fn advance(ps: *mut Parser) {\n    unsafe { (*ps).p = (*ps).p.add(1) }\n}\n\nunsafe fn parse_term(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = parse_atom(ps);\n        loop {\n            skip_ws(ps as _);\n            let op = cur(ps);\n            if op != b'*' && op != b'/' && op != b'%' {\n                return v;\n            }\n            advance(ps);\n            let r = parse_atom(ps);\n            if op == b'*' {\n                v = v.wrapping_mul(r);\n            } else if r == 0 {\n                (*ps).err = 1;\n            } else {\n                v = if op == b'/' { v / r } else { v % r };\n            }\n        }\n    }\n}\n\nunsafe fn parse_expr(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = parse_term(ps);\n        loop {\n            skip_ws(ps as _);\n            let op = cur(ps);\n            if op != b'+' && op != b'-' {\n                return v;\n            }\n            advance(ps);\n            let r = parse_term(ps);\n            v = if op == b'+' {\n                v.wrapping_add(r)\n            } else {\n                v.wrapping_sub(r)\n            };\n        }\n    }\n}\n\n/// atom = '(' expr ')' | '-' atom | number\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn parse_atom(ps: *mut Parser) -> i64 {\n    unsafe {\n        skip_ws(ps as _);\n        if cur(ps) == b'(' {\n            advance(ps);\n            let v = parse_expr(ps);\n            skip_ws(ps as _);\n            if cur(ps) != b')' {\n                (*ps).err = 1;\n            } else {\n                advance(ps);\n            }\n            return v;\n        }\n        if cur(ps) == b'-' {\n            advance(ps);\n            return parse_atom(ps).wrapping_neg();\n        }\n        parse_number(ps as _)\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `parse_term`; calls the translated `skip_ws` and\n// `parse_atom`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// term = atom (('*' | '/' | '%') atom)*; division by zero sets `err` and keeps the value.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn parse_term(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = parse_atom(ps as _);\n        loop {\n            skip_ws(ps as _);\n            let op = *(*ps).p;\n            if op != b'*' && op != b'/' && op != b'%' {\n                return v;\n            }\n            (*ps).p = (*ps).p.add(1);\n            let r = parse_atom(ps as _);\n            if op == b'*' {\n                v = v.wrapping_mul(r);\n            } else if r == 0 {\n                (*ps).err = 1;\n            } else {\n                v = if op == b'/' { v / r } else { v % r };\n            }\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `parse_expr`; calls the translated `skip_ws` and\n// `parse_term`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// expr = term (('+' | '-') term)*\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn parse_expr(ps: *mut Parser) -> i64 {\n    unsafe {\n        let mut v = parse_term(ps as _);\n        loop {\n            skip_ws(ps as _);\n            let op = *(*ps).p;\n            if op != b'+' && op != b'-' {\n                return v;\n            }\n            (*ps).p = (*ps).p.add(1);\n            let r = parse_term(ps as _);\n            v = if op == b'+' {\n                v.wrapping_add(r)\n            } else {\n                v.wrapping_sub(r)\n            };\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `evaluate`; calls the translated `parse_expr` and\n// `skip_ws`.\n\n#[repr(C)]\npub struct Parser {\n    pub p: *const u8,\n    pub err: i32,\n}\n\n/// Evaluates the NUL-terminated `text`; stores the value in `*out` and returns 0, or returns -1\n/// (leaving `*out` alone) on a syntax error, trailing text or division by zero.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn evaluate(text: *const u8, out: *mut i64) -> i32 {\n    let mut ps = Parser { p: text, err: 0 };\n    unsafe {\n        let v = parse_expr(&mut ps as *mut Parser as _);\n        skip_ws(&mut ps as *mut Parser as _);\n        if ps.err != 0 || *ps.p != 0 {\n            return -1;\n        }\n        *out = v;\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ],
+      [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of stripped_calc `main`; the entry point of the program. Calls the\n// translated `evaluate` and prints through the runtime shim.\n\n/// Evaluates seven fixed expressions and prints each result or `error`, then the error count.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn fn_1014c1() -> i32 {\n    const CASES: [&[u8]; 7] = [\n        b\"1 + 2 * 3\\0\",\n        b\"(1 + 2) * 3\\0\",\n        b\"100 / (5 - 5)\\0\",\n        b\"-(4 + 6) % 7\\0\",\n        b\"2 * (3 + 4) * 5\\0\",\n        b\"12 +\\0\",\n        b\"((7))\\0\",\n    ];\n    let mut bad: i32 = 0;\n    for case in CASES.iter() {\n        let mut v: i64 = 0;\n        unsafe {\n            if evaluate(case.as_ptr() as _, &mut v as *mut i64 as _) == 0 {\n                rt::printf(\n                    b\"%-18s = %ld\\n\\0\".as_ptr(),\n                    &[rt::Arg::Ptr(case.as_ptr()), rt::Arg::Int(v)],\n                );\n            } else {\n                rt::printf(\n                    b\"%-18s : error\\n\\0\".as_ptr(),\n                    &[rt::Arg::Ptr(case.as_ptr())],\n                );\n                bad += 1;\n            }\n        }\n    }\n    unsafe {\n        rt::printf(b\"errors: %d\\n\\0\".as_ptr(), &[rt::Arg::Int(i64::from(bad))]);\n    }\n    0\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    ]
+  }
+}
