@@ -275,6 +275,10 @@ impl ProjectCreateArgs {
 /// For an Intel HEX or S-record file: its loader format and the processor its contents suggest.
 fn firmware_loader(path: &Path) -> Result<Option<(&'static str, Option<String>)>, ProtoError> {
     use std::io::Read;
+    // Opening a FIFO or device would block; the regular-file check later refuses those.
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return Ok(None);
+    }
     let mut head = [0u8; 64];
     let n = std::fs::File::open(path)
         .and_then(|mut f| f.read(&mut head))
