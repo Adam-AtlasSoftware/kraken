@@ -35,8 +35,8 @@ pub use form::{
 pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
 pub use patches::{
     AsmState, EXPORT_FORMATS, ExportDialog, ExportDone, GroupDialog, ImportDialog, LintItem,
-    LintReport, MAX_PATCH_BYTES, PatchDialog, PatchGroupItem, PatchItem, PatchOrigin,
-    PatchesPanel, VerdictItem, parse_hex, spaced_hex,
+    LintReport, MAX_PATCH_BYTES, PatchDialog, PatchGroupItem, PatchItem, PatchOrigin, PatchesPanel,
+    VerdictItem, parse_hex, spaced_hex,
 };
 pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
