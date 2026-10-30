@@ -58,6 +58,7 @@ const EXPECTED: &[&str] = &[
     "emulate_run",
     "emulator_run",
     "exports",
+    "firmware_identify",
     "get_function",
     "gui_navigate",
     "history",

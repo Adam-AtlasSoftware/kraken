@@ -1,0 +1,126 @@
+# Starting points for opening a raw firmware or ROM image: the processor and where the image
+# usually lives in memory. Only public architectural facts (vector-table layouts and the
+# memory maps the architecture or a part's reference manual documents). A preset fills in the
+# Import wizard's loader options; the person can change every field.
+#
+# language: a short name `kraken-engine` knows (see LANGUAGE_ALIASES).
+# base: where the first byte of the image sits in memory.
+# engine: "native" when the native engine loads the processor as a raw image, "ghidra" when only
+#         Ghidra does (the wizard then picks Ghidra).
+
+[[preset]]
+id = "cortex-m-flash-08000000"
+title = "ARM Cortex-M, flash at 0x08000000"
+family = "Cortex-M"
+language = "cortex-m"
+base = 0x0800_0000
+engine = "native"
+note = "The image starts with the vector table (initial stack pointer, then Reset). STM32 and many other parts map their main flash here."
+
+[[preset]]
+id = "cortex-m-flash-0"
+title = "ARM Cortex-M, flash at 0x0"
+family = "Cortex-M"
+language = "cortex-m"
+base = 0x0
+engine = "native"
+note = "Parts that boot from address 0 (many nRF, LPC and SAM devices) and images that are linked to run from 0."
+
+[[preset]]
+id = "cortex-m-xip-10000000"
+title = "ARM Cortex-M, execute-in-place flash at 0x10000000"
+family = "Cortex-M"
+language = "cortex-m"
+base = 0x1000_0000
+engine = "native"
+note = "External flash read through an XIP window, as on the Raspberry Pi RP2040."
+
+[[preset]]
+id = "arm-a32-0"
+title = "ARM 32-bit (A32), loaded at 0x0"
+family = "ARM"
+language = "arm"
+base = 0x0
+engine = "native"
+note = "Boot code for ARM cores that start at the low vector table; the first words are branches."
+
+[[preset]]
+id = "aarch64-0"
+title = "AArch64, loaded at 0x0"
+family = "ARM"
+language = "aarch64"
+base = 0x0
+engine = "native"
+note = "Flat AArch64 images such as bare-metal programs and boot stages."
+
+[[preset]]
+id = "aarch64-linux-kernel"
+title = "AArch64 Linux kernel Image, loaded at 0x80000"
+family = "ARM"
+language = "aarch64"
+base = 0x8_0000
+engine = "native"
+note = "The arm64 boot protocol: the Image header comes first and the kernel is usually placed 512 KiB into RAM."
+
+[[preset]]
+id = "riscv32-0"
+title = "RISC-V 32-bit, loaded at 0x0"
+family = "RISC-V"
+language = "riscv32"
+base = 0x0
+engine = "native"
+note = "Flat RV32 images."
+
+[[preset]]
+id = "riscv32-80000000"
+title = "RISC-V 32-bit, RAM at 0x80000000"
+family = "RISC-V"
+language = "riscv32"
+base = 0x8000_0000
+engine = "native"
+note = "The base most RISC-V emulators and boards place DRAM at."
+
+[[preset]]
+id = "riscv64-80000000"
+title = "RISC-V 64-bit, RAM at 0x80000000"
+family = "RISC-V"
+language = "riscv64"
+base = 0x8000_0000
+engine = "native"
+note = "The base most RISC-V emulators and boards place DRAM at."
+
+[[preset]]
+id = "x86-reset-32"
+title = "x86 32-bit, last 64 KiB below 4 GiB (reset area)"
+family = "x86"
+language = "x86"
+base = 0xFFFF_0000
+engine = "native"
+note = "A 64 KiB firmware image mapped so that it ends at the x86 reset vector (0xFFFFFFF0)."
+
+[[preset]]
+id = "x86-bios-f0000"
+title = "x86 real mode, BIOS image ending at 1 MiB"
+family = "x86"
+language = "x86-16"
+base = 0xF_0000
+engine = "ghidra"
+note = "A 64 KiB legacy BIOS image mapped at 0xF0000; the reset jump is in the last 16 bytes."
+
+[[preset]]
+id = "x86-64-0"
+title = "x86-64, loaded at 0x0"
+family = "x86"
+language = "x86-64"
+base = 0x0
+engine = "native"
+note = "Flat x86-64 code with no container."
+
+[[preset]]
+id = "x86-32-0"
+title = "x86 32-bit, loaded at 0x0"
+family = "x86"
+language = "x86"
+base = 0x0
+engine = "native"
+note = "Flat protected-mode x86 code with no container."

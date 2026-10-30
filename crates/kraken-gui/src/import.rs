@@ -21,6 +21,8 @@ use crate::welcome::{Choice, default_project_dir, engine_help, engine_label, pro
 pub enum Picked {
     /// A program to import.
     Binary(String),
+    /// A firmware or ROM image to open as raw bytes.
+    Firmware(String),
     /// An existing project folder to open.
     Project(String),
     /// A folder to save a new project in.
@@ -80,6 +82,12 @@ impl Picker {
             .add_filter("Programs", &PROGRAM_EXTENSIONS)
             .add_filter("All files", &["*"]);
         self.spawn(rt, ctx, d, false, Picked::Binary);
+    }
+
+    /// Asks for a firmware or ROM image (any file).
+    pub fn firmware(&self, rt: &Handle, ctx: &egui::Context) {
+        let d = rfd::AsyncFileDialog::new().set_title("Choose a firmware or ROM image");
+        self.spawn(rt, ctx, d, false, Picked::Firmware);
     }
 
     /// Asks for an existing project folder.
@@ -596,6 +604,56 @@ impl ImportDialog {
         })
     }
 
+    /// Applies a loader preset: the processor and the usual load address.
+    pub fn use_preset(&mut self, p: &kraken_host::presets::LoaderPreset) {
+        self.raw = true;
+        self.raw_load = RawLoad {
+            language: p.language.clone(),
+            base: format!("{:#x}", p.base),
+            ..RawLoad::default()
+        };
+        if p.engine == "ghidra" {
+            self.engine = EngineChoice::Ghidra;
+        }
+    }
+
+    /// The "Preset" choice: processor and load address for common firmware layouts.
+    fn preset_row(&mut self, ui: &mut Ui) {
+        let pal = pal(ui);
+        let presets = kraken_host::presets::loader_presets();
+        let current = presets
+            .iter()
+            .find(|p| {
+                p.language == self.raw_load.language
+                    && format!("{:#x}", p.base) == self.raw_load.base.trim().to_lowercase()
+            })
+            .map(|p| p.title.as_str());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Preset").color(pal.text_dim))
+                .on_hover_text("A common firmware layout: it fills in the processor and the base address below. You can change both afterwards.");
+            let mut picked = None;
+            egui::ComboBox::from_id_salt("kraken_import_raw_preset")
+                .selected_text(current.unwrap_or("Choose a layout..."))
+                .width(380.0)
+                .show_ui(ui, |ui| {
+                    for p in presets {
+                        if ui
+                            .selectable_label(current == Some(p.title.as_str()), &p.title)
+                            .on_hover_text(&p.note)
+                            .clicked()
+                        {
+                            picked = Some(p.clone());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Pick where the image usually lives for its processor family.");
+            if let Some(p) = picked {
+                self.use_preset(&p);
+            }
+        });
+    }
+
     /// The "Raw binary" part of the dialog: processor, base address, file offset, length and
     /// entry point, with what the probe recognised offered as one-click choices.
     pub(crate) fn raw_section(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
@@ -638,6 +696,7 @@ impl ImportDialog {
                 self.use_suggestion(&s);
             }
         }
+        self.preset_row(ui);
         egui::Grid::new("kraken_import_raw")
             .num_columns(2)
             .spacing([16.0, 4.0])

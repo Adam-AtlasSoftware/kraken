@@ -378,6 +378,7 @@ async fn every_registry_command_identical() {
 
     step!("project_info", json!({}));
     step!("binary_probe", json!({"path": s.binary}));
+    step!("firmware_identify", json!({"path": s.binary}));
     step!("debuginfo_probe", json!({"path": s.binary}));
     step!(
         "debuginfo_attach",

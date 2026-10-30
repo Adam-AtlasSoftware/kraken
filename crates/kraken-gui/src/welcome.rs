@@ -40,6 +40,8 @@ pub enum WelcomeAction {
     Choose(Choice),
     /// Show the import dialog for this program.
     Import(String),
+    /// Open this firmware or ROM image in the Import wizard, as a raw binary.
+    ImportFirmware(String),
     /// Remove a project from the recent list.
     Forget(String),
     /// Show the settings window.
@@ -166,6 +168,7 @@ impl Welcome {
                     self.binary_path = b.clone();
                     actions.push(WelcomeAction::Import(b));
                 }
+                Picked::Firmware(f) => actions.push(WelcomeAction::ImportFirmware(f)),
                 Picked::Location(_) | Picked::DebugFile(_) | Picked::DebugFolder(_) => {}
             }
         }
@@ -311,6 +314,25 @@ pub fn show(
                                 }
                             });
                         });
+                    });
+                    ui.add_space(10.0);
+
+                    card().fill(p.surface).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(medium("Firmware or ROM image", 16.0).color(p.text_strong));
+                        ui.label(
+                            RichText::new("A flash dump, boot ROM or update file with no executable header. KRAKEN scans it for what is inside and offers a processor and load address for common layouts.")
+                                .color(p.text_dim),
+                        );
+                        ui.add_space(6.0);
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Open a firmware or ROM image..."))
+                            .on_hover_text("Choose a firmware or ROM file and open it as raw bytes")
+                            .on_disabled_hover_text("Wait until the project that is opening is ready.")
+                            .clicked()
+                        {
+                            w.picker.firmware(rt, &ctx);
+                        }
                     });
                     ui.add_space(10.0);
 

@@ -472,3 +472,118 @@ fn the_wizard_searches_symbol_servers_only_after_consent_and_uses_what_it_finds(
         "the cached file is the one the server sent"
     );
 }
+
+/// The cortex-m firmware, a gzip stream at 8 KiB and an ELF file after it.
+fn synthetic_image(dir: &Path) -> (PathBuf, usize, usize) {
+    let mut img = std::fs::read(corpus("raw/fw_cortexm.bin")).unwrap();
+    let gzip_at = 8192;
+    img.resize(gzip_at, 0xff);
+    img.extend([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]);
+    img.extend((0..6000u64).map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8));
+    img.resize(img.len().div_ceil(4096) * 4096, 0);
+    let elf_at = img.len();
+    img.extend(std::fs::read(corpus("bin/stripped_calc-O2-stripped")).unwrap());
+    let path = dir.join("synthetic.bin");
+    std::fs::write(&path, img).unwrap();
+    (path, gzip_at, elf_at)
+}
+
+#[test]
+fn the_what_it_is_step_lists_what_is_inside_a_raw_image() {
+    let tmp = tempfile::Builder::new().prefix("fwimg").tempdir().unwrap();
+    let (img, gzip_at, elf_at) = synthetic_image(tmp.path());
+    let mut k = kit(false);
+    open_wizard(&mut k, &img);
+    until(&mut k, "the firmware scan", |k| {
+        k.h.state()
+            .import_wizard()
+            .is_some_and(|w| w.firmware().is_some())
+    });
+    k.h.run_steps(3);
+    let out = k.h.state().import_wizard().unwrap().firmware().unwrap();
+    let got: Vec<_> = out
+        .signatures
+        .iter()
+        .map(|s| (s.kind.as_str(), s.offset.0 as usize))
+        .collect();
+    assert_eq!(got, [("gzip", gzip_at), ("elf", elf_at)]);
+    assert!(has(&k, "What is inside the image"));
+    assert!(has(&k, "gzip stream"));
+    assert!(has(&k, "ELF file"));
+}
+
+#[test]
+fn a_file_in_no_known_format_goes_to_the_preset_page() {
+    let tmp = tempfile::Builder::new().prefix("fwunk").tempdir().unwrap();
+    let path = tmp.path().join("blob.rom");
+    let bytes: Vec<u8> = (0..6000u32)
+        .map(|i| (i.wrapping_mul(2_246_822_519) >> 13) as u8 | 0x80)
+        .collect();
+    std::fs::write(&path, bytes).unwrap();
+    let mut k = kit(false);
+    open_wizard(&mut k, &path);
+    until(&mut k, "the probe", |k| {
+        k.h.state()
+            .import_wizard()
+            .and_then(|w| w.dialog.as_ref())
+            .is_some_and(|d| d.probed().is_some())
+    });
+    k.h.run_steps(3);
+    assert!(
+        k.h.state()
+            .import_wizard()
+            .unwrap()
+            .steps()
+            .contains(&ImportStep::Loader),
+        "an unknown file needs the loader page"
+    );
+    next(&mut k);
+    next(&mut k);
+    assert_eq!(step(&k), ImportStep::Loader);
+    k.h.run_steps(3);
+    assert!(has(&k, "Preset"));
+    assert!(k.h.get_by_label("Next").accesskit_node().is_disabled());
+    // picking a preset fills the processor and base address
+    k.h.query_all_by_role(egui::accesskit::Role::ComboBox)
+        .next()
+        .expect("the preset choice")
+        .click();
+    k.h.run_steps(3);
+    k.h.get_by_label("ARM Cortex-M, flash at 0x08000000")
+        .click();
+    k.h.run_steps(3);
+    let d =
+        k.h.state()
+            .import_wizard()
+            .unwrap()
+            .dialog
+            .as_ref()
+            .unwrap();
+    assert_eq!(d.raw_load.language, "cortex-m");
+    assert_eq!(d.raw_load.base, "0x8000000");
+    assert!(
+        !k.h.get_by_label("Next").accesskit_node().is_disabled(),
+        "{:?}",
+        d.blocker()
+    );
+}
+
+#[test]
+fn the_welcome_screen_opens_firmware_as_raw_bytes_even_when_it_has_a_known_format() {
+    let mut k = kit(false);
+    k.h.run_steps(3);
+    assert!(has(&k, "Open a firmware or ROM image..."));
+    let ctx = k.h.ctx.clone();
+    let elf = corpus("bin/stripped_calc-O2-stripped");
+    k.h.state_mut()
+        .start_firmware_import(elf.to_string_lossy().into_owned(), &ctx);
+    until(&mut k, "the probe", |k| {
+        k.h.state()
+            .import_wizard()
+            .and_then(|w| w.dialog.as_ref())
+            .is_some_and(|d| d.probed().is_some())
+    });
+    let w = k.h.state().import_wizard().unwrap();
+    assert!(w.dialog.as_ref().unwrap().raw_active());
+    assert!(w.steps().contains(&ImportStep::Loader));
+}

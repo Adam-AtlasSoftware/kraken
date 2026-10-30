@@ -26,6 +26,7 @@ pub mod local_models;
 pub mod managed;
 pub mod native;
 pub mod paths;
+pub mod presets;
 pub mod provision;
 pub mod setup;
 pub mod strata_setup;

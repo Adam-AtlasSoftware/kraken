@@ -41,6 +41,37 @@ file, load addresses in console memory, checksum complements, ECC words in the N
 
 `platform.emulators` are catalogue ids you can pass to `emulator_run`. Nothing is run by the probe.
 
+## Firmware and ROM images
+
+A flash dump, boot ROM or update file usually has no executable header, so the probe reports it as
+a file in no known format. Three things help.
+
+**`firmware_identify`** scans the file for embedded structures and prints each with its file offset:
+gzip, xz, LZMA, bzip2, Zstandard, SquashFS, cramfs, U-Boot uImage, FIT and device-tree blobs, ELF,
+PE, Intel HEX and UEFI firmware volumes. Where the header gives a length it is shown. It also
+returns an entropy map with one character per 4 KiB block (`0` padding to `8` compressed or
+encrypted) and the runs that map makes: `padding`, `code_or_data`, `compressed_or_encrypted`.
+
+```
+kraken firmware_identify --path router.bin
+```
+
+The scan is header checks only: nothing is decompressed or run, at most the first 64 MiB are read,
+at most 1000 signatures are listed (`truncated` says when a limit applied), and a hit is a
+candidate, not proof. The Import wizard runs it for raw files and shows the result in the "What it
+is" step.
+
+**Loader presets** (`crates/kraken-host/data/loader_presets.toml`) are common layouts: ARM
+Cortex-M with flash at `0x08000000`, `0x0` or `0x10000000`, A32 and AArch64 boot code, RISC-V RAM at
+`0x80000000`, the x86 reset area and a legacy BIOS image. They hold only public architectural
+facts. The raw loader page of the Import wizard has a "Preset" choice that fills in the processor and
+the base address; both stay editable. A test checks that every preset names a processor the native
+engine loads as a raw image (or, marked `engine = "ghidra"`, one Ghidra loads).
+
+**The welcome screen** has "Open a firmware or ROM image...", which opens the wizard with the file
+as a raw binary even if it happens to carry a known header. A file in no known format goes to the
+same loader page by itself.
+
 ## Encrypted images
 
 KRAKEN never decrypts anything. SELF files, encrypted XEX executables, encrypted PRX files and NCA

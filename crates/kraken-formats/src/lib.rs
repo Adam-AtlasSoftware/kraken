@@ -11,6 +11,7 @@ mod elf;
 mod handheld;
 mod nand;
 mod native;
+pub mod scan;
 mod text;
 
 /// How sure the detector is.

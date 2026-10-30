@@ -14,8 +14,8 @@ use kraken_proto::DwarfState;
 use kraken_registry::EngineChoice;
 use kraken_registry::commands::{
     BinaryFormat, ConfigStore, DebugCandidate, DebugFindOut, DebugInfoProbeOut, DebugStatus,
-    Verdict, debug_wanted, find_debug_file, normalize_symbol_server, symbol_servers_with_env,
-    symbols_offline_env,
+    FirmwareIdentifyOut, Verdict, debug_wanted, find_debug_file, normalize_symbol_server,
+    symbol_servers_with_env, symbols_offline_env,
 };
 use kraken_viewmodel::RawLoad;
 use kraken_viewmodel::wizard::WizardFlow;
@@ -42,6 +42,15 @@ pub enum ImportStep {
     Analysis,
     /// What will be done.
     Summary,
+}
+
+/// Where the firmware scan of a raw file stands (`firmware_identify`).
+enum FwScan {
+    /// Not started: the file is not raw, or the probe is not back.
+    Idle,
+    Running(Receiver<Result<FirmwareIdentifyOut, String>>),
+    Done(Box<FirmwareIdentifyOut>),
+    Failed(String),
 }
 
 /// Where the debug-information check stands.
@@ -127,6 +136,8 @@ pub struct ImportWizard {
     pub debug: DebugState,
     /// Where `config.toml` is, to record the consent to search symbol servers.
     pub config_path: Option<PathBuf>,
+    /// What is inside a raw file.
+    fw: FwScan,
 }
 
 #[cfg(test)]
@@ -156,6 +167,7 @@ impl ImportWizard {
             ctx: ctx.clone(),
             debug: DebugState::new(),
             config_path: KrakenConfig::default_path(),
+            fw: FwScan::Idle,
         };
         if path.is_some() {
             w.start_file();
@@ -184,6 +196,7 @@ impl ImportWizard {
         }
         self.started_for = path.clone();
         self.debug = DebugState::new();
+        self.fw = FwScan::Idle;
         self.dialog = Some(ImportDialog::start(&self.cfg, &path, &self.rt, &self.ctx));
     }
 
@@ -285,6 +298,7 @@ impl ImportWizard {
         if let Some(d) = self.dialog.as_mut() {
             d.poll();
         }
+        self.poll_firmware();
         if let DebugProbe::Running(rx) = &self.debug.probe {
             match rx.try_recv() {
                 Ok((ask, Ok(out))) => {
@@ -304,7 +318,7 @@ impl ImportWizard {
         }
         for p in self.picker.drain() {
             match p {
-                Picked::Binary(b) => self.path = b,
+                Picked::Binary(b) | Picked::Firmware(b) => self.path = b,
                 Picked::Location(dir) => {
                     if let Some(d) = self.dialog.as_mut() {
                         d.location = dir;
@@ -313,6 +327,41 @@ impl ImportWizard {
                 Picked::DebugFile(f) | Picked::DebugFolder(f) => self.start_debug(Some(f)),
                 Picked::Project(_) => {}
             }
+        }
+    }
+
+    /// Starts the firmware scan once a raw file is probed and takes its answer.
+    fn poll_firmware(&mut self) {
+        let raw = self
+            .dialog
+            .as_ref()
+            .is_some_and(|d| d.probed().is_some() && d.raw_active());
+        if raw && matches!(self.fw, FwScan::Idle) {
+            let (tx, rx) = channel();
+            let (path, ctx) = (PathBuf::from(self.started_for.clone()), self.ctx.clone());
+            self.rt.spawn_blocking(move || {
+                let r = kraken_registry::commands::identify_firmware(&path).map_err(|e| e.message);
+                let _ = tx.send(r);
+                ctx.request_repaint();
+            });
+            self.fw = FwScan::Running(rx);
+        }
+        if let FwScan::Running(rx) = &self.fw {
+            match rx.try_recv() {
+                Ok(Ok(out)) => self.fw = FwScan::Done(Box::new(out)),
+                Ok(Err(e)) => self.fw = FwScan::Failed(e),
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => self.fw = FwScan::Failed("scan stopped".into()),
+            }
+        }
+    }
+
+    /// The firmware scan result, once ready.
+    #[cfg(test)]
+    pub fn firmware(&self) -> Option<&FirmwareIdentifyOut> {
+        match &self.fw {
+            FwScan::Done(o) => Some(o),
+            _ => None,
         }
     }
 
@@ -663,6 +712,105 @@ fn kind_step(ui: &mut Ui, w: &mut ImportWizard) {
     } else if let Some(problem) = &pr.problem {
         ui.label(RichText::new(problem).color(s.warning));
     }
+    if w.dialog.as_ref().is_some_and(ImportDialog::raw_active) {
+        firmware_section(ui, &w.fw);
+    }
+}
+
+fn entropy_color(digit: u8, dark: bool) -> egui::Color32 {
+    let t = f32::from(digit.min(8)) / 8.0;
+    let (lo, hi) = if dark {
+        ([40.0, 70.0, 110.0], [235.0, 120.0, 60.0])
+    } else {
+        ([170.0, 200.0, 235.0], [200.0, 70.0, 20.0])
+    };
+    let c = |i: usize| (lo[i] + (hi[i] - lo[i]) * t) as u8;
+    egui::Color32::from_rgb(c(0), c(1), c(2))
+}
+
+/// What is inside a raw image: embedded structures and the entropy map.
+fn firmware_section(ui: &mut Ui, fw: &FwScan) {
+    let p = pal(ui);
+    ui.add_space(8.0);
+    ui.label(medium("What is inside the image", 13.0).color(p.text_strong))
+        .on_hover_text(
+            "KRAKEN scanned the file for embedded containers and file systems (header checks only, nothing is unpacked or run).",
+        );
+    let out = match fw {
+        FwScan::Idle | FwScan::Running(_) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Scanning the image...");
+            });
+            return;
+        }
+        FwScan::Failed(e) => {
+            ui.label(RichText::new(format!("The scan failed: {e}")).color(p.text_dim));
+            return;
+        }
+        FwScan::Done(o) => o,
+    };
+    ui.label(RichText::new(&out.summary).size(12.5).color(p.text));
+    if out.signatures.is_empty() {
+        ui.label(
+            RichText::new("Nothing inside it has a recognisable header. It is probably plain code and data: choose the processor on the next steps.")
+                .size(12.5)
+                .color(p.text_dim),
+        );
+    } else {
+        egui::Grid::new("kraken_wizard_firmware")
+            .num_columns(3)
+            .spacing([16.0, 2.0])
+            .show(ui, |ui| {
+                for s in out.signatures.iter().take(40) {
+                    ui.label(
+                        RichText::new(format!("{:#x}", s.offset.0))
+                            .monospace()
+                            .color(p.text_dim),
+                    )
+                    .on_hover_text("Offset of the structure in the file");
+                    ui.label(RichText::new(&s.name).color(p.text));
+                    let detail = match s.size {
+                        Some(n) if !s.detail.is_empty() => format!("{}, {n} bytes", s.detail),
+                        Some(n) => format!("{n} bytes"),
+                        None => s.detail.clone(),
+                    };
+                    ui.label(RichText::new(detail).size(12.0).color(p.text_dim));
+                    ui.end_row();
+                }
+            });
+        if out.signatures.len() > 40 {
+            ui.label(
+                RichText::new(format!("... and {} more", out.signatures.len() - 40))
+                    .size(12.0)
+                    .color(p.text_dim),
+            );
+        }
+        ui.label(
+            RichText::new("A compressed part or a file system has to be unpacked before it can be opened as code; the processor you choose applies to the code part.")
+                .size(12.0)
+                .color(p.text_dim),
+        );
+    }
+    let n = out.entropy.len().max(1);
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().min(560.0), 18.0),
+        egui::Sense::hover(),
+    );
+    let dark = style::dark(ui);
+    let w = rect.width() / n as f32;
+    for (i, c) in out.entropy.bytes().enumerate() {
+        let r = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + i as f32 * w, rect.top()),
+            egui::vec2(w.max(1.0), rect.height()),
+        );
+        ui.painter()
+            .rect_filled(r, 0.0, entropy_color(c.saturating_sub(b'0'), dark));
+    }
+    resp.on_hover_text(format!(
+        "Entropy map, one stripe per {} bytes. Blue is padding or sparse data, orange is compressed or encrypted.",
+        out.entropy_block
+    ));
 }
 
 fn engine_step(ui: &mut Ui, w: &mut ImportWizard) {

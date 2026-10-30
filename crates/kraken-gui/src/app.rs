@@ -400,6 +400,14 @@ impl KrakenApp {
         self.import_wizard = Some(ImportWizard::open(&cfg, path, self.rt.handle(), ctx));
     }
 
+    /// Opens the Import wizard on a firmware or ROM image, as a raw binary.
+    pub(crate) fn start_firmware_import(&mut self, path: String, ctx: &egui::Context) {
+        self.start_import_wizard(Some(path), ctx);
+        if let Some(d) = self.import_wizard.as_mut().and_then(|w| w.dialog.as_mut()) {
+            d.raw = true;
+        }
+    }
+
     /// The Import wizard, when open.
     #[cfg(test)]
     pub fn import_wizard(&self) -> Option<&ImportWizard> {
@@ -1090,7 +1098,10 @@ impl KrakenApp {
             match p {
                 Picked::Binary(b) => self.start_import(b, ctx),
                 Picked::Project(dir) => self.open_path(Path::new(&dir), ctx),
-                Picked::Location(_) | Picked::DebugFile(_) | Picked::DebugFolder(_) => {}
+                Picked::Firmware(_)
+                | Picked::Location(_)
+                | Picked::DebugFile(_)
+                | Picked::DebugFolder(_) => {}
             }
         }
     }
@@ -1922,6 +1933,7 @@ impl KrakenApp {
                 match a {
                     WelcomeAction::Choose(c) => self.request(Pending::Open(c), &ctx),
                     WelcomeAction::Import(binary) => self.start_import(binary, &ctx),
+                    WelcomeAction::ImportFirmware(path) => self.start_firmware_import(path, &ctx),
                     WelcomeAction::Forget(path) => self.prefs.remove(&path),
                     WelcomeAction::Settings => self.settings.show_window(),
                     WelcomeAction::Help => self.help.show_topic(help::Topic::Start),

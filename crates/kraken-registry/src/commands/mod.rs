@@ -21,6 +21,7 @@ mod emulate;
 #[cfg(unix)]
 mod emulate_call;
 mod emulate_call_types;
+mod firmware;
 mod gui_navigate;
 mod help;
 mod history;
@@ -118,6 +119,9 @@ pub use emulate::{
 pub use emulate_call::EmulateCall;
 pub use emulate_call_types::{
     CallArgIn, CallBufferOut, CallValue, EmulateCallArgs, EmulateCallOut, IntText,
+};
+pub use firmware::{
+    FirmwareIdentify, FirmwareIdentifyArgs, FirmwareIdentifyOut, identify_firmware,
 };
 pub use gui_navigate::{GuiNavigate, GuiNavigateArgs, GuiNavigateOut, GuiTabName};
 pub use help::{
@@ -374,6 +378,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(ConfigSet);
     // Card SHELL: the open/import workflow.
     r.register(BinaryProbe);
+    r.register(FirmwareIdentify);
     r.register(DebugInfoProbe);
     r.register(DebugInfoAttach);
     r.register(DebugInfoDetach);
