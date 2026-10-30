@@ -21,15 +21,15 @@ fake-engine = ["dep:engine-fake"]
 
 [dependencies]
 async-trait = "0.1.89"
-engine-fake = { path = "../engine-fake", version = "0.2.0", optional = true }
-kraken-assist = { path = "../kraken-assist", version = "0.2.0" }
-kraken-engine = { path = "../kraken-engine", version = "0.2.0" }
-kraken-host = { path = "../kraken-host", version = "0.2.0" }
-kraken-ipc = { path = "../kraken-ipc", version = "0.2.0" }
-kraken-model = { path = "../kraken-model", version = "0.2.0" }
+engine-fake = { path = "../engine-fake", version = "0.3.0", optional = true }
+kraken-assist = { path = "../kraken-assist", version = "0.3.0" }
+kraken-engine = { path = "../kraken-engine", version = "0.3.0" }
+kraken-host = { path = "../kraken-host", version = "0.3.0" }
+kraken-ipc = { path = "../kraken-ipc", version = "0.3.0" }
+kraken-model = { path = "../kraken-model", version = "0.3.0" }
 kraken-proto.workspace = true
-kraken-registry = { path = "../kraken-registry", version = "0.2.0" }
-kraken-rewrite = { path = "../kraken-rewrite", version = "0.2.0" }
+kraken-registry = { path = "../kraken-registry", version = "0.3.0" }
+kraken-rewrite = { path = "../kraken-rewrite", version = "0.3.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -38,7 +38,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 
 [dev-dependencies]
-kraken-infer = { path = "../kraken-infer", version = "0.2.0" }
-engine-fake = { path = "../engine-fake", version = "0.2.0" }
+kraken-infer = { path = "../kraken-infer", version = "0.3.0" }
+engine-fake = { path = "../engine-fake", version = "0.3.0" }
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }
