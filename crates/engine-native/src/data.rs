@@ -2,12 +2,12 @@
 
 use async_trait::async_trait;
 use kraken_engine::{
-    EngineResult, FlowGraph, StringLister, StringsRequest, SymbolLister, TypeStore, XrefProvider,
-    XrefRequest,
+    EngineResult, FlowGraph, JumpTables, StringLister, StringsRequest, SymbolLister, TypeStore,
+    XrefProvider, XrefRequest,
 };
 use kraken_proto::{
-    Cfg, ErrorCode, FunctionRef, Hex64, Locator, Page, PageRequest, ProtoError, StringEntry,
-    SymbolEntry, TypeDef, Xref, XrefDirection,
+    Cfg, ErrorCode, FunctionRef, Hex64, JumpTable, Locator, Page, PageRequest, ProtoError,
+    StringEntry, SymbolEntry, TypeDef, Xref, XrefDirection,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -145,6 +145,42 @@ impl FlowGraph for InProcessEngine {
         Ok(crate::cfg::build(f, &insns, &pads, &|t| {
             noreturn.contains(&t)
         }))
+    }
+}
+
+#[async_trait]
+impl JumpTables for InProcessEngine {
+    async fn list_jump_tables(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<JumpTable>> {
+        check(cancel)?;
+        check_cursor(page)?;
+        let p = self.program()?;
+        let funcs = p.funcs();
+        let mut all: Vec<JumpTable> = funcs
+            .map
+            .values()
+            .flat_map(|f| {
+                f.switches
+                    .iter()
+                    .filter(|(_, t)| !t.is_empty())
+                    .map(|(jump, targets)| {
+                        let mut t = targets.clone();
+                        t.sort_unstable();
+                        t.dedup();
+                        JumpTable {
+                            function: Hex64(f.entry),
+                            jump: Hex64(*jump),
+                            targets: t.into_iter().map(Hex64).collect(),
+                        }
+                    })
+            })
+            .collect();
+        all.sort_by_key(|t| t.jump.0);
+        all.dedup_by_key(|t| t.jump.0);
+        page_of(&all, page)
     }
 }
 

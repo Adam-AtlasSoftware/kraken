@@ -7,8 +7,8 @@ use kraken_proto::{Capability, Handshake, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 
 use crate::traits::{
-    Analyzer, Assembler, Decompiler, Disassembler, FlowGraph, FunctionLister, Loader, MemoryReader,
-    Mutator, StringLister, SymbolLister, TypeStore, XrefProvider,
+    Analyzer, Assembler, Decompiler, Disassembler, FlowGraph, FunctionLister, JumpTables, Loader,
+    MemoryReader, Mutator, StringLister, SymbolLister, TypeStore, XrefProvider,
 };
 
 /// A capability an engine may provide.
@@ -41,11 +41,13 @@ pub enum Cap {
     Symbols,
     /// [`Assembler`].
     Assembler,
+    /// [`JumpTables`].
+    JumpTables,
 }
 
 impl Cap {
     /// All capabilities.
-    pub const ALL: [Cap; 13] = [
+    pub const ALL: [Cap; 14] = [
         Cap::Loader,
         Cap::Analyzer,
         Cap::Decompiler,
@@ -59,11 +61,12 @@ impl Cap {
         Cap::Strings,
         Cap::Symbols,
         Cap::Assembler,
+        Cap::JumpTables,
     ];
 
     /// Name used in the handshake: `"loader"`, `"analyzer"`, `"decompiler"`, `"type_store"`,
     /// `"function_lister"`, `"mutator"`, `"memory"`, `"disassembler"`, `"xrefs"`, `"cfg"`,
-    /// `"strings"`, `"symbols"`, `"assembler"`.
+    /// `"strings"`, `"symbols"`, `"assembler"`, `"jump_tables"`.
     pub fn name(self) -> &'static str {
         match self {
             Cap::Loader => "loader",
@@ -79,6 +82,7 @@ impl Cap {
             Cap::Strings => "strings",
             Cap::Symbols => "symbols",
             Cap::Assembler => "assembler",
+            Cap::JumpTables => "jump_tables",
         }
     }
 }
@@ -177,6 +181,10 @@ pub trait Engine: Send + Sync {
     }
     /// The assembler, if supported.
     fn assembler(&self) -> Option<&dyn Assembler> {
+        None
+    }
+    /// The jump-table lister, if supported.
+    fn jump_tables(&self) -> Option<&dyn JumpTables> {
         None
     }
     /// The process doing the engine's work (a sidecar or worker), so its activity can be shown

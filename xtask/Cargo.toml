@@ -13,3 +13,4 @@ kraken-viewmodel = { path = "../crates/kraken-viewmodel", version = "0.3.0" }
 serde.workspace = true
 sha2 = "0.10"
 serde_json.workspace = true
+toml = "0.8"

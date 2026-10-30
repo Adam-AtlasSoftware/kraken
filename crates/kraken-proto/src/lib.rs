@@ -52,8 +52,8 @@ pub use meta::{
 pub use page::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, PageRequest};
 pub use program::{
     BytesRead, Cfg, CfgBlock, CfgEdge, CfgEdgeKind, DisasmRow, DisasmScope, FlowKind, FunctionRef,
-    MemoryBlock, MemoryKind, OperandKind, OperandToken, StringEncoding, StringEntry, SymbolEntry,
-    SymbolKind, Xref, XrefDirection, XrefKind, hex_bytes,
+    JumpTable, MemoryBlock, MemoryKind, OperandKind, OperandToken, StringEncoding, StringEntry,
+    SymbolEntry, SymbolKind, Xref, XrefDirection, XrefKind, hex_bytes,
 };
 pub use progress::{OpenPlan, OpenProgress, OpenStage, OpenUpdate};
 pub use types::{

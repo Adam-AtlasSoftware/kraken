@@ -14,10 +14,11 @@ use std::path::{Path, PathBuf};
 
 use engine_native::{NativeConfig, NativeEngine};
 use kraken_engine::{
-    CancellationToken, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, StringLister,
-    StringsRequest, SymbolLister, XrefProvider, XrefRequest,
+    CancellationToken, Decompiler, DisasmRequest, Disassembler, FlowGraph, FunctionLister,
+    JumpTables, Loader, LoaderSpec, MemoryReader, StringLister, StringsRequest, SymbolLister,
+    TypeStore, XrefProvider, XrefRequest,
 };
-use kraken_proto::{Hex64, Locator, PageRequest, XrefDirection};
+use kraken_proto::{DisasmScope, Hex64, Locator, PageRequest, XrefDirection};
 use serde_json::Value;
 
 fn root() -> PathBuf {
@@ -112,6 +113,13 @@ struct Report {
     names: Score,
     signatures: Score,
     signature_types: Score,
+    // the extra measures of `cargo xtask parity`, filled by `compare_full` only
+    decompile_text: Score,
+    globals: Score,
+    types: Score,
+    memory: Score,
+    disassembly: Score,
+    jump_tables: Score,
 }
 
 async fn compare(binary: &str, c: NativeConfig) -> Report {
@@ -120,6 +128,12 @@ async fn compare(binary: &str, c: NativeConfig) -> Report {
 
 /// [`compare`] for a binary of the corpus set in `set` (`corpus`, `corpus/pe`, `corpus/elf32`).
 async fn compare_in(set: &str, binary: &str, c: NativeConfig) -> Report {
+    compare_full(set, binary, c, false).await
+}
+
+/// [`compare_in`], and with `extras` the measures only the parity report needs: decompile text,
+/// globals, types, memory, disassembly and jump tables.
+async fn compare_full(set: &str, binary: &str, c: NativeConfig, extras: bool) -> Report {
     let e = NativeEngine::new(c);
     let cancel = CancellationToken::new();
     e.open_binary(
@@ -492,7 +506,195 @@ async fn compare_in(set: &str, binary: &str, c: NativeConfig) -> Report {
         }
     }
     r.exports.add(&theirs, &mine);
+    if extras {
+        measure_extras(set, binary, &e, &fx, &mut r).await;
+    }
     r
+}
+
+/// Functions whose decompiles are compared per binary (the first ones the fixture lists), to keep
+/// the sweep short and the numbers reproducible.
+const DECOMPILE_SAMPLE: usize = 40;
+
+/// Words of C text without its comments, as a multiset.
+fn words(text: &str) -> BTreeMap<String, usize> {
+    let mut plain = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("/*") {
+        plain.push_str(&rest[..i]);
+        rest = rest[i..].find("*/").map_or("", |j| &rest[i + j + 2..]);
+    }
+    plain.push_str(rest);
+    let mut out = BTreeMap::new();
+    for w in plain.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        if !w.is_empty() {
+            *out.entry(w.to_string()).or_insert(0) += 1;
+        }
+    }
+    out
+}
+
+/// An automatically named reference to data (`DAT_00404010`, `PTR_s_hello_00402004`).
+fn is_global_name(n: &str) -> bool {
+    const PREFIXES: [&str; 11] = [
+        "DAT_", "PTR_", "UNK_", "BYTE_", "WORD_", "DWORD_", "QWORD_", "FLOAT_", "DOUBLE_", "s_",
+        "u_",
+    ];
+    PREFIXES.iter().any(|p| n.starts_with(p))
+        && n.chars().last().is_some_and(|c| c.is_ascii_hexdigit())
+}
+
+async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r: &mut Report) {
+    let cancel = CancellationToken::new();
+    let recorded: Vec<(u64, &Value)> = fx["functions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| (hex(&f["summary"]["locator"]["offset"]), f))
+        .collect();
+
+    // decompile text and globals
+    for (entry, f) in recorded.iter().take(DECOMPILE_SAMPLE) {
+        let theirs = words(f["decompile"]["text"].as_str().unwrap_or(""));
+        let theirs_globals: BTreeSet<String> = f["decompile"]["tokens"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t["symbol"].as_str())
+            .filter(|n| is_global_name(n))
+            .map(str::to_string)
+            .collect();
+        let mine = e.decompile(&Locator::ram(*entry), &cancel).await.ok();
+        let ours = mine.as_ref().map(|d| words(&d.text)).unwrap_or_default();
+        for (w, n) in &theirs {
+            r.decompile_text.common += (*n).min(ours.get(w).copied().unwrap_or(0));
+            r.decompile_text.theirs += n;
+        }
+        r.decompile_text.ours += ours.values().sum::<usize>();
+        let our_globals: BTreeSet<String> = mine
+            .iter()
+            .flat_map(|d| d.tokens.iter())
+            .filter_map(|t| t.symbol.clone())
+            .filter(|n| is_global_name(n))
+            .collect();
+        r.globals.add(&theirs_globals, &our_globals);
+    }
+
+    // types by name
+    let theirs: BTreeSet<String> = fx["types"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t["name"].as_str().map(str::to_string))
+        .collect();
+    let mut mine = BTreeSet::new();
+    let mut cursor = None;
+    loop {
+        let p = e.list_types(&page(cursor), &cancel).await.expect("types");
+        mine.extend(
+            p.items
+                .iter()
+                .filter_map(|t| kraken_engine::type_def_name(t).map(str::to_string)),
+        );
+        match p.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    r.types.add(&theirs, &mine);
+
+    // memory blocks (not the debug-section overlays) by extent and permissions
+    let theirs: BTreeSet<(u64, u64, String)> = fx["memory"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["kind"] != "overlay")
+        .map(|b| {
+            (
+                hex(&b["start"]),
+                hex(&b["end"]),
+                b["perms"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    let mine: BTreeSet<(u64, u64, String)> = e
+        .memory_map(&cancel)
+        .await
+        .expect("memory map")
+        .iter()
+        .filter(|b| b.kind != kraken_proto::MemoryKind::Overlay)
+        .map(|b| (b.start.0, b.end.0, b.perms.clone()))
+        .collect();
+    r.memory.add(&theirs, &mine);
+
+    // disassembly: the (address, mnemonic) pairs of the recorded functions
+    let mut theirs: BTreeSet<(u64, String)> = BTreeSet::new();
+    let mut mine: BTreeSet<(u64, String)> = BTreeSet::new();
+    for (entry, f) in &recorded {
+        theirs.extend(
+            f["disassembly"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|row| {
+                    (
+                        hex(&row["address"]),
+                        row["mnemonic"].as_str().unwrap_or("").to_ascii_lowercase(),
+                    )
+                }),
+        );
+        let req = DisasmRequest {
+            start: Hex64(*entry),
+            scope: DisasmScope::Function,
+        };
+        let mut cursor = None;
+        while let Ok(p) = e.disassemble(&req, &page(cursor.take()), &cancel).await {
+            mine.extend(
+                p.items
+                    .iter()
+                    .map(|row| (row.address.0, row.mnemonic.to_ascii_lowercase())),
+            );
+            match p.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+    }
+    let theirs_addrs: BTreeSet<u64> = theirs.iter().map(|t| t.0).collect();
+    mine.retain(|(a, _)| theirs_addrs.contains(a));
+    r.disassembly.add(&theirs, &mine);
+
+    // jump tables: (jump, target) pairs, Ghidra's read from the recorded CFGs by the fake engine
+    let fixture = engine_fake::FixtureFile::from_path(
+        &root().join(set).join(format!("fixtures/{binary}.json")),
+    )
+    .expect("fixture for the fake engine");
+    let fake = engine_fake::FakeEngine::new(fixture);
+    let theirs = jump_pairs(&fake, &cancel).await;
+    let mut mine = jump_pairs(e, &cancel).await;
+    // the fixtures may hold the first functions only: compare up to the last recorded one
+    let last = recorded.iter().map(|(a, _)| *a).max().unwrap_or(0);
+    mine.retain(|(j, _)| *j <= last);
+    r.jump_tables.add(&theirs, &mine);
+}
+
+/// Every (jump address, target) pair `eng` lists.
+async fn jump_pairs(eng: &dyn JumpTables, cancel: &CancellationToken) -> BTreeSet<(u64, u64)> {
+    let mut out = BTreeSet::new();
+    let mut cursor = None;
+    loop {
+        let p = eng
+            .list_jump_tables(&page(cursor), cancel)
+            .await
+            .expect("jump tables");
+        for t in p.items {
+            out.extend(t.targets.iter().map(|x| (t.jump.0, x.0)));
+        }
+        match p.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => return out,
+        }
+    }
 }
 
 /// A signature without parameter names or spacing: `int cmp_id(record*,record*)`.
@@ -788,5 +990,133 @@ async fn finds_the_functions_ghidra_finds_in_stripped_binaries() {
             "{binary}: functions {}",
             r.functions
         );
+    }
+}
+
+/// One measure as the parity report writes it.
+fn measure_json(s: &Score) -> Value {
+    let round = |x: f64| (x * 10_000.0).round() / 10_000.0;
+    serde_json::json!({
+        "common": s.common,
+        "theirs": s.theirs,
+        "ours": s.ours,
+        "recall": round(s.recall()),
+        "precision": round(s.precision()),
+    })
+}
+
+/// The numbers behind `cargo xtask parity`: every binary of the three fixture sets, summed per
+/// set, written as JSON to the file named by `KRAKEN_PARITY_OUT`. Run it through the xtask.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "run by `cargo xtask parity`"]
+async fn parity_report() {
+    let Some(out) = std::env::var_os("KRAKEN_PARITY_OUT") else {
+        eprintln!("skipped: KRAKEN_PARITY_OUT names the file to write");
+        return;
+    };
+    let mut sets = serde_json::Map::new();
+    for set in ["corpus", "corpus/pe", "corpus/elf32"] {
+        let mut names: Vec<String> = std::fs::read_dir(root().join(set).join("fixtures"))
+            .expect("fixtures")
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_suffix(".json").map(str::to_string))
+            })
+            .collect();
+        names.sort();
+        let mut total = Report::default();
+        for binary in &names {
+            let Some(c) = config() else { return };
+            let r = compare_full(set, binary, c, true).await;
+            print(binary, &r);
+            eprintln!("  decompile text       {}", r.decompile_text);
+            eprintln!("  globals              {}", r.globals);
+            eprintln!("  types                {}", r.types);
+            eprintln!("  memory               {}", r.memory);
+            eprintln!("  disassembly          {}", r.disassembly);
+            eprintln!("  jump tables          {}", r.jump_tables);
+            macro_rules! sum {
+                ($($f:ident),*) => {$(
+                    total.$f.common += r.$f.common;
+                    total.$f.theirs += r.$f.theirs;
+                    total.$f.ours += r.$f.ours;
+                )*};
+            }
+            sum!(
+                functions,
+                names,
+                decompile_text,
+                globals,
+                types,
+                memory,
+                disassembly,
+                jump_tables
+            );
+        }
+        sets.insert(
+            set.to_string(),
+            serde_json::json!({
+                "binaries": names.len(),
+                "measures": {
+                    "functions": measure_json(&total.functions),
+                    "names": measure_json(&total.names),
+                    "decompile_text": measure_json(&total.decompile_text),
+                    "globals": measure_json(&total.globals),
+                    "types": measure_json(&total.types),
+                    "memory": measure_json(&total.memory),
+                    "disassembly": measure_json(&total.disassembly),
+                    "jump_tables": measure_json(&total.jump_tables),
+                },
+            }),
+        );
+    }
+    let text = serde_json::to_string_pretty(&Value::Object(sets)).expect("json");
+    std::fs::write(out, text + "\n").expect("write the report");
+}
+
+/// The jump tables the native engine recovers against the switches Ghidra recorded, read from
+/// the fixtures' CFGs by the fake engine: `switch_vm` has a dense `switch` per binary and the
+/// optimiser turns it into a table the engines must both find.
+#[tokio::test(flavor = "multi_thread")]
+async fn native_jump_tables_agree_with_the_recorded_switches() {
+    for (set, binary) in [
+        ("corpus", "switch_vm-O2"),
+        ("corpus", "switch_vm-O0"),
+        ("corpus/elf32", "switch_vm-i386-O0"),
+    ] {
+        let Some(c) = config() else { return };
+        let e = NativeEngine::new(c);
+        let cancel = CancellationToken::new();
+        e.open_binary(
+            &root().join(set).join("bin").join(binary),
+            &LoaderSpec::default(),
+            &cancel,
+        )
+        .await
+        .expect("open");
+        let fixture = engine_fake::FixtureFile::from_path(
+            &root().join(set).join(format!("fixtures/{binary}.json")),
+        )
+        .expect("fixture");
+        let fake = engine_fake::FakeEngine::new(fixture);
+        let theirs = jump_pairs(&fake, &cancel).await;
+        let mine = jump_pairs(&e, &cancel).await;
+        assert!(!theirs.is_empty(), "{binary}: Ghidra recorded no switch");
+        let mut s = Score::default();
+        s.add(&theirs, &mine);
+        eprintln!("{binary}: jump tables {s}");
+        assert_eq!(s.recall(), 1.0, "{binary}: jump tables {s}");
+        assert!(s.precision() >= 0.85, "{binary}: jump tables {s}");
+        // every table the native engine lists on top of Ghidra's is a real computed jump of a
+        // listed function
+        for (jump, _) in &mine {
+            let f = e
+                .get_function(&Locator::ram(*jump), &cancel)
+                .await
+                .unwrap_or_else(|err| panic!("{binary}: jump {jump:#x} is in no function: {err}"));
+            assert!(!f.name.is_empty());
+        }
     }
 }

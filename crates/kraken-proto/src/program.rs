@@ -306,6 +306,17 @@ pub struct Cfg {
     pub edges: Vec<CfgEdge>,
 }
 
+/// A computed jump (a `switch`, a dispatch table) and the addresses it can reach.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JumpTable {
+    /// Entry of the function holding the jump.
+    pub function: Hex64,
+    /// Address of the computed jump instruction.
+    pub jump: Hex64,
+    /// Addresses the jump can reach, ascending and without repeats.
+    pub targets: Vec<Hex64>,
+}
+
 /// Character encoding of a string in memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

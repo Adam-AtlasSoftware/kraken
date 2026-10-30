@@ -948,7 +948,8 @@ impl Engine for GhidraEngine {
                 env!("CARGO_PKG_VERSION"),
                 self.cfg.install.ghidra_version
             ),
-            Cap::ALL,
+            // the sidecar serves no jump tables (yet)
+            Cap::ALL.into_iter().filter(|c| *c != Cap::JumpTables),
         )
     }
     fn loader(&self) -> Option<&dyn Loader> {

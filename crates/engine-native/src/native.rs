@@ -9,12 +9,12 @@ use async_trait::async_trait;
 use kraken_engine::{
     AnalysisJob, AnalyzeRequest, Analyzer, AsmBlock, Assembler, Decompiler, DisasmRequest,
     Disassembler, Engine, EngineCaps, EngineRejected, EngineResult, FlowGraph, FunctionLister,
-    Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, StringLister,
+    JumpTables, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter, ProgramInfo, StringLister,
     StringsRequest, SymbolLister, TypeStore, XrefProvider, XrefRequest,
 };
 use kraken_proto::{
-    BytesRead, Cfg, DecompileResult, DisasmRow, FunctionSummary, Locator, MemoryBlock, Page,
-    PageRequest, StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
+    BytesRead, Cfg, DecompileResult, DisasmRow, FunctionSummary, JumpTable, Locator, MemoryBlock,
+    Page, PageRequest, StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 use kraken_sidecar::ConfinementReport;
 #[cfg(unix)]
@@ -202,6 +202,9 @@ impl Engine for NativeEngine {
         Some(self)
     }
     fn memory_reader(&self) -> Option<&dyn MemoryReader> {
+        Some(self)
+    }
+    fn jump_tables(&self) -> Option<&dyn JumpTables> {
         Some(self)
     }
     fn assembler(&self) -> Option<&dyn Assembler> {
@@ -442,6 +445,20 @@ impl FlowGraph for NativeEngine {
         route!(self,
             l => l.cfg(function, cancel).await,
             w => w.call("cfg", json!({ "function": function }), w.request_limits(), cancel).await
+        )
+    }
+}
+
+#[async_trait]
+impl JumpTables for NativeEngine {
+    async fn list_jump_tables(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<JumpTable>> {
+        route!(self,
+            l => l.list_jump_tables(page, cancel).await,
+            w => w.call("jump_tables", json!({ "page": page }), w.request_limits(), cancel).await
         )
     }
 }

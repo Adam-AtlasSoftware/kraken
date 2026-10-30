@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use kraken_engine::{
     AnalyzeRequest, Analyzer, Decompiler, DisasmRequest, Disassembler, FlowGraph, FunctionLister,
-    MemoryReader, Mutator, OpenReporter, StringLister, StringsRequest, SymbolLister, TypeStore,
-    XrefProvider, XrefRequest,
+    JumpTables, MemoryReader, Mutator, OpenReporter, StringLister, StringsRequest, SymbolLister,
+    TypeStore, XrefProvider, XrefRequest,
 };
 use kraken_proto::{
     ErrorCode, Locator, OpenUpdate, PageRequest, ProtoError, TypeDef, VersionedLogOp,
@@ -271,6 +271,7 @@ async fn dispatch(
         "xrefs" => out(e
             .xrefs(&arg::<XrefRequest>(params, "req")?, &page(params)?, c)
             .await?),
+        "jump_tables" => out(e.list_jump_tables(&page(params)?, c).await?),
         "cfg" => out(e.cfg(&arg::<Locator>(params, "function")?, c).await?),
         "strings" => out(e
             .strings(&arg::<StringsRequest>(params, "req")?, &page(params)?, c)

@@ -10,14 +10,14 @@ use async_trait::async_trait;
 use kraken_engine::{
     AnalysisJob, AnalysisSummary, AnalyzeRequest, Analyzer, Assembler, CancellationToken, Cap,
     Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps, EngineRejected, EngineResult,
-    FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter,
+    FlowGraph, FunctionLister, JumpTables, Loader, LoaderSpec, MemoryReader, Mutator, OpenReporter,
     ProgramInfo, Progress, Stage, StringLister, StringsRequest, SymbolLister, TypeStore, Watermark,
     XrefProvider, XrefRequest, type_def_name,
 };
 use kraken_proto::{
-    BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, LogOp,
-    MemoryBlock, OpenStage, OpenUpdate, OperandKind, Page, PageRequest, ProtoError, StringEntry,
-    SymbolEntry, TypeDef, VersionedLogOp, Xref,
+    BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, JumpTable, Locator,
+    LogOp, MemoryBlock, OpenStage, OpenUpdate, OperandKind, Page, PageRequest, ProtoError,
+    StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 
 use crate::data::DataView;
@@ -222,6 +222,9 @@ impl Engine for FakeEngine {
     }
     fn assembler(&self) -> Option<&dyn Assembler> {
         self.has(Cap::Assembler).then_some(self as &dyn Assembler)
+    }
+    fn jump_tables(&self) -> Option<&dyn JumpTables> {
+        self.has(Cap::JumpTables).then_some(self as &dyn JumpTables)
     }
 }
 
@@ -595,6 +598,18 @@ impl FlowGraph for FakeEngine {
     async fn cfg(&self, function: &Locator, cancel: &CancellationToken) -> EngineResult<Cfg> {
         check(cancel)?;
         self.lock().view().cfg(function)
+    }
+}
+
+#[async_trait]
+impl JumpTables for FakeEngine {
+    async fn list_jump_tables(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<JumpTable>> {
+        check(cancel)?;
+        self.lock().view().jump_tables(page)
     }
 }
 

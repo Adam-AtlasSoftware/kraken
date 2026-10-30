@@ -271,6 +271,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     step!("callers", json!({"address": "0x401040"}));
     step!("callees", json!({"address": "0x401000"}));
     step!("cfg", json!({"function": "0x401000"}));
+    step!("jump_tables", json!({}));
     step!("strings", json!({}));
     step!("imports", json!({}));
     step!("exports", json!({}));

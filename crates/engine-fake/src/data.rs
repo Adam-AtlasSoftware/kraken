@@ -8,10 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kraken_engine::{DisasmRequest, EngineResult, StringsRequest, XrefRequest};
 use kraken_proto::{
-    AddressRange, BytesRead, Cfg, CfgBlock, CfgEdge, DEFAULT_SPACE, DisasmRow, DisasmScope,
-    ErrorCode, FlowKind, FunctionRef, Hex64, Locator, MemoryBlock, MemoryKind, OperandKind,
-    OperandToken, Page, PageRequest, ProtoError, StringEncoding, StringEntry, SymbolEntry,
-    SymbolKind, TokenKind, Xref, XrefDirection, XrefKind, hex_bytes,
+    AddressRange, BytesRead, Cfg, CfgBlock, CfgEdge, CfgEdgeKind, DEFAULT_SPACE, DisasmRow,
+    DisasmScope, ErrorCode, FlowKind, FunctionRef, Hex64, JumpTable, Locator, MemoryBlock,
+    MemoryKind, OperandKind, OperandToken, Page, PageRequest, ProtoError, StringEncoding,
+    StringEntry, SymbolEntry, SymbolKind, TokenKind, Xref, XrefDirection, XrefKind, hex_bytes,
 };
 
 use crate::fixture::{FixtureFunction, key_of};
@@ -531,6 +531,41 @@ impl DataView<'_> {
             }],
             edges: Vec::<CfgEdge>::new(),
         })
+    }
+
+    /// The computed jumps of every function, read off the `switch` edges of its CFG: the jump is
+    /// the last instruction of the block the edges leave.
+    pub fn jump_tables(&self, page: &PageRequest) -> EngineResult<Page<JumpTable>> {
+        let names = self.names();
+        let mut all = Vec::new();
+        for (entry, f) in self.ram_functions() {
+            let Some(cfg) = &f.cfg else { continue };
+            let rows = self.rows_of(f, &names);
+            for b in &cfg.blocks {
+                let mut targets: Vec<u64> = cfg
+                    .edges
+                    .iter()
+                    .filter(|e| e.kind == CfgEdgeKind::Switch && e.from == b.start)
+                    .map(|e| e.to.0)
+                    .collect();
+                targets.sort_unstable();
+                targets.dedup();
+                let jump = rows
+                    .iter()
+                    .map(|r| r.address.0)
+                    .filter(|a| (b.start.0..b.end.0).contains(a))
+                    .max();
+                if let (false, Some(jump)) = (targets.is_empty(), jump) {
+                    all.push(JumpTable {
+                        function: Hex64(entry),
+                        jump: Hex64(jump),
+                        targets: targets.into_iter().map(Hex64).collect(),
+                    });
+                }
+            }
+        }
+        all.sort_by_key(|t| t.jump.0);
+        page_vec(&all, page)
     }
 
     // ---- strings and symbols --------------------------------------------------------

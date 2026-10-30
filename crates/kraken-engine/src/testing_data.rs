@@ -134,6 +134,7 @@ pub(crate) async fn check_program_data(engine: &dyn Engine, exp: &FixtureExpecta
     check_listing_rows(engine, &sample).await?;
     check_xrefs(engine, &sample).await?;
     check_cfg(engine, &sample).await?;
+    check_jump_tables(engine).await?;
     check_strings(engine).await?;
     check_symbols(engine).await
 }
@@ -416,6 +417,70 @@ async fn check_xrefs(engine: &dyn Engine, sample: &[u64]) -> Check {
                 &cancel,
             )
             .await,
+        ErrorCode::InvalidArgument,
+    )
+}
+
+async fn check_jump_tables(engine: &dyn Engine) -> Check {
+    let Some(jt) = engine.jump_tables() else {
+        return Ok(());
+    };
+    let cancel = CancellationToken::new();
+    let small = collect("jump_tables", 2, |page| {
+        let cancel = &cancel;
+        async move { jt.list_jump_tables(&page, cancel).await }
+    })
+    .await?;
+    let big = collect("jump_tables", 200, |page| {
+        let cancel = &cancel;
+        async move { jt.list_jump_tables(&page, cancel).await }
+    })
+    .await?;
+    paged_equal("jump_tables", &small, &big)?;
+    for pair in big.windows(2) {
+        ensure!(
+            pair[0].jump < pair[1].jump,
+            "jump tables are not ordered by jump address at {}",
+            pair[1].jump
+        );
+    }
+    for t in &big {
+        ensure!(!t.targets.is_empty(), "jump at {} has no targets", t.jump);
+        ensure!(
+            t.targets.windows(2).all(|w| w[0] < w[1]),
+            "targets of the jump at {} are not ascending and distinct",
+            t.jump
+        );
+    }
+    // the switch edges of a function's CFG are among the targets of its jump tables
+    if let Some(graph) = engine.flow_graph() {
+        for t in big.iter().take(SAMPLE) {
+            let cfg = call!("cfg", graph.cfg(&Locator::ram(t.function.0), &cancel));
+            for e in cfg
+                .edges
+                .iter()
+                .filter(|e| e.kind == kraken_proto::CfgEdgeKind::Switch)
+            {
+                ensure!(
+                    big.iter()
+                        .any(|b| b.function == t.function && b.targets.contains(&e.to)),
+                    "switch edge to {} of {} is in no jump table",
+                    e.to,
+                    t.function
+                );
+            }
+        }
+    }
+    expect_code(
+        "jump tables with a bad cursor",
+        jt.list_jump_tables(
+            &PageRequest {
+                cursor: Some("not-a-cursor".into()),
+                limit: Some(5),
+            },
+            &cancel,
+        )
+        .await,
         ErrorCode::InvalidArgument,
     )
 }

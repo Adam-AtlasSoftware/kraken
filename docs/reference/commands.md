@@ -77,6 +77,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`job_await`](#job_await) | query | safe | Wait for a job to finish or a timeout to pass |
 | [`job_cancel`](#job_cancel) | mutation | mutating | Request cancellation of a running job |
 | [`job_status`](#job_status) | query | safe | Show a job's status, progress and result |
+| [`jump_tables`](#jump_tables) | query | safe | List the computed jumps (switch tables) with the addresses each can reach |
 | [`kraken_help`](#kraken_help) | query | safe | Search KRAKEN's own documentation and glossary |
 | [`list_functions`](#list_functions) | query | safe | List functions ordered by address, one page at a time |
 | [`local_model_devices`](#local_model_devices) | query | safe | List the graphics cards a local model could run on |
@@ -11648,6 +11649,116 @@ Example: `job_status {"job_id": "job-1"}`
     "status"
   ],
   "title": "JobView",
+  "type": "object"
+}
+```
+
+</details>
+
+## jump_tables
+
+List the computed jumps (switch tables) with the addresses each can reach
+
+```sh
+kraken jump-tables [options]
+```
+
+- Kind: query
+- Permission: safe
+- Engine needs: `JumpTables`
+
+Every computed jump the engine resolved, ordered by jump address: the function it is in, the jump instruction and its targets. These are the edges the CFG draws as `switch`; use it to see how a dispatch loop or a `switch` fans out.
+
+Example: `jump_tables {"limit": 20}`
+
+A table with more than 256 targets lists the first 256 and sets `truncated`; `target_count` is the full count. Engines that cannot resolve computed jumps do not offer the command (`unsupported`).
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `cursor` | `--cursor` | string | no | Cursor from the previous page's `next_cursor`. |
+| `limit` | `--limit` | integer | no | Page size (default 100, at most 200). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    },
+    "JumpTableView": {
+      "description": "One computed jump with the addresses it can reach.",
+      "properties": {
+        "function": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Entry of the function holding the jump."
+        },
+        "jump": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Address of the computed jump instruction."
+        },
+        "target_count": {
+          "description": "Number of distinct targets.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "targets": {
+          "description": "Targets, ascending, at most 256.",
+          "items": {
+            "$ref": "#/$defs/Hex64"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "description": "Whether `targets` is cut short of `target_count`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "function",
+        "jump",
+        "target_count",
+        "targets",
+        "truncated"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One page of results with an optional cursor for the next page.",
+  "properties": {
+    "items": {
+      "description": "The items on this page.",
+      "items": {
+        "$ref": "#/$defs/JumpTableView"
+      },
+      "type": "array"
+    },
+    "next_cursor": {
+      "description": "Cursor for the next page; absent on the last page.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "total": {
+      "description": "Total item count when the engine can cheaply provide it.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "Page",
   "type": "object"
 }
 ```

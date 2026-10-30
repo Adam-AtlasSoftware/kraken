@@ -71,6 +71,7 @@ const EXPECTED: &[&str] = &[
     "job_await",
     "job_cancel",
     "job_status",
+    "jump_tables",
     "kraken_help",
     "list_functions",
     "local_model_devices",

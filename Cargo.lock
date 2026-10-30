@@ -1464,6 +1464,7 @@ version = "0.3.0"
 dependencies = [
  "async-trait",
  "cpp_demangle",
+ "engine-fake",
  "engine-native-sys",
  "gimli 0.34.0",
  "iced-x86",
@@ -6915,6 +6916,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "toml 0.8.23",
 ]
 
 [[package]]

@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use engine_native_sys::{Instruction, NativeError, Session, TokenKind as NativeKind};
 use kraken_engine::{
     Analyzer, Assembler, Cap, Decompiler, DisasmRequest, Disassembler, Engine, EngineCaps,
-    EngineRejected, EngineResult, FlowGraph, FunctionLister, Loader, LoaderSpec, MemoryReader,
-    Mutator, OpenReporter, ProgramInfo, StringLister, SymbolLister, TypeStore, Watermark,
-    XrefProvider,
+    EngineRejected, EngineResult, FlowGraph, FunctionLister, JumpTables, Loader, LoaderSpec,
+    MemoryReader, Mutator, OpenReporter, ProgramInfo, StringLister, SymbolLister, TypeStore,
+    Watermark, XrefProvider,
 };
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
@@ -1533,6 +1533,7 @@ impl Engine for InProcessEngine {
                 Cap::Assembler,
                 Cap::Xrefs,
                 Cap::Cfg,
+                Cap::JumpTables,
                 Cap::Strings,
                 Cap::Symbols,
             ],
@@ -1566,6 +1567,9 @@ impl Engine for InProcessEngine {
         Some(self)
     }
     fn flow_graph(&self) -> Option<&dyn FlowGraph> {
+        Some(self)
+    }
+    fn jump_tables(&self) -> Option<&dyn JumpTables> {
         Some(self)
     }
     fn string_lister(&self) -> Option<&dyn StringLister> {

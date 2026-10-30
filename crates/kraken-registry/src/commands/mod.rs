@@ -29,6 +29,7 @@ mod history;
 mod infer;
 mod integrations;
 mod jobs;
+mod jump_tables;
 mod local_model;
 mod patch;
 mod patch_check;
@@ -148,6 +149,7 @@ pub use jobs::{
     Analyze, AnalyzeOut, AnalyzeResult, JobAwait, JobAwaitArgs, JobCancel, JobIdArgs, JobStatus,
     JobView,
 };
+pub use jump_tables::{JumpTableView, JumpTablesArgs, JumpTablesCommand};
 pub use local_model::{
     DownloadView, GpuView, LocalFeature, LocalModelBackend, LocalModelRecommend,
     LocalModelRecommendArgs, LocalModelRecommendOut, LocalModelSetup, LocalModelSetupArgs,
@@ -341,6 +343,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(Callers);
     r.register(Callees);
     r.register(CfgCommand);
+    r.register(JumpTablesCommand);
     r.register(Strings);
     r.register(Imports);
     r.register(Exports);

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_proto::{
-    BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, Locator, MemoryBlock,
-    OpenUpdate, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef, VersionedLogOp,
-    Xref,
+    BytesRead, Cfg, DecompileResult, DisasmRow, ErrorCode, FunctionSummary, JumpTable, Locator,
+    MemoryBlock, OpenUpdate, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, TypeDef,
+    VersionedLogOp, Xref,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -265,6 +265,19 @@ pub trait FlowGraph: Send + Sync {
     /// The basic blocks and edges of the function containing `function`; `not_found` if there is
     /// none. Blocks are ordered by start address and every edge joins two listed blocks.
     async fn cfg(&self, function: &Locator, cancel: &CancellationToken) -> EngineResult<Cfg>;
+}
+
+/// Lists the computed jumps of the program (switch tables and dispatch tables) with the
+/// addresses each can reach.
+#[async_trait]
+pub trait JumpTables: Send + Sync {
+    /// Jump tables ordered by jump address. Cursors are opaque; a malformed one is
+    /// `invalid_argument`. Every target lies in a mapped address of the program.
+    async fn list_jump_tables(
+        &self,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> EngineResult<Page<JumpTable>>;
 }
 
 /// Finds strings in memory.

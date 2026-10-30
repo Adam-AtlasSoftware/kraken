@@ -162,6 +162,9 @@ impl Engine for Controlled {
     fn assembler(&self) -> Option<&dyn kraken_engine::Assembler> {
         self.inner.assembler()
     }
+    fn jump_tables(&self) -> Option<&dyn kraken_engine::JumpTables> {
+        self.inner.jump_tables()
+    }
     fn process_id(&self) -> Option<u32> {
         self.inner.process_id()
     }

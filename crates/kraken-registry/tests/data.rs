@@ -865,6 +865,7 @@ async fn data_commands_need_their_capability() {
         (Cap::Xrefs, "callers", json!({"address": MAIN})),
         (Cap::Xrefs, "callees", json!({"address": MAIN})),
         (Cap::Cfg, "cfg", json!({"function": MAIN})),
+        (Cap::JumpTables, "jump_tables", json!({})),
         (Cap::Strings, "strings", json!({})),
         (Cap::Symbols, "imports", json!({})),
         (Cap::Symbols, "exports", json!({})),
@@ -946,6 +947,16 @@ async fn recorded_corpus_fixture_serves_switch_edges_and_listing() {
         .count();
     assert_eq!(switch, cases);
     assert!(switch >= 3);
+
+    let tables = env.ok(&u, "jump_tables", json!({"limit": 50})).await;
+    let mine: Vec<_> = items(&tables)
+        .iter()
+        .filter(|t| t["function"] == address.as_str())
+        .collect();
+    assert_eq!(mine.len(), 1, "one dispatch jump in the function");
+    assert_eq!(mine[0]["target_count"], cases);
+    assert_eq!(mine[0]["truncated"], false);
+    assert!(mine[0]["jump"].as_str().is_some());
 
     let listing = env
         .ok(

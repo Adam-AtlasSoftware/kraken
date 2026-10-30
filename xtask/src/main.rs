@@ -6,6 +6,7 @@ mod native_licenses;
 mod native_sla;
 mod native_src;
 mod notices;
+mod parity;
 mod samples;
 
 use std::fs;
@@ -50,6 +51,9 @@ Commands:
   schema       Write schema/kraken-proto.schema.json from the kraken-proto types.
   samples      Write one JSON sample per kraken-proto type/variant to schema/samples/.
   docs         Write docs/reference/commands.md and docs/gui.md (registry, menus, panels, shortcuts).
+  parity       Measure the native engine against the recorded Ghidra results (`cargo xtask parity`),
+               join them with parity.toml, write parity.json and the table in
+               docs/design/0014-native-engine.md; fails below a row threshold.
   notices      Write THIRD-PARTY-NOTICES.md from cargo metadata and the crates' license files,
                plus the Ghidra decompiler and zlib texts the native engine compiles in
                (crates/engine-native-sys/licenses, refreshed from the pinned source archive
@@ -75,6 +79,7 @@ fn main() -> ExitCode {
         Some("samples") => write_samples(),
         Some("docs") => docs::write_docs(),
         Some("notices") => notices::write_notices(),
+        Some("parity") => parity::parity(&args[1..]),
         Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     };
     match result {

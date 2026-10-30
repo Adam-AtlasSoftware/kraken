@@ -38,5 +38,6 @@ libc = "0.2"
 
 [dev-dependencies]
 kraken-engine = { path = "../kraken-engine", version = "0.3.0", features = ["testing"] }
+engine-fake = { path = "../engine-fake", version = "0.3.0" }
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }

@@ -1,0 +1,208 @@
+# How closely the native engine agrees with Ghidra 12.2, one row per capability and fixture set.
+#
+# `cargo xtask parity` measures every row (recall against the recorded Ghidra results), writes
+# parity.json and the table in docs/design/0014-native-engine.md, and fails when a row falls
+# below its `threshold` or when `status` disagrees with the measurement:
+#   parity   recall >= 95%
+#   partial  recall between 1% and 95%
+#   missing  recall below 1%
+# `test` names a function in crates/engine-native/tests that guards the row. Raise a threshold
+# when a change improves the number; never lower one without saying why in the commit.
+
+# ---- x86-64 and x86 ELF (corpus/fixtures: 20 binaries, stripped ones included) -------------
+
+[[row]]
+capability = "functions"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.99
+status = "parity"
+test = "finds_the_functions_ghidra_finds_in_stripped_binaries"
+
+[[row]]
+capability = "names"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.87
+status = "partial"
+test = "agrees_with_ghidra_on_the_guarded_binaries"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.48
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.0
+status = "missing"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.40
+status = "partial"
+test = "cpp_names_and_dwarf_signatures_agree_with_ghidra"
+
+[[row]]
+capability = "memory"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.69
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "disassembly"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.98
+status = "parity"
+test = "agrees_with_ghidra_on_the_guarded_binaries"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus"
+format = "ELF x86-64"
+threshold = 0.62
+status = "partial"
+test = "native_jump_tables_agree_with_the_recorded_switches"
+
+# ---- PE (corpus/pe: mingw-w64 PE32+ and PE32, a DLL, a stripped image) ----------------------
+
+[[row]]
+capability = "functions"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+[[row]]
+capability = "names"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.93
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.66
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.0
+status = "missing"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.43
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "memory"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.14
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "disassembly"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.98
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus/pe"
+format = "PE x86-64 and x86"
+threshold = 0.98
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+# ---- 32-bit ELF (corpus/elf32: 8 binaries) ---------------------------------------------------
+
+[[row]]
+capability = "functions"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+[[row]]
+capability = "names"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.98
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.59
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.0
+status = "missing"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.61
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "memory"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.70
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "disassembly"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.98
+status = "parity"
+test = "agrees_with_ghidra_on_pe_and_elf32"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus/elf32"
+format = "ELF x86"
+threshold = 0.98
+status = "parity"
+test = "native_jump_tables_agree_with_the_recorded_switches"
