@@ -7753,7 +7753,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - zbus_macros 5.19.0 (<https://github.com/z-galaxy/zbus/>)
 - zbus_names 4.3.5 (<https://github.com/z-galaxy/zbus/>)
 - zcheapstr 1.1.0 (<https://github.com/z-galaxy/zcheapstr/>)
-- zip 9.0.4 (<https://github.com/zip-rs/zip2>)
+- zip 9.0.5 (<https://github.com/zip-rs/zip2>)
 - zmij 1.0.23 (<https://github.com/dtolnay/zmij>)
 - zvariant 5.15.1 (<https://github.com/z-galaxy/zbus/>)
 - zvariant_derive 5.15.1 (<https://github.com/z-galaxy/zbus/>)
@@ -9031,7 +9031,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-**LICENSE** — zip 9.0.4
+**LICENSE** — zip 9.0.5
 
     The MIT License (MIT)
 
