@@ -71,7 +71,7 @@ test = "agrees_with_ghidra_on_the_guarded_binaries"
 capability = "jump_tables"
 set = "corpus"
 format = "ELF x86-64"
-threshold = 0.62
+threshold = 0.66
 status = "partial"
 test = "native_jump_tables_agree_with_the_recorded_switches"
 

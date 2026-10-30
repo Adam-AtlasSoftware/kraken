@@ -192,7 +192,7 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 | types | `corpus` | ELF x86-64 | 42.1% | 5.6% | 40.0% | partial |
 | memory | `corpus` | ELF x86-64 | 71.2% | 75.8% | 69.0% | partial |
 | disassembly | `corpus` | ELF x86-64 | 98.8% | 100.0% | 98.0% | parity |
-| jump_tables | `corpus` | ELF x86-64 | 64.0% | 89.0% | 62.0% | partial |
+| jump_tables | `corpus` | ELF x86-64 | 68.2% | 89.6% | 66.0% | partial |
 | functions | `corpus/pe` | PE x86-64 and x86 | 100.0% | 82.9% | 99.0% | parity |
 | names | `corpus/pe` | PE x86-64 and x86 | 95.6% | 95.6% | 93.0% | parity |
 | decompile_text | `corpus/pe` | PE x86-64 and x86 | 68.6% | 63.5% | 66.0% | partial |

@@ -671,11 +671,39 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
     .expect("fixture for the fake engine");
     let fake = engine_fake::FakeEngine::new(fixture);
     let theirs = jump_pairs(&fake, &cancel).await;
+    // the fixtures may hold the first functions only: compare the tables whose jump lies in the
+    // body Ghidra recorded for one of them (so a table of the last recorded function counts, and
+    // so does one the native engine places in a function of its own)
+    let blocks: Vec<(u64, u64)> = recorded
+        .iter()
+        .flat_map(|(_, f)| f["cfg"]["blocks"].as_array().into_iter().flatten())
+        .map(|b| (hex(&b["start"]), hex(&b["end"])))
+        .collect();
+    let entries: BTreeSet<u64> = recorded.iter().map(|(a, _)| *a).collect();
     let mut mine = jump_pairs(e, &cancel).await;
-    // the fixtures may hold the first functions only: compare up to the last recorded one
-    let last = recorded.iter().map(|(a, _)| *a).max().unwrap_or(0);
-    mine.retain(|(j, _)| *j <= last);
+    let tables = jump_functions(e, &cancel).await;
+    mine.retain(|(j, _)| {
+        tables.get(j).is_some_and(|f| entries.contains(f))
+            || blocks.iter().any(|(s, end)| (*s..*end).contains(j))
+    });
     r.jump_tables.add(&theirs, &mine);
+}
+
+/// The function each jump `eng` lists belongs to, by jump address.
+async fn jump_functions(eng: &dyn JumpTables, cancel: &CancellationToken) -> BTreeMap<u64, u64> {
+    let mut out = BTreeMap::new();
+    let mut cursor = None;
+    loop {
+        let p = eng
+            .list_jump_tables(&page(cursor), cancel)
+            .await
+            .expect("jump tables");
+        out.extend(p.items.iter().map(|t| (t.jump.0, t.function.0)));
+        match p.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => return out,
+        }
+    }
 }
 
 /// Every (jump address, target) pair `eng` lists.
@@ -1109,13 +1137,21 @@ async fn native_jump_tables_agree_with_the_recorded_switches() {
         eprintln!("{binary}: jump tables {s}");
         assert_eq!(s.recall(), 1.0, "{binary}: jump tables {s}");
         assert!(s.precision() >= 0.85, "{binary}: jump tables {s}");
-        // every table the native engine lists on top of Ghidra's is a real computed jump of a
-        // listed function
-        for (jump, _) in &mine {
+        // every table the native engine lists on top of Ghidra's belongs to a listed function
+        let tables = e
+            .list_jump_tables(&page(None), &cancel)
+            .await
+            .expect("jump tables");
+        for t in &tables.items {
             let f = e
-                .get_function(&Locator::ram(*jump), &cancel)
+                .get_function(&Locator::ram(t.function.0), &cancel)
                 .await
-                .unwrap_or_else(|err| panic!("{binary}: jump {jump:#x} is in no function: {err}"));
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "{binary}: jump {:#x} names {:#x}, which is no function: {err}",
+                        t.jump.0, t.function.0
+                    )
+                });
             assert!(!f.name.is_empty());
         }
     }
