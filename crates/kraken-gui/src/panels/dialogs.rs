@@ -25,6 +25,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     super::emulation::dialog(ctx, vm);
     super::emulation::call_dialog(ctx, vm);
     type_dialog(ctx, vm);
+    local_dialog(ctx, vm);
     function_dialog(ctx, vm);
     command_form(ctx, vm);
     command_result(ctx, vm);
@@ -1361,6 +1362,101 @@ fn type_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         vm.cancel_type();
     } else if save || (enter && check.is_ok()) {
         vm.submit_type();
+    }
+}
+
+// ---------------------------------------------------------------- rename / retype a variable
+
+fn local_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    let Some(d) = vm.tools.local_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let (mut name, mut ty) = (d.name.clone(), d.ty.clone());
+    let (mut save, mut cancel) = (false, false);
+    let check = d.check();
+    window("Rename or retype variable", "kraken_local", 540.0).show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "Give this variable of the decompiled function a better name, a type, or both. \
+                 Leave a field alone to keep it.",
+            )
+            .color(p.text_dim),
+        );
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&d.old_name).monospace().color(p.text_strong));
+            ui.label(
+                RichText::new(&d.storage)
+                    .monospace()
+                    .size(12.0)
+                    .color(p.address),
+            );
+        });
+        ui.label(RichText::new("Name").size(12.0).color(p.text_dim));
+        let r = ui
+            .add(
+                egui::TextEdit::singleline(&mut name)
+                    .id(Id::new("kraken_local_name"))
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .margin(Margin::symmetric(8, 6)),
+            )
+            .on_hover_text("The new name, with no spaces. Enter saves it");
+        ui.label(RichText::new("Type").size(12.0).color(p.text_dim));
+        let rt = ui
+            .add(
+                egui::TextEdit::singleline(&mut ty)
+                    .id(Id::new("kraken_local_type"))
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("int, char *, uint8_t[16], struct config")
+                    .desired_width(f32::INFINITY)
+                    .margin(Margin::symmetric(8, 6)),
+            )
+            .on_hover_text("Write the type as you would in C. Enter saves it");
+        if !r.has_focus() && !rt.has_focus() && !d.submitting {
+            if d.focus_type {
+                rt.request_focus();
+            } else {
+                r.request_focus();
+            }
+        }
+        match (&d.error, &check) {
+            (Some(e), _) => {
+                ui.label(RichText::new(e).color(s.danger));
+            }
+            (None, Err(e)) if d.name != d.old_name || !d.ty.trim().is_empty() => {
+                ui.label(RichText::new(e).color(s.danger));
+            }
+            _ => {
+                ui.label(
+                    RichText::new(
+                        "A type of another size than the variable can clash with its neighbours; \
+                         the decompiler then says it was not applied.",
+                    )
+                    .size(12.0)
+                    .color(p.text_dim),
+                );
+            }
+        }
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Save",
+            "Apply it. The change is recorded in History and can be undone (Enter)",
+            check.as_ref().map(|_| ()).map_err(Clone::clone),
+            d.submitting,
+            &mut save,
+            &mut cancel,
+        );
+    });
+    if name != d.name || ty != d.ty {
+        vm.set_local_input(name, ty);
+    }
+    if esc || cancel {
+        vm.cancel_local();
+    } else if save || (enter && check.is_ok()) {
+        vm.submit_local();
     }
 }
 

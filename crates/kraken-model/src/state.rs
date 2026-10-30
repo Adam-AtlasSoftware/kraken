@@ -50,6 +50,13 @@ pub enum StateValue {
         /// Convention name.
         name: String,
     },
+    /// A user name and/or type for a local variable.
+    Local {
+        /// The name, if the user gave one.
+        name: Option<String>,
+        /// The type, if the user gave one.
+        ty: Option<TypeRef>,
+    },
     /// A named type's definition.
     TypeDef {
         /// The definition.
@@ -116,6 +123,10 @@ pub fn apply_op(state: &mut AnnotationState, op: &LogOp) {
             (!new.is_empty()).then(|| StateValue::CallingConvention { name: new.clone() })
         }
         LogOp::DefineType { new, .. } => new.clone().map(|def| StateValue::TypeDef { def }),
+        LogOp::SetLocal { new, .. } => new.as_ref().map(|l| StateValue::Local {
+            name: l.name.clone(),
+            ty: l.ty.clone(),
+        }),
         LogOp::SetPatch { original, new, .. } => new.as_ref().map(|b| StateValue::Patch {
             original: original.clone(),
             replacement: b.replacement.clone(),
@@ -202,6 +213,17 @@ pub fn invert_op(op: &LogOp) -> LogOp {
             anchor,
             old: Some(new),
             new: old.unwrap_or_default(),
+        },
+        LogOp::SetLocal {
+            anchor,
+            storage,
+            old,
+            new,
+        } => LogOp::SetLocal {
+            anchor,
+            storage,
+            old: new,
+            new: old,
         },
         LogOp::DefineType { name, old, new } => LogOp::DefineType {
             name,

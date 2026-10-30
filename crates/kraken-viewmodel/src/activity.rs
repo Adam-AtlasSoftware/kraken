@@ -84,7 +84,7 @@ pub fn what_it_does(command: &str) -> &'static str {
         "rename_symbol" => "renaming",
         "set_comment" => "commenting",
         "patch_set" | "patch_remove" => "patching",
-        "set_type" | "set_calling_convention" => "retyping",
+        "set_type" | "set_calling_convention" | "set_local" => "retyping",
         "apply_edits" => "editing",
         "create_function" | "delete_function" | "set_function_bounds" => "reshaping functions",
         "analyze" => "analysing",

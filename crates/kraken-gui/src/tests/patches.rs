@@ -160,6 +160,7 @@ fn the_context_menu_patch_items_preview_then_apply_a_nop() {
         address: Some(row.address),
         name: None,
         function: None,
+        varnode: None,
     };
     let items = context::items(vm, &target);
     let patch: Vec<_> = items.iter().filter(|i| i.group == Some("Patch")).collect();

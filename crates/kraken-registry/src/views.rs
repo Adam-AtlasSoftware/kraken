@@ -218,6 +218,7 @@ fn op_kind(op: &LogOp) -> &'static str {
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
         LogOp::SetPatch { .. } => "set_patch",
+        LogOp::SetLocal { .. } => "set_local",
         LogOp::DefineType { new, old, .. } => match (old, new) {
             (_, None) => "type_delete",
             (None, Some(_)) => "type_define",
@@ -258,6 +259,16 @@ fn describe_op(op: &LogOp) -> String {
         LogOp::SetFunctionBounds { new, .. } => format!("{}..{}", new.start, new.end),
         LogOp::SetCodeData { new, .. } => format!("{new:?}"),
         LogOp::SetCallingConvention { new, .. } => new.clone(),
+        LogOp::SetLocal { storage, new, .. } => match new {
+            Some(l) => format!(
+                "{storage}: {} {}",
+                l.name.as_deref().unwrap_or("-"),
+                l.ty.as_ref()
+                    .and_then(|t| serde_json::to_string(t).ok())
+                    .unwrap_or_default()
+            ),
+            None => format!("{storage}: cleared"),
+        },
         LogOp::SetPatch {
             original, old, new, ..
         } => match new {

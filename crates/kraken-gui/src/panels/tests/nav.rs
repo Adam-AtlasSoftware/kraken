@@ -4,7 +4,7 @@
 use egui::{Event, Key, Modifiers};
 
 use super::{Harness, ctrl, is_front};
-use crate::panels::context::{Target, TargetKind, items};
+use crate::panels::context::{self, NavChoice, Target, TargetKind, items};
 use crate::workspace::Tab;
 
 impl Harness {
@@ -208,6 +208,7 @@ fn the_right_click_menu_lists_every_item_and_dispatches_them() {
         address: Some(helper),
         name: Some("helper".into()),
         function: Some(main),
+        varnode: None,
     };
     let all = items(h.app.view_model().unwrap(), &fun);
     for want in [
@@ -239,6 +240,7 @@ fn the_right_click_menu_lists_every_item_and_dispatches_them() {
         address: None,
         name: Some("argc".into()),
         function: Some(main),
+        varnode: None,
     };
     let vi = items(h.app.view_model().unwrap(), &var);
     let retype = vi.iter().find(|i| i.label == "Retype").unwrap();
@@ -247,8 +249,39 @@ fn the_right_click_menu_lists_every_item_and_dispatches_them() {
             .disabled
             .as_deref()
             .unwrap_or("")
-            .contains("cannot be retyped")
+            .contains("no stored place")
     );
+    // Where the variable lives is what makes it editable.
+    let placed = Target {
+        varnode: Some("stack:0xfffffffffffffff0:8".into()),
+        ..var.clone()
+    };
+    let pi = items(h.app.view_model().unwrap(), &placed);
+    for label in ["Rename", "Retype"] {
+        let i = pi.iter().find(|i| i.label == label).unwrap();
+        assert!(i.disabled.is_none(), "{label}: {:?}", i.disabled);
+    }
+    context::run(
+        &egui::Context::default(),
+        h.app.view_model_mut().unwrap(),
+        &placed,
+        NavChoice::Retype,
+    );
+    let d = h
+        .app
+        .view_model()
+        .unwrap()
+        .tools
+        .local_dialog
+        .clone()
+        .expect("dialog");
+    assert_eq!(
+        (d.storage.as_str(), d.old_name.as_str(), d.focus_type),
+        ("stack:0xfffffffffffffff0", "argc", true)
+    );
+    h.step();
+    h.step();
+    h.app.view_model_mut().unwrap().cancel_local();
     let create = vi
         .iter()
         .find(|i| i.label == "Create function here")

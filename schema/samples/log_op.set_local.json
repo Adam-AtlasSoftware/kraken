@@ -1,0 +1,23 @@
+{
+  "op": {
+    "anchor": {
+      "fn_entry": "0x401000",
+      "fn_hash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      "kind": "native",
+      "offset": "0x401010",
+      "space": "ram"
+    },
+    "new": {
+      "name": "total",
+      "ty": {
+        "class": "int",
+        "kind": "primitive",
+        "signed": false,
+        "size": 8
+      }
+    },
+    "op": "set_local",
+    "storage": "stack:0xfffffffffffffff0"
+  },
+  "schema_version": 1
+}

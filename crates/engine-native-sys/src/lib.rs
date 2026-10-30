@@ -521,6 +521,14 @@ mod real {
             fn set_noreturn(self: Pin<&mut Session>, addr: u64, noreturn: bool) -> Result<()>;
             fn remove_function(self: Pin<&mut Session>, addr: u64) -> Result<()>;
             fn set_convention(self: Pin<&mut Session>, addr: u64, name: &str) -> Result<()>;
+            fn set_local(
+                self: Pin<&mut Session>,
+                fad: u64,
+                space: &str,
+                offset: u64,
+                name: &str,
+                decl: &str,
+            ) -> Result<()>;
             fn set_comments(
                 self: Pin<&mut Session>,
                 fad: u64,
@@ -612,6 +620,7 @@ enum Call {
     SetConvention(u64, String),
     SetGlobal(u64, String, String, u32),
     RemoveGlobal(u64),
+    SetLocal(u64, String, u64, String, String),
 }
 
 /// The edits made to a session (functions and their names, types, prototypes, marks and
@@ -725,6 +734,7 @@ impl Session {
                 Call::SetConvention(a, n) => self.set_convention(*a, n),
                 Call::SetGlobal(a, n, d, z) => self.set_global(*a, n, d, *z),
                 Call::RemoveGlobal(a) => self.remove_global(*a),
+                Call::SetLocal(f, sp, o, n, d) => self.set_local(*f, sp, *o, n, d),
             };
             if let Err(e @ NativeError::Unavailable(_)) = r {
                 return Err(e);
@@ -1062,6 +1072,39 @@ impl Session {
         #[cfg(not(kraken_native))]
         {
             let _ = (addr, name);
+            Err(unavailable())
+        }
+    }
+
+    /// Records a name and/or a C type (`decl`, such as `char *`) for the local variable of the
+    /// function at `fad` that lives at `offset` of the address space `space` (`stack` or
+    /// `register`); both empty clears the override. Every later decompile of the function
+    /// applies it; what it could not apply comes back as a warning of the decompile.
+    pub fn set_local(
+        &mut self,
+        fad: u64,
+        space: &str,
+        offset: u64,
+        name: &str,
+        decl: &str,
+    ) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            self.journal.calls.push(Call::SetLocal(
+                fad,
+                space.to_string(),
+                offset,
+                name.to_string(),
+                decl.to_string(),
+            ));
+            let _g = lock_shared();
+            self.pinned()?
+                .set_local(fad, space, offset, name, decl)
+                .map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (fad, space, offset, name, decl);
             Err(unavailable())
         }
     }

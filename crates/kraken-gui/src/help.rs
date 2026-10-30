@@ -120,7 +120,7 @@ const STEPS: &[Step] = &[
     },
     Step {
         title: "Rename and retype",
-        text: "As you work out what a function does, give it a real name: select it and press N. Press Y to change the type of a variable, and ; to leave a comment. Every change goes in the History tab, and Ctrl+Z undoes it.",
+        text: "As you work out what a function does, give it a real name: select it and press N. Press Y to change the type of the item at the cursor, and ; to leave a comment. In the Decompiler, double-click a variable (or right-click it) to rename or retype it. Every change goes in the History tab, and Ctrl+Z undoes it.",
         doit: &[
             (
                 "Rename this function",

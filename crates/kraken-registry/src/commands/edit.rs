@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use kraken_engine::Cap;
 use kraken_model::{AuthorKind, EntryId, ProposalId, ProposalStatus, RunId, StateValue, op_key};
 use kraken_proto::{
-    AddressRange, CommentKind, ErrorCode, FunctionPrototype, Hex64, LogOp, ProtoError, TypeRef,
-    VersionedLogOp, sanitize,
+    AddressRange, CommentKind, ErrorCode, FunctionPrototype, Hex64, LocalSpec, LogOp, ProtoError,
+    TypeRef, VersionedLogOp, sanitize,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -390,6 +390,138 @@ impl Command for SetCallingConvention {
             && let LogOp::SetCallingConvention { old, .. } = &mut op
         {
             *old = Some(name);
+        }
+        submit(s, ctx, op, args.expect_versions).await
+    }
+}
+
+/// Arguments of `set_local`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetLocalArgs {
+    /// Entry address of the function that holds the variable, as `0x...`.
+    pub address: Hex64,
+    /// Where the variable lives: the `varnode` of its tokens in `decompile` without the size,
+    /// such as `stack:0xffffffffffffffec` or `register:0x38`.
+    pub storage: String,
+    /// The new name; leave out to keep the name the variable has now.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The name of an existing type (give at most one of `type_name` and `data_type`).
+    #[serde(default)]
+    pub type_name: Option<String>,
+    /// A data type in the neutral type model (give at most one of `type_name` and `data_type`).
+    #[serde(default)]
+    pub data_type: Option<TypeRef>,
+    /// Remove the override, so the decompiler names and types the variable again.
+    #[serde(default)]
+    pub clear: bool,
+    /// Entity versions the edit is based on; see `get_function`.
+    #[serde(default)]
+    pub expect_versions: Option<BTreeMap<String, u64>>,
+}
+
+/// Renames or retypes a local variable or parameter of a function.
+pub struct SetLocal;
+
+#[async_trait]
+impl Command for SetLocal {
+    type Args = SetLocalArgs;
+    type Output = MutationOutput;
+
+    fn spec() -> CommandSpec {
+        CommandSpec::new(
+            "set_local",
+            "Rename or retype a local variable or parameter in decompiled C",
+            CommandKind::Mutation,
+            Permission::Mutating,
+        )
+        .doc(
+            "Gives a variable of a decompiled function a name and/or a type; every later \
+             `decompile` shows it. Take `storage` from the `varnode` of a variable token (drop \
+             the `:size`). An agent applies it at once only on a variable nobody has named or \
+             typed; changing or clearing an override becomes a proposal. Native engine only.\n\
+             Example: set_local {\"address\": \"0x401136\", \"storage\": \"stack:0xfffffffffffffff0\", \"name\": \"total\"}",
+        )
+        .details(
+            "Give `name`, a type (`type_name` or `data_type`), or both; what you leave out stays \
+             as the last override (or the decompiler's choice) had it. `clear: true` removes the \
+             override. A type of another size than the variable's can overlap its neighbours; \
+             the decompile then warns that it was not applied. The Ghidra engine rejects the \
+             edit as unsupported.",
+        )
+        .doc_expect()
+        .needs(&[Cap::Mutator])
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        ctx: &CallContext,
+        args: SetLocalArgs,
+    ) -> Result<MutationOutput, ProtoError> {
+        let project = s.project()?;
+        let who = ctx.author.kind;
+        let Some((space, offset)) = kraken_proto::parse_storage(&args.storage) else {
+            return Err(invalid(format!(
+                "{:?} is not a storage such as stack:0xfffffffffffffff0 or register:0x38",
+                args.storage
+            )));
+        };
+        if matches!(space.as_str(), "const" | "ram") {
+            return Err(invalid(
+                "a variable lives in a register, the stack or a temporary",
+            ));
+        }
+        let storage = kraken_proto::storage_key(&space, offset);
+        let name = match args.name.as_deref() {
+            Some(n) => Some(validate_name("name", n, who)?),
+            None => None,
+        };
+        let ty = match (args.type_name, args.data_type) {
+            (Some(n), None) => {
+                validate_name("type_name", &n, who)?;
+                Some(TypeRef::Named { name: n })
+            }
+            (None, Some(t)) => {
+                check_type_ref(&t, who, 0)?;
+                Some(t)
+            }
+            (None, None) => None,
+            _ => return Err(invalid("give at most one of `type_name` and `data_type`")),
+        };
+        if args.clear && (name.is_some() || ty.is_some()) {
+            return Err(invalid("`clear` cannot come with a name or a type"));
+        }
+        if !args.clear && name.is_none() && ty.is_none() {
+            return Err(invalid(
+                "give a `name`, a `type_name` or `data_type`, or `clear`",
+            ));
+        }
+        let r = anchor_for(&project, ctx, args.address).await?;
+        if function_at(&r, args.address).is_none() {
+            return Err(ProtoError::new(
+                ErrorCode::NotFound,
+                format!("no function at {}", args.address),
+            ));
+        }
+        let mut op = LogOp::SetLocal {
+            anchor: r.anchor,
+            storage,
+            old: None,
+            new: None,
+        };
+        let current = match state_value(&project, op_key(&op)?).await? {
+            Some(StateValue::Local { name, ty }) => Some(LocalSpec { name, ty }),
+            _ => None,
+        };
+        let new = (!args.clear).then(|| LocalSpec {
+            name: name.or_else(|| current.as_ref().and_then(|c| c.name.clone())),
+            ty: ty.or_else(|| current.as_ref().and_then(|c| c.ty.clone())),
+        });
+        if let LogOp::SetLocal { old, new: slot, .. } = &mut op {
+            *old = current;
+            *slot = new;
         }
         submit(s, ctx, op, args.expect_versions).await
     }

@@ -309,6 +309,54 @@ fn signature_dialog_parses_inline_and_saves_through_set_type() {
 }
 
 #[test]
+fn variable_dialog_checks_the_input_and_saves_through_set_local() {
+    let mut r = rig();
+    let helper = addr_of(&r.vm, "helper");
+    r.vm.select_function(helper);
+    idle(&mut r.vm);
+
+    r.vm.begin_local(helper, "nonsense", "x", false);
+    assert!(r.vm.tools.local_dialog.is_none(), "no storage, no dialog");
+    r.vm.begin_local(helper, "stack:0xfffffffffffffff0:8", "lStack_10", false);
+    let d = r.vm.tools.local_dialog.as_ref().expect("dialog");
+    assert_eq!(d.storage, "stack:0xfffffffffffffff0");
+    assert!(d.check().is_err(), "nothing changed yet");
+
+    let before = r.vm.pending_calls();
+    r.vm.set_local_input("lStack_10", "not a type!");
+    r.vm.submit_local();
+    assert_eq!(r.vm.pending_calls(), before, "a parse error sends nothing");
+    assert!(r.vm.tools.local_dialog.as_ref().unwrap().error.is_some());
+
+    r.vm.set_local_input("total", "unsigned long");
+    let args =
+        r.vm.tools
+            .local_dialog
+            .as_ref()
+            .unwrap()
+            .check()
+            .expect("ok");
+    assert_eq!(args["name"], "total");
+    assert_eq!(args["storage"], "stack:0xfffffffffffffff0");
+    assert_eq!(args["data_type"]["kind"], "primitive");
+    r.vm.set_local_input("has space", "");
+    assert!(r.vm.tools.local_dialog.as_ref().unwrap().check().is_err());
+    r.vm.set_local_input("total", "");
+    r.vm.submit_local();
+    idle(&mut r.vm);
+    assert!(
+        r.vm.tools.local_dialog.is_none(),
+        "{:?}",
+        r.vm.tools.local_dialog
+    );
+    assert!(
+        r.vm.toasts
+            .iter()
+            .any(|t| t.text.contains("Variable saved"))
+    );
+}
+
+#[test]
 fn functions_are_created_and_deleted_after_a_confirmation() {
     let mut r = rig();
     let helper = addr_of(&r.vm, "helper");

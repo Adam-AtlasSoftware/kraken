@@ -385,6 +385,31 @@ sections opens in about 15 s with 3738 functions. Big C++ libraries are slow: Qt
 same code linked into a shared library, so the time goes to the analysis, not to the loading
 (which takes 0.1 s).
 
+## Renaming and retyping variables
+
+In the decompiled C, right-click a local variable or a parameter and choose Rename or Retype (or
+double-click it, or press N over it). One dialog takes a new name, a C type, or both; leave a
+field alone to keep it. The change is an entry in the History tab like any other edit, so Ctrl+Z
+undoes it, and it shows in every later decompile of the function. It is saved with the project and
+comes back when the project is reopened or the worker restarts.
+
+From the command line or an agent the same edit is `set_local`:
+
+```sh
+kraken set-local --address 0x101197 --storage stack:0xfffffffffffffff0 --name total --type-name long
+```
+
+`storage` is where the variable lives: the `varnode` of its tokens in `decompile --json`, without
+the `:size` (`stack:0xfffffffffffffff0`, `register:0x38`). It stays the same at every use of the
+variable and across re-decompiles, so the edit follows the variable. `--clear` removes the
+override. An agent's first name or type for a variable applies at once; changing or clearing one
+becomes a proposal.
+
+A type that is not the size of the variable can overlap its neighbours on the stack; the decompile
+then carries a warning that the type was not applied. Variables the decompiler invents for a
+register that no symbol covers cannot always be named. The Ghidra engine does not support this
+edit yet and answers `unsupported`; use the native engine.
+
 ## What does not work yet
 
 - Mach-O files, big-endian ELF (ARM BE8, AArch64 BE), processors other than x86, ARM, AArch64 and
@@ -401,7 +426,8 @@ same code linked into a shared library, so the time goes to the analysis, not to
 - Global variables are named in decompiled C from the symbol table (ELF `STT_OBJECT`, PE/COFF
   data symbols) and named and typed from DWARF; a rename or `set_type` of a data address in the
   listing reaches the decompiler too. A COFF symbol carries no size, so the variable is given
-  the room before the next symbol, at most four bytes. DWARF locals are not imported; static
+  the room before the next symbol, at most four bytes. DWARF locals are not imported (rename and
+  retype them yourself, see above); static
   variables inside functions and object files and archives get no global names yet.
 - DWARF types, function prototypes and global variables are imported.
 - Linux only.

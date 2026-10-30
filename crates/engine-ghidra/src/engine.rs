@@ -179,6 +179,7 @@ fn op_anchor(op: &LogOp) -> Option<&Anchor> {
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetLocal { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
         LogOp::DefineType { .. } => return None,
     })
@@ -726,6 +727,12 @@ impl Mutator for GhidraEngine {
         cancel: &CancellationToken,
     ) -> Result<(), EngineRejected> {
         op.check_version()?;
+        if matches!(op.op, LogOp::SetLocal { .. }) {
+            return Err(EngineRejected::new(
+                ErrorCode::Unsupported,
+                "the Ghidra engine cannot rename or retype local variables yet; use the native engine",
+            ));
+        }
         if let LogOp::DefineType { name, new, .. } = &op.op {
             return match new {
                 Some(def) if type_def_name(def) == Some(name.as_str()) => self

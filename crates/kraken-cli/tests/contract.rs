@@ -299,6 +299,11 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         json!({"address": "0x401040", "convention": "__cdecl"})
     );
     assert_eq!(cc["status"], "applied", "{cc}");
+    let local = step!(
+        "set_local",
+        json!({"address": "0x401040", "storage": "stack:0xfffffffffffffff0", "name": "total"})
+    );
+    assert_eq!(local["status"], "applied", "{local}");
     let created = step!(
         "create_function",
         json!({"address": "0x401100", "name": "fresh"})

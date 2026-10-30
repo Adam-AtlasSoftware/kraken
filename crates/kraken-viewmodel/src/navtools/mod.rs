@@ -23,7 +23,7 @@ pub use bookmarks::{BookmarkDialog, BookmarkItem, BookmarksPanel};
 pub use call::{
     CallBufferDetail, CallDetail, CallDialog, CallParam, ParamKind, RETURN_KINDS, parse_signature,
 };
-pub use edits::{FunctionDialog, FunctionDialogKind, TypeDialog, TypeMode};
+pub use edits::{FunctionDialog, FunctionDialogKind, LocalDialog, TypeDialog, TypeMode};
 pub use emulate::{
     Difference, EmulateDialog, EmulateMode, EmulationPanel, EmulationResult, FileDetail, InputRow,
     MAX_INPUT_FILE, RunDetail, SideRow, side_by_side,
@@ -167,6 +167,8 @@ pub struct NavTools {
     pub source_edit: Option<SourceEdit>,
     /// The Retype / Edit signature dialog, when open.
     pub type_dialog: Option<TypeDialog>,
+    /// The Rename / retype variable dialog, when open.
+    pub local_dialog: Option<LocalDialog>,
     /// The Create / Delete function dialog, when open.
     pub function_dialog: Option<FunctionDialog>,
     /// The generated form of a registry command, when open.
@@ -204,6 +206,7 @@ impl NavTools {
             || self.string_dialog.is_some()
             || self.intent_dialog.is_some()
             || self.type_dialog.is_some()
+            || self.local_dialog.is_some()
             || self.function_dialog.is_some()
             || self.form.is_some()
     }

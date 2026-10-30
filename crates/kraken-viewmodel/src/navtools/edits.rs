@@ -61,6 +61,50 @@ impl TypeDialog {
     }
 }
 
+/// The Rename / retype variable dialog: a local variable or parameter of a decompiled function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalDialog {
+    /// Entry of the function that holds the variable.
+    pub function: u64,
+    /// Where the variable lives, as `space:0xoffset` (the token's varnode without its size).
+    pub storage: String,
+    /// The name the variable has in the decompiled text.
+    pub old_name: String,
+    /// The new name as typed; empty keeps the name.
+    pub name: String,
+    /// The new type as typed in C; empty keeps the type.
+    pub ty: String,
+    /// Pointer size of the program, for `*`.
+    pub pointer_size: u32,
+    /// True when the dialog opened to retype: the type field gets the focus.
+    pub focus_type: bool,
+    /// Why saving failed (from the engine).
+    pub error: Option<String>,
+    /// The call is running.
+    pub submitting: bool,
+}
+
+impl LocalDialog {
+    /// Reads the typed name and type. `Ok` holds the `set_local` arguments.
+    pub fn check(&self) -> Result<Value, String> {
+        let name = self.name.trim();
+        let mut args = json!({"address": hex(self.function), "storage": self.storage});
+        let mut something = false;
+        if !name.is_empty() && name != self.old_name {
+            args["name"] = json!(validate_name(name, &self.old_name)?);
+            something = true;
+        }
+        if !self.ty.trim().is_empty() {
+            args["data_type"] = json!(parse_type(&self.ty, self.pointer_size)?);
+            something = true;
+        }
+        if !something {
+            return Err("Type a new name, a type, or both.".into());
+        }
+        Ok(args)
+    }
+}
+
 /// Whether the function dialog creates or deletes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FunctionDialogKind {
@@ -241,6 +285,87 @@ impl ViewModel {
                 }
                 Err(e) => {
                     if let Some(d) = vm.tools.type_dialog.as_mut() {
+                        d.submitting = false;
+                        d.error = Some(plain_error(&e));
+                    }
+                }
+            }
+        });
+    }
+
+    // ---------------------------------------------------------------- local variables
+
+    /// Why local variables cannot be renamed or retyped right now, if they cannot.
+    pub fn local_edit_blocked(&self) -> Option<&'static str> {
+        if self.module.is_some() {
+            return Some("Variables in a .NET assembly cannot be renamed here yet.");
+        }
+        None
+    }
+
+    /// Opens the dialog for the variable `name` stored at `varnode` (as in a decompiler token,
+    /// with or without the `:size`) of the function at `function`.
+    pub fn begin_local(&mut self, function: u64, varnode: &str, name: &str, focus_type: bool) {
+        if let Some(why) = self.local_edit_blocked() {
+            self.toast(ToastLevel::Info, why);
+            return;
+        }
+        let Some((space, offset)) = kraken_proto::parse_storage(varnode) else {
+            self.toast(
+                ToastLevel::Info,
+                "This variable has no place KRAKEN can name it by. Try another use of it.",
+            );
+            return;
+        };
+        self.tools.local_dialog = Some(LocalDialog {
+            function,
+            storage: kraken_proto::storage_key(&space, offset),
+            old_name: name.to_string(),
+            name: name.to_string(),
+            ty: String::new(),
+            pointer_size: self.pointer_size(),
+            focus_type,
+            error: None,
+            submitting: false,
+        });
+    }
+
+    /// Updates the text fields of the variable dialog.
+    pub fn set_local_input(&mut self, name: impl Into<String>, ty: impl Into<String>) {
+        if let Some(d) = self.tools.local_dialog.as_mut() {
+            d.name = name.into();
+            d.ty = ty.into();
+            d.error = None;
+        }
+    }
+
+    /// Closes the variable dialog.
+    pub fn cancel_local(&mut self) {
+        self.tools.local_dialog = None;
+    }
+
+    /// Sends the name and type through `set_local`. Parse errors stay in the dialog.
+    pub fn submit_local(&mut self) {
+        let Some(d) = self.tools.local_dialog.as_mut().filter(|d| !d.submitting) else {
+            return;
+        };
+        let args = match d.check() {
+            Ok(a) => a,
+            Err(e) => {
+                d.error = Some(e);
+                return;
+            }
+        };
+        d.submitting = true;
+        self.call("set_local", args, move |vm, res| {
+            match res.and_then(parse::<MutationWire>) {
+                Ok(m) => {
+                    vm.tools.local_dialog = None;
+                    vm.toast_mutation(&m, "Variable saved.", "Variable change");
+                    vm.refresh_after_edit();
+                }
+                Err(e) => {
+                    if let Some(d) = vm.tools.local_dialog.as_mut() {
                         d.submitting = false;
                         d.error = Some(plain_error(&e));
                     }

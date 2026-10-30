@@ -1015,3 +1015,160 @@ async fn type_definitions_are_edits_and_replay_on_reopen() {
         Err(ErrorCode::NotFound)
     );
 }
+
+async fn open_calc(state: &Path) -> Option<NativeEngine> {
+    let e = NativeEngine::new(config(state)?);
+    e.open_binary(
+        &root().join("corpus/bin/stripped_calc-O0"),
+        &LoaderSpec::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("open_binary");
+    Some(e)
+}
+
+const PARSE_NUMBER: u64 = 1053079;
+const ACC: &str = "stack:0xfffffffffffffff0:8";
+
+fn local(f: &FunctionSummary, storage: &str, name: Option<&str>, ty: Option<TypeRef>) -> LogOp {
+    LogOp::SetLocal {
+        anchor: anchor(PARSE_NUMBER, Some(f)),
+        storage: storage.into(),
+        old: None,
+        new: Some(kraken_proto::LocalSpec {
+            name: name.map(String::from),
+            ty,
+        }),
+    }
+}
+
+fn ulong() -> TypeRef {
+    TypeRef::Primitive(Primitive {
+        class: PrimitiveClass::Int,
+        size: 8,
+        signed: false,
+    })
+}
+
+async fn calc_text(e: &NativeEngine) -> (String, Vec<String>) {
+    let r = e
+        .decompile(&Locator::ram(PARSE_NUMBER), &CancellationToken::new())
+        .await
+        .expect("decompile");
+    (r.text, r.warnings)
+}
+
+fn token_storage(text: &str, tokens: &[kraken_proto::Token], name: &str) -> Option<String> {
+    tokens
+        .iter()
+        .filter(|t| t.kind == kraken_proto::TokenKind::Variable)
+        .find(|t| &text[t.start as usize..t.end as usize] == name)
+        .and_then(|t| t.varnode.clone())
+}
+
+fn clear_local(f: &FunctionSummary, storage: &str) -> LogOp {
+    let mut op = local(f, storage, None, None);
+    if let LogOp::SetLocal { new, .. } = &mut op {
+        *new = None;
+    }
+    op
+}
+
+#[tokio::test]
+async fn locals_are_edits_and_replay_on_reopen() {
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(e) = open_calc(state.path()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let f = function(&e, PARSE_NUMBER).await.expect("function");
+    let before = e
+        .decompile(&Locator::ram(PARSE_NUMBER), &c)
+        .await
+        .expect("decompile");
+    assert!(before.text.contains("lStack_10"), "{}", before.text);
+    // the variable tokens name their storage, the same at every use
+    let acc = token_storage(&before.text, &before.tokens, "lStack_10").expect("storage");
+    assert!(acc.starts_with("stack:0xfffffffffffffff0"), "{acc}");
+    let param = token_storage(&before.text, &before.tokens, "ps").expect("param");
+    assert!(param.starts_with("register:0x38"), "{param}");
+
+    // a name alone, on a stack variable and on a parameter
+    apply(&e, local(&f, ACC, Some("total"), None))
+        .await
+        .expect("rename local");
+    apply(&e, local(&f, "register:0x38:8", Some("state"), None))
+        .await
+        .expect("rename param");
+    let (text, warnings) = calc_text(&e).await;
+    assert!(
+        text.contains("long total;") && text.contains("parser *state"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("lStack_10") && !text.contains("(parser *ps"),
+        "{text}"
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    // a name and a type together
+    apply(&e, local(&f, ACC, Some("total"), Some(ulong())))
+        .await
+        .expect("retype");
+    let (text, warnings) = calc_text(&e).await;
+    assert!(text.contains("ulong total;"), "{text}");
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    // a type alone keeps the decompiler's name
+    apply(&e, local(&f, ACC, None, Some(ulong())))
+        .await
+        .expect("type only");
+    let (text, _) = calc_text(&e).await;
+    assert!(
+        text.contains("ulong ") && !text.contains(" total"),
+        "{text}"
+    );
+    apply(&e, local(&f, ACC, Some("total"), Some(ulong())))
+        .await
+        .expect("both again");
+
+    assert_eq!(
+        apply(&e, local(&f, "nonsense", Some("x"), None)).await,
+        Err(ErrorCode::InvalidArgument)
+    );
+    assert_eq!(
+        apply(&e, local(&f, ACC, Some("has space"), None)).await,
+        Err(ErrorCode::InvalidArgument)
+    );
+    let mut stale = local(&f, ACC, Some("x"), None);
+    if let LogOp::SetLocal {
+        anchor: Anchor::Native { fn_hash, .. },
+        ..
+    } = &mut stale
+    {
+        *fn_hash = "not-the-hash".into();
+    }
+    assert_eq!(apply(&e, stale).await, Err(ErrorCode::ConflictStaleRead));
+
+    e.save(&c).await.expect("save");
+    drop(e);
+    let e = open_calc(state.path()).await.expect("reopen");
+    let (text, warnings) = calc_text(&e).await;
+    assert!(
+        text.contains("ulong total;") && text.contains("parser *state"),
+        "replayed on reopen: {text}"
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    // clearing the override brings the decompiler's own names back
+    let f = function(&e, PARSE_NUMBER).await.expect("function");
+    for st in [ACC, "register:0x38:8"] {
+        apply(&e, clear_local(&f, st)).await.expect("clear");
+    }
+    let (text, _) = calc_text(&e).await;
+    assert!(
+        text.contains("lStack_10") && text.contains("parser *ps"),
+        "{text}"
+    );
+}

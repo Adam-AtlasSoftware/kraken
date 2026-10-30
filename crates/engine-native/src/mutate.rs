@@ -232,6 +232,7 @@ fn anchor_of(op: &LogOp) -> Result<&Anchor, EngineRejected> {
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetLocal { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
         LogOp::DefineType { .. } => return Err(invalid("a type definition has no anchor")),
     })
@@ -393,12 +394,51 @@ fn apply_inner(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
                 return Err(err);
             }
         }
+        LogOp::SetLocal { storage, new, .. } => {
+            let f = function(p, at)?;
+            check_hash(p, e, &f, hash)?;
+            set_local(p, at, storage, new.as_ref())?;
+            // a parameter the decompiler renamed keeps the name until its function is rebuilt
+            refresh(p, e, &f)?;
+        }
         // Patches stay in the project; the registry never pushes them.
         LogOp::SetPatch { .. } => return Ok(()),
         LogOp::DefineType { .. } => return Err(invalid("a type definition has no anchor")),
     }
     e.journal.push(Journaled::Op(op.clone()));
     Ok(())
+}
+
+/// Hands the decompiler the name and type the user gave the variable at `storage` of the
+/// function at `at`; the next decompile applies them (and says what it could not apply).
+fn set_local(
+    p: &Program,
+    at: u64,
+    storage: &str,
+    spec: Option<&kraken_proto::LocalSpec>,
+) -> Result<(), EngineRejected> {
+    let (space, offset) = kraken_proto::parse_storage(storage).ok_or_else(|| {
+        invalid(format!(
+            "{storage:?} is not a storage key such as stack:0x10"
+        ))
+    })?;
+    let name = spec.and_then(|s| s.name.as_deref()).unwrap_or_default();
+    if !name.is_empty() {
+        check_name(name)?;
+    }
+    let decl = match spec.and_then(|s| s.ty.as_ref()) {
+        Some(ty) => {
+            let decl = p.types().global_decl(ty, "x");
+            if decl.is_empty() {
+                return Err(invalid("that type cannot be given to a variable"));
+            }
+            decl
+        }
+        None => String::new(),
+    };
+    p.session()
+        .set_local(at, &space, offset, name, &decl)
+        .map_err(native_rejected)
 }
 
 /// Sets `map[at]` to `value`, or removes the entry for `None`.

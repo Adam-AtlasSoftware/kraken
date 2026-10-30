@@ -138,6 +138,21 @@ pub enum LogOp {
         /// Convention after the edit.
         new: String,
     },
+    /// Name and/or retype a local variable or parameter of a function. The variable is named by
+    /// its storage (`stack:0xffffffffffffffec`, `register:0x38`: the address space and offset a
+    /// decompiler token's `varnode` shows, without the size), so the edit survives re-decompiles.
+    SetLocal {
+        /// The function's entry.
+        anchor: Anchor,
+        /// Storage key of the variable: `<space>:0x<offset>`.
+        storage: String,
+        /// The override before the edit; absent when there was none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old: Option<LocalSpec>,
+        /// The override after the edit; absent removes it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new: Option<LocalSpec>,
+    },
     /// Set, replace or remove a byte patch: replacement bytes laid over the program's bytes at
     /// the anchor's address. Kept in the log so it shows in the history and can be undone; it is
     /// never pushed to the engine (see [`LogOp::is_engine_op`]).
@@ -165,6 +180,36 @@ pub enum LogOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         new: Option<TypeDef>,
     },
+}
+
+/// What the user decided about one local variable: a name, a type, or both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LocalSpec {
+    /// The name; absent keeps the decompiler's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The type; absent keeps the decompiler's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ty: Option<TypeRef>,
+}
+
+/// Splits a storage key (`stack:0xffffffffffffffec`, optionally with a `:<size>` suffix as in a
+/// token's `varnode`) into the address space and the offset.
+pub fn parse_storage(key: &str) -> Option<(String, u64)> {
+    let mut parts = key.split(':');
+    let space = parts.next().filter(|s| !s.is_empty())?;
+    let off = parts.next()?.strip_prefix("0x")?;
+    let size_ok = parts.next().is_none_or(|n| n.parse::<u32>().is_ok());
+    if parts.next().is_some() || !size_ok {
+        return None;
+    }
+    let off = u64::from_str_radix(off, 16).ok()?;
+    Some((space.to_string(), off))
+}
+
+/// The canonical storage key of `space` and `offset`.
+pub fn storage_key(space: &str, offset: u64) -> String {
+    format!("{space}:{offset:#x}")
 }
 
 /// The replacement bytes and note of a byte patch.
@@ -306,6 +351,15 @@ mod tests {
                 old: None,
                 new: "__fastcall".into(),
             },
+            LogOp::SetLocal {
+                anchor: anchor(),
+                storage: "stack:0xffffffffffffffec".into(),
+                old: None,
+                new: Some(LocalSpec {
+                    name: Some("count".into()),
+                    ty: Some(ty()),
+                }),
+            },
         ]
     }
 
@@ -347,5 +401,21 @@ mod tests {
             newer.check_version().unwrap_err().code,
             ErrorCode::Unsupported
         );
+    }
+
+    #[test]
+    fn storage_keys_parse() {
+        assert_eq!(
+            parse_storage("stack:0xffffffffffffffec:4"),
+            Some(("stack".into(), 0xffff_ffff_ffff_ffec))
+        );
+        assert_eq!(
+            parse_storage("register:0x38"),
+            Some(("register".into(), 0x38))
+        );
+        assert_eq!(parse_storage("register"), None);
+        assert_eq!(parse_storage("register:38"), None);
+        assert_eq!(parse_storage("a:0x1:2:3"), None);
+        assert_eq!(storage_key("stack", 0x10), "stack:0x10");
     }
 }

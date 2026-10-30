@@ -61,6 +61,9 @@ pub fn classify(op: &LogOp, state: &AnnotationState) -> Classification {
         // Defining a name nothing has defined adds to the program; replacing or deleting a
         // definition changes what other edits and the decompiler already rely on.
         LogOp::DefineType { old, new, .. } => new.is_some() && old.is_none() && current.is_none(),
+        // Giving a variable a name or type nothing has given it adds; changing or clearing one
+        // overwrites a decision.
+        LogOp::SetLocal { old, new, .. } => new.is_some() && old.is_none() && current.is_none(),
         LogOp::CreateFunction { .. }
         | LogOp::DeleteFunction { .. }
         | LogOp::SetFunctionBounds { .. } => false,

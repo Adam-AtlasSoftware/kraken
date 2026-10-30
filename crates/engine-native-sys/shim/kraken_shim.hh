@@ -67,6 +67,10 @@ public:
   // Sets the prototype model (calling convention) of the function at `addr` (created when
   // unknown) and locks it; an empty name restores the default model. Unknown names throw.
   void set_convention(uint64_t addr, rust::Str name);
+  // Records a user name and/or C type (`decl`, such as "char *") for the local at `offset` of
+  // address space `space` ("stack", "register") in the function at `fad`; both empty clears it.
+  // They apply to every later decompile of the function, which reports what it could not apply.
+  void set_local(uint64_t fad, rust::Str space, uint64_t offset, rust::Str name, rust::Str decl);
   // Replaces the user comments of the function at `fad` with `comments` (each an address, a
   // decompiler comment type and the text). Warnings the decompiler adds are left alone.
   void set_comments(uint64_t fad, rust::Slice<const CommentIn> comments);

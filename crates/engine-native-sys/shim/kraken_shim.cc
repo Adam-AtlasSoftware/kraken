@@ -142,6 +142,32 @@ class TokenEmit : public Emit {
     return vn->getSpace()->getName() + buf;
   }
 
+  // the symbol whose declaration is being printed; its tokens carry no varnode of their own
+  const Symbol *declSymbol = nullptr;
+
+  static std::string entryText(const ghidra::MapEntry *e) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, ":0x%llx:%d", (unsigned long long)e->getAddr().getOffset(),
+                  (int)e->getSize());
+    return e->getAddr().getSpace()->getName() + buf;
+  }
+
+  // Where the variable lives as the decompiler's scope maps it: the storage of its symbol, the
+  // same at every use (a register or unique varnode names only one use). Falls back to the
+  // varnode itself for variables without a mapped symbol.
+  std::string variableText(const Varnode *vn) const {
+    const Symbol *sym = declSymbol;
+    if (vn != nullptr)
+      sym = vn->getHigh() != nullptr ? vn->getHigh()->getSymbol() : nullptr;
+    if (sym != nullptr)
+      for (ghidra::int4 i = 0; i < sym->numEntries(); ++i) {
+        const ghidra::MapEntry *m = dynamic_cast<const ghidra::MapEntry *>(sym->getMapEntry(i));
+        if (m != nullptr)
+          return entryText(m);
+      }
+    return varnodeText(vn);
+  }
+
   void push(const std::string &text, uint8_t kind, const std::string &symbol = std::string(),
             bool has_target = false, uint64_t target = 0, const std::string &varnode = std::string()) {
     size_t start = out.size();
@@ -190,8 +216,11 @@ public:
   void tagLine(ghidra::int4 indent) override { newline(indent); }
   ghidra::int4 beginReturnType(const Varnode *) override { return 0; }
   void endReturnType(ghidra::int4) override {}
-  ghidra::int4 beginVarDecl(const Symbol *) override { return 0; }
-  void endVarDecl(ghidra::int4) override {}
+  ghidra::int4 beginVarDecl(const Symbol *sym) override {
+    declSymbol = sym;
+    return 0;
+  }
+  void endVarDecl(ghidra::int4) override { declSymbol = nullptr; }
   ghidra::int4 beginStatement(const PcodeOp *) override { return 0; }
   void endStatement(ghidra::int4) override {}
   ghidra::int4 beginFuncProto(void) override { return 0; }
@@ -204,7 +233,8 @@ public:
       return;
     }
     bool global = vn != nullptr && vn->getSpace()->getType() == ghidra::IPTR_PROCESSOR;
-    push(name, TK_VARIABLE, name, global, global ? vn->getOffset() : 0, varnodeText(vn));
+    push(name, TK_VARIABLE, name, global, global ? vn->getOffset() : 0,
+         global ? varnodeText(vn) : variableText(vn));
   }
   void tagOp(const std::string &name, syntax_highlight hl, const PcodeOp *) override {
     push(name, hl == keyword_color ? TK_KEYWORD : TK_OP);
@@ -459,6 +489,17 @@ struct Session::Impl {
   // conditional execution, `if (!cond) goto inst_next`) rather than being a flow of its own;
   // x86 keeps its historical reading (`CMOVcc` and friends)
   bool condExec = false;
+  // user names and types of locals by function entry; applied to the function's local scope
+  // around each decompile (see `applyLocalTypes` and `applyLocalNames`)
+  struct LocalOverride {
+    AddrSpace *space;
+    uint64_t offset;
+    std::string name;
+    std::string decl;
+  };
+  std::map<uint64_t, std::vector<LocalOverride>> locals;
+  // the type-locked symbols we added to a function's scope, to take out before the next round
+  std::map<uint64_t, std::vector<std::pair<AddrSpace *, uint64_t>>> addedLocals;
 };
 
 Session::Session(std::unique_ptr<Impl> i) : impl(std::move(i)) {}
@@ -838,6 +879,87 @@ Funcdata *functionAt(ghidra::Architecture *a, uint64_t addr) {
   return fd;
 }
 
+// Before the analysis: the user's types for locals go into the local scope as type-locked
+// symbols (a name too when the user gave one; else the decompiler names it as any other).
+// Symbols of an earlier round are taken out first; a variable the scope already has a symbol for
+// (a parameter of a locked prototype) keeps its type and is only renamed afterwards.
+void applyLocalTypes(Session::Impl *impl, ghidra::Architecture *a, Funcdata *fd, uint64_t fad,
+                     std::vector<std::string> &warnings) {
+  ghidra::ScopeLocal *sc = fd->getScopeLocal();
+  auto &added = impl->addedLocals[fad];
+  for (const auto &sp : added) {
+    ghidra::SymbolEntry *e = sc->findAddr(Address(sp.first, sp.second), Address());
+    if (e != nullptr && e->getSymbol()->getCategory() == ghidra::Symbol::no_category)
+      sc->removeSymbol(e->getSymbol());
+  }
+  added.clear();
+  auto it = impl->locals.find(fad);
+  if (it == impl->locals.end())
+    return;
+  for (const auto &ov : it->second) {
+    if (ov.decl.empty())
+      continue;
+    Address at(ov.space, ov.offset);
+    if (sc->findAddr(at, Address()) != nullptr)
+      continue;
+    try {
+      std::istringstream s{ov.decl};
+      std::string ignored;
+      ghidra::Datatype *ct = ghidra::parse_type(s, ignored, a);
+      ghidra::SymbolEntry *e = sc->addSymbol(ov.name, ct, at, Address());
+      if (e == nullptr) {
+        warnings.push_back("the type of the local at " + ov.space->getName() +
+                           " overlaps another variable and was not applied");
+        continue;
+      }
+      sc->setAttribute(e->getSymbol(),
+                       ov.name.empty() ? ghidra::Varnode::typelock
+                                       : (ghidra::Varnode::typelock | ghidra::Varnode::namelock));
+      added.emplace_back(ov.space, ov.offset);
+    } catch (const ghidra::LowlevelError &e) {
+      warnings.push_back("a local's type was not applied: " + e.explain);
+    }
+  }
+}
+
+// After the analysis, before printing: names for the locals that got no symbol of ours above.
+void applyLocalNames(Session::Impl *impl, Funcdata *fd, uint64_t fad,
+                     std::vector<std::string> &warnings) {
+  auto it = impl->locals.find(fad);
+  if (it == impl->locals.end())
+    return;
+  ghidra::ScopeLocal *sc = fd->getScopeLocal();
+  for (const auto &ov : it->second) {
+    if (ov.name.empty())
+      continue;
+    Address at(ov.space, ov.offset);
+    ghidra::Symbol *sym = nullptr;
+    for (auto v = fd->beginLoc(at); v != fd->endLoc(at) && sym == nullptr; ++v) {
+      ghidra::HighVariable *high = (*v)->getHigh();
+      ghidra::Symbol *cand = high != nullptr ? high->getSymbol() : nullptr;
+      if (cand == nullptr)
+        continue;
+      for (ghidra::int4 i = 0; i < cand->numEntries() && sym == nullptr; ++i) {
+        const ghidra::MapEntry *m = dynamic_cast<const ghidra::MapEntry *>(cand->getMapEntry(i));
+        if (m != nullptr && m->getAddr() == at)
+          sym = cand;
+      }
+    }
+    if (sym == nullptr) {
+      warnings.push_back("no variable at " + ov.space->getName() + " to rename to " + ov.name);
+      continue;
+    }
+    if (sym->getName() == ov.name)
+      continue;
+    try {
+      sc->renameSymbol(sym, ov.name);
+      sc->setAttribute(sym, ghidra::Varnode::namelock);
+    } catch (const ghidra::LowlevelError &e) {
+      warnings.push_back("cannot name a local " + ov.name + ": " + e.explain);
+    }
+  }
+}
+
 } // namespace
 
 void Session::ensure_function(uint64_t addr) {
@@ -896,6 +1018,8 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
         std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     CallbackLoadImage *img = static_cast<CallbackLoadImage *>(a->loader);
     DiscoveredGlobals discovered(a, fd);
+    std::vector<std::string> localWarnings;
+    applyLocalTypes(impl.get(), a, fd, addr, localWarnings);
     act->reset(*fd);
     while (act->perform(*fd) < 0) {
       if (img->interrupted())
@@ -909,6 +1033,7 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
       return out;
     }
 
+    applyLocalNames(impl.get(), fd, addr, localWarnings);
     TokenEmit *te = impl->printer->tokens();
     te->reset();
     std::ostringstream sink;
@@ -919,6 +1044,8 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
     for (auto &t : te->tokens())
       out.tokens.push_back(std::move(t));
     for (auto &w : te->warnings())
+      out.warnings.push_back(rust::String(w));
+    for (const auto &w : localWarnings)
       out.warnings.push_back(rust::String(w));
     std::string errs = impl->errs.str();
     if (!errs.empty()) {
@@ -1043,6 +1170,25 @@ void Session::set_convention(uint64_t addr, rust::Str name) {
     Funcdata *fd = functionAt(a, addr);
     fd->getFuncProto().setModel(model);
     fd->getFuncProto().setModelLock(!nm.empty());
+  });
+}
+
+void Session::set_local(uint64_t fad, rust::Str space, uint64_t offset, rust::Str name,
+                        rust::Str decl) {
+  guarded("set_local", [&]() {
+    AddrSpace *spc = impl->arch->getSpaceByName(std::string(space));
+    if (spc == nullptr)
+      throw std::runtime_error("no address space " + std::string(space));
+    auto &list = impl->locals[fad];
+    for (size_t i = 0; i < list.size(); ++i)
+      if (list[i].space == spc && list[i].offset == offset) {
+        list.erase(list.begin() + static_cast<std::ptrdiff_t>(i));
+        break;
+      }
+    if (!name.empty() || !decl.empty())
+      list.push_back({spc, offset, std::string(name), std::string(decl)});
+    if (list.empty())
+      impl->locals.erase(fad);
   });
 }
 

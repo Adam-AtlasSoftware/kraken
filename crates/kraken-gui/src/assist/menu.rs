@@ -62,6 +62,7 @@ pub fn capture_decompiler(
             address: Some(function),
             name: None,
             function: Some(function),
+            varnode: None,
         },
     });
     let line = tok.and_then(|t| {
@@ -104,6 +105,7 @@ pub fn capture_function_row(ui: &Ui, row: &egui::Response, function: u64, a: &mu
                 address: Some(function),
                 name: None,
                 function: Some(function),
+                varnode: None,
             }),
         });
     }
@@ -134,6 +136,7 @@ pub fn capture_instruction_at(
                 address: Some(address),
                 name: None,
                 function,
+                varnode: None,
             }),
         });
     }

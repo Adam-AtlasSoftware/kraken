@@ -43,6 +43,7 @@ pub fn op_aspect(op: &LogOp) -> String {
         LogOp::SetCodeData { .. } => "codedata".into(),
         LogOp::SetCallingConvention { .. } => "cc".into(),
         LogOp::SetPatch { .. } => "patch".into(),
+        LogOp::SetLocal { storage, .. } => format!("local:{storage}"),
         LogOp::DefineType { .. } => "typedef".into(),
     }
 }
@@ -58,6 +59,7 @@ pub fn op_anchor(op: &LogOp) -> Option<&Anchor> {
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetLocal { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
         LogOp::DefineType { .. } => return None,
     })
@@ -89,6 +91,7 @@ pub fn op_kind_name(op: &LogOp) -> &'static str {
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
         LogOp::SetPatch { .. } => "set_patch",
+        LogOp::SetLocal { .. } => "set_local",
         LogOp::DefineType { .. } => "define_type",
     }
 }

@@ -84,7 +84,7 @@ pub use edit::{
     CreateFunction, CreateFunctionArgs, DeleteFunction, DeleteFunctionArgs, ProposalAccept,
     ProposalIdArgs, ProposalReject, RenameSymbol, RenameSymbolArgs, SetCallingConvention,
     SetCallingConventionArgs, SetComment, SetCommentArgs, SetFunctionBounds, SetFunctionBoundsArgs,
-    SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
+    SetLocal, SetLocalArgs, SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
 };
 pub use emulate::{
     DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateCompare, EmulateCompareArgs,
@@ -310,6 +310,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(SetComment);
     r.register(SetType);
     r.register(SetCallingConvention);
+    r.register(SetLocal);
     r.register(CreateFunction);
     r.register(DeleteFunction);
     r.register(SetFunctionBounds);

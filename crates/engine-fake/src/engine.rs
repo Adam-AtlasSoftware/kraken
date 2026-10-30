@@ -671,6 +671,7 @@ fn anchor_of(op: &LogOp) -> Option<&kraken_proto::Anchor> {
         | LogOp::SetFunctionBounds { anchor, .. }
         | LogOp::SetCodeData { anchor, .. }
         | LogOp::SetCallingConvention { anchor, .. }
+        | LogOp::SetLocal { anchor, .. }
         | LogOp::SetPatch { anchor, .. } => anchor,
         LogOp::DefineType { .. } => return None,
     })
@@ -865,6 +866,7 @@ impl State {
             LogOp::SetType { anchor, .. }
             | LogOp::SetComment { anchor, .. }
             | LogOp::SetCodeData { anchor, .. }
+            | LogOp::SetLocal { anchor, .. }
             | LogOp::SetCallingConvention { anchor, .. } => {
                 let (space, _, entry, hash) = anchor.native()?;
                 let f = self

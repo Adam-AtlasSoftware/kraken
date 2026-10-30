@@ -132,6 +132,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`set_calling_convention`](#set_calling_convention) | mutation | mutating | Set a function's calling convention |
 | [`set_comment`](#set_comment) | mutation | mutating | Set or clear a comment at an address |
 | [`set_function_bounds`](#set_function_bounds) | mutation | mutating | Change a function's address range |
+| [`set_local`](#set_local) | mutation | mutating | Rename or retype a local variable or parameter in decompiled C |
 | [`set_type`](#set_type) | mutation | mutating | Set the prototype of a function or the type of a data item |
 | [`setup_dotnet`](#setup_dotnet) | job | mutating | Download the .NET runtime and install the managed-code sidecar (job) |
 | [`setup_ghidra`](#setup_ghidra) | job | mutating | Download Ghidra, a JDK and build the KRAKEN extension (job) |
@@ -22780,6 +22781,121 @@ Entity versions the edit is based on, as returned by `get_function`; absent mean
 | `end` | `--end` | address | yes | One past the last address of the new body, as `0x...`. |
 | `start` | `--start` | address | yes | First address of the new body, as `0x...`. |
 | `expect_versions` | `--expect-versions` | json | no | Entity versions the edit is based on; see `get_function`. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "MutationStatus": {
+      "description": "What a mutation did.",
+      "oneOf": [
+        {
+          "const": "applied",
+          "description": "Logged and pushed to the engine.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Logged but waiting for analysis to finish before it is pushed.",
+          "type": "string"
+        },
+        {
+          "const": "proposed",
+          "description": "Not applied; waiting for a user to accept it.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of every edit command.",
+  "properties": {
+    "entry_id": {
+      "description": "Log entry id (applied and queued).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "key": {
+      "description": "Entity key the edit wrote.",
+      "type": "string"
+    },
+    "proposal_id": {
+      "description": "Proposal id (proposed).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "reason": {
+      "description": "For proposals, why the edit was not auto-applied.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/MutationStatus",
+      "description": "`applied`, `queued` or `proposed`."
+    },
+    "versions": {
+      "additionalProperties": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "description": "New version of the written key (applied and queued).",
+      "type": "object"
+    }
+  },
+  "required": [
+    "status",
+    "key",
+    "versions"
+  ],
+  "title": "MutationOutput",
+  "type": "object"
+}
+```
+
+</details>
+
+## set_local
+
+Rename or retype a local variable or parameter in decompiled C
+
+```sh
+kraken set-local --address <address> --storage <string> [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+- Engine needs: `Mutator`
+
+Gives a variable of a decompiled function a name and/or a type; every later `decompile` shows it. Take `storage` from the `varnode` of a variable token (drop the `:size`). An agent applies it at once only on a variable nobody has named or typed; changing or clearing an override becomes a proposal. Native engine only.
+
+Example: `set_local {"address": "0x401136", "storage": "stack:0xfffffffffffffff0", "name": "total"}`
+
+Give `name`, a type (`type_name` or `data_type`), or both; what you leave out stays as the last override (or the decompiler's choice) had it. `clear: true` removes the override. A type of another size than the variable's can overlap its neighbours; the decompile then warns that it was not applied. The Ghidra engine rejects the edit as unsupported.
+
+Entity versions the edit is based on, as returned by `get_function`; absent means the current version. A stale version is rejected with `conflict_stale_read`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | address | yes | Entry address of the function that holds the variable, as `0x...`. |
+| `storage` | `--storage` | string | yes | Where the variable lives: the `varnode` of its tokens in `decompile` without the size, such as `stack:0xffffffffffffffec` or `register:0x38`. |
+| `clear` | `--clear` | boolean | no | Remove the override, so the decompiler names and types the variable again. |
+| `data_type` | `--data-type` | json | no | A data type in the neutral type model (give at most one of `type_name` and `data_type`). |
+| `expect_versions` | `--expect-versions` | json | no | Entity versions the edit is based on; see `get_function`. |
+| `name` | `--name` | string | no | The new name; leave out to keep the name the variable has now. |
+| `type_name` | `--type-name` | string | no | The name of an existing type (give at most one of `type_name` and `data_type`). |
 
 <details>
 <summary>Output schema</summary>

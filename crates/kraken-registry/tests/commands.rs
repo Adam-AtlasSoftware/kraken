@@ -126,6 +126,7 @@ const EXPECTED: &[&str] = &[
     "set_calling_convention",
     "set_comment",
     "set_function_bounds",
+    "set_local",
     "set_type",
     "setup_dotnet",
     "setup_ghidra",

@@ -1142,6 +1142,30 @@
       ],
       "type": "object"
     },
+    "LocalSpec": {
+      "description": "What the user decided about one local variable: a name, a type, or both.",
+      "properties": {
+        "name": {
+          "description": "The name; absent keeps the decompiler's.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TypeRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The type; absent keeps the decompiler's."
+        }
+      },
+      "type": "object"
+    },
     "Locator": {
       "description": "Where something lives in a program; protocol-level and extensible with new variants.\n\nSerialized with `\"kind\"` as the tag.",
       "oneOf": [
@@ -1470,6 +1494,51 @@
             "op",
             "anchor",
             "new"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Name and/or retype a local variable or parameter of a function. The variable is named by\nits storage (`stack:0xffffffffffffffec`, `register:0x38`: the address space and offset a\ndecompiler token's `varnode` shows, without the size), so the edit survives re-decompiles.",
+          "properties": {
+            "anchor": {
+              "$ref": "#/$defs/Anchor",
+              "description": "The function's entry."
+            },
+            "new": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LocalSpec"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The override after the edit; absent removes it."
+            },
+            "old": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LocalSpec"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The override before the edit; absent when there was none."
+            },
+            "op": {
+              "const": "set_local",
+              "type": "string"
+            },
+            "storage": {
+              "description": "Storage key of the variable: `<space>:0x<offset>`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "anchor",
+            "storage"
           ],
           "type": "object"
         },

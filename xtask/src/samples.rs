@@ -6,8 +6,8 @@ use std::fmt::Debug;
 use kraken_proto::{
     AddressRange, Anchor, Bitfield, Capability, CodeData, CommentKind, Completeness, Composite,
     DecompileResult, EnumDef, EnumVariant, ErrorCode, Field, FunctionPrototype, FunctionSummary,
-    Handshake, Hex64, Locator, LogOp, LogStatus, PROTOCOL_VERSION, Page, PageRequest, Param,
-    Primitive, PrimitiveClass, ProtoError, Provenance, SyncState, Token, TokenKind, TypeDef,
+    Handshake, Hex64, LocalSpec, Locator, LogOp, LogStatus, PROTOCOL_VERSION, Page, PageRequest,
+    Param, Primitive, PrimitiveClass, ProtoError, Provenance, SyncState, Token, TokenKind, TypeDef,
     TypeRef, TypedefDef, Untrusted, VersionedLogOp,
 };
 use serde::Serialize;
@@ -324,9 +324,21 @@ pub fn samples() -> Result<Samples, String> {
         (
             "set_calling_convention",
             LogOp::SetCallingConvention {
-                anchor: a,
+                anchor: a.clone(),
                 old: Some("__cdecl".into()),
                 new: "__stdcall".into(),
+            },
+        ),
+        (
+            "set_local",
+            LogOp::SetLocal {
+                anchor: a,
+                storage: "stack:0xfffffffffffffff0".into(),
+                old: None,
+                new: Some(LocalSpec {
+                    name: Some("total".into()),
+                    ty: Some(prim(PrimitiveClass::Int, 8, false)),
+                }),
             },
         ),
     ];

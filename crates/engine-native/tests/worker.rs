@@ -450,3 +450,48 @@ fn overall_cap_scales_with_the_binary() {
     assert!(o.total_cap(true, 1) > o.analyze_timeout);
     assert!(o.open_idle_timeout < o.open_timeout);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn local_names_survive_a_crash() {
+    const PARSE_NUMBER: u64 = 1_053_079;
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(mut c) = NativeConfig::discover() else {
+        eprintln!("skipped: no Sleigh spec tree");
+        return;
+    };
+    if !NativeEngine::is_usable(&c) {
+        eprintln!("skipped: engine-native-sys was built without the decompiler sources");
+        return;
+    }
+    c.isolation = Isolation::Worker(options());
+    c.state_dir = Some(state.path().to_path_buf());
+    let e = NativeEngine::new(c);
+    let cancel = CancellationToken::new();
+    e.open_binary(
+        &root().join("corpus/bin/stripped_calc-O0"),
+        &LoaderSpec::default(),
+        &cancel,
+    )
+    .await
+    .expect("open in the worker");
+    let op = VersionedLogOp::new(LogOp::SetLocal {
+        anchor: native(PARSE_NUMBER),
+        storage: "stack:0xfffffffffffffff0".into(),
+        old: None,
+        new: Some(kraken_proto::LocalSpec {
+            name: Some("total".into()),
+            ty: None,
+        }),
+    });
+    e.apply(&op, &cancel).await.expect("set local");
+    // not saved: the restart replays it on top of the state file
+    e.worker_test_hook("test_crash", &cancel).await.unwrap_err();
+    let text = e
+        .decompile(&Locator::ram(PARSE_NUMBER), &cancel)
+        .await
+        .expect("decompile after the restart")
+        .text;
+    assert_eq!(e.worker_restarts(), 1);
+    assert!(text.contains("long total;"), "{text}");
+    assert_eq!(e.stats().await.expect("stats").replay_failed, 0);
+}

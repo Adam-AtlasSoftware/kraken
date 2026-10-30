@@ -437,6 +437,10 @@ async fn every_registry_command_identical() {
         json!({"address": "0x401040", "convention": "__cdecl"})
     );
     step!(
+        "set_local",
+        json!({"address": "0x401040", "storage": "stack:0xfffffffffffffff0", "name": "total"})
+    );
+    step!(
         "create_function",
         json!({"address": "0x401100", "name": "fresh"})
     );

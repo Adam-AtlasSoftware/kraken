@@ -523,6 +523,7 @@ enum Act {
     Comment,
     Retry,
     RenameAt(u64, Option<String>),
+    RenameLocal(u64, String, String),
     Notice(&'static str),
     SyncListing(u64),
     RewriteThis,
@@ -732,6 +733,9 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             Act::Retry => vm.refresh_current(),
             Act::Signature => vm.begin_edit_signature_current(),
             Act::RenameAt(addr, name) => vm.begin_rename(addr, name.as_deref()),
+            Act::RenameLocal(function, varnode, name) => {
+                vm.begin_local(function, &varnode, &name, false)
+            }
             Act::Notice(t) => vm.toast(ToastLevel::Info, t),
             Act::SyncListing(a) => {
                 vm.sync_listing_to(a);
@@ -745,6 +749,14 @@ fn decompiler(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
             Act::DecompilePatched => vm.decompile_patched_current(),
         }
     }
+}
+
+/// A local variable token: the function, where it lives and its name.
+fn local_of(t: &kraken_proto::Token, function: u64) -> Option<(u64, String, String)> {
+    if t.kind != TokenKind::Variable || t.target.is_some() {
+        return None;
+    }
+    Some((function, t.varnode.clone()?, t.symbol.clone()?))
 }
 
 fn target_of(t: &kraken_proto::Token) -> Option<u64> {
@@ -797,10 +809,11 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
     if double {
         if let Some(t) = hovered_tok {
             st.pending_nav = None;
-            match target_of(t) {
-                Some(a) => acts.push(Act::RenameAt(a, t.symbol.clone())),
-                None => acts.push(Act::Notice(
-                    "Only function names can be renamed so far. Variables are coming later.",
+            match (target_of(t), local_of(t, addr)) {
+                (Some(a), _) => acts.push(Act::RenameAt(a, t.symbol.clone())),
+                (None, Some((f, v, n))) => acts.push(Act::RenameLocal(f, v, n)),
+                (None, None) => acts.push(Act::Notice(
+                    "Double-click a function name or a variable to rename it.",
                 )),
             }
         }
@@ -827,7 +840,10 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
             .and_then(|t| target_of(t).map(|a| (a, t.symbol.clone())))
         {
             Some((a, sym)) => acts.push(Act::RenameAt(a, sym)),
-            None => acts.push(Act::Rename),
+            None => match hovered_tok.and_then(|t| local_of(t, addr)) {
+                Some((f, v, n)) => acts.push(Act::RenameLocal(f, v, n)),
+                None => acts.push(Act::Rename),
+            },
         }
     }
 }

@@ -747,6 +747,7 @@ fn op_name(op: &LogOp) -> &'static str {
         LogOp::SetCodeData { .. } => "set_code_data",
         LogOp::SetCallingConvention { .. } => "set_calling_convention",
         LogOp::SetPatch { .. } => "set_patch",
+        LogOp::SetLocal { .. } => "set_local",
         LogOp::DefineType { .. } => "define_type",
     }
 }

@@ -34,6 +34,8 @@ pub struct Target {
     pub name: Option<String>,
     /// The function the click was in.
     pub function: Option<u64>,
+    /// Where a variable lives (its token's `varnode`), the key local edits use.
+    pub varnode: Option<String>,
 }
 
 /// The menu item chosen.
@@ -136,6 +138,16 @@ pub fn token_target(t: &Token, text: &str, function: u64) -> Target {
         address,
         name,
         function: Some(function),
+        varnode: (kind == TargetKind::Variable)
+            .then(|| t.varnode.clone())
+            .flatten(),
+    }
+}
+
+fn no_storage(t: &Target) -> Option<&'static str> {
+    match (&t.varnode, t.function) {
+        (Some(_), Some(_)) => None,
+        _ => Some("This variable has no stored place KRAKEN can name it by."),
     }
 }
 
@@ -169,9 +181,10 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
             NavChoice::Rename,
             "Rename",
             Some("N"),
-            "Rename this variable",
+            "Rename this local variable or parameter. The name shows wherever it is used in this function",
         )
-        .off("Local variables cannot be renamed yet. Only functions and labels can."),
+        .off_if(vm.local_edit_blocked())
+        .off_if(no_storage(t)),
         TargetKind::Other => item(
             NavChoice::Rename,
             "Rename",
@@ -192,10 +205,10 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
         TargetKind::Function => retype,
         TargetKind::Data => retype,
         TargetKind::Code if entry => retype,
-        TargetKind::Code => retype.off("This is an instruction. Retype data, or edit the function's signature."),
-        TargetKind::Variable => {
-            retype.off("Local variables cannot be retyped yet. Edit the function's signature to change its parameters.")
+        TargetKind::Code => {
+            retype.off("This is an instruction. Retype data, or edit the function's signature.")
         }
+        TargetKind::Variable => retype.off_if(vm.local_edit_blocked()).off_if(no_storage(t)),
         TargetKind::Other => retype.off("Right-click a function or a data address to retype it."),
     });
 
@@ -503,6 +516,16 @@ pub fn run(ctx: &egui::Context, vm: &mut ViewModel, t: &Target, choice: NavChoic
         t.function
     };
     match choice {
+        NavChoice::Rename if t.kind == TargetKind::Variable => {
+            if let (Some(f), Some(v), Some(n)) = (t.function, &t.varnode, &t.name) {
+                vm.begin_local(f, v, n, false);
+            }
+        }
+        NavChoice::Retype if t.kind == TargetKind::Variable => {
+            if let (Some(f), Some(v), Some(n)) = (t.function, &t.varnode, &t.name) {
+                vm.begin_local(f, v, n, true);
+            }
+        }
         NavChoice::Rename => {
             if let Some(a) = t.address {
                 let hint = (t.kind == TargetKind::Function)
