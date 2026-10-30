@@ -428,6 +428,9 @@ fn set_local(
     }
     let decl = match spec.and_then(|s| s.ty.as_ref()) {
         Some(ty) => {
+            if type_size(p, ty, 0) == Some(0) {
+                return Err(invalid("a variable cannot have a type of size 0"));
+            }
             let decl = p.types().global_decl(ty, "x");
             if decl.is_empty() {
                 return Err(invalid("that type cannot be given to a variable"));

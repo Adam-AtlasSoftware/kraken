@@ -906,6 +906,22 @@ void applyLocalTypes(Session::Impl *impl, ghidra::Architecture *a, Funcdata *fd,
       std::istringstream s{ov.decl};
       std::string ignored;
       ghidra::Datatype *ct = ghidra::parse_type(s, ignored, a);
+      ghidra::int4 size = ct->getSize();
+      if (size <= 0) {
+        warnings.push_back("the type of the local at " + ov.space->getName() +
+                           " has no size and was not applied");
+        continue;
+      }
+      // A local that runs past the end of its space (a stack local past the frame base, into
+      // the return address) or over another variable's storage crashes the analysis.
+      ghidra::uintb highest = ov.space->getHighest();
+      bool wraps = ov.offset > highest || static_cast<ghidra::uintb>(size - 1) > highest - ov.offset;
+      if (wraps || sc->findOverlap(at, size) != nullptr) {
+        warnings.push_back("the type of the local at " + ov.space->getName() +
+                           " is larger than its storage (it overlaps another variable or the "
+                           "frame base) and was not applied");
+        continue;
+      }
       ghidra::SymbolEntry *e = sc->addSymbol(ov.name, ct, at, Address());
       if (e == nullptr) {
         warnings.push_back("the type of the local at " + ov.space->getName() +

@@ -1172,3 +1172,36 @@ async fn locals_are_edits_and_replay_on_reopen() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn a_local_type_past_the_frame_base_is_refused_with_a_warning() {
+    let state = tempfile::tempdir().expect("state dir");
+    let Some(e) = open_calc(state.path()).await else {
+        return;
+    };
+    let f = function(&e, PARSE_NUMBER).await.expect("function");
+    let array = |count| TypeRef::Array {
+        element: Box::new(ulong()),
+        count,
+    };
+    // 32 bytes at -0x10 run over the saved frame pointer and the return address
+    apply(&e, local(&f, ACC, Some("acc"), Some(array(4))))
+        .await
+        .expect("the edit is recorded");
+    let (text, warnings) = calc_text(&e).await;
+    assert!(!text.is_empty());
+    assert!(
+        warnings.iter().any(|w| w.contains("was not applied")),
+        "{warnings:?}"
+    );
+    // a type that fits still applies
+    apply(&e, local(&f, ACC, Some("acc"), Some(array(2))))
+        .await
+        .expect("fits");
+    let (text, warnings) = calc_text(&e).await;
+    assert!(text.contains("acc"), "{text}");
+    assert!(
+        !warnings.iter().any(|w| w.contains("was not applied")),
+        "{warnings:?}"
+    );
+}
