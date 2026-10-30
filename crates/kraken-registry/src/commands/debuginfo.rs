@@ -665,17 +665,15 @@ pub struct DebugInfoAttachArgs {
     pub debug_file: String,
 }
 
-/// Whether `kind` can use `file`: the native engine reads separate DWARF, Ghidra a PDB.
+/// Whether `kind` can use `file`: the native engine reads separate DWARF and PDB files, Ghidra
+/// a PDB.
 pub fn engine_accepts(kind: EngineKind, file: &Path) -> Result<(), ProtoError> {
     let is_pdb = std::fs::read(file)
         .ok()
         .is_some_and(|d| pdb_identity(&d).is_some());
     let unsupported = |m: &str| Err(ProtoError::new(ErrorCode::Unsupported, m.to_string()));
     match (kind, is_pdb) {
-        (EngineKind::Native, false) | (EngineKind::Ghidra, true) => Ok(()),
-        (EngineKind::Native, true) => unsupported(
-            "the native engine does not read PDB files yet; open the program with the Ghidra engine to use a PDB",
-        ),
+        (EngineKind::Native, _) | (EngineKind::Ghidra, true) => Ok(()),
         (EngineKind::Ghidra, false) => unsupported(
             "Ghidra reads PDB files; a separate DWARF file works with the native engine (`engine: native`)",
         ),
@@ -763,8 +761,8 @@ impl Command for DebugInfoAttach {
         )
         .details(
             "A file that belongs to another build is refused with the reason (`debuginfo_probe` \
-             shows the comparison). The native engine reads separate DWARF (ELF); Ghidra reads \
-             a PDB that sits beside the program as `<name>.pdb`. The path is kept in \
+             shows the comparison). The native engine reads separate DWARF (ELF) and a PDB (PE) \
+             wherever it is; Ghidra reads a PDB that sits beside the program as `<name>.pdb`. The path is kept in \
              `meta.json` (`loader.debug_file`) and used on every reopen and `rebuild`. The job \
              result is a `RebuildReport`.",
         )

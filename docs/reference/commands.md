@@ -5893,7 +5893,7 @@ Checks that the file is this program's own debug file (build-id or debug-link CR
 
 Example: `debuginfo_attach {"debug_file": "./prog.debug"}`
 
-A file that belongs to another build is refused with the reason (`debuginfo_probe` shows the comparison). The native engine reads separate DWARF (ELF); Ghidra reads a PDB that sits beside the program as `<name>.pdb`. The path is kept in `meta.json` (`loader.debug_file`) and used on every reopen and `rebuild`. The job result is a `RebuildReport`.
+A file that belongs to another build is refused with the reason (`debuginfo_probe` shows the comparison). The native engine reads separate DWARF (ELF) and a PDB (PE) wherever it is; Ghidra reads a PDB that sits beside the program as `<name>.pdb`. The path is kept in `meta.json` (`loader.debug_file`) and used on every reopen and `rebuild`. The job result is a `RebuildReport`.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -18492,7 +18492,7 @@ Example: `project_create {"binary": "./a.out", "project_dir": "./a.kraken"}`
 Creates the project directory layout (`project.kraken.sqlite`, `ghidra/`, `meta.json`), starts the engine and loads the binary. `engine` picks the engine and is recorded in `meta.json`; `project_info` reports it and why `auto` chose it. The first load of a big program can take minutes: while it runs it is the job `open-N` (`job_status` shows its stages and counts in `open_progress`, the daemon sends `open_progress` events), and `job_cancel` stops it without leaving a project behind.
 Intel HEX and Motorola S-record files are detected: their blocks load at the addresses the records give and the start record becomes the entry; give `language` (or let a recognisable vector table choose it).
 Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a `language`: one memory block holds the file (or `offset`/`length` of it) at `base`, and execution starts at `entry`. An ARM Cortex-M vector table at the start names `Reset_Handler` and the interrupt handlers. `binary_probe` suggests these options for a file it cannot identify. The options are recorded in `meta.json` and used on every reopen and `rebuild`. The native engine loads raw x86, x86-64, ARM, Cortex-M, AArch64 and RISC-V images; `auto` falls back to Ghidra for other processors.
-`debug_file` names the program's separate debug file (or a folder with it; `debuginfo_probe` finds it); it is checked against the program first and kept in `meta.json`. The native engine reads separate DWARF.
+`debug_file` names the program's separate debug file (or a folder with it; `debuginfo_probe` finds it); it is checked against the program first and kept in `meta.json`. The native engine reads separate DWARF and PDB files.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -25831,7 +25831,7 @@ Types come from debug info, libc and Windows prototypes and types defined by use
 
 Example: `types_list {"name_filter": "packet", "kind": "struct"}`
 
-A program without debug info lists only the prototypes KRAKEN knows (libc, Win32). Page with `next_cursor` until it is absent. The engine decides what exists: the native engine reads DWARF, the Ghidra engine also reads PDB types.
+A program without debug info lists only the prototypes KRAKEN knows (libc, Win32). Page with `next_cursor` until it is absent. The engine decides what exists: the native engine reads DWARF and PDB types, as does the Ghidra engine.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|

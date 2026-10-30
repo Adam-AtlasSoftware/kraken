@@ -45,8 +45,9 @@ new projects.
 
 Use native to get going quickly, for ELF programs (x86, ARM, AArch64, RISC-V) and Windows PE
 images. Switch a project to Ghidra (create it again with `--engine ghidra`) when you need Mach-O
-files or other processors. A program's PDB is read by the Ghidra engine when it sits next
-to the program (`app.exe` and `app.pdb`); the native engine does not read PDB files yet.
+files or other processors. A program's PDB is read by both engines when it sits next to the
+program (`app.exe` and `app.pdb`); the native engine also takes one from anywhere with
+`debuginfo_attach` (see `docs/debug-info.md`).
 
 ## Choosing an engine
 
@@ -413,9 +414,8 @@ edit yet and answers `unsupported`; use the native engine.
 ## What does not work yet
 
 - Mach-O files, big-endian ELF (ARM BE8, AArch64 BE), processors other than x86, ARM, AArch64 and
-  RISC-V (this includes raw images of other processors and 16-bit real-mode x86), and PDB files
-  for PE images (the native engine ignores a PDB; keep it next to the program and use the Ghidra
-  engine to get its names and types). With `auto` these go to Ghidra. Intel HEX and S-record
+  RISC-V (this includes raw images of other processors and 16-bit real-mode x86). With `auto`
+  these go to Ghidra. Intel HEX and S-record
   files must be converted to a flat binary first (`objcopy -I ihex -O binary`).
 - COFF objects and libraries for processors other than x86 and x86-64 (Windows on ARM), thin
   archives, and LLVM bitcode members. RISC-V objects assembled with linker relaxation are read

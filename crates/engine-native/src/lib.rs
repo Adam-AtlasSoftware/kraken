@@ -40,6 +40,7 @@ pub mod listing;
 mod mutate;
 mod native;
 pub mod objfile;
+pub mod pdbinfo;
 pub mod pe;
 pub mod raw;
 pub mod refs;

@@ -347,7 +347,7 @@ impl Command for ProjectCreate {
              processors.\n\
              `debug_file` names the program's separate debug file (or a folder with it; \
              `debuginfo_probe` finds it); it is checked against the program first and kept in \
-             `meta.json`. The native engine reads separate DWARF.",
+             `meta.json`. The native engine reads separate DWARF and PDB files.",
         )
     }
 
@@ -391,7 +391,7 @@ impl Command for ProjectCreate {
             if args.engine == Some(crate::session::EngineChoice::Ghidra) {
                 return Err(ProtoError::new(
                     ErrorCode::InvalidArgument,
-                    "`debug_file` works with the native engine (it reads separate DWARF); Ghidra reads a PDB beside the program by itself",
+                    "`debug_file` works with the native engine (it reads separate DWARF and PDB files); Ghidra reads a PDB beside the program by itself",
                 ));
             }
             let binary = args.binary.clone();

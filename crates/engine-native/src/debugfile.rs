@@ -2,7 +2,9 @@
 //! `.gnu_debuglink` (and its CRC-32), or the one its GNU build-id selects, looked for where GDB
 //! looks: next to the program, in its `.debug/` directory, under `/usr/lib/debug` (by directory
 //! and by build-id). A candidate counts only when it proves to be the program's own: the same
-//! build-id, or the CRC the link names.
+//! build-id, or the CRC the link names. A PE image names its PDB in the CodeView record of its
+//! debug directory; [`find`] looks for it beside the image (under that name, then under the
+//! image's own) and accepts it when its GUID is the image's.
 
 use std::path::{Path, PathBuf};
 
@@ -72,8 +74,53 @@ fn candidates_in(binary: &Path, w: &Wanted, system: &Path) -> Vec<PathBuf> {
 
 /// The separate debug file of the program at `binary` with contents `data`, if one is installed.
 pub fn find(binary: &Path, data: &[u8]) -> Option<PathBuf> {
+    if let Some(pdb) = find_pdb(binary, data) {
+        return Some(pdb);
+    }
     let w = wanted(data)?;
     find_wanted(binary, &w, Path::new(SYSTEM_DEBUG_DIR))
+}
+
+/// The PDB beside the PE image `data` at `binary`: the CodeView name, then `<stem>.pdb`.
+pub fn find_pdb(binary: &Path, data: &[u8]) -> Option<PathBuf> {
+    let file = object::File::parse(data).ok()?;
+    if file.format() != object::BinaryFormat::Pe {
+        return None;
+    }
+    let info = file.pdb_info().ok().flatten()?;
+    let guid = info.guid();
+    let dir = binary.parent().map(Path::to_path_buf).unwrap_or_default();
+    let named = String::from_utf8_lossy(info.path());
+    let named = named
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let mut names = Vec::new();
+    if !named.is_empty() && !named.contains("..") {
+        names.push(named);
+    }
+    if let Some(stem) = binary.file_stem() {
+        let mut n = stem.to_os_string();
+        n.push(".pdb");
+        names.push(n.to_string_lossy().into_owned());
+    }
+    for name in names {
+        let path = dir.join(name);
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() > crate::pdbinfo::MAX_PDB_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if crate::pdbinfo::identity(&bytes).is_some_and(|(g, age)| g == guid && age >= info.age()) {
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn find_wanted(binary: &Path, w: &Wanted, system: &Path) -> Option<PathBuf> {

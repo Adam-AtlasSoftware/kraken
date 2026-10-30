@@ -264,3 +264,75 @@ async fn a_separate_debug_file_is_found_checked_attached_and_detached() {
     job(&r, &s, "analyze", json!({})).await;
     assert_eq!(named_functions(&r, &s).await, with);
 }
+
+/// A PDB kept apart from its image is probed, attached to a native project (a job) and names
+/// the functions; detaching takes the names away again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pdb_is_attached_to_a_native_project() {
+    let Some(mut config) = NativeConfig::discover() else {
+        eprintln!("skipped: no Sleigh specs");
+        return;
+    };
+    if !NativeEngine::is_usable(&config) {
+        eprintln!("skipped: engine-native-sys was built without the decompiler sources");
+        return;
+    }
+    config.isolation = match WorkerOptions::default().locate() {
+        Ok(w) => Isolation::Worker(WorkerOptions::with_program(w)),
+        Err(_) => Isolation::InProcess,
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let exe = tmp.path().join("bin").join("sample.exe");
+    let pdb = tmp.path().join("symbols").join("pdb_sample-x64.pdb");
+    std::fs::create_dir_all(exe.parent().expect("parent")).expect("bin");
+    std::fs::create_dir_all(pdb.parent().expect("parent")).expect("symbols");
+    std::fs::copy(corpus("pe/bin/pdb_sample-x64.exe"), &exe).expect("exe");
+    std::fs::copy(corpus("pe/bin/pdb_sample-x64.pdb"), &pdb).expect("pdb");
+    let r = Registry::standard();
+    let s = Session::new(Arc::new(NativeFactory { config }));
+
+    let p = call(
+        &r,
+        &s,
+        "debuginfo_probe",
+        json!({"path": exe, "debug_file": pdb}),
+    )
+    .await
+    .expect("probe");
+    assert_eq!(p["candidates"][0]["verdict"], "match", "{p}");
+
+    let dir = tmp.path().join("pdb.kraken");
+    call(
+        &r,
+        &s,
+        "project_create",
+        json!({"binary": exe, "project_dir": dir, "engine": "native"}),
+    )
+    .await
+    .expect("create");
+    job(&r, &s, "analyze", json!({})).await;
+    let without = named_functions(&r, &s).await;
+    job(&r, &s, "debuginfo_attach", json!({"debug_file": pdb})).await;
+    let with = named_functions(&r, &s).await;
+    assert!(with >= without + 6, "{without} before, {with} after");
+    let page = call(&r, &s, "list_functions", json!({"limit": 500}))
+        .await
+        .expect("list");
+    let names: Vec<&str> = page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter_map(|f| f["name"]["value"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"shape_area") && names.contains(&"list_sum"),
+        "{names:?}"
+    );
+    let types = call(&r, &s, "types_list", json!({"name_filter": "shape"}))
+        .await
+        .expect("types_list");
+    assert!(types.to_string().contains("shape"), "{types}");
+
+    job(&r, &s, "debuginfo_detach", json!({})).await;
+    assert_eq!(named_functions(&r, &s).await, without);
+}

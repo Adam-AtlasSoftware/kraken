@@ -29,7 +29,7 @@ Beside the program (`<name>.debug`, `.debug/<name>.debug`, `<name>.pdb` or the n
 
 **File > Import program...** has a step for debug information (for ELF and PE programs). It shows what the program refers to, every file that was checked with a verdict (matches, cannot be checked, does not match, not usable) and the reason, and two buttons: **Choose debug file...** and **Choose folder...**. A matching file is attached when you create the project (untick **Use this file** to leave it out).
 
-A separate DWARF file is read by the native engine; when it is installed the wizard switches to it for you. A PDB is read by the Ghidra engine when it sits next to the program as `<name>.pdb`; the wizard tells you when it does not.
+A separate DWARF file is read by the native engine; when it is installed the wizard switches to it for you. A PDB is read by the native engine from beside the program or from a file you attach, and by the Ghidra engine when it sits next to the program as `<name>.pdb`.
 
 ## On the command line
 
@@ -64,6 +64,6 @@ objcopy --add-gnu-debuglink=prog.debug prog.stripped
 
 ## Limits
 
-- The native engine reads separate DWARF for ELF programs. It does not read PDB files yet.
+- The native engine reads separate DWARF for ELF programs and PDB files for PE programs (x86 and x86-64). A PDB gives function names, sizes and prototypes (parameter names and types), global variable names and types, and the structs, unions, enums, pointers, arrays and function pointer types of the type stream. A PDB that is not the image's (GUID and age differ) is not used when it is found beside the program; `debuginfo_attach` refuses it. C++ member functions, templates and inline-function records are read as plain functions and names with `::` become `__`. Local variables and line numbers are not read.
 - Ghidra reads a PDB that sits beside the program under the program's name (`<name>.pdb`); `debuginfo_attach` refuses a PDB somewhere else and says where to copy it.
 - Downloading symbols from a server is not part of this: KRAKEN only looks at files that are already on the computer.

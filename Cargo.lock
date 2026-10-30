@@ -1474,6 +1474,7 @@ dependencies = [
  "libc",
  "msvc-demangler",
  "object 0.40.0",
+ "pdb2",
  "rustc-demangle",
  "serde",
  "serde_json",
@@ -4044,6 +4045,17 @@ version = "0.2.0"
 source = "git+https://github.com/icicle-emu/icicle-emu?rev=638508b72f480f9be6fe2e267ef09de8f1541f9a#638508b72f480f9be6fe2e267ef09de8f1541f9a"
 
 [[package]]
+name = "pdb2"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79985b314ce0dff98f8be401e878dc9914ae8333559397addb4f99f037fe61fc"
+dependencies = [
+ "fallible-iterator",
+ "scroll",
+ "uuid",
+]
+
+[[package]]
 name = "peniko"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4981,6 +4993,12 @@ name = "scratch"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
+
+[[package]]
+name = "scroll"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ab8598aa408498679922eff7fa985c25d58a90771bd6be794434c5277eab1a6"
 
 [[package]]
 name = "self_cell"

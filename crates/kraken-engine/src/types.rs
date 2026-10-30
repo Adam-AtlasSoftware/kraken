@@ -28,8 +28,8 @@ pub struct LoaderSpec {
     /// Raw images: the entry point (a function start); for Thumb code the low bit may be set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<Hex64>,
-    /// A separate debug file the person attached (`debuginfo_attach`): DWARF for the native
-    /// engine, a PDB for Ghidra. Checked against the program before it is recorded.
+    /// A separate debug file the person attached (`debuginfo_attach`): DWARF or a PDB for the
+    /// native engine, a PDB for Ghidra. Checked against the program before it is recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_file: Option<String>,
 }

@@ -101,7 +101,7 @@ impl Command for TypesList {
         .details(
             "A program without debug info lists only the prototypes KRAKEN knows (libc, Win32). \
              Page with `next_cursor` until it is absent. The engine decides what exists: the \
-             native engine reads DWARF, the Ghidra engine also reads PDB types.",
+             native engine reads DWARF and PDB types, as does the Ghidra engine.",
         )
         .needs(&[Cap::TypeStore])
     }

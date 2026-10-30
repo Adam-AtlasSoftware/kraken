@@ -190,6 +190,14 @@ build_pe() {
     done
     "$t-strip" --strip-all -o "pe/bin/win_tls-$arch-O2-stripped.exe" "pe/bin/win_tls-$arch-O2.exe"
   done
+  # a program with a PDB (clang + lld-link; the PDB beside the image is what the native engine
+  # reads); built from pe/bin so the image records the relative PDB name
+  if command -v clang > /dev/null && command -v lld-link > /dev/null; then
+    (cd pe/bin && clang --target=x86_64-pc-windows-msvc -fuse-ld=lld -g -O1 -nostdlib \
+      -fno-stack-protector -fno-ident -Wl,/entry:main -Wl,/debug -Wl,/subsystem:console \
+      -Wl,/brepro -Wl,/pdb:pdb_sample-x64.pdb ../src/pdb_sample.c -o pdb_sample-x64.exe)
+    echo "built pe/bin/pdb_sample-x64.exe and .pdb"
+  fi
 }
 
 # libkr (lib/src) as every kind of library and object: for x86-64 Linux a shared library, a static

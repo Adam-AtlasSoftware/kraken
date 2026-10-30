@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-604 crates in 32 license groups.
+606 crates in 32 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -7700,6 +7700,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - schemars 0.9.0 (<https://github.com/GREsau/schemars>)
 - schemars 1.2.3 (<https://github.com/GREsau/schemars>)
 - schemars_derive 1.2.3 (<https://github.com/GREsau/schemars>)
+- scroll 0.12.0 (<https://github.com/m4b/scroll>)
 - serde-xml-rs 0.8.2 (<https://github.com/RReverser/serde-xml-rs>)
 - sharded-slab 0.1.7 (<https://github.com/hawkw/sharded-slab>)
 - simd-adler32 0.3.10 (<https://github.com/mcountryman/simd-adler32>)
@@ -9324,6 +9325,30 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+**LICENSE** — scroll 0.12.0
+
+    The MIT License (MIT)
+
+    Copyright (c) m4b 2016
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 **LICENSE** — crunchy 0.2.4
 
     The MIT License (MIT)
@@ -9792,6 +9817,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - parking_lot_core 0.9.12 (<https://github.com/Amanieu/parking_lot>)
 - paste 1.0.15 (<https://github.com/dtolnay/paste>)
 - pastey 0.2.3 (<https://github.com/as1100k/pastey>)
+- pdb2 0.11.0 (<https://github.com/afranchuk/pdb>)
 - percent-encoding 2.3.2 (<https://github.com/servo/rust-url/>)
 - pkg-config 0.3.34 (<https://github.com/rust-lang/pkg-config-rs>)
 - plain 0.2.3 (<https://github.com/randomites/plain>)
@@ -14763,7 +14789,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     See the License for the specific language governing permissions and
     limitations under the License.
 
-**LICENSE-APACHE** — ahash 0.8.12, arbitrary 1.5.0, arrayvec 0.7.8, async-recursion 1.2.0, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.3, cc 1.8.0, cfg-if 1.0.5, cgl 0.3.2, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, cpp_demangle 0.5.1, crossbeam-utils 0.8.23, displaydoc 0.2.7, either 1.19.0, errno 0.3.14, euclid 0.22.14, filetime 0.2.29, find-msvc-tools 0.1.14, fixedbitset 0.5.7, flate2 1.1.10, form_urlencoded 1.2.2, gimli 0.33.0, gimli 0.34.0, hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, hermit-abi 0.5.3, httparse 1.10.1, idna 1.1.0, itertools 0.15.0, jobserver 0.1.35, js-sys 0.3.106, khronos-egl 6.0.0, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.34, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0, ron 0.11.0, rustc-demangle 0.1.28, rustc_version 0.4.1, scoped-tls 1.0.1, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, signal-hook-registry 1.4.8, smallvec 1.16.3, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, thread_local 1.1.10, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, vcpkg 0.2.15, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl 0.1.12, xattr 1.6.1
+**LICENSE-APACHE** — ahash 0.8.12, arbitrary 1.5.0, arrayvec 0.7.8, async-recursion 1.2.0, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.3, cc 1.8.0, cfg-if 1.0.5, cgl 0.3.2, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, cpp_demangle 0.5.1, crossbeam-utils 0.8.23, displaydoc 0.2.7, either 1.19.0, errno 0.3.14, euclid 0.22.14, filetime 0.2.29, find-msvc-tools 0.1.14, fixedbitset 0.5.7, flate2 1.1.10, form_urlencoded 1.2.2, gimli 0.33.0, gimli 0.34.0, hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, hermit-abi 0.5.3, httparse 1.10.1, idna 1.1.0, itertools 0.15.0, jobserver 0.1.35, js-sys 0.3.106, khronos-egl 6.0.0, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.34, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot 0.12.5, parking_lot_core 0.9.12, pdb2 0.11.0, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0, ron 0.11.0, rustc-demangle 0.1.28, rustc_version 0.4.1, scoped-tls 1.0.1, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, signal-hook-registry 1.4.8, smallvec 1.16.3, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, thread_local 1.1.10, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, vcpkg 0.2.15, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl 0.1.12, xattr 1.6.1
 
                                   Apache License
                             Version 2.0, January 2004
@@ -18085,6 +18111,34 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 **LICENSE-MIT** — http 1.5.0
 
     Copyright (c) 2017 http-rs authors
+
+    Permission is hereby granted, free of charge, to any
+    person obtaining a copy of this software and associated
+    documentation files (the "Software"), to deal in the
+    Software without restriction, including without
+    limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following
+    conditions:
+
+    The above copyright notice and this permission notice
+    shall be included in all copies or substantial portions
+    of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+
+**LICENSE-MIT** — pdb2 0.11.0
+
+    Copyright (c) 2017 pdb Developers
 
     Permission is hereby granted, free of charge, to any
     person obtaining a copy of this software and associated

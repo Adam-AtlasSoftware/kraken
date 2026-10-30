@@ -321,7 +321,7 @@ pub fn load_with(
     }
     let file = object::File::parse(data).map_err(|e| bad(format!("cannot parse binary: {e}")))?;
     if file.format() == BinaryFormat::Pe {
-        return crate::pe::load(data, base_override);
+        return crate::pe::load_with(data, base_override, external_debug);
     }
     if file.format() != BinaryFormat::Elf {
         return Err(ProtoError::new(

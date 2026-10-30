@@ -41,9 +41,18 @@ fn bad(msg: impl Into<String>) -> ProtoError {
 
 /// Parses a PE image; `base_override` rebases it (applying its base relocations).
 pub fn load(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError> {
+    load_with(data, base_override, None)
+}
+
+/// [`load`] with the contents of the program's PDB (`crate::debugfile`), read when given.
+pub fn load_with(
+    data: &[u8],
+    base_override: Option<u64>,
+    pdb: Option<&[u8]>,
+) -> Result<Loaded, ProtoError> {
     match FileKind::parse(data) {
-        Ok(FileKind::Pe32) => load_pe::<pe::ImageNtHeaders32>(data, base_override),
-        Ok(FileKind::Pe64) => load_pe::<pe::ImageNtHeaders64>(data, base_override),
+        Ok(FileKind::Pe32) => load_pe::<pe::ImageNtHeaders32>(data, base_override, pdb),
+        Ok(FileKind::Pe64) => load_pe::<pe::ImageNtHeaders64>(data, base_override, pdb),
         _ => Err(bad("not a PE image")),
     }
 }
@@ -151,6 +160,7 @@ impl Rva<'_> {
 fn load_pe<Pe: ImageNtHeaders>(
     data: &[u8],
     base_override: Option<u64>,
+    pdb: Option<&[u8]>,
 ) -> Result<Loaded, ProtoError> {
     let file = PeFile::<Pe>::parse(data).map_err(|e| bad(format!("cannot parse PE: {e}")))?;
     let nt = file.nt_headers();
@@ -748,6 +758,69 @@ fn load_pe<Pe: ImageNtHeaders>(
         .map(|(a, g)| (at(a), g))
         .collect();
     let mut data_symbols: BTreeMap<u64, crate::elf::DataSymbol> = BTreeMap::new();
+    // a PDB: its procedures name and seed functions, its types and globals fill the same
+    // `Debug` DWARF fills
+    if let Some(bytes) = pdb.filter(|b| crate::pdbinfo::is_pdb(b)) {
+        let parsed = crate::pdbinfo::parse(bytes, link_base, ptr as u32);
+        let rebased = |a: &u64| at(*a) & mask;
+        for a in parsed.procs.keys() {
+            if in_exec(*a) {
+                pdata_starts.push(rebased(a));
+            }
+        }
+        pdata_starts.sort_unstable();
+        pdata_starts.dedup();
+        for (a, f) in &parsed.debug.functions {
+            functions
+                .entry(rebased(a))
+                .or_insert_with(|| f.name.clone());
+        }
+        for (a, names) in &parsed.code_names {
+            if !in_exec(*a) {
+                continue;
+            }
+            let have = code_symbols.entry(rebased(a)).or_default();
+            for n in names {
+                if !have.contains(n) {
+                    have.push(n.clone());
+                }
+            }
+        }
+        for (a, c) in &parsed.conventions {
+            conventions.entry(rebased(a)).or_insert_with(|| c.clone());
+        }
+        for (a, (name, size)) in &parsed.data {
+            if !in_exec(*a) {
+                data_symbols
+                    .entry(rebased(a))
+                    .or_insert(crate::elf::DataSymbol {
+                        name: name.replace(' ', "_"),
+                        size: *size,
+                    });
+            }
+        }
+        let mut merged = parsed.debug;
+        merged.functions = merged
+            .functions
+            .into_iter()
+            .map(|(a, f)| (rebased(&a), f))
+            .collect();
+        merged.globals = merged
+            .globals
+            .into_iter()
+            .map(|(a, g)| (rebased(&a), g))
+            .collect();
+        // DWARF names stay when a mingw build kept both
+        merged.types.append(&mut debug.types);
+        for (a, f) in std::mem::take(&mut debug.functions) {
+            merged.functions.entry(a).or_insert(f);
+        }
+        for (a, g) in std::mem::take(&mut debug.globals) {
+            merged.globals.entry(a).or_insert(g);
+        }
+        merged.display.append(&mut debug.display);
+        debug = merged;
+    }
     if let Ok(f) = object::File::parse(data) {
         for sym in f.symbols() {
             if sym.kind() != SymbolKind::Data

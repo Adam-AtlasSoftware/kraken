@@ -132,6 +132,8 @@ fn binaries(set: &str) -> Vec<String> {
         .expect("corpus set")
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
+        // the PDB sample has no truth file; `pdb_*` tests below cover it
+        .filter(|n| !n.starts_with("pdb_sample"))
         .collect();
     v.sort();
     v
@@ -452,4 +454,162 @@ async fn pe_globals_decompile_by_name() {
             "{c}"
         );
     }
+}
+
+const PDB_SAMPLE: &str = "pdb_sample-x64.exe";
+
+/// The sample built with clang and lld-link has a PDB beside it: its procedures name the
+/// functions, its type stream fills the type store, and a parameter has its type in the C.
+#[tokio::test(flavor = "multi_thread")]
+async fn pdb_names_functions_types_and_parameters() {
+    let Some((e, info)) = open("corpus/pe", PDB_SAMPLE).await else {
+        return;
+    };
+    assert_eq!(info.base.0, 0x1_4000_0000);
+    let fns = listing(&e).await;
+    for name in [
+        "shape_area",
+        "shape_tag_sum",
+        "apply_scorer",
+        "number_bits",
+        "shape_move",
+        "list_sum",
+        "main",
+    ] {
+        let f = fns.values().find(|f| f.name == name).unwrap_or_else(|| {
+            panic!(
+                "no function {name} in {:?}",
+                fns.values().map(|f| &f.name).collect::<Vec<_>>()
+            )
+        });
+        assert!(f.size.is_some_and(|s| s > 0), "{name} has a size");
+    }
+    let area = fns.values().find(|f| f.name == "shape_area").expect("area");
+    assert_eq!(
+        area.signature.as_deref(),
+        Some("int shape_area(shape *s)"),
+        "prototype from the PDB"
+    );
+
+    let types = e
+        .list_types(&page(), &CancellationToken::new())
+        .await
+        .expect("types");
+    let find = |n: &str| {
+        types
+            .items
+            .iter()
+            .find(|t| kraken_engine::type_def_name(t) == Some(n))
+            .unwrap_or_else(|| panic!("no type {n}"))
+    };
+    let kraken_proto::TypeDef::Struct(shape) = find("shape") else {
+        panic!("shape is a struct");
+    };
+    let fields: Vec<(&str, u64)> = shape
+        .fields
+        .iter()
+        .map(|f| (f.name.as_str(), f.offset))
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            ("kind", 0),
+            ("origin", 4),
+            ("extent", 12),
+            ("label", 24),
+            ("tags", 32)
+        ]
+    );
+    assert_eq!(shape.size, 48);
+    assert!(matches!(find("vec2"), kraken_proto::TypeDef::Struct(c) if c.size == 8));
+    assert!(matches!(find("number"), kraken_proto::TypeDef::Union(c) if c.size == 4));
+    let kraken_proto::TypeDef::Enum(kind) = find("shape_kind") else {
+        panic!("shape_kind is an enum");
+    };
+    let values: Vec<(&str, i64)> = kind
+        .variants
+        .iter()
+        .map(|v| (v.name.as_str(), v.value))
+        .collect();
+    assert_eq!(
+        values,
+        [("SHAPE_POINT", 0), ("SHAPE_BOX", 1), ("SHAPE_RING", 7)]
+    );
+
+    // a struct that points to itself, an anonymous struct named by its typedef, with bitfields
+    let kraken_proto::TypeDef::Struct(node) = find("node") else {
+        panic!("node is a struct");
+    };
+    assert!(matches!(
+        &node.fields[0].ty,
+        kraken_proto::TypeRef::Pointer { target, .. }
+            if matches!(&**target, kraken_proto::TypeRef::Named { name } if name == "node")
+    ));
+    let kraken_proto::TypeDef::Struct(word) = find("packed_word") else {
+        panic!("packed_word is a struct");
+    };
+    let bits: Vec<_> = word
+        .fields
+        .iter()
+        .map(|f| f.bitfield.map(|b| (b.bit_offset, b.bit_size)))
+        .collect();
+    assert_eq!(bits, [Some((0, 4)), Some((4, 12)), None]);
+    let c = decompile(&e, &fns, "list_sum").await;
+    assert!(
+        c.contains("node *head") && c.contains("->value"),
+        "list walk:\n{c}"
+    );
+
+    let c = decompile(&e, &fns, "shape_tag_sum").await;
+    assert!(
+        c.contains("shape *s") && c.contains("limit"),
+        "typed parameters:\n{c}"
+    );
+    let c = decompile(&e, &fns, "shape_area").await;
+    assert!(c.contains("pdb_sample_counter"), "global by name:\n{c}");
+    let c = decompile(&e, &fns, "apply_scorer").await;
+    assert!(c.contains("shape *"), "function pointer parameter:\n{c}");
+}
+
+/// Without symbols the PDB is not read.
+#[tokio::test(flavor = "multi_thread")]
+async fn pdb_is_ignored_when_symbols_are_off() {
+    let Some(c) = config(false) else { return };
+    let e = NativeEngine::new(c);
+    e.open_binary(
+        &root().join("corpus/pe/bin").join(PDB_SAMPLE),
+        &LoaderSpec::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("open");
+    let fns = listing(&e).await;
+    assert!(!fns.values().any(|f| f.name == "shape_area"));
+}
+
+/// A PDB that is not the image's is not used, and one attached by path is.
+#[tokio::test(flavor = "multi_thread")]
+async fn pdb_attached_by_path_and_mismatch_refused() {
+    let Some(c) = config(true) else { return };
+    let dir = tempfile::tempdir().expect("dir");
+    let exe = dir.path().join("sample.exe");
+    std::fs::copy(root().join("corpus/pe/bin").join(PDB_SAMPLE), &exe).expect("copy");
+    let pdb = root().join("corpus/pe/bin/pdb_sample-x64.pdb");
+    // the image names pdb_sample-x64.pdb; a different file beside it is not that PDB
+    std::fs::write(dir.path().join("pdb_sample-x64.pdb"), b"not a pdb").expect("junk");
+    let e = NativeEngine::new(c.clone());
+    e.open_binary(&exe, &LoaderSpec::default(), &CancellationToken::new())
+        .await
+        .expect("open");
+    assert!(!listing(&e).await.values().any(|f| f.name == "shape_area"));
+
+    let spec = LoaderSpec {
+        debug_file: Some(pdb.to_string_lossy().into_owned()),
+        ..LoaderSpec::default()
+    };
+    let e = NativeEngine::new(c);
+    e.open_binary(&exe, &spec, &CancellationToken::new())
+        .await
+        .expect("open with the PDB");
+    assert!(listing(&e).await.values().any(|f| f.name == "shape_area"));
 }

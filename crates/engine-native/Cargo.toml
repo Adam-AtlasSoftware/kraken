@@ -22,6 +22,7 @@ kraken-proto.workspace = true
 kraken-sidecar = { path = "../kraken-sidecar", version = "0.3.0" }
 gimli = { version = "0.34", default-features = false, features = ["read", "std"] }
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "encoder", "op_code_info", "instr_info"] }
+pdb2 = "0.11"
 object = { version = "0.40", default-features = false, features = ["read_core", "elf", "pe", "coff", "archive", "compression", "std"] }
 msvc-demangler = "0.11"
 serde.workspace = true
