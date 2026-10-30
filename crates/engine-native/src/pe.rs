@@ -207,6 +207,7 @@ fn load_pe<Pe: ImageNtHeaders>(
     // link-time virtual address -> loaded address
     let at = |va: u64| va.wrapping_add(bias);
     let mask = if ptr == 4 { 0xffff_ffff } else { u64::MAX };
+    let section_align = u64::from(opt.section_alignment()).max(1);
     let headers_size = opt.size_of_headers().min(image_size as u32);
     let section_table = file.section_table();
     if section_table.len() > MAX_SECTIONS {
@@ -323,6 +324,10 @@ fn load_pe<Pe: ImageNtHeaders>(
         if size == 0 {
             continue;
         }
+        // Ghidra ends a block at the next SectionAlignment boundary
+        let block_size = (u64::from(size).div_ceil(section_align) * section_align)
+            .min(image_size.saturating_sub(u64::from(va)));
+        let block_size = block_size.max(u64::from(size));
         let bytes = if raw == 0 {
             &[][..]
         } else {
@@ -338,7 +343,7 @@ fn load_pe<Pe: ImageNtHeaders>(
         segments.push(Segment {
             start,
             data: bytes.to_vec(),
-            mem_size: u64::from(size),
+            mem_size: block_size,
             readonly: !write,
         });
         let raw_name = s.raw_name();
@@ -364,7 +369,7 @@ fn load_pe<Pe: ImageNtHeaders>(
             name: short,
             space: "ram".into(),
             start: start.into(),
-            end: (start + u64::from(size)).into(),
+            end: (start + block_size).into(),
             perms: MemoryBlock::perms_string(true, write, exec),
             initialized: raw != 0,
             kind: MemoryKind::Default,
@@ -508,7 +513,25 @@ fn load_pe<Pe: ImageNtHeaders>(
     let exec_merged = merge_ranges(exec_ranges);
     let in_exec = |va: u64| in_ranges(&exec_merged, va);
     let mut coff: Vec<CoffSymbol> = Vec::new();
+    // address -> (name, at the start of its section, how many, how many came before the first
+    // function symbol) of the C_STAT section symbols in code
+    let mut section_syms: BTreeMap<u64, (String, bool, usize, Option<usize>)> = BTreeMap::new();
     for sym in file.symbols() {
+        if sym.kind() == SymbolKind::Section
+            && let Ok(name) = sym.name()
+            && name.starts_with('.')
+            && in_exec(sym.address())
+        {
+            let starts = section_names.iter().any(|(lo, _, _)| *lo == sym.address());
+            let e = section_syms.entry(at(sym.address())).or_insert((
+                name.to_string(),
+                starts,
+                0,
+                None,
+            ));
+            e.2 += 1;
+            continue;
+        }
         let code = match sym.kind() {
             SymbolKind::Text => true,
             SymbolKind::Data | SymbolKind::Unknown => in_exec(sym.address()),
@@ -520,6 +543,11 @@ fn load_pe<Pe: ImageNtHeaders>(
         let Ok(name) = sym.name() else { continue };
         if name.is_empty() || name.starts_with('.') {
             continue;
+        }
+        if let Some(e) = section_syms.get_mut(&at(sym.address()))
+            && e.3.is_none()
+        {
+            e.3 = Some(e.2);
         }
         coff.push(CoffSymbol {
             addr: at(sym.address()),
@@ -563,6 +591,19 @@ fn load_pe<Pe: ImageNtHeaders>(
                 }
             }
             functions.insert(s.addr, name);
+        }
+    }
+    // Ghidra shows the section symbol (`.text`) as the name of a function that follows two of
+    // them (the empty ones an object file opens with; x64 only), and gives a static function at the very
+    // start of a section no name (`FUN_`)
+    for (a, (name, starts, _, before)) in &section_syms {
+        let Some(f) = functions.get_mut(a) else {
+            continue;
+        };
+        if ptr == 8 && before.is_some_and(|n| n >= 2) {
+            *f = name.clone();
+        } else if *starts && !coff.iter().any(|s| s.addr == *a && s.global) {
+            *f = format!("FUN_{a:08x}");
         }
     }
     // x86 decorations tell the convention
@@ -955,11 +996,11 @@ mod tests {
             .collect();
         assert_eq!(names[0], ("Headers", 0x1_4000_0000, 0x1_4000_0400));
         assert!(
-            names.contains(&(".text", 0x1_4000_1000, 0x1_4000_8400)),
+            names.contains(&(".text", 0x1_4000_1000, 0x1_4000_9000)),
             "{names:x?}"
         );
         assert!(
-            names.contains(&(".bss", 0x1_4000_d000, 0x1_4000_dba0)),
+            names.contains(&(".bss", 0x1_4000_d000, 0x1_4000_e000)),
             "{names:x?}"
         );
         let idata = l
@@ -1044,6 +1085,23 @@ mod tests {
         assert!(blocks.contains(&".eh_fram"), "{blocks:?}");
         assert!(!l.fde_starts.is_empty());
         assert_eq!(l.init_pointers.len(), 3, "{:x?}", l.init_pointers);
+    }
+
+    #[test]
+    fn blocks_end_at_the_section_alignment_and_names_follow_ghidra() {
+        let l = load(&corpus("win_dll-x64-O0.dll"), None).expect("load");
+        let text = l.blocks.iter().find(|b| b.name == ".text").expect(".text");
+        assert_eq!((text.start.0, text.end.0), (0x2_ca15_1000, 0x2_ca15_3000));
+        // a static function at the start of a section has no name, one after two empty
+        // section symbols is shown as the section
+        assert_eq!(
+            l.functions.get(&0x2_ca15_1000).map(String::as_str),
+            Some("FUN_2ca151000")
+        );
+        assert_eq!(
+            l.functions.get(&0x2_ca15_1650).map(String::as_str),
+            Some(".text")
+        );
     }
 
     #[test]

@@ -89,7 +89,7 @@ test = "agrees_with_ghidra_on_pe_and_elf32"
 capability = "names"
 set = "corpus/pe"
 format = "PE x86-64 and x86"
-threshold = 0.93
+threshold = 0.99
 status = "parity"
 test = "agrees_with_ghidra_on_pe_and_elf32"
 
@@ -121,8 +121,8 @@ test = "parity_report"
 capability = "memory"
 set = "corpus/pe"
 format = "PE x86-64 and x86"
-threshold = 0.14
-status = "partial"
+threshold = 0.95
+status = "parity"
 test = "parity_report"
 
 [[row]]
