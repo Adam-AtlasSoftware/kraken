@@ -3208,6 +3208,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "engine-fake",
+ "kraken-assist",
  "kraken-engine",
  "kraken-host",
  "kraken-infer",

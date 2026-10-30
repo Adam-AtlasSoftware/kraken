@@ -171,11 +171,11 @@ impl Assistant {
     /// tool calls, proposals). Cancelling `cancel` stops the run.
     ///
     /// A failed model call is not an `Err`: the result has `stop == Error` and the message.
-    pub async fn run(
+    pub async fn run<F: FnMut(&AgentEvent) + ?Sized>(
         &self,
         task: Task,
         cancel: &CancellationToken,
-        on_event: &mut dyn FnMut(&AgentEvent),
+        on_event: &mut F,
     ) -> TaskResult {
         let run_id = self.run_ids.next_id();
         let host = Arc::new(self.host_for(&task));

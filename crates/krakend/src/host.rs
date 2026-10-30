@@ -79,6 +79,10 @@ pub struct HostConfig {
     pub integrations: Option<Arc<dyn kraken_registry::commands::IntegrationsBackend>>,
     /// What `setup_status` probes and the `setup_*` jobs install, if any.
     pub setup: Option<Arc<dyn kraken_registry::commands::SetupBackend>>,
+    /// The assistant behind the `assist_*` jobs, if any.
+    pub assist: Option<Arc<dyn kraken_registry::commands::AssistJobs>>,
+    /// The configuration file behind `config_get` and `config_set`, if any.
+    pub config_store: Option<Arc<dyn kraken_registry::commands::ConfigStore>>,
 }
 
 impl Default for HostConfig {
@@ -91,6 +95,8 @@ impl Default for HostConfig {
             local_models: None,
             integrations: None,
             setup: None,
+            assist: None,
+            config_store: None,
         }
     }
 }
@@ -271,6 +277,9 @@ impl SessionHost {
             .with_config(self.inner.cfg.session_config.clone());
         if let Some(rewrite) = &self.inner.cfg.rewrite {
             session = session.with_rewrite(rewrite.clone());
+        }
+        if let Some(a) = &self.inner.cfg.assist {
+            session = session.with_assist(a.clone());
         }
         if let Some(i) = &self.inner.cfg.integrations {
             session = session.with_integrations(i.clone());

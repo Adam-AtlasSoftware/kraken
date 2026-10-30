@@ -203,6 +203,8 @@ pub fn start_with_setup(
                 .ok()
                 .map(|i| Arc::new(i) as Arc<dyn kraken_registry::commands::IntegrationsBackend>),
             setup: Some(setup.unwrap_or_else(|| Arc::new(kraken_host::setup::HostSetup::system()))),
+            assist: Some(kraken_assist::AssistService::standard().into_backend()),
+            config_store: Some(Arc::new(kraken_host::config_keys::HostConfigStore::system())),
         },
         opts.clock.clone(),
         hub.clone(),

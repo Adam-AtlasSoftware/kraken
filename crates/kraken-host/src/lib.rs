@@ -14,6 +14,7 @@
 pub mod author;
 pub mod backend;
 pub mod config;
+pub mod config_keys;
 pub mod convention;
 pub mod daemon;
 pub mod dotnet_setup;

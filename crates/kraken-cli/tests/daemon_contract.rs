@@ -854,6 +854,18 @@ async fn every_registry_command_identical() {
         let r = step!(name, args);
         assert_eq!(r["code"], "unsupported", "{name}: {r}");
     }
+    // The assistant jobs validate their arguments before anything else, so these never reach a
+    // model; the behaviour is tested in kraken-assist (tests/jobs.rs). config_get and
+    // config_set work on the real config file, so tests/config_commands.rs in kraken-host covers them.
+    for (name, args) in [
+        ("assist_explain", json!({"address": ""})),
+        ("assist_overview", json!({"bogus": 1})),
+        ("assist_auto_name", json!({"limit": 0})),
+    ] {
+        let r = step!(name, args);
+        assert_eq!(r["code"], "invalid_argument", "{name}: {r}");
+    }
+    covered.extend(["config_get".to_string(), "config_set".to_string()]);
     let denied = step!("rewrite_accept", json!({"unit": "ru-1"}));
     assert_eq!(denied["code"], "rejected_human_priority", "{denied}");
     for cmd in ["rewrite_reject", "rewrite_unaccept"] {

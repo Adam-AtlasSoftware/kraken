@@ -349,6 +349,9 @@ impl DaemonHandler {
             if let Some(b) = &self.host.config().setup {
                 session = session.with_setup(b.clone());
             }
+            if let Some(c) = &self.host.config().config_store {
+                session = session.with_config_store(c.clone());
+            }
             if let Some(i) = &self.host.config().integrations {
                 session = session.with_integrations(i.clone());
             }

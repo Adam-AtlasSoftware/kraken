@@ -7,8 +7,10 @@ use serde::Deserialize;
 use crate::command::Registry;
 
 mod ai;
+mod assist;
 mod bookmarks;
 mod bulk;
+mod config;
 mod data;
 #[cfg(unix)]
 mod debug;
@@ -56,6 +58,10 @@ pub use ai::{
     AiJobs, AiJobsOut, AiUsage, AiUsageArgs, AiUsageGroupView, AiUsageOut, AiUsageScope,
     ESTIMATE_NOTE,
 };
+pub use assist::{
+    AssistAutoName, AssistAutoNameArgs, AssistExplain, AssistExplainArgs, AssistJobs,
+    AssistOverview, AssistRequest, DEFAULT_AUTO_NAME, MAX_AUTO_NAME,
+};
 pub use bookmarks::{
     BOOKMARK_PAGE_CAP, BookmarkAdd, BookmarkAddArgs, BookmarkList, BookmarkListArgs,
     BookmarkRemove, BookmarkRemoveArgs, BookmarkRemoveOut, BookmarkView, MAX_BOOKMARK_NOTE,
@@ -63,6 +69,9 @@ pub use bookmarks::{
 pub use bulk::{
     ApplyEdits, ApplyEditsArgs, ApplyEditsOut, BulkEdit, BulkItemResult, BulkOp, BulkOutcome,
     MAX_BULK_EDITS,
+};
+pub use config::{
+    ConfigEntry, ConfigGet, ConfigGetArgs, ConfigGetOut, ConfigSet, ConfigSetArgs, ConfigStore,
 };
 pub use data::{
     CallGraphArgs, Callees, Callers, CfgArgs, CfgCommand, CfgOut, Disassemble, DisassembleArgs,
@@ -346,6 +355,12 @@ pub fn register_all(r: &mut Registry) {
     r.register(RewriteExport);
     r.register(RewriteProgram);
     r.register(RewriteProgramStatus);
+    // Card IN-06: the assistant and the config as commands.
+    r.register(AssistExplain);
+    r.register(AssistOverview);
+    r.register(AssistAutoName);
+    r.register(ConfigGet);
+    r.register(ConfigSet);
     // Card SHELL: the open/import workflow.
     r.register(BinaryProbe);
     r.register(DebugInfoProbe);

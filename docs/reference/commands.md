@@ -17,6 +17,9 @@ logged; **dangerous** commands always ask for approval first.
 | [`analyze`](#analyze) | job | mutating | Analyse the binary (job): functions, types and references |
 | [`apply_edits`](#apply_edits) | mutation | mutating | Rename, comment and retype many items in one call |
 | [`assemble`](#assemble) | query | safe | Turn assembly instructions into machine-code bytes at an address |
+| [`assist_auto_name`](#assist_auto_name) | job | mutating | Have the assistant name unnamed functions (job) |
+| [`assist_explain`](#assist_explain) | job | safe | Have the assistant explain one function (job) |
+| [`assist_overview`](#assist_overview) | job | safe | Have the assistant summarise the whole program (job) |
 | [`binary_probe`](#binary_probe) | query | safe | Describe a file and say which engine should open it, without making a project |
 | [`bookmark_add`](#bookmark_add) | mutation | mutating | Bookmark an address with an optional note |
 | [`bookmark_list`](#bookmark_list) | query | safe | List bookmarks ordered by address, one page at a time |
@@ -24,6 +27,8 @@ logged; **dangerous** commands always ask for approval first.
 | [`callees`](#callees) | query | safe | List the calls a function makes |
 | [`callers`](#callers) | query | safe | List the call sites that call a function |
 | [`cfg`](#cfg) | query | safe | Show a function's basic blocks and control-flow edges |
+| [`config_get`](#config_get) | query | safe | Read the settings of config.toml that can be changed from here |
+| [`config_set`](#config_set) | mutation | mutating | Change one setting of config.toml (people only) |
 | [`create_function`](#create_function) | mutation | mutating | Create a function at an address |
 | [`debug_break_list`](#debug_break_list) | query | safe | List the breakpoints of a debug session |
 | [`debug_break_remove`](#debug_break_remove) | query | safe | Remove a breakpoint of the debugged program |
@@ -1114,6 +1119,135 @@ Uses the engine's assembler: Ghidra's SLEIGH assembler on the Ghidra engine; ice
     "encodings"
   ],
   "title": "AssembleOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## assist_auto_name
+
+Have the assistant name unnamed functions (job)
+
+```sh
+kraken assist-auto-name [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Runs the assistant's auto-name task and returns a `job_id`; `job_await` returns each suggestion with its evidence and what happened to it, and the `run_id`. Renames and comments are logged under that run, so `undo_run` takes them all back at once. With `dry_run` nothing is written. Sends decompiled code to the provider; an agent or MCP caller needs a person's approval.
+
+Example: `assist_auto_name {"limit": 10, "dry_run": true}`
+
+The same task as `kraken auto-name`. Names the assistant is not sure about become proposals for you to review instead of edits, as for every agent write that is not purely additive. Metered like every model call (`ai_usage`, `ai_jobs`).
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `dry_run` | `--dry-run` | boolean | no | Only suggest names; write nothing (default false). |
+| `limit` | `--limit` | integer | no | Most functions to name (default 10, at most 50). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## assist_explain
+
+Have the assistant explain one function (job)
+
+```sh
+kraken assist-explain --address <string>
+```
+
+- Kind: job
+- Permission: safe
+
+Runs the assistant's explain task with the configured model and returns a `job_id`; `job_await` returns the answer text, a structured explanation (summary, key behaviours, names to consider, caveats) and the run id. Changes nothing in the project. Sends decompiled code to the provider; an agent or MCP caller needs a person's approval.
+
+Example: `assist_explain {"address": "0x401136"}`
+
+The same task as `kraken explain` and the Explain button. The model works through the read-only commands (decompile, xrefs, strings), is metered like every model call (`ai_usage`, `ai_jobs`) and stops at the per-run cap and the daily budget of `[ai_limits]`. Only model APIs are supported here; a terminal agent is run with `kraken explain` or in the GUI.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `address` | `--address` | string | yes | The function (any address inside it, or its name). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## assist_overview
+
+Have the assistant summarise the whole program (job)
+
+```sh
+kraken assist-overview
+```
+
+- Kind: job
+- Permission: safe
+
+Runs the assistant's overview task and returns a `job_id`; `job_await` returns what the program is, its main parts, where to look first and next steps. Changes nothing in the project. Sends decompiled code to the provider; an agent or MCP caller needs a person's approval.
+
+Example: `assist_overview {}`
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
   "type": "object"
 }
 ```
@@ -2440,6 +2574,149 @@ Example: `cfg {"function": "0x401136"}`
     "truncated"
   ],
   "title": "CfgOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## config_get
+
+Read the settings of config.toml that can be changed from here
+
+```sh
+kraken config-get [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Needs no project. Lists every settable key with its value in the file (absent: the default applies), what it accepts and whether only a person may change it, or one key. Provider tables and API keys are never shown.
+
+Example: `config_get {"key": "engine"}`
+
+The value is the one in the file, not the effective one: environment variables such as `KRAKEN_ENGINE` override the file at run time.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `key` | `--key` | string | no | One key; without it every settable key is listed. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "ConfigEntry": {
+      "description": "One setting.",
+      "properties": {
+        "accepts": {
+          "description": "What values it takes (`true or false`, `ghidra, native or auto`, `a directory`).",
+          "type": "string"
+        },
+        "doc": {
+          "description": "What it does.",
+          "type": "string"
+        },
+        "key": {
+          "description": "The key (`engine`, `daemon.idle_secs`).",
+          "type": "string"
+        },
+        "person_only": {
+          "description": "True when only a person may change it, never an agent or the MCP surface.",
+          "type": "boolean"
+        },
+        "value": {
+          "description": "The value in the file; absent when the key is not set (the default applies)."
+        }
+      },
+      "required": [
+        "key",
+        "accepts",
+        "doc",
+        "person_only"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of `config_get`.",
+  "properties": {
+    "entries": {
+      "description": "The entries, in a fixed order.",
+      "items": {
+        "$ref": "#/$defs/ConfigEntry"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "entries"
+  ],
+  "title": "ConfigGetOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## config_set
+
+Change one setting of config.toml (people only)
+
+```sh
+kraken config-set --key <string> --value <json>
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Needs no project. Writes one allowlisted key of config.toml; `null` removes it. Only a person may call it: an agent or the MCP surface is refused. A running daemon picks most keys up when it next starts.
+
+Example: `config_set {"key": "engine", "value": "native"}`
+
+The value is checked against the key's type before anything is written, and the file is replaced in one step. Comments in the file are not kept. Keys that loosen a safeguard (`danger_mode`, `allow_unconfined`, `per_run_cap`) are marked `person_only` in `config_get`; every key is refused to agents because the file decides what they may do.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `key` | `--key` | string | yes | The key, from `config_get`. |
+| `value` | `--value` | json | yes | The new value; `null` removes the key so the default applies again. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One setting.",
+  "properties": {
+    "accepts": {
+      "description": "What values it takes (`true or false`, `ghidra, native or auto`, `a directory`).",
+      "type": "string"
+    },
+    "doc": {
+      "description": "What it does.",
+      "type": "string"
+    },
+    "key": {
+      "description": "The key (`engine`, `daemon.idle_secs`).",
+      "type": "string"
+    },
+    "person_only": {
+      "description": "True when only a person may change it, never an agent or the MCP surface.",
+      "type": "boolean"
+    },
+    "value": {
+      "description": "The value in the file; absent when the key is not set (the default applies)."
+    }
+  },
+  "required": [
+    "key",
+    "accepts",
+    "doc",
+    "person_only"
+  ],
+  "title": "ConfigEntry",
   "type": "object"
 }
 ```

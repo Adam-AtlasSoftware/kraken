@@ -24,6 +24,7 @@ pub mod backend;
 pub mod error;
 pub mod glossary;
 pub mod host;
+pub mod jobs;
 pub mod local;
 pub mod meter;
 pub mod output;
@@ -51,6 +52,7 @@ pub use glossary::{Arch, Glossary, GlossaryEntry, GlossaryKind, GlossaryMatch, M
 pub use host::{
     CallRecord, DEFAULT_EXCLUDED, DangerMode, HostOptions, HostStats, RegistryToolHost,
 };
+pub use jobs::{AssistService, AssistSource, ConfigSource, FixedSource};
 pub use local::{ServingResolver, set_serving};
 pub use meter::{
     Meter, MeterBuilder, MeterObserver, MeterSpec, daily_budget_message, measured_tok_s,

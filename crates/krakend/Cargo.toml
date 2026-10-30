@@ -22,6 +22,7 @@ fake-engine = ["dep:engine-fake"]
 [dependencies]
 async-trait = "0.1.89"
 engine-fake = { path = "../engine-fake", version = "0.2.0", optional = true }
+kraken-assist = { path = "../kraken-assist", version = "0.2.0" }
 kraken-engine = { path = "../kraken-engine", version = "0.2.0" }
 kraken-host = { path = "../kraken-host", version = "0.2.0" }
 kraken-ipc = { path = "../kraken-ipc", version = "0.2.0" }

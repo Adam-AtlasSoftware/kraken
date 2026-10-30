@@ -71,6 +71,7 @@ fn env(binary: &str, cassette: Option<&str>) -> CliEnv {
         session: None,
         daemon: DaemonMode::Direct,
         rewrite: Some(service.into_backend()),
+        assist: None,
         owner: Default::default(),
     }
 }

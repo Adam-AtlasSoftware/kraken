@@ -8,6 +8,11 @@ use serde_json::json;
 const EXPECTED: &[&str] = &[
     "ai_jobs",
     "ai_usage",
+    "assist_auto_name",
+    "assist_explain",
+    "assist_overview",
+    "config_get",
+    "config_set",
     "analyze",
     "apply_edits",
     "assemble",

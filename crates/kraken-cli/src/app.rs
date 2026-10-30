@@ -151,6 +151,8 @@ pub struct CliEnv {
     /// The rewrite pipeline attached to sessions that run in this process (`rewrite_*`
     /// commands). Through the daemon, the daemon's own pipeline runs them.
     pub rewrite: Option<Arc<dyn RewriteBackend>>,
+    /// The assistant attached to sessions that run in this process (`assist_*` jobs).
+    pub assist: Option<Arc<dyn kraken_registry::commands::AssistJobs>>,
     /// The local models this process runs when there is no daemon (made on first use); they are
     /// stopped when the command ends.
     pub owner: OwnerSlot,
@@ -192,6 +194,7 @@ impl CliEnv {
             session: None,
             daemon: DaemonMode::Auto(DaemonAuto::default()),
             rewrite: Some(kraken_rewrite::RewriteService::standard().into_backend()),
+            assist: Some(kraken_assist::AssistService::standard().into_backend()),
             owner: OwnerSlot::default(),
         }
     }
@@ -222,6 +225,9 @@ impl CliEnv {
             if let Some(r) = &self.rewrite {
                 s = s.with_rewrite(r.clone());
             }
+            if let Some(a) = &self.assist {
+                s = s.with_assist(a.clone());
+            }
             if let Ok(i) = kraken_host::integrations::Integrations::system() {
                 s = s.with_integrations(Arc::new(i));
             }
@@ -229,6 +235,7 @@ impl CliEnv {
                 s = s.with_local_models(Arc::new(lm));
             }
             s = s.with_setup(Arc::new(kraken_host::setup::HostSetup::system()));
+            s = s.with_config_store(Arc::new(kraken_host::config_keys::HostConfigStore::system()));
             s = s.with_serving(Arc::new(kraken_host::infer::ServingBridge::new(Arc::new(
                 self.owner_manager()
                     .holder(kraken_host::infer::Holder::Owner),

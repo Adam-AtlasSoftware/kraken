@@ -855,6 +855,8 @@ pub struct Session {
     serving: Option<Arc<dyn crate::commands::ServingBackend>>,
     integrations: Option<Arc<dyn crate::commands::IntegrationsBackend>>,
     setup: Option<Arc<dyn crate::commands::SetupBackend>>,
+    assist: Option<Arc<dyn crate::commands::AssistJobs>>,
+    pub(crate) config_store: Option<Arc<dyn crate::commands::ConfigStore>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -879,6 +881,8 @@ impl Session {
             serving: None,
             integrations: None,
             setup: None,
+            assist: None,
+            config_store: None,
         }
     }
 
@@ -886,6 +890,16 @@ impl Session {
     pub fn with_jobs(mut self, jobs: JobTable) -> Session {
         self.jobs = jobs;
         self
+    }
+
+    /// Attaches the assistant that the `assist_*` jobs run (kraken-assist).
+    pub fn with_assist(mut self, b: Arc<dyn crate::commands::AssistJobs>) -> Session {
+        self.assist = Some(b);
+        self
+    }
+
+    pub(crate) fn assist_backend(&self) -> Option<&Arc<dyn crate::commands::AssistJobs>> {
+        self.assist.as_ref()
     }
 
     /// Attaches what `setup_status` probes and the `setup_*` commands install.

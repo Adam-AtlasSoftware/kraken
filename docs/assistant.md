@@ -532,6 +532,23 @@ kraken auto ./a.out --project-dir ~/re/a --engine native --names --rewrite --acc
 
 Progress lines go to standard error (`[2/4] creating the project and analysing it`, then the jobs' own progress). The summary goes to standard output: program and format, project directory, function count, how many functions the assistant renamed, the rewrite verdict (`pass` means every test case agreed) and where the Rust crate and the export are. `--json` prints that summary as one object. The exit status is 0 when everything you asked for worked and the rewrite verdict is `pass`, 4 when the verdict is not `pass` or the export could not be made, and the usual codes for errors. `--names` needs a provider like the other assistant commands and checks for one before it creates anything. A terminal agent edits through its own `kraken mcp` process, which must share the run's session: with the daemon (the default) it does, and without one (`--no-daemon`, or no `krakend` to start) `kraken auto` runs a private daemon inside its own process for the run, points the agent's tool server at it (`private one` on stderr says so) and stops it at the end, which saves the project.
 
+### Scripting the assistant: `assist_explain`, `assist_overview`, `assist_auto_name`
+
+The same three tasks are registry commands, so scripts, the MCP server and Python can run them without a terminal. Each starts a job and returns a `job_id`; `kraken job-await` (or `job_status`) gives the task result: the answer text, the structured output (an explanation, an overview or the auto-name report) and the `run_id`. The auto-name edits are logged under that run, so one `undo_run` takes them all back.
+
+```sh
+kraken assist-auto-name --limit 10 --dry-run          # suggestions only
+kraken assist-auto-name --limit 10                    # writes renames and comments
+kraken assist-explain --address 0x401000
+kraken undo-run --run-id <run_id from the result>
+```
+
+These commands use the model API in the `[provider]` table, are metered like every model call (`ai_usage`, `ai_jobs`, the caps and daily budget of `[ai_limits]`) and send decompiled code to the provider. An agent or an MCP client calling them needs a person's approval (the message says the model and the estimated cost); a person is asked only when the estimate crosses the confirmation threshold. A `[provider]` that names a terminal agent is not run by these commands; use `kraken explain`, `kraken overview` and `kraken auto-name`, or the GUI.
+
+### Reading and changing the settings: `config_get`, `config_set`
+
+`config_get` lists the settings of `config.toml` that can be changed from here, with what each accepts, or shows one key. `config_set --key engine --value '"native"'` writes one; a `null` value removes it again. Provider tables, API keys, local model entries and the shell rules are not reachable, and only a person may call `config_set` (an agent or the MCP surface is refused). Keys that loosen a safeguard (`danger_mode`, `allow_unconfined`, `per_run_cap`) say `person_only` in the listing. A running `krakend` picks most keys up at its next start.
+
 ### `kraken glossary <term>`
 
 Looks up a term or an instruction mnemonic. It works offline and needs no project or provider.
