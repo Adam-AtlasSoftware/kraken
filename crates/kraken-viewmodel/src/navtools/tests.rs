@@ -907,3 +907,83 @@ fn cancelling_the_patch_wizard_leaves_no_patch_behind() {
     assert!(r.vm.tools.patch_wizard.is_none());
     assert!(r.vm.block_until(WAIT, |v| v.tools.patches.items.is_empty() && !v.busy()));
 }
+
+/// Walks a fresh wizard on `jne` to the preview with Never take this branch staged.
+fn stage_never_take(r: &mut Rig, jne: u64) {
+    use crate::wizard::WizardNav;
+    r.vm.begin_patch_wizard(Some(jne));
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| w.pick.is_some())
+    }));
+    r.vm.tools.patch_wizard.as_mut().expect("wizard").intent = Some(WizardIntent::NeverTake);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| matches!(w.draft, Draft::Staged(_)))
+            && !v.busy()
+    }));
+}
+
+#[test]
+fn opening_the_patch_wizard_again_takes_the_old_draft_out() {
+    use crate::wizard::WizardFlow;
+    let (mut r, jne) = x86_main_rig();
+    stage_never_take(&mut r, jne);
+    r.vm.begin_patch_wizard(Some(jne));
+    assert_eq!(wizard(&r.vm).draft, Draft::None);
+    assert_eq!(wizard(&r.vm).current(), PatchStep::Pick);
+    r.vm.refresh_patches();
+    assert!(r.vm.block_until(WAIT, |v| !v.busy() && v.tools.patches.items.is_empty()));
+    // the new wizard stages and cancels on its own, unaffected by the old one's replies
+    r.vm.cancel_patch_wizard();
+    stage_never_take(&mut r, jne);
+    r.vm.cancel_patch_wizard();
+    r.vm.refresh_patches();
+    assert!(r.vm.block_until(WAIT, |v| !v.busy() && v.tools.patches.items.is_empty()));
+}
+
+#[test]
+fn a_draft_over_a_patch_the_wizard_did_not_know_of_puts_it_back_on_cancel() {
+    use crate::wizard::WizardNav;
+    let (mut r, jne) = x86_main_rig();
+    r.vm.begin_patch_wizard(Some(jne));
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| w.pick.is_some())
+            && !v.busy()
+    }));
+    r.vm.tools.patch_wizard.as_mut().expect("wizard").intent = Some(WizardIntent::NeverTake);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    // a patch the wizard's list has not seen yet (set elsewhere, or past the first page)
+    r.vm.call(
+        "patch_set",
+        serde_json::json!({"address": format!("{jne:#x}"), "bytes": "7511", "note": "mine"}),
+        |_, res| {
+            res.expect("patch_set");
+        },
+    );
+    assert!(r.vm.block_until(WAIT, |v| !v.busy()));
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| matches!(w.draft, Draft::Staged(_)))
+            && !v.busy()
+    }));
+    r.vm.cancel_patch_wizard();
+    r.vm.refresh_patches();
+    assert!(r.vm.block_until(WAIT, |v| !v.busy() && v.tools.patches.loaded));
+    let items = &r.vm.tools.patches.items;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0].address, jne);
+    assert_eq!(items[0].replacement, vec![0x75, 0x11]);
+}

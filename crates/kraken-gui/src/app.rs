@@ -469,6 +469,8 @@ impl KrakenApp {
         });
         if !same && !std::mem::take(&mut self.leave_running) {
             vm.close_project();
+        } else {
+            vm.abandon_patch_wizard(false);
         }
     }
 
@@ -2243,6 +2245,9 @@ impl KrakenApp {
     /// Ends the sidecar of a `--no-daemon` run; a daemon outlives the window by design.
     pub(crate) fn stop_in_process_engine(&mut self) {
         self.settings.infer.shutdown(self.rt.handle());
+        if let Some(vm) = self.vm.as_mut() {
+            vm.abandon_patch_wizard(true);
+        }
         self.vm = None;
         if let Some(p) = self.private.take() {
             self.rt.block_on(p.stop());

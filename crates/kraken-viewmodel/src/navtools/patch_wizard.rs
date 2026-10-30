@@ -175,9 +175,34 @@ pub struct TestPanel {
 #[derive(Debug)]
 enum Todo {
     Stage,
-    Discard(u64),
+    Discard(Discard),
     Verify,
     Save,
+}
+
+/// A staged draft to take out: its address and the edit-log entry that wrote it.
+#[derive(Debug, Clone, Copy)]
+struct Discard {
+    address: u64,
+    entry: Option<u64>,
+}
+
+impl Discard {
+    /// The call that takes the draft out. Undoing the draft's own entry puts back a patch the
+    /// draft replaced; `patch_remove` (only when the reply named no entry) would delete it.
+    fn call(self) -> (&'static str, Value) {
+        match self.entry {
+            Some(id) => ("undo_entry", json!({"entry_id": id})),
+            None => ("patch_remove", json!({"address": hex(self.address)})),
+        }
+    }
+}
+
+/// Request numbers of every wizard, so a reply meant for a closed wizard never matches the next
+/// one opened.
+fn next_seq() -> u64 {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The wizard's state.
@@ -227,6 +252,10 @@ pub struct PatchWizard {
     taken: Vec<u64>,
     todo: Vec<Todo>,
     seq: u64,
+    /// The edit-log entry of the staged draft.
+    staged_entry: Option<u64>,
+    /// Tells this wizard from one opened after it.
+    id: u64,
 }
 
 impl PatchWizard {
@@ -256,7 +285,9 @@ impl PatchWizard {
             discarding: 0,
             taken: Vec::new(),
             todo: Vec::new(),
-            seq: 0,
+            seq: next_seq(),
+            staged_entry: None,
+            id: next_seq(),
         }
     }
 
@@ -360,11 +391,14 @@ impl PatchWizard {
     /// Takes the draft out when the person goes back before the preview.
     fn drop_draft(&mut self) {
         match std::mem::replace(&mut self.draft, Draft::None) {
-            Draft::Staged(a) => self.todo.push(Todo::Discard(a)),
+            Draft::Staged(address) => self.todo.push(Todo::Discard(Discard {
+                address,
+                entry: self.staged_entry.take(),
+            })),
             Draft::Staging => {}
             _ => {}
         }
-        self.seq += 1;
+        self.seq = next_seq();
         self.preview = None;
         self.c_before = CText::Idle;
         self.c_after = CText::Idle;
@@ -572,6 +606,8 @@ impl ViewModel {
             .or_else(|| self.views.listing.selected_row().map(|r| r.address))
             .or_else(|| self.current.as_ref().map(|c| c.address));
         self.ensure_patches();
+        // a wizard already open takes its draft out first, or it would stay as a real patch
+        self.cancel_patch_wizard();
         self.tools.patch_wizard = Some(PatchWizard::new(address));
         self.drive_patch_wizard();
     }
@@ -597,14 +633,33 @@ impl ViewModel {
 
     /// Closes the wizard and removes the draft patch.
     pub fn cancel_patch_wizard(&mut self) {
-        if let Some(mut w) = self.tools.patch_wizard.take() {
-            w.drop_draft();
-            for t in w.todo.drain(..) {
-                if let Todo::Discard(a) = t {
-                    self.discard_draft(a);
-                }
-            }
+        for d in self.take_patch_wizard() {
+            self.discard_draft(d, false);
         }
+    }
+
+    /// Takes the wizard away and returns the drafts it leaves to take out.
+    fn take_patch_wizard(&mut self) -> Vec<Discard> {
+        let Some(mut w) = self.tools.patch_wizard.take() else {
+            return Vec::new();
+        };
+        w.drop_draft();
+        w.todo
+            .drain(..)
+            .filter_map(|t| match t {
+                Todo::Discard(d) => Some(d),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The calls that take the open wizard's draft out, for a project about to close or a
+    /// window about to go: the wizard is closed and nothing waits for the answers.
+    pub(crate) fn patch_wizard_leftovers(&mut self) -> Vec<(&'static str, Value)> {
+        self.take_patch_wizard()
+            .into_iter()
+            .map(Discard::call)
+            .collect()
     }
 
     /// Reads the wizard's address and does the work its steps asked for. The window calls it
@@ -633,11 +688,11 @@ impl ViewModel {
         for t in todo {
             match t {
                 Todo::Stage => self.wizard_stage(),
-                Todo::Discard(a) => {
+                Todo::Discard(d) => {
                     if let Some(w) = self.tools.patch_wizard.as_mut() {
                         w.discarding += 1;
                     }
-                    self.discard_draft(a);
+                    self.discard_draft(d, true);
                 }
                 Todo::Verify => self.wizard_verify(),
                 Todo::Save => self.wizard_save(),
@@ -675,21 +730,28 @@ impl ViewModel {
         }
     }
 
-    fn discard_draft(&mut self, address: u64) {
-        self.call(
-            "patch_remove",
-            json!({"address": hex(address)}),
-            |vm, res| {
-                if let Some(w) = vm.tools.patch_wizard.as_mut() {
-                    w.discarding = w.discarding.saturating_sub(1);
-                }
-                if let Err(e) = res {
-                    vm.toast_error(&e);
-                }
-                vm.refresh_patches();
-                vm.refresh_history();
-            },
-        );
+    /// Takes a draft out; `counted` when the open wizard counted it in `discarding`.
+    fn discard_draft(&mut self, draft: Discard, counted: bool) {
+        let (cmd, args) = draft.call();
+        // only the wizard that counted it, not one opened since
+        let counted = counted
+            .then(|| self.tools.patch_wizard.as_ref().map(|w| w.id))
+            .flatten();
+        self.call(cmd, args, move |vm, res| {
+            if let Some(w) = vm
+                .tools
+                .patch_wizard
+                .as_mut()
+                .filter(|w| Some(w.id) == counted)
+            {
+                w.discarding = w.discarding.saturating_sub(1);
+            }
+            if let Err(e) = res {
+                vm.toast_error(&e);
+            }
+            vm.refresh_patches();
+            vm.refresh_history();
+        });
     }
 
     fn wizard_stage(&mut self) {
@@ -703,7 +765,7 @@ impl ViewModel {
                 return;
             }
         };
-        w.seq += 1;
+        w.seq = next_seq();
         let seq = w.seq;
         w.draft = Draft::Staging;
         w.c_before = CText::Loading;
@@ -722,15 +784,20 @@ impl ViewModel {
                             "the patch command did not say where it wrote",
                         )
                     })?;
+                let entry = v
+                    .get("edit")
+                    .and_then(|e| e.get("entry_id"))
+                    .and_then(Value::as_u64);
                 let pv = serde_json::from_value::<IntentPreview>(v).ok();
-                Ok((at, pv))
+                Ok((Discard { address: at, entry }, pv))
             });
             let live = vm.tools.patch_wizard.as_ref().is_some_and(|w| w.seq == seq);
             match staged {
-                Ok((at, _)) if !live => vm.discard_draft(at),
-                Ok((at, pv)) => {
+                Ok((d, _)) if !live => vm.discard_draft(d, false),
+                Ok((d, pv)) => {
                     if let Some(w) = vm.tools.patch_wizard.as_mut() {
-                        w.draft = Draft::Staged(at);
+                        w.draft = Draft::Staged(d.address);
+                        w.staged_entry = d.entry;
                         w.preview = pv;
                     }
                     vm.refresh_patches();

@@ -2093,11 +2093,39 @@ impl ViewModel {
         if self.connection != Connection::Open {
             return;
         }
+        // the patch wizard's draft goes first, while the project is still open
+        let leftovers = self.patch_wizard_leftovers();
         let backend = self.backend.clone();
         self.rt.spawn(async move {
+            for (cmd, args) in leftovers {
+                let _ = backend.call(cmd, args).await;
+            }
             let _ = backend.call("project_close", json!({})).await;
         });
         self.connection = Connection::NoProject;
+    }
+
+    /// Closes the patch wizard of a view-model about to be dropped and takes its draft patch
+    /// out. With `wait` it blocks (at most five seconds) until the backend has answered, for a
+    /// window that is closing; call it from outside the runtime then.
+    pub fn abandon_patch_wizard(&mut self, wait: bool) {
+        let leftovers = self.patch_wizard_leftovers();
+        if leftovers.is_empty() {
+            return;
+        }
+        let backend = self.backend.clone();
+        let work = async move {
+            for (cmd, args) in leftovers {
+                let _ = backend.call(cmd, args).await;
+            }
+        };
+        if wait {
+            let _ = self.rt.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), work).await
+            });
+        } else {
+            self.rt.spawn(work);
+        }
     }
 
     /// Entity versions of the function being viewed, as sent with edits.
