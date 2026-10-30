@@ -118,6 +118,8 @@ pub fn identify_firmware(path: &Path) -> Result<FirmwareIdentifyOut, ProtoError>
             format!("{}: {e}", path.display()),
         )
     };
+    // before opening: opening a FIFO for reading blocks until a writer comes, for ever
+    trust::ensure_regular_file(path)?;
     let file = std::fs::File::open(path).map_err(io)?;
     let meta = file.metadata().map_err(io)?;
     if !meta.is_file() {
@@ -244,5 +246,25 @@ mod tests {
         assert!(out.entropy.starts_with('0'), "{}", out.entropy);
         assert_eq!(out.size, 12288);
         assert!(!out.truncated);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_named_pipe_is_refused_without_waiting_for_a_writer() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().expect("tmp");
+        let p = dir.path().join("fifo");
+        let c = std::ffi::CString::new(p.as_os_str().as_bytes()).expect("path");
+        // SAFETY: `c` is a valid NUL-terminated path for the duration of the call.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(identify_firmware(&p).map(|_| ()));
+        });
+        let e = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("identify_firmware blocked on the pipe")
+            .expect_err("a pipe is not an image");
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
     }
 }
