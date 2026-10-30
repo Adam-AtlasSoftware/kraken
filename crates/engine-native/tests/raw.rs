@@ -208,3 +208,33 @@ async fn a_hex_file_with_two_blocks_maps_both() {
     assert!(found.iter().any(|(a, _)| *a == 0x0800_00dc), "{found:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A named function (here `entry`) that opens with a jump to its own loop test (`jmp .Lcond`,
+/// as -O2 and -Os lay loops out) is one function, not a thunk to a second one.
+#[tokio::test]
+async fn a_loop_entered_at_its_test_stays_one_function() {
+    let Some(e) = engine(Isolation::InProcess) else {
+        return;
+    };
+    // f: jmp .Lcond; .Lbody: inc eax; nop; .Lcond: cmp eax, 0x10; jne .Lbody; ret
+    let code = [
+        0xeb, 0x03, 0xff, 0xc0, 0x90, 0x83, 0xf8, 0x10, 0x75, 0xf8, 0xc3,
+    ];
+    let dir = std::env::temp_dir().join(format!("kraken-loop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("loop.bin");
+    std::fs::write(&path, code).unwrap();
+    let spec = LoaderSpec {
+        format: Some("raw".into()),
+        arch: Some("x86".into()),
+        base: Some(Hex64(0x10_0000)),
+        ..LoaderSpec::default()
+    };
+    e.open_binary(&path, &spec, &CancellationToken::new())
+        .await
+        .unwrap();
+    let found = names(&e).await;
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(found.iter().any(|(a, _)| *a == 0x10_0000), "{found:?}");
+    assert!(!found.iter().any(|(a, _)| *a == 0x10_0005), "{found:?}");
+}

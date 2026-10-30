@@ -283,8 +283,8 @@ fn walk(
     if let Some(pads) = loaded.landing_pads.get(&entry) {
         work.extend(pads.iter().copied());
     }
-    // x86: a function that starts (past `endbr`) with a jump is a thunk, its target a function
-    // (gcc's `frame_dummy` jumping to `register_tm_clones`)
+    // x86: a function that starts (past `endbr`) with a jump out of itself is a thunk, its
+    // target a function (gcc's `frame_dummy` jumping back to `register_tm_clones`)
     let thunk_pc = match lane.instruction(entry)? {
         Some(i) if i.mnemonic.to_ascii_lowercase().starts_with("endbr") => {
             entry + u64::from(i.length)
@@ -384,12 +384,22 @@ fn walk(
                 Flow::Jump => {
                     if let Some(&t) = insn.targets.first() {
                         // a jump to another function's entry is a tail call; so is the jump
-                        // a RISC function starts with (a thunk, such as ARM's `frame_dummy`)
-                        let thunk = (propagate && pc == entry && t != entry)
-                            || (loaded.language.id.starts_with("x86")
-                                && pc == thunk_pc
-                                && t != entry
-                                && loaded.is_code(t));
+                        // a RISC function starts with (a thunk, such as ARM's `frame_dummy`).
+                        // On x86 a function with a symbol is a thunk only when that jump leaves
+                        // it (backwards, or past another known start): a forward jump to its loop
+                        // test (`jmp .Lcond`, common at -O2/-Os) stays in the body. Without a
+                        // symbol Ghidra splits that shape too (`thunk_FUN_...`), and so do we.
+                        let x86_thunk = loaded.language.id.starts_with("x86")
+                            && pc == thunk_pc
+                            && t != entry
+                            && loaded.is_code(t)
+                            && (t < entry
+                                || crosses(env.names, entry, pc, t)
+                                || env
+                                    .names
+                                    .get(&entry)
+                                    .is_none_or(|n| *n == default_name(entry)));
+                        let thunk = (propagate && pc == entry && t != entry) || x86_thunk;
                         let far = propagate && crosses(env.names, entry, pc, t);
                         if t != entry && (env.names.contains_key(&t) || thunk || far) {
                             calls.push(t);
