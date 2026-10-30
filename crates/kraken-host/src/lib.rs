@@ -34,7 +34,7 @@ pub mod strata_setup;
 pub use author::{RunIdGen, agent_id_from_client, user_id};
 pub use config::{
     ConfigError, DaemonSettings, DangerMode, KrakenConfig, LocalServingSettings, ShellConfig,
-    TitlebarMode,
+    TitlebarMode, UiSettings,
 };
 pub use convention::finalize_output;
 pub use factory::{

@@ -835,7 +835,8 @@ fn code(ui: &mut Ui, st: &mut UiState, addr: u64, d: &Decompiled, acts: &mut Vec
 
     // N renames the name under the pointer, or the function being read.
     let typing = ui.ctx().egui_wants_keyboard_input();
-    if !typing && ui.input(|i| i.key_pressed(egui::Key::N) && !i.modifiers.any()) {
+    let km = crate::keymap::of(ui.ctx());
+    if !typing && ui.input_mut(|i| km.consume(i, kraken_viewmodel::AppAction::RenameCurrent)) {
         match hovered_tok
             .filter(|t| t.kind == TokenKind::Function)
             .and_then(|t| target_of(t).map(|a| (a, t.symbol.clone())))

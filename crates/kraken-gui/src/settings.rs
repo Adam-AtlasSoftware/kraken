@@ -24,6 +24,10 @@ pub enum SettingsAction {
     DefaultEngine(kraken_registry::EngineChoice),
     /// Switch to the dark (`true`) or light theme.
     SetDark(bool),
+    /// A keyboard shortcut preset was picked (its id).
+    SetKeymap(&'static str),
+    /// A text size was picked, in percent.
+    SetZoom(u32),
     /// Connect to the daemon now (it was not needed until now).
     ConnectDaemon,
     /// "Set up a model on this computer..." was chosen in a picker.
@@ -118,6 +122,10 @@ pub struct SettingsEnv<'a> {
     pub rt: &'a Handle,
     pub mode: Mode,
     pub dark: bool,
+    /// The keyboard preset in force.
+    pub keymap: &'static crate::keymap::Keymap,
+    /// Text size in percent.
+    pub zoom: u32,
     pub config_path: Option<&'a PathBuf>,
     pub backend: Option<&'a Arc<DaemonClientBackend>>,
     pub connecting: bool,
@@ -412,7 +420,7 @@ impl Settings {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        self.appearance(ui, dark, env.config_path, &mut actions);
+                        self.appearance(ui, dark, env, &mut actions);
                         ui.separator();
                         self.ai.show(ui, env.rt, env.config_path, &mut self.infer);
                         ui.separator();
@@ -441,9 +449,10 @@ impl Settings {
         &mut self,
         ui: &mut Ui,
         dark: bool,
-        config_path: Option<&PathBuf>,
+        env: &SettingsEnv<'_>,
         actions: &mut Vec<SettingsAction>,
     ) {
+        let config_path = env.config_path;
         let p = pal(ui);
         ui.label(medium("Appearance", 14.0).color(p.text_strong));
         ui.horizontal(|ui| {
@@ -463,8 +472,37 @@ impl Settings {
             {
                 actions.push(SettingsAction::SetDark(false));
             }
+            ui.separator();
+            ui.label("Text size:");
+            for z in kraken_viewmodel::first_run::ZOOM_STEPS {
+                if ui
+                    .radio(env.zoom == z, format!("{z}%"))
+                    .on_hover_text("Make all text and controls this size")
+                    .clicked()
+                    && env.zoom != z
+                {
+                    actions.push(SettingsAction::SetZoom(z));
+                }
+            }
         });
         self.titlebar_choice(ui, config_path);
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Keys:");
+            for k in crate::keymap::presets() {
+                let id: &'static str = k.id.as_str();
+                if ui
+                    .radio(env.keymap.id == k.id, &k.name)
+                    .on_hover_text(format!(
+                        "{} Takes effect at once; Ctrl+/ lists the keys.",
+                        k.blurb
+                    ))
+                    .clicked()
+                    && env.keymap.id != k.id
+                {
+                    actions.push(SettingsAction::SetKeymap(id));
+                }
+            }
+        });
     }
 
     /// "Assistant control": what the assistant may do with dangerous commands. Saved at once by

@@ -2005,6 +2005,7 @@ impl ViewModel {
             AppAction::ShowIntegrations => return Some(UiRequest::ShowIntegrations),
             AppAction::ImportProgram => return Some(UiRequest::ImportProgram),
             AppAction::ShowSetupStatus => return Some(UiRequest::ShowSetupStatus),
+            AppAction::ShowFirstRun => return Some(UiRequest::ShowFirstRun),
             AppAction::RunInEmulator => return Some(UiRequest::RunInEmulator),
             AppAction::LocalSetupNext => {
                 return Some(UiRequest::LocalSetup(crate::SetupButton::Next));

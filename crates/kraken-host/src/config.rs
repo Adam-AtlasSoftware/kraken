@@ -199,6 +199,27 @@ impl Default for LocalServingSettings {
     }
 }
 
+/// The `[ui]` table: choices of the first-run wizard that the GUI reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct UiSettings {
+    /// Keymap preset id (`kraken`, `classic`, `ida-like`, `binja-like`); unset means `kraken`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keymap: Option<String>,
+    /// Text size of the GUI in percent (100 when unset).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_percent: Option<u32>,
+    /// The first-run wizard was finished or skipped.
+    pub first_run_done: bool,
+}
+
+impl UiSettings {
+    /// True when nothing is set (the table is then left out of the file).
+    pub fn is_empty(&self) -> bool {
+        *self == UiSettings::default()
+    }
+}
+
 /// The `[assistant_shell]` table (and the project's `assistant-shell.toml`, same keys): which
 /// shell commands the assistant may run without asking (`allow`), must ask for (`ask`) or may
 /// never run (`deny`). Each entry is a command prefix compared word by word with the command,
@@ -271,6 +292,9 @@ pub struct KrakenConfig {
     /// What the assistant may do with dangerous commands (default `ask`).
     #[serde(skip_serializing_if = "is_default_danger")]
     pub danger_mode: DangerMode,
+    /// The `[ui]` table: keymap preset, text size and whether the first-run wizard is done.
+    #[serde(skip_serializing_if = "UiSettings::is_empty")]
+    pub ui: UiSettings,
     /// The `[assistant_shell]` table: the assistant's shell tool.
     #[serde(skip_serializing_if = "ShellConfig::is_empty")]
     pub assistant_shell: ShellConfig,

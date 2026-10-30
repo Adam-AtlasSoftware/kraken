@@ -1,0 +1,26 @@
+# Office-style keys: Ctrl plus a letter for everything, F2 renames.
+id = "classic"
+name = "Classic desktop"
+blurb = "Like most desktop programs: Ctrl+F finds, Ctrl+G goes to, F2 renames, Ctrl+Z undoes."
+
+[keys]
+Back = ["Alt+Left"]
+Forward = ["Alt+Right"]
+RenameCurrent = ["F2"]
+FocusFunctionFilter = ["Ctrl+L"]
+OpenSettings = ["Ctrl+,"]
+NewProject = ["Ctrl+O"]
+OpenProject = ["Ctrl+Shift+O"]
+CloseProject = ["Ctrl+W"]
+Quit = ["Ctrl+Q"]
+OpenPalette = ["Ctrl+P", "Ctrl+Shift+P"]
+ShowShortcuts = ["Ctrl+/"]
+ShowHelp = ["F1"]
+UndoLast = ["Ctrl+Z"]
+GoTo = ["Ctrl+G"]
+Search = ["Ctrl+F"]
+Retype = ["Ctrl+T"]
+CommentHere = ["Ctrl+;"]
+ShowReferences = ["Ctrl+R"]
+AddBookmark = ["Ctrl+D"]
+CreateFunctionHere = ["Ctrl+Shift+N"]

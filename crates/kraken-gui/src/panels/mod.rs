@@ -24,7 +24,7 @@ mod tests;
 
 use egui::{Context, Key, Modifiers};
 use egui_dock::DockState;
-use kraken_viewmodel::{Reveal, ViewModel, XrefWhich};
+use kraken_viewmodel::{AppAction, Reveal, ViewModel, XrefWhich};
 
 use crate::workspace::Tab;
 
@@ -86,8 +86,9 @@ fn tool_keys(ctx: &Context, typing: bool, blocked: bool) -> ToolKeys {
     if blocked {
         return ToolKeys::default();
     }
+    let km = crate::keymap::of(ctx);
     ctx.input_mut(|i| {
-        let search = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F);
+        let search = km.consume(i, AppAction::Search);
         if typing {
             return ToolKeys {
                 search,
@@ -96,12 +97,12 @@ fn tool_keys(ctx: &Context, typing: bool, blocked: bool) -> ToolKeys {
         }
         ToolKeys {
             search,
-            goto: i.consume_key(Modifiers::NONE, Key::G),
-            retype: i.consume_key(Modifiers::NONE, Key::Y),
-            comment: i.consume_key(Modifiers::NONE, Key::Semicolon),
-            bookmark: i.consume_key(Modifiers::COMMAND, Key::D),
-            create_function: i.consume_key(Modifiers::NONE, Key::P),
-            undo: i.consume_key(Modifiers::COMMAND, Key::Z),
+            goto: km.consume(i, AppAction::GoTo),
+            retype: km.consume(i, AppAction::Retype),
+            comment: km.consume(i, AppAction::CommentHere),
+            bookmark: km.consume(i, AppAction::AddBookmark),
+            create_function: km.consume(i, AppAction::CreateFunctionHere),
+            undo: km.consume(i, AppAction::UndoLast),
         }
     })
 }
@@ -121,13 +122,14 @@ pub fn global_keys(
     let blocked =
         vm.palette.open || vm.tools.dialog_open() || vm.rename.is_some() || vm.comment.is_some();
     let keys = tool_keys(ctx, typing, blocked);
+    let km = crate::keymap::of(ctx);
     let (space, x) = if typing || blocked {
         (false, false)
     } else {
         ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::NONE, Key::Space),
-                i.consume_key(Modifiers::NONE, Key::X),
+                km.consume(i, AppAction::ShowReferences),
             )
         })
     };

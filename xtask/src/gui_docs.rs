@@ -227,8 +227,32 @@ On the welcome screen only **File** and **Help** are shown. The other menus appe
         );
     }
     out.push_str("\nPress **Ctrl+/** in the app for this list.\n");
+    out.push_str(FIRST_RUN);
     Ok(out)
 }
+
+const FIRST_RUN: &str = "
+## First run and keymaps
+
+The first time KRAKEN starts it opens a short wizard, **Welcome to KRAKEN**, with five steps:
+
+1. **Engine.** Shows whether KRAKEN's own engine is ready. When it is not, **Set up the native engine** downloads and builds its processor descriptions in the background; you can go on while it runs.
+2. **Assistant.** A coding agent on this computer, a model over the internet with an API key, a model on this computer, or none for now. The first two open Settings afterwards, the third starts the model setup. The step cannot be left before you choose.
+3. **Keys.** A keyboard preset: *KRAKEN* (the keys above), *Classic desktop* (Ctrl+F finds, Ctrl+G goes to, F2 renames), *Classic RE tool* (single letters on the code, Alt+T for text search) or *Modern RE tool* (Ctrl+P for every action, Ctrl+B for bookmarks).
+4. **Look.** Dark or light, and the text size (90, 100, 115 or 130 percent).
+5. **Start.** Open the demo project, take the short tour, or go to the start screen.
+
+Cancel skips the wizard and it does not come back by itself. **Help > First-run setup...** opens it again, and Settings has the same choices (Appearance, text size, Keyboard shortcuts). The choices are saved in `config.toml`:
+
+```toml
+[ui]
+keymap = \"classic\"      # kraken, classic, ida-like or binja-like
+zoom_percent = 115
+first_run_done = true
+```
+
+or with `kraken config set ui.keymap classic`. A preset changes only the keys, never what an action does; menus and the **Ctrl+/** list show the keys of the preset in force. The presets are plain files, one per keymap, in `crates/kraken-gui/data/keymaps/`: the name of an action and its keys, such as `GoTo = [\"G\"]`. A test checks that every action in them exists and that no key is bound twice.
+";
 
 /// Writes the page.
 pub fn write_page() -> Result<()> {

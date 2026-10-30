@@ -1,0 +1,27 @@
+# KRAKEN's own keys. Action names are the variants of `AppAction`; each takes one or more chords,
+# the first one is shown in menus.
+id = "kraken"
+name = "KRAKEN"
+blurb = "The keys KRAKEN shipped with: single letters in the code views, Ctrl+K for every action."
+
+[keys]
+Back = ["Alt+Left"]
+Forward = ["Alt+Right"]
+RenameCurrent = ["N"]
+FocusFunctionFilter = ["Ctrl+L"]
+OpenSettings = ["Ctrl+,"]
+NewProject = ["Ctrl+O"]
+OpenProject = ["Ctrl+Shift+O"]
+CloseProject = ["Ctrl+W"]
+Quit = ["Ctrl+Q"]
+OpenPalette = ["Ctrl+K", "Ctrl+Shift+P"]
+ShowShortcuts = ["Ctrl+/"]
+ShowHelp = ["F1"]
+UndoLast = ["Ctrl+Z"]
+GoTo = ["G"]
+Search = ["Ctrl+Shift+F"]
+Retype = ["Y"]
+CommentHere = [";"]
+ShowReferences = ["X"]
+AddBookmark = ["Ctrl+D"]
+CreateFunctionHere = ["P"]

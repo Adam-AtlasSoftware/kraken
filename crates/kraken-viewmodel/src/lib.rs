@@ -16,6 +16,7 @@ pub mod assist;
 mod backend;
 pub mod debug;
 mod errors;
+pub mod first_run;
 mod fuzzy;
 pub mod history;
 pub mod infer;

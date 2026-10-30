@@ -126,6 +126,8 @@ pub enum AppAction {
     ImportProgram,
     /// Open the Setup status window: what is installed and ready, with installs as background jobs.
     ShowSetupStatus,
+    /// Open the first-run wizard again: engine, assistant, keymap and look.
+    ShowFirstRun,
     /// Run the program, or a patched copy, in an installed emulator.
     RunInEmulator,
     /// In that setup: go on to the next step (the last one starts the download).
@@ -199,6 +201,7 @@ impl AppAction {
         AppAction::SetUpLocalModel,
         AppAction::ShowIntegrations,
         AppAction::ShowSetupStatus,
+        AppAction::ShowFirstRun,
         AppAction::RunInEmulator,
     ];
 
@@ -303,6 +306,7 @@ impl AppAction {
             AppAction::ShowIntegrations => "Emulators and tools...",
             AppAction::ImportProgram => "Import program...",
             AppAction::ShowSetupStatus => "Setup status...",
+            AppAction::ShowFirstRun => "First-run setup...",
             AppAction::RunInEmulator => "Run in emulator...",
             AppAction::LocalSetupNext => "Model setup: next step",
             AppAction::LocalSetupBack => "Model setup: previous step",
@@ -418,6 +422,9 @@ impl AppAction {
             }
             AppAction::ImportProgram => {
                 "Import a program step by step: what it is, which engine, and its debug information"
+            }
+            AppAction::ShowFirstRun => {
+                "Choose the engine, assistant, keyboard shortcuts and look again, step by step"
             }
             AppAction::ShowSetupStatus => {
                 "See which engines and tools are installed and ready, and install the missing ones"
@@ -635,6 +642,8 @@ pub enum UiRequest {
     ImportProgram,
     /// Show the Setup status window.
     ShowSetupStatus,
+    /// Open the first-run wizard.
+    ShowFirstRun,
     /// Open the run-in-emulator dialog.
     RunInEmulator,
     /// Press a button of that setup.

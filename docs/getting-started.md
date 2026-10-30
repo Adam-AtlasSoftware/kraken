@@ -118,7 +118,7 @@ Not sure what to do next? `kraken next-steps` looks at the project and suggests 
 
 ## Prefer the window?
 
-Everything above also works in the window. Start it with `kraken-gui`.
+Everything above also works in the window. Start it with `kraken-gui`. The first start opens a short wizard (engine, assistant, keyboard preset, look); **Help > First-run setup...** opens it again, and the [window reference](gui.md#first-run-and-keymaps) describes the choices.
 
 ![The welcome screen with the menu bar, the demo, the import box and the project box](images/tutorial/welcome.png)
 

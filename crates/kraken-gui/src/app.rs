@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use egui::{Frame, Key, Margin, Modifiers, Ui, ViewportCommand};
+use egui::{Frame, Margin, Ui, ViewportCommand};
 use egui_dock::DockState;
 use kraken_gui_widgets::KrakenTheme;
 use kraken_viewmodel::agents::{AgentEnv, AgentsHub};
@@ -22,6 +22,7 @@ use crate::assist::{self, AssistRequest, AssistSetup, Change};
 use crate::help::{self, HelpDo, HelpEnv, HelpUi};
 use crate::import::{ImportAction, ImportDialog, Picked, Picker, is_project_dir};
 use crate::import_wizard::ImportWizard;
+use crate::keymap::{self, Keymap};
 use crate::menu::{self, MenuCmd, MenuEnv};
 use crate::private::{self, PrivateDaemon};
 use crate::recent::{self, Prefs};
@@ -32,6 +33,7 @@ use crate::welcome::{self, Choice, Welcome, WelcomeAction};
 use crate::wizard::WizardEvent;
 use crate::workspace::{self, Tab, UiState};
 use crate::{chrome, overlays};
+use kraken_viewmodel::first_run::{AfterFirstRun, AssistantChoice, FirstRun};
 
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -185,6 +187,12 @@ pub struct KrakenApp {
     shortcuts_open: bool,
     /// The help window.
     help: HelpUi,
+    /// The keyboard shortcut preset in force.
+    keymap: &'static Keymap,
+    /// Text size in percent.
+    zoom: u32,
+    /// The first-run wizard, while it is open.
+    first_run: Option<FirstRun>,
     /// The first-run tour.
     tour: Tour,
     /// The tour step whose panel was last brought to the front.
@@ -228,6 +236,11 @@ impl KrakenApp {
             let ctx = ctx.clone();
             approvals.set_repaint(Arc::new(move || ctx.request_repaint()));
         }
+        let ui_keymap = keymap::preset_or_default(services.cfg.ui.keymap.as_deref());
+        let ui_zoom = services.cfg.ui.zoom_percent.unwrap_or(100).clamp(
+            crate::first_run::ZOOM_RANGE.0,
+            crate::first_run::ZOOM_RANGE.1,
+        );
         let mut app = KrakenApp {
             rt,
             slot: Slot::Idle,
@@ -271,6 +284,9 @@ impl KrakenApp {
             quit_agreed: false,
             shortcuts_open: false,
             help: HelpUi::default(),
+            keymap: ui_keymap,
+            zoom: ui_zoom,
+            first_run: None,
             tour: Tour::default(),
             tour_fronted: None,
             next_steps: None,
@@ -323,10 +339,11 @@ impl KrakenApp {
         if app.services.first_run_tour
             && app.prefs.persistent()
             && !app.prefs.tour_done()
+            && !app.services.cfg.ui.first_run_done
             && opts.screenshot.is_none()
             && !opts.demo
         {
-            app.tour.start();
+            app.open_first_run(ctx);
         }
         if opts.screenshot.is_some()
             && let Some((p, b)) = assist::provider_for(opts.scene)
@@ -616,6 +633,12 @@ impl KrakenApp {
     #[cfg(test)]
     pub fn tour_step(&self) -> Option<usize> {
         self.tour.is_active().then(|| self.tour.step())
+    }
+
+    /// The id of the keyboard preset in force (tests).
+    #[cfg(test)]
+    pub fn active_keymap(&self) -> &str {
+        &self.keymap.id
     }
 
     #[cfg(test)]
@@ -908,21 +931,23 @@ impl KrakenApp {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context, reqs: &mut Vec<UiRequest>) {
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma)) {
-            self.settings.toggle();
-        }
-        let (open_project, open_binary, close, quit, cheat, help) = ctx.input_mut(|i| {
+        let km = self.keymap;
+        let (settings, open_project, open_binary, close, quit, cheat, help) = ctx.input_mut(|i| {
             // The shifted chord first: a plain Ctrl+O pattern also matches it.
-            let open_project = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::O);
+            let open_project = km.consume(i, AppAction::OpenProject);
             (
+                km.consume(i, AppAction::OpenSettings),
                 open_project,
-                i.consume_key(Modifiers::COMMAND, Key::O),
-                i.consume_key(Modifiers::COMMAND, Key::W),
-                i.consume_key(Modifiers::COMMAND, Key::Q),
-                i.consume_key(Modifiers::COMMAND, Key::Slash),
-                i.consume_key(Modifiers::NONE, Key::F1),
+                km.consume(i, AppAction::NewProject),
+                km.consume(i, AppAction::CloseProject),
+                km.consume(i, AppAction::Quit),
+                km.consume(i, AppAction::ShowShortcuts),
+                km.consume(i, AppAction::ShowHelp),
             )
         });
+        if settings {
+            self.settings.toggle();
+        }
         for (pressed, action) in [
             (open_project, AppAction::OpenProject),
             (open_binary, AppAction::NewProject),
@@ -942,16 +967,15 @@ impl KrakenApp {
         else {
             return;
         };
-        let (palette_a, palette_b, back, fwd, filter) = ctx.input_mut(|i| {
+        let (palette, back, fwd, filter) = ctx.input_mut(|i| {
             (
-                i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
-                i.consume_key(Modifiers::COMMAND, Key::K),
-                i.consume_key(Modifiers::ALT, Key::ArrowLeft),
-                i.consume_key(Modifiers::ALT, Key::ArrowRight),
-                i.consume_key(Modifiers::COMMAND, Key::L),
+                km.consume(i, AppAction::OpenPalette),
+                km.consume(i, AppAction::Back),
+                km.consume(i, AppAction::Forward),
+                km.consume(i, AppAction::FocusFunctionFilter),
             )
         });
-        if palette_a || palette_b {
+        if palette {
             if vm.palette.open {
                 vm.close_palette();
             } else {
@@ -992,6 +1016,7 @@ impl KrakenApp {
             AppAction::ShowIntegrations => Some(UiRequest::ShowIntegrations),
             AppAction::ImportProgram => Some(UiRequest::ImportProgram),
             AppAction::ShowSetupStatus => Some(UiRequest::ShowSetupStatus),
+            AppAction::ShowFirstRun => Some(UiRequest::ShowFirstRun),
             AppAction::LocalSetupNext => Some(UiRequest::LocalSetup(SetupButton::Next)),
             AppAction::LocalSetupBack => Some(UiRequest::LocalSetup(SetupButton::Back)),
             AppAction::LocalSetupCancel => Some(UiRequest::LocalSetup(SetupButton::Cancel)),
@@ -1076,6 +1101,7 @@ impl KrakenApp {
                 self.help.show_topic(help::topic_for_tab(tab));
             }
             UiRequest::TakeTour => self.tour.start(),
+            UiRequest::ShowFirstRun => self.open_first_run(ctx),
             UiRequest::AskAboutKraken => {
                 self.state.bring_to_front = Some(Tab::Assistant);
                 if self.state.assist.input.trim().is_empty() {
@@ -1223,6 +1249,7 @@ impl KrakenApp {
                 WizardEvent::None => {}
             }
         }
+        self.first_run_window(ctx);
         if let Some(step) = self.confirm_ai.clone() {
             let daemon = self.services.mode == Mode::Daemon && !self.is_demo;
             let line = self.vm.as_ref().and_then(|v| v.ai_chip()).map(|c| c.text());
@@ -1342,6 +1369,8 @@ impl KrakenApp {
             rt: self.rt.handle(),
             mode: self.services.mode,
             dark: self.theme.dark,
+            keymap: self.keymap,
+            zoom: self.zoom,
             config_path: self.services.config_path.as_ref(),
             backend,
             connecting: matches!(self.slot, Slot::Connecting(_)),
@@ -1355,6 +1384,14 @@ impl KrakenApp {
                 SettingsAction::SetDark(dark) => {
                     self.theme.dark = dark;
                     self.prefs.set_dark(dark);
+                }
+                SettingsAction::SetKeymap(id) => {
+                    self.keymap = keymap::preset_or_default(Some(id));
+                    self.save_ui(|u| u.keymap = Some(id.to_string()));
+                }
+                SettingsAction::SetZoom(z) => {
+                    self.zoom = z;
+                    self.save_ui(|u| u.zoom_percent = Some(z));
                 }
                 SettingsAction::ConnectDaemon => self.connect_daemon(ctx),
                 SettingsAction::DefaultEngine(engine) => self.welcome.engine = engine,
@@ -1422,6 +1459,8 @@ impl KrakenApp {
             rt: self.rt.handle(),
             mode: self.services.mode,
             dark: self.theme.dark,
+            keymap: self.keymap,
+            zoom: self.zoom,
             config_path: self.services.config_path.as_ref(),
             backend,
             connecting: false,
@@ -1485,6 +1524,83 @@ impl KrakenApp {
         }
     }
 
+    /// Opens the first-run wizard with the settings now in force, and gets the engine report
+    /// ready for its first step.
+    fn open_first_run(&mut self, ctx: &egui::Context) {
+        let assistant = self.services.cfg.provider.is_some();
+        self.first_run = Some(FirstRun::new(
+            &self.keymap.id,
+            self.theme.dark,
+            self.zoom,
+            assistant,
+        ));
+        if self.integrations_backend().is_none()
+            && self.services.mode == Mode::Daemon
+            && matches!(self.slot, Slot::Idle)
+        {
+            self.connect_daemon(ctx);
+        }
+    }
+
+    /// Saves a change of `[ui]` in the config file; a file that cannot be written is reported.
+    fn save_ui(&mut self, change: impl FnOnce(&mut kraken_host::UiSettings)) {
+        let Some(path) = self.services.config_path.clone() else {
+            return;
+        };
+        if let Err(e) = crate::first_run::save_ui(&path, change) {
+            self.problem(format!("The setting could not be saved: {e}"));
+        }
+    }
+
+    /// Draws the first-run wizard and carries out what it ends with.
+    fn first_run_window(&mut self, ctx: &egui::Context) {
+        let Some(mut w) = self.first_run.take() else {
+            return;
+        };
+        let hub = self.setup_hub.clone();
+        let ev = crate::wizard::show(ctx, "Welcome to KRAKEN", &mut w, |ui, w| {
+            crate::first_run::body(ui, w, hub.as_ref())
+        });
+        match ev {
+            WizardEvent::None => self.first_run = Some(w),
+            WizardEvent::Cancel => self.end_first_run(None, ctx),
+            WizardEvent::Finish => self.end_first_run(Some(w), ctx),
+        }
+    }
+
+    /// The wizard is over: `done` holds its choices, `None` when it was skipped.
+    fn end_first_run(&mut self, done: Option<FirstRun>, ctx: &egui::Context) {
+        self.prefs.set_tour_done();
+        let Some(w) = done else {
+            self.save_ui(|u| u.first_run_done = true);
+            return;
+        };
+        self.keymap = keymap::preset_or_default(Some(&w.keymap));
+        self.zoom = w.zoom;
+        if self.theme.dark != w.dark {
+            self.theme.dark = w.dark;
+            self.prefs.set_dark(w.dark);
+        }
+        let id = self.keymap.id.clone();
+        self.save_ui(|u| {
+            u.keymap = Some(id);
+            u.zoom_percent = Some(w.zoom);
+            u.first_run_done = true;
+        });
+        match w.assistant {
+            Some(AssistantChoice::LocalModel) => self.open_local_setup(ctx),
+            Some(AssistantChoice::TerminalAgent | AssistantChoice::ModelApi) => {
+                self.settings.show_window()
+            }
+            _ => {}
+        }
+        match w.after {
+            AfterFirstRun::Demo => self.request(Pending::Open(Choice::Demo), ctx),
+            AfterFirstRun::Tour => self.tour.start(),
+            AfterFirstRun::Nothing => {}
+        }
+    }
+
     /// Asks for the Setup status window; connects to the daemon first when there is no backend.
     fn want_setup_status(&mut self, ctx: &egui::Context) {
         self.setup_want = true;
@@ -1506,18 +1622,26 @@ impl KrakenApp {
 
     /// Draws the Setup status window; makes the hub on first use.
     fn setup_status_window(&mut self, ctx: &egui::Context) {
-        if self.setup_hub.is_none() && self.setup_want {
+        if self.setup_hub.is_none() && (self.setup_want || self.first_run.is_some()) {
             match self.integrations_backend() {
                 Some(backend) => {
                     let c = ctx.clone();
-                    self.setup_hub = Some(kraken_viewmodel::setup_status::SetupHub::new(
+                    let hub = kraken_viewmodel::setup_status::SetupHub::new(
                         backend,
                         self.rt.handle().clone(),
                         Arc::new(move || c.request_repaint()),
-                    ));
+                    );
+                    if !self.setup_want {
+                        // Made for the first-run wizard: the window is not opened, so the
+                        // report is asked for here.
+                        hub.refresh();
+                    }
+                    self.setup_hub = Some(hub);
                 }
                 None => {
-                    if let Slot::Failed(e) = &self.slot {
+                    if self.setup_want
+                        && let Slot::Failed(e) = &self.slot
+                    {
                         let msg = format!("KRAKEN cannot reach krakend: {e}");
                         self.setup_want = false;
                         self.problem(msg);
@@ -1826,6 +1950,10 @@ impl KrakenApp {
         if self.applied != Some(self.theme) {
             self.theme.apply(&ctx);
             self.applied = Some(self.theme);
+        }
+        keymap::install(&ctx, self.keymap);
+        if (ctx.zoom_factor() * 100.0).round() as u32 != self.zoom {
+            ctx.set_zoom_factor(self.zoom as f32 / 100.0);
         }
         self.step_vm(&ctx);
         let mut reqs: Vec<UiRequest> = Vec::new();

@@ -405,3 +405,27 @@ fn the_palette_opens_a_form_for_any_command_and_runs_it() {
     assert!(!r.failed, "{}", r.text);
     assert!(r.text.contains("\"length\": 16"));
 }
+
+#[test]
+fn a_remapped_key_triggers_its_action_and_the_old_key_stops() {
+    let mut services = crate::services::Services::offline();
+    services.cfg.ui.keymap = Some("classic".into());
+    let mut h = Harness::demo_with(services);
+    h.select("main");
+    // In the classic desktop preset Go to is Ctrl+G; G alone does nothing.
+    h.press(Key::G);
+    h.step();
+    assert!(h.app.view_model().unwrap().tools.goto.is_none());
+    h.press_with(Key::G, ctrl());
+    h.step();
+    assert!(h.app.view_model().unwrap().tools.goto.is_some());
+    h.press(Key::Escape);
+    h.step();
+    // Y retypes in KRAKEN's keys; here it is Ctrl+T.
+    h.press(Key::Y);
+    h.step();
+    assert!(h.app.view_model().unwrap().tools.type_dialog.is_none());
+    h.press_with(Key::T, ctrl());
+    h.step();
+    assert!(h.app.view_model().unwrap().tools.type_dialog.is_some());
+}

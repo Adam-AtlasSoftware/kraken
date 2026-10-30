@@ -29,6 +29,10 @@ struct Harness {
 
 impl Harness {
     fn demo() -> Self {
+        Self::demo_with(Services::offline())
+    }
+
+    fn demo_with(services: Services) -> Self {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -49,7 +53,7 @@ impl Harness {
             function: None,
             path: None,
         };
-        let app = KrakenApp::new(&ctx, rt.clone(), Services::offline(), &opts);
+        let app = KrakenApp::new(&ctx, rt.clone(), services, &opts);
         let mut h = Harness { ctx, app, _rt: rt };
         h.run_until("the demo to finish analysis", |a| {
             a.view_model().is_some_and(|vm| {

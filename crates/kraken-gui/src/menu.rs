@@ -137,7 +137,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
 fn item(ui: &mut Ui, a: AppAction, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     let reason = disabled_reason(a, env);
     let mut button = Button::new(a.label());
-    if let Some(sc) = a.shortcut() {
+    if let Some(sc) = crate::keymap::of(ui.ctx()).label(a) {
         button = button.shortcut_text(sc);
     }
     let r = ui
@@ -225,6 +225,7 @@ fn help_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     toggle(ui, AppAction::ToggleLearnMode, env.learn_mode, env, out);
     item(ui, AppAction::ShowShortcuts, env, out);
     item(ui, AppAction::ShowSetupStatus, env, out);
+    item(ui, AppAction::ShowFirstRun, env, out);
     ui.separator();
     item(ui, AppAction::OpenDocs, env, out);
 }
@@ -404,6 +405,28 @@ pub fn shortcuts_window(ctx: &egui::Context, open: &mut bool) {
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
+            let km = crate::keymap::of(ui.ctx());
+            ui.label(format!(
+                "Keymap: {}. Change it in Settings > Keyboard shortcuts.",
+                km.name
+            ));
+            if km.id != crate::keymap::DEFAULT_ID {
+                ui.add_space(4.0);
+                ui.strong("Keys of this keymap");
+                egui::Grid::new("kraken_shortcuts_keymap")
+                    .num_columns(2)
+                    .striped(true)
+                    .spacing([18.0, 4.0])
+                    .show(ui, |ui| {
+                        for (action, keys) in km.bound() {
+                            ui.monospace(keys);
+                            ui.label(action.label());
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(6.0);
+                ui.strong("Keys of KRAKEN's own keymap (the ones not listed above are the same)");
+            }
             egui::Grid::new("kraken_shortcuts")
                 .num_columns(3)
                 .striped(true)

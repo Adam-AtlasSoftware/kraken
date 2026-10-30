@@ -935,6 +935,7 @@ mod audit;
 mod bench;
 mod debug;
 mod emulate;
+mod first_run;
 mod help;
 mod import_wizard;
 mod integrations;

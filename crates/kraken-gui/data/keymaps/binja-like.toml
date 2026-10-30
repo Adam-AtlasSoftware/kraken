@@ -1,0 +1,26 @@
+# The habits of newer interactive tools: a command palette on Ctrl+P, letters on the code.
+id = "binja-like"
+name = "Modern RE tool"
+blurb = "The habits of newer reverse-engineering tools: Ctrl+P for every action, G, N, Y, X, ; and P on the code, Ctrl+B for bookmarks."
+
+[keys]
+Back = ["Alt+Left"]
+Forward = ["Alt+Right"]
+RenameCurrent = ["N"]
+FocusFunctionFilter = ["Ctrl+L"]
+OpenSettings = ["Ctrl+,"]
+NewProject = ["Ctrl+O"]
+OpenProject = ["Ctrl+Shift+O"]
+CloseProject = ["Ctrl+W"]
+Quit = ["Ctrl+Q"]
+OpenPalette = ["Ctrl+P", "Ctrl+Shift+P"]
+ShowShortcuts = ["Ctrl+/"]
+ShowHelp = ["F1"]
+UndoLast = ["Ctrl+Z"]
+GoTo = ["G"]
+Search = ["Ctrl+Shift+F"]
+Retype = ["Y"]
+CommentHere = [";"]
+ShowReferences = ["X"]
+AddBookmark = ["Ctrl+B"]
+CreateFunctionHere = ["P"]

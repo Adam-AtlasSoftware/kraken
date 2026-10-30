@@ -113,6 +113,24 @@ pub const CONFIG_KEYS: &[ConfigKey] = &[
         false,
     ),
     key(
+        "ui.keymap",
+        "kraken, classic, ida-like or binja-like",
+        "Keyboard shortcut preset of the GUI",
+        false,
+    ),
+    key(
+        "ui.zoom_percent",
+        "a whole number from 80 to 160",
+        "Text size of the GUI in percent (default 100)",
+        false,
+    ),
+    key(
+        "ui.first_run_done",
+        "true or false",
+        "The GUI's first-run wizard was finished or skipped (false shows it again)",
+        false,
+    ),
+    key(
         "debuginfo.servers",
         "a list of http:// or https:// addresses",
         "debuginfod and Microsoft-style symbol servers `debuginfo_find` asks, in order",

@@ -1,0 +1,27 @@
+# The habits of long-established disassemblers: single letters, Alt for the big dialogs.
+id = "ida-like"
+name = "Classic RE tool"
+blurb = "The habits of older reverse-engineering tools: G, N, X, Y, ; and P on the code, Alt+T for text search, Alt+M for marks."
+
+[keys]
+Back = ["Alt+Left"]
+Forward = ["Alt+Right"]
+RenameCurrent = ["N"]
+FocusFunctionFilter = ["Ctrl+F"]
+OpenSettings = ["Ctrl+,"]
+NewProject = ["Ctrl+O"]
+OpenProject = ["Ctrl+Shift+O"]
+CloseProject = ["Ctrl+W"]
+Quit = ["Alt+X"]
+OpenPalette = ["Ctrl+K", "Ctrl+Shift+P"]
+ShowShortcuts = ["Ctrl+/"]
+ShowHelp = ["F1"]
+UndoLast = ["Ctrl+Z"]
+GoTo = ["G"]
+Search = ["Alt+T"]
+Retype = ["Y"]
+CommentHere = [";"]
+ShowReferences = ["X"]
+AddBookmark = ["Alt+M"]
+ShowBookmarks = ["Ctrl+M"]
+CreateFunctionHere = ["P"]
