@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use kraken_engine::{Cap, TypeStore, unsupported};
 use kraken_model::StateValue;
-use kraken_proto::cdecl::{CContext, CParseError, parse_declarations, parse_type, relayout};
+use kraken_proto::cdecl::{
+    CContext, CParseError, check_limits, parse_declarations, parse_type, relayout,
+};
 use kraken_proto::{ErrorCode, LogOp, ProtoError, TypeDef};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -123,6 +125,7 @@ fn check_names(def: &TypeDef, who: kraken_model::AuthorKind) -> Result<(), Proto
     if let Some(n) = def.name() {
         validate_name("type name", n, who)?;
     }
+    check_limits(def).map_err(invalid)?;
     if let TypeDef::Struct(c) | TypeDef::Union(c) = def {
         if c.fields.len() > MAX_FIELDS {
             return Err(invalid(format!("more than {MAX_FIELDS} fields")));
@@ -141,6 +144,9 @@ async fn submit_define(
     name: String,
     new: Option<TypeDef>,
 ) -> Result<MutationOutput, ProtoError> {
+    if let Some(def) = &new {
+        check_limits(def).map_err(invalid)?;
+    }
     let project = s.project()?;
     let old = current(&project, store, ctx, &name).await?;
     let op = LogOp::DefineType { name, old, new };

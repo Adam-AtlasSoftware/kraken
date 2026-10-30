@@ -92,6 +92,29 @@ async fn parse_errors_name_the_line_and_nothing_is_recorded() {
 }
 
 #[tokio::test]
+async fn hostile_declarations_are_refused_without_harm() {
+    let env = Setup::new(tiny()).start().await;
+    let u = user();
+    let n = 2500;
+    let deep = format!(
+        "struct t {{ void (*f)({}void{}); }};",
+        "void(*)(".repeat(n),
+        ")".repeat(n)
+    );
+    let stars = format!("struct s {{ char {}p; }};", "*".repeat(200));
+    let huge = "struct u { char a[4611686018427387904][4]; };".to_string();
+    for text in [deep, stars, huge] {
+        let e = env
+            .err(&u, "type_define", json!({"c_declaration": text}))
+            .await;
+        assert_eq!(code(&e), kraken_proto::ErrorCode::InvalidArgument);
+    }
+    // the daemon is still there and nothing was recorded
+    let hist = env.ok(&u, "history", json!({})).await;
+    assert!(!hist.to_string().contains("type_define"), "{hist}");
+}
+
+#[tokio::test]
 async fn agents_add_types_but_changes_wait_for_approval() {
     let env = Setup::new(tiny()).start().await;
     let a = agent("run-1");

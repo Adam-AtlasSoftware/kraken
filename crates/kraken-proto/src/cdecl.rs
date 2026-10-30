@@ -12,6 +12,68 @@ use crate::types::{
     TypeDef, TypeRef, TypedefDef,
 };
 
+/// Deepest nesting a declared type may have, counted in JSON levels (a pointer or array adds
+/// one, a function pointer adds three around its parameters). Deeper types could not be read
+/// back from the edit log, whose JSON reader stops at 128 levels.
+pub const MAX_TYPE_NESTING: u32 = 32;
+
+/// Largest size in bytes a declared type may have.
+pub const MAX_TYPE_SIZE: u64 = 1 << 32;
+
+/// How many declarators (function-pointer parameter lists) may be nested in one another.
+const MAX_DECLARATOR_DEPTH: u32 = 16;
+
+/// The nesting of `t` in the units of [`MAX_TYPE_NESTING`].
+pub fn type_nesting(t: &TypeRef) -> u32 {
+    match t {
+        TypeRef::Named { .. } | TypeRef::Primitive(_) => 1,
+        TypeRef::Pointer { target, .. } => 1 + type_nesting(target),
+        TypeRef::Array { element, .. } => 1 + type_nesting(element),
+        TypeRef::Function(p) => prototype_nesting(p),
+    }
+}
+
+fn prototype_nesting(p: &FunctionPrototype) -> u32 {
+    let params = p
+        .params
+        .iter()
+        .map(|q| 2 + type_nesting(&q.ty))
+        .max()
+        .unwrap_or(0);
+    1 + type_nesting(&p.return_type).max(params)
+}
+
+/// Checks that `def` stays within [`MAX_TYPE_NESTING`] and [`MAX_TYPE_SIZE`], for definitions
+/// that did not come through the parser.
+pub fn check_limits(def: &TypeDef) -> Result<(), String> {
+    let deep = |t: &TypeRef| type_nesting(t) > MAX_TYPE_NESTING;
+    let too_deep = match def {
+        TypeDef::Struct(c) | TypeDef::Union(c) => {
+            if c.size > MAX_TYPE_SIZE {
+                return Err(format!("the type is larger than {MAX_TYPE_SIZE} bytes"));
+            }
+            c.fields.iter().any(|f| deep(&f.ty))
+        }
+        TypeDef::Enum(_) => false,
+        TypeDef::Typedef(t) => deep(&t.target),
+        TypeDef::Function(p) => prototype_nesting(p) > MAX_TYPE_NESTING,
+    };
+    if too_deep {
+        return Err(format!(
+            "the type is nested too deeply (more than {MAX_TYPE_NESTING} levels of pointers, arrays and function pointers)"
+        ));
+    }
+    Ok(())
+}
+
+/// Places a member of size `s` and alignment `a` after `size` bytes: its offset and the new
+/// size, or `None` past [`MAX_TYPE_SIZE`].
+fn place(size: u64, s: u64, a: u32) -> Option<(u64, u64)> {
+    let o = size.checked_next_multiple_of(u64::from(a.max(1)))?;
+    let end = o.checked_add(s)?;
+    (end <= MAX_TYPE_SIZE).then_some((o, end))
+}
+
 /// What the parser needs to know about the program.
 pub struct CContext<'a> {
     /// Pointer size in bytes.
@@ -153,6 +215,7 @@ struct Parser<'a> {
     /// An anonymous body took the typedef's name already.
     typedef_done: bool,
     depth: u32,
+    decl_depth: u32,
 }
 
 type PResult<T> = Result<T, CParseError>;
@@ -260,7 +323,10 @@ impl<'a> Parser<'a> {
             TypeRef::Pointer { size, .. } => Ok((u64::from(*size), *size)),
             TypeRef::Array { element, count } => {
                 let (s, a) = self.size_align_depth(element, depth + 1)?;
-                Ok((s * count, a))
+                match s.checked_mul(*count) {
+                    Some(n) if n <= MAX_TYPE_SIZE => Ok((n, a)),
+                    _ => self.fail(format!("an array is larger than {MAX_TYPE_SIZE} bytes")),
+                }
             }
             TypeRef::Function(_) => self.fail("a function cannot be a member by value"),
             TypeRef::Named { name } => match self.lookup(name) {
@@ -392,7 +458,7 @@ impl<'a> Parser<'a> {
             };
         }
         self.at += 1;
-        if self.depth >= 16 {
+        if self.depth >= 16 || self.depth + self.decl_depth >= 2 * MAX_DECLARATOR_DEPTH {
             return self.fail("declarations are nested too deeply");
         }
         self.depth += 1;
@@ -421,8 +487,10 @@ impl<'a> Parser<'a> {
                     size = size.max(s);
                     0
                 } else {
-                    let o = size.next_multiple_of(u64::from(a));
-                    size = o + s;
+                    let Some((o, end)) = place(size, s, a) else {
+                        return self.fail(format!("the type is larger than {MAX_TYPE_SIZE} bytes"));
+                    };
+                    size = end;
                     o
                 };
                 fields.push(Field {
@@ -439,7 +507,9 @@ impl<'a> Parser<'a> {
         }
         self.depth -= 1;
         self.in_typedef = outer_typedef;
-        let size = size.next_multiple_of(u64::from(align));
+        let Some((_, size)) = place(size, 0, align) else {
+            return self.fail(format!("the type is larger than {MAX_TYPE_SIZE} bytes"));
+        };
         let Some(name) = tag else {
             // an anonymous body is named by the typedef that follows
             return self.anonymous_body(
@@ -536,8 +606,27 @@ impl<'a> Parser<'a> {
 
     /// Pointers, name, array suffixes and function-pointer declarators.
     fn declarator(&mut self, base: TypeRef) -> PResult<(TypeRef, Option<String>)> {
+        if self.decl_depth >= MAX_DECLARATOR_DEPTH {
+            return self.fail("declarations are nested too deeply");
+        }
+        self.decl_depth += 1;
+        let out = self.declarator_inner(base);
+        self.decl_depth -= 1;
+        let (ty, name) = out?;
+        if type_nesting(&ty) > MAX_TYPE_NESTING {
+            return self.fail(format!(
+                "the type is nested too deeply (more than {MAX_TYPE_NESTING} levels of pointers, arrays and function pointers)"
+            ));
+        }
+        Ok((ty, name))
+    }
+
+    fn declarator_inner(&mut self, base: TypeRef) -> PResult<(TypeRef, Option<String>)> {
         let mut ty = base;
         while self.eat('*') {
+            if type_nesting(&ty) > MAX_TYPE_NESTING {
+                return self.fail("too many levels of pointers");
+            }
             self.skip_qualifiers();
             ty = TypeRef::Pointer {
                 target: Box::new(ty),
@@ -549,9 +638,12 @@ impl<'a> Parser<'a> {
             && self.toks.get(self.at + 1).map(|t| &t.tok) == Some(&Tok::Punct('*'))
         {
             self.at += 2;
-            let mut stars = 1;
+            let mut stars = 1u32;
             while self.eat('*') {
                 stars += 1;
+                if stars > MAX_TYPE_NESTING {
+                    return self.fail("too many levels of pointers");
+                }
             }
             let name = match self.peek_ident() {
                 Some(_) => Some(self.ident("a name")?),
@@ -587,6 +679,9 @@ impl<'a> Parser<'a> {
                 return self.fail("an array cannot have a negative size");
             }
             self.expect(']')?;
+            if dims.len() as u32 >= MAX_TYPE_NESTING {
+                return self.fail("too many array dimensions");
+            }
             dims.push(n as u64);
         }
         for n in dims.into_iter().rev() {
@@ -694,6 +789,7 @@ pub fn parse_declarations(text: &str, cx: &CContext<'_>) -> Result<Vec<TypeDef>,
         in_typedef: false,
         typedef_done: false,
         depth: 0,
+        decl_depth: 0,
     };
     while p.at < p.toks.len() {
         p.declaration()?;
@@ -717,6 +813,7 @@ fn bare_parser<'a>(cx: &'a CContext<'a>) -> Parser<'a> {
         in_typedef: false,
         typedef_done: false,
         depth: 0,
+        decl_depth: 0,
     }
 }
 
@@ -741,6 +838,11 @@ pub fn parse_type(text: &str, cx: &CContext<'_>) -> Result<TypeRef, CParseError>
 /// Lays the fields of `c` out again in order with natural alignment (after a field's type
 /// changed).
 pub fn relayout(c: &mut Composite, union: bool, cx: &CContext<'_>) -> Result<(), CParseError> {
+    let too_large = || CParseError {
+        message: format!("the type is larger than {MAX_TYPE_SIZE} bytes"),
+        line: 1,
+        column: 1,
+    };
     let p = bare_parser(cx);
     let (mut size, mut align) = (0u64, 1u32);
     for f in &mut c.fields {
@@ -757,12 +859,13 @@ pub fn relayout(c: &mut Composite, union: bool, cx: &CContext<'_>) -> Result<(),
             f.offset = 0;
             size = size.max(s);
         } else {
-            f.offset = size.next_multiple_of(u64::from(a));
-            size = f.offset + s;
+            let (o, end) = place(size, s, a).ok_or_else(too_large)?;
+            f.offset = o;
+            size = end;
         }
     }
     c.align = align;
-    c.size = size.next_multiple_of(u64::from(align));
+    c.size = place(size, 0, align).ok_or_else(too_large)?.1;
     Ok(())
 }
 
@@ -842,5 +945,68 @@ mod tests {
         assert!(parse("#include <x.h>").is_err());
         assert!(parse("struct a { int x; }; struct a { int y; };").is_err());
         assert!(parse("").is_err());
+    }
+
+    #[test]
+    fn deep_function_pointers_fail_cleanly() {
+        // thousands of nested parameter lists used to overflow the stack
+        let n = 2500;
+        let text = format!(
+            "struct t {{ void (*f)({}void{}); }};",
+            "void(*)(".repeat(n),
+            ")".repeat(n)
+        );
+        let e = parse(&text).unwrap_err();
+        assert!(e.message.contains("nested too deeply"), "{e}");
+        // a run on a small stack, as on a worker thread
+        let h = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || parse(&text).is_err())
+            .unwrap();
+        assert!(h.join().unwrap());
+        assert!(parse("typedef void (*h)(void (*)(int (*)(char *)));").is_ok());
+    }
+
+    #[test]
+    fn pointer_nesting_is_capped_and_what_parses_reads_back() {
+        let e = parse(&format!("struct s {{ char {}p; }};", "*".repeat(200))).unwrap_err();
+        assert!(e.message.contains("pointers"), "{e}");
+        let e = parse(&format!("typedef int (*{}f)(void);", "*".repeat(200))).unwrap_err();
+        assert!(e.message.contains("pointers"), "{e}");
+        let e = parse(&format!("struct s {{ char a{}; }};", "[1]".repeat(200))).unwrap_err();
+        assert!(e.message.contains("dimensions"), "{e}");
+        // the deepest accepted type survives a JSON round trip
+        let ok = parse(&format!("struct s {{ char {}p; }};", "*".repeat(30))).unwrap();
+        let json = serde_json::to_string(&ok).unwrap();
+        let back: Vec<TypeDef> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ok);
+        assert!(check_limits(&ok[0]).is_ok());
+        let mut deep = TypeRef::Primitive(Primitive {
+            class: PrimitiveClass::Int,
+            size: 1,
+            signed: true,
+        });
+        for _ in 0..40 {
+            deep = TypeRef::Pointer {
+                target: Box::new(deep),
+                size: 8,
+            };
+        }
+        let def = TypeDef::Typedef(TypedefDef {
+            name: "d".into(),
+            target: deep,
+        });
+        assert!(check_limits(&def).is_err());
+    }
+
+    #[test]
+    fn sizes_do_not_overflow() {
+        let e = parse("struct u { char a[4611686018427387904][4]; };").unwrap_err();
+        assert!(e.message.contains("larger"), "{e}");
+        let e = parse("struct u { char a[4294967296]; char b; };").unwrap_err();
+        assert!(e.message.contains("larger"), "{e}");
+        let e = parse("struct u { char a[9223372036854775807]; long b; };").unwrap_err();
+        assert!(e.message.contains("larger"), "{e}");
+        assert!(parse("struct u { char a[65536]; };").is_ok());
     }
 }
