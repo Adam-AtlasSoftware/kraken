@@ -108,7 +108,7 @@ final class TypeConv {
     /** Removes the program's own type `name` from the root category; false when there is none. */
     boolean remove(String name) {
         DataType dt = dtm.getDataType(CategoryPath.ROOT, name);
-        return dt != null && dtm.remove(dt, ghidra.util.task.TaskMonitor.DUMMY);
+        return dt != null && dtm.remove(dt);
     }
 
     /** Find a named type: program types first, then built-ins. */
