@@ -289,20 +289,27 @@ pub(super) fn verify_file(refs: &DebugRefs, candidate: &Path) -> (Verdict, Strin
             "the file has no debug information (no DWARF .debug_info section)".into(),
         );
     }
-    if let (Some(want), Ok(Some(theirs))) = (&refs.build_id, file.build_id()) {
-        return if hex(theirs) == *want {
-            (
+    // When the program has a build-id the candidate must carry the same one: a CRC-32 alone can
+    // be forged by patching four bytes, so it is only trusted for programs without a build-id.
+    if let Some(want) = &refs.build_id {
+        return match file.build_id() {
+            Ok(Some(theirs)) if hex(theirs) == *want => (
                 Verdict::Match,
                 format!("build-id {want} agrees with the program"),
-            )
-        } else {
-            (
+            ),
+            Ok(Some(theirs)) => (
                 Verdict::Mismatch,
                 format!(
                     "its build-id is {} but the program's is {want}: it is from another build",
                     hex(theirs)
                 ),
-            )
+            ),
+            _ => (
+                Verdict::Mismatch,
+                format!(
+                    "it carries no build-id but the program's is {want}, so KRAKEN cannot prove it belongs to this build"
+                ),
+            ),
         };
     }
     if let Some(link) = &refs.debuglink {

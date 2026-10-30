@@ -277,6 +277,44 @@ async fn a_file_with_another_build_id_is_refused_and_never_cached() {
 }
 
 #[tokio::test]
+async fn a_file_without_the_build_id_is_refused_even_when_its_crc_matches() {
+    let Some((dir, with_id, _)) = program(0xB4) else {
+        return;
+    };
+    // the program has a build-id and a debug link whose CRC-32 is that of a debug file that
+    // carries no build-id: a server must not get that file accepted on the CRC alone
+    let debug = corpus("bin/stripped_calc-O0");
+    let prog = dir.path().join("linked");
+    let linked = std::process::Command::new("objcopy")
+        .arg(format!("--add-gnu-debuglink={}", debug.display()))
+        .arg(&with_id)
+        .arg(&prog)
+        .status()
+        .is_ok_and(|s| s.success());
+    if !linked {
+        eprintln!("skipped: objcopy cannot add a debug link");
+        return;
+    }
+    let (url, _hits) = serve(HashMap::from([(
+        format!("/buildid/{}/debuginfo", id_hex(0xB4)),
+        std::fs::read(&debug).unwrap(),
+    )]));
+    let s = session();
+    configure(&s, &url, true).await;
+    let out = find_result(&s, &user(), &prog).await.unwrap();
+    assert_eq!(out["found"], false, "{out}");
+    let why = out["attempts"][0]["outcome"]["value"].as_str().unwrap();
+    assert!(why.contains("no build-id"), "{why}");
+    assert!(
+        !cache_dir()
+            .join("buildid")
+            .join(id_hex(0xB4))
+            .join("debuginfo")
+            .exists()
+    );
+}
+
+#[tokio::test]
 async fn a_cache_hit_asks_no_server_even_offline() {
     let Some((_dir, prog, debug)) = program(0xC4) else {
         return;
