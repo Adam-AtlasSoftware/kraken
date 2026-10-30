@@ -613,6 +613,8 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ("setup_ghidra", json!({})),
         ("setup_native", json!({})),
         ("setup_dotnet", json!({})),
+        ("setup_rust", json!({})),
+        ("setup_sysroots", json!({})),
         ("local_model_setup", json!({})),
         ("local_model_list", json!({})),
         ("local_model_devices", json!({})),

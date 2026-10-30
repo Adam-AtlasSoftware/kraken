@@ -72,6 +72,34 @@ Linux x86-64 builds, checked against upstream's releases on 2026-10-28.
 AppImages run with `APPIMAGE_EXTRACT_AND_RUN=1`, so they need no FUSE. Some emulators need system
 libraries of their own (for example melonDS wants `libenet`); the run log says what is missing.
 
+### Libraries for dynamically linked programs, and the Rust toolchain
+
+Two kinds of entry are not programs you start. They are what emulation and rewriting need, so
+that neither needs developer tools on your computer.
+
+| Entry | What it is | Install |
+|---|---|---|
+| `sysroot-aarch64`, `sysroot-armhf`, `sysroot-riscv64`, `sysroot-i386`, `sysroot-x86-64` | The dynamic loader and the C and C++ runtime libraries of one architecture | Debian 13 (trixie) `libc6`, `libgcc-s1` and `libstdc++6` packages from deb.debian.org, pinned by SHA-256, unpacked by KRAKEN itself (no `dpkg`, no root) |
+| `rust-toolchain` | `rustc` and `cargo`, to build the Rust rewrites | `cargo` on your `PATH` is used first. Otherwise KRAKEN downloads `rustup-init` (pinned, SHA-256 checked) and runs it with its own `RUSTUP_HOME` and `CARGO_HOME`, so your `~/.cargo`, `~/.rustup` and shell profile are never touched. Installs the pinned toolchain and the `x86_64-unknown-linux-musl` target (about 250 MB to download, 800 MB on disk). A C linker (`cc`) is still needed to link builds for the host target |
+
+Install them from Help > Setup status (the Emulators and Rust toolchain cards), the rewrite
+wizard's Check step (the Rust toolchain row has a "Set it up..." button), `kraken setup --sysroots`
+and `kraken setup --rust`, the jobs `setup_sysroots` and `setup_rust`, or one by one with
+`integration_install` (`{"id": "sysroot-aarch64", "accept_licence": true}`). The files go to
+`<data dir>/integrations/<id>/<version>/`; `integration_remove` deletes them.
+
+A sysroot is laid out like the one `cargo xtask emu-sysroots` makes (`usr/lib/<triplet>/` with `lib`
+linking to `usr/lib`). `emulate_run`, `emulate_call`, the debugger and the rewrite oracle find an
+installed one by themselves; a sysroot you built yourself (`KRAKEN_EMU_SYSROOTS`, the developer
+cache) wins over an installed one. **There is no riscv32 sysroot**: Debian has no riscv32 port, so
+RISC-V 32-bit programs run in the emulator only when they are statically linked, and a dynamic one
+gets a message that says so.
+
+The pinned package versions come from the trixie archive of 2026-10-30. Debian drops a package
+from `deb.debian.org` once a newer one replaces it, so after a security update the download answers
+404 until KRAKEN's catalogue is updated; `emulators.d/` can carry an entry with updated pins in the
+meantime.
+
 ## Your own emulator
 
 Any emulator on any silicon works as soon as you describe it. Drop a TOML file into

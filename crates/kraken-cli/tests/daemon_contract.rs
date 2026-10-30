@@ -558,6 +558,8 @@ async fn every_registry_command_identical() {
         "setup_ghidra",
         "setup_native",
         "setup_dotnet",
+        "setup_rust",
+        "setup_sysroots",
         "integration_install_start",
     ] {
         covered.insert(name.to_string());
@@ -578,6 +580,8 @@ async fn every_registry_command_identical() {
         ("setup_ghidra", json!({"force": "yes"}), "invalid_argument"),
         ("setup_native", json!({"nope": 1}), "invalid_argument"),
         ("setup_dotnet", json!({"force": 3}), "invalid_argument"),
+        ("setup_rust", json!({"force": "x"}), "invalid_argument"),
+        ("setup_sysroots", json!({"nope": 1}), "invalid_argument"),
         (
             "integration_install_start",
             json!({"id": "no-such-emulator", "accept_licence": true}),

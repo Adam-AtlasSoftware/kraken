@@ -215,7 +215,8 @@ impl Command for EmulateRun {
              (`kraken-emu-run`) that can read the program and the SLEIGH specs and write one \
              private directory that is removed afterwards. A statically linked program runs as \
              is; a dynamically linked one needs a sysroot with its loader and libraries \
-             (`cargo xtask emu-sysroots`, or `KRAKEN_EMU_SYSROOTS`); without one, an x86 or \
+             (install `sysroot-<arch>` from the integrations catalogue, `cargo xtask emu-sysroots` \
+             or `KRAKEN_EMU_SYSROOTS`; there is no riscv32 sysroot); without one, an x86 or \
              x86-64 program gets private copies of this computer's loader and of the libraries \
              it names, and sees nothing else of this computer. Needs the SLEIGH specs (`kraken setup --native`, or `KRAKEN_NATIVE_SPECS`). \
              `kind: unsupported` means the program used an instruction the emulator cannot \
@@ -420,7 +421,51 @@ fn sysroot_for(arch: Arch) -> Option<Sysroot> {
     {
         return Some(Sysroot::Extracted(dir));
     }
+    if let Some(dir) = installed_sysroot(set) {
+        return Some(Sysroot::Extracted(dir));
+    }
     host_libraries(arch).then_some(Sysroot::Host)
+}
+
+/// The sysroot of `set` that Setup (the `sysroot-*` entries of the integrations catalogue)
+/// installed under `<data dir>/integrations/sysroot-<name>/<version>/`.
+fn installed_sysroot(set: &str) -> Option<PathBuf> {
+    let data = match std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
+        Some(x) => x.join("kraken"),
+        None => PathBuf::from(std::env::var_os("HOME")?).join(".local/share/kraken"),
+    };
+    installed_sysroot_in(&data, set)
+}
+
+fn installed_sysroot_in(data: &Path, set: &str) -> Option<PathBuf> {
+    let name = match set {
+        "arm32" => "armhf",
+        "aarch64" => "aarch64",
+        "riscv64" => "riscv64",
+        "elf32" => "i386",
+        "x86_64" => "x86-64",
+        _ => return None,
+    };
+    let base = data.join("integrations").join(format!("sysroot-{name}"));
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("lib").is_dir())
+        .collect();
+    versions.sort();
+    versions.pop()
+}
+
+/// Why `arch` has no sysroot to install, when that is the reason a dynamic program cannot run.
+fn no_sysroot_note(arch: Arch) -> Option<&'static str> {
+    (arch == Arch::Riscv32).then_some(
+        "there is no riscv32 sysroot: Debian has no riscv32 port, so RISC-V 32-bit programs \
+         can only be emulated when they are statically linked",
+    )
 }
 
 /// Whether this computer has a loader for programs of `arch`.
@@ -458,11 +503,28 @@ pub(super) fn emulation_error(e: EmuError, binary: &Path) -> ProtoError {
             arch: Arch::X86_64, ..
         } => problem(
             ErrorCode::Unsupported,
-            "a dynamically linked x86-64 program needs a sysroot: run `cargo xtask \
-             emu-sysroots` (needs docker or podman and the debian:trixie-slim image) or set \
+            "a dynamically linked x86-64 program needs a sysroot: install `sysroot-x86-64` \
+             (Help > Setup status, or integration_install), or run `cargo xtask emu-sysroots` \
+             (needs docker or podman and the debian:trixie-slim image), or set \
              KRAKEN_EMU_SYSROOTS",
         ),
-        EmuError::NeedsSysroot { .. } => problem(ErrorCode::Unsupported, e.to_string()),
+        EmuError::NeedsSysroot { arch, .. } => match no_sysroot_note(arch) {
+            Some(note) => problem(ErrorCode::Unsupported, format!("{e}; {note}")),
+            None => problem(
+                ErrorCode::Unsupported,
+                format!(
+                    "{e}; install the libraries for it: `kraken setup --sysroots`, Help > Setup \
+                     status, or integration_install with id sysroot-{}",
+                    match arch {
+                        Arch::Arm => "armhf",
+                        Arch::Aarch64 => "aarch64",
+                        Arch::Riscv64 => "riscv64",
+                        Arch::X86 => "i386",
+                        _ => "x86-64",
+                    }
+                ),
+            ),
+        },
         EmuError::Unsupported(m) => problem(ErrorCode::Unsupported, m),
         EmuError::Io(m) | EmuError::Emulator(m) => {
             problem(ErrorCode::Internal, format!("emulation failed: {m}"))
@@ -1158,6 +1220,30 @@ fn present_exit(e: &Exit) -> EmulateExit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_sysroots_are_found_by_set_and_riscv32_has_none() {
+        let dir = tempfile::tempdir().expect("dir");
+        let base = dir.path().join("integrations");
+        for (id, version) in [("sysroot-armhf", "v1"), ("sysroot-armhf", "v2")] {
+            std::fs::create_dir_all(base.join(id).join(version).join("lib")).expect("tree");
+        }
+        // An unfinished install has no `lib` and is ignored.
+        std::fs::create_dir_all(base.join("sysroot-armhf/v3.partial/usr")).expect("partial");
+        std::fs::create_dir_all(base.join("sysroot-i386/d13/lib")).expect("tree");
+        assert_eq!(
+            installed_sysroot_in(dir.path(), "arm32"),
+            Some(base.join("sysroot-armhf/v2"))
+        );
+        assert_eq!(
+            installed_sysroot_in(dir.path(), "elf32"),
+            Some(base.join("sysroot-i386/d13"))
+        );
+        assert_eq!(installed_sysroot_in(dir.path(), "aarch64"), None);
+        assert_eq!(installed_sysroot_in(dir.path(), "riscv32"), None);
+        assert!(no_sysroot_note(Arch::Riscv32).is_some_and(|n| n.contains("no riscv32 sysroot")));
+        assert!(no_sysroot_note(Arch::Aarch64).is_none());
+    }
 
     fn args() -> EmulateRunArgs {
         EmulateRunArgs::default()

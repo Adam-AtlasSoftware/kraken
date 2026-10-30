@@ -845,9 +845,13 @@ fn extract_tar_reader<R: Read>(
             .map_err(|e| ProvisionError::BadArchive(e.to_string()))?
             .to_string_lossy()
             .into_owned();
-        let rel = safe_relative(&raw)?;
         let kind = entry.header().entry_type();
         use tar::EntryType as T;
+        // Debian packages start with a `./` entry for the root itself.
+        if kind == T::Directory && matches!(raw.trim_end_matches('/'), "" | ".") {
+            continue;
+        }
+        let rel = safe_relative(&raw)?;
         match kind {
             T::Regular | T::Continuous | T::Directory => {}
             T::Symlink => {

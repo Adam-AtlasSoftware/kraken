@@ -528,20 +528,39 @@ pub fn build_cli(registry: &Registry) -> Command {
                  `cargo xtask native-sla` (the pinned Ghidra sources and the compiled Sleigh \
                  files); anywhere else it prints the exact commands, because the decompiler \
                  library is linked when kraken is built. Pick the engine per project with \
-                 `kraken project-create --engine ghidra|native|auto`.",
+                 `kraken project-create --engine ghidra|native|auto`. With --rust it installs a \
+                 Rust toolchain for rewrites (nothing happens when `cargo` is on PATH; otherwise \
+                 rustup runs inside KRAKEN's data directory and your ~/.cargo is untouched). With \
+                 --sysroots it installs the loaders and libraries (pinned Debian packages) that \
+                 dynamically linked AArch64, ARM, RISC-V 64, x86 and x86-64 programs need in the \
+                 emulator; there is no riscv32 sysroot.",
             )
             .arg(
                 Arg::new("dotnet")
                     .long("dotnet")
                     .action(ArgAction::SetTrue)
-                    .conflicts_with("native")
+                    .conflicts_with_all(["native", "rust", "sysroots"])
                     .help("Install the .NET runtime and sidecar (for .NET assemblies) instead of Ghidra"),
             )
             .arg(
                 Arg::new("native")
                     .long("native")
                     .action(ArgAction::SetTrue)
+                    .conflicts_with_all(["rust", "sysroots"])
                     .help("Fetch the native engine's sources and compile its Sleigh files instead of installing Ghidra"),
+            )
+            .arg(
+                Arg::new("rust")
+                    .long("rust")
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with("sysroots")
+                    .help("Install a Rust toolchain for rewrites unless cargo is on PATH"),
+            )
+            .arg(
+                Arg::new("sysroots")
+                    .long("sysroots")
+                    .action(ArgAction::SetTrue)
+                    .help("Install the libraries dynamically linked programs need in the emulator"),
             )
             .arg(
                 Arg::new("force")

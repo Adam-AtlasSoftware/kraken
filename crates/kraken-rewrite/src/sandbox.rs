@@ -77,7 +77,32 @@ type ToolchainKey = (Option<std::ffi::OsString>, Option<std::ffi::OsString>);
 
 static TOOLCHAIN: std::sync::Mutex<Option<(ToolchainKey, Toolchain)>> = std::sync::Mutex::new(None);
 
-/// Resolves the toolchain (`RUSTC` / `CARGO` if set, else `rustc` / `cargo` on `PATH`). Runs
+/// The `rustc` of the toolchain Setup installed (the `rust-toolchain` entry of the integrations
+/// catalogue): `<data dir>/integrations/rust-toolchain/<version>/rustup/toolchains/*/bin/rustc`.
+/// The real binary, not a rustup proxy, so no `RUSTUP_HOME` is needed to run it.
+pub fn managed_rustc() -> Option<PathBuf> {
+    let data = match std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
+        Some(x) => x.join("kraken"),
+        None => PathBuf::from(std::env::var_os("HOME")?).join(".local/share/kraken"),
+    };
+    let base = data.join("integrations/rust-toolchain");
+    let mut found: Vec<PathBuf> = std::fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .filter_map(|v| std::fs::read_dir(v.path().join("rustup/toolchains")).ok())
+        .flat_map(|rd| rd.flatten())
+        .map(|t| t.path().join("bin/rustc"))
+        .filter(|p| p.is_file())
+        .collect();
+    found.sort();
+    found.pop()
+}
+
+/// Resolves the toolchain (`RUSTC` / `CARGO` if set, else `rustc` / `cargo` on `PATH`, else the
+/// one Setup installed). Runs
 /// `rustc --print sysroot` once with the caller's own environment; nothing generated is involved.
 pub fn toolchain() -> Result<Toolchain, RewriteError> {
     let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
@@ -88,10 +113,16 @@ pub fn toolchain() -> Result<Toolchain, RewriteError> {
     {
         return Ok(t.clone());
     }
-    let candidate = key
+    let mut candidate = key
         .0
         .clone()
         .map_or_else(|| PathBuf::from("rustc"), PathBuf::from);
+    if key.0.is_none()
+        && Command::new(&candidate).arg("--version").output().is_err()
+        && let Some(managed) = managed_rustc()
+    {
+        candidate = managed;
+    }
     let out = Command::new(&candidate)
         .args(["--print", "sysroot"])
         .stdin(Stdio::null())

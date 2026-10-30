@@ -393,3 +393,190 @@ probe = true
 [emulator.run]
 argv = ["{exe}", "{binary}"]
 gui = true
+
+# ---- Sysroots: the loader and shared libraries a dynamically linked program needs, so the
+# built-in emulator can run it. Pinned Debian 13 (trixie) packages from deb.debian.org, checked
+# by SHA-256 (the Packages index of 2026-10-30). Unpacked in Rust into <data dir>/integrations/
+# sysroot-<arch>/<version>/ in the layout `cargo xtask emu-sysroots` makes. Debian publishes no
+# riscv32 port, so there is no riscv32 sysroot: RV32 programs run statically linked only.
+
+[[emulator]]
+id = "sysroot-aarch64"
+name = "AArch64 libraries"
+kind = "sysroot"
+summary = "Loader and C/C++ runtime libraries to emulate dynamically linked AArch64 programs"
+homepage = "https://packages.debian.org/trixie/libc6"
+platforms = ["Linux AArch64"]
+license = "LGPL-2.1-or-later"
+notice = "Debian's libc6, libgcc-s1 and libstdc++6 packages (GNU C Library and GCC runtime, LGPL-2.1-or-later with the GCC runtime exception), downloaded from deb.debian.org and unpacked here; nothing of them is shipped with KRAKEN. The emulator reads them as the guest's /lib."
+[emulator.sysroot]
+set = "aarch64"
+loader = "usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_arm64.deb"
+sha256 = "8784eda966b189c777a384dac5ce009e8fc9b52d006926c5a013e7fa8aa688cc"
+size = 2483572
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_arm64.deb"
+sha256 = "1108bc87879833d6d9a145f22a4a15cddb34e065b4b5f4b97bee586adbac2851"
+size = 54104
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_arm64.deb"
+sha256 = "6669b0c52a2e7c6af9adfdabce3ff6e286065cdfbc7b85280862b5f799daebee"
+size = 637536
+format = "deb"
+
+[[emulator]]
+id = "sysroot-armhf"
+name = "32-bit ARM (armhf) libraries"
+kind = "sysroot"
+summary = "Loader and C/C++ runtime libraries to emulate dynamically linked 32-bit ARM (armhf) programs"
+homepage = "https://packages.debian.org/trixie/libc6"
+platforms = ["Linux 32-bit ARM (armhf)"]
+license = "LGPL-2.1-or-later"
+notice = "Debian's libc6, libgcc-s1 and libstdc++6 packages (GNU C Library and GCC runtime, LGPL-2.1-or-later with the GCC runtime exception), downloaded from deb.debian.org and unpacked here; nothing of them is shipped with KRAKEN. The emulator reads them as the guest's /lib."
+[emulator.sysroot]
+set = "arm32"
+loader = "usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_armhf.deb"
+sha256 = "4fc6fed8d77d01c0dacb5fda8b880a8c8a669575936de5761b693077a6f6c2ec"
+size = 2260832
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_armhf.deb"
+sha256 = "25910c3a0bce3985e388de445244578b7922dc670c9bba1c8673779b89447873"
+size = 37008
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_armhf.deb"
+sha256 = "9c82eecc30961a3da3e062c0dba8ce076736059f4b8e7794c803985e75aea48b"
+size = 606604
+format = "deb"
+
+[[emulator]]
+id = "sysroot-riscv64"
+name = "RISC-V 64 libraries"
+kind = "sysroot"
+summary = "Loader and C/C++ runtime libraries to emulate dynamically linked RISC-V 64 programs"
+homepage = "https://packages.debian.org/trixie/libc6"
+platforms = ["Linux RISC-V 64"]
+license = "LGPL-2.1-or-later"
+notice = "Debian's libc6, libgcc-s1 and libstdc++6 packages (GNU C Library and GCC runtime, LGPL-2.1-or-later with the GCC runtime exception), downloaded from deb.debian.org and unpacked here; nothing of them is shipped with KRAKEN. The emulator reads them as the guest's /lib."
+[emulator.sysroot]
+set = "riscv64"
+loader = "usr/lib/riscv64-linux-gnu/ld-linux-riscv64-lp64d.so.1"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_riscv64.deb"
+sha256 = "77f0da760da3eab6318917857669ec23556b4e1ee489218cb966884a11b0d967"
+size = 2470128
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_riscv64.deb"
+sha256 = "16d3f9f534028615413d23f649e5d246baef48fe7db739ad564ef8b9a6e5587c"
+size = 56788
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_riscv64.deb"
+sha256 = "f285313f34e0d8f65463c669fac8eb29760a3f3fd6459005dd3110cdd2b10fd7"
+size = 707496
+format = "deb"
+
+[[emulator]]
+id = "sysroot-i386"
+name = "32-bit x86 libraries"
+kind = "sysroot"
+summary = "Loader and C/C++ runtime libraries to emulate dynamically linked 32-bit x86 programs"
+homepage = "https://packages.debian.org/trixie/libc6"
+platforms = ["Linux 32-bit x86"]
+license = "LGPL-2.1-or-later"
+notice = "Debian's libc6, libgcc-s1 and libstdc++6 packages (GNU C Library and GCC runtime, LGPL-2.1-or-later with the GCC runtime exception), downloaded from deb.debian.org and unpacked here; nothing of them is shipped with KRAKEN. The emulator reads them as the guest's /lib."
+[emulator.sysroot]
+set = "elf32"
+loader = "usr/lib/i386-linux-gnu/ld-linux.so.2"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_i386.deb"
+sha256 = "67bb4b54cf4bb6a380449dfa1852cd9135659f85360caa0e41d312f4b30e573a"
+size = 2721896
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_i386.deb"
+sha256 = "a4c71fd856d2a48a7505a087b4186e3cca23f94603c05e3fb7c799b27e72f761"
+size = 88164
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_i386.deb"
+sha256 = "b6020260b92a97ac33ae58a73b16f3ab31fed7632e9b861f7cd5fc393facd6ed"
+size = 765444
+format = "deb"
+
+[[emulator]]
+id = "sysroot-x86-64"
+name = "x86-64 libraries"
+kind = "sysroot"
+summary = "Loader and C/C++ runtime libraries to emulate dynamically linked x86-64 programs"
+homepage = "https://packages.debian.org/trixie/libc6"
+platforms = ["Linux x86-64"]
+license = "LGPL-2.1-or-later"
+notice = "Debian's libc6, libgcc-s1 and libstdc++6 packages (GNU C Library and GCC runtime, LGPL-2.1-or-later with the GCC runtime exception), downloaded from deb.debian.org and unpacked here; nothing of them is shipped with KRAKEN. The emulator reads them as the guest's /lib."
+[emulator.sysroot]
+set = "x86_64"
+loader = "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_amd64.deb"
+sha256 = "967aa62605721081c3eb2a17650611a792aa802d76a6511d1840242623d204c9"
+size = 2846580
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_amd64.deb"
+sha256 = "3c71917b490d1a17aed43196a2787a256ecf060526cdb20216a74bedc061b150"
+size = 72772
+format = "deb"
+[[emulator.artifact]]
+version = "debian13-2.41-12-deb13u4"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_amd64.deb"
+sha256 = "ab1fa05837aa7a92aae748fd07a18a35f7d18bb4a71c4724fe2bbf0e32089de0"
+size = 713628
+format = "deb"
+
+# ---- The Rust toolchain rewrites compile with. Detected on PATH first (`cargo`); otherwise
+# KRAKEN downloads rustup-init (pinned, SHA-256 checked) and runs it with RUSTUP_HOME and
+# CARGO_HOME inside its own install directory, so ~/.cargo and ~/.rustup are never touched.
+[[emulator]]
+id = "rust-toolchain"
+name = "Rust toolchain"
+kind = "toolchain"
+summary = "rustc and cargo to build the Rust rewrites, with the x86-64 musl target"
+homepage = "https://rustup.rs"
+platforms = ["Linux x86-64"]
+license = "MIT OR Apache-2.0"
+notice = "KRAKEN downloads rustup-init from static.rust-lang.org and lets it install the pinned toolchain from the same host, into KRAKEN's data directory only (about 250 MB to download, 800 MB on disk). It changes nothing in your home directory or shell profile."
+[emulator.detect]
+names = ["cargo"]
+probe = true
+[emulator.toolchain]
+channel = "1.99.1"
+targets = ["x86_64-unknown-linux-musl"]
+[[emulator.artifact]]
+version = "rustup-1.29.2"
+url = "https://static.rust-lang.org/rustup/archive/1.29.2/x86_64-unknown-linux-gnu/rustup-init"
+sha256 = "5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4"
+size = 21139856
+format = "file"
+entry = "rustup-init"

@@ -37,7 +37,14 @@ one private directory.
 ## Dynamic programs
 
 A statically linked program runs as it is. A dynamically linked program needs its loader and C
-library. The emulator reads them from a sysroot, `~/.cache/kraken-dev/emu-sysroots/<set>` (or
+library. The emulator reads them from a sysroot. **Without developer tools:** Help > Setup status,
+`kraken setup --sysroots` or `integration_install` with `sysroot-aarch64`, `sysroot-armhf`,
+`sysroot-riscv64`, `sysroot-i386` or `sysroot-x86-64` downloads pinned Debian 13 `libc6`,
+`libgcc-s1` and `libstdc++6` packages (about 20 MB in all, checked by SHA-256) and unpacks them under
+KRAKEN's data directory (`integrations/sysroot-<arch>/`); the emulator finds them by itself (see
+[Emulators and tools](integrations.md)). There is **no riscv32 sysroot**, because Debian has no
+riscv32 port: 32-bit RISC-V programs run only when they are statically linked, as the corpus ones
+are. **From a source checkout:** `~/.cache/kraken-dev/emu-sysroots/<set>` (or
 `$KRAKEN_EMU_SYSROOTS/<set>`), which `cargo xtask emu-sysroots` extracts for 32-bit x86, x86-64,
 ARM, AArch64 and RISC-V 64. The corpus sets come from the corpus build images; the `x86_64` set
 comes from the local `debian:trixie-slim` image (`KRAKEN_EMU_X86_64_IMAGE` picks another; needs
@@ -50,7 +57,9 @@ it copies the program's loader and the shared libraries the program names (and t
 name) into a private directory for the run, and that directory is the guest's `/`. Nothing else
 of this computer is visible, so libraries a program opens by name at run time (`dlopen`, NSS
 modules, gconv) are absent; the run's `notes` say how many libraries were copied and which were
-not found. For other architectures without a sysroot the command says so and names the fix.
+not found. For other architectures without a sysroot the command says so and names the fix (the
+Setup entry to install, or that riscv32 has none). The order is: a sysroot you built, an installed one,
+then this computer's libraries (x86 only).
 
 Why a portable sysroot can still be needed on x86-64: many distributions build glibc for x86-64-v3, with AVX2
 instructions inside, and the emulated CPU implements no VEX/AVX instructions (a program that

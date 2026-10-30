@@ -238,7 +238,8 @@ pub use search::{
 };
 pub use setup::{
     GlobalJobOut, IntegrationInstallStart, SetupArgs, SetupBackend, SetupDotnet, SetupGhidra,
-    SetupItem, SetupNative, SetupState, SetupStatus, SetupStatusOut, SetupTask,
+    SetupItem, SetupNative, SetupRust, SetupState, SetupStatus, SetupStatusOut, SetupSysroots,
+    SetupTask,
 };
 pub use symbols::{
     ConflictPolicy, DEFAULT_PREVIEW, ExportFormat, MAX_EXPORT_TEXT_BYTES, MAX_IMPORT_EDITS,
@@ -408,6 +409,8 @@ pub fn register_all(r: &mut Registry) {
     r.register(SetupGhidra);
     r.register(SetupNative);
     r.register(SetupDotnet);
+    r.register(SetupRust);
+    r.register(SetupSysroots);
     r.register(IntegrationUsePath);
     r.register(IntegrationRemove);
     r.register(EmulatorRun);

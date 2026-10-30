@@ -31,9 +31,10 @@ use crate::provision::{
     extract_tar_xz, extract_zip,
 };
 
+pub mod deb;
 pub mod manifest;
 
-use manifest::{Artifact, Entry, Format};
+use manifest::{Artifact, Entry, Format, TOOLCHAIN_ENTRY};
 
 /// What KRAKEN remembers per entry.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -216,6 +217,16 @@ impl Integrations {
             .find(|a| a.os == std::env::consts::OS && a.arch == std::env::consts::ARCH)
     }
 
+    /// Everything an install downloads: a sysroot's packages (for any host), else the build for
+    /// this platform.
+    fn artifacts<'a>(&self, e: &'a Entry) -> Vec<&'a Artifact> {
+        if e.kind == "sysroot" {
+            e.artifact.iter().collect()
+        } else {
+            self.artifact(e).into_iter().collect()
+        }
+    }
+
     /// The usable program of an entry and where it came from.
     fn find(&self, e: &Entry, saved: &Saved) -> Option<(PathBuf, IntegrationSource)> {
         if let Some(p) = saved.path.as_deref().map(PathBuf::from)
@@ -278,7 +289,8 @@ impl Integrations {
 
     fn view(&self, e: &Entry, user: bool, saved: &Saved) -> IntegrationView {
         let found = self.find(e, saved);
-        let artifact = self.artifact(e);
+        let artifacts = self.artifacts(e);
+        let artifact = artifacts.first().copied();
         let progress = lock(&self.progress).get(&e.id).cloned();
         let status = if progress.is_some() {
             IntegrationStatus::Installing
@@ -307,7 +319,7 @@ impl Integrations {
             version,
             pinned_version: artifact.map(|a| a.version.clone()),
             path: found.map(|(p, _)| p.display().to_string()),
-            download_bytes: artifact.map_or(0, |a| a.size),
+            download_bytes: artifacts.iter().map(|a| a.size).sum(),
             disk_bytes: saved.disk_bytes,
             license: e.license.clone(),
             notice: e.notice.clone(),
@@ -336,59 +348,87 @@ impl Integrations {
         );
     }
 
-    async fn install_entry(&self, e: &Entry, a: &Artifact) -> Result<(), ProtoError> {
+    async fn install_entry(&self, e: &Entry, artifacts: &[Artifact]) -> Result<(), ProtoError> {
         let downloads = self.root.join("downloads");
-        let file_name = a
-            .url
-            .rsplit('/')
-            .next()
-            .filter(|n| !n.is_empty())
-            .unwrap_or("download")
-            .to_string();
-        let spec = ArtifactSpec {
-            name: e.id.clone(),
-            file_name,
-            url: a.url.clone(),
-            sha256: a.sha256.clone(),
-            format: match a.format {
-                Format::Zip => ArchiveFormat::Zip,
-                _ => ArchiveFormat::TarGz,
-            },
-            top_dir: String::new(),
-        };
-        let id = e.id.clone();
-        let progress = self.progress.clone();
-        let mut on_progress = move |p: Progress| {
-            let (phase, done, total) = match p {
-                Progress::Downloading { done, total, .. } => {
-                    ("downloading", done, total.unwrap_or(0))
-                }
-                Progress::Verifying { .. } => ("verifying", 0, 0),
-                Progress::Extracting { .. } => ("extracting", 0, 0),
-                _ => return,
-            };
-            lock(&progress).insert(
-                id.clone(),
-                InstallProgress {
-                    phase: phase.into(),
-                    done,
-                    total,
+        let total: u64 = artifacts.iter().map(|a| a.size).sum();
+        let mut archives = Vec::new();
+        let mut before = 0u64;
+        for a in artifacts {
+            let file_name = a
+                .url
+                .rsplit('/')
+                .next()
+                .filter(|n| !n.is_empty())
+                .unwrap_or("download")
+                .to_string();
+            let spec = ArtifactSpec {
+                name: e.id.clone(),
+                file_name,
+                url: a.url.clone(),
+                sha256: a.sha256.clone(),
+                format: match a.format {
+                    Format::Zip => ArchiveFormat::Zip,
+                    _ => ArchiveFormat::TarGz,
                 },
-            );
-        };
-        let archive = download(&*self.fetcher, &spec, &downloads, &mut on_progress)
-            .await
-            .map_err(|err| ProtoError::new(ErrorCode::Unsupported, err.to_string()))?;
+                top_dir: String::new(),
+            };
+            let id = e.id.clone();
+            let progress = self.progress.clone();
+            let offset = before;
+            let mut on_progress = move |p: Progress| {
+                let (phase, done) = match p {
+                    Progress::Downloading { done, .. } => ("downloading", offset + done),
+                    Progress::Verifying { .. } => ("verifying", offset),
+                    Progress::Extracting { .. } => ("extracting", offset),
+                    _ => return,
+                };
+                lock(&progress).insert(
+                    id.clone(),
+                    InstallProgress {
+                        phase: phase.into(),
+                        done,
+                        total,
+                    },
+                );
+            };
+            let archive = download(&*self.fetcher, &spec, &downloads, &mut on_progress)
+                .await
+                .map_err(|err| ProtoError::new(ErrorCode::Unsupported, err.to_string()))?;
+            archives.push((a.clone(), archive));
+            before += a.size;
+        }
         self.set_progress(&e.id, "extracting", 0, 0);
-        let (root, id2, art) = (self.root.clone(), e.id.clone(), a.clone());
-        let disk = tokio::task::spawn_blocking(move || stage(&root, &id2, &art, &archive))
+        let version = artifacts[0].version.clone();
+        let (root, entry, items) = (self.root.clone(), e.clone(), archives.clone());
+        let staging = tokio::task::spawn_blocking(move || unpack(&root, &entry, &items))
             .await
             .map_err(|err| internal(format!("install task failed: {err}")))??;
-        let (version, entry) = (a.version.clone(), a.entry.clone());
+        let program = match (&e.sysroot, &e.toolchain) {
+            (Some(s), _) => s.loader.clone(),
+            (_, Some(t)) => {
+                self.set_progress(&e.id, "installing the toolchain", 0, 0);
+                if let Err(err) = run_rustup(&staging, t).await {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    return Err(err);
+                }
+                TOOLCHAIN_ENTRY.to_string()
+            }
+            _ => artifacts[0].entry.clone(),
+        };
+        let (root, id2, v2, p2) = (
+            self.root.clone(),
+            e.id.clone(),
+            version.clone(),
+            program.clone(),
+        );
+        let files: Vec<PathBuf> = archives.into_iter().map(|(_, p)| p).collect();
+        let disk = tokio::task::spawn_blocking(move || commit(&root, &id2, &v2, &p2, &files))
+            .await
+            .map_err(|err| internal(format!("install task failed: {err}")))??;
         self.update_state(|st| {
             let s = st.entry(e.id.clone()).or_default();
             s.version = Some(version);
-            s.entry = Some(entry);
+            s.entry = Some(program);
             s.disk_bytes = disk;
         })
     }
@@ -402,31 +442,56 @@ impl Drop for ClearProgress {
     }
 }
 
-/// Unpacks `archive` into `<root>/<id>/<version>` through a staging directory; returns the bytes
-/// the installed copy uses. Other versions of the entry are deleted afterwards.
-fn stage(root: &Path, id: &str, a: &Artifact, archive: &Path) -> Result<u64, ProtoError> {
-    let base = root.join(id);
-    let staging = base.join(format!("{}.partial", a.version));
-    let target = base.join(&a.version);
+/// Unpacks the downloads of `e` into the staging directory `<root>/<id>/<version>.partial` and
+/// returns it. Nothing is in place until [`commit`].
+fn unpack(root: &Path, e: &Entry, items: &[(Artifact, PathBuf)]) -> Result<PathBuf, ProtoError> {
+    let version = &items[0].0.version;
+    let staging = root.join(&e.id).join(format!("{version}.partial"));
     let io = |what: &str, e: std::io::Error| internal(format!("{what}: {e}"));
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| io("cannot create the install directory", e))?;
-    let unpacked = match a.format {
-        Format::File => std::fs::copy(archive, staging.join(&a.entry))
-            .map(|_| ())
-            .map_err(|e| io("cannot copy the download", e)),
-        Format::Zip => extract_zip(archive, &staging)
-            .map_err(|e| ProtoError::new(ErrorCode::Unsupported, e.to_string())),
-        Format::TarGz => extract_tar_gz(archive, &staging)
-            .map_err(|e| ProtoError::new(ErrorCode::Unsupported, e.to_string())),
-        Format::TarXz => extract_tar_xz(archive, &staging)
-            .map_err(|e| ProtoError::new(ErrorCode::Unsupported, e.to_string())),
+    let unsupported = |e: crate::provision::ProvisionError| {
+        ProtoError::new(ErrorCode::Unsupported, e.to_string())
     };
-    if let Err(e) = unpacked {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(e);
+    let mut result = Ok(());
+    for (a, archive) in items {
+        result = match a.format {
+            Format::File => std::fs::copy(archive, staging.join(&a.entry))
+                .map(|_| ())
+                .map_err(|e| io("cannot copy the download", e)),
+            Format::Zip => extract_zip(archive, &staging).map_err(unsupported),
+            Format::TarGz => extract_tar_gz(archive, &staging).map_err(unsupported),
+            Format::TarXz => extract_tar_xz(archive, &staging).map_err(unsupported),
+            Format::Deb => deb::unpack_deb(archive, &staging).map_err(unsupported),
+        };
+        if result.is_err() {
+            break;
+        }
     }
-    let program = staging.join(&a.entry);
+    if result.is_ok() && e.kind == "sysroot" {
+        result = deb::shape_sysroot(&staging).map_err(|e| io("cannot lay out the sysroot", e));
+    }
+    if let Err(err) = result {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+    Ok(staging)
+}
+
+/// Checks that the program is in the staging directory, moves it to `<root>/<id>/<version>` and
+/// deletes the other versions and the downloads; returns the bytes the install uses.
+fn commit(
+    root: &Path,
+    id: &str,
+    version: &str,
+    entry: &str,
+    archives: &[PathBuf],
+) -> Result<u64, ProtoError> {
+    let base = root.join(id);
+    let staging = base.join(format!("{version}.partial"));
+    let target = base.join(version);
+    let io = |what: &str, e: std::io::Error| internal(format!("{what}: {e}"));
+    let program = staging.join(entry);
     // A symbolic link in the archive may not lead the entry out of the install directory.
     let inside = match (program.canonicalize(), staging.canonicalize()) {
         (Ok(p), Ok(s)) => p.starts_with(&s) && p.is_file(),
@@ -436,10 +501,7 @@ fn stage(root: &Path, id: &str, a: &Artifact, archive: &Path) -> Result<u64, Pro
         let _ = std::fs::remove_dir_all(&staging);
         return Err(ProtoError::new(
             ErrorCode::Unsupported,
-            format!(
-                "the release does not contain `{}` (or it is a link leaving the install)",
-                a.entry
-            ),
+            format!("the release does not contain `{entry}` (or it is a link leaving the install)"),
         ));
     }
     make_executable(&program);
@@ -452,8 +514,52 @@ fn stage(root: &Path, id: &str, a: &Artifact, archive: &Path) -> Result<u64, Pro
             }
         }
     }
-    let _ = std::fs::remove_file(archive);
+    for a in archives {
+        let _ = std::fs::remove_file(a);
+    }
     Ok(dir_size(&target))
+}
+
+/// Runs the downloaded `rustup-init` inside `dir` with `RUSTUP_HOME` and `CARGO_HOME` there, so
+/// nothing of the person's `~/.cargo` or `~/.rustup` is read or written, then drops the installer.
+async fn run_rustup(dir: &Path, t: &manifest::ToolchainSpec) -> Result<(), ProtoError> {
+    let init = dir.join("rustup-init");
+    make_executable(&init);
+    let mut cmd = tokio::process::Command::new(&init);
+    cmd.args([
+        "-y",
+        "--no-modify-path",
+        "--profile",
+        "minimal",
+        "--default-toolchain",
+        &t.channel,
+    ]);
+    for target in &t.targets {
+        cmd.args(["-t", target]);
+    }
+    cmd.env("RUSTUP_HOME", dir.join("rustup"))
+        .env("CARGO_HOME", dir.join("cargo"))
+        .env("RUSTUP_INIT_SKIP_PATH_CHECK", "yes")
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| internal(format!("cannot run rustup-init: {e}")))?;
+    let _ = std::fs::remove_file(&init);
+    let _ = std::fs::remove_dir_all(dir.join("rustup/downloads"));
+    let _ = std::fs::remove_dir_all(dir.join("rustup/tmp"));
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let skip = err.chars().count().saturating_sub(600);
+        let tail: String = err.chars().skip(skip).collect();
+        return Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!("rustup-init failed: {}", tail.trim()),
+        ));
+    }
+    Ok(())
 }
 
 fn dir_size(p: &Path) -> u64 {
@@ -608,7 +714,8 @@ impl IntegrationsBackend for Integrations {
         if !accept_licence {
             return Err(invalid("the licence and notice have to be accepted first"));
         }
-        let Some(artifact) = self.artifact(&entry).cloned() else {
+        let artifacts: Vec<Artifact> = self.artifacts(&entry).into_iter().cloned().collect();
+        if artifacts.is_empty() {
             return Err(ProtoError::new(
                 ErrorCode::Unsupported,
                 format!(
@@ -619,7 +726,7 @@ impl IntegrationsBackend for Integrations {
                     entry.notice
                 ),
             ));
-        };
+        }
         {
             let mut p = lock(&self.progress);
             if p.contains_key(id) {
@@ -633,14 +740,14 @@ impl IntegrationsBackend for Integrations {
                 InstallProgress {
                     phase: "downloading".into(),
                     done: 0,
-                    total: artifact.size,
+                    total: artifacts.iter().map(|a| a.size).sum(),
                 },
             );
         }
         // Dropped with the future when the install is cancelled, so the entry can be installed
         // again.
         let clear = ClearProgress(self.progress.clone(), id.to_string());
-        let result = self.install_entry(&entry, &artifact).await;
+        let result = self.install_entry(&entry, &artifacts).await;
         drop(clear);
         result?;
         self.view_of(id)

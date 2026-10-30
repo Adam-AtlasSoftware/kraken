@@ -2,7 +2,8 @@
 //!
 //! None of these needs a project. `setup_status` reports each tool KRAKEN uses (the engines'
 //! runtimes, the Rust toolchain, emulators, local inference) with a hint for fixing what is
-//! missing. `setup_ghidra`, `setup_native`, `setup_dotnet` and `integration_install_start` do the
+//! missing. `setup_ghidra`, `setup_native`, `setup_dotnet`, `setup_rust`, `setup_sysroots` and
+//! `integration_install_start` do the
 //! installs as jobs (`job-gN`): progress in `job_status`, stop with `job_cancel`. The work is done
 //! by a [`SetupBackend`] that `kraken-host` provides; `kraken setup` runs the same code.
 
@@ -66,6 +67,10 @@ pub enum SetupTask {
     Native,
     /// The .NET runtime and the sidecar.
     Dotnet,
+    /// The Rust toolchain rewrites compile with (when there is none on `PATH`).
+    Rust,
+    /// The loaders and libraries that dynamically linked programs need in the emulator.
+    Sysroots,
 }
 
 impl SetupTask {
@@ -75,6 +80,8 @@ impl SetupTask {
             SetupTask::Ghidra => "setup_ghidra",
             SetupTask::Native => "setup_native",
             SetupTask::Dotnet => "setup_dotnet",
+            SetupTask::Rust => "setup_rust",
+            SetupTask::Sysroots => "setup_sysroots",
         }
     }
 }
@@ -266,6 +273,39 @@ setup_command!(
      `job_status`, `job_await`, `job_cancel`. Agents and MCP callers are asked first.\n\
      Example: setup_dotnet {}",
     "The same work as `kraken setup --dotnet`."
+);
+
+setup_command!(
+    SetupRust,
+    SetupTask::Rust,
+    "setup_rust",
+    "Install a Rust toolchain for rewrites when there is none on PATH (job)",
+    "Needs no project. Looks for `cargo` on PATH first and does nothing when it is there. \
+     Otherwise downloads the pinned `rustup-init` from static.rust-lang.org over HTTPS, checks \
+     its SHA-256 and lets it install the pinned toolchain and the x86-64 musl target into \
+     KRAKEN's data directory (about 250 MB to download, 800 MB on disk); your `~/.cargo`, `~/.rustup` and shell profile \
+     are not touched. Returns a `job_id`: `job_status`, `job_await`, `job_cancel`. Agents and \
+     MCP callers are asked first.\n\
+     Example: setup_rust {}",
+    "The same work as `kraken setup --rust`; the `rust-toolchain` entry of the integrations \
+     catalogue. `force` installs KRAKEN's own copy even when `cargo` is on PATH. A C linker \
+     (`cc`) is still needed to link the host-target builds."
+);
+
+setup_command!(
+    SetupSysroots,
+    SetupTask::Sysroots,
+    "setup_sysroots",
+    "Install the libraries dynamically linked programs need in the emulator (job)",
+    "Needs no project. Downloads pinned Debian 13 packages (libc6, libgcc-s1, libstdc++6) for \
+     AArch64, 32-bit ARM, RISC-V 64, 32-bit x86 and x86-64 from deb.debian.org over HTTPS \
+     (about 20 MB), checks their SHA-256 and unpacks them under KRAKEN's data directory; \
+     `emulate_run` and the debugger find them by themselves. There is no riscv32 sysroot \
+     (Debian has no such port): RISC-V 32-bit programs run statically linked only. Returns a \
+     `job_id`: `job_status`, `job_await`, `job_cancel`. Agents and MCP callers are asked first.\n\
+     Example: setup_sysroots {}",
+    "The same work as `kraken setup --sysroots`; the `sysroot-*` entries of the integrations \
+     catalogue (`integration_install` installs one). `force` installs again."
 );
 
 /// Starts the install of a catalogue entry as a job.

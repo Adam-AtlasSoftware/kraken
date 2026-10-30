@@ -144,7 +144,7 @@ kraken job-status --job-id job-g1    # progress of that job
 kraken job-cancel --job-id job-g1    # stop it
 ```
 
-`setup_native` and `setup_dotnet` are the same for `kraken setup --native` and `--dotnet`, and `integration_install_start` does the install of an emulator or tool as a job. Agents and MCP clients are asked before any of them downloads anything. `kraken setup` itself stays as the plain way to run an install in the terminal.
+`setup_native`, `setup_dotnet`, `setup_rust` and `setup_sysroots` are the same for `kraken setup --native`, `--dotnet`, `--rust` (a Rust toolchain for rewrites, unless `cargo` is already on your `PATH`) and `--sysroots` (the libraries dynamically linked programs need in the emulator), and `integration_install_start` does the install of an emulator or tool as a job. Agents and MCP clients are asked before any of them downloads anything. `kraken setup` itself stays as the plain way to run an install in the terminal.
 
 ## Optional: the Ghidra engine
 

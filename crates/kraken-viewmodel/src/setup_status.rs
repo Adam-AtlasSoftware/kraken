@@ -104,6 +104,8 @@ pub fn install_command(item: &SetupItem) -> Option<&'static str> {
         "setup_ghidra" => Some("setup_ghidra"),
         "setup_native" => Some("setup_native"),
         "setup_dotnet" => Some("setup_dotnet"),
+        "setup_rust" => Some("setup_rust"),
+        "setup_sysroots" => Some("setup_sysroots"),
         _ => None,
     }
 }

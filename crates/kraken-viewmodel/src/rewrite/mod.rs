@@ -679,6 +679,8 @@ pub struct RewriteState {
     pub prereqs: Option<Vec<PrereqItem>>,
     /// The daemon is being asked.
     pub prereqs_loading: bool,
+    /// A check row asked for the Setup status window; the app takes it and opens the window.
+    pub open_setup: bool,
     /// Bulk actions of the plan list: the functions still waiting to be translated.
     pub bulk: bulk::BulkState,
     /// The window should show the Program section of the Rewrite tab.
@@ -717,6 +719,7 @@ impl Default for RewriteState {
             wizard: WizardState::default(),
             prereqs: None,
             prereqs_loading: false,
+            open_setup: false,
             bulk: bulk::BulkState::default(),
             show_program_request: false,
             hints: HintsState::default(),

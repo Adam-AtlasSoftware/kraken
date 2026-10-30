@@ -458,9 +458,10 @@ fn model_for_run(ui: &mut egui::Ui, vm: &mut ViewModel) {
     }
 }
 
-fn check_list(ui: &mut egui::Ui, vm: &ViewModel) {
+fn check_list(ui: &mut egui::Ui, vm: &mut ViewModel) {
     let p = pal(ui);
     let s = style::status(style::dark(ui));
+    let mut open_setup = false;
     for c in vm.rewrite_wizard_checks() {
         ui.horizontal_wrapped(|ui| {
             let (word, color, tip) = match c.level {
@@ -488,7 +489,21 @@ fn check_list(ui: &mut egui::Ui, vm: &ViewModel) {
         {
             ui.ctx().copy_text(fix.clone());
         }
+        if c.title == "Rust toolchain"
+            && c.level != CheckLevel::Ok
+            && ui
+                .small_button("Set it up...")
+                .on_hover_text(
+                    "Open Setup status, where Install downloads a Rust toolchain into KRAKEN's own folder. Your ~/.cargo is not touched.",
+                )
+                .clicked()
+        {
+            open_setup = true;
+        }
         ui.add_space(6.0);
+    }
+    if open_setup {
+        vm.rewrite.open_setup = true;
     }
 }
 

@@ -764,7 +764,7 @@ impl RewriteService {
                 "Rust toolchain",
                 PrereqLevel::Blocked,
                 format!("The generated code is built with rustc and cargo, which could not be run: {e}"),
-                Some("Install Rust with rustup (https://rustup.rs) so that `rustc` and `cargo` are on PATH."),
+                Some("Run setup_rust (`kraken setup --rust`, or Help > Setup status): KRAKEN installs its own toolchain in its data directory and leaves ~/.cargo alone. Or install Rust with rustup (https://rustup.rs) so that `rustc` and `cargo` are on PATH."),
             ),
         });
         let specs = crate::oracle::find_processors(&self.cfg.oracle);

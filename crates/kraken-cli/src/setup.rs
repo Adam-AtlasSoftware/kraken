@@ -1,5 +1,5 @@
-//! `kraken setup`: a thin wrapper over the backend of the `setup_ghidra`, `setup_dotnet` and
-//! `setup_native` commands (`kraken_host::setup`), printing their progress. Plain `kraken setup`
+//! `kraken setup`: a thin wrapper over the backend of the `setup_ghidra`, `setup_dotnet`,
+//! `setup_native`, `setup_rust` and `setup_sysroots` commands (`kraken_host::setup`), printing their progress. Plain `kraken setup`
 //! installs Ghidra, a JDK and the extension, `--dotnet` the .NET runtime and sidecar, `--native`
 //! the native engine's sources and Sleigh files. Ctrl-C stops the install; a partial download is
 //! kept.
@@ -155,6 +155,10 @@ pub(crate) async fn run_setup(
         SetupTask::Dotnet
     } else if flag("native") {
         SetupTask::Native
+    } else if flag("rust") {
+        SetupTask::Rust
+    } else if flag("sysroots") {
+        SetupTask::Sysroots
     } else {
         SetupTask::Ghidra
     };
@@ -195,6 +199,28 @@ pub(crate) async fn run_setup(
             field(&v, "dotnet_root"),
             field(&v, "dotnet_ext")
         ),
+        SetupTask::Rust => {
+            format!(
+                "Rust toolchain: {}\n{}\n",
+                field(&v, "cargo"),
+                field(&v, "note")
+            )
+        }
+        SetupTask::Sysroots => {
+            let list = v
+                .get("installed")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(|s| format!("  {s}\n"))
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            format!(
+                "Sysroots:\n{list}The emulator finds them on its own. There is no riscv32 sysroot (Debian has no such port); RISC-V 32-bit programs run statically linked only.\n"
+            )
+        }
         SetupTask::Native => {
             let specs = field(&v, "specs");
             if v.get("ready").and_then(Value::as_bool) == Some(true) {

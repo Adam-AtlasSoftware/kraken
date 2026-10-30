@@ -149,7 +149,9 @@ logged; **dangerous** commands always ask for approval first.
 | [`setup_dotnet`](#setup_dotnet) | job | mutating | Download the .NET runtime and install the managed-code sidecar (job) |
 | [`setup_ghidra`](#setup_ghidra) | job | mutating | Download Ghidra, a JDK and build the KRAKEN extension (job) |
 | [`setup_native`](#setup_native) | job | mutating | Fetch the native engine's sources and compile its Sleigh files (job) |
+| [`setup_rust`](#setup_rust) | job | mutating | Install a Rust toolchain for rewrites when there is none on PATH (job) |
 | [`setup_status`](#setup_status) | query | safe | Show what is installed and ready on this computer, with a fix for what is not |
+| [`setup_sysroots`](#setup_sysroots) | job | mutating | Install the libraries dynamically linked programs need in the emulator (job) |
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
 | [`symbols_export`](#symbols_export) | query | safe | Export names and comments as CSV or a .map-like text |
 | [`symbols_import`](#symbols_import) | mutation | mutating | Import names and comments from a link map, CSV, splat or IDA script |
@@ -7945,7 +7947,7 @@ Runs the project's original executable under emulation (Linux user mode, ELF) an
 
 Example: `emulate_run {"stdin": "hello\n", "argv": ["-v"], "env": {"MODE": "fast"}, "inputs": [{"name": "in.txt", "text": "abc"}], "return_files": true}`
 
-Whole-program emulation of the executable the project was made from, on KRAKEN's own Linux system-call layer (x86, x86-64, ARM, AArch64, RISC-V). Two runs with the same input agree byte for byte. The run happens in a sandboxed child process (`kraken-emu-run`) that can read the program and the SLEIGH specs and write one private directory that is removed afterwards. A statically linked program runs as is; a dynamically linked one needs a sysroot with its loader and libraries (`cargo xtask emu-sysroots`, or `KRAKEN_EMU_SYSROOTS`); without one, an x86 or x86-64 program gets private copies of this computer's loader and of the libraries it names, and sees nothing else of this computer. Needs the SLEIGH specs (`kraken setup --native`, or `KRAKEN_NATIVE_SPECS`). `kind: unsupported` means the program used an instruction the emulator cannot execute.
+Whole-program emulation of the executable the project was made from, on KRAKEN's own Linux system-call layer (x86, x86-64, ARM, AArch64, RISC-V). Two runs with the same input agree byte for byte. The run happens in a sandboxed child process (`kraken-emu-run`) that can read the program and the SLEIGH specs and write one private directory that is removed afterwards. A statically linked program runs as is; a dynamically linked one needs a sysroot with its loader and libraries (install `sysroot-<arch>` from the integrations catalogue, `cargo xtask emu-sysroots` or `KRAKEN_EMU_SYSROOTS`; there is no riscv32 sysroot); without one, an x86 or x86-64 program gets private copies of this computer's loader and of the libraries it names, and sees nothing else of this computer. Needs the SLEIGH specs (`kraken setup --native`, or `KRAKEN_NATIVE_SPECS`). `kind: unsupported` means the program used an instruction the emulator cannot execute.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
@@ -24348,6 +24350,50 @@ The same work as `kraken setup --native`.
 
 </details>
 
+## setup_rust
+
+Install a Rust toolchain for rewrites when there is none on PATH (job)
+
+```sh
+kraken setup-rust [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Needs no project. Looks for `cargo` on PATH first and does nothing when it is there. Otherwise downloads the pinned `rustup-init` from static.rust-lang.org over HTTPS, checks its SHA-256 and lets it install the pinned toolchain and the x86-64 musl target into KRAKEN's data directory (about 250 MB to download, 800 MB on disk); your `~/.cargo`, `~/.rustup` and shell profile are not touched. Returns a `job_id`: `job_status`, `job_await`, `job_cancel`. Agents and MCP callers are asked first.
+
+Example: `setup_rust {}`
+
+The same work as `kraken setup --rust`; the `rust-toolchain` entry of the integrations catalogue. `force` installs KRAKEN's own copy even when `cargo` is on PATH. A C linker (`cc`) is still needed to link the host-target builds.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `force` | `--force` | boolean | no | Install again even when it looks complete. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
+  "type": "object"
+}
+```
+
+</details>
+
 ## setup_status
 
 Show what is installed and ready on this computer, with a fix for what is not
@@ -24473,6 +24519,50 @@ Arguments: none.
     "not_ready"
   ],
   "title": "SetupStatusOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## setup_sysroots
+
+Install the libraries dynamically linked programs need in the emulator (job)
+
+```sh
+kraken setup-sysroots [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Needs no project. Downloads pinned Debian 13 packages (libc6, libgcc-s1, libstdc++6) for AArch64, 32-bit ARM, RISC-V 64, 32-bit x86 and x86-64 from deb.debian.org over HTTPS (about 20 MB), checks their SHA-256 and unpacks them under KRAKEN's data directory; `emulate_run` and the debugger find them by themselves. There is no riscv32 sysroot (Debian has no such port): RISC-V 32-bit programs run statically linked only. Returns a `job_id`: `job_status`, `job_await`, `job_cancel`. Agents and MCP callers are asked first.
+
+Example: `setup_sysroots {}`
+
+The same work as `kraken setup --sysroots`; the `sysroot-*` entries of the integrations catalogue (`integration_install` installs one). `force` installs again.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `force` | `--force` | boolean | no | Install again even when it looks complete. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
   "type": "object"
 }
 ```

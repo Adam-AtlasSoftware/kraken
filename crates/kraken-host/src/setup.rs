@@ -8,12 +8,16 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
-use kraken_registry::commands::{SetupBackend, SetupItem, SetupState, SetupTask};
+use kraken_registry::commands::{
+    IntegrationStatus, IntegrationView, IntegrationsBackend, SetupBackend, SetupItem, SetupState,
+    SetupTask,
+};
 use kraken_registry::jobs::JobProgress;
 use serde_json::{Value, json};
 
 use crate::config::KrakenConfig;
 use crate::dotnet_setup::{bundled_sidecar, pinned_dotnet, setup_dotnet};
+use crate::integrations::Integrations;
 use crate::provision::{
     Fetcher, HttpsFetcher, Layout, Progress, ProvisionError, SetupOptions, pinned, setup,
 };
@@ -182,6 +186,65 @@ impl HostSetup {
         }))
     }
 
+    /// The catalogue, with real downloads and the real `PATH`; tests give the setup a layout and a
+    /// fetcher, and the catalogue then lives in the layout.
+    fn integrations(&self) -> Result<Integrations, ProtoError> {
+        match (&self.layout, &self.fetcher) {
+            (Some(l), Some(f)) => Ok(Integrations::new(
+                l.root().join("integrations"),
+                None,
+                f.clone(),
+            )),
+            _ => Integrations::system(),
+        }
+    }
+
+    async fn run_rust(
+        &self,
+        force: bool,
+        progress: &(dyn Fn(JobProgress) + Send + Sync),
+    ) -> Result<Value, ProtoError> {
+        let integ = self.integrations()?;
+        let before = find_view(&integ, "rust-toolchain")?;
+        if before.status == IntegrationStatus::Ready && !force {
+            return Ok(json!({
+                "cargo": before.path,
+                "version": before.version,
+                "installed": false,
+                "note": "a Rust toolchain is already available (cargo on PATH or KRAKEN's own); nothing to install",
+            }));
+        }
+        let view = install_with_progress(&integ, "rust-toolchain", progress).await?;
+        Ok(json!({
+            "cargo": view.path,
+            "version": view.version,
+            "installed": true,
+            "note": "KRAKEN's own toolchain is installed in its data directory; rewrites use it when there is no rustc on PATH. A C linker (cc) is still needed for host-target builds.",
+        }))
+    }
+
+    async fn run_sysroots(
+        &self,
+        force: bool,
+        progress: &(dyn Fn(JobProgress) + Send + Sync),
+    ) -> Result<Value, ProtoError> {
+        let integ = self.integrations()?;
+        let mut done = Vec::new();
+        for id in SYSROOT_IDS {
+            let before = find_view(&integ, id)?;
+            if before.status == IntegrationStatus::Ready && !force {
+                done.push(format!(
+                    "{id}: already installed at {}",
+                    before.path.unwrap_or_default()
+                ));
+                continue;
+            }
+            let view = install_with_progress(&integ, id, progress).await?;
+            done.push(format!("{id}: {}", view.path.unwrap_or_default()));
+        }
+        Ok(json!({ "installed": done }))
+    }
+
     async fn run_native(
         &self,
         force: bool,
@@ -232,6 +295,58 @@ impl HostSetup {
                     "specs": after.specs.as_ref().map(|p| p.display().to_string()),
                     "rebuild": (!after.library).then_some(native::SETUP_COMMANDS[2]),
                 }))
+            }
+        }
+    }
+}
+
+/// The sysroot entries of the integrations catalogue, one per architecture with a Debian port.
+pub const SYSROOT_IDS: [&str; 5] = [
+    "sysroot-aarch64",
+    "sysroot-armhf",
+    "sysroot-riscv64",
+    "sysroot-i386",
+    "sysroot-x86-64",
+];
+
+fn find_view(integ: &Integrations, id: &str) -> Result<IntegrationView, ProtoError> {
+    integ
+        .list()?
+        .into_iter()
+        .find(|v| v.id == id)
+        .ok_or_else(|| ProtoError::new(ErrorCode::NotFound, format!("no catalogue entry `{id}`")))
+}
+
+/// Installs the catalogue entry `id` (the setup command is the consent to its notice) and reports
+/// the entry's own progress as job progress.
+async fn install_with_progress(
+    integ: &Integrations,
+    id: &str,
+    progress: &(dyn Fn(JobProgress) + Send + Sync),
+) -> Result<IntegrationView, ProtoError> {
+    let started = std::time::Instant::now();
+    let mut last: Option<(String, u64)> = None;
+    let install = integ.install(id, true);
+    tokio::pin!(install);
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(300));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            r = &mut install => return r,
+            _ = tick.tick() => {
+                if let Ok(Some(p)) = find_view(integ, id).map(|v| v.progress)
+                    && last.as_ref() != Some(&(p.phase.clone(), p.done))
+                {
+                    last = Some((p.phase.clone(), p.done));
+                    progress(JobProgress {
+                        message: format!("{id}: {}", p.phase),
+                        phase: p.phase,
+                        done: p.done,
+                        total: p.total,
+                        elapsed_ms: Some(started.elapsed().as_millis() as u64),
+                        ..Default::default()
+                    });
+                }
             }
         }
     }
@@ -431,10 +546,23 @@ fn dotnet_item(layout: Option<&Layout>, cfg: &KrakenConfig) -> SetupItem {
     )
 }
 
-fn rust_item() -> SetupItem {
+fn rust_item(integ: Option<&Integrations>) -> SetupItem {
     let purpose = "Compiles and tests the Rust rewrites";
+    let managed = integ
+        .and_then(|i| find_view(i, "rust-toolchain").ok())
+        .filter(|v| {
+            v.status == IntegrationStatus::Ready
+                && v.source == Some(kraken_registry::commands::IntegrationSource::Downloaded)
+        });
     let (state, detail) = match (tool_version("rustc"), tool_version("cargo")) {
         (Some(r), Some(c)) => (SetupState::Ready, format!("{r}; {c}")),
+        _ if managed.is_some() => (
+            SetupState::Ready,
+            format!(
+                "installed by KRAKEN at {}",
+                managed.and_then(|v| v.path).unwrap_or_default()
+            ),
+        ),
         (None, None) => (
             SetupState::Missing,
             "rustc and cargo are not on PATH".into(),
@@ -445,29 +573,54 @@ fn rust_item() -> SetupItem {
         ),
     };
     item("rust", "Rust toolchain", purpose, state, detail).fixed(
-        "Install the stable toolchain from https://rustup.rs (rewrites need rustc and cargo on PATH)",
-        None,
+        "Install it with setup_rust or `kraken setup --rust` (KRAKEN's own copy, about 800 MB on disk, your ~/.cargo is not touched), or install the stable toolchain from https://rustup.rs",
+        Some("setup_rust"),
     )
 }
 
-fn emulators_item() -> SetupItem {
-    let sysroots = std::env::var_os("HOME")
+fn emulators_item(integ: Option<&Integrations>) -> SetupItem {
+    let missing: Vec<String> = integ
+        .map(|i| {
+            SYSROOT_IDS
+                .iter()
+                .filter(|id| find_view(i, id).is_ok_and(|v| v.status != IntegrationStatus::Ready))
+                .map(|id| id.trim_start_matches("sysroot-").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let dev = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join(".cache/kraken-dev/emu-sysroots"))
         .filter(|p| p.is_dir());
-    let detail = match sysroots {
-        Some(p) => format!(
-            "built-in emulator (x86, ARM, AArch64, RISC-V); sysroots at {}",
-            p.display()
-        ),
-        None => "built-in emulator (x86, ARM, AArch64, RISC-V); no optional sysroots".into(),
+    let mut detail = "built-in emulator (x86, ARM, AArch64, RISC-V)".to_string();
+    if let Some(p) = &dev {
+        detail.push_str(&format!("; developer sysroots at {}", p.display()));
+    }
+    let (state, fix) = if missing.is_empty() || dev.is_some() {
+        detail.push_str("; libraries for dynamically linked programs are installed");
+        (SetupState::Ready, None)
+    } else {
+        detail.push_str(&format!(
+            "; libraries for dynamically linked programs missing: {} (statically linked programs run without them; there is no riscv32 sysroot)",
+            missing.join(", ")
+        ));
+        (
+            SetupState::Partial,
+            Some(
+                "Install them with setup_sysroots or `kraken setup --sysroots` (pinned Debian packages, about 20 MB)",
+            ),
+        )
     };
-    item(
+    let it = item(
         "emulators",
         "Emulators",
         "Runs functions and programs for rewrites and debugging",
-        SetupState::Ready,
+        state,
         detail,
-    )
+    );
+    match fix {
+        Some(f) => it.fixed(f, Some("setup_sysroots")),
+        None => it,
+    }
 }
 
 fn llama_item() -> SetupItem {
@@ -509,12 +662,13 @@ impl SetupBackend for HostSetup {
     fn status(&self) -> Result<Vec<SetupItem>, ProtoError> {
         let cfg = self.config();
         let layout = self.layout.as_ref();
+        let integ = self.integrations().ok();
         Ok(vec![
             ghidra_item(layout, &cfg),
             native_item(&cfg),
             dotnet_item(layout, &cfg),
-            rust_item(),
-            emulators_item(),
+            rust_item(integ.as_ref()),
+            emulators_item(integ.as_ref()),
             llama_item(),
             strata_item(),
         ])
@@ -530,6 +684,8 @@ impl SetupBackend for HostSetup {
             SetupTask::Ghidra => self.run_ghidra(force, progress).await,
             SetupTask::Native => self.run_native(force, progress).await,
             SetupTask::Dotnet => self.run_dotnet(force, progress).await,
+            SetupTask::Rust => self.run_rust(force, progress).await,
+            SetupTask::Sysroots => self.run_sysroots(force, progress).await,
         }
     }
 }

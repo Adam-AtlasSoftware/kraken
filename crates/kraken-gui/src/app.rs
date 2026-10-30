@@ -1372,6 +1372,11 @@ impl KrakenApp {
         self.keep_local_models_served(ctx);
         self.local_setup_window(ctx);
         self.integrations_windows(ctx);
+        if let Some(vm) = self.vm.as_mut()
+            && std::mem::take(&mut vm.rewrite.open_setup)
+        {
+            self.want_setup_status(ctx);
+        }
         self.setup_status_window(ctx);
         if self.settings.ai.take_policy_dirty()
             && let Some(vm) = self.vm.as_mut()

@@ -33,7 +33,7 @@ pub struct Entry {
     pub id: String,
     /// Display name.
     pub name: String,
-    /// `emulator` (default), `compat_layer` or `tool`.
+    /// `emulator` (default), `compat_layer`, `tool`, `sysroot` or `toolchain`.
     #[serde(default = "default_kind")]
     pub kind: String,
     /// One line.
@@ -58,12 +58,45 @@ pub struct Entry {
     /// How to find a copy on this computer.
     #[serde(default)]
     pub detect: Detect,
-    /// How to run it.
+    /// How to run it (emulators, compatibility layers and tools).
+    #[serde(default)]
     pub run: Run,
-    /// Upstream releases KRAKEN may download.
+    /// Upstream releases KRAKEN may download. A sysroot lists one `deb` per package, all of
+    /// the same release.
     #[serde(default)]
     pub artifact: Vec<Artifact>,
+    /// What a `sysroot` entry provides.
+    #[serde(default)]
+    pub sysroot: Option<SysrootSpec>,
+    /// How a `toolchain` entry installs.
+    #[serde(default)]
+    pub toolchain: Option<ToolchainSpec>,
 }
+
+/// A sysroot: the loader and shared libraries of one architecture, unpacked from Debian
+/// packages, in the layout `cargo xtask emu-sysroots` makes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SysrootSpec {
+    /// The emulator's name for the set: `arm32`, `aarch64`, `riscv64`, `elf32` or `x86_64`.
+    pub set: String,
+    /// The dynamic loader, relative to the sysroot; it proves the unpack worked.
+    pub loader: String,
+}
+
+/// The pinned Rust toolchain a `toolchain` entry installs with the downloaded `rustup-init`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolchainSpec {
+    /// Toolchain to install (a release number: pinned).
+    pub channel: String,
+    /// Extra standard-library targets (musl targets, which link without a system C library).
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
+/// `rustc` of an installed toolchain, relative to the install directory.
+pub const TOOLCHAIN_ENTRY: &str = "cargo/bin/cargo";
 
 fn default_kind() -> String {
     "emulator".into()
@@ -88,10 +121,11 @@ pub struct Detect {
 }
 
 /// How an emulator is started.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
     /// Command line template; the first element must be `{exe}`.
+    #[serde(default)]
     pub argv: Vec<String>,
     /// A windowed program that keeps running (default true).
     #[serde(default = "yes")]
@@ -123,6 +157,8 @@ pub enum Format {
     TarGz,
     /// An xz-compressed tar.
     TarXz,
+    /// A Debian package: its files are unpacked into the install directory.
+    Deb,
 }
 
 /// One pinned upstream release asset.
@@ -145,7 +181,8 @@ pub struct Artifact {
     pub size: u64,
     /// Container.
     pub format: Format,
-    /// The program: its file name for `file`, else its path inside the archive.
+    /// The program: its file name for `file`, else its path inside the archive. Not used by `deb`.
+    #[serde(default)]
     pub entry: String,
 }
 
@@ -232,6 +269,80 @@ fn check_template(id: &str, what: &str, argv: &[String]) -> Result<(), ManifestE
     Ok(())
 }
 
+fn plain_relative(path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    !path.is_empty()
+        && p.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// The rules for `sysroot` and `toolchain` entries.
+fn lint_special(e: &Entry) -> Result<(), ManifestError> {
+    let id = e.id.as_str();
+    let debs = e
+        .artifact
+        .iter()
+        .filter(|a| a.format == Format::Deb)
+        .count();
+    match e.kind.as_str() {
+        "sysroot" => {
+            let Some(s) = &e.sysroot else {
+                return Err(bad(id, "a sysroot entry needs a [emulator.sysroot] table"));
+            };
+            if !["arm32", "aarch64", "riscv64", "elf32", "x86_64"].contains(&s.set.as_str()) {
+                return Err(bad(
+                    id,
+                    "sysroot.set must be arm32, aarch64, riscv64, elf32 or x86_64",
+                ));
+            }
+            if !plain_relative(&s.loader) {
+                return Err(bad(
+                    id,
+                    "sysroot.loader must be a relative path without `..`",
+                ));
+            }
+            if debs == 0 || debs != e.artifact.len() {
+                return Err(bad(
+                    id,
+                    "a sysroot's artifacts are all `deb` and there is one",
+                ));
+            }
+            let first = &e.artifact[0].version;
+            if e.artifact.iter().any(|a| &a.version != first) {
+                return Err(bad(id, "a sysroot's artifacts share one version"));
+            }
+        }
+        "toolchain" => {
+            let Some(t) = &e.toolchain else {
+                return Err(bad(
+                    id,
+                    "a toolchain entry needs a [emulator.toolchain] table",
+                ));
+            };
+            let word = |s: &str| {
+                !s.is_empty()
+                    && s.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+            };
+            if !word(&t.channel) || !t.targets.iter().all(|x| word(x)) {
+                return Err(bad(id, "toolchain channel and targets are plain words"));
+            }
+            if e.artifact.len() > 1 || e.artifact.iter().any(|a| a.format != Format::File) {
+                return Err(bad(id, "a toolchain has one `file` artifact: rustup-init"));
+            }
+        }
+        _ => {
+            if e.sysroot.is_some() || e.toolchain.is_some() || debs > 0 {
+                return Err(bad(
+                    id,
+                    "sysroot, toolchain and deb artifacts belong to those kinds",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks one entry against the rules of the format.
 pub fn lint(e: &Entry) -> Result<(), ManifestError> {
     let id = e.id.as_str();
@@ -244,13 +355,22 @@ pub fn lint(e: &Entry) -> Result<(), ManifestError> {
     if !id_ok {
         return Err(bad(id, "id must be 1-40 characters of a-z, 0-9 and `-`"));
     }
-    if !matches!(e.kind.as_str(), "emulator" | "compat_layer" | "tool") {
-        return Err(bad(id, "kind must be emulator, compat_layer or tool"));
+    if !matches!(
+        e.kind.as_str(),
+        "emulator" | "compat_layer" | "tool" | "sysroot" | "toolchain"
+    ) {
+        return Err(bad(
+            id,
+            "kind must be emulator, compat_layer, tool, sysroot or toolchain",
+        ));
     }
+    lint_special(e)?;
     if e.name.trim().is_empty() || e.license.trim().is_empty() {
         return Err(bad(id, "name and license are required"));
     }
-    check_template(id, "run.argv", &e.run.argv)?;
+    if !matches!(e.kind.as_str(), "sysroot" | "toolchain") {
+        check_template(id, "run.argv", &e.run.argv)?;
+    }
     if let Some(g) = &e.run.gdb_argv {
         check_template(id, "run.gdb_argv", g)?;
     }
@@ -279,9 +399,10 @@ pub fn lint(e: &Entry) -> Result<(), ManifestError> {
             return Err(bad(id, "artifact size is required"));
         }
         let p = std::path::Path::new(&a.entry);
-        let plain = !a.entry.is_empty()
-            && p.components()
-                .all(|c| matches!(c, std::path::Component::Normal(_)));
+        let plain = (a.format == Format::Deb && a.entry.is_empty())
+            || (!a.entry.is_empty()
+                && p.components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_))));
         if !plain {
             return Err(bad(
                 id,
