@@ -82,6 +82,8 @@ pub enum AppAction {
     ShowBookmarks,
     /// Stage a byte patch on the selected instruction (or Hex selection).
     PatchHere,
+    /// Stage a byte patch by file offset (headers, padding, raw images).
+    PatchFileOffset,
     /// Open the guided Change what this code does wizard.
     ChangeWhatItDoes,
     /// Show the Patches tab.
@@ -136,7 +138,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 60] = [
+    pub const ALL: [AppAction; 61] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -148,6 +150,7 @@ impl AppAction {
         AppAction::AddBookmark,
         AppAction::ShowBookmarks,
         AppAction::PatchHere,
+        AppAction::PatchFileOffset,
         AppAction::ChangeWhatItDoes,
         AppAction::ShowPatches,
         AppAction::ExportPatched,
@@ -278,6 +281,7 @@ impl AppAction {
             AppAction::AddBookmark => "Bookmark this address",
             AppAction::ShowBookmarks => "Show bookmarks",
             AppAction::PatchHere => "Patch bytes here...",
+            AppAction::PatchFileOffset => "Patch bytes by file offset...",
             AppAction::ChangeWhatItDoes => "Change what this code does...",
             AppAction::ShowPatches => "Show patches",
             AppAction::ExportPatched => "Export patched binary...",
@@ -355,6 +359,10 @@ impl AppAction {
             AppAction::PatchHere => {
                 "Replace the bytes of the selected instruction or Hex selection; nothing on disk \
                  changes until you export"
+            }
+            AppAction::PatchFileOffset => {
+                "Replace bytes by their offset in the file: headers, padding, data the program \
+                 does not map, or a raw image; nothing on disk changes until you export"
             }
             AppAction::ChangeWhatItDoes => {
                 "Step by step: pick code, say what it should do instead, preview the result, test it \

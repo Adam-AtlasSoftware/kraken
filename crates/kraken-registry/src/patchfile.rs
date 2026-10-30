@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use kraken_proto::PatchKind;
 use object::read::{Object, ObjectSegment};
 
 /// Load base Ghidra and the native engine give a position-independent executable; tried when a
@@ -170,18 +171,121 @@ pub fn apply_project_patches(
             format!("cannot read the project's binary {}: {e}", binary.display()),
         )
     })?;
+    if let Some(m) = patches.iter().find(|p| p.kind == PatchKind::Member) {
+        return Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!(
+                "the patch at offset {:#x} of member {:?} belongs to a container; only a firmware \
+                 rebuild can write it back",
+                m.address, m.member
+            ),
+        ));
+    }
     let file_patches: Vec<FilePatch> = patches
         .iter()
+        .filter(|p| p.kind == PatchKind::Va)
         .map(|p| FilePatch {
             address: p.address,
             original: p.original.clone(),
             replacement: p.replacement.clone(),
         })
         .collect();
-    patch_file_bytes_at(&image, &file_patches, Some(engine_base)).map_err(|e| match e {
-        PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
-        PatchError::NoMapping(_) => ProtoError::new(ErrorCode::InvalidArgument, e.to_string()),
-    })
+    let by_offset: Vec<&kraken_model::Patch> = patches
+        .iter()
+        .filter(|p| p.kind == PatchKind::Offset)
+        .collect();
+    let (mut out, mut applied) = patch_file_bytes_at(&image, &file_patches, Some(engine_base))
+        .map_err(|e| match e {
+            PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
+            PatchError::NoMapping(_) => ProtoError::new(ErrorCode::InvalidArgument, e.to_string()),
+        })?;
+    if by_offset.is_empty() {
+        return Ok((out, applied));
+    }
+    // Checked against the unpatched file, so an offset patch cannot be fooled by an address one.
+    let mut taken: Vec<(u64, u64)> = applied
+        .iter()
+        .map(|a| (a.file_offset, a.file_offset + a.len as u64))
+        .collect();
+    for p in by_offset {
+        let start = p.address;
+        let end = start.saturating_add(p.replacement.len() as u64);
+        if end > image.len() as u64 {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "the patch at file offset {start:#x}..{end:#x} is past the end of the \
+                     {}-byte file",
+                    image.len()
+                ),
+            ));
+        }
+        let here = &image[start as usize..end as usize];
+        if here != p.original.as_slice() {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "the bytes at file offset {start:#x} are not what the patch recorded: \
+                     expected {}, found {}",
+                    kraken_proto::hex_bytes(&p.original),
+                    kraken_proto::hex_bytes(here)
+                ),
+            ));
+        }
+        if let Some((a, b)) = taken.iter().find(|(a, b)| *a < end && *b > start) {
+            return Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "the patch at file offset {start:#x}..{end:#x} overlaps another patch that \
+                     lands on file bytes {a:#x}..{b:#x}; remove one of them"
+                ),
+            ));
+        }
+        taken.push((start, end));
+        out[start as usize..end as usize].copy_from_slice(&p.replacement);
+        applied.push(AppliedPatch {
+            address: start,
+            file_offset: start,
+            len: p.replacement.len(),
+        });
+    }
+    if let Some(h) = pe_headers(&out) {
+        let sum = pe_checksum_of(&out, h.checksum_off);
+        out[h.checksum_off..h.checksum_off + 4].copy_from_slice(&sum.to_le_bytes());
+    }
+    Ok((out, applied))
+}
+
+/// The file offset a patch lands on when `image` is patched at `engine_base`, whichever kind it
+/// is; `None` when a virtual address does not map (or the file is not an object).
+pub fn file_range_of(
+    image: &[u8],
+    p: &kraken_model::Patch,
+    engine_base: u64,
+) -> Option<std::ops::Range<u64>> {
+    let len = p.replacement.len() as u64;
+    match p.kind {
+        PatchKind::Offset => Some(p.address..p.address.saturating_add(len)),
+        PatchKind::Member => None,
+        PatchKind::Va => {
+            let one = FilePatch {
+                address: p.address,
+                original: Vec::new(),
+                replacement: p.replacement.clone(),
+            };
+            let segs = segments(image).ok()?;
+            let lowest = segs.iter().map(|s| s.vaddr).min().unwrap_or(0);
+            let shift = engine_base.checked_sub(lowest);
+            [shift, Some(0), Some(PIE_BASE_32), Some(PIE_BASE)]
+                .into_iter()
+                .flatten()
+                .find_map(|base| {
+                    let fv = one.address.checked_sub(base)?;
+                    let off = offset_of(&segs, fv, one.replacement.len(), image.len())?;
+                    Some(off..off + len)
+                })
+        }
+    }
 }
 
 /// [`patch_file_bytes`] for a program the engine reports loaded at `engine_base` (its image

@@ -20,6 +20,11 @@ pub fn anchor_key(anchor: &Anchor) -> Result<String, ProtoError> {
     {
         return Ok(format!("managed:{token}"));
     }
+    match anchor {
+        Anchor::FileOffset { offset } => return Ok(format!("offset:{:#x}", offset.0)),
+        Anchor::Member { node, offset } => return Ok(format!("member:{node}:{:#x}", offset.0)),
+        _ => {}
+    }
     let (space, offset, _, _) = anchor.native()?;
     Ok(format!("native:{space}:{:#x}", offset.0))
 }

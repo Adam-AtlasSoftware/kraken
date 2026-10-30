@@ -196,6 +196,43 @@ to disk and nothing runs — so they do not ask for approval. Producing a patche
 `patch_export` is the **dangerous** step and asks every time (ADR 0005), whether the caller is you
 or an agent.
 
+## Patching by file offset
+
+An address patch can only reach bytes the program maps. To change a byte of a file header, the
+padding between sections, data appended to a firmware image, or any byte of a raw image the
+engine does not load as an executable, give `offset` instead of `address`: the number of bytes
+from the start of the input file.
+
+```
+patch_set {"offset": "0x10", "bytes": "03", "note": "make the ELF a shared object"}
+patch_remove {"offset": "0x10"}
+```
+
+- The original bytes are read from the file on disk (not through the engine), so the range must
+  lie inside the file; one past the end is refused.
+- The overlay keys a patch by what its start counts (`va`, `offset`, and `member` for a container
+  member, kept in the model for firmware images), so address `0x40` and offset `0x40` are two
+  patches. `patch_list` shows each patch's `target`; for `offset` patches `address` is the file
+  offset. Projects made before this keep their patches as address patches (the table is rebuilt
+  once when the project opens).
+- Two patches of one kind may not overlap, and neither may an address patch and an offset patch
+  that land on the same bytes of the file (the address is mapped through the segments to check).
+- `patch_export` and `patch_export_diff` write both kinds: address patches are mapped through the
+  segments, offset patches are written where they say, the recorded originals are checked first
+  for both, and a PE checksum is recomputed once at the end. A file that is not an object (a raw
+  image) takes offset patches only; an address patch in it makes the export say that the file is
+  not an object. A `member` patch cannot be written by an export (only a firmware rebuild could).
+- Undo, history, patch sets and the agent policy work the same: an agent's new offset patch applies
+  at once, replacing or removing one is a proposal. `patch_group_assign` addresses patches by the
+  number `patch_list` shows, so give offset patches their set in `patch_set` (`group`).
+- Importing a patch file stages its changes at the addresses they map to; changes outside the
+  mapped blocks are not imported yet.
+
+In the window, **Patch > Patch bytes by file offset...** (also in the palette), the Hex view's
+**Patch file offset...** button and the Patches tab's button of the same name open the patch dialog
+in file-offset mode: type the offset and the new bytes. Offset patches list as `file+0x10` in the
+Patches tab and are not drawn over the Hex view, which shows addresses.
+
 ## Seeing what a patch does
 
 The Listing and the Decompiler show the file as it is on disk, because patches are an overlay the

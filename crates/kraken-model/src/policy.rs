@@ -103,6 +103,10 @@ fn overlaps_a_patch(op: &LogOp, state: &AnnotationState) -> bool {
         let Some(other) = key_address(base) else {
             return false;
         };
+        // an offset into the file and an address are different numberings
+        if base.rsplit_once(':').map(|x| x.0) != own.rsplit_once(':').map(|x| x.0) {
+            return false;
+        }
         let other_end = other.saturating_add((replacement.len() / 2) as u64);
         other != start && other < end && other_end > start
     })

@@ -104,6 +104,47 @@
             "offset"
           ],
           "type": "object"
+        },
+        {
+          "description": "A byte of the input file itself, by file offset: used by byte patches that fall outside\nevery mapped block (headers, padding, appended data, raw images).",
+          "properties": {
+            "kind": {
+              "const": "file_offset",
+              "type": "string"
+            },
+            "offset": {
+              "$ref": "#/$defs/Hex64",
+              "description": "Offset from the start of the file, hex-encoded."
+            }
+          },
+          "required": [
+            "kind",
+            "offset"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A byte of a member inside a container (an archive or a firmware image), by offset in the\nmember's own bytes.",
+          "properties": {
+            "kind": {
+              "const": "member",
+              "type": "string"
+            },
+            "node": {
+              "description": "The member's node id.",
+              "type": "string"
+            },
+            "offset": {
+              "$ref": "#/$defs/Hex64",
+              "description": "Offset from the start of the member, hex-encoded."
+            }
+          },
+          "required": [
+            "kind",
+            "node",
+            "offset"
+          ],
+          "type": "object"
         }
       ]
     },

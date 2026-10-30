@@ -289,6 +289,7 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let mut note = d.note.clone();
     let mut asm = d.asm.clone();
     let mut group = d.group.clone();
+    let mut offset_text = d.offset_text.clone();
     let groups: Vec<String> = vm
         .tools
         .patches
@@ -299,20 +300,40 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let (mut save, mut cancel, mut pad) = (false, false, false);
     let (mut assemble, mut pick) = (false, None);
     let focused_once = ctx.memory(|m| m.focused().is_some());
-    let title = if d.existing {
-        "Edit byte patch"
-    } else {
-        "Patch bytes"
+    let title = match (d.existing, d.by_offset) {
+        (true, _) => "Edit byte patch",
+        (false, true) => "Patch file bytes",
+        (false, false) => "Patch bytes",
     };
-    let fname = vm.functions.containing(d.address).map(|f| f.name.clone());
+    let fname = vm
+        .functions
+        .containing(d.address)
+        .filter(|_| !d.by_offset)
+        .map(|f| f.name.clone());
     window(title, "kraken_patch", 520.0).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Address").size(12.0).color(p.text_dim));
-            ui.label(
-                RichText::new(format!("{:#x}", d.address))
-                    .monospace()
-                    .color(p.address),
-            );
+            if d.by_offset {
+                ui.label(RichText::new("File offset").size(12.0).color(p.text_dim));
+                ui.add(
+                    egui::TextEdit::singleline(&mut offset_text)
+                        .id(Id::new("kraken_patch_offset"))
+                        .font(egui::TextStyle::Monospace)
+                        .hint_text("0x10")
+                        .desired_width(140.0),
+                )
+                .on_hover_text(
+                    "Where to patch, counted in bytes from the start of the file (hex with 0x, \
+                     or decimal). This reaches bytes the program does not map, such as headers \
+                     or padding",
+                );
+            } else {
+                ui.label(RichText::new("Address").size(12.0).color(p.text_dim));
+                ui.label(
+                    RichText::new(format!("{:#x}", d.address))
+                        .monospace()
+                        .color(p.address),
+                );
+            }
             if let Some(n) = &fname {
                 ui.label(
                     RichText::new(format!("in {n}"))
@@ -343,12 +364,17 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             };
         });
         ui.add_space(4.0);
-        ui.label(
-            RichText::new("New instruction")
-                .size(12.0)
-                .color(p.text_dim),
-        );
+        if !d.by_offset {
+            ui.label(
+                RichText::new("New instruction")
+                    .size(12.0)
+                    .color(p.text_dim),
+            );
+        }
         ui.horizontal(|ui| {
+            if d.by_offset {
+                return;
+            }
             ui.add(
                 egui::TextEdit::multiline(&mut asm)
                     .id(Id::new(ASM_ID))
@@ -423,7 +449,12 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         let elsewhere = ui
             .memory(|m| m.has_focus(Id::new("kraken_patch_note")) || m.has_focus(Id::new(ASM_ID)));
         if !r.has_focus() && !d.submitting && !elsewhere && !focused_once {
-            ui.memory_mut(|m| m.request_focus(Id::new(ASM_ID)));
+            let first = if d.by_offset {
+                Id::new("kraken_patch_offset")
+            } else {
+                Id::new(ASM_ID)
+            };
+            ui.memory_mut(|m| m.request_focus(first));
         }
         if let Some(n) = d.length_note() {
             ui.horizontal_wrapped(|ui| {
@@ -490,6 +521,9 @@ fn patch_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
             &mut cancel,
         );
     });
+    if offset_text != d.offset_text {
+        vm.set_patch_offset_text(offset_text);
+    }
     if input != d.input {
         vm.set_patch_input(input);
     }

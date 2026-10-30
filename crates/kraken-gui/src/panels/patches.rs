@@ -132,6 +132,16 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
             vm.begin_patch_bytes();
         }
         if ui
+            .button("Patch file offset...")
+            .on_hover_text(
+                "Patch bytes by their offset in the file: headers, padding, data the program \
+                 does not map, or a raw image",
+            )
+            .clicked()
+        {
+            vm.begin_patch_file_offset();
+        }
+        if ui
             .button("Run original vs patched...")
             .on_hover_text(
                 "Run the program twice in the sandboxed emulator with the arguments and input \
@@ -288,22 +298,35 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
                     }
                     ui.end_row();
                     for it in &b.items {
-                        let addr = ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new(format!("{:08x}", it.address))
-                                        .monospace()
-                                        .size(12.0)
-                                        .color(p.address),
-                                )
-                                .frame(false),
+                        if it.by_offset {
+                            ui.label(
+                                RichText::new(format!("file+{:#x}", it.address))
+                                    .monospace()
+                                    .size(12.0)
+                                    .color(p.address),
                             )
-                            .on_hover_text(match vm.functions.containing(it.address) {
-                                Some(f) => format!("Go to this address, in {}", f.name),
-                                None => "Go to this address".to_string(),
-                            });
-                        if addr.clicked() {
-                            go = Some(it.address);
+                            .on_hover_text(
+                                "A patch by file offset: this many bytes from the start of the \
+                                 file, outside the program's address space",
+                            );
+                        } else {
+                            let addr = ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(format!("{:08x}", it.address))
+                                            .monospace()
+                                            .size(12.0)
+                                            .color(p.address),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text(match vm.functions.containing(it.address) {
+                                    Some(f) => format!("Go to this address, in {}", f.name),
+                                    None => "Go to this address".to_string(),
+                                });
+                            if addr.clicked() {
+                                go = Some(it.address);
+                            }
                         }
                         ui.horizontal(|ui| {
                             ui.label(
@@ -331,7 +354,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
                                 .on_hover_text("Change the bytes or the note of this patch")
                                 .clicked()
                             {
-                                edit = Some((it.address, it.original.clone()));
+                                edit = Some((it.address, it.original.clone(), it.by_offset));
                             }
                             if ui
                                 .small_button("Remove")
@@ -340,7 +363,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
                                 )
                                 .clicked()
                             {
-                                remove = Some(it.address);
+                                remove = Some((it.address, it.by_offset));
                             }
                         });
                         ui.horizontal(|ui| {
@@ -416,14 +439,19 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
     if let Some(a) = go {
         vm.goto(a);
     }
-    if let Some(a) = remove {
-        vm.remove_patch(a);
+    if let Some((a, by_offset)) = remove {
+        vm.remove_patch_at(a, by_offset);
     }
-    if let Some((a, original)) = edit {
-        vm.begin_patch(
-            a,
-            Some(original),
-            kraken_viewmodel::navtools::PatchOrigin::Bytes,
-        );
+    if let Some((a, original, by_offset)) = edit {
+        if by_offset {
+            vm.begin_patch_file_offset();
+            vm.set_patch_offset_text(format!("{a:#x}"));
+        } else {
+            vm.begin_patch(
+                a,
+                Some(original),
+                kraken_viewmodel::navtools::PatchOrigin::Bytes,
+            );
+        }
     }
 }

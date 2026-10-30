@@ -546,6 +546,16 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     step!("debug_stop", json!({"session": 1}));
     step!("patch_remove", json!({"address": "0x401040"}));
     step!("patch_remove", json!({"address": "0x401040"}));
+    // A patch by file offset reaches bytes no block maps: alike over both surfaces.
+    step!(
+        "patch_set",
+        json!({"offset": "0x1", "bytes": "41", "note": "header byte"})
+    );
+    step!("patch_list", json!({}));
+    step!("patch_set", json!({"bytes": "41"}));
+    step!("patch_set", json!({"offset": "0xffff", "bytes": "41"}));
+    step!("patch_remove", json!({"offset": "0x1"}));
+    step!("patch_remove", json!({"offset": "0x1"}));
 
     let closed = step!("project_close", json!({}));
     assert_eq!(closed["closed"], true, "{closed}");

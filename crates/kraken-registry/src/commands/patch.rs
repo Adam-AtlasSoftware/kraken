@@ -18,7 +18,8 @@ use async_trait::async_trait;
 use kraken_engine::{Cap, unsupported};
 use kraken_model::{AuthorKind, Patch};
 use kraken_proto::{
-    ErrorCode, Hex64, LogOp, Page, PatchBytes, ProtoError, Untrusted, hex_bytes, sanitize,
+    ErrorCode, Hex64, LogOp, Page, PatchBytes, PatchKind, ProtoError, Untrusted, hex_bytes,
+    sanitize,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -76,8 +77,16 @@ pub(crate) fn parse_hex(s: &str) -> Result<Vec<u8>, ProtoError> {
 /// A patch as the commands return it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PatchView {
-    /// The patched address.
+    /// The patched address; for a file-offset patch (`target` is `offset`) the offset from the
+    /// start of the file.
     pub address: Hex64,
+    /// What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`
+    /// (an offset inside a container member).
+    #[serde(default = "va_target")]
+    pub target: String,
+    /// For `member` patches, the member; absent otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub member: String,
     /// The bytes that were there, as lower-case hex.
     pub original: String,
     /// The bytes written in their place, as lower-case hex.
@@ -109,10 +118,16 @@ fn enabled_by_default() -> bool {
     true
 }
 
+fn va_target() -> String {
+    "va".into()
+}
+
 impl From<&Patch> for PatchView {
     fn from(p: &Patch) -> Self {
         PatchView {
             address: Hex64(p.address),
+            target: p.kind.as_str().into(),
+            member: p.member.clone(),
             original: hex_bytes(&p.original),
             replacement: hex_bytes(&p.replacement),
             length: p.len() as u32,
@@ -137,8 +152,14 @@ impl From<&Patch> for PatchView {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PatchSetArgs {
-    /// The address to patch, as `0x...`.
-    pub address: Hex64,
+    /// The virtual address to patch, as `0x...`. Give this or `offset`.
+    #[serde(default)]
+    pub address: Option<Hex64>,
+    /// Patch by file offset instead: the offset from the start of the input file, as `0x...`.
+    /// Reaches bytes no block maps (headers, padding, data appended to an image) and raw
+    /// images. Give this or `address`.
+    #[serde(default)]
+    pub offset: Option<Hex64>,
     /// The replacement bytes as hex (`"eb 10"` or `"eb10"`); 1 to 4096 bytes.
     pub bytes: String,
     /// A short note on why, at most 1000 characters.
@@ -181,20 +202,26 @@ impl Command for PatchSet {
             Permission::Mutating,
         )
         .doc(
-            "Records replacement bytes at an address. The bytes there now are read and kept as \
-             the originals, so the patch can be checked and undone. Setting a patch changes \
-             nothing on disk and does not run anything: it is a reversible overlay entry. \
-             `patch_export` (which writes a patched binary) is the step that asks for approval; \
-             `emulate_run {\"patched\": true}` runs a patched copy in the sandbox to check it. A \
-             patch where one exists replaces it. The edit is logged like a rename: it shows in \
-             `history` and `undo`/`undo_run` take it back; an agent's new patch applies at once, \
-             an agent replacing a patch makes a proposal.\n\
+            "Records replacement bytes at an address, or with `offset` at a file offset (bytes no \
+             block maps: headers, padding, raw images). The bytes there now are kept as the \
+             originals, so the patch can be checked and undone. Nothing on disk changes and \
+             nothing runs: it is a reversible overlay entry. `patch_export` (which writes a \
+             patched binary) is the step that asks for approval; `emulate_run {\"patched\": true}` \
+             runs a patched copy to check it. A patch where one exists replaces it. Logged like \
+             a rename: `undo`/`undo_run` take it back; an agent's new patch applies at once, an \
+             agent replacing one makes a proposal.\n\
              Example: patch_set {\"address\": \"0x401136\", \"bytes\": \"9090\", \"note\": \"no startup banner\"}",
         )
         .details(
             "The replacement length sets how many bytes are read for the originals; the address \
              must be mapped and hold that many bytes. Give the bytes as hex, with or without \
-             spaces and a leading 0x. At most 4096 bytes per patch.",
+             spaces and a leading 0x. At most 4096 bytes per patch. With `offset` the originals \
+             are read from the input file on disk, so the range must lie inside the file; the \
+             patch is keyed by offset, so an address patch and an offset patch with the same \
+             number are two patches, and they may not overlap (the address is mapped to the \
+             file to check). `patch_export` and `patch_export_diff` write both kinds. For \
+             example `patch_set {\"offset\": \"0x10\", \"bytes\": \"03\"}` changes one byte of an \
+             ELF header.",
         )
         .needs(&[Cap::Memory])
     }
@@ -214,8 +241,17 @@ impl Command for PatchSet {
                 "note is longer than {MAX_PATCH_NOTE} characters"
             )));
         }
-        set_patch(s, ctx, args.address, replacement, note, args.group).await
+        let target = match (args.address, args.offset) {
+            (Some(a), None) => (PatchKind::Va, a.0),
+            (None, Some(o)) => (PatchKind::Offset, o.0),
+            _ => return Err(invalid("give exactly one of address and offset")),
+        };
+        set_patch_target(s, ctx, target, replacement, note, args.group, None).await
     }
+}
+
+fn same_target(a: &Patch, b: &Patch) -> bool {
+    (a.kind, &a.member, a.address) == (b.kind, &b.member, b.address)
 }
 
 /// The set and the on/off state a patch being staged gets. `group` of `None` keeps what an
@@ -240,7 +276,7 @@ fn placement(
     }
     let members: Vec<&Patch> = all
         .iter()
-        .filter(|p| p.group == name && old.is_none_or(|o| o.address != p.address))
+        .filter(|p| p.group == name && old.is_none_or(|o| !same_target(o, p)))
         .collect();
     let off = !members.is_empty() && members.iter().all(|p| p.disabled);
     Ok((name, off))
@@ -271,15 +307,74 @@ pub(crate) async fn set_patch_vetted(
     group: Option<String>,
     vet: Option<&str>,
 ) -> Result<PatchEditOut, ProtoError> {
+    set_patch_target(
+        s,
+        ctx,
+        (PatchKind::Va, address.0),
+        replacement,
+        note,
+        group,
+        vet,
+    )
+    .await
+}
+
+/// Reads `len` bytes at file offset `start` of `binary`: the originals of a file-offset patch.
+fn read_file_original(
+    binary: &std::path::Path,
+    start: u64,
+    len: usize,
+) -> Result<Vec<u8>, ProtoError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(binary).map_err(|e| {
+        ProtoError::new(
+            ErrorCode::NotFound,
+            format!("cannot read the project's binary {}: {e}", binary.display()),
+        )
+    })?;
+    let size = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if start.saturating_add(len as u64) > size {
+        return Err(invalid(format!(
+            "file offset {start:#x}..{:#x} is past the end of the {size}-byte file",
+            start.saturating_add(len as u64)
+        )));
+    }
+    let mut buf = vec![0u8; len];
+    f.seek(SeekFrom::Start(start))
+        .and_then(|_| f.read_exact(&mut buf))
+        .map_err(|e| {
+            ProtoError::new(ErrorCode::Internal, format!("cannot read the binary: {e}"))
+        })?;
+    Ok(buf)
+}
+
+/// [`set_patch_vetted`] for a patch of either kind: `target` is what the start counts and the
+/// start. Two patches of one kind overlap by their ranges; an address patch and an offset patch
+/// overlap when the address lands on those file bytes.
+pub(crate) async fn set_patch_target(
+    s: &Session,
+    ctx: &CallContext,
+    (kind, start): (PatchKind, u64),
+    replacement: Vec<u8>,
+    note: String,
+    group: Option<String>,
+    vet: Option<&str>,
+) -> Result<PatchEditOut, ProtoError> {
     let project = s.project()?;
-    let start = address.0;
+    let address = Hex64(start);
     let end = start.saturating_add(replacement.len() as u64);
     let all = project.with_store(|st| st.all_patches()).await?;
-    if let Some(other) = all.iter().find(|p| {
-        p.address != start
-            && p.address < end
-            && p.address.saturating_add(p.replacement.len() as u64) > start
-    }) {
+    let overlap = |other: &Patch, from: u64, to: u64| {
+        let (a, b) = (
+            other.address,
+            other.address.saturating_add(other.replacement.len() as u64),
+        );
+        a < to && b > from
+    };
+    if let Some(other) = all
+        .iter()
+        .find(|p| p.kind == kind && p.address != start && overlap(p, start, end))
+    {
         return Err(invalid(format!(
             "a patch of {} byte{} at {:#x} overlaps {:#x}..{:#x}; remove it first (patch_remove) \
              or patch outside it",
@@ -294,23 +389,81 @@ pub(crate) async fn set_patch_vetted(
             end
         )));
     }
-    let old = all.iter().find(|p| p.address == start).cloned();
+    let others: Vec<Patch> = all
+        .iter()
+        .filter(|p| p.kind != kind && p.kind != PatchKind::Member)
+        .cloned()
+        .collect();
+    if !others.is_empty() {
+        let binary = PathBuf::from(project.meta().binary_path);
+        let base = project.program().base.0;
+        let probe = Patch {
+            kind,
+            member: String::new(),
+            address: start,
+            original: Vec::new(),
+            replacement: replacement.clone(),
+            note: String::new(),
+            group: String::new(),
+            disabled: false,
+            author: ctx.author.clone(),
+            ts_ms: 0,
+        };
+        let clash = blocking(move || {
+            let Ok(image) = fs::read(&binary) else {
+                return Ok(None);
+            };
+            let Some(mine) = crate::patchfile::file_range_of(&image, &probe, base) else {
+                return Ok(None);
+            };
+            Ok(others.into_iter().find(|o| {
+                crate::patchfile::file_range_of(&image, o, base)
+                    .is_some_and(|r| r.start < mine.end && r.end > mine.start)
+            }))
+        })
+        .await?;
+        if let Some(other) = clash {
+            return Err(invalid(format!(
+                "this patch and the {} patch at {:#x} land on the same bytes of the file; remove \
+                 one of them (patch_remove)",
+                other.kind.as_str(),
+                other.address
+            )));
+        }
+    }
+    let old = all
+        .iter()
+        .find(|p| p.kind == kind && p.address == start)
+        .cloned();
     let sets = project.with_store(|st| st.patch_groups()).await?;
     let (group, disabled) = placement(&all, &sets, old.as_ref(), group)?;
     // The originals cover the old patch too, so undoing a replacement restores it whole.
     let len = replacement
         .len()
         .max(old.as_ref().map_or(0, |p| p.replacement.len()));
-    let original = read_original(&project, ctx, address, len).await?;
+    let original = match kind {
+        PatchKind::Va => read_original(&project, ctx, address, len).await?,
+        _ => {
+            let binary = PathBuf::from(project.meta().binary_path);
+            blocking(move || read_file_original(&binary, start, len)).await?
+        }
+    };
     let new = PatchBytes {
         replacement: hex_bytes(&replacement),
         note: note.clone(),
         group: group.clone(),
         disabled,
     };
-    let resolved = crate::mutate::anchor_for(&project, ctx, address).await?;
+    let anchor = match kind {
+        PatchKind::Va => {
+            crate::mutate::anchor_for(&project, ctx, address)
+                .await?
+                .anchor
+        }
+        _ => kraken_model::plain_anchor(kind, "", start),
+    };
     let op = LogOp::SetPatch {
-        anchor: resolved.anchor,
+        anchor,
         original: hex_bytes(&original),
         old: old.as_ref().map(patch_bytes),
         new: Some(new),
@@ -320,6 +473,8 @@ pub(crate) async fn set_patch_vetted(
         None => crate::mutate::submit(s, ctx, op, None).await?,
     };
     let patch = Patch {
+        kind,
+        member: String::new(),
         address: start,
         original: original[..replacement.len()].to_vec(),
         replacement,
@@ -329,7 +484,10 @@ pub(crate) async fn set_patch_vetted(
         author: ctx.author.clone(),
         ts_ms: 0,
     };
-    let patch = match project.with_store(move |st| st.patch_get(start)).await? {
+    let patch = match project
+        .with_store(move |st| st.patch_get_at(kind, "", start))
+        .await?
+    {
         Some(stored) if edit.entry_id.is_some() => stored,
         _ => patch,
     };
@@ -385,8 +543,12 @@ pub(crate) async fn read_original(
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PatchRemoveArgs {
-    /// The patched address, as `0x...`.
-    pub address: Hex64,
+    /// The patched virtual address, as `0x...`. Give this or `offset`.
+    #[serde(default)]
+    pub address: Option<Hex64>,
+    /// The file offset of a file-offset patch, as `0x...`. Give this or `address`.
+    #[serde(default)]
+    pub offset: Option<Hex64>,
 }
 
 /// Removes a byte patch.
@@ -405,7 +567,7 @@ impl Command for PatchRemove {
             Permission::Mutating,
         )
         .doc(
-            "Deletes the patch at an address, putting the overlay back the way it was; the binary \
+            "Deletes the patch at an address (or, with `offset`, at a file offset), putting the overlay back the way it was; the binary \
              is unaffected (patches are not written until `patch_export`). `removed` is false \
              when the address had none. Logged like any edit, so `undo` puts the patch back; \
              an agent's removal is a proposal.\n\
@@ -420,8 +582,15 @@ impl Command for PatchRemove {
         args: PatchRemoveArgs,
     ) -> Result<PatchEditOut, ProtoError> {
         let project = s.project()?;
-        let address = args.address.0;
-        let Some(old) = project.with_store(move |st| st.patch_get(address)).await? else {
+        let (kind, address) = match (args.address, args.offset) {
+            (Some(a), None) => (PatchKind::Va, a.0),
+            (None, Some(o)) => (PatchKind::Offset, o.0),
+            _ => return Err(invalid("give exactly one of address and offset")),
+        };
+        let Some(old) = project
+            .with_store(move |st| st.patch_get_at(kind, "", address))
+            .await?
+        else {
             return Ok(PatchEditOut {
                 edit: MutationOutput {
                     status: crate::views::MutationStatus::Applied,
@@ -435,9 +604,16 @@ impl Command for PatchRemove {
                 removed: Some(false),
             });
         };
-        let resolved = crate::mutate::anchor_for(&project, ctx, args.address).await?;
+        let anchor = match kind {
+            PatchKind::Va => {
+                crate::mutate::anchor_for(&project, ctx, Hex64(address))
+                    .await?
+                    .anchor
+            }
+            _ => kraken_model::plain_anchor(kind, "", address),
+        };
         let op = LogOp::SetPatch {
-            anchor: resolved.anchor,
+            anchor,
             original: hex_bytes(&old.original),
             old: Some(patch_bytes(&old)),
             new: None,

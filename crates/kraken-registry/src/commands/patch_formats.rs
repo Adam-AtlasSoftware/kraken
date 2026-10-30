@@ -676,6 +676,8 @@ mod tests {
         let image = fs::read(&binary).expect("read");
         let off = 0x400usize;
         let patch = Patch {
+            kind: kraken_proto::PatchKind::Va,
+            member: String::new(),
             address: DLL_BASE + 0x1000,
             original: image[off..off + 1].to_vec(),
             replacement: vec![image[off] ^ 0xff],

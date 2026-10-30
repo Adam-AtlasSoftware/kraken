@@ -212,6 +212,53 @@ pub fn storage_key(space: &str, offset: u64) -> String {
     format!("{space}:{offset:#x}")
 }
 
+/// What a byte patch's start is counted in.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchKind {
+    /// A virtual address of the loaded program.
+    #[default]
+    Va,
+    /// An offset from the start of the input file.
+    Offset,
+    /// An offset into a member of a container (the member is named beside it).
+    Member,
+}
+
+impl PatchKind {
+    /// The name stored in the project database and shown to people.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PatchKind::Va => "va",
+            PatchKind::Offset => "offset",
+            PatchKind::Member => "member",
+        }
+    }
+
+    /// The kind named `s`, if it is one.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "va" => Some(PatchKind::Va),
+            "offset" => Some(PatchKind::Offset),
+            "member" => Some(PatchKind::Member),
+            _ => None,
+        }
+    }
+}
+
 /// The replacement bytes and note of a byte patch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PatchBytes {

@@ -94,6 +94,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::AddBookmark
             | AppAction::ShowBookmarks
             | AppAction::PatchHere
+            | AppAction::PatchFileOffset
             | AppAction::ChangeWhatItDoes
             | AppAction::ShowPatches
             | AppAction::ExportPatched
@@ -327,6 +328,7 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             ui.menu_button("Patch", |ui| {
                 item(ui, AppAction::ChangeWhatItDoes, env, &mut out);
                 item(ui, AppAction::PatchHere, env, &mut out);
+                item(ui, AppAction::PatchFileOffset, env, &mut out);
                 item(ui, AppAction::ShowPatches, env, &mut out);
                 ui.separator();
                 item(ui, AppAction::ExportPatched, env, &mut out);

@@ -17,7 +17,7 @@ use crate::{
 
 type Result<T> = std::result::Result<T, ProtoError>;
 
-const MIGRATIONS: &[&str] = &[
+pub(crate) const MIGRATIONS: &[&str] = &[
     "CREATE TABLE entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         op TEXT NOT NULL,
@@ -64,6 +64,7 @@ const MIGRATIONS: &[&str] = &[
     crate::patches::MIGRATION,
     crate::patches::MIGRATION_GROUPS,
     crate::patches::MIGRATION_VERDICTS,
+    crate::patches::MIGRATION_TARGETS,
 ];
 
 /// Number of schema migrations this build knows; the version of a fully migrated database.

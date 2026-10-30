@@ -111,6 +111,13 @@ pub(crate) fn overlay(
     patches: &[Patch],
     rows: Vec<InsnView>,
 ) -> Result<Vec<InsnView>, ProtoError> {
+    // file-offset patches have no address to show at
+    let va: Vec<Patch> = patches
+        .iter()
+        .filter(|p| p.kind == kraken_proto::PatchKind::Va)
+        .cloned()
+        .collect();
+    let patches = &va[..];
     let touched = |r: &InsnView| {
         let len = (r.bytes.len() / 2) as u64;
         patches.iter().any(|p| overlaps(p, r.address.0, len))

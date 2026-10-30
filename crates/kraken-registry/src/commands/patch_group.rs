@@ -288,9 +288,16 @@ async fn restage(
     group: &str,
     disabled: bool,
 ) -> Result<MutationOutput, ProtoError> {
-    let resolved = crate::mutate::anchor_for(project, ctx, Hex64(old.address)).await?;
+    let anchor = match old.kind {
+        kraken_proto::PatchKind::Va => {
+            crate::mutate::anchor_for(project, ctx, Hex64(old.address))
+                .await?
+                .anchor
+        }
+        kind => kraken_model::plain_anchor(kind, &old.member, old.address),
+    };
     let op = LogOp::SetPatch {
-        anchor: resolved.anchor,
+        anchor,
         original: hex_bytes(&old.original),
         old: Some(patch_bytes(old)),
         new: Some(PatchBytes {

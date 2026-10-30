@@ -90,6 +90,20 @@ pub enum Anchor {
         /// Offset within the bank, hex-encoded.
         offset: Hex64,
     },
+    /// A byte of the input file itself, by file offset: used by byte patches that fall outside
+    /// every mapped block (headers, padding, appended data, raw images).
+    FileOffset {
+        /// Offset from the start of the file, hex-encoded.
+        offset: Hex64,
+    },
+    /// A byte of a member inside a container (an archive or a firmware image), by offset in the
+    /// member's own bytes.
+    Member {
+        /// The member's node id.
+        node: String,
+        /// Offset from the start of the member, hex-encoded.
+        offset: Hex64,
+    },
 }
 
 impl Anchor {
@@ -129,6 +143,10 @@ impl Anchor {
             Anchor::Banked { .. } => Err(ProtoError::new(
                 ErrorCode::Unsupported,
                 "banked anchors are not supported yet",
+            )),
+            Anchor::FileOffset { .. } | Anchor::Member { .. } => Err(ProtoError::new(
+                ErrorCode::Unsupported,
+                "file-offset anchors name raw bytes, not program addresses",
             )),
         }
     }

@@ -15048,7 +15048,7 @@ Uses the engine's assembler (see `assemble`): Ghidra's SLEIGH assembler on the G
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -15077,6 +15077,10 @@ Uses the engine's assembler (see `assemble`): Ghidra's SLEIGH assembler on the G
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -15087,6 +15091,11 @@ Uses the engine's assembler (see `assemble`): Ghidra's SLEIGH assembler on the G
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -15376,7 +15385,7 @@ The new instruction has the same length as the old one, except that an x86 near 
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -15405,6 +15414,10 @@ The new instruction has the same length as the old one, except that an x86 near 
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -15415,6 +15428,11 @@ The new instruction has the same length as the old one, except that an x86 near 
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -15702,7 +15720,7 @@ Example: `patch_constant {"address": "0x401136", "value": 100}`
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -15731,6 +15749,10 @@ Example: `patch_constant {"address": "0x401136", "value": 100}`
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -15741,6 +15763,11 @@ Example: `patch_constant {"address": "0x401136", "value": 100}`
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -16235,7 +16262,7 @@ Example: `patch_fill {"address": "0x402000", "length": 16, "pattern": "cc"}`
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -16264,6 +16291,10 @@ Example: `patch_fill {"address": "0x402000", "length": 16, "pattern": "cc"}`
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -16274,6 +16305,11 @@ Example: `patch_fill {"address": "0x402000", "length": 16, "pattern": "cc"}`
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -17250,7 +17286,7 @@ Example: `patch_list {"limit": 50}`
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -17279,6 +17315,10 @@ Example: `patch_list {"limit": 50}`
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -17289,6 +17329,11 @@ Example: `patch_list {"limit": 50}`
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -17536,7 +17581,7 @@ The range always covers whole instructions. A range that overlaps another patch 
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -17565,6 +17610,10 @@ The range always covers whole instructions. A range that overlaps another patch 
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -17575,6 +17624,11 @@ The range always covers whole instructions. A range that overlaps another patch 
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -17708,19 +17762,20 @@ The range always covers whole instructions. A range that overlaps another patch 
 Remove the byte patch at an address
 
 ```sh
-kraken patch-remove --address <address>
+kraken patch-remove [options]
 ```
 
 - Kind: mutation
 - Permission: mutating
 
-Deletes the patch at an address, putting the overlay back the way it was; the binary is unaffected (patches are not written until `patch_export`). `removed` is false when the address had none. Logged like any edit, so `undo` puts the patch back; an agent's removal is a proposal.
+Deletes the patch at an address (or, with `offset`, at a file offset), putting the overlay back the way it was; the binary is unaffected (patches are not written until `patch_export`). `removed` is false when the address had none. Logged like any edit, so `undo` puts the patch back; an agent's removal is a proposal.
 
 Example: `patch_remove {"address": "0x401136"}`
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
-| `address` | `--address` | address | yes | The patched address, as `0x...`. |
+| `address` | `--address` | json | no | The patched virtual address, as `0x...`. Give this or `offset`. |
+| `offset` | `--offset` | json | no | The file offset of a file-offset patch, as `0x...`. Give this or `address`. |
 
 <details>
 <summary>Output schema</summary>
@@ -17787,7 +17842,7 @@ Example: `patch_remove {"address": "0x401136"}`
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -17816,6 +17871,10 @@ Example: `patch_remove {"address": "0x401136"}`
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -17826,6 +17885,11 @@ Example: `patch_remove {"address": "0x401136"}`
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -18111,7 +18175,7 @@ A 32-bit x86 function that pops its own arguments (stdcall) needs `ret N`; this 
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -18140,6 +18204,10 @@ A 32-bit x86 function that pops its own arguments (stdcall) needs `ret N`; this 
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -18150,6 +18218,11 @@ A 32-bit x86 function that pops its own arguments (stdcall) needs `ret N`; this 
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -18283,25 +18356,26 @@ A 32-bit x86 function that pops its own arguments (stdcall) needs `ret N`; this 
 Record a byte patch: replacement bytes at an address, with the originals kept
 
 ```sh
-kraken patch-set --address <address> --bytes <string> [options]
+kraken patch-set --bytes <string> [options]
 ```
 
 - Kind: mutation
 - Permission: mutating
 - Engine needs: `Memory`
 
-Records replacement bytes at an address. The bytes there now are read and kept as the originals, so the patch can be checked and undone. Setting a patch changes nothing on disk and does not run anything: it is a reversible overlay entry. `patch_export` (which writes a patched binary) is the step that asks for approval; `emulate_run {"patched": true}` runs a patched copy in the sandbox to check it. A patch where one exists replaces it. The edit is logged like a rename: it shows in `history` and `undo`/`undo_run` take it back; an agent's new patch applies at once, an agent replacing a patch makes a proposal.
+Records replacement bytes at an address, or with `offset` at a file offset (bytes no block maps: headers, padding, raw images). The bytes there now are kept as the originals, so the patch can be checked and undone. Nothing on disk changes and nothing runs: it is a reversible overlay entry. `patch_export` (which writes a patched binary) is the step that asks for approval; `emulate_run {"patched": true}` runs a patched copy to check it. A patch where one exists replaces it. Logged like a rename: `undo`/`undo_run` take it back; an agent's new patch applies at once, an agent replacing one makes a proposal.
 
 Example: `patch_set {"address": "0x401136", "bytes": "9090", "note": "no startup banner"}`
 
-The replacement length sets how many bytes are read for the originals; the address must be mapped and hold that many bytes. Give the bytes as hex, with or without spaces and a leading 0x. At most 4096 bytes per patch.
+The replacement length sets how many bytes are read for the originals; the address must be mapped and hold that many bytes. Give the bytes as hex, with or without spaces and a leading 0x. At most 4096 bytes per patch. With `offset` the originals are read from the input file on disk, so the range must lie inside the file; the patch is keyed by offset, so an address patch and an offset patch with the same number are two patches, and they may not overlap (the address is mapped to the file to check). `patch_export` and `patch_export_diff` write both kinds. For example `patch_set {"offset": "0x10", "bytes": "03"}` changes one byte of an ELF header.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
-| `address` | `--address` | address | yes | The address to patch, as `0x...`. |
 | `bytes` | `--bytes` | string | yes | The replacement bytes as hex (`"eb 10"` or `"eb10"`); 1 to 4096 bytes. |
+| `address` | `--address` | json | no | The virtual address to patch, as `0x...`. Give this or `offset`. |
 | `group` | `--group` | string | no | The patch set to put it in (see `patch_group_set`); `""` takes it out of its set. Absent keeps the set an existing patch at this address has. |
 | `note` | `--note` | string | no | A short note on why, at most 1000 characters. |
+| `offset` | `--offset` | json | no | Patch by file offset instead: the offset from the start of the input file, as `0x...`. Reaches bytes no block maps (headers, padding, data appended to an image) and raw images. Give this or `address`. |
 
 <details>
 <summary>Output schema</summary>
@@ -18368,7 +18442,7 @@ The replacement length sets how many bytes are read for the originals; the addre
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -18397,6 +18471,10 @@ The replacement length sets how many bytes are read for the originals; the addre
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -18407,6 +18485,11 @@ The replacement length sets how many bytes are read for the originals; the addre
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {
@@ -18694,7 +18777,7 @@ The old string is the run of characters from `address` to the first zero unit (o
       "properties": {
         "address": {
           "$ref": "#/$defs/Hex64",
-          "description": "The patched address."
+          "description": "The patched address; for a file-offset patch (`target` is `offset`) the offset from the\nstart of the file."
         },
         "author_id": {
           "description": "User name or agent id of whoever set it last.",
@@ -18723,6 +18806,10 @@ The old string is the run of characters from `address` to the first zero unit (o
           "minimum": 0,
           "type": "integer"
         },
+        "member": {
+          "description": "For `member` patches, the member; absent otherwise.",
+          "type": "string"
+        },
         "note": {
           "$ref": "#/$defs/Untrusted_string",
           "description": "The note; empty when none was given. Written by people or agents: untrusted data."
@@ -18733,6 +18820,11 @@ The old string is the run of characters from `address` to the first zero unit (o
         },
         "replacement": {
           "description": "The bytes written in their place, as lower-case hex.",
+          "type": "string"
+        },
+        "target": {
+          "default": "va",
+          "description": "What `address` counts: `va` (a virtual address), `offset` (a file offset) or `member`\n(an offset inside a container member).",
           "type": "string"
         },
         "ts_ms": {

@@ -489,3 +489,32 @@ fn the_export_dialog_writes_patch_files_and_the_import_dialog_reads_them() {
             .is_some_and(|vm| vm.tools.import_dialog.is_none())
     );
 }
+
+#[test]
+fn patch_by_file_offset_opens_from_the_menu_action_and_stages_beside_address_patches() {
+    let mut h = Harness::ready_demo();
+    let ctx = h.ctx.clone();
+    h.app.dispatch(AppAction::PatchFileOffset, &ctx);
+    h.step();
+    let vm = h.app.view_model_mut().expect("vm");
+    let d = vm.tools.patch_dialog.clone().expect("the dialog opens");
+    assert!(d.by_offset, "it asks for a file offset, not an address");
+    vm.set_patch_offset_text("0x1");
+    vm.set_patch_input("aa");
+    h.step();
+    h.key(Key::Enter, Modifiers::NONE);
+    h.run_until("the offset patch to be staged and listed", |a| {
+        a.view_model().is_some_and(|vm| {
+            vm.tools.patch_dialog.is_none()
+                && vm
+                    .tools
+                    .patches
+                    .items
+                    .iter()
+                    .any(|p| p.by_offset && p.address == 1)
+        })
+    });
+    h.app.dispatch(AppAction::ShowPatches, &ctx);
+    h.step();
+    h.step();
+}

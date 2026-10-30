@@ -515,6 +515,8 @@ fn hex_input_parses_like_the_registry() {
 fn a_short_replacement_is_flagged_and_can_be_padded_with_nops() {
     let mut d = PatchDialog {
         address: 0x40113a,
+        by_offset: false,
+        offset_text: String::new(),
         original: Some(vec![0xb8, 3, 0, 0, 0]),
         origin: PatchOrigin::Instruction("mov eax, 0x3".into()),
         input: "31 c0".into(),
@@ -986,4 +988,48 @@ fn a_draft_over_a_patch_the_wizard_did_not_know_of_puts_it_back_on_cancel() {
     assert_eq!(items.len(), 1, "{items:?}");
     assert_eq!(items[0].address, jne);
     assert_eq!(items[0].replacement, vec![0x75, 0x11]);
+}
+
+#[test]
+fn a_patch_by_file_offset_is_staged_listed_apart_from_addresses_and_removed() {
+    let rt = Runtime::new().expect("runtime");
+    let d = demo_project_with(demo_fixture(), Duration::ZERO).expect("demo");
+    let mut vm = ViewModel::new(d.backend.clone(), rt.handle().clone());
+    vm.create_project(
+        d.binary.to_string_lossy().into_owned(),
+        d.project_dir.to_string_lossy().into_owned(),
+    );
+    assert!(vm.block_until(WAIT, |v| v.connection == Connection::Open));
+    let size = std::fs::metadata(&d.binary).expect("binary").len();
+    assert!(size > 8, "the demo binary has bytes to patch");
+
+    vm.begin_patch_file_offset();
+    let dlg = vm.tools.patch_dialog.clone().expect("dialog");
+    assert!(dlg.by_offset && !dlg.existing);
+    assert!(dlg.check().is_err(), "no offset typed yet");
+    vm.set_patch_offset_text("not a number");
+    vm.set_patch_input("aa bb");
+    vm.submit_patch();
+    assert!(vm.tools.patch_dialog.as_ref().unwrap().error.is_some());
+
+    vm.set_patch_offset_text("0x2");
+    vm.set_patch_input("aa bb");
+    vm.set_patch_note("header byte");
+    vm.submit_patch();
+    idle(&mut vm);
+    assert!(vm.tools.patch_dialog.is_none(), "staged and closed");
+    assert!(vm.block_until(WAIT, |v| v.tools.patches.loaded && !v.busy()));
+    let p = vm.tools.patches.items.first().cloned().expect("listed");
+    assert!(p.by_offset);
+    assert_eq!((p.address, p.replacement.clone()), (2, vec![0xaa, 0xbb]));
+    assert_eq!(p.original.len(), 2, "read from the file");
+    assert!(
+        vm.tools.patches.covering(2).is_none(),
+        "an offset is not an address"
+    );
+
+    vm.remove_patch_at(2, true);
+    idle(&mut vm);
+    assert!(vm.block_until(WAIT, |v| !v.tools.patches.loading && !v.busy()));
+    assert!(vm.tools.patches.items.is_empty());
 }

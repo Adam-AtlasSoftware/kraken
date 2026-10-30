@@ -22,8 +22,10 @@ pub const MAX_PATCH_NOTE: usize = 1000;
 /// One staged patch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatchItem {
-    /// The patched address.
+    /// The patched address, or the file offset when `by_offset`.
     pub address: u64,
+    /// The patch is by file offset (header bytes, padding, a raw image), not by address.
+    pub by_offset: bool,
     /// The bytes that were there.
     pub original: Vec<u8>,
     /// The bytes written in their place.
@@ -190,7 +192,9 @@ pub struct PatchesPanel {
 impl PatchesPanel {
     /// The patch covering `addr`, when loaded.
     pub fn covering(&self, addr: u64) -> Option<&PatchItem> {
-        self.items.iter().find(|p| p.range().contains(&addr))
+        self.items
+            .iter()
+            .find(|p| !p.by_offset && p.range().contains(&addr))
     }
 }
 
@@ -206,8 +210,12 @@ pub enum PatchOrigin {
 /// The dialog that stages a byte patch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatchDialog {
-    /// Address to patch.
+    /// Address to patch, or the file offset when `by_offset`.
     pub address: u64,
+    /// Patching by file offset: the number counts bytes from the start of the file.
+    pub by_offset: bool,
+    /// The file offset typed so far (`by_offset` only).
+    pub offset_text: String,
     /// The bytes there now, when known (the instruction's, or the cached ones).
     pub original: Option<Vec<u8>>,
     /// Where it was opened from.
@@ -256,6 +264,9 @@ impl PatchDialog {
 
     /// Whether Stage may be pressed.
     pub fn check(&self) -> Result<(), String> {
+        if self.by_offset {
+            self.offset()?;
+        }
         self.parsed()?;
         if self.note.chars().count() > MAX_PATCH_NOTE {
             return Err(format!(
@@ -263,6 +274,21 @@ impl PatchDialog {
             ));
         }
         Ok(())
+    }
+
+    /// The file offset typed, as a number.
+    pub fn offset(&self) -> Result<u64, String> {
+        let t = self.offset_text.trim();
+        let digits = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"));
+        let n = match digits {
+            Some(h) => u64::from_str_radix(h, 16),
+            None => t.parse::<u64>(),
+        };
+        n.map_err(|_| {
+            "Type the file offset as a number such as 0x10 (or 16): the bytes from the start of \
+             the file."
+                .to_string()
+        })
     }
 
     /// A plain-language warning when the replacement is not the length of the original.
@@ -337,6 +363,8 @@ struct PatchWire {
     enabled: bool,
     #[serde(default)]
     verdict: Option<VerdictWire>,
+    #[serde(default)]
+    target: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -607,6 +635,7 @@ impl ViewModel {
                 Ok(page) => {
                     let rows = page.items.into_iter().map(|w| PatchItem {
                         address: w.address.0,
+                        by_offset: w.target == "offset",
                         original: unhex(&w.original),
                         replacement: unhex(&w.replacement),
                         note: w.note.0,
@@ -679,7 +708,7 @@ impl ViewModel {
             .patches
             .items
             .iter()
-            .find(|p| p.address == address)
+            .find(|p| !p.by_offset && p.address == address)
             .cloned();
         let (original, input, note) = match &existing {
             Some(p) => (
@@ -695,6 +724,8 @@ impl ViewModel {
         };
         self.tools.patch_dialog = Some(PatchDialog {
             address,
+            by_offset: false,
+            offset_text: String::new(),
             original,
             origin,
             input,
@@ -711,6 +742,44 @@ impl ViewModel {
                 .map(|p| p.group.clone())
                 .unwrap_or_default(),
         });
+    }
+
+    /// Opens the patch dialog to patch by file offset: bytes the program does not map (file
+    /// headers, padding, data appended to an image) or a raw image. The person types the offset;
+    /// the bytes there are read from the file when the patch is staged.
+    pub fn begin_patch_file_offset(&mut self) {
+        self.ensure_patches();
+        self.begin_patch(0, None, PatchOrigin::Bytes);
+        if let Some(d) = self.tools.patch_dialog.as_mut() {
+            d.by_offset = true;
+            d.existing = false;
+            d.input.clear();
+        }
+    }
+
+    /// Edits the file offset of a file-offset patch being staged.
+    pub fn set_patch_offset_text(&mut self, text: impl Into<String>) {
+        let existing = |vm: &ViewModel, at: u64| {
+            vm.tools
+                .patches
+                .items
+                .iter()
+                .find(|p| p.by_offset && p.address == at)
+                .cloned()
+        };
+        let text = text.into();
+        let Some(d) = self.tools.patch_dialog.as_mut() else {
+            return;
+        };
+        d.offset_text = text;
+        d.error = None;
+        let at = d.offset().ok();
+        let found = at.and_then(|a| existing(self, a));
+        if let Some(d) = self.tools.patch_dialog.as_mut() {
+            d.address = at.unwrap_or(0);
+            d.existing = found.is_some();
+            d.original = found.map(|p| p.original);
+        }
     }
 
     /// Opens the patch dialog on the selected instruction of the Listing.
@@ -877,20 +946,23 @@ impl ViewModel {
         };
         d.submitting = true;
         let addr = d.address;
-        let args = json!({
-            "address": hex(addr),
+        let by_offset = d.by_offset;
+        let mut args = json!({
             "bytes": spaced_hex(&bytes),
             "note": d.note.trim(),
             "group": d.group,
         });
+        args[if by_offset { "offset" } else { "address" }] = json!(hex(addr));
         self.call("patch_set", args, move |vm, res| match res {
             Ok(_) => {
                 vm.tools.patch_dialog = None;
                 vm.toast(
                     ToastLevel::Success,
                     format!(
-                        "Staged a {}-byte patch at {}. Nothing on disk changes until you export.",
+                        "Staged a {}-byte patch at {}{}. Nothing on disk changes until you \
+                         export.",
                         bytes.len(),
+                        if by_offset { "file offset " } else { "" },
                         hex(addr)
                     ),
                 );
@@ -909,9 +981,14 @@ impl ViewModel {
 
     /// Removes the patch at `addr` (`patch_remove`).
     pub fn remove_patch(&mut self, addr: u64) {
+        self.remove_patch_at(addr, false);
+    }
+
+    /// Removes the patch at `addr`, a file offset when `by_offset` (`patch_remove`).
+    pub fn remove_patch_at(&mut self, addr: u64, by_offset: bool) {
         self.call(
             "patch_remove",
-            json!({"address": hex(addr)}),
+            json!({(if by_offset { "offset" } else { "address" }): hex(addr)}),
             move |vm, res| match res {
                 Ok(_) => {
                     vm.toast(

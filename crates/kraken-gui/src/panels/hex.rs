@@ -103,6 +103,16 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
             {
                 vm.begin_patch_bytes();
             }
+            if ui
+                .button("Patch file offset...")
+                .on_hover_text(
+                    "Patch bytes by their offset in the file, for headers, padding or data the \
+                     program does not map. Nothing on disk changes until you export",
+                )
+                .clicked()
+            {
+                vm.begin_patch_file_offset();
+            }
             if sel.is_some()
                 && ui
                     .button("Who refers here  (X)")
@@ -163,6 +173,7 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel, st: &mut PanelState) {
                 .patches
                 .items
                 .iter()
+                .filter(|it| !it.by_offset)
                 .filter_map(|it| clip(it.range(), patched)),
         )
         .collect();

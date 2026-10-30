@@ -7,7 +7,7 @@
 //! original bytes are stored so a patch can be checked against the file it is applied to and so
 //! anchors, which hash the original bytes, keep working. Removing a patch is the way back.
 
-use kraken_proto::{ErrorCode, LogOp, Page, PageRequest, ProtoError};
+use kraken_proto::{Anchor, ErrorCode, LogOp, Page, PageRequest, PatchKind, ProtoError};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,32 @@ pub(crate) const MIGRATION_GROUPS: &str = "
         description TEXT NOT NULL
     );";
 
+/// Patches keyed by what their start is counted in: `va` (a virtual address, every patch so
+/// far), `offset` (a file offset) or `member` (an offset in a container member, named in
+/// `member`). Rebuilds the table because SQLite cannot change a primary key in place; the rows
+/// that exist are kept as `va`.
+pub(crate) const MIGRATION_TARGETS: &str = "
+    CREATE TABLE patches_v2 (
+        target_kind TEXT NOT NULL DEFAULT 'va',
+        member TEXT NOT NULL DEFAULT '',
+        start INTEGER NOT NULL,
+        original BLOB NOT NULL,
+        replacement BLOB NOT NULL,
+        note TEXT NOT NULL,
+        author_kind TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        grp TEXT NOT NULL DEFAULT '',
+        disabled INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (target_kind, member, start)
+    );
+    INSERT INTO patches_v2(target_kind, member, start, original, replacement, note,
+                           author_kind, author_id, ts, grp, disabled)
+        SELECT 'va', '', address, original, replacement, note, author_kind, author_id, ts,
+               grp, disabled FROM patches;
+    DROP TABLE patches;
+    ALTER TABLE patches_v2 RENAME TO patches;";
+
 /// What running the patched program against the original concluded, one row per patch-set hash.
 pub(crate) const MIGRATION_VERDICTS: &str = "CREATE TABLE patch_verdicts (
         set_hash TEXT PRIMARY KEY,
@@ -47,7 +73,13 @@ type Result<T> = std::result::Result<T, ProtoError>;
 /// One stored byte patch. `original` and `replacement` are always the same length.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
-    /// First address of the patched bytes.
+    /// What `address` counts: a virtual address, a file offset or an offset in a member.
+    #[serde(default)]
+    pub kind: PatchKind,
+    /// For [`PatchKind::Member`], the member's node id; empty otherwise.
+    #[serde(default)]
+    pub member: String,
+    /// First address (or offset, see `kind`) of the patched bytes.
     pub address: u64,
     /// The bytes at `address` when the patch was recorded.
     pub original: Vec<u8>,
@@ -99,6 +131,36 @@ fn from_db(a: i64) -> u64 {
     a as u64
 }
 
+/// The overlay key a patch anchor names: what its start counts, the member (for member
+/// patches) and the start itself.
+pub fn target_of(anchor: &Anchor) -> Result<(PatchKind, String, u64)> {
+    Ok(match anchor {
+        Anchor::FileOffset { offset } => (PatchKind::Offset, String::new(), offset.0),
+        Anchor::Member { node, offset } => (PatchKind::Member, node.clone(), offset.0),
+        other => (PatchKind::Va, String::new(), other.native()?.1.0),
+    })
+}
+
+/// The anchor a patch of `kind` is logged under. A virtual address gets a native anchor with no
+/// function around it; callers that know the function build their own.
+pub fn plain_anchor(kind: PatchKind, member: &str, start: u64) -> Anchor {
+    match kind {
+        PatchKind::Va => Anchor::Native {
+            space: kraken_proto::DEFAULT_SPACE.into(),
+            offset: kraken_proto::Hex64(start),
+            fn_entry: kraken_proto::Hex64(start),
+            fn_hash: String::new(),
+        },
+        PatchKind::Offset => Anchor::FileOffset {
+            offset: kraken_proto::Hex64(start),
+        },
+        PatchKind::Member => Anchor::Member {
+            node: member.to_string(),
+            offset: kraken_proto::Hex64(start),
+        },
+    }
+}
+
 /// Lays an applied `SetPatch` log op onto the overlay table: sets, replaces or removes the patch
 /// at its address. Other ops leave the table alone. Called for every entry written as applied,
 /// so the table always matches the log, undo entries included.
@@ -112,11 +174,14 @@ pub(crate) fn apply_patch_op(conn: &Connection, op: &LogOp, author: &Author) -> 
     else {
         return Ok(());
     };
-    let (_, address, _, _) = anchor.native()?;
+    let (kind, member, start) = target_of(anchor)?;
     match new {
         None => {
-            conn.execute("DELETE FROM patches WHERE address = ?1", [to_db(address.0)])
-                .map_err(db)?;
+            conn.execute(
+                "DELETE FROM patches WHERE target_kind = ?1 AND member = ?2 AND start = ?3",
+                params![kind.as_str(), member, to_db(start)],
+            )
+            .map_err(db)?;
         }
         Some(b) => {
             let original = unhex(original)?;
@@ -125,7 +190,7 @@ pub(crate) fn apply_patch_op(conn: &Connection, op: &LogOp, author: &Author) -> 
             let original = original.get(..replacement.len()).unwrap_or(&original);
             write_patch(
                 conn,
-                address.0,
+                (kind, &member, start),
                 original,
                 &replacement,
                 (&b.note, &b.group, b.disabled),
@@ -155,7 +220,7 @@ pub fn unhex(s: &str) -> Result<Vec<u8>> {
 
 fn write_patch(
     conn: &Connection,
-    address: u64,
+    (kind, member, start): (PatchKind, &str, u64),
     original: &[u8],
     replacement: &[u8],
     (note, group, disabled): (&str, &str, bool),
@@ -175,16 +240,18 @@ fn write_patch(
     }
     let ts = now_ms();
     conn.execute(
-        "INSERT INTO patches(address, original, replacement, note, author_kind, author_id, ts,
-                             grp, disabled)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT(address) DO UPDATE SET original = excluded.original,
+        "INSERT INTO patches(target_kind, member, start, original, replacement, note,
+                             author_kind, author_id, ts, grp, disabled)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(target_kind, member, start) DO UPDATE SET original = excluded.original,
             replacement = excluded.replacement, note = excluded.note,
             grp = excluded.grp, disabled = excluded.disabled,
             author_kind = excluded.author_kind, author_id = excluded.author_id,
             ts = excluded.ts",
         params![
-            to_db(address),
+            kind.as_str(),
+            member,
+            to_db(start),
             original,
             replacement,
             note,
@@ -197,7 +264,9 @@ fn write_patch(
     )
     .map_err(db)?;
     Ok(Patch {
-        address,
+        kind,
+        member: member.to_string(),
+        address: start,
         original: original.to_vec(),
         replacement: replacement.to_vec(),
         note: note.to_string(),
@@ -208,6 +277,14 @@ fn write_patch(
     })
 }
 
+const COLS: &str = "target_kind, member, start, original, replacement, note, author_kind, \
+                    author_id, ts, grp, disabled";
+
+/// Address patches first, then file offsets, then member offsets; each by start (an address
+/// above `i64::MAX` is stored negative and sorts last).
+const ORDER: &str = "CASE target_kind WHEN 'va' THEN 0 WHEN 'offset' THEN 1 ELSE 2 END, member, \
+                     start < 0, start";
+
 impl Store {
     /// Gives every patch that has no edit-log entry one, under the author who set it and with
     /// its time: patches recorded before they were logged then show in the history and can be
@@ -215,12 +292,7 @@ impl Store {
     pub(crate) fn backfill_patch_entries(&mut self) -> Result<usize> {
         let mut added = 0;
         for p in self.all_patches()? {
-            let anchor = kraken_proto::Anchor::Native {
-                space: kraken_proto::DEFAULT_SPACE.into(),
-                offset: kraken_proto::Hex64(p.address),
-                fn_entry: kraken_proto::Hex64(p.address),
-                fn_hash: String::new(),
-            };
+            let anchor = plain_anchor(p.kind, &p.member, p.address);
             let op = LogOp::SetPatch {
                 anchor,
                 original: kraken_proto::hex_bytes(&p.original),
@@ -255,8 +327,9 @@ impl Store {
                 .map_err(db)?;
             self.conn
                 .execute(
-                    "UPDATE patches SET ts = ?1 WHERE address = ?2",
-                    params![p.ts_ms, to_db(p.address)],
+                    "UPDATE patches SET ts = ?1
+                     WHERE target_kind = ?2 AND member = ?3 AND start = ?4",
+                    params![p.ts_ms, p.kind.as_str(), p.member, to_db(p.address)],
                 )
                 .map_err(db)?;
             added += 1;
@@ -264,8 +337,8 @@ impl Store {
         Ok(added)
     }
 
-    /// Records the patch at `address`, replacing one already there. `original` and `replacement`
-    /// must be the same non-zero length.
+    /// Records the patch at the virtual address `address`, replacing one already there.
+    /// `original` and `replacement` must be the same non-zero length.
     pub fn patch_set(
         &mut self,
         address: u64,
@@ -274,9 +347,27 @@ impl Store {
         note: &str,
         author: &Author,
     ) -> Result<Patch> {
+        self.patch_set_at(
+            (PatchKind::Va, "", address),
+            original,
+            replacement,
+            note,
+            author,
+        )
+    }
+
+    /// [`Store::patch_set`] for a patch of any kind.
+    pub fn patch_set_at(
+        &mut self,
+        target: (PatchKind, &str, u64),
+        original: &[u8],
+        replacement: &[u8],
+        note: &str,
+        author: &Author,
+    ) -> Result<Patch> {
         write_patch(
             &self.conn,
-            address,
+            target,
             original,
             replacement,
             (note, "", false),
@@ -284,22 +375,32 @@ impl Store {
         )
     }
 
-    /// Removes the patch at `address`; false when there was none.
+    /// Removes the patch at the virtual address `address`; false when there was none.
     pub fn patch_remove(&mut self, address: u64) -> Result<bool> {
         let n = self
             .conn
-            .execute("DELETE FROM patches WHERE address = ?1", [to_db(address)])
+            .execute(
+                "DELETE FROM patches WHERE target_kind = 'va' AND member = '' AND start = ?1",
+                [to_db(address)],
+            )
             .map_err(db)?;
         Ok(n > 0)
     }
 
-    /// The patch at `address`, if any.
+    /// The address patch at `address`, if any.
     pub fn patch_get(&self, address: u64) -> Result<Option<Patch>> {
+        self.patch_get_at(PatchKind::Va, "", address)
+    }
+
+    /// The patch of `kind` (in `member`, for member patches) starting at `start`, if any.
+    pub fn patch_get_at(&self, kind: PatchKind, member: &str, start: u64) -> Result<Option<Patch>> {
         self.conn
             .query_row(
-                "SELECT address, original, replacement, note, author_kind, author_id, ts, grp, disabled
-                 FROM patches WHERE address = ?1",
-                [to_db(address)],
+                &format!(
+                    "SELECT {COLS} FROM patches
+                     WHERE target_kind = ?1 AND member = ?2 AND start = ?3"
+                ),
+                params![kind.as_str(), member, to_db(start)],
                 row,
             )
             .optional()
@@ -308,15 +409,12 @@ impl Store {
             .transpose()
     }
 
-    /// Every patch, ordered by address, for applying them to a file. Not paginated: the overlay
-    /// is small and a patched binary needs all of it at once.
+    /// Every patch, address patches first and then by file offset, for applying them to a file.
+    /// Not paginated: the overlay is small and a patched binary needs all of it at once.
     pub fn all_patches(&self) -> Result<Vec<Patch>> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT address, original, replacement, note, author_kind, author_id, ts, grp, disabled
-                 FROM patches ORDER BY address < 0, address",
-            )
+            .prepare(&format!("SELECT {COLS} FROM patches ORDER BY {ORDER}"))
             .map_err(db)?;
         let raw = stmt
             .query_map([], row)
@@ -326,8 +424,8 @@ impl Store {
         raw.into_iter().map(finish).collect()
     }
 
-    /// The patches that are switched on, ordered by address: what an export or an emulated run
-    /// applies. `group` limits them to one patch set.
+    /// The patches that are switched on, in the order of [`Store::all_patches`]: what an export
+    /// or an emulated run applies. `group` limits them to one patch set.
     pub fn active_patches(&self, group: Option<&str>) -> Result<Vec<Patch>> {
         Ok(self
             .all_patches()?
@@ -402,19 +500,31 @@ impl Store {
             .map_err(db)
     }
 
-    /// Patches ordered by address, one page at a time. The cursor is the address of the last row
-    /// of the previous page, in hex.
+    /// Patches in the order of [`Store::all_patches`], one page at a time. The cursor names the
+    /// last row of the previous page as `kind:hex-start:member`.
     pub fn patches(&self, page: &PageRequest) -> Result<Page<Patch>> {
         let limit = page.effective_limit();
-        let after: Option<i64> = match &page.cursor {
+        let bad = || ProtoError::new(ErrorCode::InvalidArgument, "malformed patch cursor");
+        // After which row to start: (kind rank, member, start is negative, start).
+        let after: Option<(i64, String, i64, i64)> = match &page.cursor {
             None => None,
-            Some(c) => Some(
-                u64::from_str_radix(c.trim_start_matches("0x"), 16)
+            Some(c) => {
+                // an older cursor was just the address
+                let mut parts = c.splitn(3, ':');
+                let (kind, hex, member) = match (parts.next(), parts.next(), parts.next()) {
+                    (Some(k), Some(h), Some(m)) => (PatchKind::parse(k).ok_or_else(bad)?, h, m),
+                    _ => (PatchKind::Va, c.as_str(), ""),
+                };
+                let start = u64::from_str_radix(hex.trim_start_matches("0x"), 16)
                     .map(to_db)
-                    .map_err(|_| {
-                        ProtoError::new(ErrorCode::InvalidArgument, "malformed patch cursor")
-                    })?,
-            ),
+                    .map_err(|_| bad())?;
+                let rank = match kind {
+                    PatchKind::Va => 0,
+                    PatchKind::Offset => 1,
+                    PatchKind::Member => 2,
+                };
+                Some((rank, member.to_string(), i64::from(start < 0), start))
+            }
         };
         let total: i64 = self
             .conn
@@ -422,22 +532,29 @@ impl Store {
             .map_err(db)?;
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT address, original, replacement, note, author_kind, author_id, ts, grp, disabled
-                 FROM patches
-                 WHERE ?1 IS NULL OR (address < 0, address) > (?1 < 0, ?1)
-                 ORDER BY address < 0, address LIMIT ?2",
-            )
+            .prepare(&format!(
+                "SELECT {COLS} FROM patches
+                 WHERE ?1 IS NULL OR
+                       (CASE target_kind WHEN 'va' THEN 0 WHEN 'offset' THEN 1 ELSE 2 END,
+                        member, start < 0, start) > (?1, ?2, ?3, ?4)
+                 ORDER BY {ORDER} LIMIT ?5"
+            ))
             .map_err(db)?;
+        let (r, m, n, st) = match &after {
+            Some((r, m, n, st)) => (Some(*r), m.as_str(), *n, *st),
+            None => (None, "", 0, 0),
+        };
         let raw = stmt
-            .query_map(params![after, limit as i64 + 1], row)
+            .query_map(params![r, m, n, st, limit as i64 + 1], row)
             .map_err(db)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(db)?;
         let mut items = raw.into_iter().map(finish).collect::<Result<Vec<_>>>()?;
         let next_cursor = if items.len() > limit as usize {
             items.truncate(limit as usize);
-            items.last().map(|p| format!("{:#x}", p.address))
+            items
+                .last()
+                .map(|p| format!("{}:{:#x}:{}", p.kind.as_str(), p.address, p.member))
         } else {
             None
         };
@@ -450,6 +567,8 @@ impl Store {
 }
 
 type Raw = (
+    String,
+    String,
     i64,
     Vec<u8>,
     Vec<u8>,
@@ -472,21 +591,27 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Raw> {
         r.get(6)?,
         r.get(7)?,
         r.get(8)?,
+        r.get(9)?,
+        r.get(10)?,
     ))
 }
 
 fn finish(
-    (address, original, replacement, note, kind, id, ts, group, disabled): Raw,
+    (kind, member, start, original, replacement, note, author_kind, id, ts, group, disabled): Raw,
 ) -> Result<Patch> {
     Ok(Patch {
-        address: from_db(address),
+        kind: PatchKind::parse(&kind).ok_or_else(|| {
+            ProtoError::new(ErrorCode::Internal, format!("unknown patch kind {kind:?}"))
+        })?,
+        member,
+        address: from_db(start),
         original,
         replacement,
         note,
         group,
         disabled,
         author: Author {
-            kind: parse_kind(&kind)?,
+            kind: parse_kind(&author_kind)?,
             id,
         },
         ts_ms: ts,
@@ -547,6 +672,158 @@ mod tests {
         assert!(s.patch_remove(0x401000).expect("remove"));
         assert!(!s.patch_remove(0x401000).expect("remove again"));
         assert!(s.patch_get(0x401000).expect("get").is_none());
+    }
+
+    fn set_op(anchor: Anchor, original: &str, replacement: &str) -> crate::EntryDraft {
+        let op = LogOp::SetPatch {
+            anchor,
+            original: original.into(),
+            old: None,
+            new: Some(kraken_proto::PatchBytes {
+                replacement: replacement.into(),
+                note: String::new(),
+                group: String::new(),
+                disabled: false,
+            }),
+        };
+        let key = crate::keys::op_key(&op).expect("key");
+        crate::EntryDraft {
+            op: kraken_proto::VersionedLogOp::new(op),
+            provenance: kraken_proto::Provenance::User,
+            author: Author::user("me"),
+            run_id: None,
+            read_set: std::collections::BTreeMap::from([(key, 0)]),
+        }
+    }
+
+    fn overlay(s: &Store) -> Vec<(PatchKind, String, u64, Vec<u8>)> {
+        s.all_patches()
+            .expect("all")
+            .into_iter()
+            .map(|p| (p.kind, p.member, p.address, p.replacement))
+            .collect()
+    }
+
+    #[test]
+    fn an_address_patch_and_an_offset_patch_with_the_same_number_coexist() {
+        let mut s = Store::open_in_memory().expect("store");
+        let va = plain_anchor(PatchKind::Va, "", 0x40);
+        let off = plain_anchor(PatchKind::Offset, "", 0x40);
+        let member = plain_anchor(PatchKind::Member, "fw/app", 0x40);
+        s.append(set_op(va, "00", "01")).expect("va");
+        let off_id = s.append(set_op(off, "00", "02")).expect("offset");
+        s.append(set_op(member, "00", "03")).expect("member");
+        let all = overlay(&s);
+        assert_eq!(all.len(), 3);
+        assert_eq!(
+            all.iter().map(|p| p.0).collect::<Vec<_>>(),
+            vec![PatchKind::Va, PatchKind::Offset, PatchKind::Member]
+        );
+
+        // undoing one leaves the others
+        s.undo_entry(off_id, &Author::user("me")).expect("undo");
+        let left = overlay(&s);
+        assert_eq!(left.len(), 2);
+        assert!(left.iter().all(|p| p.0 != PatchKind::Offset));
+        assert_eq!(
+            s.patch_get_at(PatchKind::Member, "fw/app", 0x40)
+                .expect("get")
+                .expect("kept")
+                .replacement,
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn replaying_a_mixed_log_rebuilds_a_byte_identical_overlay() {
+        let mut s = Store::open_in_memory().expect("store");
+        for (kind, member, at, new) in [
+            (PatchKind::Offset, "", 0x10, "aa"),
+            (PatchKind::Va, "", 0x10, "bb"),
+            (PatchKind::Member, "m1", 0x10, "cc"),
+            (PatchKind::Offset, "", 0x7fff_ffff_ffff_ffff, "dd"),
+        ] {
+            s.append(set_op(plain_anchor(kind, member, at), "00", new))
+                .expect("append");
+        }
+        let before = s.all_patches().expect("all");
+        let page = s.patches(&PageRequest::default()).expect("page");
+        assert_eq!(page.items.len(), 4);
+        // rebuild the overlay from the log alone
+        s.conn.execute("DELETE FROM patches", []).expect("clear");
+        let entries = s
+            .history(&PageRequest::default(), &crate::HistoryFilter::default())
+            .expect("history")
+            .items;
+        for e in entries.iter().rev() {
+            apply_patch_op(&s.conn, &e.op.op, &e.author).expect("replay");
+        }
+        let after = s.all_patches().expect("all");
+        let strip = |v: &[Patch]| {
+            v.iter()
+                .map(|p| {
+                    (
+                        p.kind,
+                        p.member.clone(),
+                        p.address,
+                        p.original.clone(),
+                        p.replacement.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(strip(&before), strip(&after));
+    }
+
+    #[test]
+    fn a_pre_migration_project_keeps_its_patches_as_address_patches() {
+        let dir = std::env::temp_dir().join(format!("kraken-patch-mig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("old.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            // a database as the build before file-offset patches left it
+            let conn = Connection::open(&path).expect("open");
+            conn.execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+                .expect("sv");
+            let old = crate::store::MIGRATIONS.len() - 1;
+            for (i, sql) in crate::store::MIGRATIONS[..old].iter().enumerate() {
+                conn.execute_batch(sql).expect("migrate");
+                conn.execute("INSERT INTO schema_version VALUES (?1)", [i as u32 + 1])
+                    .expect("version");
+            }
+            conn.execute(
+                "INSERT INTO patches(address, original, replacement, note, author_kind,
+                                     author_id, ts, grp, disabled)
+                 VALUES (4198400, x'7410', x'eb10', 'flip', 'user', 'me', 5, '', 0),
+                        (-1, x'00', x'01', '', 'agent', 'bot', 6, 'set', 1)",
+                [],
+            )
+            .expect("old rows");
+        }
+        let s = Store::open(&path).expect("migrates");
+        assert_eq!(
+            s.schema_version().expect("version"),
+            crate::store::SCHEMA_VERSION
+        );
+        let p = s.patch_get(0x401000).expect("get").expect("kept");
+        assert_eq!((p.kind, p.member.as_str()), (PatchKind::Va, ""));
+        assert_eq!(p.replacement, vec![0xeb, 0x10]);
+        assert_eq!(p.note, "flip");
+        let high = s.patch_get(u64::MAX).expect("get").expect("kept");
+        assert!(high.disabled && high.group == "set");
+        // and a file-offset patch can now sit beside them
+        drop(s);
+        let mut s = Store::open(&path).expect("reopens");
+        s.append(set_op(
+            plain_anchor(PatchKind::Offset, "", 0x401000),
+            "00",
+            "ff",
+        ))
+        .expect("offset patch");
+        assert_eq!(s.all_patches().expect("all").len(), 3);
+        drop(s);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

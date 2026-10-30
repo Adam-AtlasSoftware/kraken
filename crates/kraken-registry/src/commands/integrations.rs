@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use crate::command::{Command, CommandKind, CommandSpec, Permission};
 use crate::commands::NoArgs;
 use crate::context::CallContext;
-use crate::patchfile::{FilePatch, PatchError, patch_file_bytes_at};
 use crate::session::{Session, blocking};
 
 /// Where a usable copy of the tool comes from.
@@ -786,25 +785,7 @@ fn patched_copy(
     dir: &Path,
     engine_base: u64,
 ) -> Result<PathBuf, ProtoError> {
-    let image = std::fs::read(binary).map_err(|e| {
-        ProtoError::new(
-            ErrorCode::NotFound,
-            format!("cannot read {}: {e}", binary.display()),
-        )
-    })?;
-    let file_patches: Vec<FilePatch> = patches
-        .iter()
-        .map(|p| FilePatch {
-            address: p.address,
-            original: p.original.clone(),
-            replacement: p.replacement.clone(),
-        })
-        .collect();
-    let (patched, _) =
-        patch_file_bytes_at(&image, &file_patches, Some(engine_base)).map_err(|e| match e {
-            PatchError::NotAnObject(_) => ProtoError::new(ErrorCode::Unsupported, e.to_string()),
-            PatchError::NoMapping(_) => invalid(e.to_string()),
-        })?;
+    let (patched, _) = crate::patchfile::apply_project_patches(binary, patches, engine_base)?;
     let name = binary
         .file_name()
         .map(|n| n.to_os_string())

@@ -38,7 +38,12 @@ pub(crate) fn patch_set_hash(active: &[Patch]) -> String {
     let mut h = Sha256::new();
     for p in sorted {
         h.update(format!(
-            "{:x}:{}:{}\n",
+            "{}{:x}:{}:{}\n",
+            // address patches hash as they always did
+            match p.kind {
+                kraken_proto::PatchKind::Va => "".to_string(),
+                k => format!("{}{}:", k.as_str(), p.member),
+            },
             p.address,
             hex_bytes(&p.original),
             hex_bytes(&p.replacement)
@@ -218,7 +223,10 @@ impl Command for PatchLint {
                 }
             }
             funcs.sort_by_key(|f| f.0);
-            for p in &patches {
+            for p in patches
+                .iter()
+                .filter(|p| p.kind == kraken_proto::PatchKind::Va)
+            {
                 findings.extend(boundary_finding(&funcs, p));
             }
         }
