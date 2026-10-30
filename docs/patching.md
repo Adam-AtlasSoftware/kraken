@@ -59,6 +59,34 @@ Everything below is also in the GUI, under the **Patch** menu:
    **SHA-256** (with **Copy SHA-256**) and **Open folder**; the Patches tab keeps the last one.
    `patch_export` returns the same hash as `sha256`.
 
+### Change what this code does (guided)
+
+**Patch > Change what this code does...** (also in the right-click menu of the Listing and the
+Decompiler, and in the command palette) walks through a patch in five steps, with Back and Cancel
+on every one:
+
+1. **Where.** The instruction you had selected in the Listing, or the line you right-clicked in the
+   Decompiler. You can type another address. The window shows the function and the instruction.
+2. **What.** Pick a card: **Skip this call** (NOPs the call), **Always take this branch**,
+   **Never take this branch**, **Return a value** (the function returns your number as soon as it
+   is called), **Change this constant** (the number inside the instruction) or **Write assembly**.
+   Cards that do not fit the instruction (a call card on a `mov`) are off and say why.
+3. **Preview.** The instructions before and after, what the patch checks (`patch_lint`) found, and
+   the decompiled C of the function before and after (`decompile` and `decompile_patched`).
+   ![The Change what this code does wizard on its preview step for "never take this branch" in a whitespace-skipping loop: the jump becomes a NOP, no warnings, and the C loop disappears](images/patch-wizard.png)
+4. **Test (optional).** Arguments and standard input; **Run original and patched** runs both in
+   the emulator (`patch_verify`) and says whether they behaved the same. Press Next to skip it.
+5. **Save.** Name a patch set (an existing one or a new one, with a line on what it is for) and
+   optionally write a patched copy of the program and/or a patch file of just this set. The box
+   under the buttons lists the CLI commands that do the same.
+
+The preview commands read the project's staged patches, so the wizard stages **one draft patch**
+when the preview opens and takes it out again if you go back to step 1 or 2 or cancel (both are
+undoable entries in the History). Nothing is written to a file before Save, and then only the
+copies you ticked. If the address already has a patch, the wizard asks you to remove that first.
+In the CLI the same steps are `patch_nop`, `patch_branch`, `patch_return`, `patch_constant` or
+`patch_asm`, then `patch_lint`, `patch_verify`, `patch_group_set` and `patch_group_assign`.
+
 ### One-click patches
 
 Right-click an instruction in the **Listing** and open **Patch** (in the **Decompiler** only

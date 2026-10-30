@@ -94,6 +94,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::AddBookmark
             | AppAction::ShowBookmarks
             | AppAction::PatchHere
+            | AppAction::ChangeWhatItDoes
             | AppAction::ShowPatches
             | AppAction::ExportPatched
             | AppAction::ImportPatchFile
@@ -324,6 +325,7 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             .response
             .on_hover_text("Turn the program into Rust");
             ui.menu_button("Patch", |ui| {
+                item(ui, AppAction::ChangeWhatItDoes, env, &mut out);
                 item(ui, AppAction::PatchHere, env, &mut out);
                 item(ui, AppAction::ShowPatches, env, &mut out);
                 ui.separator();

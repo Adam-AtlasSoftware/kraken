@@ -16,8 +16,12 @@ struct Rig {
 }
 
 fn rig() -> Rig {
+    rig_with(demo_fixture())
+}
+
+fn rig_with(fixture: engine_fake::FixtureFile) -> Rig {
     let rt = Runtime::new().expect("runtime");
-    let d = demo_project_with(demo_fixture(), Duration::ZERO).expect("demo");
+    let d = demo_project_with(fixture, Duration::ZERO).expect("demo");
     let mut vm = ViewModel::new(d.backend, rt.handle().clone());
     vm.create_project(
         d.binary.to_string_lossy().into_owned(),
@@ -778,4 +782,128 @@ fn import_symbols_previews_then_applies_as_one_run() {
         v.functions.items.iter().any(|f| f.name == "imported_entry")
     }));
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The demo with `main` holding x86 code that has a conditional branch.
+fn x86_main_rig() -> (Rig, u64) {
+    use kraken_proto::{DisasmRow, FlowKind, Hex64, Locator};
+    let mut fx = demo_fixture();
+    fx.program.arch = "x86:LE:64:default".into();
+    let f = fx
+        .functions
+        .iter_mut()
+        .find(|f| f.summary.name == "main")
+        .expect("main");
+    let Locator::Native { offset, .. } = f.summary.locator.clone() else {
+        panic!("native main");
+    };
+    let row = |at: u64, bytes: &str, m: &str, flow| DisasmRow {
+        address: Hex64(at),
+        bytes: bytes.into(),
+        mnemonic: m.into(),
+        operands: Vec::new(),
+        comment: None,
+        labels: Vec::new(),
+        flow,
+    };
+    let a = offset.0;
+    f.disassembly = Some(vec![
+        row(a, "83f805", "cmp", FlowKind::Fallthrough),
+        row(a + 3, "7510", "jne", FlowKind::ConditionalJump),
+        row(a + 5, "b801000000", "mov", FlowKind::Fallthrough),
+        row(a + 10, "c3", "ret", FlowKind::Return),
+    ]);
+    (rig_with(fx), a + 3)
+}
+
+fn wizard(vm: &ViewModel) -> &PatchWizard {
+    vm.tools.patch_wizard.as_ref().expect("the wizard is open")
+}
+
+#[test]
+fn the_patch_wizard_walks_a_branch_change_to_a_saved_set() {
+    use crate::wizard::{WizardFlow, WizardNav};
+    let (mut r, jne) = x86_main_rig();
+    r.vm.begin_patch_wizard(Some(jne));
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| w.pick.is_some())
+    }));
+    assert_eq!(wizard(&r.vm).current(), PatchStep::Pick);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+
+    // No choice, no way on; and nothing has been written.
+    assert!(matches!(r.vm.patch_wizard_next(), WizardNav::Blocked(_)));
+    assert!(r.vm.tools.patches.items.is_empty());
+    r.vm.tools.patch_wizard.as_mut().expect("wizard").intent = Some(WizardIntent::AlwaysTake);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert_eq!(wizard(&r.vm).current(), PatchStep::Preview);
+
+    // The preview: the branch becomes a jump, the C is asked for before and after, the checks run.
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools.patch_wizard.as_ref().is_some_and(|w| {
+            matches!(w.draft, Draft::Staged(_))
+                && matches!(w.c_before, CText::Ready(_))
+                && matches!(w.c_after, CText::Ready(_) | CText::Failed(_))
+                && w.lint.is_some()
+        })
+    }));
+    let w = wizard(&r.vm);
+    let pv = w.preview.as_ref().expect("preview");
+    assert!(pv.old_disassembly[0].contains("jne"), "{pv:?}");
+    assert_eq!(pv.replacement, "eb10", "{pv:?}");
+    assert!(
+        pv.new_disassembly
+            .iter()
+            .any(|l| l.to_lowercase().contains("jmp")),
+        "{pv:?}"
+    );
+    assert!(r.vm.block_until(WAIT, |v| v.tools.patches.items.len() == 1));
+
+    // Back before the preview takes the draft out again.
+    r.vm.patch_wizard_back();
+    assert!(r.vm.block_until(WAIT, |v| v.tools.patches.items.is_empty() && !v.busy()));
+    assert!(wizard(&r.vm).preview.is_none());
+
+    // Forward again, through the test step, to Save.
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| matches!(w.draft, Draft::Staged(_)))
+    }));
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert_eq!(wizard(&r.vm).current(), PatchStep::Save);
+    assert!(wizard(&r.vm).set_name.contains("Always take this branch"));
+    r.vm.tools.patch_wizard.as_mut().expect("wizard").set_name = "skip the check".into();
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Finish);
+    assert!(r.vm.block_until(WAIT, |v| v.tools.patch_wizard.is_none() && !v.busy()));
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools.patches.items.len() == 1 && v.tools.patches.items[0].group == "skip the check"
+    }));
+    assert_eq!(r.vm.tools.patches.items[0].address, jne);
+}
+
+#[test]
+fn cancelling_the_patch_wizard_leaves_no_patch_behind() {
+    use crate::wizard::WizardNav;
+    let (mut r, jne) = x86_main_rig();
+    r.vm.begin_patch_wizard(Some(jne));
+    assert!(r.vm.block_until(WAIT, |v| {
+        v.tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| w.pick.is_some())
+    }));
+    r.vm.tools.patch_wizard.as_mut().expect("wizard").intent = Some(WizardIntent::NeverTake);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert_eq!(r.vm.patch_wizard_next(), WizardNav::Moved);
+    assert!(r.vm.block_until(WAIT, |v| v.tools.patches.items.len() == 1));
+    r.vm.cancel_patch_wizard();
+    assert!(r.vm.tools.patch_wizard.is_none());
+    assert!(r.vm.block_until(WAIT, |v| v.tools.patches.items.is_empty() && !v.busy()));
 }

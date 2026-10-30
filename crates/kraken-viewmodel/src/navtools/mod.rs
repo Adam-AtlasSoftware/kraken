@@ -10,6 +10,7 @@ mod emulate;
 mod form;
 mod guide;
 mod patch_intents;
+mod patch_wizard;
 mod patches;
 mod search;
 mod source_edit;
@@ -35,6 +36,9 @@ pub use form::{
 };
 pub use guide::{NextStepsPanel, STRIP_MAX};
 pub use patch_intents::{IntentDialog, IntentKind, IntentPreview, parse_number};
+pub use patch_wizard::{
+    CText, Draft, LintLine, PatchStep, PatchWizard, Pick, TestPanel, WizardIntent,
+};
 pub use patches::{
     AsmState, EXPORT_FORMATS, ExportDialog, ExportDone, GroupDialog, ImportDialog, LintItem,
     LintReport, MAX_PATCH_BYTES, PatchDialog, PatchGroupItem, PatchItem, PatchOrigin, PatchesPanel,
@@ -161,6 +165,8 @@ pub struct NavTools {
     pub symbols_dialog: Option<SymbolsDialog>,
     /// The one-click patch dialog (NOP, branch, return, fill), when open.
     pub intent_dialog: Option<IntentDialog>,
+    /// The Change what this code does wizard, when open.
+    pub patch_wizard: Option<PatchWizard>,
     /// The Run dialog, when open.
     pub emulate_dialog: Option<EmulateDialog>,
     /// The call-a-function dialog, when open.
@@ -209,6 +215,7 @@ impl NavTools {
             || self.symbols_dialog.is_some()
             || self.string_dialog.is_some()
             || self.intent_dialog.is_some()
+            || self.patch_wizard.is_some()
             || self.type_dialog.is_some()
             || self.local_dialog.is_some()
             || self.function_dialog.is_some()

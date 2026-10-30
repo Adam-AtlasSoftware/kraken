@@ -941,6 +941,7 @@ mod integrations;
 mod loading;
 mod local_models;
 mod next_steps;
+mod patch_wizard;
 mod patches;
 mod setup_status;
 mod shell;

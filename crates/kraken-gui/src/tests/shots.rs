@@ -13,7 +13,7 @@ fn out_dir() -> PathBuf {
     std::env::var_os("KRAKEN_SHOT_DIR").map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
-fn save(k: &mut Kit, name: &str) {
+pub(super) fn save(k: &mut Kit, name: &str) {
     k.h.state_mut().hide_notices();
     k.h.run_steps(6);
     let img = k.h.render().expect("render");
@@ -25,7 +25,7 @@ fn save(k: &mut Kit, name: &str) {
     println!("saved {}", path.display());
 }
 
-fn ready_demo(k: &mut Kit) {
+pub(super) fn ready_demo(k: &mut Kit) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut selected = false;
     loop {
@@ -177,6 +177,9 @@ fn screenshot_a_project_from_the_environment() {
     if let Ok(menu) = std::env::var("KRAKEN_SHOT_MENU") {
         k.h.get_by_label(&menu).click();
     }
+    if std::env::var("KRAKEN_SHOT_ACTION").is_ok_and(|a| a == "patch-wizard") {
+        patch_wizard_to_preview(&mut k);
+    }
     if std::env::var("KRAKEN_SHOT_ACTION").is_ok_and(|a| a == "wizard") {
         let ctx = k.h.ctx.clone();
         k.h.state_mut().dispatch(AppAction::RewriteWizard, &ctx);
@@ -190,7 +193,7 @@ fn screenshot_a_project_from_the_environment() {
 }
 
 /// Main's first instruction selected in the Listing.
-fn select_first_instruction(k: &mut Kit) {
+pub(super) fn select_first_instruction(k: &mut Kit) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         k.h.run_steps(1);
@@ -281,4 +284,93 @@ fn screenshot_the_edit_tab_with_a_plan() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     save(&mut k, "edit-tab.png");
+}
+
+#[test]
+#[ignore = "writes PNG files and needs a GPU; run by hand"]
+fn screenshot_the_patch_wizard_preview() {
+    use kraken_viewmodel::navtools::{Draft, WizardIntent};
+    let mut k = kit_with(true, true);
+    ready_demo(&mut k);
+    select_first_instruction(&mut k);
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().dispatch(AppAction::ChangeWhatItDoes, &ctx);
+    k.h.run_steps(3);
+    k.h.get_by_label("Next").click();
+    k.h.run_steps(3);
+    let vm = k.h.state_mut().view_model_mut().expect("vm");
+    let w = vm.tools.patch_wizard.as_mut().expect("wizard");
+    w.intent = Some(WizardIntent::ReturnValue);
+    w.value = "1".into();
+    k.h.run_steps(3);
+    save(&mut k, "patch-wizard-what.png");
+    k.h.get_by_label("Next").click();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        k.h.run_steps(1);
+        let vm = k.h.state().view_model().expect("vm");
+        if vm
+            .tools
+            .patch_wizard
+            .as_ref()
+            .is_some_and(|w| matches!(w.draft, Draft::Staged(_)) && w.lint.is_some())
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no preview");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    save(&mut k, "patch-wizard-preview.png");
+}
+
+/// `KRAKEN_SHOT_ACTION=patch-wizard`: the Change what this code does wizard on its preview step,
+/// at `KRAKEN_SHOT_ADDRESS` with `KRAKEN_SHOT_INTENT` (`always`, `never`, `return`).
+fn patch_wizard_to_preview(k: &mut Kit) {
+    use kraken_viewmodel::navtools::{CText, Draft, WizardIntent};
+    let address = std::env::var("KRAKEN_SHOT_ADDRESS")
+        .ok()
+        .and_then(|a| kraken_viewmodel::navtools::parse_number(&a))
+        .map(|a| a as u64);
+    let intent = match std::env::var("KRAKEN_SHOT_INTENT").as_deref() {
+        Ok("always") => WizardIntent::AlwaysTake,
+        Ok("return") => WizardIntent::ReturnValue,
+        _ => WizardIntent::NeverTake,
+    };
+    k.h.state_mut()
+        .view_model_mut()
+        .expect("vm")
+        .begin_patch_wizard(address);
+    k.h.run_steps(5);
+    k.h.get_by_label("Next").click();
+    k.h.run_steps(8);
+    let w =
+        k.h.state_mut()
+            .view_model_mut()
+            .and_then(|vm| vm.tools.patch_wizard.as_mut())
+            .expect("wizard");
+    w.intent = Some(intent);
+    k.h.run_steps(5);
+    k.h.state_mut().hide_notices();
+    k.h.run_steps(6);
+    k.h.get_by_label("Next").click();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        k.h.run_steps(1);
+        let done =
+            k.h.state()
+                .view_model()
+                .and_then(|vm| vm.tools.patch_wizard.as_ref())
+                .is_some_and(|w| {
+                    matches!(w.draft, Draft::Staged(_))
+                        && w.lint.is_some()
+                        && !matches!(w.c_before, CText::Loading)
+                        && !matches!(w.c_after, CText::Loading)
+                });
+        if done {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no preview");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    k.h.run_steps(10);
 }

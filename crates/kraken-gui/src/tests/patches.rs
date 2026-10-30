@@ -166,8 +166,8 @@ fn the_context_menu_patch_items_preview_then_apply_a_nop() {
     let patch: Vec<_> = items.iter().filter(|i| i.group == Some("Patch")).collect();
     assert_eq!(
         patch.len(),
-        7,
-        "edit string, NOP, three branch edits, return, fill"
+        8,
+        "edit string, the guided wizard, NOP, three branch edits, return, fill"
     );
     assert!(patch.iter().all(|i| i.disabled.is_none()
         || matches!(i.choice, NavChoice::PatchReturn | NavChoice::EditString)));

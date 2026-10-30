@@ -18,6 +18,7 @@ mod menu;
 mod model_chip;
 mod overlays;
 mod panels;
+mod patch_wizard;
 mod private;
 mod recent;
 mod rewrite;

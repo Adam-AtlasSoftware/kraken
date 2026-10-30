@@ -122,6 +122,7 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 
 | Item | What it does | Shortcut |
 |---|---|---|
+| Change what this code does... | Step by step: pick code, say what it should do instead, preview the result, test it and save it as a patch set |  |
 | Patch bytes here... | Replace the bytes of the selected instruction or Hex selection; nothing on disk changes until you export |  |
 | Show patches | See every staged byte patch, run them and export |  |
 | Export patched binary... | Write a copy of the program with every patch applied, or the patches as an IPS, BPS or JSON file to share; the original is untouched |  |

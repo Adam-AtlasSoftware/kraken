@@ -55,6 +55,7 @@ pub enum NavChoice {
     CreateFunction,
     DeleteFunction,
     Rewrite,
+    ChangeCode,
     PatchNop,
     PatchInvert,
     PatchAlways,
@@ -388,6 +389,19 @@ pub fn items(vm: &ViewModel, t: &Target) -> Vec<Item> {
                 .then_some("Right-click a string in the Listing data to edit it."),
         ),
     );
+    out.push(
+        item(
+            NavChoice::ChangeCode,
+            "Change what this code does...",
+            None,
+            "A guided patch: say what the code should do, preview the result, test it and save it as a patch set",
+        )
+        .in_group(PATCH)
+        .off_if(
+            (t.address.is_none() && t.function.is_none())
+                .then_some("There is no code address here."),
+        ),
+    );
     let code = t.kind == TargetKind::Code && t.address.is_some();
     let on_code = |it: Item| {
         it.in_group(PATCH)
@@ -599,6 +613,11 @@ pub fn run(ctx: &egui::Context, vm: &mut ViewModel, t: &Target, choice: NavChoic
         NavChoice::DeleteFunction => {
             if let Some(a) = t.address {
                 vm.begin_delete_function(a);
+            }
+        }
+        NavChoice::ChangeCode => {
+            if let Some(a) = t.address.or(func) {
+                vm.begin_patch_wizard(Some(a));
             }
         }
         NavChoice::PatchNop => {

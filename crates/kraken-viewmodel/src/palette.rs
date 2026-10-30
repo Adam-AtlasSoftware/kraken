@@ -82,6 +82,8 @@ pub enum AppAction {
     ShowBookmarks,
     /// Stage a byte patch on the selected instruction (or Hex selection).
     PatchHere,
+    /// Open the guided Change what this code does wizard.
+    ChangeWhatItDoes,
     /// Show the Patches tab.
     ShowPatches,
     /// Write a copy of the binary with the patches applied.
@@ -134,7 +136,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 59] = [
+    pub const ALL: [AppAction; 60] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -146,6 +148,7 @@ impl AppAction {
         AppAction::AddBookmark,
         AppAction::ShowBookmarks,
         AppAction::PatchHere,
+        AppAction::ChangeWhatItDoes,
         AppAction::ShowPatches,
         AppAction::ExportPatched,
         AppAction::ImportPatchFile,
@@ -275,6 +278,7 @@ impl AppAction {
             AppAction::AddBookmark => "Bookmark this address",
             AppAction::ShowBookmarks => "Show bookmarks",
             AppAction::PatchHere => "Patch bytes here...",
+            AppAction::ChangeWhatItDoes => "Change what this code does...",
             AppAction::ShowPatches => "Show patches",
             AppAction::ExportPatched => "Export patched binary...",
             AppAction::ImportPatchFile => "Import patch file...",
@@ -351,6 +355,10 @@ impl AppAction {
             AppAction::PatchHere => {
                 "Replace the bytes of the selected instruction or Hex selection; nothing on disk \
                  changes until you export"
+            }
+            AppAction::ChangeWhatItDoes => {
+                "Step by step: pick code, say what it should do instead, preview the result, test it \
+                 and save it as a patch set"
             }
             AppAction::ShowPatches => "See every staged byte patch, run them and export",
             AppAction::ExportPatched => {

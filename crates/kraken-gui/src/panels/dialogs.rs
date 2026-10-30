@@ -22,6 +22,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     import_dialog(ctx, vm);
     symbols_dialog(ctx, vm);
     intent_dialog(ctx, vm);
+    crate::patch_wizard::show(ctx, vm);
     super::emulation::dialog(ctx, vm);
     super::emulation::call_dialog(ctx, vm);
     type_dialog(ctx, vm);

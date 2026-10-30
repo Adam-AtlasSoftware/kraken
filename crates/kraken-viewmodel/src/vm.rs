@@ -1952,6 +1952,7 @@ impl ViewModel {
                 | AppAction::AddBookmark
                 | AppAction::ShowBookmarks
                 | AppAction::PatchHere
+                | AppAction::ChangeWhatItDoes
                 | AppAction::ShowPatches
                 | AppAction::ExportPatched
                 | AppAction::ImportPatchFile
@@ -2033,6 +2034,7 @@ impl ViewModel {
                     self.begin_patch_instruction();
                 }
             }
+            AppAction::ChangeWhatItDoes => self.begin_patch_wizard(None),
             AppAction::ShowPatches => self.show_patches(),
             AppAction::ExportPatched => self.begin_patch_export(),
             AppAction::ImportPatchFile => self.begin_patch_import(),
