@@ -186,3 +186,20 @@ fn the_settings_window_changes_the_keymap_at_once_and_saves_it() {
     r.click("90%");
     assert_eq!(r.config().ui.zoom_percent, Some(90));
 }
+
+#[test]
+fn keyboard_zoom_is_kept_until_the_setting_changes() {
+    let mut r = rig();
+    r.click("Cancel");
+    r.k.h.run_steps(2);
+    // what egui's built-in Ctrl+= does
+    r.k.h.ctx.set_zoom_factor(1.5);
+    r.k.h.run_steps(5);
+    assert_eq!(r.k.h.ctx.zoom_factor(), 1.5);
+    r.k.h
+        .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+    r.k.h.run_steps(5);
+    r.click("90%");
+    r.k.h.run_steps(2);
+    assert_eq!(r.k.h.ctx.zoom_factor(), 0.9);
+}

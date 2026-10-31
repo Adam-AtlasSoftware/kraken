@@ -191,6 +191,9 @@ pub struct KrakenApp {
     keymap: &'static Keymap,
     /// Text size in percent.
     zoom: u32,
+    /// The text size last given to egui. Applied only when `zoom` changes, so egui's own
+    /// keyboard zoom (Ctrl+= / Ctrl+-) is not undone on the next frame.
+    zoom_applied: Option<u32>,
     /// The first-run wizard, while it is open.
     first_run: Option<FirstRun>,
     /// The first-run tour.
@@ -286,6 +289,7 @@ impl KrakenApp {
             help: HelpUi::default(),
             keymap: ui_keymap,
             zoom: ui_zoom,
+            zoom_applied: None,
             first_run: None,
             tour: Tour::default(),
             tour_fronted: None,
@@ -1952,8 +1956,9 @@ impl KrakenApp {
             self.applied = Some(self.theme);
         }
         keymap::install(&ctx, self.keymap);
-        if (ctx.zoom_factor() * 100.0).round() as u32 != self.zoom {
+        if self.zoom_applied != Some(self.zoom) {
             ctx.set_zoom_factor(self.zoom as f32 / 100.0);
+            self.zoom_applied = Some(self.zoom);
         }
         self.step_vm(&ctx);
         let mut reqs: Vec<UiRequest> = Vec::new();
