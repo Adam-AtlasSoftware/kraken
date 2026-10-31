@@ -504,6 +504,13 @@ impl<'a> RewriteRunner<'a> {
                     },
                 )))
             }
+            // a run a limit stopped ends cancelled with the reason as its error
+            Some("cancelled") if done["error"]["message"].is_string() => Err(tool_error(
+                done["error"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            )),
             other => Err(tool_error(format!(
                 "the job did not finish within {} s ({})",
                 limit.as_secs(),
