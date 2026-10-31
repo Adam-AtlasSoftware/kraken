@@ -178,12 +178,11 @@ fn stack_words_used(code: &[u8], ip: u64) -> Option<u32> {
         match i.mnemonic() {
             Mnemonic::Push => depth += 4,
             Mnemonic::Pop => depth -= 4,
-            Mnemonic::Sub
-                if in_prologue
-                    && i.op0_register() == Register::ESP
-                    && i.op1_kind() != OpKind::Register =>
-            {
-                depth += i.immediate(1) as i64;
+            // `sub esp, [mem]` has no immediate (and `immediate` asserts in debug builds)
+            Mnemonic::Sub if in_prologue && i.op0_register() == Register::ESP => {
+                if let Ok(v) = i.try_immediate(1) {
+                    depth += v as i64;
+                }
             }
             _ => {}
         }
@@ -1095,6 +1094,18 @@ mod tests {
         let count = u16::from_le_bytes(d[pe + 6..pe + 8].try_into().unwrap()) as usize;
         let opt_size = u16::from_le_bytes(d[pe + 20..pe + 22].try_into().unwrap()) as usize;
         (pe + 24, pe + 24 + opt_size, count)
+    }
+
+    #[test]
+    fn a_stack_adjustment_from_memory_does_not_panic() {
+        // sub esp, [0x1000]; mov eax, [esp+4]; ret (the unknown adjustment is not counted)
+        let code = [
+            0x2b, 0x25, 0x00, 0x10, 0x00, 0x00, 0x8b, 0x44, 0x24, 0x04, 0xc3,
+        ];
+        assert_eq!(stack_words_used(&code, 0x401000), Some(1));
+        // sub esp, 8; mov eax, [esp+12]; ret: the immediate is still counted
+        let code = [0x83, 0xec, 0x08, 0x8b, 0x44, 0x24, 0x0c, 0xc3];
+        assert_eq!(stack_words_used(&code, 0x401000), Some(1));
     }
 
     #[test]
