@@ -160,6 +160,23 @@ fn prototypes_and_types_reach_the_output() {
     );
 }
 
+/// A prototype without a convention keeps a method's `__thiscall`; one that names the default
+/// convention (`__stdcall` in x86-64 gcc's compiler spec) takes it off.
+#[test]
+fn an_explicit_default_convention_replaces_a_locked_one() {
+    let Some(mut s) = session() else { return };
+    s.add_function(0x124e, "cmp_id").expect("symbol");
+    s.set_convention(0x124e, "__thiscall").expect("thiscall");
+    s.set_prototype(0x124e, "int cmp_id(void *a,void *b)")
+        .expect("prototype");
+    let d = s.decompile(0x124e, None).expect("decompile");
+    assert!(d.text.contains("__thiscall"), "{}", d.text);
+    s.set_prototype(0x124e, "int __stdcall cmp_id(void *a,void *b)")
+        .expect("explicit default");
+    let d = s.decompile(0x124e, None).expect("decompile");
+    assert!(!d.text.contains("__thiscall"), "{}", d.text);
+}
+
 /// A context range painted when the session starts selects Thumb decoding for its bytes; the
 /// rest decodes as A32, the language's default.
 #[test]

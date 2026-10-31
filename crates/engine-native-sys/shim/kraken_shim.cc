@@ -4,6 +4,7 @@
 #include "engine-native-sys/shim/kraken_shim.hh"
 #include "engine-native-sys/src/lib.rs.h"
 
+#include <cctype>
 #include <chrono>
 #include <map>
 #include <cstdio>
@@ -1253,6 +1254,19 @@ void Session::remove_global(uint64_t addr) {
   });
 }
 
+// Whether `word` appears in `text` as a whole C identifier.
+static bool namesWord(const std::string &text, const std::string &word) {
+  if (word.empty())
+    return false;
+  auto ident = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+  for (size_t pos = text.find(word); pos != std::string::npos; pos = text.find(word, pos + 1)) {
+    size_t end = pos + word.size();
+    if ((pos == 0 || !ident(text[pos - 1])) && (end >= text.size() || !ident(text[end])))
+      return true;
+  }
+  return false;
+}
+
 void Session::set_prototype(uint64_t addr, rust::Str decl) {
   guarded("set_prototype", [&]() {
     ghidra::Architecture *a = impl->arch.get();
@@ -1263,8 +1277,11 @@ void Session::set_prototype(uint64_t addr, rust::Str decl) {
       text += ';'; // the grammar wants a complete declaration
     std::istringstream s{text};
     ghidra::parse_protopieces(pieces, s, a);
-    // a declaration without a convention keeps the one locked onto the function (a method's)
-    if (pieces.model == nullptr || pieces.model == a->defaultfp)
+    // a declaration without a convention keeps the one locked onto the function (a method's);
+    // the parser folds "none" into the default, so a default written out (`__cdecl` on i386,
+    // taking `__thiscall` off a method) is told apart by its name in the text
+    if (pieces.model == nullptr ||
+        (pieces.model == a->defaultfp && !namesWord(text, a->defaultfp->getName())))
       pieces.model = fd->getFuncProto().isModelLocked()
                          ? a->getModel(fd->getFuncProto().getModelName())
                          : a->defaultfp;
