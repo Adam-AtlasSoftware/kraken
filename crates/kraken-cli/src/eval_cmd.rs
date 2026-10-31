@@ -521,6 +521,8 @@ async fn run_rewrite(
     err: &mut dyn Write,
 ) -> Result<i32, ProtoError> {
     let record_to = sm.get_one::<String>("record").map(PathBuf::from);
+    // Live runs on a real model are metered like every other model call.
+    let mut meter: Option<kraken_assist::Meter> = None;
     let answers = match backend_name {
         "ci-replay" => {
             if record_to.is_some() {
@@ -537,6 +539,7 @@ async fn run_rewrite(
             ));
         }
         _ => {
+            let injected = provider.is_some();
             let provider = match provider {
                 Some(p) => p,
                 None => match selection_from_config(env)? {
@@ -548,6 +551,18 @@ async fn run_rewrite(
                     }
                 },
             };
+            // the [ai_limits] caps and daily budget, [pricing] and the daily totals, for the
+            // whole eval (the rewrite runs inside it are metered per task as well)
+            let m = crate::cost::task_meter(
+                env,
+                &crate::cost::policy(env),
+                kraken_proto::AiFeature::Eval,
+                None,
+                None,
+                !injected,
+            );
+            let provider = m.wrap_provider(provider);
+            meter = Some(m);
             let info = provider.info();
             Answers::Live {
                 note: format!("{} / {} (recorded by kraken eval)", info.id, info.model),
@@ -588,6 +603,9 @@ async fn run_rewrite(
         })
         .await
         .map_err(proto)?;
+    if let Some(m) = meter.filter(|m| m.totals().calls > 0) {
+        emit(err, &format!("AI usage: {}\n", m.totals().line()));
+    }
     if let (Some(cassette), Some(path)) = (runner.recorded(), &record_to) {
         cassette.save(path).map_err(proto)?;
         emit(err, &format!("cassette written to {}\n", path.display()));

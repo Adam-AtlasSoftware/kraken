@@ -347,3 +347,57 @@ async fn the_rewrite_suite_replays_and_reports_the_differential_numbers() {
     let md = std::fs::read_to_string(Path::new(&dir).join("report.md")).unwrap();
     assert!(md.contains("## Rewrite quality"), "{md}");
 }
+
+#[tokio::test]
+async fn a_live_rewrite_run_is_held_to_the_configured_limits() {
+    // `[ai_limits]` applies to the live rewrite suite as to every other model call: with no
+    // calls allowed, the model is never asked.
+    let out = tempfile::tempdir().expect("tempdir");
+    let config = out.path().join("config.toml");
+    std::fs::write(&config, "[ai_limits]\nmax_calls_per_run = 0\n").expect("config");
+    let r = rig(
+        CliAuthor::User("tester".into()),
+        vec![
+            ("KRAKEN_NO_DAEMON", "1".into()),
+            ("KRAKEN_CONFIG", path_str(&config)),
+        ],
+    );
+    let provider: Arc<dyn ChatProvider> = Arc::new(ReplayProvider::scripted(vec![reply(
+        "```rust\nfn x() {}\n```",
+        Usage {
+            input_tokens: 1000,
+            output_tokens: 20,
+        },
+    )]));
+    let dir = path_str(&out.path().join("rw"));
+    let run = kraken_with(
+        &r.env,
+        Some(provider),
+        &[
+            "--json",
+            "eval",
+            "run",
+            "--suite",
+            "rewrite",
+            "--task",
+            "rw-fn/pie_list/cmp_id",
+            "--out",
+            &dir,
+        ],
+    )
+    .await;
+    let v = run.json();
+    assert_eq!(v["summary"]["rewrite"]["passed"], 0, "{v:#}");
+    assert!(
+        v["tasks"][0]["problem"]
+            .as_str()
+            .is_some_and(|p| p.contains("max_calls_per_run")),
+        "{v:#}\n{}",
+        run.stderr
+    );
+    // the refused call never reached the model: no tokens were used
+    assert!(
+        v["summary"]["tokens"].is_null() || v["summary"]["tokens"]["input"] == 0,
+        "{v:#}"
+    );
+}
