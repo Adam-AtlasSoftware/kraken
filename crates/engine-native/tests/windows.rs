@@ -613,3 +613,17 @@ async fn pdb_attached_by_path_and_mismatch_refused() {
         .expect("open with the PDB");
     assert!(listing(&e).await.values().any(|f| f.name == "shape_area"));
 }
+
+/// Decorated names give the callee its prototype at the call site (`_DllMain@12` takes three
+/// parameters) and `__fastcall` stays in the declaration.
+#[tokio::test(flavor = "multi_thread")]
+async fn x86_decorations_give_calls_and_names() {
+    let Some((e, _)) = open("corpus/pe", "win_dll-x86-O0.dll").await else {
+        return;
+    };
+    let fns = listing(&e).await;
+    let c = decompile(&e, &fns, "___DllMainCRTStartup").await;
+    assert!(c.contains("_DllMain@12(in_EAX,0)"), "{c}");
+    assert!(c.contains("__CRT_INIT@12(in_EAX,param_2)"), "{c}");
+    assert!(c.contains("__fastcall ___DllMainCRTStartup("), "{c}");
+}

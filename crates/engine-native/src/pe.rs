@@ -120,6 +120,115 @@ fn stdcall_purge(name: &str) -> Option<u16> {
     Some(proto.params.iter().map(|p| size(&p.ty)).sum())
 }
 
+/// How many stack words of a function its body reads as parameters, from `[ebp+8]` in a
+/// frame-pointer function (`push ebp; mov ebp, esp`) or `[esp+n]` relative to the entry stack
+/// pointer otherwise (the pushes and `sub esp` of the prologue are counted, and every call and
+/// return puts the tracked depth back to where the prologue left it). `None` when the code does
+/// not decode.
+fn stack_words_used(code: &[u8], ip: u64) -> Option<u32> {
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic, OpKind, Register};
+    let framed = code.starts_with(&[0x55, 0x89, 0xe5]) || code.starts_with(&[0x55, 0x8b, 0xec]);
+    let mut dec = Decoder::with_ip(32, code, ip, DecoderOptions::NONE);
+    let mut used = 0u32;
+    let mut depth = 0i64;
+    let mut base = 0i64;
+    let mut in_prologue = true;
+    let mut seen = 0;
+    // a parameter loaded into a register and only stored on as an argument of the next call
+    // is not used by this function (Ghidra's callees drop it too)
+    let mut pending: Option<(Register, u32, u8)> = None;
+    while dec.can_decode() {
+        let i = dec.decode();
+        if i.is_invalid() {
+            return (seen > 0).then_some(used.max(pending.map_or(0, |p| p.1)));
+        }
+        seen += 1;
+        if let Some((reg, words, left)) = pending.take() {
+            if i.mnemonic() == Mnemonic::Mov
+                && i.op0_kind() == OpKind::Memory
+                && i.op1_register() == reg
+            {
+                // forwarded
+            } else if left == 0 || i.op0_register() == reg || i.op1_register() == reg {
+                used = used.max(words);
+            } else {
+                pending = Some((reg, words, left - 1));
+            }
+        }
+        for n in 0..i.op_count() {
+            if i.op_kind(n) != OpKind::Memory {
+                continue;
+            }
+            let size = i64::from(i.memory_size().size().max(1) as u32);
+            let d = i64::from(i.memory_displacement32() as i32);
+            let off = match i.memory_base() {
+                Register::EBP if framed => d - 8,
+                Register::ESP if !framed => d - depth - 4,
+                _ => continue,
+            };
+            if off >= 0 {
+                let words = ((off + size + 3) / 4) as u32;
+                if n == 1 && i.mnemonic() == Mnemonic::Mov && i.op0_kind() == OpKind::Register {
+                    pending = Some((i.op0_register(), words, 3));
+                } else {
+                    used = used.max(words);
+                }
+            }
+        }
+        match i.mnemonic() {
+            Mnemonic::Push => depth += 4,
+            Mnemonic::Pop => depth -= 4,
+            Mnemonic::Sub
+                if in_prologue
+                    && i.op0_register() == Register::ESP
+                    && i.op1_kind() != OpKind::Register =>
+            {
+                depth += i.immediate(1) as i64;
+            }
+            _ => {}
+        }
+        let prologue_op = matches!(i.mnemonic(), Mnemonic::Push | Mnemonic::Sub)
+            && (i.mnemonic() == Mnemonic::Push || i.op0_register() == Register::ESP);
+        if in_prologue && !prologue_op {
+            in_prologue = false;
+            base = depth;
+        }
+        if matches!(i.mnemonic(), Mnemonic::Call | Mnemonic::Ret) {
+            in_prologue = false;
+            depth = base;
+        }
+    }
+    Some(used.max(pending.map_or(0, |p| p.1)))
+}
+
+/// The prototype a decoration implies: `words` word parameters, the result in a word.
+fn decorated_function(name: &str, convention: &str, words: u32) -> crate::dwarf::DebugFunction {
+    use kraken_proto::{FunctionPrototype, Param, Primitive, PrimitiveClass, TypeRef};
+    let word = TypeRef::Primitive(Primitive {
+        class: PrimitiveClass::Undefined,
+        size: 4,
+        signed: false,
+    });
+    crate::dwarf::DebugFunction {
+        name: name.to_string(),
+        linkage: None,
+        prototype: FunctionPrototype {
+            name: None,
+            return_type: Box::new(word.clone()),
+            params: (1..=words)
+                .map(|i| Param {
+                    name: Some(format!("param_{i}")),
+                    ty: word.clone(),
+                    storage: None,
+                })
+                .collect(),
+            calling_convention: convention.to_string(),
+            varargs: false,
+            noreturn: false,
+        },
+    }
+}
+
 /// One COFF function symbol.
 struct CoffSymbol {
     addr: u64,
@@ -608,6 +717,8 @@ fn load_pe<Pe: ImageNtHeaders>(
     }
     // x86 decorations tell the convention
     let mut conventions: BTreeMap<u64, String> = BTreeMap::new();
+    // the argument bytes a decoration names (`@12`)
+    let mut decorated_args: BTreeMap<u64, u32> = BTreeMap::new();
     if ptr == 4 {
         for s in &coff {
             let decorated = s.name.rsplit_once('@').is_some_and(|(b, n)| {
@@ -624,6 +735,13 @@ fn load_pe<Pe: ImageNtHeaders>(
                 continue;
             };
             conventions.entry(s.addr).or_insert_with(|| c.to_string());
+            if let Some(n) = s
+                .name
+                .rsplit_once('@')
+                .and_then(|(_, n)| n.parse::<u32>().ok())
+            {
+                decorated_args.entry(s.addr).or_insert(n);
+            }
         }
     }
     // a thunk is named after its import, or on x86 after its symbol without the decoration
@@ -861,6 +979,38 @@ fn load_pe<Pe: ImageNtHeaders>(
         }
         merged.display.append(&mut debug.display);
         debug = merged;
+    }
+    // a decorated x86 function takes the words its decoration names; the decompiler then prints
+    // its calls with their arguments, as Ghidra does once it has the prototype
+    for (a, bytes) in &decorated_args {
+        let (Some(name), Some(conv)) = (functions.get(a), conventions.get(a)) else {
+            continue;
+        };
+        if debug.functions.contains_key(a) {
+            continue;
+        }
+        let mut words = bytes / 4;
+        // Ghidra drops the trailing stack parameters a `__stdcall` body never reads
+        if conv == "__stdcall" {
+            let end = functions
+                .range(a + 1..)
+                .next()
+                .map_or(a + 0x2000, |(n, _)| *n);
+            let code = image
+                .segments
+                .iter()
+                .find(|s| s.start <= *a && *a < s.start + s.data.len() as u64)
+                .map(|s| &s.data[(a - s.start) as usize..]);
+            if let Some(code) = code {
+                let len = (end - a).min(0x2000) as usize;
+                if let Some(used) = stack_words_used(&code[..len.min(code.len())], *a) {
+                    words = words.min(used);
+                }
+            }
+        }
+        debug
+            .functions
+            .insert(*a, decorated_function(name, conv, words));
     }
     if let Ok(f) = object::File::parse(data) {
         for sym in f.symbols() {
