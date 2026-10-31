@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
 use object::elf::{
-    PF_W, ProgramFlags, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE, R_ARM_IRELATIVE,
-    R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE,
-    SectionFlags as ElfSectionFlags,
+    PF_W, PF_X, ProgramFlags, R_386_IRELATIVE, R_386_JMP_SLOT, R_AARCH64_IRELATIVE,
+    R_ARM_IRELATIVE, R_RISCV_IRELATIVE, R_X86_64_IRELATIVE, R_X86_64_JUMP_SLOT, SHF_ALLOC,
+    SHF_EXECINSTR, SHF_WRITE, SectionFlags as ElfSectionFlags,
 };
 use object::read::{Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable};
 use object::{
@@ -492,8 +492,9 @@ pub fn load_with(
                 perms: MemoryBlock::perms_string(
                     true,
                     ProgramFlags(h.flags).contains(PF_W),
-                    // headers are never code, whatever the segment says
-                    false,
+                    // the gap before the first section holds headers, never code; a
+                    // segment with no section at all (sstrip'd or packed) keeps PF_X
+                    first == hi && ProgramFlags(h.flags).contains(PF_X),
                 ),
                 initialized: true,
                 kind: MemoryKind::Default,
@@ -1276,6 +1277,26 @@ mod tests {
             .iter()
             .find(|s| s.start <= 0x103fb8 && 0x103fb8 < s.start + s.mem_size);
         assert!(got.is_some_and(|s| !s.readonly));
+    }
+
+    #[test]
+    fn sectionless_elf_keeps_executable_segments() {
+        // sstrip'd and packed files have no section headers: the PT_LOAD flags decide
+        let mut data = corpus("stripped_calc-O0-stripped");
+        data[0x28..0x30].fill(0); // e_shoff
+        data[0x3c..0x40].fill(0); // e_shnum, e_shstrndx
+        let l = load(&data, None).expect("load");
+        let entry = l.entry.expect("entry");
+        assert!(
+            l.is_code(entry),
+            "entry {entry:#x} not in an executable block"
+        );
+        assert!(
+            l.blocks
+                .iter()
+                .any(|b| b.perms == "r-x" && b.start.0 <= entry && entry < b.end.0)
+        );
+        assert!(l.blocks.iter().any(|b| b.perms == "r--"));
     }
 
     #[test]
