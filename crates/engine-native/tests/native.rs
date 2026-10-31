@@ -899,3 +899,73 @@ async fn cpp_names_are_demangled_and_mangled_names_kept() {
     assert!(text.contains("double area(Rect *this)"), "{text}");
     assert!(text.contains("this->"), "{text}");
 }
+
+/// A PLT stub decompiles as a call of the import with its prototype, as Ghidra prints it, with no
+/// jump table warning or native-only register names.
+#[tokio::test(flavor = "multi_thread")]
+async fn plt_thunks_decompile_as_calls() {
+    let Some((e, _)) = open("pie_list-O2-stripped", false).await else {
+        return;
+    };
+    let text = e
+        .decompile(&Locator::ram(0x101040), &CancellationToken::new())
+        .await
+        .expect("decompile")
+        .text;
+    eprintln!("{text}");
+    assert!(
+        text.contains("pcVar1 = strncpy(__dest,__src,__n);"),
+        "{text}"
+    );
+    assert!(text.contains("return pcVar1;"), "{text}");
+    for word in [
+        "pcRam",
+        "unaff_retaddr",
+        "uStack0000",
+        "jumptable",
+        "Jumptable",
+    ] {
+        assert!(!text.contains(word), "{word}: {text}");
+    }
+}
+
+/// C++ functions print with their namespace, `__thiscall` and `this` from the demangled name.
+#[tokio::test(flavor = "multi_thread")]
+async fn cpp_thunks_print_this_and_namespace() {
+    let Some((e, _)) = open("cpp_shapes-O0", true).await else {
+        return;
+    };
+    let text = e
+        .decompile(&Locator::ram(0x102180), &CancellationToken::new())
+        .await
+        .expect("decompile")
+        .text;
+    eprintln!("{text}");
+    assert!(
+        text.contains("std::__cxx11::string::_Alloc_hider::_Alloc_hider"),
+        "{text}"
+    );
+    assert!(text.contains("__thiscall"), "{text}");
+    assert!(
+        text.contains("_Alloc_hider *this,char *param_1,allocator *param_2"),
+        "{text}"
+    );
+}
+
+/// Goto targets are named as Ghidra names them.
+#[tokio::test(flavor = "multi_thread")]
+async fn goto_labels_are_lab_addresses() {
+    let Some((e, _)) = open("switch_vm-O2-stripped", false).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let mut seen = false;
+    for f in listing(&e).await {
+        let Ok(r) = e.decompile(&f.locator, &c).await else {
+            continue;
+        };
+        assert!(!r.text.contains("code_r0x"), "{}", r.text);
+        seen |= r.text.contains("LAB_0010163a");
+    }
+    assert!(seen, "no LAB_0010163a");
+}

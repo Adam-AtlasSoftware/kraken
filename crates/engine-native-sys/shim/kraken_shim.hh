@@ -64,6 +64,8 @@ public:
   void set_prototype(uint64_t addr, rust::Str decl);
   // Marks the function at `addr` (created when unknown) as never returning, or clears the mark.
   void set_noreturn(uint64_t addr, bool noreturn);
+  void set_thunk(uint64_t addr, uint64_t branch);
+  void set_qualified(uint64_t addr, rust::Str name);
   // Removes the function symbol at `addr` (and with it any prototype); no-op when absent.
   void remove_function(uint64_t addr);
   // Sets the prototype model (calling convention) of the function at `addr` (created when

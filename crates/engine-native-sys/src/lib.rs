@@ -531,6 +531,8 @@ mod real {
             fn remove_global(self: Pin<&mut Session>, addr: u64) -> Result<()>;
             fn set_prototype(self: Pin<&mut Session>, addr: u64, decl: &str) -> Result<()>;
             fn set_noreturn(self: Pin<&mut Session>, addr: u64, noreturn: bool) -> Result<()>;
+            fn set_thunk(self: Pin<&mut Session>, addr: u64, branch: u64) -> Result<()>;
+            fn set_qualified(self: Pin<&mut Session>, addr: u64, name: &str) -> Result<()>;
             fn remove_function(self: Pin<&mut Session>, addr: u64) -> Result<()>;
             fn set_convention(self: Pin<&mut Session>, addr: u64, name: &str) -> Result<()>;
             fn set_local(
@@ -628,6 +630,8 @@ enum Call {
     DeclareType(String),
     SetPrototype(u64, String),
     SetNoreturn(u64, bool),
+    SetThunk(u64, u64),
+    SetQualified(u64, String),
     RemoveFunction(u64),
     SetConvention(u64, String),
     SetGlobal(u64, String, String, u32),
@@ -743,6 +747,8 @@ impl Session {
                 Call::DeclareType(d) => self.declare_type(d),
                 Call::SetPrototype(a, d) => self.set_prototype(*a, d),
                 Call::SetNoreturn(a, n) => self.set_noreturn(*a, *n),
+                Call::SetThunk(a, b) => self.set_thunk(*a, *b),
+                Call::SetQualified(a, n) => self.set_qualified(*a, n),
                 Call::RemoveFunction(a) => self.remove_function(*a),
                 Call::SetConvention(a, n) => self.set_convention(*a, n),
                 Call::SetGlobal(a, n, d, z) => self.set_global(*a, n, d, *z),
@@ -1104,6 +1110,41 @@ impl Session {
         #[cfg(not(kraken_native))]
         {
             let _ = (addr, noreturn);
+            Err(unavailable())
+        }
+    }
+
+    /// Declares the function at `addr` a thunk: its jump at `branch` becomes a tail call of the
+    /// function itself, so it decompiles as a call with its own prototype (`return strncpy(a,b,n);`)
+    /// as Ghidra prints PLT stubs and import thunks.
+    pub fn set_thunk(&mut self, addr: u64, branch: u64) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            self.journal.calls.push(Call::SetThunk(addr, branch));
+            let _g = lock_shared();
+            self.pinned()?.set_thunk(addr, branch).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, branch);
+            Err(unavailable())
+        }
+    }
+
+    /// Gives the function at `addr` a namespaced name for its declaration in decompiled C (calls
+    /// keep the plain name).
+    pub fn set_qualified(&mut self, addr: u64, name: &str) -> NativeResult<()> {
+        #[cfg(kraken_native)]
+        {
+            self.journal
+                .calls
+                .push(Call::SetQualified(addr, name.to_string()));
+            let _g = lock_shared();
+            self.pinned()?.set_qualified(addr, name).map_err(real::err)
+        }
+        #[cfg(not(kraken_native))]
+        {
+            let _ = (addr, name);
             Err(unavailable())
         }
     }

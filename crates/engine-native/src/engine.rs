@@ -1324,9 +1324,37 @@ fn build_program(
     for (at, c) in library_conventions {
         loaded.conventions.entry(at).or_insert(c);
     }
+    // constructors and destructors without DWARF: `__thiscall` with a `this`, as Ghidra types them
+    let methods: BTreeMap<u64, crate::demangle::Method> = found
+        .functions
+        .values()
+        .filter(|f| !loaded.debug.functions.contains_key(&f.entry))
+        .filter_map(|f| {
+            let m = crate::demangle::constructor(mangled_names.get(&f.entry)?)?;
+            Some((f.entry, m))
+        })
+        .collect();
+    for at in methods.keys() {
+        loaded
+            .conventions
+            .entry(*at)
+            .or_insert_with(|| "__thiscall".to_string());
+    }
     for (at, c) in &loaded.conventions {
         // a convention the compiler spec does not have leaves the default
         let _ = session.set_convention(*at, c);
+    }
+    // PLT stubs and import thunks decompile as a call of the import, as Ghidra prints them
+    for at in loaded.plt.keys() {
+        if !found.functions.contains_key(at) {
+            continue;
+        }
+        let Ok(insns) = session.decode(*at, 4) else {
+            continue;
+        };
+        if let Some(jump) = insns.iter().find(|i| i.via_pointer) {
+            let _ = session.set_thunk(*at, jump.addr);
+        }
     }
     // the listed signatures are the functions', not the stand-ins' of imports
     for at in loaded.externals.keys() {
@@ -1385,6 +1413,54 @@ fn build_program(
         signatures.insert(*at, signature(&shown, &f.name, &known));
         locked.insert(*at, decl);
         apply_debug_locals(&mut session, &types, &loaded, *at, &d.locals);
+    }
+
+    for (at, m) in &methods {
+        let params: String = std::iter::once(format!("{} *this", m.class))
+            .chain(m.params.iter().enumerate().map(|(i, p)| {
+                let sep = if p.ends_with('*') { "" } else { " " };
+                format!("{p}{sep}param_{}", i + 1)
+            }))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let Ok((_, proto)) =
+            crate::ctypes::parse_prototype_in(&format!("void {PROTO_NAME}({params})"), model)
+        else {
+            continue;
+        };
+        // the classes it names are opaque unless something defined them
+        let mut classes: BTreeSet<String> = BTreeSet::new();
+        for p in &proto.params {
+            let mut t = &p.ty;
+            while let TypeRef::Pointer { target, .. } = t {
+                t = target;
+            }
+            if let TypeRef::Named { name } = t
+                && !types.knows(name)
+            {
+                classes.insert(name.clone());
+            }
+        }
+        for name in classes {
+            let def = TypeDef::Struct(kraken_proto::Composite {
+                name,
+                size: 0,
+                align: 1,
+                fields: Vec::new(),
+            });
+            let _ = types.define(def, &mut session, &|_| Vec::new());
+        }
+        let decl = types.prototype_text(&proto, PROTO_NAME);
+        if session.set_prototype(*at, &decl).is_err() {
+            continue;
+        }
+        let _ = session.set_qualified(*at, &m.qualified);
+        let shown = crate::typestore::renamed_proto(&proto, &|n| n.to_string());
+        let known = |n: &str| types.knows(n);
+        if let Some(f) = found.functions.get(at) {
+            signatures.insert(*at, signature(&shown, &f.name, &known));
+        }
+        locked.insert(*at, decl);
     }
 
     // data symbols: the symbol table's names and DWARF's names and types, so the decompiler prints

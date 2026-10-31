@@ -224,6 +224,8 @@ public:
   void endVarDecl(ghidra::int4) override { declSymbol = nullptr; }
   ghidra::int4 beginStatement(const PcodeOp *) override { return 0; }
   void endStatement(ghidra::int4) override {}
+  // the qualified name of the function being printed, when it has one
+  std::string declName;
   ghidra::int4 beginFuncProto(void) override { return 0; }
   void endFuncProto(ghidra::int4) override {}
 
@@ -240,8 +242,10 @@ public:
   void tagOp(const std::string &name, syntax_highlight hl, const PcodeOp *) override {
     push(name, hl == keyword_color ? TK_KEYWORD : TK_OP);
   }
-  void tagFuncName(const std::string &name, syntax_highlight, const Funcdata *fd,
+  void tagFuncName(const std::string &shortName, syntax_highlight, const Funcdata *fd,
                    const PcodeOp *op) override {
+    // the declaration of a method shows its namespaces; calls keep the plain name
+    const std::string &name = (op == nullptr && !declName.empty()) ? declName : shortName;
     bool has = false;
     uint64_t target = 0;
     if (op == nullptr && fd != nullptr) {
@@ -289,7 +293,16 @@ public:
   void tagLabel(const std::string &name, syntax_highlight, const AddrSpace *spc,
                 ghidra::uintb off) override {
     bool ram = spc != nullptr && spc->getType() == ghidra::IPTR_PROCESSOR;
-    push(name, TK_OTHER, name, ram, ram ? off : 0);
+    // Ghidra's own names of jump targets: `LAB_` and the address, not `code_r0x`
+    static const std::string decomp = "code_r0x";
+    std::string label = name;
+    if (name.compare(0, decomp.size(), decomp) == 0) {
+      std::string hex = name.substr(decomp.size());
+      if (hex.size() < 8)
+        hex.insert(0, 8 - hex.size(), '0');
+      label = "LAB_" + hex;
+    }
+    push(label, TK_OTHER, label, ram, ram ? off : 0);
   }
   void tagCaseLabel(const std::string &name, syntax_highlight, const PcodeOp *,
                     ghidra::uintb) override {
@@ -499,6 +512,10 @@ struct Session::Impl {
     std::string decl;
   };
   std::map<uint64_t, std::vector<LocalOverride>> locals;
+  // thunks (PLT stubs, import thunks): function entry to the address of its jump
+  std::map<uint64_t, uint64_t> thunks;
+  // namespaced names of methods, by function entry
+  std::map<uint64_t, std::string> qualified;
   // the type-locked symbols we added to a function's scope, to take out before the next round
   std::map<uint64_t, std::vector<std::pair<AddrSpace *, uint64_t>>> addedLocals;
 };
@@ -1109,6 +1126,14 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
         std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     CallbackLoadImage *img = static_cast<CallbackLoadImage *>(a->loader);
     DiscoveredGlobals discovered(a, fd);
+    auto thunk = impl->thunks.find(addr);
+    if (thunk != impl->thunks.end()) {
+      // the jump becomes a call of the function itself: the thunk's own prototype is the
+      // target's, and the call prints by name
+      Address jmp(a->getDefaultCodeSpace(), thunk->second);
+      fd->getOverride().insertFlowOverride(jmp, "callreturn");
+      fd->getOverride().insertDeindirect(jmp, fd->getAddress());
+    }
     std::vector<std::string> localWarnings;
     applyLocalTypes(impl.get(), a, fd, addr, localWarnings);
     act->reset(*fd);
@@ -1130,7 +1155,10 @@ DecompOut Session::decompile(uint64_t addr, uint32_t timeout_ms) {
     te->reset();
     std::ostringstream sink;
     impl->printer->setOutputStream(&sink);
+    auto qn = impl->qualified.find(addr);
+    te->declName = qn != impl->qualified.end() ? qn->second : std::string();
     impl->printer->docFunction(fd);
+    te->declName.clear();
 
     out.text = rust::String(te->text());
     for (auto &t : te->tokens())
@@ -1235,8 +1263,11 @@ void Session::set_prototype(uint64_t addr, rust::Str decl) {
       text += ';'; // the grammar wants a complete declaration
     std::istringstream s{text};
     ghidra::parse_protopieces(pieces, s, a);
-    if (pieces.model == nullptr)
-      pieces.model = a->defaultfp;
+    // a declaration without a convention keeps the one locked onto the function (a method's)
+    if (pieces.model == nullptr || pieces.model == a->defaultfp)
+      pieces.model = fd->getFuncProto().isModelLocked()
+                         ? a->getModel(fd->getFuncProto().getModelName())
+                         : a->defaultfp;
     bool noreturn = fd->getFuncProto().isNoReturn();
     fd->getFuncProto().setPieces(pieces);
     fd->getFuncProto().setNoReturn(noreturn);
@@ -1246,6 +1277,23 @@ void Session::set_prototype(uint64_t addr, rust::Str decl) {
 void Session::set_noreturn(uint64_t addr, bool noreturn) {
   guarded("set_noreturn", [&]() {
     functionAt(impl->arch.get(), addr)->getFuncProto().setNoReturn(noreturn);
+  });
+}
+
+void Session::set_thunk(uint64_t addr, uint64_t branch) {
+  guarded("set_thunk", [&]() {
+    functionAt(impl->arch.get(), addr);
+    impl->thunks[addr] = branch;
+  });
+}
+
+void Session::set_qualified(uint64_t addr, rust::Str name) {
+  guarded("set_qualified", [&]() {
+    functionAt(impl->arch.get(), addr);
+    if (name.empty())
+      impl->qualified.erase(addr);
+    else
+      impl->qualified[addr] = std::string(name);
   });
 }
 
@@ -1266,8 +1314,13 @@ void Session::set_convention(uint64_t addr, rust::Str name) {
     std::string nm(name);
     ghidra::ProtoModel *model = a->defaultfp;
     if (!nm.empty()) {
-      if (!a->hasModel(nm))
-        throw std::runtime_error("unknown calling convention " + nm);
+      if (!a->hasModel(nm)) {
+        // a C++ method on a target whose compiler spec has no such model: the decompiler
+        // keeps the name, behaving as the default
+        if (nm != "__thiscall")
+          throw std::runtime_error("unknown calling convention " + nm);
+        a->createUnknownModel(nm);
+      }
       model = a->getModel(nm);
     }
     Funcdata *fd = functionAt(a, addr);

@@ -128,6 +128,152 @@ fn special_name(raw: &str) -> Option<String> {
     .map(|(_, name)| name.to_string())
 }
 
+/// A C++ constructor or destructor as Ghidra types it: a `__thiscall` function with a `this`
+/// pointer, shown with its namespaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Method {
+    /// The qualified name (`std::__cxx11::string::_Alloc_hider::_Alloc_hider`).
+    pub qualified: String,
+    /// The class (`_Alloc_hider`), the type of `this`.
+    pub class: String,
+    /// The parameters after `this`, as C types of one level (`char *`, `allocator *`).
+    pub params: Vec<String>,
+}
+
+/// The part of `s` before the `(` that opens the parameter list (the last one at depth 0) and
+/// the text inside its parentheses.
+fn split_params(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim_end();
+    let s = s.strip_suffix(" const").unwrap_or(s);
+    let inner_end = s.strip_suffix(')').map(str::len)?;
+    let mut depth = 0i32;
+    for (i, c) in s[..=inner_end].char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&s[..i], &s[i + 1..inner_end]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Splits at commas outside brackets.
+fn split_top(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut from = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(s[from..i].trim());
+                from = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(s[from..].trim());
+    parts
+}
+
+/// A parameter type of the demangled text as one level of C: references become pointers,
+/// `const` goes, classes keep their last component without template arguments. `None` for
+/// anything else (function pointers, arrays, templates of values).
+fn c_param(t: &str) -> Option<String> {
+    let t = t.trim();
+    let stars = t.chars().filter(|c| matches!(c, '*' | '&')).count();
+    let base = t.replace(['*', '&'], " ");
+    let base: Vec<&str> = base
+        .split_whitespace()
+        .filter(|w| !matches!(*w, "const" | "volatile"))
+        .collect();
+    let base = base.join(" ");
+    let named = match base.as_str() {
+        "bool" => "bool".to_string(),
+        b if b.split(' ').all(|w| {
+            matches!(
+                w,
+                "unsigned"
+                    | "signed"
+                    | "char"
+                    | "short"
+                    | "int"
+                    | "long"
+                    | "float"
+                    | "double"
+                    | "void"
+            )
+        }) =>
+        {
+            b.to_string()
+        }
+        b => {
+            let b = b.split('<').next().unwrap_or(b);
+            let last = b.rsplit("::").next().unwrap_or(b);
+            if last.is_empty() || !last.chars().all(is_ident) {
+                return None;
+            }
+            last.to_string()
+        }
+    };
+    if named == "void" && stars == 0 {
+        return None;
+    }
+    Some(format!("{named}{}", if stars > 0 { " " } else { "" }) + &"*".repeat(stars))
+}
+
+/// The method signature of a constructor or destructor symbol (Itanium), as Ghidra shows it.
+pub fn constructor(raw: &str) -> Option<Method> {
+    let raw = unversioned(raw);
+    if is_msvc(raw) || is_rust(raw) || !is_mangled(raw) {
+        return None;
+    }
+    let sym = Symbol::new(raw).ok()?;
+    let full = sym
+        .demangle_with_options(&DemangleOptions::new().no_return_type())
+        .ok()?;
+    let mut full = full;
+    for (long, short) in STRING_TYPEDEFS {
+        let at = long.find("basic_string<").unwrap_or(0);
+        let (ns, tail) = long.split_at(at);
+        let class = short.trim_start_matches("std::");
+        full = full.replace(&format!("{ns}{tail}"), &format!("{ns}{class}"));
+    }
+    let (head, args) = split_params(&full)?;
+    let head = strip_abi_tags(head);
+    let parts: Vec<&str> = head.split("::").collect();
+    let [.., class, last] = parts.as_slice() else {
+        return None;
+    };
+    let class = (*class).to_string();
+    // template arguments hold `::` too: only plain components can be told apart
+    if head.contains('<') {
+        return None;
+    }
+    let is_ctor = class == *last;
+    let is_dtor = last.strip_prefix('~') == Some(class.as_str());
+    if !is_ctor && !is_dtor {
+        return None;
+    }
+    let mut params = Vec::new();
+    if !args.trim().is_empty() && args.trim() != "void" {
+        for a in split_top(args) {
+            params.push(c_param(a)?);
+        }
+    }
+    Some(Method {
+        qualified: head,
+        class,
+        params,
+    })
+}
+
 /// Ghidra's symbol name for a demangled name printed without parameters and return type.
 fn ghidra_name(short: &str) -> Option<String> {
     // member function qualifiers follow even without parameters
@@ -281,6 +427,22 @@ mod tests {
 
     fn name(raw: &str) -> String {
         demangle(raw).map(|d| d.name).unwrap_or_default()
+    }
+
+    #[test]
+    fn constructors_become_this_call_methods() {
+        let m = constructor(
+            "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_Alloc_hiderC1EPcRKS3_",
+        )
+        .unwrap();
+        assert_eq!(
+            m.qualified,
+            "std::__cxx11::string::_Alloc_hider::_Alloc_hider"
+        );
+        assert_eq!(m.class, "_Alloc_hider");
+        assert_eq!(m.params, ["char *", "allocator *"]);
+        assert!(constructor("_ZNK4Rect4areaEv").is_none());
+        assert!(constructor("main").is_none());
     }
 
     #[test]
