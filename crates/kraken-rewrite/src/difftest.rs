@@ -268,7 +268,7 @@ pub fn run_differential(
         sandbox: String::new(),
     };
     let runner: NativeRunner = match build_full(sig, rust_code, opts)? {
-        Build::Ready(r) => r,
+        Build::Ready(r) => *r,
         Build::Rejected(reason) => {
             report.verdict = Verdict::Rejected { reason };
             return Ok(report);

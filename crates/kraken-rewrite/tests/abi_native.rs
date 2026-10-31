@@ -21,7 +21,7 @@ fn can_confine() -> bool {
 
 fn runner(sig: &Signature, code: &str) -> NativeRunner {
     match build(sig, code, &Confinement::default()).expect("build") {
-        Build::Ready(r) => r,
+        Build::Ready(r) => *r,
         Build::Rejected(why) => panic!("rejected: {why}"),
     }
 }

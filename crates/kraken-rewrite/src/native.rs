@@ -45,7 +45,7 @@ pub struct NativeRunner {
 #[derive(Debug)]
 pub enum Build {
     /// Ready to run.
-    Ready(NativeRunner),
+    Ready(Box<NativeRunner>),
     /// The translation was refused or did not compile; the text says why.
     Rejected(String),
 }
@@ -453,14 +453,14 @@ fn build_parts(
             text.lines().take(12).collect::<Vec<_>>().join("\n")
         )));
     }
-    Ok(Build::Ready(NativeRunner {
+    Ok(Build::Ready(Box::new(NativeRunner {
         dir,
         exe,
         sig: sig.clone(),
         confinement: confinement.clone(),
         build_confinement: report,
         image: image.is_some(),
-    }))
+    })))
 }
 
 impl NativeRunner {
