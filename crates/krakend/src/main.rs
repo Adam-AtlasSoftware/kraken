@@ -207,6 +207,10 @@ fn main() -> ExitCode {
         if args.serve_local {
             serve_local(&daemon);
         }
+        // Tests serving a fixture never reach the network.
+        if args.fake_engine.is_none() {
+            daily_update_check(&daemon);
+        }
         wait_for_signal_then_stop(&daemon);
         daemon.wait().await;
         ExitCode::SUCCESS
@@ -227,6 +231,34 @@ fn serve_local(daemon: &krakend::Daemon) {
                 }
             }
             Err(e) => tracing::warn!("cannot serve local models: {}", e.message),
+        }
+    });
+}
+
+/// Checks for a new release once a day while the daemon runs (ADR 0015). The check itself
+/// honours `updates.check`, `KRAKEN_NO_UPDATE_CHECK` and `CI` and does nothing while the last
+/// result is less than a day old.
+fn daily_update_check(daemon: &krakend::Daemon) {
+    let stop = daemon.stop_handle();
+    tokio::spawn(async move {
+        let updater = kraken_host::update::HostUpdater::system();
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_secs(60)) => {}
+                () = stop.wait() => return,
+            }
+            if updater.check_due() {
+                let s = updater.check_now(false).await;
+                if let Some(e) = &s.last_error {
+                    tracing::info!("update check failed: {e}");
+                } else if s.update_available {
+                    tracing::info!(latest = ?s.latest, "a new KRAKEN release is available");
+                }
+            }
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_secs(3600)) => {}
+                () = stop.wait() => return,
+            }
         }
     });
 }

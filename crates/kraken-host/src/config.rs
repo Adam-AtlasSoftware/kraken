@@ -73,6 +73,36 @@ pub struct DebugInfoSettings {
     pub offline: bool,
 }
 
+/// Which releases the update check looks at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    /// Releases only.
+    #[default]
+    Stable,
+    /// Releases and prereleases.
+    Prerelease,
+}
+
+/// The `[updates]` table (ADR 0015).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct UpdateSettings {
+    /// Look for a new release once a day (default true).
+    pub check: bool,
+    /// `stable` (default) or `prerelease`.
+    pub channel: UpdateChannel,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        UpdateSettings {
+            check: true,
+            channel: UpdateChannel::Stable,
+        }
+    }
+}
+
 /// The `[daemon]` table of the configuration (decisions 17, 40).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -292,6 +322,9 @@ pub struct KrakenConfig {
     /// What the assistant may do with dangerous commands (default `ask`).
     #[serde(skip_serializing_if = "is_default_danger")]
     pub danger_mode: DangerMode,
+    /// The `[updates]` table: the daily update check and its channel.
+    #[serde(skip_serializing_if = "is_default_updates")]
+    pub updates: UpdateSettings,
     /// The `[ui]` table: keymap preset, text size and whether the first-run wizard is done.
     #[serde(skip_serializing_if = "UiSettings::is_empty")]
     pub ui: UiSettings,
@@ -326,6 +359,10 @@ pub struct KrakenConfig {
 
 fn is_default_debuginfo(s: &DebugInfoSettings) -> bool {
     *s == DebugInfoSettings::default()
+}
+
+fn is_default_updates(s: &UpdateSettings) -> bool {
+    *s == UpdateSettings::default()
 }
 
 fn is_default_serving(s: &LocalServingSettings) -> bool {

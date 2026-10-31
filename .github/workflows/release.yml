@@ -3,8 +3,10 @@ name: Release
 # On a tag v*: build, package, checksum, attest and create a DRAFT GitHub release.
 # workflow_dispatch with a version is a dry run: everything is built and uploaded as workflow
 # artifacts, but no release is created.
-# No secrets are used. Each platform job is independent (fail-fast: false), so Linux ships
-# even when macOS or Windows fail. macOS binaries are ad-hoc signed only (decision 72).
+# The only secret is KRAKEN_MINISIGN_KEY (and KRAKEN_MINISIGN_PASSWORD when the key has one): on a
+# tag, SHA256SUMS is signed with it for the updater and install.sh (ADR 0015). Each platform job is
+# independent (fail-fast: false), so Linux ships even when macOS or Windows fail. macOS binaries
+# are ad-hoc signed only (decision 72).
 
 on:
   push:
@@ -25,6 +27,11 @@ env:
   JDK_SHA256: 68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb
   # The .NET SDK that builds the managed sidecar is pinned (with its sha512) in dotnet/install-sdk.sh.
   DOTNET_SDK_VERSION: "10.0.402"
+  # minisign signs SHA256SUMS; the release binary is pinned by its SHA-256.
+  MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+  MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+  # The public half of KRAKEN_MINISIGN_KEY, as compiled into KRAKEN and embedded in install.sh.
+  KRAKEN_MINISIGN_PUBKEY: RWQcuc9uv/vL6fNGCFoY+ea132bmfUHhfczZGY/UgdNbC08hjU6DYmln
 
 permissions:
   contents: read
@@ -193,6 +200,9 @@ jobs:
           echo "KRAKEN_NATIVE_SLA_DIR=$HOME/.cache/kraken-dev/native-sla/Ghidra_${GHIDRA_VERSION}_build" >> "$GITHUB_ENV"
 
       - name: Build release binaries
+        env:
+          # Compiled in: release builds tell the updater they came from this workflow.
+          KRAKEN_BUILD_CHANNEL: release
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = Linux ]; then
@@ -265,6 +275,36 @@ jobs:
           cd release
           sha256sum kraken-* KRAKEN-*.AppImage > SHA256SUMS
           cat SHA256SUMS
+
+      # The updater and install.sh refuse a release whose SHA256SUMS is not signed with the
+      # release key, and check the trusted comment names this tag (no replay of an old list).
+      - name: Sign SHA256SUMS
+        if: ${{ needs.version.outputs.is_tag == 'true' }}
+        env:
+          KRAKEN_MINISIGN_KEY: ${{ secrets.KRAKEN_MINISIGN_KEY }}
+          KRAKEN_MINISIGN_PASSWORD: ${{ secrets.KRAKEN_MINISIGN_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KRAKEN_MINISIGN_KEY" ]; then
+            echo "the KRAKEN_MINISIGN_KEY secret is not set; refusing to publish an unsigned release" >&2
+            exit 1
+          fi
+          tool="$RUNNER_TEMP/minisign-tool"
+          mkdir -p "$tool"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$tool/minisign.tar.gz" "$MINISIGN_URL"
+          echo "$MINISIGN_SHA256  $tool/minisign.tar.gz" | sha256sum -c -
+          tar -xzf "$tool/minisign.tar.gz" -C "$tool" minisign-linux/x86_64/minisign
+          minisign="$tool/minisign-linux/x86_64/minisign"
+          umask 077
+          key="$RUNNER_TEMP/kraken-release.key"
+          printf '%s\n' "$KRAKEN_MINISIGN_KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$KRAKEN_MINISIGN_PASSWORD" | "$minisign" -S -s "$key" \
+            -m release/SHA256SUMS -x release/SHA256SUMS.minisig \
+            -t "kraken $TAG SHA256SUMS"
+          "$minisign" -V -P "$KRAKEN_MINISIGN_PUBKEY" -m release/SHA256SUMS -x release/SHA256SUMS.minisig
+          grep -qx "trusted comment: kraken $TAG SHA256SUMS" release/SHA256SUMS.minisig
 
       - name: Attest SHA256SUMS
         uses: actions/attest-build-provenance@v2

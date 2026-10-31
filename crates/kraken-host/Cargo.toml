@@ -21,7 +21,9 @@ kraken-ipc = { version = "0.3.0", path = "../kraken-ipc" }
 kraken-model = { version = "0.3.0", path = "../kraken-model" }
 kraken-proto.workspace = true
 lzma-rs = "0.3"
+minisign-verify = "0.3"
 kraken-registry = { path = "../kraken-registry", version = "0.3.0" }
+semver = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -33,7 +35,11 @@ toml = "0.8"
 tracing = "0.1"
 zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
+minisign = "0.9"
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "macros"] }
 

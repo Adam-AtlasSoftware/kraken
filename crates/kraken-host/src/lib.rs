@@ -30,11 +30,12 @@ pub mod presets;
 pub mod provision;
 pub mod setup;
 pub mod strata_setup;
+pub mod update;
 
 pub use author::{RunIdGen, agent_id_from_client, user_id};
 pub use config::{
     ConfigError, DaemonSettings, DangerMode, KrakenConfig, LocalServingSettings, ShellConfig,
-    TitlebarMode, UiSettings,
+    TitlebarMode, UiSettings, UpdateChannel, UpdateSettings,
 };
 pub use convention::finalize_output;
 pub use factory::{

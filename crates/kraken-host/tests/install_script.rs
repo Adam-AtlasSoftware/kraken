@@ -127,3 +127,58 @@ fn install_scripts_restrict_curl_to_https() {
         assert!(seen > 0, "{rel}: no curl invocation found");
     }
 }
+
+#[test]
+fn the_embedded_key_is_the_one_the_updater_trusts() {
+    let text = std::fs::read_to_string(repo_file("scripts/install.sh")).unwrap();
+    let line = format!(
+        "KRAKEN_MINISIGN_PUBKEY=\"{}\"",
+        kraken_host::update::verify::RELEASE_PUBLIC_KEY
+    );
+    assert!(
+        text.contains(&line),
+        "install.sh must embed the release key"
+    );
+    // The install always requires a signature now.
+    assert!(text.contains("\"$KRAKEN_MINISIGN_PUBKEY\" 1\n"));
+}
+
+#[test]
+fn a_signature_for_another_release_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path();
+    std::fs::write(
+        d.join("sig"),
+        "untrusted comment: x\nAAAA\ntrusted comment: kraken v0.4.0 SHA256SUMS\nBBBB\n",
+    )
+    .unwrap();
+    assert!(run(d, "check_trusted_comment sig v0.4.0").0);
+    let (ok, err) = run(d, "check_trusted_comment sig v0.5.0");
+    assert!(!ok && err.contains("not for v0.5.0"), "{err}");
+}
+
+#[test]
+fn the_receipt_names_the_script_install() {
+    let t = tempfile::tempdir().unwrap();
+    let prefix = t.path().join("we\"ird prefix");
+    let (ok, err) = run(
+        t.path(),
+        &format!("write_receipt '{}' 0.4.0", prefix.display()),
+    );
+    assert!(ok, "{err}");
+    let text = std::fs::read_to_string(prefix.join("share/kraken/install.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["method"], "script");
+    assert_eq!(v["version"], "0.4.0");
+    assert_eq!(v["prefix"], prefix.display().to_string());
+    // The updater reads it as a script install.
+    let exe = prefix.join("bin/kraken");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    std::fs::write(&exe, "").unwrap();
+    let kind = kraken_host::update::install::detect(
+        &exe,
+        "release",
+        &kraken_host::update::install::SystemProbe,
+    );
+    assert_eq!(kind.id(), "script");
+}

@@ -1,7 +1,7 @@
-//! The first-run wizard: engine, assistant, keyboard shortcuts, look, and what to do first. The
-//! flow keeps the choices; the window (`kraken-gui`'s `first_run.rs`) draws the steps and, on
-//! Finish, saves them (`ui.keymap`, `ui.first_run_done`, the theme and the zoom) and starts what
-//! was chosen.
+//! The first-run wizard: engine, assistant, keyboard shortcuts, look, updates, and what to do
+//! first. The flow keeps the choices; the window (`kraken-gui`'s `first_run.rs`) draws the steps
+//! and, on Finish, saves them (`ui.keymap`, `ui.first_run_done`, `updates.check`, the theme and
+//! the zoom) and starts what was chosen.
 
 use crate::wizard::WizardFlow;
 
@@ -16,6 +16,8 @@ pub enum FirstRunStep {
     Keymap,
     /// Theme and text size.
     Look,
+    /// Whether KRAKEN looks for a new version once a day.
+    Updates,
     /// What to do first.
     Done,
 }
@@ -114,6 +116,8 @@ pub struct FirstRun {
     pub dark: bool,
     /// Text size in percent (one of [`ZOOM_STEPS`]).
     pub zoom: u32,
+    /// Look for a new version once a day (`[updates] check`).
+    pub check_updates: bool,
     /// What to do after Finish.
     pub after: AfterFirstRun,
 }
@@ -132,6 +136,7 @@ impl FirstRun {
                 .into_iter()
                 .min_by_key(|z| z.abs_diff(zoom))
                 .unwrap_or(100),
+            check_updates: true,
             after: AfterFirstRun::default(),
         }
     }
@@ -152,6 +157,7 @@ impl WizardFlow for FirstRun {
             FirstRunStep::Assistant,
             FirstRunStep::Keymap,
             FirstRunStep::Look,
+            FirstRunStep::Updates,
             FirstRunStep::Done,
         ]
     }
@@ -170,6 +176,7 @@ impl WizardFlow for FirstRun {
             FirstRunStep::Assistant => "Assistant",
             FirstRunStep::Keymap => "Keys",
             FirstRunStep::Look => "Look",
+            FirstRunStep::Updates => "Updates",
             FirstRunStep::Done => "Start",
         }
     }
@@ -186,6 +193,9 @@ impl WizardFlow for FirstRun {
                 "Pick the keyboard shortcuts you know. Every preset keeps the same actions; only the keys differ. You can change it later in Settings."
             }
             FirstRunStep::Look => "Choose the theme and the size of the text.",
+            FirstRunStep::Updates => {
+                "KRAKEN can tell you when a new version is out. It asks GitHub once a day and sends only its version number; nothing about you or your files."
+            }
             FirstRunStep::Done => "That is everything. What would you like to do first?",
         }
     }
@@ -213,6 +223,9 @@ impl WizardFlow for FirstRun {
             format!("kraken config set ui.zoom_percent {}", self.zoom),
             "kraken config set ui.first_run_done true".to_string(),
         ];
+        if !self.check_updates {
+            c.push("kraken config set updates.check false".to_string());
+        }
         if self.engine == EngineState::Missing {
             c.insert(0, "kraken setup --native".to_string());
         }
@@ -228,7 +241,7 @@ mod tests {
     #[test]
     fn the_flow_walks_from_engine_to_start_and_finishes() {
         let mut w = FirstRun::new("kraken", true, 100, false);
-        assert_eq!(wizard::position(&w), (1, 5));
+        assert_eq!(wizard::position(&w), (1, 6));
         assert!(!wizard::can_back(&w));
         assert_eq!(wizard::next(&mut w), WizardNav::Moved);
         assert_eq!(w.step(), FirstRunStep::Assistant);
@@ -240,6 +253,10 @@ mod tests {
         w.dark = false;
         w.zoom = 115;
         assert_eq!(wizard::next(&mut w), WizardNav::Moved);
+        assert_eq!(w.step(), FirstRunStep::Updates);
+        assert!(w.check_updates, "on by default");
+        w.check_updates = false;
+        assert_eq!(wizard::next(&mut w), WizardNav::Moved);
         assert!(wizard::is_last(&w));
         w.after = AfterFirstRun::Demo;
         assert_eq!(w.finish_label(), "Finish and open the demo");
@@ -250,8 +267,13 @@ mod tests {
                 .iter()
                 .any(|c| c.ends_with("ui.keymap classic"))
         );
+        assert!(
+            w.commands()
+                .iter()
+                .any(|c| c.ends_with("updates.check false"))
+        );
         assert!(wizard::back(&mut w));
-        assert_eq!(w.step(), FirstRunStep::Look);
+        assert_eq!(w.step(), FirstRunStep::Updates);
     }
 
     #[test]

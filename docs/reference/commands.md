@@ -172,6 +172,10 @@ logged; **dangerous** commands always ask for approval first.
 | [`undo_entry`](#undo_entry) | mutation | mutating | Undo any log entry, with the later edits that depend on it |
 | [`undo_preview`](#undo_preview) | query | safe | Show what undoing a log entry would also undo |
 | [`undo_run`](#undo_run) | mutation | mutating | Undo every edit of an agent run, newest first |
+| [`update_apply`](#update_apply) | job | mutating | Download, verify and install the newest KRAKEN release (job, people only) |
+| [`update_check`](#update_check) | query | safe | Check GitHub for a newer KRAKEN release (at most once a day unless forced) |
+| [`update_rollback`](#update_rollback) | mutation | mutating | Go back to the version the last update replaced (people only) |
+| [`update_status`](#update_status) | query | safe | Show the version, how KRAKEN was installed and whether an update is available |
 | [`xrefs`](#xrefs) | query | safe | List cross-references to or from an address |
 
 ## ai_jobs
@@ -28113,6 +28117,530 @@ Example: `undo_run {"run_id": "run-7f3a"}`
     "failed"
   ],
   "title": "UndoOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## update_apply
+
+Download, verify and install the newest KRAKEN release (job, people only)
+
+```sh
+kraken update-apply
+```
+
+- Kind: job
+- Permission: mutating
+
+Needs no project. For installs KRAKEN updates itself (the script install, a release archive, the AppImage, the Windows zip): downloads the release's SHA256SUMS, checks its signature against the key compiled into KRAKEN, downloads the archive, checks its SHA-256, tries the new `kraken --version` and swaps the files, keeping the old ones for `update_rollback`. Package-managed installs are refused with their command. An agent or the MCP surface is refused. Returns a `job_id` (`job-gN`).
+
+Example: `update_apply {}`
+
+Never downgrades and never installs an unsigned release. Refuses to run as root and refuses when a file it would replace is a link or belongs to someone else. Restart KRAKEN afterwards to use the new version.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Output of the commands that start a global job.",
+  "properties": {
+    "job_id": {
+      "description": "The job: `job_status`, `job_await` and `job_cancel` take it (`job-g1`, ...).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "GlobalJobOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## update_check
+
+Check GitHub for a newer KRAKEN release (at most once a day unless forced)
+
+```sh
+kraken update-check [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Needs no project. Sends one HTTPS GET to api.github.com with the User-Agent `kraken/<version>`; nothing else. Without `force` a result less than a day old is returned as is. Checks that are off (`updates.check = false`, `KRAKEN_NO_UPDATE_CHECK`, `CI`) still run when forced. Installs nothing.
+
+Example: `update_check {"force": true}`
+
+Only tags of the form `vX.Y.Z` or `vX.Y.Z-pre` count. `channel = "prerelease"` in `[updates]` also considers prereleases. The result is kept in `update-state.json` in KRAKEN's data directory.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `force` | `--force` | boolean | no | Ask GitHub now even when the last check is less than a day old. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "InstallView": {
+      "description": "How KRAKEN was installed, and how it is updated.",
+      "properties": {
+        "can_self_update": {
+          "description": "KRAKEN can download and install updates itself.",
+          "type": "boolean"
+        },
+        "command": {
+          "description": "The command the person runs to update a package-managed install.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`script`, `archive`, `appimage`, `portable`, `windows_installer`, `aur`, `package`,\n`cargo`, `source`, `python` or `unknown`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "In plain words: \"AppImage at ~/Apps/KRAKEN.AppImage\".",
+          "type": "string"
+        },
+        "program": {
+          "description": "The running program.",
+          "type": "string"
+        },
+        "self_update_blocked": {
+          "description": "Why it cannot, when it is a kind that normally could.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "can_self_update",
+        "program"
+      ],
+      "type": "object"
+    },
+    "SystemView": {
+      "description": "The computer KRAKEN runs on.",
+      "properties": {
+        "arch": {
+          "description": "Processor architecture (`x86_64`, `aarch64`).",
+          "type": "string"
+        },
+        "libc": {
+          "description": "C library the build uses (`glibc`, `musl`, `msvc`, `macos`).",
+          "type": "string"
+        },
+        "os": {
+          "description": "Operating system with its version (\"Arch Linux\", \"Ubuntu 24.04.1 LTS\", \"Windows 10.0.26100\").",
+          "type": "string"
+        },
+        "session": {
+          "description": "The session: desktop and display server, a terminal, or SSH.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "libc",
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where updates stand.",
+  "properties": {
+    "build_channel": {
+      "description": "`release` for builds from the release workflow, `source` otherwise.",
+      "type": "string"
+    },
+    "channel": {
+      "description": "`stable` or `prerelease`: which releases the check looks at.",
+      "type": "string"
+    },
+    "checks_disabled_by": {
+      "description": "Why checks are off (`KRAKEN_NO_UPDATE_CHECK`, `CI`, `updates.check = false`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checks_enabled": {
+      "description": "Checks are on.",
+      "type": "boolean"
+    },
+    "install": {
+      "$ref": "#/$defs/InstallView",
+      "description": "How KRAKEN was installed."
+    },
+    "last_check": {
+      "description": "Unix seconds of the last check.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "last_error": {
+      "description": "What went wrong in the last check.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latest": {
+      "description": "The newest release the last check saw.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latest_signed": {
+      "description": "The newest release carries a signature (`SHA256SUMS.minisig`); unsigned ones cannot be\ninstalled by KRAKEN.",
+      "type": "boolean"
+    },
+    "notes_url": {
+      "description": "Its release notes.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rollback_to": {
+      "description": "The version `update_rollback` would go back to.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "skipped": {
+      "description": "The version the person chose to skip.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "description": "One sentence for a person: what to do, if anything.",
+      "type": "string"
+    },
+    "system": {
+      "$ref": "#/$defs/SystemView",
+      "description": "This computer."
+    },
+    "target": {
+      "description": "The target triple compiled in.",
+      "type": "string"
+    },
+    "update_available": {
+      "description": "`latest` is newer than the running version.",
+      "type": "boolean"
+    },
+    "version": {
+      "description": "The running version.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "target",
+    "build_channel",
+    "channel",
+    "install",
+    "system",
+    "checks_enabled",
+    "latest_signed",
+    "update_available",
+    "summary"
+  ],
+  "title": "UpdateStatusOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## update_rollback
+
+Go back to the version the last update replaced (people only)
+
+```sh
+kraken update-rollback
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Needs no project. Puts back the one generation `update_apply` kept in `<data dir>/previous/`. An agent or the MCP surface is refused.
+
+Example: `update_rollback {}`
+
+Fails when nothing was kept. Restart KRAKEN afterwards.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `update_apply` and `update_rollback`.",
+  "properties": {
+    "from": {
+      "description": "The version that ran before.",
+      "type": "string"
+    },
+    "message": {
+      "description": "For a person: \"Updated to 0.4.0. Restart KRAKEN to use it.\"",
+      "type": "string"
+    },
+    "replaced": {
+      "description": "Files and directories replaced.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "to": {
+      "description": "The version now installed.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "replaced",
+    "message"
+  ],
+  "title": "UpdateApplied",
+  "type": "object"
+}
+```
+
+</details>
+
+## update_status
+
+Show the version, how KRAKEN was installed and whether an update is available
+
+```sh
+kraken update-status
+```
+
+- Kind: query
+- Permission: safe
+
+Needs no project and uses no network: reads the result of the last check. Reports the version, target and build channel, the install kind in plain words (`install.label`), whether KRAKEN can update itself or the command your package manager uses, this computer, and the newest release seen.
+
+Example: `update_status {}`
+
+`update_available` compares `latest` with the running version (semver). A release without `SHA256SUMS.minisig` (`latest_signed` false) cannot be installed by KRAKEN. `checks_disabled_by` names what turned checks off.
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "InstallView": {
+      "description": "How KRAKEN was installed, and how it is updated.",
+      "properties": {
+        "can_self_update": {
+          "description": "KRAKEN can download and install updates itself.",
+          "type": "boolean"
+        },
+        "command": {
+          "description": "The command the person runs to update a package-managed install.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`script`, `archive`, `appimage`, `portable`, `windows_installer`, `aur`, `package`,\n`cargo`, `source`, `python` or `unknown`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "In plain words: \"AppImage at ~/Apps/KRAKEN.AppImage\".",
+          "type": "string"
+        },
+        "program": {
+          "description": "The running program.",
+          "type": "string"
+        },
+        "self_update_blocked": {
+          "description": "Why it cannot, when it is a kind that normally could.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "can_self_update",
+        "program"
+      ],
+      "type": "object"
+    },
+    "SystemView": {
+      "description": "The computer KRAKEN runs on.",
+      "properties": {
+        "arch": {
+          "description": "Processor architecture (`x86_64`, `aarch64`).",
+          "type": "string"
+        },
+        "libc": {
+          "description": "C library the build uses (`glibc`, `musl`, `msvc`, `macos`).",
+          "type": "string"
+        },
+        "os": {
+          "description": "Operating system with its version (\"Arch Linux\", \"Ubuntu 24.04.1 LTS\", \"Windows 10.0.26100\").",
+          "type": "string"
+        },
+        "session": {
+          "description": "The session: desktop and display server, a terminal, or SSH.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "libc",
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where updates stand.",
+  "properties": {
+    "build_channel": {
+      "description": "`release` for builds from the release workflow, `source` otherwise.",
+      "type": "string"
+    },
+    "channel": {
+      "description": "`stable` or `prerelease`: which releases the check looks at.",
+      "type": "string"
+    },
+    "checks_disabled_by": {
+      "description": "Why checks are off (`KRAKEN_NO_UPDATE_CHECK`, `CI`, `updates.check = false`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checks_enabled": {
+      "description": "Checks are on.",
+      "type": "boolean"
+    },
+    "install": {
+      "$ref": "#/$defs/InstallView",
+      "description": "How KRAKEN was installed."
+    },
+    "last_check": {
+      "description": "Unix seconds of the last check.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "last_error": {
+      "description": "What went wrong in the last check.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latest": {
+      "description": "The newest release the last check saw.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latest_signed": {
+      "description": "The newest release carries a signature (`SHA256SUMS.minisig`); unsigned ones cannot be\ninstalled by KRAKEN.",
+      "type": "boolean"
+    },
+    "notes_url": {
+      "description": "Its release notes.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rollback_to": {
+      "description": "The version `update_rollback` would go back to.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "skipped": {
+      "description": "The version the person chose to skip.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "description": "One sentence for a person: what to do, if anything.",
+      "type": "string"
+    },
+    "system": {
+      "$ref": "#/$defs/SystemView",
+      "description": "This computer."
+    },
+    "target": {
+      "description": "The target triple compiled in.",
+      "type": "string"
+    },
+    "update_available": {
+      "description": "`latest` is newer than the running version.",
+      "type": "boolean"
+    },
+    "version": {
+      "description": "The running version.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "target",
+    "build_channel",
+    "channel",
+    "install",
+    "system",
+    "checks_enabled",
+    "latest_signed",
+    "update_available",
+    "summary"
+  ],
+  "title": "UpdateStatusOut",
   "type": "object"
 }
 ```

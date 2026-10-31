@@ -46,6 +46,8 @@ pub struct Services {
     pub setup_probe: Option<Arc<dyn kraken_viewmodel::infer::SetupProbe>>,
     /// A scripted backend for the Integrations window (tests); else the daemon is used.
     pub integrations_backend: Option<Arc<dyn kraken_viewmodel::Backend>>,
+    /// What the update strip and the Updates window ask; `None` checks nothing (tests).
+    pub updater: Option<Arc<dyn kraken_registry::commands::UpdateBackend>>,
 }
 
 impl Services {
@@ -74,6 +76,7 @@ impl Services {
             serving: None,
             setup_probe: None,
             integrations_backend: None,
+            updater: Some(Arc::new(kraken_host::update::HostUpdater::system())),
         }
     }
 
@@ -100,6 +103,7 @@ impl Services {
             serving: None,
             setup_probe: None,
             integrations_backend: None,
+            updater: None,
         }
     }
 

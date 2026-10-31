@@ -202,6 +202,8 @@ pub struct KrakenApp {
     tour_fronted: Option<usize>,
     /// Analysis finished with this many functions: the next-steps notice is showing.
     next_steps: Option<u64>,
+    /// The update strip, the Updates and About windows.
+    pub(crate) updates: kraken_viewmodel::update::UpdateHub,
     /// The analysis was seen running, so its end shows the next-steps notice.
     saw_running: bool,
     /// The last address handed to the browser.
@@ -243,6 +245,17 @@ impl KrakenApp {
         let ui_zoom = services.cfg.ui.zoom_percent.unwrap_or(100).clamp(
             crate::first_run::ZOOM_RANGE.0,
             crate::first_run::ZOOM_RANGE.1,
+        );
+        let updates = kraken_viewmodel::update::UpdateHub::new(
+            services
+                .updater
+                .clone()
+                .unwrap_or_else(|| Arc::new(kraken_viewmodel::update::NoUpdates)),
+            rt.handle().clone(),
+            {
+                let c = ctx.clone();
+                Arc::new(move || c.request_repaint())
+            },
         );
         let mut app = KrakenApp {
             rt,
@@ -294,6 +307,7 @@ impl KrakenApp {
             tour: Tour::default(),
             tour_fronted: None,
             next_steps: None,
+            updates,
             saw_running: false,
             opened_url: None,
             file_menu_open: false,
@@ -339,6 +353,9 @@ impl KrakenApp {
         if let Some(api) = app.services.serving.clone() {
             app.settings.infer =
                 crate::infer::InferSettings::with_service(api, app.rt.handle().clone());
+        }
+        if app.services.updater.is_some() && opts.screenshot.is_none() {
+            app.updates.start();
         }
         if app.services.first_run_tour
             && app.prefs.persistent()
@@ -1021,6 +1038,8 @@ impl KrakenApp {
             AppAction::ImportProgram => Some(UiRequest::ImportProgram),
             AppAction::ShowSetupStatus => Some(UiRequest::ShowSetupStatus),
             AppAction::ShowFirstRun => Some(UiRequest::ShowFirstRun),
+            AppAction::CheckForUpdates => Some(UiRequest::CheckForUpdates),
+            AppAction::ShowAbout => Some(UiRequest::ShowAbout),
             AppAction::LocalSetupNext => Some(UiRequest::LocalSetup(SetupButton::Next)),
             AppAction::LocalSetupBack => Some(UiRequest::LocalSetup(SetupButton::Back)),
             AppAction::LocalSetupCancel => Some(UiRequest::LocalSetup(SetupButton::Cancel)),
@@ -1106,6 +1125,8 @@ impl KrakenApp {
             }
             UiRequest::TakeTour => self.tour.start(),
             UiRequest::ShowFirstRun => self.open_first_run(ctx),
+            UiRequest::CheckForUpdates => self.updates.open_dialog(),
+            UiRequest::ShowAbout => self.updates.open_about(),
             UiRequest::AskAboutKraken => {
                 self.state.bring_to_front = Some(Tab::Assistant);
                 if self.state.assist.input.trim().is_empty() {
@@ -1228,6 +1249,9 @@ impl KrakenApp {
     /// The import dialog, the stop-the-job question, the cheat sheet and file drops.
     fn dialogs(&mut self, ctx: &egui::Context) {
         self.take_picks(ctx);
+        if let Some(ev) = crate::updates::windows(ctx, &self.updates) {
+            self.update_event(ev, ctx);
+        }
         if let Some(d) = self.import.as_mut() {
             match d.show(ctx, self.rt.handle()) {
                 Some(ImportAction::Import(c)) => {
@@ -1546,6 +1570,61 @@ impl KrakenApp {
         }
     }
 
+    /// Turns the daily update check on or off in `config.toml` (`[updates] check`).
+    fn set_update_checks(&mut self, on: bool) {
+        let Some(path) = self.services.config_path.clone() else {
+            return;
+        };
+        let saved = kraken_host::KrakenConfig::from_file(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|mut cfg| {
+                cfg.updates.check = on;
+                cfg.save(&path).map_err(|e| e.to_string())
+            });
+        match saved {
+            Ok(()) => {
+                self.services.cfg.updates.check = on;
+                self.updates.start();
+            }
+            Err(e) => self.problem(format!("The setting could not be saved: {e}")),
+        }
+    }
+
+    /// Carries out what the update strip or window asked for.
+    fn update_event(&mut self, ev: crate::updates::UpdateEvent, ctx: &egui::Context) {
+        use crate::updates::UpdateEvent;
+        match ev {
+            UpdateEvent::Copy(text) => {
+                ctx.copy_text(text);
+                if let Some(vm) = self.vm.as_mut() {
+                    vm.toast(
+                        kraken_viewmodel::ToastLevel::Info,
+                        "Copied. Paste it into a terminal to update.".to_string(),
+                    );
+                }
+            }
+            UpdateEvent::Open(url) => {
+                if let Err(e) = open_in_browser(&url) {
+                    self.problem(format!(
+                        "Could not open the browser ({e}). The page is {url}"
+                    ));
+                }
+                self.opened_url = Some(url);
+            }
+            UpdateEvent::SetChecks(on) => self.set_update_checks(on),
+            UpdateEvent::Restart => {
+                let daemon = self.services.mode == Mode::Daemon;
+                match self.rt.block_on(crate::updates::restart(daemon)) {
+                    Ok(()) => {
+                        self.quit_agreed = true;
+                        ctx.send_viewport_cmd(ViewportCommand::Close);
+                    }
+                    Err(e) => self.problem(e),
+                }
+            }
+        }
+    }
+
     /// Saves a change of `[ui]` in the config file; a file that cannot be written is reported.
     fn save_ui(&mut self, change: impl FnOnce(&mut kraken_host::UiSettings)) {
         let Some(path) = self.services.config_path.clone() else {
@@ -1591,6 +1670,7 @@ impl KrakenApp {
             u.zoom_percent = Some(w.zoom);
             u.first_run_done = true;
         });
+        self.set_update_checks(w.check_updates);
         match w.assistant {
             Some(AssistantChoice::LocalModel) => self.open_local_setup(ctx),
             Some(AssistantChoice::TerminalAgent | AssistantChoice::ModelApi) => {
@@ -1966,6 +2046,9 @@ impl KrakenApp {
         let pal = self.theme.palette();
 
         self.menu_bar(ui, &ctx);
+        if let Some(ev) = crate::updates::strip(ui, &self.updates) {
+            self.update_event(ev, &ctx);
+        }
         // Before the panels, so the dialogs see Escape before any panel takes it.
         self.dialogs(&ctx);
         if self.custom_titlebar {

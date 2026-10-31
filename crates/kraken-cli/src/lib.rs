@@ -33,6 +33,7 @@ pub mod render;
 pub mod schema;
 mod serve_local;
 mod setup;
+mod update_cmd;
 
 pub use app::{
     BUILD, CliAuthor, CliEnv, DaemonAuto, DaemonMode, OwnerSlot, build_args, build_cli, run,

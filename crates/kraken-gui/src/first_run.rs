@@ -49,6 +49,7 @@ pub fn body(ui: &mut Ui, w: &mut FirstRun, hub: Option<&SetupHub>) {
         FirstRunStep::Assistant => assistant_step(ui, w),
         FirstRunStep::Keymap => keymap_step(ui, w),
         FirstRunStep::Look => look_step(ui, w),
+        FirstRunStep::Updates => updates_step(ui, w),
         FirstRunStep::Done => done_step(ui, w),
     }
 }
@@ -191,6 +192,39 @@ fn look_step(ui: &mut Ui, w: &mut FirstRun) {
             }
         }
     });
+}
+
+fn updates_step(ui: &mut Ui, w: &mut FirstRun) {
+    let p = pal(ui);
+    ui.checkbox(
+        &mut w.check_updates,
+        "Tell me when a new version of KRAKEN is out",
+    )
+    .on_hover_text(
+        "Once a day KRAKEN asks GitHub for the newest release, sending only its own version",
+    );
+    ui.add_space(6.0);
+    let (_, kind) = kraken_host::update::this_install();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let how = if kind.self_updating() {
+        "KRAKEN can install updates itself when you say so: it checks the release signature first and keeps the old version so you can go back.".to_string()
+    } else if let Some(c) = kind.command(None) {
+        format!(
+            "Your package manager installed KRAKEN ({}), so it updates it; KRAKEN shows you the command: {c}",
+            kind.label(home.as_deref())
+        )
+    } else {
+        "KRAKEN cannot tell how it was installed here, so it links to the releases page when there is something new.".to_string()
+    };
+    ui.add(egui::Label::new(RichText::new(how).size(12.0).color(p.text_dim)).wrap());
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Change it later in Help > Check for updates..., or set KRAKEN_NO_UPDATE_CHECK=1.",
+        )
+        .size(12.0)
+        .color(p.text_dim),
+    );
 }
 
 fn done_step(ui: &mut Ui, w: &mut FirstRun) {

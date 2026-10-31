@@ -35,7 +35,7 @@ Platforms: Linux x86_64 is supported today. macOS (Apple silicon) and Windows (x
 curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/Adam-AtlasSoftware/kraken/main/scripts/install.sh | bash
 ```
 
-The script finds the latest release for your platform, downloads it over HTTPS, checks the archive against the release's `SHA256SUMS` and only then installs. The script can also verify a detached minisign signature (`SHA256SUMS.minisig`) of `SHA256SUMS`. That check is built but dormant: it switches on, and then becomes mandatory, once the project owner generates a release signing key and pastes its public key into `KRAKEN_MINISIGN_PUBKEY` in the script. Until then `SHA256SUMS` only guards against corruption, because it comes from the same place as the archive. It never uses `sudo`: programs go to `~/.local/bin` and the bundled Ghidra extension to `~/.local/share/kraken`. Read it first if you like, it is short: [`scripts/install.sh`](https://github.com/Adam-AtlasSoftware/kraken/blob/main/scripts/install.sh).
+The script finds the latest release for your platform, downloads it over HTTPS, checks the minisign signature of the release's `SHA256SUMS` against the release key embedded in the script, checks the archive against `SHA256SUMS` and only then installs. It needs the `minisign` tool for that (`pacman -S minisign`, `apt install minisign`, `brew install minisign`); without a valid signature nothing is installed. Releases up to v0.3.0 were not signed, so the script installs v0.4.0 and later. It never uses `sudo`: programs go to `~/.local/bin` and the bundled Ghidra extension to `~/.local/share/kraken`. It also writes `~/.local/share/kraken/install.json`, which tells KRAKEN it was installed this way so it can update itself. Read it first if you like, it is short: [`scripts/install.sh`](https://github.com/Adam-AtlasSoftware/kraken/blob/main/scripts/install.sh).
 
 Set `KRAKEN_VERSION=v0.1.0` to pick a release, or `KRAKEN_PREFIX=/some/dir` to install somewhere other than `~/.local`. If `~/.local/bin` is not on your `PATH`, the script says so.
 
@@ -80,6 +80,26 @@ The first macOS and Windows releases are not signed by a recognised publisher (s
 ### Windows
 
 Windows support is an early preview. Unzip `kraken-<version>-x86_64-pc-windows-msvc.zip` anywhere and add its `bin` folder to your `PATH`: `kraken.exe` is the command line and MCP server, `kraken-gui.exe` the app and `krakend.exe` the daemon. Windows has the Ghidra engine only (`kraken setup` downloads Ghidra and a JDK). KRAKEN's sandbox around the engine exists on Linux only, so on Windows analysis is refused until you set the environment variable `KRAKEN_ALLOW_UNCONFINED=1` (or `allow_unconfined = true` in the config file that `KRAKEN_CONFIG` names); Ghidra then runs as you, unconfined, so open only files you trust. Linux is the platform to use today. An installer that updates itself is planned.
+
+## Updating
+
+KRAKEN looks for a new release once a day and tells you: a strip at the top of the app, or one line after a command in a terminal (`KRAKEN 0.4.0 is available (you have 0.3.0): run kraken update`). The check sends one request to GitHub with KRAKEN's version and nothing else. Turn it off in the first-run wizard, in Help > Check for updates..., with `kraken config-set --key updates.check --value false`, or with `KRAKEN_NO_UPDATE_CHECK=1`; it is also off when `CI` is set. `[updates] channel = "prerelease"` in `config.toml` includes prereleases.
+
+`kraken --version` (and Help > About) says how KRAKEN was installed. That decides how it is updated:
+
+| Installed with | How to update |
+|---|---|
+| The one-command script, or a release archive unpacked into a folder you own | `kraken update`, or Update now in the app |
+| The AppImage | `kraken update` (run `./KRAKEN.AppImage kraken update`), or Update now in the app: the file is replaced |
+| The Windows zip | `kraken update`, or Update now in the app |
+| AUR (`kraken-workbench-bin`) | `yay -Syu kraken-workbench-bin` (or `paru`) |
+| A distribution package | your distribution's upgrade command |
+| `cargo install` | `cargo install --locked --git https://github.com/Adam-AtlasSoftware/kraken --tag vX.Y.Z kraken-cli krakend kraken-gui` |
+| A clone built from source | `git pull --ff-only` and the `cargo build` above |
+
+**Per-user and system-wide installs.** An install in your home folder (the script, the AppImage, the Windows zip) belongs to you, so KRAKEN updates it itself when you say so. An install in `/usr` or `/opt` (the AUR package, a distribution package) belongs to the package manager: KRAKEN never runs `sudo` or asks for administrator rights, so it shows you the exact command instead, with a copy button in the app. `kraken update` also refuses to run as root, so `sudo kraken update` cannot rewrite a system install.
+
+What `kraken update` does: it downloads the release's `SHA256SUMS` and checks its signature against the key compiled into KRAKEN (the signature must name the new version), downloads the archive and checks its SHA-256, unpacks it into a private folder, runs the new `kraken --version`, and only then swaps the files, one rename at a time, keeping the old ones in `~/.local/share/kraken/previous/`. If anything fails, what was already swapped is put back. It never installs an older version. Restart KRAKEN afterwards (the app offers Restart now). `kraken update --rollback` goes back to the kept version; `--check` only checks; `--yes` skips the question; `--json` prints the result for scripts.
 
 ## Install from source
 

@@ -226,8 +226,10 @@ fn help_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     item(ui, AppAction::ShowShortcuts, env, out);
     item(ui, AppAction::ShowSetupStatus, env, out);
     item(ui, AppAction::ShowFirstRun, env, out);
+    item(ui, AppAction::CheckForUpdates, env, out);
     ui.separator();
     item(ui, AppAction::OpenDocs, env, out);
+    item(ui, AppAction::ShowAbout, env, out);
 }
 
 /// Draws the menu bar. On the welcome screen only File and Help are shown.

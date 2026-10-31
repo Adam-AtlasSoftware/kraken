@@ -166,6 +166,10 @@ const EXPECTED: &[&str] = &[
     "undo_entry",
     "undo_preview",
     "undo_run",
+    "update_apply",
+    "update_check",
+    "update_rollback",
+    "update_status",
     "xrefs",
 ];
 

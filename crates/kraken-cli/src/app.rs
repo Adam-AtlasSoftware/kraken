@@ -235,6 +235,7 @@ impl CliEnv {
                 s = s.with_local_models(Arc::new(lm));
             }
             s = s.with_setup(Arc::new(kraken_host::setup::HostSetup::system()));
+            s = s.with_update(Arc::new(kraken_host::update::HostUpdater::system()));
             s = s.with_config_store(Arc::new(kraken_host::config_keys::HostConfigStore::system()));
             s = s.with_serving(Arc::new(kraken_host::infer::ServingBridge::new(Arc::new(
                 self.owner_manager()
@@ -567,6 +568,33 @@ pub fn build_cli(registry: &Registry) -> Command {
                     .long("force")
                     .action(ArgAction::SetTrue)
                     .help("Download, extract and build again even if everything is in place"),
+            ),
+    )
+    .subcommand(
+        Command::new("update")
+            .about("Check for a new KRAKEN release and install it")
+            .long_about(
+                "Asks GitHub for the newest release and, for the installs KRAKEN updates itself \
+                 (the install script, a release archive, the AppImage, the Windows zip), downloads \
+                 it, checks its signature and SHA-256, tries the new program and swaps the files. \
+                 The old version is kept: --rollback goes back to it. For an install a package \
+                 manager made (AUR, a distribution package, cargo, a source checkout) it prints \
+                 the command that updates it. Never runs as root and never downgrades. Turn the \
+                 daily check off with `kraken config-set --key updates.check --value false` or \
+                 KRAKEN_NO_UPDATE_CHECK=1.",
+            )
+            .arg(
+                Arg::new("check")
+                    .long("check")
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with("rollback")
+                    .help("Only check and print what is available"),
+            )
+            .arg(
+                Arg::new("rollback")
+                    .long("rollback")
+                    .action(ArgAction::SetTrue)
+                    .help("Go back to the version the last update replaced"),
             ),
     )
     .subcommand(
@@ -1338,6 +1366,14 @@ pub async fn run_with_provider(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    if matches!(
+        args.get(1).and_then(|a| a.to_str()),
+        Some("--version" | "-V")
+    ) && args.len() == 2
+    {
+        emit(out, &kraken_host::update::version_text());
+        return 0;
+    }
     let cli = build_cli(&env.registry);
     let matches = match cli.try_get_matches_from(args) {
         Ok(m) => m,
@@ -1359,6 +1395,9 @@ pub async fn run_with_provider(
     let code = dispatch(env, sub, sm, json_out, provider, out, err).await;
     if let Some(s) = serving {
         s.finish().await;
+    }
+    if env.interactive {
+        crate::update_cmd::after_command(sub, json_out, err).await;
     }
     env.owner.shutdown().await;
     code
@@ -1386,6 +1425,7 @@ async fn dispatch(
         "agents" => crate::agents_cmd::run_agents(env, sm, json_out, out, err).await,
         "infer" => crate::infer_cmd::run_infer(env, sm, json_out, out, err).await,
         "setup" => crate::setup::run_setup(env, sm, json_out, out, err).await,
+        "update" => crate::update_cmd::run_update(env, sm, json_out, out, err).await,
         "daemon" => crate::daemon_cmd::run_daemon(env, sm, json_out, out, err).await,
         "glossary" => crate::assist_cmd::run_glossary(sm, json_out, out, err),
         "eval" => crate::eval_cmd::run_eval(env, sm, json_out, provider, out, err).await,

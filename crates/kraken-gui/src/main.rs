@@ -30,6 +30,7 @@ mod setup_status;
 mod style;
 mod titlebar;
 mod tour;
+mod updates;
 mod welcome;
 mod wizard;
 mod workspace;

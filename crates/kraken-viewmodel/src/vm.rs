@@ -2006,6 +2006,8 @@ impl ViewModel {
             AppAction::ImportProgram => return Some(UiRequest::ImportProgram),
             AppAction::ShowSetupStatus => return Some(UiRequest::ShowSetupStatus),
             AppAction::ShowFirstRun => return Some(UiRequest::ShowFirstRun),
+            AppAction::CheckForUpdates => return Some(UiRequest::CheckForUpdates),
+            AppAction::ShowAbout => return Some(UiRequest::ShowAbout),
             AppAction::RunInEmulator => return Some(UiRequest::RunInEmulator),
             AppAction::LocalSetupNext => {
                 return Some(UiRequest::LocalSetup(crate::SetupButton::Next));

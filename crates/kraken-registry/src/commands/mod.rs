@@ -59,6 +59,7 @@ mod typedit;
 mod types;
 mod ui;
 mod undo_entry;
+mod update;
 
 pub use ai::{
     AiJobs, AiJobsOut, AiUsage, AiUsageArgs, AiUsageGroupView, AiUsageOut, AiUsageScope,
@@ -271,6 +272,10 @@ pub use undo_entry::{
     DependentView, TaintedClear, TaintedClearArgs, TaintedClearOut, TaintedFunction, TaintedList,
     TaintedListOut, UndoEntry, UndoEntryArgs, UndoPreview, UndoPreviewArgs, UndoPreviewCommand,
 };
+pub use update::{
+    InstallView, SystemView, UpdateApplied, UpdateApply, UpdateBackend, UpdateCheck,
+    UpdateCheckArgs, UpdateRollback, UpdateStatus, UpdateStatusOut,
+};
 
 /// Arguments of a command that takes none.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -423,6 +428,10 @@ pub fn register_all(r: &mut Registry) {
     r.register(SetupDotnet);
     r.register(SetupRust);
     r.register(SetupSysroots);
+    r.register(UpdateStatus);
+    r.register(UpdateCheck);
+    r.register(UpdateApply);
+    r.register(UpdateRollback);
     r.register(IntegrationUsePath);
     r.register(IntegrationRemove);
     r.register(EmulatorRun);

@@ -8,21 +8,21 @@
 # release's SHA256SUMS before anything is extracted or installed.
 #
 # Authenticity: SHA256SUMS comes from the same origin as the archive, so on its own it only
-# guards against corruption. Releases are meant to carry a detached minisign signature
-# (SHA256SUMS.minisig) made with a release key whose public half is embedded below. That key has
-# NOT been generated yet (the project owner must create it and paste the public key into
-# KRAKEN_MINISIGN_PUBKEY); until then the signature step is skipped with a notice. Once a key is
-# embedded the check is mandatory: a missing minisign tool or signature aborts the install.
+# guards against corruption. Releases carry a detached minisign signature (SHA256SUMS.minisig)
+# made with the release key whose public half is embedded below (the same key KRAKEN's updater
+# has compiled in, docs/design/0015-updates.md). The check is mandatory: a missing minisign tool
+# or signature aborts the install. Releases up to v0.3.0 were not signed.
+#
+# The script writes an install receipt, <prefix>/share/kraken/install.json, so that KRAKEN knows
+# it was installed this way and can update itself (`kraken update`).
 #
 # Environment:
-#   KRAKEN_VERSION            release to install, e.g. v0.1.0 (default: the latest release)
+#   KRAKEN_VERSION            release to install, e.g. v0.4.0 (default: the latest release)
 #   KRAKEN_PREFIX             install prefix (default: $HOME/.local)
-#   KRAKEN_REQUIRE_SIGNATURE  set to 1 to abort when no release key is embedded yet
 set -euo pipefail
 
-# minisign public key of the release signing key (the base64 line of the .pub file).
-# EMPTY until the owner generates the key: `minisign -G`, then paste the key here.
-KRAKEN_MINISIGN_PUBKEY=""
+# minisign public key of the release signing key (key id E9CBFBBF6ECFB91C).
+KRAKEN_MINISIGN_PUBKEY="RWQcuc9uv/vL6fNGCFoY+ea132bmfUHhfczZGY/UgdNbC08hjU6DYmln"
 
 repo="Adam-AtlasSoftware/kraken"
 base="https://github.com/$repo/releases"
@@ -57,9 +57,29 @@ verify_signature() {
   [ -n "$sig" ] && [ -f "$sig" ] || die "release has no SHA256SUMS.minisig; nothing was installed"
   command -v minisign >/dev/null 2>&1 ||
     die "minisign is required to verify this release (https://jedisct1.github.io/minisign/)"
+  # minisign 0.11 and later verify the prehashed signatures the release workflow makes.
   minisign -V -P "$pubkey" -m "$sums" -x "$sig" >/dev/null ||
     die "signature check failed for SHA256SUMS; nothing was installed"
   echo "Signature OK"
+}
+
+# Checks that the signature was made for this release: its trusted comment must be
+# "kraken <tag> SHA256SUMS", so an older signed list cannot stand in for a newer release.
+# $1 = signature path, $2 = tag (v0.4.0)
+check_trusted_comment() {
+  local sig=$1 tag=$2
+  grep -qx "trusted comment: kraken $tag SHA256SUMS" "$sig" ||
+    die "the signature is not for $tag; nothing was installed"
+}
+
+# Writes the install receipt KRAKEN's updater reads. $1 = prefix, $2 = version (0.4.0)
+write_receipt() {
+  local prefix=$1 version=$2 escaped
+  escaped=$(printf '%s' "$prefix" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  mkdir -p "$prefix/share/kraken"
+  printf '{"method": "script", "version": "%s", "prefix": "%s"}\n' "$version" "$escaped" \
+    > "$prefix/share/kraken/.install.json.new"
+  mv -f "$prefix/share/kraken/.install.json.new" "$prefix/share/kraken/install.json"
 }
 
 # Rejects archives with absolute or parent-relative names and any link entry (symlink or hard
@@ -137,7 +157,8 @@ sig_file=""
 if fetch "$base/download/$tag/SHA256SUMS.minisig" "$work/SHA256SUMS.minisig" 2>/dev/null; then
   sig_file="$work/SHA256SUMS.minisig"
 fi
-verify_signature "$work/SHA256SUMS" "$sig_file" "$KRAKEN_MINISIGN_PUBKEY" "${KRAKEN_REQUIRE_SIGNATURE:-0}"
+verify_signature "$work/SHA256SUMS" "$sig_file" "$KRAKEN_MINISIGN_PUBKEY" 1
+check_trusted_comment "$sig_file" "$tag"
 
 # Keep only the line for our archive (exact name match), then verify it.
 grep -F "  $archive" "$work/SHA256SUMS" | grep -x ".\{64\}  $archive" > "$work/archive.sha256" ||
@@ -176,12 +197,15 @@ for f in applications/kraken-gui.desktop icons/hicolor/scalable/apps/kraken-gui.
   fi
 done
 
+write_receipt "$prefix" "$version"
+
 echo
 echo "Installed KRAKEN $tag into $prefix"
 case ":$PATH:" in
   *":$prefix/bin:"*) ;;
   *) echo "Add $prefix/bin to your PATH, for example:  export PATH=\"$prefix/bin:\$PATH\"" ;;
 esac
+echo "Updates: KRAKEN tells you when a new version is out; \`kraken update\` installs it."
 if [ -d "$prefix/share/kraken/native-sla" ]; then
   cat <<'EOF'
 

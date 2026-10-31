@@ -10,6 +10,7 @@
 //! | `status` | none | daemon info, open sessions, engine diagnostics |
 //! | `events` | `{after_seq?, limit?}` | `{events: [...], last_seq}` (catch-up for a missed stream) |
 //! | `shutdown` | none | `{"stopping": true}` |
+//! | `exit_when_idle` | none | `{"exiting": "when_idle"}` (user credential only) |
 //! | `approvals` | none | `{pending: [PendingApproval]}` (user credential only) |
 //! | `approval_decide` | `{id, allow}` | `{decided: bool}` (user credential only) |
 //! | `gui_selection_set` | [`GuiSelectionSetParams`] | `{stored: bool}` (user credential only) |
@@ -61,6 +62,8 @@ pub const METHOD_APPROVAL_DECIDE: &str = "approval_decide";
 pub const METHOD_GUI_SELECTION_SET: &str = "gui_selection_set";
 /// Read what the person has selected in the GUI (any credential).
 pub const METHOD_GUI_SELECTION: &str = "gui_selection";
+/// Ask the daemon to exit once no client, job or model keeps it busy (a newer client met it).
+pub const METHOD_EXIT_WHEN_IDLE: &str = "exit_when_idle";
 /// Notification method of change events.
 pub const METHOD_EVENT: &str = "event";
 
@@ -413,7 +416,9 @@ impl DaemonClient {
             opts.timeout,
         )
         .await?;
-        Ok(Self::from_client(client, build))
+        let c = Self::from_client(client, build);
+        c.retire_if_older().await;
+        Ok(c)
     }
 
     /// The daemon's build string from the handshake.
@@ -424,6 +429,25 @@ impl DaemonClient {
     /// The daemon's process id.
     pub fn daemon_pid(&self) -> u32 {
         self.client.server_info().daemon_pid
+    }
+
+    /// True when the daemon announced an older version than this client's.
+    pub fn daemon_is_older(&self) -> bool {
+        match (
+            semver::Version::parse(self.daemon_build()),
+            semver::Version::parse(&self.build),
+        ) {
+            (Ok(d), Ok(c)) => d < c,
+            _ => false,
+        }
+    }
+
+    /// Asks an older daemon to exit once it is idle, so the next client starts the updated one.
+    /// Daemons from before the updater do not know the request; that is ignored.
+    pub async fn retire_if_older(&self) {
+        if self.daemon_is_older() {
+            let _ = self.client.call(METHOD_EXIT_WHEN_IDLE, Value::Null).await;
+        }
     }
 
     /// A notice when the daemon is from a different build than this client.

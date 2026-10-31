@@ -605,6 +605,34 @@ async fn every_registry_command_identical() {
         let r = cli_call(&s.daemon_cli, &s.cli_dir, name, &args).await;
         assert_eq!(r.1["code"], code, "{name}: {}", r.1);
     }
+    // Updates, on the daemon only: the status is read from this machine without the network;
+    // the check, the install and the rollback are given arguments that are refused before
+    // anything is fetched or replaced (the flow is tested in kraken-host's update module).
+    for name in [
+        "update_status",
+        "update_check",
+        "update_apply",
+        "update_rollback",
+    ] {
+        covered.insert(name.to_string());
+    }
+    let status = cli_call(&s.daemon_cli, &s.cli_dir, "update_status", &json!({})).await;
+    assert!(status.0, "{}", status.1);
+    assert_eq!(
+        status.1["version"],
+        env!("CARGO_PKG_VERSION"),
+        "{}",
+        status.1
+    );
+    assert!(status.1["install"]["label"].is_string(), "{}", status.1);
+    for (name, args) in [
+        ("update_check", json!({"force": "x"})),
+        ("update_apply", json!({"nope": 1})),
+        ("update_rollback", json!({"nope": 1})),
+    ] {
+        let r = cli_call(&s.daemon_cli, &s.cli_dir, name, &args).await;
+        assert_eq!(r.1["code"], "invalid_argument", "{name}: {}", r.1);
+    }
     covered.extend(SERVING.iter().map(|n| n.to_string()));
     Box::pin(check_serving_commands(&s)).await;
     step!("search", json!({"query": "main", "kind": "names"}));

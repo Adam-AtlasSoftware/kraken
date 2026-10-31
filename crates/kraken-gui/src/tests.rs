@@ -949,6 +949,7 @@ mod shell;
 mod shots;
 mod titlebar;
 mod types;
+mod updates;
 
 fn active_tab_is(h: &Harness, tab: Tab) -> bool {
     let dock = h.app.dock();

@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use kraken_host::daemon::{
     CallParams, CallResult, GUI_SELECTION_FRESH_SECS, GuiSelection, GuiSelectionReply,
     GuiSelectionSetParams, METHOD_APPROVAL_DECIDE, METHOD_APPROVALS, METHOD_CALL, METHOD_COMMANDS,
-    METHOD_EVENTS, METHOD_GUI_SELECTION, METHOD_GUI_SELECTION_SET, METHOD_SHUTDOWN, METHOD_STATUS,
-    event_kind,
+    METHOD_EVENTS, METHOD_EXIT_WHEN_IDLE, METHOD_GUI_SELECTION, METHOD_GUI_SELECTION_SET,
+    METHOD_SHUTDOWN, METHOD_STATUS, event_kind,
 };
 use kraken_host::infer::{
     Holder, InferApi, InferManager, ServingBridge, serve_rpc, serve_serving_rpc,
@@ -65,6 +65,8 @@ pub struct DaemonHandler {
     granted: Arc<Mutex<HashSet<PathBuf>>>,
     /// What the GUI shows, per project, and when it said so.
     gui_selection: Mutex<HashMap<PathBuf, (GuiSelection, Instant)>>,
+    /// A newer client asked the daemon to exit once it is idle.
+    retiring: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl DaemonHandler {
@@ -91,6 +93,7 @@ impl DaemonHandler {
             global_jobs: kraken_registry::JobTable::global(),
             granted: Arc::default(),
             gui_selection: Mutex::default(),
+            retiring: Arc::default(),
         }
     }
 
@@ -348,6 +351,9 @@ impl DaemonHandler {
                 .with_jobs(self.global_jobs.clone());
             if let Some(b) = &self.host.config().setup {
                 session = session.with_setup(b.clone());
+            }
+            if let Some(u) = &self.host.config().update {
+                session = session.with_update(u.clone());
             }
             if let Some(c) = &self.host.config().config_store {
                 session = session.with_config_store(c.clone());
@@ -704,6 +710,31 @@ impl RpcHandler for DaemonHandler {
                 let limit = p.limit.map_or(256, |l| l.clamp(1, 1024)) as usize;
                 let (events, last_seq) = self.host.hub().since(p.after_seq, limit);
                 Ok(json!({"events": events, "last_seq": last_seq}))
+            }
+            METHOD_EXIT_WHEN_IDLE => {
+                use std::sync::atomic::Ordering;
+                if !self.retiring.swap(true, Ordering::SeqCst) {
+                    let (clients, jobs, infer, s) = (
+                        self.clients.clone(),
+                        self.jobs.clone(),
+                        self.infer.clone(),
+                        self.shutdown.clone(),
+                    );
+                    tracing::info!("a newer client asked krakend to exit once it is idle");
+                    tokio::spawn(async move {
+                        loop {
+                            if clients.get() == 0 && jobs.get() == 0 && infer.loaded_models() == 0 {
+                                s.trigger();
+                                return;
+                            }
+                            tokio::select! {
+                                () = tokio::time::sleep(Duration::from_millis(500)) => {}
+                                () = s.wait() => return,
+                            }
+                        }
+                    });
+                }
+                Ok(json!({"exiting": "when_idle"}))
             }
             METHOD_SHUTDOWN => {
                 let s = self.shutdown.clone();

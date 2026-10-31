@@ -131,6 +131,18 @@ pub const CONFIG_KEYS: &[ConfigKey] = &[
         false,
     ),
     key(
+        "updates.check",
+        "true or false",
+        "Look for a new KRAKEN release once a day (sends only the version to GitHub)",
+        false,
+    ),
+    key(
+        "updates.channel",
+        "stable or prerelease",
+        "Which releases the update check tells you about",
+        false,
+    ),
+    key(
         "debuginfo.servers",
         "a list of http:// or https:// addresses",
         "debuginfod and Microsoft-style symbol servers `debuginfo_find` asks, in order",

@@ -117,7 +117,9 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Keyboard shortcuts | List every keyboard shortcut | `Ctrl+/` |
 | Setup status... | See which engines and tools are installed and ready, and install the missing ones |  |
 | First-run setup... | Choose the engine, assistant, keyboard shortcuts and look again, step by step |  |
+| Check for updates... | See whether a newer KRAKEN is out and install it, or get the command your package manager uses |  |
 | User guide | Open the KRAKEN documentation in your browser |  |
+| About KRAKEN | The version, how KRAKEN was installed and what computer it runs on |  |
 
 ### Patch
 

@@ -335,6 +335,7 @@ pub fn require_https(url: &str) -> Result<(), ProvisionError> {
 /// `reqwest` over rustls; HTTPS only, redirects included.
 pub struct HttpsFetcher {
     client: reqwest::Client,
+    hosts: Option<&'static [&'static str]>,
 }
 
 impl HttpsFetcher {
@@ -350,8 +351,53 @@ impl HttpsFetcher {
                 url: String::new(),
                 message: e.to_string(),
             })?;
-        Ok(HttpsFetcher { client })
+        Ok(HttpsFetcher {
+            client,
+            hosts: None,
+        })
     }
+
+    /// A fetcher that only talks to `hosts`: the first URL and every redirect must be `https://`
+    /// on one of them, with at most 5 redirects. `timeout` bounds each whole request.
+    pub fn restricted(
+        hosts: &'static [&'static str],
+        timeout: Duration,
+    ) -> Result<Self, ProvisionError> {
+        let policy = reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 5 {
+                attempt.error("too many redirects")
+            } else if host_allowed(attempt.url(), hosts) {
+                attempt.follow()
+            } else {
+                let to = attempt.url().host_str().unwrap_or("?").to_string();
+                attempt.error(format!("redirect to {to}, which is not allowed"))
+            }
+        });
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(policy)
+            .user_agent(concat!("kraken/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(timeout.min(Duration::from_secs(30)))
+            .read_timeout(Duration::from_secs(60))
+            .timeout(timeout)
+            .build()
+            .map_err(|e| ProvisionError::Http {
+                url: String::new(),
+                message: e.to_string(),
+            })?;
+        Ok(HttpsFetcher {
+            client,
+            hosts: Some(hosts),
+        })
+    }
+}
+
+fn host_allowed(url: &reqwest::Url, hosts: &[&str]) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url
+            .host_str()
+            .is_some_and(|h| hosts.iter().any(|a| a.eq_ignore_ascii_case(h)))
 }
 
 struct ReqwestBody {
@@ -385,6 +431,15 @@ fn parse_content_range(v: &str) -> Option<(u64, Option<u64>)> {
 impl Fetcher for HttpsFetcher {
     async fn fetch(&self, url: &str, from: u64) -> Result<Fetched, ProvisionError> {
         require_https(url)?;
+        if let Some(hosts) = self.hosts {
+            let ok = reqwest::Url::parse(url).is_ok_and(|u| host_allowed(&u, hosts));
+            if !ok {
+                return Err(ProvisionError::Http {
+                    url: url.to_string(),
+                    message: "this host is not one KRAKEN downloads updates from".into(),
+                });
+            }
+        }
         let mut req = self.client.get(url);
         if from > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={from}-"));

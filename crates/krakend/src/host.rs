@@ -79,6 +79,8 @@ pub struct HostConfig {
     pub integrations: Option<Arc<dyn kraken_registry::commands::IntegrationsBackend>>,
     /// What `setup_status` probes and the `setup_*` jobs install, if any.
     pub setup: Option<Arc<dyn kraken_registry::commands::SetupBackend>>,
+    /// What the `update_*` commands check and install with, if any.
+    pub update: Option<Arc<dyn kraken_registry::commands::UpdateBackend>>,
     /// The assistant behind the `assist_*` jobs, if any.
     pub assist: Option<Arc<dyn kraken_registry::commands::AssistJobs>>,
     /// The configuration file behind `config_get` and `config_set`, if any.
@@ -95,6 +97,7 @@ impl Default for HostConfig {
             local_models: None,
             integrations: None,
             setup: None,
+            update: None,
             assist: None,
             config_store: None,
         }

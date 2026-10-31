@@ -30,6 +30,7 @@ pub mod setup_status;
 mod state;
 pub mod testing;
 mod tokens;
+pub mod update;
 pub mod views;
 mod vm;
 mod wire;

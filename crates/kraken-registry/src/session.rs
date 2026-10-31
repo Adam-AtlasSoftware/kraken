@@ -855,6 +855,7 @@ pub struct Session {
     serving: Option<Arc<dyn crate::commands::ServingBackend>>,
     integrations: Option<Arc<dyn crate::commands::IntegrationsBackend>>,
     setup: Option<Arc<dyn crate::commands::SetupBackend>>,
+    update: Option<Arc<dyn crate::commands::UpdateBackend>>,
     assist: Option<Arc<dyn crate::commands::AssistJobs>>,
     pub(crate) config_store: Option<Arc<dyn crate::commands::ConfigStore>>,
 }
@@ -881,6 +882,7 @@ impl Session {
             serving: None,
             integrations: None,
             setup: None,
+            update: None,
             assist: None,
             config_store: None,
         }
@@ -910,6 +912,16 @@ impl Session {
 
     pub(crate) fn setup_backend(&self) -> Option<&Arc<dyn crate::commands::SetupBackend>> {
         self.setup.as_ref()
+    }
+
+    /// Attaches what the `update_*` commands check and install with.
+    pub fn with_update(mut self, b: Arc<dyn crate::commands::UpdateBackend>) -> Session {
+        self.update = Some(b);
+        self
+    }
+
+    pub(crate) fn update_backend(&self) -> Option<&Arc<dyn crate::commands::UpdateBackend>> {
+        self.update.as_ref()
     }
 
     /// Attaches what `local_model_setup` downloads and configures with.

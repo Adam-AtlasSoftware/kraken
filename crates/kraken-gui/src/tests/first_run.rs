@@ -1,5 +1,5 @@
 //! The first-run wizard on a fresh config directory, walked through the whole app with a
-//! scripted backend: engine set up, assistant, keys, look, and what ends up in the files.
+//! scripted backend: engine set up, assistant, keys, look, updates, and what ends up in the files.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -84,7 +84,7 @@ impl Rig {
 fn a_fresh_install_walks_the_wizard_and_saves_the_choices() {
     let mut r = rig();
     r.until("the wizard", |k| {
-        k.h.query_all_by_label_contains("Step 1 of 5")
+        k.h.query_all_by_label_contains("Step 1 of 6")
             .next()
             .is_some()
     });
@@ -102,28 +102,33 @@ fn a_fresh_install_walks_the_wizard_and_saves_the_choices() {
     assert_eq!(r.backend.calls_to("setup_native").len(), 1);
 
     r.click("Next");
-    assert!(r.has("Step 2 of 5"));
+    assert!(r.has("Step 2 of 6"));
     // The assistant step cannot be left before a choice is made.
     assert!(r.has("Choose one of the options above"));
     r.click("None for now");
     r.click("Next");
-    assert!(r.has("Step 3 of 5"));
+    assert!(r.has("Step 3 of 6"));
     r.click("Classic desktop");
     assert!(r.has("A few keys in Classic desktop"));
     r.click("Next");
-    assert!(r.has("Step 4 of 5"));
+    assert!(r.has("Step 4 of 6"));
     r.click("Light");
     r.click("115%");
     r.click("Next");
-    assert!(r.has("Step 5 of 5"));
+    assert!(r.has("Step 5 of 6"));
+    assert!(r.has("sends only its version number"));
+    r.click("Tell me when a new version of KRAKEN is out");
+    r.click("Next");
+    assert!(r.has("Step 6 of 6"));
     r.click("Finish");
     r.k.h.run_steps(3);
-    assert!(!r.has("Step 5 of 5"), "the wizard closed");
+    assert!(!r.has("Step 6 of 6"), "the wizard closed");
 
     let cfg = r.config();
     assert_eq!(cfg.ui.keymap.as_deref(), Some("classic"));
     assert_eq!(cfg.ui.zoom_percent, Some(115));
     assert!(cfg.ui.first_run_done);
+    assert!(!cfg.updates.check, "the update check was switched off");
     let prefs =
         std::fs::read_to_string(r.dir.path().join("config").join("gui.json")).expect("gui.json");
     assert!(prefs.contains("\"dark\": false") && prefs.contains("\"tour_done\": true"));
@@ -133,12 +138,12 @@ fn a_fresh_install_walks_the_wizard_and_saves_the_choices() {
 fn skipping_the_wizard_is_remembered_and_help_opens_it_again() {
     let mut r = rig();
     r.until("the wizard", |k| {
-        k.h.query_all_by_label_contains("Step 1 of 5")
+        k.h.query_all_by_label_contains("Step 1 of 6")
             .next()
             .is_some()
     });
     r.click("Cancel");
-    assert!(!r.has("Step 1 of 5"));
+    assert!(!r.has("Step 1 of 6"));
     let cfg = r.config();
     assert!(cfg.ui.first_run_done);
     assert_eq!(cfg.ui.keymap, None);
@@ -146,7 +151,7 @@ fn skipping_the_wizard_is_remembered_and_help_opens_it_again() {
     r.k.h.get_by_label("Help").click();
     r.k.h.run_steps(3);
     r.click("First-run setup");
-    assert!(r.has("Step 1 of 5"));
+    assert!(r.has("Step 1 of 6"));
 }
 
 #[test]
@@ -166,7 +171,7 @@ fn a_user_who_finished_it_before_does_not_see_it_again() {
     let mut k = kit_sized(services, &options(false), false, [1280.0, 800.0]);
     k.h.run_steps(5);
     assert!(
-        k.h.query_all_by_label_contains("Step 1 of 5")
+        k.h.query_all_by_label_contains("Step 1 of 6")
             .next()
             .is_none()
     );

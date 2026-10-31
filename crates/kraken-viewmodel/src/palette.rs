@@ -128,6 +128,10 @@ pub enum AppAction {
     ShowSetupStatus,
     /// Open the first-run wizard again: engine, assistant, keymap and look.
     ShowFirstRun,
+    /// Open the Updates window: version, install, last check, Check now.
+    CheckForUpdates,
+    /// Show the version, how KRAKEN was installed and this computer.
+    ShowAbout,
     /// Run the program, or a patched copy, in an installed emulator.
     RunInEmulator,
     /// In that setup: go on to the next step (the last one starts the download).
@@ -140,7 +144,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 62] = [
+    pub const ALL: [AppAction; 64] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -202,6 +206,8 @@ impl AppAction {
         AppAction::ShowIntegrations,
         AppAction::ShowSetupStatus,
         AppAction::ShowFirstRun,
+        AppAction::CheckForUpdates,
+        AppAction::ShowAbout,
         AppAction::RunInEmulator,
     ];
 
@@ -307,6 +313,8 @@ impl AppAction {
             AppAction::ImportProgram => "Import program...",
             AppAction::ShowSetupStatus => "Setup status...",
             AppAction::ShowFirstRun => "First-run setup...",
+            AppAction::CheckForUpdates => "Check for updates...",
+            AppAction::ShowAbout => "About KRAKEN",
             AppAction::RunInEmulator => "Run in emulator...",
             AppAction::LocalSetupNext => "Model setup: next step",
             AppAction::LocalSetupBack => "Model setup: previous step",
@@ -425,6 +433,12 @@ impl AppAction {
             }
             AppAction::ShowFirstRun => {
                 "Choose the engine, assistant, keyboard shortcuts and look again, step by step"
+            }
+            AppAction::CheckForUpdates => {
+                "See whether a newer KRAKEN is out and install it, or get the command your package manager uses"
+            }
+            AppAction::ShowAbout => {
+                "The version, how KRAKEN was installed and what computer it runs on"
             }
             AppAction::ShowSetupStatus => {
                 "See which engines and tools are installed and ready, and install the missing ones"
@@ -644,6 +658,10 @@ pub enum UiRequest {
     ShowSetupStatus,
     /// Open the first-run wizard.
     ShowFirstRun,
+    /// Open the Updates window.
+    CheckForUpdates,
+    /// Open the About window.
+    ShowAbout,
     /// Open the run-in-emulator dialog.
     RunInEmulator,
     /// Press a button of that setup.
