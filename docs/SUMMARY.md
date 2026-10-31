@@ -47,3 +47,4 @@
   - [0012. Milestones](design/0012-milestones.md)
   - [0013. The rewrite pipeline](design/0013-rewrite-pipeline.md)
   - [0014. The native engine](design/0014-native-engine.md)
+  - [0015. Updates](design/0015-updates.md)
