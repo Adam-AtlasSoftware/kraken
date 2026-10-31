@@ -21,6 +21,7 @@ pub fn show(ctx: &egui::Context, vm: &mut ViewModel) {
     export_dialog(ctx, vm);
     import_dialog(ctx, vm);
     symbols_dialog(ctx, vm);
+    debug_export_dialog(ctx, vm);
     intent_dialog(ctx, vm);
     crate::patch_wizard::show(ctx, vm);
     super::emulation::dialog(ctx, vm);
@@ -1829,6 +1830,76 @@ fn status_label(status: &str) -> &str {
         "unchanged" => "same",
         "duplicate" => "repeat",
         other => other,
+    }
+}
+
+fn debug_export_dialog(ctx: &egui::Context, vm: &mut ViewModel) {
+    use kraken_viewmodel::navtools::DEBUG_EXPORT_FORMATS as FORMATS;
+    let Some(d) = vm.tools.debug_export_dialog.clone() else {
+        return;
+    };
+    let (p, s) = colors(ctx);
+    let (enter, esc) = enter_escape(ctx);
+    let mut edited = d.clone();
+    let (mut go, mut cancel) = (false, false);
+    window("Export debug information", "kraken_export_debug", 600.0).show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "Writes what you have learned about this program: function names, prototypes, \
+                 types and the globals you named. The debug file is read by gdb and lldb (put it \
+                 beside a stripped copy) and by KRAKEN's Attach debug file. The program itself is \
+                 never changed.",
+            )
+            .color(p.text_dim),
+        );
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Format").size(12.0).color(p.text_dim));
+            egui::ComboBox::from_id_salt("kraken_export_debug_format")
+                .selected_text(FORMATS[edited.format.min(FORMATS.len() - 1)].1)
+                .show_ui(ui, |ui| {
+                    for (i, (_, label, _)) in FORMATS.iter().enumerate() {
+                        ui.selectable_value(&mut edited.format, i, *label)
+                            .on_hover_text("Write the file in this format");
+                    }
+                })
+                .response
+                .on_hover_text("The debug file holds types and prototypes; the others hold names");
+        });
+        ui.label(RichText::new("Write to").size(12.0).color(p.text_dim));
+        ui.add(
+            egui::TextEdit::singleline(&mut edited.path)
+                .id(Id::new("kraken_export_debug_path"))
+                .font(egui::TextStyle::Monospace)
+                .desired_width(ui.available_width()),
+        )
+        .on_hover_text("A file path; a relative one is placed in the project folder");
+        ui.checkbox(&mut edited.overwrite, "Replace the file if it exists")
+            .on_hover_text("Without this, an existing file at that path is left alone");
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(s.danger));
+        }
+        ui.add_space(6.0);
+        buttons(
+            ui,
+            "Write file",
+            "Write the file (Enter)",
+            if edited.path.trim().is_empty() {
+                Err("Choose where to write it".into())
+            } else {
+                Ok(())
+            },
+            d.busy,
+            &mut go,
+            &mut cancel,
+        );
+    });
+    if edited != d {
+        vm.edit_debug_export_dialog(|x| *x = edited);
+    }
+    if esc || cancel {
+        vm.cancel_export_debug_info();
+    } else if go || enter {
+        vm.submit_export_debug_info();
     }
 }
 

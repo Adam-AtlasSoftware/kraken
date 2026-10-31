@@ -15,6 +15,7 @@ mod data;
 #[cfg(unix)]
 mod debug;
 mod debuginfo;
+mod debuginfo_export;
 mod debuginfo_fetch;
 mod edit;
 mod emulate;
@@ -106,6 +107,7 @@ pub use debuginfo::{
     DebugInfoServers, DebugInfoServersArgs, DebugServer, DebugServersOut, DebugStatus, Verdict,
     engine_accepts, pdb_identity, probe as probe_debug_info, resolve_for_attach,
 };
+pub use debuginfo_export::{DebugInfoExport, DebugInfoExportArgs, DebugInfoExportOut};
 pub use debuginfo_fetch::{
     DebugFindOut, FindAttempt, find as find_debug_file,
     normalize_server as normalize_symbol_server, offline_env as symbols_offline_env,
@@ -416,6 +418,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(ApplyEdits);
     r.register(SymbolsImport);
     r.register(SymbolsExport);
+    r.register(DebugInfoExport);
     r.register(GuiNavigate);
     // Card ASSIST: the assistant drives the GUI, knows KRAKEN and sets up local models.
     r.register(UiAction);

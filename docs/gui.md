@@ -23,6 +23,7 @@ Open and import programs and projects, and settings.
 | Clear recent projects | Empty the list of recently opened projects |  |
 | Open demo project | Try KRAKEN on a small built-in program |  |
 | Import symbols... | Name functions from a link map, CSV, splat file or IDA script; preview first, undo as one step |  |
+| Export debug information... | Write what you learned (names, prototypes, types, globals) as a debug file for gdb and lldb, or as a splat, SARIF, CSV or map file |  |
 | Close project | Stop working on this project and go back to the start | `Ctrl+W` |
 | Settings... | Engine paths, theme, daemon status and setup | `Ctrl+,` |
 | Quit | Close KRAKEN. Your work is already saved | `Ctrl+Q` |

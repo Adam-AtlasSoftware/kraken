@@ -50,7 +50,8 @@ pub use search::{SearchHitItem, SearchKind, SearchPanel};
 pub use source_edit::{SourceEdit, SourceEditPhase, verdict_text};
 pub use string_edit::StringDialog;
 pub use symbols::{
-    SYMBOL_CONFLICTS, SYMBOL_FORMATS, SymbolRow, SymbolsDialog, SymbolsReport, parse_offset,
+    DEBUG_EXPORT_FORMATS, DebugExportDialog, SYMBOL_CONFLICTS, SYMBOL_FORMATS, SymbolRow,
+    SymbolsDialog, SymbolsReport, parse_offset,
 };
 pub use types::{ApplyDialog, DefineDialog, FieldRow, TypeDecl, TypeItem, TypesPanel};
 
@@ -167,6 +168,8 @@ pub struct NavTools {
     pub import_dialog: Option<ImportDialog>,
     /// The Import symbols dialog, when open.
     pub symbols_dialog: Option<SymbolsDialog>,
+    /// The Export debug information dialog, when open.
+    pub debug_export_dialog: Option<DebugExportDialog>,
     /// The one-click patch dialog (NOP, branch, return, fill), when open.
     pub intent_dialog: Option<IntentDialog>,
     /// The Change what this code does wizard, when open.
@@ -217,6 +220,7 @@ impl NavTools {
             || self.export_dialog.is_some()
             || self.import_dialog.is_some()
             || self.symbols_dialog.is_some()
+            || self.debug_export_dialog.is_some()
             || self.string_dialog.is_some()
             || self.intent_dialog.is_some()
             || self.patch_wizard.is_some()

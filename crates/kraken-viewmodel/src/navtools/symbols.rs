@@ -25,6 +25,47 @@ pub const SYMBOL_CONFLICTS: [(&str, &str); 3] = [
     ("propose", "File a proposal"),
 ];
 
+/// What File > Export > Debug information... can write: the command's format name, the label
+/// shown and the file ending suggested.
+pub const DEBUG_EXPORT_FORMATS: [(&str, &str, &str); 5] = [
+    ("dwarf", "Debug file for gdb and lldb (DWARF)", "debug"),
+    ("splat", "splat symbol_addrs.txt", "txt"),
+    (
+        "sarif",
+        "SARIF (comments, for code scanning tools)",
+        "sarif",
+    ),
+    ("csv", "CSV (address, name, size, comment)", "csv"),
+    ("map", "GNU ld map", "map"),
+];
+
+/// The Export debug information dialog.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DebugExportDialog {
+    /// File to write.
+    pub path: String,
+    /// Index into [`DEBUG_EXPORT_FORMATS`].
+    pub format: usize,
+    /// Replace an existing file.
+    pub overwrite: bool,
+    /// Why the last call failed.
+    pub error: Option<String>,
+    /// A call is running.
+    pub busy: bool,
+}
+
+#[derive(Deserialize)]
+struct DebugExportWire {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    functions: Option<u32>,
+    #[serde(default)]
+    prototypes: Option<u32>,
+    #[serde(default)]
+    count: Option<u32>,
+}
+
 /// One row of the preview table.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SymbolRow {
@@ -126,6 +167,94 @@ pub fn parse_offset(text: &str) -> Option<i64> {
 }
 
 impl ViewModel {
+    /// Opens the Export debug information dialog, suggesting `<program>.debug`.
+    pub fn begin_export_debug_info(&mut self) {
+        let Some(p) = self.project.as_ref() else {
+            return;
+        };
+        let name = if p.name.is_empty() {
+            "program"
+        } else {
+            &p.name
+        };
+        self.tools.debug_export_dialog = Some(DebugExportDialog {
+            path: format!("{name}.{}", DEBUG_EXPORT_FORMATS[0].2),
+            ..DebugExportDialog::default()
+        });
+    }
+
+    /// Closes the Export debug information dialog.
+    pub fn cancel_export_debug_info(&mut self) {
+        self.tools.debug_export_dialog = None;
+    }
+
+    /// Edits the dialog's fields; picking another format changes the suggested file ending.
+    pub fn edit_debug_export_dialog(&mut self, f: impl FnOnce(&mut DebugExportDialog)) {
+        if let Some(d) = self.tools.debug_export_dialog.as_mut() {
+            let before = d.clone();
+            f(d);
+            if d.format != before.format {
+                let from =
+                    DEBUG_EXPORT_FORMATS[before.format.min(DEBUG_EXPORT_FORMATS.len() - 1)].2;
+                let to = DEBUG_EXPORT_FORMATS[d.format.min(DEBUG_EXPORT_FORMATS.len() - 1)].2;
+                if let Some(stem) = d.path.strip_suffix(&format!(".{from}")) {
+                    d.path = format!("{stem}.{to}");
+                }
+            }
+            if *d != before {
+                d.error = None;
+            }
+        }
+    }
+
+    /// Writes the file (`debuginfo_export` or `symbols_export`).
+    pub fn submit_export_debug_info(&mut self) {
+        let Some(d) = self.tools.debug_export_dialog.as_mut().filter(|d| !d.busy) else {
+            return;
+        };
+        let path = d.path.trim().to_string();
+        if path.is_empty() {
+            d.error = Some("Choose where to write the file.".into());
+            return;
+        }
+        let (format, _, _) = DEBUG_EXPORT_FORMATS[d.format.min(DEBUG_EXPORT_FORMATS.len() - 1)];
+        d.busy = true;
+        d.error = None;
+        let (command, args) = if format == "dwarf" {
+            (
+                "debuginfo_export",
+                json!({"path": path, "overwrite": d.overwrite}),
+            )
+        } else {
+            (
+                "symbols_export",
+                json!({"path": path, "format": format, "overwrite": d.overwrite}),
+            )
+        };
+        self.call(command, args, move |vm, res| {
+            match res.and_then(parse::<DebugExportWire>) {
+                Ok(r) => {
+                    vm.tools.debug_export_dialog = None;
+                    let what = match (r.functions, r.prototypes, r.count) {
+                        (Some(f), Some(p), _) => format!("{f} functions ({p} with prototypes)"),
+                        (_, _, Some(c)) => format!("{c} entries"),
+                        _ => "the file".to_string(),
+                    };
+                    vm.toast(
+                        ToastLevel::Info,
+                        format!("Wrote {what} to {}.", r.path.unwrap_or(path)),
+                    );
+                }
+                Err(e) => {
+                    if let Some(d) = vm.tools.debug_export_dialog.as_mut() {
+                        d.busy = false;
+                        d.error = Some(plain_error(&e));
+                    }
+                }
+            }
+        });
+    }
+
     /// Opens the Import symbols dialog.
     pub fn begin_import_symbols(&mut self) {
         if self.project.is_none() {

@@ -133,7 +133,7 @@ fn invalid(m: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, m.into())
 }
 
-fn crc32(data: &[u8]) -> u32 {
+pub(super) fn crc32(data: &[u8]) -> u32 {
     let mut table = [0u32; 256];
     for (i, slot) in table.iter_mut().enumerate() {
         let mut c = i as u32;

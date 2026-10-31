@@ -104,6 +104,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::ExportPatched
             | AppAction::ImportPatchFile
             | AppAction::ImportSymbols
+            | AppAction::ExportDebugInfo
             | AppAction::RunInEmulator
             | AppAction::RunProgram
             | AppAction::RunPatched
@@ -220,6 +221,14 @@ fn file_menu(ui: &mut Ui, env: &MenuEnv<'_>, out: &mut Vec<MenuCmd>) {
     item(ui, AppAction::OpenDemo, env, out);
     ui.separator();
     item(ui, AppAction::ImportSymbols, env, out);
+    egui::containers::menu::SubMenuButton::from_button(
+        Button::new("Export").right_text("\u{203a}"),
+    )
+    .ui(ui, |ui| {
+        item(ui, AppAction::ExportDebugInfo, env, out);
+    })
+    .0
+    .on_hover_text("Write what you learned to a file");
     ui.separator();
     item(ui, AppAction::CloseProject, env, out);
     ui.separator();

@@ -19,6 +19,8 @@ kraken-proto.workspace = true
 kraken-sidecar = { path = "../kraken-sidecar", version = "0.3.0" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 kraken-confine = { path = "../kraken-confine", version = "0.3.0" }
+gimli = { version = "0.34", default-features = false, features = ["write", "std"] }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 object = { version = "0.40", default-features = false, features = ["read_core", "elf", "pe", "coff", "macho", "archive", "compression", "std"] }
 schemars.workspace = true
 serde.workspace = true

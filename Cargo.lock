@@ -1956,6 +1956,9 @@ version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 dependencies = [
+ "fnv",
+ "hashbrown 0.17.1",
+ "indexmap 2.14.2",
  "stable_deref_trait",
 ]
 
@@ -3150,8 +3153,10 @@ name = "kraken-registry"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "engine-fake",
  "gdbstub",
+ "gimli 0.34.0",
  "kraken-confine",
  "kraken-emu",
  "kraken-engine",

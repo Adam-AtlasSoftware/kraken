@@ -340,6 +340,8 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
     );
     assert_eq!(sym["dry_run"], true, "{sym}");
     step!("symbols_export", json!({"format": "csv"}));
+    step!("symbols_export", json!({"format": "sarif"}));
+    step!("debuginfo_export", json!({}));
     step!("symbols_import", json!({"text": "x", "path": "y"}));
     let nav = step!(
         "gui_navigate",

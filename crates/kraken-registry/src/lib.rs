@@ -17,6 +17,7 @@ pub mod command;
 pub mod commands;
 pub mod context;
 pub mod docs;
+mod dwarfwrite;
 pub mod guide;
 pub mod jobs;
 mod mutate;

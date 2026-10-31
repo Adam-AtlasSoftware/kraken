@@ -1958,6 +1958,7 @@ impl ViewModel {
                 | AppAction::ExportPatched
                 | AppAction::ImportPatchFile
                 | AppAction::ImportSymbols
+                | AppAction::ExportDebugInfo
                 | AppAction::RunProgram
                 | AppAction::RunPatched
                 | AppAction::RunWithWine
@@ -2048,6 +2049,7 @@ impl ViewModel {
             AppAction::ExportPatched => self.begin_patch_export(),
             AppAction::ImportPatchFile => self.begin_patch_import(),
             AppAction::ImportSymbols => self.begin_import_symbols(),
+            AppAction::ExportDebugInfo => self.begin_export_debug_info(),
             AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
             AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
             AppAction::RunWithWine => self.begin_emulate_wine(EmulateMode::Run),

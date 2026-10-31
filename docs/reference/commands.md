@@ -56,6 +56,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_watch_set`](#debug_watch_set) | query | safe | Stop the debugged program when it writes (or reads) a range of memory |
 | [`debuginfo_attach`](#debuginfo_attach) | job | mutating | Attach a separate debug file to the project and reopen the engine with it (job) |
 | [`debuginfo_detach`](#debuginfo_detach) | job | mutating | Remove the attached debug file and reopen the engine without it (job) |
+| [`debuginfo_export`](#debuginfo_export) | query | safe | Export names, prototypes, types and globals as an ELF debug file with DWARF |
 | [`debuginfo_find`](#debuginfo_find) | job | mutating | Download the program's debug file from debuginfod or a symbol server, checked (job; needs consent) |
 | [`debuginfo_probe`](#debuginfo_probe) | query | safe | Say what debug information a program refers to and where a matching file is |
 | [`debuginfo_servers`](#debuginfo_servers) | query | mutating | List or set the symbol servers, the download consent and the offline switch |
@@ -160,7 +161,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`setup_status`](#setup_status) | query | safe | Show what is installed and ready on this computer, with a fix for what is not |
 | [`setup_sysroots`](#setup_sysroots) | job | mutating | Install the libraries dynamically linked programs need in the emulator (job) |
 | [`strings`](#strings) | query | safe | List strings in memory, defined and discovered, ordered by address |
-| [`symbols_export`](#symbols_export) | query | safe | Export names and comments as CSV or a .map-like text |
+| [`symbols_export`](#symbols_export) | query | safe | Export names and comments as CSV, a .map-like text, splat symbol_addrs.txt or SARIF |
 | [`symbols_import`](#symbols_import) | mutation | mutating | Import names and comments from a link map, CSV, splat or IDA script |
 | [`tainted_clear`](#tainted_clear) | mutation | mutating | Clear the stale marker of a function after refreshing it |
 | [`tainted_list`](#tainted_list) | query | safe | List functions whose derived data is stale after an undo |
@@ -6287,6 +6288,125 @@ Arguments: none.
     "job_id"
   ],
   "title": "JobStarted",
+  "type": "object"
+}
+```
+
+</details>
+
+## debuginfo_export
+
+Export names, prototypes, types and globals as an ELF debug file with DWARF
+
+```sh
+kraken debuginfo-export [options]
+```
+
+- Kind: query
+- Permission: safe
+- Engine needs: `FunctionLister`
+
+Writes a separate debug file for an ELF program: a DWARF subprogram for every named function with its parameters and return type, the struct, union, enum and typedef definitions, and the globals you named, plus the program's build-id so gdb and lldb find it beside a stripped copy. `debuginfo_attach` reads it back in another project. Without `path` the file comes back base64-encoded (up to 8 MiB); only a person can write a file with `path`.
+
+Example: `debuginfo_export {"path": "prog.debug", "overwrite": true}`
+
+Names and signatures come from the engine's function list (your renames and prototypes included), types from the type store, globals from the names and types you set on data addresses. Functions with default names (`FUN_...`) are left out unless `include_default` is set. Addresses are the program file's own, so a PIE's load base is subtracted. A signature whose types the store does not know is written as a name and address without parameters. `debuglink_crc` and `debuglink_hint` tell how to point a stripped copy at the file with `objcopy --add-gnu-debuglink`; KRAKEN never changes the program.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `base_offset` | `--base-offset` | integer | no | Subtracted from every address instead of the program's own load base (a PIE is loaded at 0x100000 by the native engine; the file's addresses start at 0). |
+| `include_default` | `--include-default` | boolean | no | Also describe functions that still have default names (`FUN_...`). |
+| `overwrite` | `--overwrite` | boolean | no | Replace an existing file at `path` (default false). |
+| `path` | `--path` | string | no | Write the debug file here (people only; relative paths are taken against the project directory). Without it the bytes come back base64-encoded, up to 8 MiB. |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `debuginfo_export`.",
+  "properties": {
+    "build_id": {
+      "description": "The GNU build-id the file carries (the program's); absent when the program has none.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "data_base64": {
+      "description": "The file, base64-encoded, when no `path` was given.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "debuglink_crc": {
+      "description": "CRC-32 of the file, the value `.gnu_debuglink` of a stripped program needs.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "debuglink_hint": {
+      "description": "Command that adds the debug link to a stripped copy of the program.",
+      "type": "string"
+    },
+    "functions": {
+      "description": "Functions described.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "globals": {
+      "description": "Global variables described.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "path": {
+      "description": "Absolute path written, when `path` was given.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prototypes": {
+      "description": "Of those, the ones with a prototype (parameters and return type).",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "size": {
+      "description": "Size of the debug file in bytes.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "types": {
+      "description": "Named types described.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "warnings": {
+      "description": "Things left out and why.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "size",
+    "functions",
+    "prototypes",
+    "globals",
+    "types",
+    "debuglink_crc",
+    "debuglink_hint",
+    "warnings"
+  ],
+  "title": "DebugInfoExportOut",
   "type": "object"
 }
 ```
@@ -25569,7 +25689,7 @@ Example: `strings {"filter": "password", "min_len": 6}`
 
 ## symbols_export
 
-Export names and comments as CSV or a .map-like text
+Export names and comments as CSV, a .map-like text, splat symbol_addrs.txt or SARIF
 
 ```sh
 kraken symbols-export [options]
@@ -25579,16 +25699,16 @@ kraken symbols-export [options]
 - Permission: safe
 - Engine needs: `FunctionLister`
 
-Writes every named function and label, with its size and comment, as CSV (`address,name,size,comment`) or GNU-map style lines, so another tool or another project can read them (`symbols_import` reads both back). Without `path` the text is returned (up to 8 MiB); only a person can write a file with `path`.
+Writes every named function and label, with its size and comment, as CSV (`address,name,size,comment`), GNU-map style lines or splat `symbol_addrs.txt`, so another tool or another project can read them (`symbols_import` reads all three back), or as SARIF 2.1.0 with one result per comment. Without `path` the text is returned (up to 8 MiB); only a person can write a file with `path`.
 
 Example: `symbols_export {"format": "csv", "path": "names.csv", "overwrite": true}`
 
-Names come from the engine's function list and the project's rename edits; comments from the edit log (plate first, then end-of-line, pre, post, repeatable; one per address). The map format carries no comments or sizes.
+Names come from the engine's function list and the project's rename edits; comments from the edit log (plate first, then end-of-line, pre, post, repeatable; one per address). The map format carries no comments or sizes; splat carries sizes only; SARIF carries the comments, located by address.
 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `base_offset` | `--base-offset` | integer | no | Subtracted from every address, the inverse of `base_offset` on import. |
-| `format` | `--format` | one of `csv`, `map` | no | `csv` (default) or `map`. |
+| `format` | `--format` | one of `csv`, `map`, `splat`, `sarif` | no | `csv` (default), `map`, `splat` or `sarif`. |
 | `include_default` | `--include-default` | boolean | no | Also list functions that still have default names (`FUN_...`). |
 | `overwrite` | `--overwrite` | boolean | no | Replace an existing file at `path` (default false). |
 | `path` | `--path` | string | no | Write the text to this file (relative paths are taken against the project directory) instead of returning it. |
@@ -25610,6 +25730,16 @@ Names come from the engine's function list and the project's rename edits; comme
         {
           "const": "map",
           "description": "GNU ld style `0xADDRESS name` lines that `symbols_import` reads back as `gnu_map`.",
+          "type": "string"
+        },
+        {
+          "const": "splat",
+          "description": "splat `symbol_addrs.txt`: `name = 0xADDRESS; // type:func size:0x10`, which\n`symbols_import` reads back as `splat`.",
+          "type": "string"
+        },
+        {
+          "const": "sarif",
+          "description": "SARIF 2.1.0: one result per comment, located by address, for tools that read SARIF.",
           "type": "string"
         }
       ]

@@ -94,6 +94,8 @@ pub enum AppAction {
     ImportPatchFile,
     /// Read names and comments from a link map, CSV, splat file or IDA script.
     ImportSymbols,
+    /// Write names, prototypes and types as a debug file for gdb and lldb, or as symbol files.
+    ExportDebugInfo,
     /// Run the program in the emulator with arguments and input.
     RunProgram,
     /// Run the program with the byte patches applied.
@@ -152,7 +154,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 65] = [
+    pub const ALL: [AppAction; 69] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -170,6 +172,7 @@ impl AppAction {
         AppAction::ExportPatched,
         AppAction::ImportPatchFile,
         AppAction::ImportSymbols,
+        AppAction::ExportDebugInfo,
         AppAction::RunProgram,
         AppAction::RunPatched,
         AppAction::RunWithWine,
@@ -308,6 +311,7 @@ impl AppAction {
             AppAction::ExportPatched => "Export patched binary...",
             AppAction::ImportPatchFile => "Import patch file...",
             AppAction::ImportSymbols => "Import symbols...",
+            AppAction::ExportDebugInfo => "Export debug information...",
             AppAction::RunProgram => "Run program...",
             AppAction::RunPatched => "Run patched program...",
             AppAction::RunWithWine => "Run with Wine...",
@@ -404,6 +408,10 @@ impl AppAction {
             AppAction::ImportPatchFile => {
                 "Read an IPS, BPS or KRAKEN JSON patch file made for this program into staged \
                  patches"
+            }
+            AppAction::ExportDebugInfo => {
+                "Write what you learned (names, prototypes, types, globals) as a debug file for \
+                 gdb and lldb, or as a splat, SARIF, CSV or map file"
             }
             AppAction::ImportSymbols => {
                 "Name functions from a link map, CSV, splat file or IDA script; preview first, undo as one step"
@@ -522,6 +530,7 @@ impl AppAction {
             "patch_export" | "patch_export_diff" => AppAction::ExportPatched,
             "patch_import" => AppAction::ImportPatchFile,
             "symbols_import" => AppAction::ImportSymbols,
+            "debuginfo_export" | "symbols_export" => AppAction::ExportDebugInfo,
             "emulate_run" => AppAction::RunProgram,
             "wine_run" => AppAction::RunWithWine,
             "emulate_compare" => AppAction::ComparePatched,

@@ -30,6 +30,37 @@ async fn import_dry_run_changes_nothing_then_undo_run_reverts() {
     assert!(text.contains("0x401040,helper_fn"), "{text}");
     assert!(text.contains("\"starts here, really\""), "{text}");
 
+    let splat = env
+        .ok(&u, "symbols_export", json!({"format": "splat"}))
+        .await;
+    let splat = splat["text"].as_str().expect("text").to_string();
+    assert!(
+        splat.contains("helper_fn = 0x401040; // type:func"),
+        "{splat}"
+    );
+    let back = env
+        .ok(
+            &u,
+            "symbols_import",
+            json!({"text": splat, "format": "splat", "dry_run": true}),
+        )
+        .await;
+    assert_eq!(back["unchanged"], 3, "{back}");
+
+    let sarif = env
+        .ok(&u, "symbols_export", json!({"format": "sarif"}))
+        .await;
+    let doc: serde_json::Value =
+        serde_json::from_str(sarif["text"].as_str().expect("text")).expect("sarif is JSON");
+    assert_eq!(doc["version"], "2.1.0");
+    let results = doc["runs"][0]["results"].as_array().expect("results");
+    assert_eq!(results.len(), 1, "{doc}");
+    assert_eq!(results[0]["message"]["text"], "starts here, really");
+    assert_eq!(
+        results[0]["locations"][0]["physicalLocation"]["address"]["absoluteAddress"],
+        0x401000
+    );
+
     env.ok(&u, "undo_run", json!({"run_id": run})).await;
     assert_eq!(env.engine_name(0x401000).await, "FUN_00401000");
     assert_eq!(env.engine_name(0x401040).await, "FUN_00401040");

@@ -48,6 +48,11 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the hover text is on the sub-menu button's response after its closure",
     ),
     (
+        "menu.rs",
+        "Button::new(\"Export\")",
+        "the hover text is on the sub-menu button's response after its closure",
+    ),
+    (
         "style.rs",
         "egui::Button::new(label)",
         "this is the shared primary button; every caller adds its own hover text",

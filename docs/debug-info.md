@@ -88,6 +88,27 @@ objcopy --add-gnu-debuglink=prog.debug prog.stripped
 
 `prog.stripped` now names `prog.debug` and carries its CRC-32.
 
+## Exporting what you learned
+
+KRAKEN can write its names, prototypes and types back out. **File > Export > Debug information...** (or `Export debug information...` in the command palette) asks for a format and a file; only a person writes files, an agent gets the bytes back instead.
+
+```
+kraken call debuginfo_export '{"path": "prog.debug", "overwrite": true}'
+```
+
+The result is a separate ELF debug file with DWARF 4:
+
+- a `DW_TAG_subprogram` for every named function, with its address range, parameters (names and types), return type, `noreturn` and the mangled name when the shown name is demangled; functions that still have default names (`FUN_...`) are left out unless `include_default` is set;
+- every struct, union, enum and typedef of the type store (yours, the program's DWARF types, libc typedefs), so a debugger shows `struct pair *p` rather than a number;
+- the globals you named (a name on a data address, with the type you set), as `DW_TAG_variable` at a fixed address;
+- the program's GNU build-id as a `.note.gnu.build-id` note, so gdb and lldb find the file by build-id when it sits in `/usr/lib/debug/.build-id/`; and the program's sections as empty `NOBITS` sections, like `objcopy --only-keep-debug`.
+
+Addresses are the program file's own: a position-independent program that the native engine loads at 0x100000 is shifted back (`base_offset` overrides this). A signature whose types the store does not know is written as a name and range without parameters; the result counts `functions` and `prototypes` so you can see how many were understood.
+
+For a stripped program, point it at the file yourself; the result carries `debuglink_crc` and a ready `objcopy --add-gnu-debuglink=...` hint. KRAKEN never edits the program. The file round-trips: `debuginfo_attach` of the exported file to a fresh project of the same program brings the names, prototypes and types back (the exit test is `crates/kraken-e2e/tests/debuginfo_export.rs`, which also asks `readelf` and `gdb` to read the file when they are installed). ELF only: a PE program uses a PDB, which KRAKEN reads but does not write.
+
+`symbols_export` writes the lighter formats: `csv`, `map`, `splat` (a `symbol_addrs.txt` with `type:func size:0x..`, read back by `symbols_import`) and `sarif` (SARIF 2.1.0, one `kraken.comment` result per comment, located by absolute address, for tools that read SARIF).
+
 ## Limits
 
 - The native engine reads separate DWARF for ELF programs and PDB files for PE programs (x86 and x86-64). A PDB gives function names, sizes and prototypes (parameter names and types), global variable names and types, and the structs, unions, enums, pointers, arrays and function pointer types of the type stream. A PDB that is not the image's (GUID and age differ) is not used when it is found beside the program; `debuginfo_attach` refuses it. C++ member functions, templates and inline-function records are read as plain functions and names with `::` become `__`. Local variables and line numbers of a PDB are not read (DWARF locals are, on x86).

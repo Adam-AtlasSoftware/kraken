@@ -75,6 +75,22 @@ fn patch_here_stages_from_the_listing_and_show_patches_opens_the_tab() {
             .is_some_and(|vm| vm.tools.symbols_dialog.is_none())
     );
 
+    h.app.dispatch(AppAction::ExportDebugInfo, &ctx);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .and_then(|vm| vm.tools.debug_export_dialog.as_ref())
+            .is_some_and(|d| d.path.ends_with(".debug"))
+    );
+    h.key(Key::Escape, Modifiers::NONE);
+    h.step();
+    assert!(
+        h.app
+            .view_model()
+            .is_some_and(|vm| vm.tools.debug_export_dialog.is_none())
+    );
+
     h.app.dispatch(AppAction::ExportPatched, &ctx);
     h.step();
     assert!(

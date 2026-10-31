@@ -50,6 +50,7 @@ const EXPECTED: &[&str] = &[
     "debug_watch_set",
     "debuginfo_attach",
     "debuginfo_detach",
+    "debuginfo_export",
     "debuginfo_find",
     "debuginfo_probe",
     "debuginfo_servers",

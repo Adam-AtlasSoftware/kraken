@@ -634,13 +634,18 @@ pub enum ExportFormat {
     Csv,
     /// GNU ld style `0xADDRESS name` lines that `symbols_import` reads back as `gnu_map`.
     Map,
+    /// splat `symbol_addrs.txt`: `name = 0xADDRESS; // type:func size:0x10`, which
+    /// `symbols_import` reads back as `splat`.
+    Splat,
+    /// SARIF 2.1.0: one result per comment, located by address, for tools that read SARIF.
+    Sarif,
 }
 
 /// Arguments of `symbols_export`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolsExportArgs {
-    /// `csv` (default) or `map`.
+    /// `csv` (default), `map`, `splat` or `sarif`.
     #[serde(default)]
     pub format: ExportFormat,
     /// Write the text to this file (relative paths are taken against the project directory)
@@ -676,6 +681,11 @@ pub struct SymbolsExportOut {
 /// Exports symbols.
 pub struct SymbolsExport;
 
+/// A name `symbol_addrs.txt` can hold: one token without `=` or `;`.
+fn splat_name_ok(n: &str) -> bool {
+    !n.is_empty() && !n.contains(|c: char| c.is_whitespace() || matches!(c, '=' | ';' | '/'))
+}
+
 fn csv_quote(s: &str) -> String {
     if s.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", s.replace('"', "\"\"").replace(['\n', '\r'], " "))
@@ -699,21 +709,23 @@ impl Command for SymbolsExport {
     fn spec() -> CommandSpec {
         CommandSpec::new(
             "symbols_export",
-            "Export names and comments as CSV or a .map-like text",
+            "Export names and comments as CSV, a .map-like text, splat symbol_addrs.txt or SARIF",
             CommandKind::Query,
             Permission::Safe,
         )
         .doc(
             "Writes every named function and label, with its size and comment, as CSV \
-             (`address,name,size,comment`) or GNU-map style lines, so another tool or another \
-             project can read them (`symbols_import` reads both back). Without `path` the text \
+             (`address,name,size,comment`), GNU-map style lines or splat `symbol_addrs.txt`, so another \
+             tool or another project can read them (`symbols_import` reads all three back), or \
+             as SARIF 2.1.0 with one result per comment. Without `path` the text \
              is returned (up to 8 MiB); only a person can write a file with `path`.\n\
              Example: symbols_export {\"format\": \"csv\", \"path\": \"names.csv\", \"overwrite\": true}",
         )
         .details(
             "Names come from the engine's function list and the project's rename edits; \
              comments from the edit log (plate first, then end-of-line, pre, post, repeatable; \
-             one per address). The map format carries no comments or sizes.",
+             one per address). The map format carries no comments or sizes; splat carries sizes only; SARIF carries \
+             the comments, located by address.",
         )
         .needs(&[Cap::FunctionLister])
     }
@@ -804,7 +816,10 @@ impl Command for SymbolsExport {
         match args.format {
             ExportFormat::Csv => text.push_str("address,name,size,comment\n"),
             ExportFormat::Map => text.push_str("Linker script and memory map\n\n"),
+            ExportFormat::Splat | ExportFormat::Sarif => {}
         }
+        let mut sarif_results = Vec::new();
+        let program = project.meta().binary_path;
         for (addr, sym) in &syms {
             let Some(addr) = rebase(*addr, offset.checked_neg().unwrap_or(0)) else {
                 continue;
@@ -827,8 +842,63 @@ impl Command for SymbolsExport {
                     let Some(name) = &sym.name else { continue };
                     let _ = writeln!(text, "                {addr:#018x}                {name}");
                 }
+                ExportFormat::Splat => {
+                    let Some(name) = &sym.name else { continue };
+                    if !splat_name_ok(name) {
+                        continue;
+                    }
+                    let size = sym
+                        .size
+                        .map(|n| format!(" size:{n:#x}"))
+                        .unwrap_or_default();
+                    let _ = writeln!(text, "{name} = {addr:#x}; // type:func{size}");
+                }
+                ExportFormat::Sarif => {
+                    let Some((_, comment)) = &sym.comment else {
+                        continue;
+                    };
+                    let mut loc = serde_json::json!({
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": program},
+                            "address": {"absoluteAddress": addr, "kind": "instruction"}
+                        }
+                    });
+                    if let Some(name) = &sym.name {
+                        loc["logicalLocations"] =
+                            serde_json::json!([{"name": name, "kind": "function"}]);
+                    }
+                    sarif_results.push(serde_json::json!({
+                        "ruleId": "kraken.comment",
+                        "level": "note",
+                        "message": {"text": comment},
+                        "locations": [loc],
+                    }));
+                }
             }
             count += 1;
+        }
+
+        if args.format == ExportFormat::Sarif {
+            count = u32::try_from(sarif_results.len()).unwrap_or(u32::MAX);
+            let doc = serde_json::json!({
+                "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                "version": "2.1.0",
+                "runs": [{
+                    "tool": {"driver": {
+                        "name": "KRAKEN",
+                        "version": env!("CARGO_PKG_VERSION"),
+                        "informationUri": "https://github.com/Adam-AtlasSoftware/kraken",
+                        "rules": [{
+                            "id": "kraken.comment",
+                            "shortDescription": {"text": "A comment written in KRAKEN"}
+                        }]
+                    }},
+                    "results": sarif_results,
+                }]
+            });
+            text = serde_json::to_string_pretty(&doc)
+                .map_err(|e| ProtoError::new(ErrorCode::Internal, e.to_string()))?;
+            text.push('\n');
         }
 
         match args.path {
