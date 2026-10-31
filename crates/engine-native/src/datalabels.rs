@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_native_sys::Instruction;
-use kraken_proto::StringEntry;
+use kraken_proto::{StringEncoding, StringEntry};
 
 use crate::elf::Loaded;
 use crate::refs::RefIndex;
@@ -128,6 +128,59 @@ pub fn symbol_ignored(loaded: &Loaded, addr: u64) -> bool {
         && loaded.blocks.iter().any(|b| b.start.0 == addr)
 }
 
+/// The labels that type the strings the code points at (`targets`) as `char[n]`, so a constant
+/// pointer prints as the literal. Only 8-bit text: a UTF-16 string typed `char[]` would print as
+/// its first character. `eligible` leaves out code, named data and fields of typed variables.
+fn string_labels(
+    strings: &[StringEntry],
+    targets: &[u64],
+    eligible: &dyn Fn(u64) -> bool,
+) -> Vec<DataLabel> {
+    let at: BTreeMap<u64, &StringEntry> = strings
+        .iter()
+        .filter(|s| matches!(s.encoding, StringEncoding::Ascii | StringEncoding::Utf8))
+        .map(|s| (s.address.0, s))
+        .collect();
+    targets
+        .iter()
+        .filter_map(|a| at.get(a).filter(|_| eligible(*a)).map(|s| (*a, *s)))
+        .map(|(a, s)| {
+            let len = s.length.max(1);
+            DataLabel {
+                addr: a,
+                name: format!("s_{}_{a:08x}", string_label_text(&s.value)),
+                decl: format!("char s[{len}]"),
+                size: len,
+            }
+        })
+        .collect()
+}
+
+/// The bytes a `DAT_` label at `a` may cover: up to the next label, the end of its block or the
+/// next typed string (`strings`: start to end). `None` when `a` lies inside a typed string.
+fn room_at(
+    a: u64,
+    next: Option<u64>,
+    block_end: Option<u64>,
+    strings: &BTreeMap<u64, u64>,
+) -> Option<u64> {
+    if strings
+        .range(..=a)
+        .next_back()
+        .is_some_and(|(_, end)| a < *end)
+    {
+        return None;
+    }
+    let next_string = strings.range(a + 1..).next().map(|(s, _)| *s);
+    Some(
+        next.into_iter()
+            .chain(block_end)
+            .chain(next_string)
+            .min()
+            .map_or(1, |e| e - a),
+    )
+}
+
 /// The labels for the data the references touch. `function_name` gives the name of the function
 /// starting at an address; `strings` are the strings found (those at referenced addresses).
 /// Addresses the symbol table or DWARF names, code, imports and the stand-ins for them are left
@@ -143,10 +196,6 @@ pub fn compute(
     let text: BTreeMap<u64, &str> = strings
         .iter()
         .map(|s| (s.address.0, s.value.as_str()))
-        .collect();
-    let strings_at: BTreeMap<u64, (&str, u32)> = strings
-        .iter()
-        .map(|s| (s.address.0, (s.value.as_str(), s.length.max(1))))
         .collect();
     let block_of = |a: u64| loaded.blocks.iter().find(|b| b.start.0 <= a && a < b.end.0);
     let is_code = |a: u64| loaded.is_code(a);
@@ -224,35 +273,31 @@ pub fn compute(
         }
         wanted.contains(&v).then(|| "DAT".to_string())
     };
-    let mut out = Vec::new();
-    // a string the code points at is typed data (`char[n]`), so the constant pointer prints as the
-    // literal
-    for a in refs.touched_targets() {
-        let Some(t) = strings_at.get(&a) else {
-            continue;
-        };
-        if block_of(a).is_some_and(|b| b.space == "ram") && !is_code(a) && !taken(a) {
-            out.push(DataLabel {
-                addr: a,
-                name: format!("s_{}_{a:08x}", string_label_text(t.0)),
-                decl: format!("char s[{}]", t.1),
-                size: t.1,
-            });
-        }
-    }
+    let mut out = string_labels(strings, &refs.touched_targets(), &|a| {
+        block_of(a).is_some_and(|b| b.space == "ram")
+            && !is_code(a)
+            && !taken(a)
+            && !inside_typed(a)
+    });
+    let typed_strings: BTreeMap<u64, u64> = out
+        .iter()
+        .map(|l| (l.addr, l.addr + u64::from(l.size)))
+        .collect();
     let all: Vec<u64> = wanted.iter().copied().collect();
     for (k, a) in all.iter().enumerate() {
         if text.contains_key(a) {
             continue;
         }
         let block = block_of(*a);
-        let room = all
-            .get(k + 1)
-            .copied()
-            .into_iter()
-            .chain(block.map(|b| b.end.0))
-            .min()
-            .map_or(1, |e| e - a);
+        let Some(room) = room_at(
+            *a,
+            all.get(k + 1).copied(),
+            block.map(|b| b.end.0),
+            &typed_strings,
+        ) else {
+            // inside a string typed above: the string prints it
+            continue;
+        };
         if block.is_some_and(|b| b.name == ".got") {
             // slots the loader fills: imports, which the decompiler names itself
             continue;
@@ -332,6 +377,47 @@ mod tests {
             string_label_text("apply_all=%d secret=%d version=%s\n"),
             "apply_all=%d_secret=%d_version=%"
         );
+    }
+
+    fn entry(addr: u64, value: &str, encoding: StringEncoding, length: u32) -> StringEntry {
+        StringEntry {
+            address: kraken_proto::Hex64(addr),
+            value: value.into(),
+            encoding,
+            length,
+        }
+    }
+
+    #[test]
+    fn only_8_bit_strings_the_caller_allows_are_typed() {
+        let strings = [
+            entry(0x100, "Hello", StringEncoding::Ascii, 6),
+            entry(0x200, "Wide", StringEncoding::Utf16, 10),
+            entry(0x300, "name", StringEncoding::Utf8, 5),
+        ];
+        // 0x300 is a field of a typed global, so the caller leaves it out
+        let labels = string_labels(&strings, &[0x100, 0x200, 0x300, 0x400], &|a| a != 0x300);
+        assert_eq!(
+            labels,
+            vec![DataLabel {
+                addr: 0x100,
+                name: "s_Hello_00000100".into(),
+                decl: "char s[6]".into(),
+                size: 6,
+            }]
+        );
+    }
+
+    #[test]
+    fn data_labels_stop_at_typed_strings() {
+        let strings = BTreeMap::from([(0x108, 0x110)]);
+        // the string bounds the label before it
+        assert_eq!(room_at(0x100, Some(0x200), Some(0x1000), &strings), Some(8));
+        // a label inside the string is left to it
+        assert_eq!(room_at(0x10c, Some(0x200), Some(0x1000), &strings), None);
+        // past the string, the next label and the block end count as before
+        assert_eq!(room_at(0x110, Some(0x118), Some(0x1000), &strings), Some(8));
+        assert_eq!(room_at(0x110, None, None, &strings), Some(1));
     }
 
     #[test]
