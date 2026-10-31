@@ -188,11 +188,20 @@ fn prototype_with(p: &FunctionPrototype, name: &str, known: Known<'_>, sep: &str
     format!("{}({args})", declarator(&p.return_type, name, known))
 }
 
+/// Size and alignment in bytes of the named type (a struct, union, enum or typedef), if known.
+pub type Layout<'a> = &'a dyn Fn(&str) -> Option<(u64, u64)>;
+
 /// A declaration for `parse_C`, or `None` for prototypes (applied to functions instead).
 pub fn declaration(def: &TypeDef, known: Known<'_>) -> Option<String> {
+    declaration_in(def, known, &|_| None)
+}
+
+/// [`declaration`] knowing the layout of the named types, so padding is computed from the
+/// sizes the debug information gave and fields keep the offsets it gave.
+pub fn declaration_in(def: &TypeDef, known: Known<'_>, layout: Layout<'_>) -> Option<String> {
     match def {
-        TypeDef::Struct(c) => Some(composite("struct", c, known)),
-        TypeDef::Union(c) => Some(composite("union", c, known)),
+        TypeDef::Struct(c) => Some(composite("struct", c, known, layout)),
+        TypeDef::Union(c) => Some(composite("union", c, known, layout)),
         TypeDef::Enum(e) => Some(enumeration(e)),
         TypeDef::Typedef(t) => Some(format!(
             "typedef {};",
@@ -202,7 +211,7 @@ pub fn declaration(def: &TypeDef, known: Known<'_>) -> Option<String> {
     }
 }
 
-fn composite(keyword: &str, c: &Composite, known: Known<'_>) -> String {
+fn composite(keyword: &str, c: &Composite, known: Known<'_>, layout: Layout<'_>) -> String {
     let mut body = String::new();
     let mut at = 0u64;
     let mut pad = 0;
@@ -211,13 +220,27 @@ fn composite(keyword: &str, c: &Composite, known: Known<'_>) -> String {
         fields.sort_by_key(|f| f.offset);
     }
     for f in fields {
+        let size = size_hint(&f.ty, layout);
+        if keyword == "struct" && f.offset < at {
+            // overlaps the previous field: the layout cannot say it
+            continue;
+        }
         if keyword == "struct" && f.offset > at {
             body.push_str(&format!("undefined _pad{pad}[{}];", f.offset - at));
             pad += 1;
         }
-        body.push_str(&declarator(&f.ty, &f.name, known));
-        body.push(';');
-        at = at.max(f.offset + size_hint(&f.ty));
+        // the decompiler aligns a field to its type; one the compiler placed lower (a double at
+        // 4 on i386) becomes raw bytes so that every later field keeps its offset
+        let misplaced = keyword == "struct"
+            && size > 0
+            && align_hint(&f.ty, layout).is_some_and(|a| a > 1 && f.offset % a != 0);
+        if misplaced {
+            body.push_str(&format!("undefined {}[{size}];", f.name));
+        } else {
+            body.push_str(&declarator(&f.ty, &f.name, known));
+            body.push(';');
+        }
+        at = at.max(f.offset + size);
     }
     if keyword == "struct" && c.size > at {
         body.push_str(&format!("undefined _pad{pad}[{}];", c.size - at));
@@ -228,14 +251,26 @@ fn composite(keyword: &str, c: &Composite, known: Known<'_>) -> String {
     format!("{keyword} {} {{{body}}};", c.name)
 }
 
-/// Size in bytes as far as it can be known without the store (named types count as 0 so the
-/// next field's offset decides the padding).
-fn size_hint(ty: &TypeRef) -> u64 {
+/// Size in bytes; a named type of unknown layout counts as 0 so the next field's offset decides
+/// the padding.
+fn size_hint(ty: &TypeRef, layout: Layout<'_>) -> u64 {
     match ty {
         TypeRef::Primitive(p) => u64::from(p.size),
         TypeRef::Pointer { size, .. } => u64::from(*size),
-        TypeRef::Array { element, count } => size_hint(element) * count,
-        TypeRef::Function(_) | TypeRef::Named { .. } => 0,
+        TypeRef::Array { element, count } => size_hint(element, layout) * count,
+        TypeRef::Function(_) => 0,
+        TypeRef::Named { name } => layout(name).map_or(0, |l| l.0),
+    }
+}
+
+/// Alignment the decompiler gives a value of the type: its scalar size, up to 8.
+pub fn align_hint(ty: &TypeRef, layout: Layout<'_>) -> Option<u64> {
+    match ty {
+        TypeRef::Primitive(p) => Some(u64::from(p.size).clamp(1, 8)),
+        TypeRef::Pointer { size, .. } => Some(u64::from(*size).clamp(1, 8)),
+        TypeRef::Array { element, .. } => align_hint(element, layout),
+        TypeRef::Function(_) => None,
+        TypeRef::Named { name } => layout(name).map(|l| l.1),
     }
 }
 
@@ -480,6 +515,67 @@ pub fn base_definitions_in(model: DataModel) -> Vec<TypeDef> {
     ]
 }
 
+/// glibc's `__locale_t` and the structures behind it, which the `_l` functions of the prototype
+/// table take.
+pub fn locale_definitions(model: DataModel) -> Vec<TypeDef> {
+    let ptr = u64::from(model.pointer);
+    let pointer = |target: TypeRef| TypeRef::Pointer {
+        target: Box::new(target),
+        size: model.pointer,
+    };
+    let named = |n: &str| TypeRef::Named { name: n.into() };
+    let table = |t: TypeRef| TypeRef::Array {
+        element: Box::new(t),
+        count: 13,
+    };
+    let field = |name: &str, offset: u64, ty: TypeRef| Field {
+        name: name.into(),
+        offset,
+        ty,
+        bitfield: None,
+    };
+    vec![
+        TypeDef::Struct(Composite {
+            name: "__locale_data".into(),
+            size: 1,
+            align: 1,
+            fields: Vec::new(),
+        }),
+        TypeDef::Struct(Composite {
+            name: "__locale_struct".into(),
+            size: 29 * ptr,
+            align: model.pointer,
+            fields: vec![
+                field("__locales", 0, table(pointer(named("__locale_data")))),
+                field(
+                    "__ctype_b",
+                    13 * ptr,
+                    pointer(prim(PrimitiveClass::Int, 2, false)),
+                ),
+                field(
+                    "__ctype_tolower",
+                    14 * ptr,
+                    pointer(prim(PrimitiveClass::Int, 4, true)),
+                ),
+                field(
+                    "__ctype_toupper",
+                    15 * ptr,
+                    pointer(prim(PrimitiveClass::Int, 4, true)),
+                ),
+                field(
+                    "__names",
+                    16 * ptr,
+                    table(pointer(prim(PrimitiveClass::Char, 1, true))),
+                ),
+            ],
+        }),
+        TypeDef::Typedef(TypedefDef {
+            name: "__locale_t".into(),
+            target: pointer(named("__locale_struct")),
+        }),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,5 +650,46 @@ mod tests {
         assert_eq!(declarator(&arr, "buf", &all), "char buf[8]");
         let fp = TypeRef::Function(Box::new(parse_prototype("int f(int)").expect("f").1));
         assert_eq!(declarator(&fp, "cb", &all), "code *cb");
+    }
+
+    #[test]
+    fn ilp32_layout_keeps_the_offsets_the_debug_info_gave() {
+        let all = |_: &str| true;
+        let named = |n: &str| TypeRef::Named { name: n.into() };
+        let field = |name: &str, offset: u64, ty: TypeRef| Field {
+            name: name.into(),
+            offset,
+            ty,
+            bitfield: None,
+        };
+        // i386: a double at 4 (4-byte aligned there), a 16-byte struct, a pointer after it
+        let layout = |n: &str| match n {
+            "inner" => Some((16, 4)),
+            _ => None,
+        };
+        let def = TypeDef::Struct(Composite {
+            name: "outer".into(),
+            size: 36,
+            align: 1,
+            fields: vec![
+                field("id", 0, prim(PrimitiveClass::Int, 4, true)),
+                field("w", 4, prim(PrimitiveClass::Float, 8, true)),
+                field("in", 12, named("inner")),
+                field(
+                    "next",
+                    28,
+                    TypeRef::Pointer {
+                        target: Box::new(named("outer")),
+                        size: 4,
+                    },
+                ),
+            ],
+        });
+        // no padding where the named struct's size fills the gap, no trailing padding of ours,
+        // and the double the decompiler would move to 8 becomes raw bytes
+        assert_eq!(
+            declaration_in(&def, &all, &layout).as_deref(),
+            Some("struct outer {int id;undefined w[8];inner in;outer *next;undefined _pad0[4];};")
+        );
     }
 }

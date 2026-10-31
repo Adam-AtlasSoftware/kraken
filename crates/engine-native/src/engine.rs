@@ -16,14 +16,14 @@ use kraken_engine::{
 };
 use kraken_proto::{
     AddressRange, BytesRead, Completeness, DecompileResult, DisasmRow, DisasmScope, ErrorCode,
-    FlowKind, FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock, OpenStage, OpenUpdate,
-    OperandKind, OperandToken, Page, PageRequest, ProtoError, StringEntry, SymbolEntry, Token,
-    TokenKind, TypeDef, TypeRef, VersionedLogOp, hex_bytes,
+    FlowKind, FunctionPrototype, FunctionSummary, Hex64, LANGUAGE_C, Locator, MemoryBlock,
+    OpenStage, OpenUpdate, OperandKind, OperandToken, Page, PageRequest, ProtoError, StringEntry,
+    SymbolEntry, Token, TokenKind, TypeDef, TypeRef, VersionedLogOp, hex_bytes,
 };
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::ctypes::{base_definitions_in, parse_prototype_in, signature};
+use crate::ctypes::{base_definitions_in, locale_definitions, parse_prototype_in, signature};
 use crate::discover::{Func, discover};
 use crate::elf::Loaded;
 use crate::listing::{flow_kind, operands};
@@ -592,6 +592,27 @@ impl Program {
             }
         }
         hex_bytes(&h.finalize())
+    }
+
+    /// The decompile warnings of the function at `at` without the notes about names that DWARF
+    /// gave to variables the decompiler has no storage for (an unused spill slot, a register
+    /// variable): they are not the user's edits.
+    fn user_warnings(&self, at: u64, warnings: &[String]) -> Vec<String> {
+        let Some(d) = self.loaded.debug.functions.get(&at) else {
+            return warnings.to_vec();
+        };
+        let ours = |w: &str| {
+            w.strip_prefix("no variable at ")
+                .and_then(|r| r.split_once(" to rename to "))
+                .is_some_and(|(_, n)| {
+                    d.locals.iter().any(|l| l.name == n)
+                        || d.prototype
+                            .params
+                            .iter()
+                            .any(|p| p.name.as_deref() == Some(n))
+                })
+        };
+        warnings.iter().filter(|w| !ours(w)).cloned().collect()
     }
 
     pub(crate) fn summary(&self, f: &Func) -> FunctionSummary {
@@ -1202,6 +1223,18 @@ fn build_program(
             by_name.entry(c).or_default().push(*entry);
         }
     }
+    // a PE function whose primary name is a section symbol (`.text`) still has its own name
+    // among the other symbols at its entry, and Ghidra types it by that
+    if loaded.is_pe() {
+        for f in found.functions.values() {
+            for n in loaded.code_symbols.get(&f.entry).into_iter().flatten() {
+                let at = by_name.entry(n.clone()).or_default();
+                if !at.contains(&f.entry) {
+                    at.push(f.entry);
+                }
+            }
+        }
+    }
     let named = |n: &str| by_name.get(n).cloned().unwrap_or_default();
     let mut types = TypeModel::new(model);
     let mut signatures = BTreeMap::new();
@@ -1220,6 +1253,8 @@ fn build_program(
             }
         }
         base.extend(crate::win32::base_definitions(model));
+    } else {
+        base.extend(locale_definitions(model));
     }
     for d in base {
         types.define(d, &mut session, &named)?;
@@ -1323,9 +1358,25 @@ fn build_program(
         let shown = crate::typestore::renamed_proto(&d.prototype, &|n| {
             display.get(n).cloned().unwrap_or_else(|| n.to_string())
         });
-        let decl = types.prototype_text(&d.prototype, PROTO_NAME);
+        // a parameter named like a type cannot be written in the C the decompiler reads: it goes
+        // in as `param_<n>` and takes its name through a local override afterwards
+        let mut proto = d.prototype.clone();
+        let mut renames: Vec<(usize, String)> = Vec::new();
+        for (i, a) in proto.params.iter_mut().enumerate() {
+            if a.name.as_deref().is_some_and(|n| types.knows(n))
+                && let Some(n) = a.name.take()
+            {
+                renames.push((i, n));
+            }
+        }
+        let decl = types.prototype_text(&proto, PROTO_NAME);
         if session.set_prototype(*at, &decl).is_err() {
             continue;
+        }
+        for (i, name) in renames {
+            if let Some((space, offset)) = parameter_storage(&loaded, &proto, i) {
+                let _ = session.set_local(*at, space, offset, &name, "");
+            }
         }
         if d.prototype.noreturn {
             session.set_noreturn(*at, true).map_err(native)?;
@@ -1333,6 +1384,7 @@ fn build_program(
         }
         signatures.insert(*at, signature(&shown, &f.name, &known));
         locked.insert(*at, decl);
+        apply_debug_locals(&mut session, &types, &loaded, *at, &d.locals);
     }
 
     // data symbols: the symbol table's names and DWARF's names and types, so the decompiler prints
@@ -1862,7 +1914,7 @@ impl Decompiler for InProcessEngine {
                     varnode: t.varnode.clone(),
                 })
                 .collect(),
-            warnings: d.warnings.clone(),
+            warnings: p.user_warnings(at, &d.warnings),
             completeness: Completeness::Complete,
         })
     }
@@ -2005,6 +2057,88 @@ impl Disassembler for InProcessEngine {
             }
         }
     }
+}
+
+/// Names and types the locals DWARF describes: its frame-base offsets become Ghidra stack
+/// offsets (the stack pointer at entry is 0, the return address sits there), set through the
+/// same overrides as a user's `set_local`. A local the decompiler cannot place is left alone.
+fn apply_debug_locals(
+    session: &mut Session,
+    types: &TypeModel,
+    loaded: &Loaded,
+    at: u64,
+    locals: &[crate::dwarf::DebugLocal],
+) {
+    // the frame layout below (return address at the entry stack pointer) is x86's
+    if !loaded.language.id.starts_with("x86:") {
+        return;
+    }
+    let pointer_size = loaded.language.pointer_size;
+    let ptr = i64::from(pointer_size);
+    let mask = if pointer_size >= 8 {
+        u64::MAX
+    } else {
+        (1u64 << (8 * pointer_size)) - 1
+    };
+    // `main` that realigns the stack (`and esp,-16` after saving the old one) pushes one more
+    // word before it sets the frame pointer
+    let mut entry = [0u8; 16];
+    loaded.image.read(at, &mut entry);
+    let realigned = entry.windows(3).any(|w| w == [0x83, 0xe4, 0xf0]);
+    let mut taken = BTreeSet::new();
+    for l in locals {
+        // CFA is one return address above the entry stack pointer; rbp is two slots below it
+        let from_cfa = if l.frame_reg {
+            l.offset - 2 * ptr - if realigned { ptr } else { 0 }
+        } else {
+            l.offset
+        };
+        let offset = (from_cfa + ptr) as u64 & mask;
+        if !taken.insert(offset) {
+            continue;
+        }
+        let decl = types.global_decl(&l.ty, "x");
+        if decl.is_empty() {
+            continue;
+        }
+        let _ = session.set_local(at, "stack", offset, &l.name, &decl);
+    }
+}
+
+/// Where the decompiler keeps parameter `index` of `proto` on x86: the SysV integer registers
+/// (as Ghidra's register space numbers them) on x86-64, the cdecl stack slots on x86-32.
+fn parameter_storage(
+    loaded: &Loaded,
+    proto: &FunctionPrototype,
+    index: usize,
+) -> Option<(&'static str, u64)> {
+    use kraken_proto::PrimitiveClass;
+    let is_float =
+        |t: &TypeRef| matches!(t, TypeRef::Primitive(p) if p.class == PrimitiveClass::Float);
+    let id = loaded.language.id;
+    if id.starts_with("x86:LE:64") && !loaded.is_pe() {
+        if is_float(&proto.params.get(index)?.ty) {
+            return None;
+        }
+        let ints = proto.params[..index]
+            .iter()
+            .filter(|p| !is_float(&p.ty))
+            .count();
+        let regs = [0x38, 0x30, 0x10, 0x8, 0x80, 0x88];
+        return regs.get(ints).map(|r| ("register", *r));
+    }
+    if id.starts_with("x86:LE:32") && !loaded.is_pe() {
+        let mut at = 4u64;
+        for p in &proto.params[..index] {
+            match &p.ty {
+                TypeRef::Primitive(q) if q.size > 4 => at += u64::from(q.size).next_multiple_of(4),
+                TypeRef::Primitive(_) | TypeRef::Pointer { .. } => at += 4,
+                _ => return None,
+            }
+        }
+        return Some(("stack", at));
+    }
+    None
 }
 
 #[cfg(test)]

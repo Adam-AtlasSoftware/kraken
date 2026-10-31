@@ -105,6 +105,8 @@ pub const PROTOTYPES: &[&str] = &[
     "int strncmp(const char *s1, const char *s2, size_t n)",
     "int strcasecmp(const char *s1, const char *s2)",
     "int strncasecmp(const char *s1, const char *s2, size_t n)",
+    "int strcasecmp_l(const char *s1, const char *s2, __locale_t loc)",
+    "int strncasecmp_l(const char *s1, const char *s2, size_t n, __locale_t loc)",
     "int strcoll(const char *s1, const char *s2)",
     "char *strchr(const char *s, int c)",
     "char *strrchr(const char *s, int c)",

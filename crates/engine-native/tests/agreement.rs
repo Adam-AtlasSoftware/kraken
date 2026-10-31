@@ -572,6 +572,23 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
             r.decompile_text.theirs += n;
         }
         r.decompile_text.ours += ours.values().sum::<usize>();
+        if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+            let missed: Vec<String> = theirs
+                .iter()
+                .filter(|(w, n)| ours.get(*w).copied().unwrap_or(0) < **n)
+                .map(|(w, _)| w.clone())
+                .collect();
+            let extra: Vec<String> = ours
+                .iter()
+                .filter(|(w, n)| theirs.get(*w).copied().unwrap_or(0) < **n)
+                .map(|(w, _)| w.clone())
+                .collect();
+            if !missed.is_empty() || !extra.is_empty() {
+                eprintln!(
+                    "  {binary} text differs at {entry:#x}: missed {missed:?}, extra {extra:?}"
+                );
+            }
+        }
         let our_globals: BTreeSet<String> = mine
             .iter()
             .flat_map(|d| d.tokens.iter())

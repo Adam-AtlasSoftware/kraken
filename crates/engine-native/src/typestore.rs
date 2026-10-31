@@ -18,7 +18,7 @@ use engine_native_sys::Session;
 use kraken_engine::type_def_name;
 use kraken_proto::{ErrorCode, FunctionPrototype, ProtoError, TypeDef, TypeRef};
 
-use crate::ctypes::{DataModel, declaration, prototype, valid_name};
+use crate::ctypes::{DataModel, align_hint, declaration_in, prototype, valid_name};
 
 /// Core type names of the decompiler (see the shim's `buildCoreTypes`).
 const CORE: &[&str] = &[
@@ -239,6 +239,61 @@ impl TypeModel {
         at.to_string()
     }
 
+    /// The scalar type the typedef chain starting at `name` ends in.
+    fn scalar_of(&self, name: &str, depth: usize) -> Option<TypeRef> {
+        if depth > 16 {
+            return None;
+        }
+        match self.defs.get(name)? {
+            TypeDef::Typedef(t) => match &t.target {
+                TypeRef::Primitive(_) => Some(t.target.clone()),
+                TypeRef::Named { name } if CORE.contains(&name.as_str()) => Some(t.target.clone()),
+                TypeRef::Named { name } => self.scalar_of(name, depth + 1),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Size and alignment of the stored type `name`, as the debug information laid it out.
+    fn layout_of(&self, name: &str, depth: usize) -> Option<(u64, u64)> {
+        if depth > 16 {
+            return None;
+        }
+        let layout = |n: &str| self.layout_of(n, depth + 1);
+        let size_of = |t: &TypeRef| -> Option<u64> {
+            match t {
+                TypeRef::Primitive(p) => Some(u64::from(p.size)),
+                TypeRef::Pointer { size, .. } => Some(u64::from(*size)),
+                TypeRef::Array { element, count } => {
+                    let e = match element.as_ref() {
+                        TypeRef::Named { name } => layout(name)?.0,
+                        TypeRef::Primitive(p) => u64::from(p.size),
+                        TypeRef::Pointer { size, .. } => u64::from(*size),
+                        _ => return None,
+                    };
+                    Some(e * count)
+                }
+                TypeRef::Named { name } => Some(layout(name)?.0),
+                TypeRef::Function(_) => None,
+            }
+        };
+        match self.defs.get(name)? {
+            TypeDef::Struct(c) | TypeDef::Union(c) => {
+                let align = c
+                    .fields
+                    .iter()
+                    .filter_map(|f| align_hint(&f.ty, &layout))
+                    .max()
+                    .unwrap_or(1);
+                Some((c.size, align))
+            }
+            TypeDef::Enum(e) => Some((u64::from(e.size), u64::from(e.size).clamp(1, 8))),
+            TypeDef::Typedef(t) => Some((size_of(&t.target)?, align_hint(&t.target, &layout)?)),
+            TypeDef::Function(_) => None,
+        }
+    }
+
     /// The C prototype of `p` named `name`, in the names the decompiler knows (for
     /// `set_prototype`).
     pub fn prototype_text(&self, p: &FunctionPrototype, name: &str) -> String {
@@ -306,7 +361,16 @@ impl TypeModel {
         session: &mut Session,
         named: &dyn Fn(&str) -> Vec<u64>,
     ) -> Option<Vec<Applied>> {
-        let def = self.defs.get(name)?.clone();
+        let mut def = self.defs.get(name)?.clone();
+        // a typedef chain that ends in a scalar keeps every link as a typedef of its own
+        // (`int32_t` over `__int32_t` over `int`), as Ghidra shows the names
+        if let TypeDef::Typedef(t) = &mut def
+            && let TypeRef::Named { name: target } = &t.target
+            && !CORE.contains(&target.as_str())
+            && let Some(scalar) = self.scalar_of(target, 0)
+        {
+            t.target = scalar;
+        }
         // a typedef of a named type is an alias (declaring it would rename that type)
         if let TypeDef::Typedef(t) = &def
             && let TypeRef::Named { name: target } = &t.target
@@ -347,7 +411,8 @@ impl TypeModel {
                 if self.declared.contains(name) {
                     return Some(Vec::new());
                 }
-                let text = self.model.spell(&declaration(other, &known)?);
+                let layout = |n: &str| self.layout_of(n, 0);
+                let text = self.model.spell(&declaration_in(other, &known, &layout)?);
                 session.declare_type(&text).ok()?;
                 self.declared.insert(name.to_string());
                 Some(Vec::new())

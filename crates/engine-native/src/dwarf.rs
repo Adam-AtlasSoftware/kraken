@@ -56,6 +56,23 @@ pub struct DebugFunction {
     pub linkage: Option<String>,
     /// The prototype.
     pub prototype: FunctionPrototype,
+    /// Local variables with a frame-base location (the function's own and those of its lexical
+    /// blocks), in DIE order. Parameters are in the prototype.
+    pub locals: Vec<DebugLocal>,
+}
+
+/// One local variable at a fixed place in the frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DebugLocal {
+    /// Its name.
+    pub name: String,
+    /// Its type.
+    pub ty: TypeRef,
+    /// Where it lives, in bytes from the frame base.
+    pub offset: i64,
+    /// The frame base is the frame pointer register (rbp/ebp, set up after the prologue), not
+    /// the canonical frame address (the stack pointer just above the return address).
+    pub frame_reg: bool,
 }
 
 /// One global variable with debug information.
@@ -81,6 +98,12 @@ struct Die {
     low_pc: Option<u64>,
     /// The address of a `DW_OP_addr` location.
     location: Option<u64>,
+    /// The offset of a `DW_OP_fbreg` location.
+    fbreg: Option<i64>,
+    /// The offset of a `DW_OP_breg5`/`DW_OP_breg6` (ebp/rbp) location.
+    bpreg: Option<i64>,
+    /// How a subprogram's frame base reads: `DW_OP_call_frame_cfa` (0x9c) or a `DW_OP_reg<n>`.
+    frame_base: Option<u8>,
     first_range: Option<u64>,
     member_location: Option<u64>,
     bit_size: bool,
@@ -93,6 +116,22 @@ struct Die {
     declaration: bool,
     noreturn: bool,
     by_reference: bool,
+}
+
+fn sleb(bytes: &[u8]) -> Option<i64> {
+    let mut v = 0i64;
+    let mut shift = 0u32;
+    for b in bytes.iter().take(10) {
+        v |= i64::from(b & 0x7f) << shift;
+        shift += 7;
+        if b & 0x80 == 0 {
+            if shift < 64 && b & 0x40 != 0 {
+                v |= -1i64 << shift;
+            }
+            return Some(v);
+        }
+    }
+    None
 }
 
 fn uleb(bytes: &[u8]) -> Option<u64> {
@@ -273,7 +312,11 @@ fn read_die(
             constants::DW_AT_location => {
                 if let Some(e) = v.exprloc_value() {
                     let b = e.0.slice();
-                    if b.first() == Some(&0x03) && b.len() == 9 {
+                    if b.first() == Some(&0x91) {
+                        d.fbreg = sleb(&b[1..]);
+                    } else if matches!(b.first(), Some(0x75 | 0x76)) {
+                        d.bpreg = sleb(&b[1..]);
+                    } else if b.first() == Some(&0x03) && b.len() == 9 {
                         d.location = b[1..].try_into().ok().map(u64::from_le_bytes);
                     } else if b.first() == Some(&0x03) && b.len() == 5 {
                         d.location = b[1..]
@@ -281,6 +324,11 @@ fn read_die(
                             .ok()
                             .map(|x| u64::from(u32::from_le_bytes(x)));
                     }
+                }
+            }
+            constants::DW_AT_frame_base => {
+                if let Some(e) = v.exprloc_value() {
+                    d.frame_base = e.0.slice().first().copied();
                 }
             }
             constants::DW_AT_ranges => {
@@ -441,6 +489,33 @@ struct Importer {
     /// Base name -> the scope of the first type that had it.
     scopes: HashMap<String, String>,
     anon: usize,
+    /// Names of the function definitions made for subroutine types.
+    func_types: BTreeSet<String>,
+}
+
+/// The name Ghidra gives the function definition of a subroutine type: the return and
+/// parameter type names after `_func_`, pointers as `_ptr`.
+fn func_type_name(p: &FunctionPrototype) -> String {
+    fn part(t: &TypeRef) -> String {
+        match t {
+            TypeRef::Primitive(p) => crate::ctypes::primitive_name(p)
+                .unwrap_or("undefined")
+                .into(),
+            TypeRef::Named { name } => name.clone(),
+            TypeRef::Pointer { target, .. } => format!("{}_ptr", part(target)),
+            TypeRef::Array { element, .. } => format!("{}_ptr", part(element)),
+            TypeRef::Function(_) => "code_ptr".into(),
+        }
+    }
+    let mut out = format!("_func_{}", part(&p.return_type));
+    for a in &p.params {
+        out.push('_');
+        out.push_str(&part(&a.ty));
+    }
+    if p.varargs {
+        out.push_str("_varargs");
+    }
+    out
 }
 
 /// One unit's conversion state.
@@ -751,7 +826,17 @@ impl Importer {
                 t
             }
             constants::DW_TAG_subroutine_type => {
-                TypeRef::Function(Box::new(self.prototype(u, i, i, depth + 1)))
+                let proto = self.prototype(u, i, i, depth + 1);
+                let name = func_type_name(&proto);
+                if self.func_types.insert(name.clone()) {
+                    let mut def = proto.clone();
+                    def.name = Some(name);
+                    for p in &mut def.params {
+                        p.name = None;
+                    }
+                    self.types.push(TypeDef::Function(def));
+                }
+                TypeRef::Function(Box::new(proto))
             }
             constants::DW_TAG_ptr_to_member_type => prim(
                 PrimitiveClass::Undefined,
@@ -894,6 +979,84 @@ impl Importer {
         });
     }
 
+    /// The variables of the subprogram at `i` and of its lexical blocks: those at a frame offset,
+    /// and the function-static ones at a fixed address.
+    fn variables(
+        &mut self,
+        u: &mut UnitImport<'_>,
+        i: usize,
+    ) -> (Vec<DebugLocal>, Vec<(u64, DebugGlobal)>) {
+        let dies = u.dies;
+        let base = match dies[i].frame_base {
+            Some(0x9c) => Some(false),
+            Some(0x55 | 0x56) => Some(true),
+            _ => None,
+        };
+        let mut locals = Vec::new();
+        let mut statics = Vec::new();
+        let mut todo: Vec<usize> = dies[i].children.iter().rev().copied().collect();
+        let mut seen = 0usize;
+        while let Some(c) = todo.pop() {
+            seen += 1;
+            if seen > 4096 {
+                break;
+            }
+            let d = &dies[c];
+            match DwTag(d.tag) {
+                constants::DW_TAG_lexical_block => todo.extend(d.children.iter().rev().copied()),
+                constants::DW_TAG_variable | constants::DW_TAG_formal_parameter
+                    if !d.artificial =>
+                {
+                    let ch = chain(dies, c);
+                    let Some(name) = ch.iter().find_map(|x| dies[*x].name.clone()) else {
+                        continue;
+                    };
+                    let ty_die = ch.iter().find_map(|x| dies[*x].ty);
+                    // a parameter the compiler spilled to the frame: Ghidra names that slot
+                    // `<name>_local`, beside the parameter itself
+                    let is_param = d.tag == constants::DW_TAG_formal_parameter.0;
+                    let name = if is_param {
+                        format!("{name}_local")
+                    } else {
+                        name
+                    };
+                    // a stack-passed parameter (above the return address) is the parameter itself
+                    if is_param && d.fbreg.or(d.bpreg).is_none_or(|o| o >= 0) {
+                        continue;
+                    }
+                    if let Some(addr) = d.location.filter(|a| *a != 0) {
+                        let ty = self.type_ref(u, ty_die, 0);
+                        statics.push((
+                            addr,
+                            DebugGlobal {
+                                name: function_name(&name),
+                                ty,
+                            },
+                        ));
+                    } else if let Some(off) = d.bpreg {
+                        let ty = self.type_ref(u, ty_die, 0);
+                        locals.push(DebugLocal {
+                            name: c_name(&name),
+                            ty,
+                            offset: off,
+                            frame_reg: true,
+                        });
+                    } else if let (Some(off), Some(b)) = (d.fbreg, base) {
+                        let ty = self.type_ref(u, ty_die, 0);
+                        locals.push(DebugLocal {
+                            name: c_name(&name),
+                            ty,
+                            offset: off,
+                            frame_reg: b,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        (locals, statics)
+    }
+
     fn function(&mut self, u: &mut UnitImport<'_>, i: usize) {
         let dies = u.dies;
         let d = &dies[i];
@@ -907,10 +1070,19 @@ impl Importer {
         let linkage = chain.iter().find_map(|c| u.dies[*c].linkage.clone());
         let decl = chain.last().copied().unwrap_or(i);
         let prototype = self.prototype(u, i, decl, 0);
+        let fname = function_name(&name);
+        let (locals, statics) = self.variables(u, i);
+        for (addr, g) in statics {
+            self.globals.entry(addr).or_insert(DebugGlobal {
+                name: format!("{fname}::{}", g.name),
+                ty: g.ty,
+            });
+        }
         self.functions.entry(entry).or_insert(DebugFunction {
-            name: function_name(&name),
+            name: fname,
             linkage,
             prototype,
+            locals,
         });
     }
 }

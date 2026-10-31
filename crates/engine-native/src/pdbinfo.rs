@@ -176,6 +176,7 @@ fn read(data: &[u8], link_base: u64, ptr: u32) -> pdb2::Result<Parsed> {
                 name,
                 linkage: None,
                 prototype: proto,
+                locals: Vec::new(),
             },
         );
     }

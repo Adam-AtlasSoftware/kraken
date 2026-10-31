@@ -1087,9 +1087,10 @@ async fn locals_are_edits_and_replay_on_reopen() {
         .decompile(&Locator::ram(PARSE_NUMBER), &c)
         .await
         .expect("decompile");
-    assert!(before.text.contains("local_10"), "{}", before.text);
+    // DWARF names the stack variable (`v`) before any edit
+    assert!(before.text.contains("long v;"), "{}", before.text);
     // the variable tokens name their storage, the same at every use
-    let acc = token_storage(&before.text, &before.tokens, "local_10").expect("storage");
+    let acc = token_storage(&before.text, &before.tokens, "v").expect("storage");
     assert!(acc.starts_with("stack:0xfffffffffffffff0"), "{acc}");
     let param = token_storage(&before.text, &before.tokens, "ps").expect("param");
     assert!(param.starts_with("register:0x38"), "{param}");
@@ -1107,7 +1108,7 @@ async fn locals_are_edits_and_replay_on_reopen() {
         "{text}"
     );
     assert!(
-        !text.contains("local_10") && !text.contains("(parser *ps"),
+        !text.contains("long v;") && !text.contains("(parser *ps"),
         "{text}"
     );
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -1161,7 +1162,8 @@ async fn locals_are_edits_and_replay_on_reopen() {
     );
     assert!(warnings.is_empty(), "{warnings:?}");
 
-    // clearing the override brings the decompiler's own names back
+    // clearing the override brings the decompiler's own names back (the override replaced the
+    // one DWARF gave)
     let f = function(&e, PARSE_NUMBER).await.expect("function");
     for st in [ACC, "register:0x38:8"] {
         apply(&e, clear_local(&f, st)).await.expect("clear");

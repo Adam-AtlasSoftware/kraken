@@ -172,6 +172,7 @@ pub const PROTOTYPES: &[&str] = &[
     "PIMAGE_SECTION_HEADER _FindPESection(PBYTE pImageBase, DWORD_PTR rva)",
     "BOOL __IsNonwritableInCurrentImage(PBYTE pTarget)",
     "int __matherr(_exception *_Except)",
+    "int _matherr(_exception *_Except)",
 ];
 
 /// The parameter names of the Microsoft C runtime headers for C library functions, which the

@@ -38,7 +38,7 @@ new projects.
 | Strings, imports, exports | Yes | Yes |
 | Rename, comments, prototypes, function create/delete | Yes, undoable | Yes, undoable |
 | Prototypes (`set-type`), calling conventions | Yes | Yes |
-| Debug-info (DWARF) types, C++ and Rust name demangling | Yes (types and prototypes; not variables) | Yes |
+| Debug-info (DWARF) types, C++ and Rust name demangling | Yes (types, prototypes, locals on x86) | Yes |
 | Function discovery on stripped code | Finds the functions Ghidra finds on the stripped x86 and x86-64 corpus (every one of the 432 ELF, 95 ELF32 and 160 PE recorded entries): besides calls and pointers, a function that starts with a jump is a thunk whose target is a function, and a start that follows a body's end past alignment padding at a 16-byte boundary is one (gcc's `register_tm_clones`) unless the body before it jumps to it or switches to it; Ghidra also lists its imported symbols as functions, so counts differ | The reference |
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
 | Runs where | Linux | Linux; macOS and Windows experimental |
@@ -444,10 +444,24 @@ edit yet and answers `unsupported`; use the native engine.
 - Global variables are named in decompiled C from the symbol table (ELF `STT_OBJECT`, PE/COFF
   data symbols) and named and typed from DWARF; a rename or `set_type` of a data address in the
   listing reaches the decompiler too. A COFF symbol carries no size, so the variable is given
-  the room before the next symbol, at most four bytes. DWARF locals are not imported (rename and
-  retype them yourself, see above); static
-  variables inside functions and object files and archives get no global names yet.
-- DWARF types, function prototypes and global variables are imported.
+  the room before the next symbol, at most four bytes. Object files and archives get no global
+  names yet.
+- DWARF types, function prototypes, global variables, function-static variables (`main::orders`)
+  and local variables are imported on x86 and x86-64. A local at a frame offset (`DW_OP_fbreg`
+  over the call frame address or the frame pointer, or `DW_OP_breg` of ebp/rbp, also in a `main`
+  that realigns the stack) is named and typed like a `set_local` edit, so `main` shows
+  `double total;` and `list l;` instead of `local_30` and `local_28`; a parameter the compiler
+  spilled to the frame is `<name>_local` as Ghidra names it. A parameter named like a type
+  (`struct vm *vm`) is written to the decompiler as `param_<n>` and renamed afterwards, because
+  its C grammar cannot read the name there. Your own `set_local` on the same storage replaces the
+  DWARF name, and clearing it brings back the decompiler's own `local_<offset>`. Variables kept
+  in registers (optimised code) have no frame location and keep the decompiler's names. Other
+  architectures keep the decompiler's local names for now.
+- Struct layouts keep the offsets and sizes DWARF gives (i386 and PE x86 included): padding is
+  computed from the member sizes, and a field the compiler placed below its natural alignment
+  (a `double` at offset 4 on i386) is written as raw bytes so the fields after it stay put.
+- Subroutine types get a function definition named as Ghidra names it (`_func_int_record_ptr_record_ptr`),
+  and a typedef chain that ends in a scalar keeps every link (`int32_t` over `__int32_t`).
 - Linux only.
 
 ## How it is kept honest
