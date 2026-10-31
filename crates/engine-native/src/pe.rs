@@ -226,6 +226,7 @@ fn decorated_function(name: &str, convention: &str, words: u32) -> crate::dwarf:
             varargs: false,
             noreturn: false,
         },
+        locals: Vec::new(),
     }
 }
 
