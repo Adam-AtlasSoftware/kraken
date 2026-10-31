@@ -100,9 +100,11 @@ struct Die {
     location: Option<u64>,
     /// The offset of a `DW_OP_fbreg` location.
     fbreg: Option<i64>,
-    /// The offset of a `DW_OP_breg5`/`DW_OP_breg6` (ebp/rbp) location.
+    /// The offset of a location based on the frame pointer: `DW_OP_breg6` (rbp) on x86-64,
+    /// `DW_OP_breg5` (ebp) on i386.
     bpreg: Option<i64>,
-    /// How a subprogram's frame base reads: `DW_OP_call_frame_cfa` (0x9c) or a `DW_OP_reg<n>`.
+    /// How a subprogram's frame base reads: `DW_OP_call_frame_cfa` (0x9c) or the frame pointer
+    /// (`DW_OP_reg6` on x86-64, `DW_OP_reg5` on i386); `None` for anything else.
     frame_base: Option<u8>,
     first_range: Option<u64>,
     member_location: Option<u64>,
@@ -265,6 +267,12 @@ fn read_unit(
     Some(dies)
 }
 
+/// The DWARF number of the x86 frame pointer: rbp (6) on x86-64, ebp (5) on i386, where 6 is
+/// esi (and on x86-64 5 is rdi). Locals only reach the decompiler on x86.
+fn frame_pointer_register(address_size: u8) -> u8 {
+    if address_size == 8 { 6 } else { 5 }
+}
+
 fn read_die(
     dwarf: &gimli::Dwarf<R<'_>>,
     unit: &Unit<R<'_>>,
@@ -276,6 +284,7 @@ fn read_die(
         tag: entry.tag().0,
         ..Die::default()
     };
+    let frame_reg = frame_pointer_register(unit.header.address_size());
     let string = |v: AttributeValue<R<'_>>| {
         dwarf
             .attr_string(unit, v)
@@ -314,7 +323,7 @@ fn read_die(
                     let b = e.0.slice();
                     if b.first() == Some(&0x91) {
                         d.fbreg = sleb(&b[1..]);
-                    } else if matches!(b.first(), Some(0x75 | 0x76)) {
+                    } else if b.first() == Some(&(0x70 + frame_reg)) {
                         d.bpreg = sleb(&b[1..]);
                     } else if b.first() == Some(&0x03) && b.len() == 9 {
                         d.location = b[1..].try_into().ok().map(u64::from_le_bytes);
@@ -328,7 +337,13 @@ fn read_die(
             }
             constants::DW_AT_frame_base => {
                 if let Some(e) = v.exprloc_value() {
-                    d.frame_base = e.0.slice().first().copied();
+                    // another register than the frame pointer (rdi, esi) is not a frame base
+                    // the stack offsets can follow
+                    d.frame_base =
+                        e.0.slice()
+                            .first()
+                            .copied()
+                            .filter(|op| *op == 0x9c || *op == 0x50 + frame_reg);
                 }
             }
             constants::DW_AT_ranges => {
@@ -1108,6 +1123,16 @@ fn chain(dies: &[Die], i: usize) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_frame_pointer_follows_the_architecture() {
+        // x86-64: DW_OP_breg6 / DW_OP_reg6 (rbp); breg5 is rdi there
+        assert_eq!(0x70 + frame_pointer_register(8), 0x76);
+        assert_eq!(0x50 + frame_pointer_register(8), 0x56);
+        // i386: DW_OP_breg5 / DW_OP_reg5 (ebp); breg6 is esi there
+        assert_eq!(0x70 + frame_pointer_register(4), 0x75);
+        assert_eq!(0x50 + frame_pointer_register(4), 0x55);
+    }
 
     fn corpus(name: &str) -> Vec<u8> {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
