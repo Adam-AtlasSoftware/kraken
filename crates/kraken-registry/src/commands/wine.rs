@@ -331,12 +331,43 @@ fn internal(msg: impl Into<String>) -> ProtoError {
     problem(ErrorCode::Internal, msg)
 }
 
-/// The directory a portable or distro Wine lives in (`<root>/bin/wine`), unless that is a system
-/// directory the sandbox already lets the child read.
+/// The directory a portable Wine lives in (`<root>/bin/wine`), which the sandbox must let the
+/// child read and run. `None` for a system directory the sandbox already reads, and for anything
+/// that is not plainly a Wine tree of its own: the Windows program can read all of it, so a
+/// wrapper script in `~/bin` or `~/.local/bin` must not open the home directory.
 fn wine_root(exe: &Path) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    wine_root_in(exe, home.as_deref())
+}
+
+fn wine_root_in(exe: &Path, home: Option<&Path>) -> Option<PathBuf> {
     let real = exe.canonicalize().ok()?;
     let root = real.parent()?.parent()?.to_path_buf();
-    (root.components().count() >= 3 && !root.starts_with("/usr")).then_some(root)
+    if root.components().count() < 3 || root.starts_with("/usr") {
+        return None;
+    }
+    let is_wine_tree = ["lib", "lib64", "lib32"]
+        .iter()
+        .any(|l| root.join(l).join("wine").is_dir());
+    if !is_wine_tree {
+        return None;
+    }
+    if let Some(home) = home {
+        let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+        if home.starts_with(&root) {
+            return None;
+        }
+        // Inside the home directory only a directory of its own (a portable build such as
+        // `wine-11.20-amd64-wow64`), never a shared prefix like `~/.local`.
+        let own = root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .is_some_and(|n| n.contains("wine") || n.contains("proton"));
+        if root.starts_with(&home) && !own {
+            return None;
+        }
+    }
+    Some(root)
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
@@ -726,5 +757,43 @@ mod tests {
     #[test]
     fn a_system_wine_needs_no_extra_read_path() {
         assert_eq!(wine_root(Path::new("/usr/bin/wine")), None);
+    }
+
+    #[test]
+    fn only_a_wine_tree_of_its_own_is_opened_to_the_program() {
+        let d = tempfile::tempdir().expect("tmp");
+        let home = d.path().join("home/me");
+        let exe = |dir: &Path| {
+            std::fs::create_dir_all(dir.join("bin")).expect("mkdir");
+            std::fs::write(dir.join("bin/wine"), b"#!/bin/sh\n").expect("write");
+            dir.join("bin/wine")
+        };
+        // A wrapper in ~/bin or ~/.local/bin: never the home directory or ~/.local.
+        assert_eq!(wine_root_in(&exe(&home), Some(&home)), None);
+        let local = home.join(".local");
+        std::fs::create_dir_all(local.join("lib/wine")).expect("mkdir");
+        assert_eq!(wine_root_in(&exe(&local), Some(&home)), None);
+        // Not a Wine tree at all.
+        let other = d.path().join("opt/tools");
+        assert_eq!(wine_root_in(&exe(&other), Some(&home)), None);
+        // A portable build, in the data directory or under /opt.
+        let portable = home.join(".local/share/kraken/integrations/wine-11.20-amd64-wow64");
+        std::fs::create_dir_all(portable.join("lib/wine")).expect("mkdir");
+        let w = exe(&portable);
+        assert_eq!(
+            wine_root_in(&w, Some(&home)),
+            Some(portable.canonicalize().expect("canon"))
+        );
+        let opt = d.path().join("opt/wine-staging");
+        std::fs::create_dir_all(opt.join("lib64/wine")).expect("mkdir");
+        let w = exe(&opt);
+        assert_eq!(
+            wine_root_in(&w, Some(&home)),
+            Some(opt.canonicalize().expect("canon"))
+        );
+        // A tree that holds the home directory is refused even when it looks like Wine.
+        let outer = d.path().to_path_buf();
+        std::fs::create_dir_all(outer.join("lib/wine")).expect("mkdir");
+        assert_eq!(wine_root_in(&exe(&outer), Some(&home)), None);
     }
 }
