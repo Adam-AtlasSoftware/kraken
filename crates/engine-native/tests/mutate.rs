@@ -1162,17 +1162,17 @@ async fn locals_are_edits_and_replay_on_reopen() {
     );
     assert!(warnings.is_empty(), "{warnings:?}");
 
-    // clearing the override brings the decompiler's own names back (the override replaced the
-    // one DWARF gave)
+    // clearing the override brings back what DWARF gave
     let f = function(&e, PARSE_NUMBER).await.expect("function");
     for st in [ACC, "register:0x38:8"] {
         apply(&e, clear_local(&f, st)).await.expect("clear");
     }
     let (text, _) = calc_text(&e).await;
     assert!(
-        text.contains("local_10") && text.contains("parser *ps"),
+        text.contains("long v;") && text.contains("parser *ps"),
         "{text}"
     );
+    assert!(!text.contains("local_10"), "{text}");
 }
 
 #[tokio::test]

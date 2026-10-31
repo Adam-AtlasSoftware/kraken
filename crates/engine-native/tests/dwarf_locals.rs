@@ -5,8 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use engine_native::{Isolation, NativeConfig, NativeEngine, WorkerOptions};
-use kraken_engine::{CancellationToken, Decompiler, FunctionLister, Loader, LoaderSpec, TypeStore};
-use kraken_proto::{PageRequest, TypeDef};
+use kraken_engine::{
+    CancellationToken, Decompiler, FunctionLister, Loader, LoaderSpec, Mutator, TypeStore,
+};
+use kraken_proto::{
+    Anchor, Hex64, LocalSpec, Locator, LogOp, PageRequest, TokenKind, TypeDef, VersionedLogOp,
+};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -138,4 +142,70 @@ async fn a_parameter_named_like_its_struct_still_gets_the_prototype() {
     // `static void push(struct vm *vm, int32_t v)`
     let text = decompile(&e, "push").await;
     assert!(text.contains("vm *vm") && text.contains("vm->sp"), "{text}");
+}
+
+/// A `set_local` on `name`'s variable `storage` (`None` clears the override).
+async fn set_local(e: &NativeEngine, name: &str, storage: &str, new: Option<LocalSpec>) {
+    let c = CancellationToken::new();
+    let page = e
+        .list_functions(
+            &PageRequest {
+                cursor: None,
+                limit: Some(500),
+            },
+            &c,
+        )
+        .await
+        .expect("list");
+    let f = page
+        .items
+        .iter()
+        .find(|f| f.name == name)
+        .expect("function");
+    let Locator::Native { offset, .. } = &f.locator else {
+        panic!("not a native locator");
+    };
+    let op = LogOp::SetLocal {
+        anchor: Anchor::Native {
+            space: "ram".into(),
+            offset: Hex64(offset.0),
+            fn_entry: Hex64(offset.0),
+            fn_hash: f.fn_hash.clone().unwrap_or_default(),
+        },
+        storage: storage.into(),
+        old: None,
+        new,
+    };
+    e.apply(&VersionedLogOp::new(op), &c)
+        .await
+        .expect("set_local");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_keeps_the_dwarf_type_and_clearing_brings_dwarf_back() {
+    let Some(e) = open("corpus", "pie_list-O0").await else {
+        eprintln!("skipped: no native build or spec tree");
+        return;
+    };
+    let before = decompile_full(&e, "main").await;
+    assert!(before.text.contains("list l;"), "{}", before.text);
+    let storage = before
+        .tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::Variable)
+        .find(|t| &before.text[t.start as usize..t.end as usize] == "l")
+        .and_then(|t| t.varnode.clone())
+        .expect("storage of l");
+    // a name alone: the struct type DWARF gave stays
+    let rename = LocalSpec {
+        name: Some("items".into()),
+        ty: None,
+    };
+    set_local(&e, "main", &storage, Some(rename)).await;
+    let text = decompile(&e, "main").await;
+    assert!(text.contains("list items;"), "{text}");
+    // clearing (undo) falls back to DWARF's name and type
+    set_local(&e, "main", &storage, None).await;
+    let text = decompile(&e, "main").await;
+    assert!(text.contains("list l;"), "{text}");
 }

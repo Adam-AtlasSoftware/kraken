@@ -225,6 +225,8 @@ pub(crate) struct Program {
     /// Prototype declarations the type store locked onto functions (library prototypes and
     /// named function types), reapplied when a function symbol is rebuilt.
     pub(crate) locked: Mutex<BTreeMap<u64, String>>,
+    /// What the program says about variables, under the user's `set_local` overrides.
+    pub(crate) base_locals: BaseLocals,
     pub(crate) insns: Mutex<BTreeMap<u64, Instruction>>,
     /// Code reached only through data (the lazy PLT entries), indexed with the bodies.
     orphans: Vec<Instruction>,
@@ -1378,6 +1380,7 @@ fn build_program(
         .iter()
         .map(|(c, g)| (g.as_str(), c.as_str()))
         .collect();
+    let mut base_locals = BaseLocals::new();
     for (at, d) in &loaded.debug.functions {
         let Some(f) = found.functions.get(at) else {
             continue;
@@ -1402,8 +1405,10 @@ fn build_program(
             continue;
         }
         for (i, name) in renames {
-            if let Some((space, offset)) = parameter_storage(&loaded, &proto, i) {
-                let _ = session.set_local(*at, space, offset, &name, "");
+            if let Some((space, offset)) = parameter_storage(&loaded, &proto, i)
+                && session.set_local(*at, space, offset, &name, "").is_ok()
+            {
+                base_locals.insert((*at, space.to_string(), offset), (name, String::new()));
             }
         }
         if d.prototype.noreturn {
@@ -1412,7 +1417,14 @@ fn build_program(
         }
         signatures.insert(*at, signature(&shown, &f.name, &known));
         locked.insert(*at, decl);
-        apply_debug_locals(&mut session, &types, &loaded, *at, &d.locals);
+        apply_debug_locals(
+            &mut session,
+            &types,
+            &loaded,
+            *at,
+            &d.locals,
+            &mut base_locals,
+        );
     }
 
     for (at, m) in &methods {
@@ -1530,6 +1542,7 @@ fn build_program(
         funcs: RwLock::new(funcs),
         edits: Mutex::new(Edits::default()),
         locked: Mutex::new(locked),
+        base_locals,
         insns: Mutex::new(found.insns),
         orphans,
         computed: found.computed,
@@ -2135,6 +2148,11 @@ impl Disassembler for InProcessEngine {
     }
 }
 
+/// The names and declarations the program itself gives variables (DWARF locals, parameters
+/// renamed after their prototype), by function, storage space and offset. A user's override
+/// goes on top of them field by field, and clearing it falls back to them.
+pub(crate) type BaseLocals = BTreeMap<(u64, String, u64), (String, String)>;
+
 /// Names and types the locals DWARF describes: its frame-base offsets become Ghidra stack
 /// offsets (the stack pointer at entry is 0, the return address sits there), set through the
 /// same overrides as a user's `set_local`. A local the decompiler cannot place is left alone.
@@ -2144,6 +2162,7 @@ fn apply_debug_locals(
     loaded: &Loaded,
     at: u64,
     locals: &[crate::dwarf::DebugLocal],
+    base: &mut BaseLocals,
 ) {
     // the frame layout below (return address at the entry stack pointer) is x86's
     if !loaded.language.id.starts_with("x86:") {
@@ -2177,7 +2196,12 @@ fn apply_debug_locals(
         if decl.is_empty() {
             continue;
         }
-        let _ = session.set_local(at, "stack", offset, &l.name, &decl);
+        if session
+            .set_local(at, "stack", offset, &l.name, &decl)
+            .is_ok()
+        {
+            base.insert((at, "stack".to_string(), offset), (l.name.clone(), decl));
+        }
     }
 }
 

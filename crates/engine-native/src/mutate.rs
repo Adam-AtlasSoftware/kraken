@@ -410,7 +410,8 @@ fn apply_inner(p: &Program, op: &VersionedLogOp) -> Result<(), EngineRejected> {
 }
 
 /// Hands the decompiler the name and type the user gave the variable at `storage` of the
-/// function at `at`; the next decompile applies them (and says what it could not apply).
+/// function at `at`, over what DWARF gave it; the next decompile applies them (and says what it
+/// could not apply).
 fn set_local(
     p: &Program,
     at: u64,
@@ -438,6 +439,22 @@ fn set_local(
             decl
         }
         None => String::new(),
+    };
+    // what the user left out (or cleared) stays as the program gave it
+    let (name, decl) = match p.base_locals.get(&(at, space.clone(), offset)) {
+        Some((base_name, base_decl)) => (
+            if name.is_empty() {
+                base_name.as_str()
+            } else {
+                name
+            },
+            if decl.is_empty() {
+                base_decl.clone()
+            } else {
+                decl
+            },
+        ),
+        None => (name, decl),
     };
     p.session()
         .set_local(at, &space, offset, name, &decl)
