@@ -5986,7 +5986,7 @@ Linux ELF programs in the emulator, like `debug_start`; a dynamic program needs 
 | Argument | CLI flag | Type | Required | Description |
 |---|---|---|---|---|
 | `argv` | `--argv` | json | no | Command-line arguments after `argv[0]` (at most 64, each at most 4096 bytes). |
-| `export_path` | `--export-path` | string | no | Where to write the export; an existing file is replaced. |
+| `export_path` | `--export-path` | string | no | Where to write the export (people only); an existing file is replaced, a link is not followed. |
 | `format` | `--format` | string | no | Write an export: `drcov` (for Lighthouse and other coverage plugins), `text` (the step trace) or `json` (everything). Needs `export_path`. |
 | `from_address` | `--from-address` | json | no | Start the step trace at this listing address. |
 | `from_symbol` | `--from-symbol` | string | no | Start the step trace when this function symbol is reached (default: the first instruction). |

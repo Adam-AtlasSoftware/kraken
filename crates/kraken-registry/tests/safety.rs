@@ -247,3 +247,17 @@ async fn dangerous_commands_ask_for_approval_and_deny_by_default() {
     let e = call(ctx).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::Cancelled);
 }
+
+#[tokio::test]
+async fn agents_and_mcp_callers_cannot_write_trace_exports() {
+    let env = Setup::new(tiny()).start().await;
+    let target = env.project_dir.join("victim.txt");
+    std::fs::write(&target, "keep me").expect("write");
+    let args = json!({"format": "drcov", "export_path": target});
+    for ctx in [agent("r"), CallContext::user("adam", Surface::Mcp)] {
+        let e = env.err(&ctx, "debug_trace", args.clone()).await;
+        assert_eq!(e.code, ErrorCode::RejectedHumanPriority, "{e}");
+        assert!(e.message.contains("coverage_blocks"), "{}", e.message);
+    }
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "keep me");
+}

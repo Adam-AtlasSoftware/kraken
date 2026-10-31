@@ -167,7 +167,8 @@ pub struct DebugTraceArgs {
     /// trace) or `json` (everything). Needs `export_path`.
     #[serde(default)]
     pub format: Option<String>,
-    /// Where to write the export; an existing file is replaced.
+    /// Where to write the export (people only); an existing file is replaced, a link is not
+    /// followed.
     #[serde(default)]
     pub export_path: Option<String>,
 }
@@ -242,14 +243,14 @@ impl Command for DebugTrace {
         let plan = validate(&args)?;
         let export = match (&args.format, &args.export_path) {
             (None, None) => None,
-            (Some(f), Some(p)) => {
-                let path = if ctx.needs_user_approval() {
-                    crate::trust::check_agent_path("export_path", Path::new(p))?
-                } else {
-                    PathBuf::from(p)
-                };
-                Some((f.clone(), path))
+            (Some(_), Some(_)) if ctx.needs_user_approval() => {
+                return Err(ProtoError::new(
+                    ErrorCode::RejectedHumanPriority,
+                    "an agent reads the coverage with `coverage_blocks`; writing a file is for \
+                     people",
+                ));
             }
+            (Some(f), Some(p)) => Some((f.clone(), PathBuf::from(p))),
             _ => return Err(invalid("format and export_path go together")),
         };
         let project = s.project()?;
@@ -624,7 +625,7 @@ fn trace_run(
                 }))
                 .map_err(|e| problem(ErrorCode::Internal, e.to_string()))?,
             };
-            std::fs::write(&path, &bytes).map_err(|e| {
+            write_export(&path, &bytes).map_err(|e| {
                 problem(
                     ErrorCode::InvalidArgument,
                     format!("cannot write {}: {e}", path.display()),
@@ -862,5 +863,40 @@ impl Command for CoverageClear {
             })
         })
         .await
+    }
+}
+
+/// Writes an export, replacing a regular file but never following a link at `path`.
+fn write_export(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(not(unix))]
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(std::io::Error::other("it is a link"));
+    }
+    opts.open(path)?.write_all(bytes)
+}
+
+#[cfg(all(test, unix))]
+mod export_tests {
+    use super::write_export;
+
+    #[test]
+    fn an_export_replaces_a_file_but_never_follows_a_link() {
+        let d = tempfile::tempdir().expect("tmp");
+        let real = d.path().join("real");
+        std::fs::write(&real, "old").expect("write");
+        write_export(&real, b"new").expect("replace");
+        assert_eq!(std::fs::read_to_string(&real).expect("read"), "new");
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+        assert!(write_export(&link, b"evil").is_err());
+        assert_eq!(std::fs::read_to_string(&real).expect("read"), "new");
     }
 }
