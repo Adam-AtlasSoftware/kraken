@@ -29,6 +29,9 @@ logged; **dangerous** commands always ask for approval first.
 | [`cfg`](#cfg) | query | safe | Show a function's basic blocks and control-flow edges |
 | [`config_get`](#config_get) | query | safe | Read the settings of config.toml that can be changed from here |
 | [`config_set`](#config_set) | mutation | mutating | Change one setting of config.toml (people only) |
+| [`coverage_blocks`](#coverage_blocks) | query | safe | List the basic blocks that ran, from one stored run or all of them |
+| [`coverage_clear`](#coverage_clear) | mutation | mutating | Remove one stored coverage run or all of them |
+| [`coverage_list`](#coverage_list) | query | safe | List the coverage runs stored in the project |
 | [`create_function`](#create_function) | mutation | mutating | Create a function at an address |
 | [`debug_break_list`](#debug_break_list) | query | safe | List the breakpoints of a debug session |
 | [`debug_break_remove`](#debug_break_remove) | query | safe | Remove a breakpoint of the debugged program |
@@ -48,6 +51,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`debug_step_out`](#debug_step_out) | query | safe | Run the debugged program until the current function returns |
 | [`debug_step_over`](#debug_step_over) | query | safe | Execute one instruction of the debugged program, running a call to its return |
 | [`debug_stop`](#debug_stop) | query | safe | End a debug session and its emulator child |
+| [`debug_trace`](#debug_trace) | job | mutating | Run the program in the emulator and record the basic blocks that execute (job) |
 | [`debug_watch_remove`](#debug_watch_remove) | query | safe | Remove a watchpoint of the debugged program |
 | [`debug_watch_set`](#debug_watch_set) | query | safe | Stop the debugged program when it writes (or reads) a range of memory |
 | [`debuginfo_attach`](#debuginfo_attach) | job | mutating | Attach a separate debug file to the project and reopen the engine with it (job) |
@@ -2731,6 +2735,264 @@ The value is checked against the key's type before anything is written, and the 
     "person_only"
   ],
   "title": "ConfigEntry",
+  "type": "object"
+}
+```
+
+</details>
+
+## coverage_blocks
+
+List the basic blocks that ran, from one stored run or all of them
+
+```sh
+kraken coverage-blocks [options]
+```
+
+- Kind: query
+- Permission: safe
+
+Blocks by address with their hit counts, paginated. Without `run` the runs are merged (hits added). The GUI overlay reads this.
+
+Example: `coverage_blocks {"run": 1, "limit": 500}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `cursor` | `--cursor` | string | no | Cursor from the previous page's `next_cursor`. |
+| `limit` | `--limit` | integer | no | Page size (default 100, at most 5000). |
+| `run` | `--run` | integer | no | One run (default: all runs together, hits added up). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "CoverageBlock": {
+      "description": "One basic block that ran.",
+      "properties": {
+        "hits": {
+          "description": "How many times control entered the block.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "description": "Length of the block in bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "$ref": "#/$defs/Hex64",
+          "description": "Address of the first instruction (listing address)."
+        }
+      },
+      "required": [
+        "start",
+        "size",
+        "hits"
+      ],
+      "type": "object"
+    },
+    "Hex64": {
+      "description": "Unsigned 64-bit integer as a 0x-prefixed hex string.",
+      "pattern": "^0[xX][0-9a-fA-F]{1,16}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One page of results with an optional cursor for the next page.",
+  "properties": {
+    "items": {
+      "description": "The items on this page.",
+      "items": {
+        "$ref": "#/$defs/CoverageBlock"
+      },
+      "type": "array"
+    },
+    "next_cursor": {
+      "description": "Cursor for the next page; absent on the last page.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "total": {
+      "description": "Total item count when the engine can cheaply provide it.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "Page",
+  "type": "object"
+}
+```
+
+</details>
+
+## coverage_clear
+
+Remove one stored coverage run or all of them
+
+```sh
+kraken coverage-clear [options]
+```
+
+- Kind: mutation
+- Permission: mutating
+
+Deletes coverage kept by `debug_trace`; the overlay in the GUI goes with it. Exports already written are not touched.
+
+Example: `coverage_clear {"run": 2}`
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `run` | `--run` | integer | no | Remove only this run (default: all). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `coverage_clear`.",
+  "properties": {
+    "remaining": {
+      "description": "Runs left.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "removed": {
+      "description": "Runs removed.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "removed",
+    "remaining"
+  ],
+  "title": "CoverageClearOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## coverage_list
+
+List the coverage runs stored in the project
+
+```sh
+kraken coverage-list
+```
+
+- Kind: query
+- Permission: safe
+
+One row per `debug_trace` run: id, label, how it ended, instructions, and how many of the known basic blocks ran. `coverage_blocks` has the blocks themselves.
+
+Example: `coverage_list {}`
+
+Arguments: none.
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "CoverageRunSummary": {
+      "description": "What `coverage_list` says about one run.",
+      "properties": {
+        "arch": {
+          "description": "The architecture.",
+          "type": "string"
+        },
+        "blocks_hit": {
+          "description": "Basic blocks that ran at least once.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blocks_total": {
+          "description": "Basic blocks the engine knows (the ones watched).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created": {
+          "description": "When it ran, seconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exit": {
+          "description": "How the run ended.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The id other commands take.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instructions": {
+          "description": "Instructions executed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "description": "The label given at the start (default: the program name).",
+          "type": "string"
+        },
+        "steps_recorded": {
+          "description": "Instructions recorded in the step trace (0 when none was asked for).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "created",
+        "arch",
+        "exit",
+        "instructions",
+        "blocks_total",
+        "blocks_hit",
+        "steps_recorded"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `coverage_list`.",
+  "properties": {
+    "runs": {
+      "description": "The stored runs, oldest first.",
+      "items": {
+        "$ref": "#/$defs/CoverageRunSummary"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "runs"
+  ],
+  "title": "CoverageListOut",
   "type": "object"
 }
 ```
@@ -5697,6 +5959,60 @@ Example: `debug_stop {"session": 1}`
     "ended"
   ],
   "title": "DebugStopSessionOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## debug_trace
+
+Run the program in the emulator and record the basic blocks that execute (job)
+
+```sh
+kraken debug-trace [options]
+```
+
+- Kind: job
+- Permission: mutating
+
+Runs the project's program to its end in the confined emulator and counts how often each basic block the engine knows ran. The coverage is stored in the project (`coverage_list`, `coverage_clear`) and the GUI shades executed blocks and lines. Add `step_trace` for the first N instructions one by one with register changes, `memory` for the bytes they wrote. `format` and `export_path` write `drcov` (for coverage plugins), `text` or `json`. Returns a `job_id`; the result is a `DebugTraceOut`.
+
+Example: `debug_trace {"stdin": "hello\n", "format": "drcov", "export_path": "/tmp/run.drcov"}`
+
+Linux ELF programs in the emulator, like `debug_start`; a dynamic program needs a sysroot or this computer's libraries. Only blocks of the program itself are watched, not the loader or libraries. Block coverage costs little; a step trace runs one instruction at a time, so keep it short and use `from_symbol` to skip start-up. The drcov file lists blocks as offsets from the program's image base. At most 20 runs are kept per project, oldest first out. Nothing in the project changes except the coverage store.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `argv` | `--argv` | json | no | Command-line arguments after `argv[0]` (at most 64, each at most 4096 bytes). |
+| `export_path` | `--export-path` | string | no | Where to write the export; an existing file is replaced. |
+| `format` | `--format` | string | no | Write an export: `drcov` (for Lighthouse and other coverage plugins), `text` (the step trace) or `json` (everything). Needs `export_path`. |
+| `from_address` | `--from-address` | json | no | Start the step trace at this listing address. |
+| `from_symbol` | `--from-symbol` | string | no | Start the step trace when this function symbol is reached (default: the first instruction). |
+| `label` | `--label` | string | no | A name for this run in `coverage_list` (default the program's name; at most 80 characters). |
+| `max_steps` | `--max-steps` | integer | no | Instruction budget of the whole run (default 100 million, at most 1 billion). |
+| `memory` | `--memory` | boolean | no | Record the memory the traced instructions wrote (default false). |
+| `stdin` | `--stdin` | string | no | Text for the program's standard input (default empty; at most 1 MiB). |
+| `step_trace` | `--step-trace` | integer | no | Also record this many executed instructions one by one with their register changes (at most 200000; default 0, none). |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit in seconds (default 10, at most 120). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A started job.",
+  "properties": {
+    "job_id": {
+      "description": "Id to pass to `job_status`, `job_await` and `job_cancel`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id"
+  ],
+  "title": "JobStarted",
   "type": "object"
 }
 ```

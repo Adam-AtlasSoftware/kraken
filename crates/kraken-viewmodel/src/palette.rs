@@ -108,6 +108,12 @@ pub enum AppAction {
     CheckPatches,
     /// Call the current function in the emulator with arguments you give.
     CallFunction,
+    /// Run the program and record which code ran.
+    RecordCoverage,
+    /// Shade the code a recorded run executed in the Listing and the Graph.
+    ToggleCoverage,
+    /// Forget the recorded coverage.
+    ClearCoverage,
     /// Show the Emulation tab.
     ShowEmulation,
     /// Read how running the program in the emulator works.
@@ -171,6 +177,9 @@ impl AppAction {
         AppAction::VerifyPatches,
         AppAction::CheckPatches,
         AppAction::CallFunction,
+        AppAction::RecordCoverage,
+        AppAction::ToggleCoverage,
+        AppAction::ClearCoverage,
         AppAction::ShowEmulation,
         AppAction::EmulationHelp,
         AppAction::CreateFunctionHere,
@@ -306,6 +315,9 @@ impl AppAction {
             AppAction::VerifyPatches => "Verify patches...",
             AppAction::CheckPatches => "Check patches",
             AppAction::CallFunction => "Call this function...",
+            AppAction::RecordCoverage => "Record coverage...",
+            AppAction::ToggleCoverage => "Show coverage",
+            AppAction::ClearCoverage => "Clear coverage",
             AppAction::ShowEmulation => "Show emulation results",
             AppAction::EmulationHelp => "About running programs",
             AppAction::CreateFunctionHere => "Create function here",
@@ -417,6 +429,13 @@ impl AppAction {
             AppAction::CallFunction => {
                 "Run just this function in the emulator with arguments you give; shows its return value and what it wrote"
             }
+            AppAction::RecordCoverage => {
+                "Run the program in the sandboxed emulator and mark every block of code that ran"
+            }
+            AppAction::ToggleCoverage => {
+                "Shade the instructions and graph blocks the recorded run executed, with how often"
+            }
+            AppAction::ClearCoverage => "Forget the recorded coverage of this project",
             AppAction::ShowEmulation => "See what the last run or comparison did",
             AppAction::EmulationHelp => {
                 "What the emulator does, what it cannot do, and why running here is safe"

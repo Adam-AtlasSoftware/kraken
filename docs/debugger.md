@@ -138,6 +138,47 @@ kraken debug-gdb-serve --session 1 --tcp true
   position-independent program. x86-64 was exercised with a real gdb; the other architectures use
   generated target descriptions that are unit-checked but not yet tried against a client.
 
+## Traces and coverage
+
+`debug_trace` is a job: it runs the program in the same confined emulator and records which basic
+blocks execute. It stops at the exit, the instruction budget (`max_steps`, default 100 million) or
+the wall-clock limit (`timeout_seconds`, default 10). The result is kept in the project as a
+coverage run, up to the 20 most recent.
+
+```
+kraken debug-trace --stdin "3" --format drcov --export-path run.drcov
+kraken coverage-list
+kraken coverage-blocks --run 1
+kraken coverage-clear --run 1
+```
+
+- `format: drcov` writes a DynamoRIO coverage file (version 2, one module, one entry per block
+  that ran) that Lighthouse and other coverage plugins read. `text` writes the step trace and
+  `json` everything.
+- `step_trace: N` also records the first N executed instructions (at most 200000) one at a time,
+  each with its address, disassembly, the registers it changed (before and after) and, with
+  `memory: true`, the bytes it wrote (at most 16 per write). `from_symbol` or `from_address` starts
+  the step trace later than the first instruction. A step trace is slower than coverage alone.
+- Blocks are the engine's basic blocks; a block counts when its first instruction runs. Hit counts
+  say how often control entered it. Running the same program with the same input gives the same
+  blocks and counts.
+- A dynamic program starts in the loader: the first steps are the dynamic loader's code, whose
+  addresses are shifted by the program's load difference and mean nothing in the Listing. Use
+  `from_symbol: "main"` to start the step trace in the program.
+- The program text and disassembly in a trace come from the program's bytes, so they are treated
+  as untrusted: control characters are removed and lines are length-capped.
+- Only whole programs are traced for now, not a single `emulate_call`.
+
+In the window, Emulate > Record coverage runs the program with no arguments or input and switches
+the overlay on; the Coverage button in the Listing and Graph headers does the same the first time
+and then shows or hides the overlay (Emulate > Show coverage does too). Executed instructions get a
+green bar and tint with a tooltip saying how often the block ran; executed graph blocks are tinted
+and say `ran Nx` in their title. Emulate > Clear coverage forgets it. The Decompiler is not shaded:
+the decompiler's output carries no instruction addresses to map lines to.
+
+In Python: `project.trace(stdin="3", format="drcov", export_path="run.drcov")`,
+`project.coverage_runs()`, `project.coverage_blocks()`, `project.coverage_clear()`.
+
 ## Addresses
 
 Addresses in arguments and results are the Listing's. For a position-independent program the

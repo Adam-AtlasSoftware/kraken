@@ -663,6 +663,11 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         "debuginfo_find".to_string(),
         "debuginfo_servers".to_string(),
     ]);
+    // debug_trace runs the emulator in a confined child: tested in kraken-e2e (trace_native.rs).
+    covered.insert("debug_trace".to_string());
+    step!("coverage_list", json!({}));
+    step!("coverage_blocks", json!({"limit": 5}));
+    step!("coverage_clear", json!({}));
     let denied = step!("rewrite_accept", json!({"unit": "ru-1"}));
     assert_eq!(denied["code"], "rejected_human_priority", "{denied}");
     for cmd in ["rewrite_reject", "rewrite_unaccept"] {

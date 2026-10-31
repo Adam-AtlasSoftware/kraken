@@ -88,15 +88,17 @@ pub use data::{
 };
 #[cfg(unix)]
 pub use debug::{
-    DebugBreakArgs, DebugBreakList, DebugBreakOut, DebugBreakRemove, DebugBreakSet, DebugContinue,
-    DebugDisasm, DebugDisasmArgs, DebugDisasmOut, DebugGdbServe, DebugGdbServeArgs,
-    DebugGdbServeOut, DebugInsn, DebugMemOut, DebugMemRead, DebugMemReadArgs, DebugRegister,
-    DebugRegs, DebugRegsOut, DebugReverseContinue, DebugReverseStep, DebugReverseStepArgs,
-    DebugRunArgs, DebugRunTo, DebugRunToArgs, DebugSessionArgs, DebugSessions, DebugSessionsOut,
-    DebugStart, DebugStartArgs, DebugStartOut, DebugStateCommand, DebugStateOut, DebugStep,
-    DebugStepArgs, DebugStepOut, DebugStepOver, DebugStop, DebugStopOut, DebugStopSession,
-    DebugStopSessionOut, DebugTable, DebugWatch, DebugWatchArgs, DebugWatchHit, DebugWatchOut,
-    DebugWatchRemove, DebugWatchSet,
+    CoverageBlocks, CoverageBlocksArgs, CoverageClear, CoverageClearArgs, CoverageClearOut,
+    CoverageList, CoverageListOut, CoverageRunSummary, DebugBreakArgs, DebugBreakList,
+    DebugBreakOut, DebugBreakRemove, DebugBreakSet, DebugContinue, DebugDisasm, DebugDisasmArgs,
+    DebugDisasmOut, DebugGdbServe, DebugGdbServeArgs, DebugGdbServeOut, DebugInsn, DebugMemOut,
+    DebugMemRead, DebugMemReadArgs, DebugRegister, DebugRegs, DebugRegsOut, DebugReverseContinue,
+    DebugReverseStep, DebugReverseStepArgs, DebugRunArgs, DebugRunTo, DebugRunToArgs,
+    DebugSessionArgs, DebugSessions, DebugSessionsOut, DebugStart, DebugStartArgs, DebugStartOut,
+    DebugStateCommand, DebugStateOut, DebugStep, DebugStepArgs, DebugStepOut, DebugStepOver,
+    DebugStop, DebugStopOut, DebugStopSession, DebugStopSessionOut, DebugTable, DebugTrace,
+    DebugTraceArgs, DebugTraceOut, DebugWatch, DebugWatchArgs, DebugWatchHit, DebugWatchOut,
+    DebugWatchRemove, DebugWatchSet, TraceExport,
 };
 pub use debuginfo::{
     CandidateSource, DebugCandidate, DebugInfoAttach, DebugInfoAttachArgs, DebugInfoDetach,
@@ -494,6 +496,10 @@ pub fn register_all(r: &mut Registry) {
     {
         r.register(EmulateCall);
         r.register(DebugStart);
+        r.register(DebugTrace);
+        r.register(CoverageList);
+        r.register(CoverageBlocks);
+        r.register(CoverageClear);
         r.register(DebugStep);
         r.register(DebugStepOver);
         r.register(DebugStepOut);

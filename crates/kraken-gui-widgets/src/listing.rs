@@ -35,6 +35,9 @@ impl OperandToken {
 /// Gutter bar and tint of an instruction a byte patch changes.
 pub const PATCH_COLOR: egui::Color32 = egui::Color32::from_rgb(226, 160, 40);
 
+/// Tint and gutter bar of code a recorded run executed.
+pub const COVER_COLOR: egui::Color32 = egui::Color32::from_rgb(70, 170, 100);
+
 /// What the gutter of a row shows for a debugger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RowMark {
@@ -74,6 +77,9 @@ pub struct ListingRow {
     /// Set when a byte patch changes this instruction: the hover text (original bytes, note).
     /// The row gets an amber bar in the gutter and a tint.
     pub patch: Option<String>,
+    /// How often a recorded run entered the block holding this instruction (`None`: it did not
+    /// run, or the coverage overlay is off). Drawn as a green bar and tint.
+    pub cover: Option<u64>,
 }
 
 /// Lazy provider of listing rows.
@@ -175,6 +181,17 @@ impl<'a> ListingView<'a> {
             if row.mark.is_current() {
                 painter.rect_filled(rect, 0.0, pal.accent.gamma_multiply(0.28));
             }
+            if row.cover.is_some() {
+                painter.rect_filled(rect, 0.0, COVER_COLOR.gamma_multiply(0.14));
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(rect.left() + 3.0, rect.top()),
+                        Pos2::new(rect.left() + 6.0, rect.bottom()),
+                    ),
+                    0.0,
+                    COVER_COLOR,
+                );
+            }
             if row.patch.is_some() {
                 painter.rect_filled(rect, 0.0, PATCH_COLOR.gamma_multiply(0.14));
                 painter.rect_filled(
@@ -223,6 +240,19 @@ impl<'a> ListingView<'a> {
             let hovering_row = pointer.is_some_and(|p| rect.contains(p));
             if hovering_row {
                 out.row_hovered = Some(index);
+                if let Some(n) = row.cover
+                    && row.patch.is_none()
+                {
+                    egui::Tooltip::always_open(
+                        ui.ctx().clone(),
+                        ui.layer_id(),
+                        ui.id().with(("cover-tip", index)),
+                        egui::PopupAnchor::Pointer,
+                    )
+                    .show(|ui| {
+                        ui.label(format!("Ran {n} time{}", if n == 1 { "" } else { "s" }));
+                    });
+                }
                 if let Some(text) = &row.patch {
                     egui::Tooltip::always_open(
                         ui.ctx().clone(),

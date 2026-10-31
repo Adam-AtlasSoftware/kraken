@@ -816,6 +816,57 @@ class Project:
         out = self.call("debug_start", argv=argv or [], stdin=stdin, patched=patched)
         return Debugger(self, out)
 
+    def trace(
+        self,
+        *,
+        argv: list[str] | None = None,
+        stdin: str = "",
+        format: str | None = None,
+        export_path: str | None = None,
+        step_trace: int = 0,
+        memory: bool = False,
+        label: str | None = None,
+        timeout: float | None = None,
+    ) -> JobResult:
+        """Runs the program in the emulator recording which basic blocks execute.
+
+        The coverage is kept in the project (``coverage_runs()``, ``coverage_blocks()``). With
+        ``format`` (``drcov``, ``text`` or ``json``) and ``export_path`` the trace is also written
+        to a file; ``step_trace`` records that many instructions with register changes.
+        """
+        args: dict[str, Any] = {"argv": argv or [], "stdin": stdin, "step_trace": step_trace}
+        args["memory"] = memory
+        for key, value in (("format", format), ("export_path", export_path), ("label", label)):
+            if value is not None:
+                args[key] = value
+        out = self.call("debug_trace", **args)
+        return Job(self, out["job_id"], "debug_trace").wait(None, timeout=timeout)  # type: ignore[return-value]
+
+    def coverage_runs(self) -> list[dict[str, Any]]:
+        """The coverage runs stored in the project."""
+        return self.call("coverage_list")["runs"]  # type: ignore[no-any-return]
+
+    def coverage_blocks(self, run: int | None = None) -> list[dict[str, Any]]:
+        """The basic blocks that ran (all runs merged without ``run``), all pages."""
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            args: dict[str, Any] = {"limit": 5000}
+            if run is not None:
+                args["run"] = run
+            if cursor is not None:
+                args["cursor"] = cursor
+            page = self.call("coverage_blocks", **args)
+            items.extend(page["items"])
+            cursor = page.get("next_cursor")
+            if not cursor:
+                return items
+
+    def coverage_clear(self, run: int | None = None) -> dict[str, Any]:
+        """Removes one stored coverage run, or all of them."""
+        args = {} if run is None else {"run": run}
+        return self.call("coverage_clear", **args)  # type: ignore[no-any-return]
+
     # -- lifecycle ----------------------------------------------------------------------------
 
     def __enter__(self) -> Project:

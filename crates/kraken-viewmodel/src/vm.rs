@@ -1964,6 +1964,9 @@ impl ViewModel {
                 | AppAction::ComparePatched
                 | AppAction::CallFunction
                 | AppAction::ShowEmulation
+                | AppAction::RecordCoverage
+                | AppAction::ToggleCoverage
+                | AppAction::ClearCoverage
                 | AppAction::CreateFunctionHere
                 | AppAction::DeleteFunction
         );
@@ -2056,6 +2059,12 @@ impl ViewModel {
             }
             AppAction::CallFunction => self.begin_call_current(),
             AppAction::ShowEmulation => self.show_emulation(),
+            AppAction::RecordCoverage => self.record_coverage(),
+            AppAction::ToggleCoverage => {
+                let on = !self.tools.coverage.show;
+                self.set_coverage_shown(on);
+            }
+            AppAction::ClearCoverage => self.clear_coverage(),
             AppAction::EmulationHelp => return Some(UiRequest::ShowEmulationHelp),
             AppAction::CreateFunctionHere => self.begin_create_function_here(),
             AppAction::DeleteFunction => self.begin_delete_current(),

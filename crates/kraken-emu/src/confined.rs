@@ -397,6 +397,16 @@ pub enum DebugRequest {
     Output { out_from: usize, err_from: usize },
     /// A function symbol's address.
     Symbol { name: String },
+    /// Count how often each of these runtime addresses runs (before anything ran).
+    Track { addrs: Vec<u64> },
+    /// The tracked addresses that ran, with counts.
+    Coverage,
+    /// Run up to `max` instructions one by one, recording each.
+    TraceSteps {
+        max: u64,
+        memory: bool,
+        wall_ms: u64,
+    },
 }
 
 /// The state of a debugging runner.
@@ -448,6 +458,14 @@ pub enum DebugReply {
     Output { stdout: Vec<u8>, stderr: Vec<u8> },
     /// A symbol.
     Symbol { addr: Option<u64> },
+    /// Tracked addresses with their counts.
+    Coverage { blocks: Vec<(u64, u64)> },
+    /// A step trace and why it ended.
+    Trace {
+        steps: Vec<crate::session::TraceStep>,
+        stop: SessionStop,
+        state: DebugState,
+    },
 }
 
 /// Longest wall-clock limit of one run request the child honours.
@@ -555,6 +573,36 @@ fn handle(s: &Session, req: DebugRequest) -> Result<DebugReply, EmuError> {
                 stderr: e.get(err_from..).unwrap_or_default().to_vec(),
             }
         }
+        DebugRequest::Track { addrs } => {
+            s.track_blocks(addrs)?;
+            DebugReply::Done
+        }
+        DebugRequest::Coverage => DebugReply::Coverage {
+            blocks: s.block_counts()?,
+        },
+        DebugRequest::TraceSteps {
+            max,
+            memory,
+            wall_ms,
+        } => {
+            let int = s.interrupter();
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            let wall = Duration::from_millis(wall_ms.clamp(1, MAX_WALL_MS));
+            let dog = std::thread::spawn(move || {
+                if done_rx.recv_timeout(wall) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                    int.interrupt();
+                }
+            });
+            let r = s.trace_steps(max, memory);
+            drop(done_tx);
+            let _ = dog.join();
+            let (steps, stop) = r?;
+            DebugReply::Trace {
+                steps,
+                stop,
+                state: debug_state(s)?,
+            }
+        }
         DebugRequest::Symbol { name } => DebugReply::Symbol {
             addr: s.symbol(&name)?,
         },
@@ -657,7 +705,8 @@ impl DebugChild {
             | DebugRequest::RunTo { wall_ms, .. }
             | DebugRequest::Finish { wall_ms, .. }
             | DebugRequest::ReverseStep { wall_ms, .. }
-            | DebugRequest::ReverseContinue { wall_ms, .. } => *wall_ms,
+            | DebugRequest::ReverseContinue { wall_ms, .. }
+            | DebugRequest::TraceSteps { wall_ms, .. } => *wall_ms,
             _ => 0,
         };
         if self.sandbox.is_none() {

@@ -158,6 +158,21 @@ pub struct Insn {
     pub text: String,
 }
 
+/// One executed instruction of a step trace ([`Session::trace_steps`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceStep {
+    /// Instructions executed before this one.
+    pub icount: u64,
+    /// Its address.
+    pub pc: u64,
+    /// SLEIGH disassembly.
+    pub text: String,
+    /// Registers it changed: name, value before, value after.
+    pub regs: Vec<(String, u64, u64)>,
+    /// Memory it wrote: address and the bytes now there (at most 16).
+    pub writes: Vec<(u64, Vec<u8>)>,
+}
+
 /// A snapshot handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SnapshotId(pub usize);
@@ -193,6 +208,10 @@ struct Inner {
     history_every: u64,
     /// Replaying recorded history: breakpoints and watchpoints are ignored.
     replaying: bool,
+    /// Block coverage being recorded ([`Session::track_blocks`]).
+    cover: Option<crate::machine::BlockLog>,
+    /// Counts taken from `cover` so far.
+    seen: BTreeMap<u64, u64>,
 }
 
 type Job = Box<dyn FnOnce(&mut Inner) + Send>;
@@ -268,6 +287,8 @@ impl Inner {
                         history: Vec::new(),
                         history_every: HISTORY_EVERY,
                         replaying: false,
+                        cover: None,
+                        seen: BTreeMap::new(),
                     },
                     arch,
                 ))
@@ -309,6 +330,8 @@ impl Inner {
                         history: Vec::new(),
                         history_every: HISTORY_EVERY,
                         replaying: false,
+                        cover: None,
+                        seen: BTreeMap::new(),
                     },
                     arch,
                 ))
@@ -430,6 +453,62 @@ impl Inner {
             self.done = Some(result.clone());
         }
         result
+    }
+
+    fn trace_steps(&mut self, max: u64, memory: bool) -> (Vec<TraceStep>, SessionStop) {
+        let names = self.m().arch().display_regs();
+        let hooks = memory.then(|| self.m().add_access_hooks(0, 1 << 47, false, true));
+        let read_all = |m: &mut Machine| -> Vec<u64> {
+            names
+                .iter()
+                .map(|n| m.read_reg(n).unwrap_or(0))
+                .collect::<Vec<_>>()
+        };
+        let mut steps = Vec::new();
+        let mut stop = SessionStop::Stepped;
+        while (steps.len() as u64) < max {
+            let pc = self.m().pc();
+            let thumb = self.m().thumb();
+            let text = self
+                .m()
+                .disasm_at(pc, Some(thumb))
+                .map(|(t, _)| t)
+                .unwrap_or_default();
+            let before = read_all(self.m());
+            let icount = self.m().icount();
+            self.m().take_accesses();
+            stop = self.run(1, None);
+            let after = read_all(self.m());
+            let regs = names
+                .iter()
+                .zip(before.iter().zip(after.iter()))
+                .filter(|(_, (a, b))| a != b)
+                .map(|(n, (a, b))| (n.to_string(), *a, *b))
+                .collect();
+            let mut writes = Vec::new();
+            if memory {
+                for a in self.m().take_accesses().into_iter().filter(|a| a.write) {
+                    let len = a.len.clamp(1, 16) as usize;
+                    if let Ok(bytes) = self.m().read_vec(a.addr, len) {
+                        writes.push((a.addr, bytes));
+                    }
+                }
+            }
+            steps.push(TraceStep {
+                icount,
+                pc,
+                text,
+                regs,
+                writes,
+            });
+            if !matches!(stop, SessionStop::Stepped) {
+                break;
+            }
+        }
+        if let Some(h) = hooks {
+            self.m().remove_access_hooks(&h);
+        }
+        (steps, stop)
     }
 
     fn mark(&self) -> KernelMark {
@@ -1108,6 +1187,41 @@ impl Session {
             i.refresh_shadows();
             Ok(())
         })?
+    }
+
+    /// Starts counting how often each of the instruction addresses `addrs` (runtime addresses,
+    /// for example the starts of basic blocks) runs. Call it before anything has run: code the
+    /// emulator already lifted is not watched.
+    pub fn track_blocks(&self, addrs: Vec<u64>) -> Result<(), EmuError> {
+        self.call(move |i| {
+            let log = i.m().track_addresses(&addrs);
+            i.cover = Some(log);
+        })
+    }
+
+    /// The tracked addresses that ran so far with their counts (empty when none is tracked).
+    pub fn block_counts(&self) -> Result<Vec<(u64, u64)>, EmuError> {
+        self.call(|i| {
+            let Some(log) = &i.cover else {
+                return Vec::new();
+            };
+            // `take_counts` empties the log; keep adding to what was seen.
+            for (a, n) in log.take_counts() {
+                *i.seen.entry(a).or_insert(0) += n;
+            }
+            i.seen.iter().map(|(a, n)| (*a, *n)).collect()
+        })
+    }
+
+    /// Runs up to `max` instructions one at a time and records each: its address, disassembly,
+    /// the registers it changed and (with `memory`) the bytes it wrote. Ends early when the
+    /// program stops.
+    pub fn trace_steps(
+        &self,
+        max: u64,
+        memory: bool,
+    ) -> Result<(Vec<TraceStep>, SessionStop), EmuError> {
+        self.call(move |i| i.trace_steps(max, memory))
     }
 
     /// Runs to the end with a wall-clock limit (program sessions).

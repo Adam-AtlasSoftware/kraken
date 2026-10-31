@@ -16,6 +16,12 @@
 //! values are the emulator's own.
 
 mod gdb;
+mod trace;
+pub use trace::{
+    CoverageBlocks, CoverageBlocksArgs, CoverageClear, CoverageClearArgs, CoverageClearOut,
+    CoverageList, CoverageListOut, CoverageRunSummary, DebugTrace, DebugTraceArgs, DebugTraceOut,
+    TraceExport,
+};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -22,6 +22,7 @@ pub mod meta;
 pub mod page;
 pub mod program;
 pub mod progress;
+pub mod trace;
 pub mod types;
 pub mod untrusted;
 

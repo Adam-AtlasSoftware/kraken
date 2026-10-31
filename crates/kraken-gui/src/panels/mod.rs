@@ -10,7 +10,7 @@ pub mod graph;
 pub mod hex;
 pub mod listing;
 pub mod next_steps;
-pub use listing::{patch_color, patched_toggle};
+pub use listing::{coverage_toggle, patch_color, patched_toggle};
 pub mod patches;
 pub mod search;
 pub mod source_edit;

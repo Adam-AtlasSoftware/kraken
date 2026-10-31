@@ -11,12 +11,15 @@ use crate::workspace::Tab;
 /// The widget model of the last graph, rebuilt only when the graph's revision changes.
 #[derive(Default)]
 pub struct GraphUi {
-    revision: Option<u64>,
+    revision: Option<(u64, u64)>,
     model: CfgModel,
 }
 
 /// Converts the view-model's graph into the widget's model.
-pub fn model_of(data: &GraphData) -> CfgModel {
+pub fn model_of(
+    data: &GraphData,
+    cover: Option<&kraken_viewmodel::navtools::CoveragePanel>,
+) -> CfgModel {
     CfgModel {
         blocks: data
             .blocks
@@ -25,6 +28,7 @@ pub fn model_of(data: &GraphData) -> CfgModel {
                 id: b.id,
                 title: b.title.clone(),
                 lines: b.lines.clone(),
+                cover: cover.and_then(|c| c.hits_in(b.id, b.end.max(b.id + 1))),
             })
             .collect(),
         edges: data
@@ -77,6 +81,7 @@ pub fn show(
             ui.spinner();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            super::coverage_toggle(ui, vm);
             if ui
                 .button("Listing  (Space)")
                 .on_hover_text("See the same code as a plain list of instructions")
@@ -123,14 +128,16 @@ pub fn show(
         return;
     }
     let revision = vm.views.graph.revision;
-    if st.graph.revision != Some(revision) {
-        st.graph.model = model_of(data);
-        st.graph.revision = Some(revision);
+    let cover = vm.tools.coverage.active().then_some(&vm.tools.coverage);
+    let shown = (revision, cover.map_or(0, |c| c.revision));
+    if st.graph.revision != Some(shown) {
+        st.graph.model = model_of(data, cover);
+        st.graph.revision = Some(shown);
     }
     let mut selected = vm.views.graph.selected;
     let out = GraphView::new(&st.graph.model)
         .id_salt("graph")
-        .cache_id(revision)
+        .cache_id(shown.0 ^ (shown.1 << 40))
         .show(ui, &mut selected);
     if out.changed
         && let Some(b) = selected
@@ -195,7 +202,7 @@ mod unit {
             ],
             entry: Some(0x10),
         };
-        let m = model_of(&data);
+        let m = model_of(&data, None);
         assert_eq!(m.blocks.len(), 2);
         assert_eq!(m.entry, Some(0x10));
         assert_eq!(m.edges[0].2, EdgeKind::ConditionalTrue);

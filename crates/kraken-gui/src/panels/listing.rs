@@ -84,6 +84,7 @@ impl DebugMarks<'_> {
 
 struct Source<'a> {
     marks: DebugMarks<'a>,
+    cover: Option<&'a kraken_viewmodel::navtools::CoveragePanel>,
     rows: &'a [ListingRowItem],
     lines: &'a [Line],
     max_seen: Cell<usize>,
@@ -106,11 +107,13 @@ impl ListingSource for Source<'_> {
                 operands: Vec::new(),
                 comment: None,
                 patch: None,
+                cover: None,
             },
             Line::Insn(i) => {
                 let r = &self.rows[*i];
                 ListingRow {
                     mark: self.marks.mark(r.address),
+                    cover: self.cover.and_then(|c| c.hits_at(r.address)),
                     address: r.address,
                     bytes: r.bytes.clone(),
                     mnemonic: r.mnemonic.clone(),
@@ -174,6 +177,28 @@ pub fn patched_toggle(ui: &mut Ui, patched: bool) -> Option<bool> {
     pick
 }
 
+/// The Coverage switch of the Listing and the Graph: shades what a recorded run executed. With
+/// nothing recorded yet, clicking records a run.
+pub fn coverage_toggle(ui: &mut Ui, vm: &mut ViewModel) {
+    let c = &vm.tools.coverage;
+    let (show, has, busy) = (c.show, c.has_data(), c.busy);
+    let hint = if busy {
+        "Recording coverage..."
+    } else if has {
+        "Shade the code a recorded run executed, and how often. Emulate > Record coverage records a new run"
+    } else {
+        "Run the program in the emulator and shade the code that ran"
+    };
+    if ui
+        .add_enabled(!busy, egui::Button::selectable(show, "Coverage"))
+        .on_hover_text(hint)
+        .on_disabled_hover_text(hint)
+        .clicked()
+    {
+        vm.toggle_coverage_or_record();
+    }
+}
+
 /// Amber of the patched-code marks.
 pub fn patch_color() -> egui::Color32 {
     kraken_gui_widgets::PATCH_COLOR
@@ -210,6 +235,7 @@ pub fn show(
             if let Some(on) = patched_toggle(ui, vm.views.patched) {
                 vm.set_patched_view(on);
             }
+            coverage_toggle(ui, vm);
             let row = vm.views.listing.selected_row().is_some();
             if ui
                 .add_enabled(row, egui::Button::new("Patch bytes"))
@@ -290,6 +316,7 @@ pub fn show(
         },
         rows: &l.rows,
         lines: &st.listing.lines,
+        cover: vm.tools.coverage.active().then_some(&vm.tools.coverage),
         max_seen: Cell::new(0),
     };
     let digits = if l
@@ -402,5 +429,33 @@ mod unit {
         assert_eq!(ui.insn_line, vec![9]);
         ui.refresh(Some(1), 2, &rows);
         assert_eq!(ui.insn_line.len(), 3);
+    }
+
+    #[test]
+    fn rows_of_executed_blocks_carry_their_hit_count() {
+        use kraken_proto::Hex64;
+        use kraken_proto::trace::CoverageBlock;
+        let rows = [row(0x10, &[]), row(0x11, &[]), row(0x20, &[])];
+        let mut cover = kraken_viewmodel::navtools::CoveragePanel::default();
+        cover.set_blocks(&[CoverageBlock {
+            start: Hex64(0x10),
+            size: 2,
+            hits: 4,
+        }]);
+        let lines = lines_for(&rows);
+        let bps = Default::default();
+        let src = Source {
+            marks: DebugMarks {
+                breakpoints: &bps,
+                pc: None,
+            },
+            cover: Some(&cover),
+            rows: &rows,
+            lines: &lines,
+            max_seen: Cell::new(0),
+        };
+        assert_eq!(src.row(0).cover, Some(4));
+        assert_eq!(src.row(1).cover, Some(4));
+        assert_eq!(src.row(2).cover, None);
     }
 }

@@ -28,6 +28,8 @@ pub struct BlockModel {
     pub title: String,
     /// Each line is a run of `(text, kind)` pieces drawn back to back.
     pub lines: Vec<Vec<(String, TokenKind)>>,
+    /// How often a recorded run entered this block (`None`: it did not run, or no overlay).
+    pub cover: Option<u64>,
 }
 
 /// The graph to show. Edges referencing unknown block ids and duplicate block ids are ignored.
@@ -643,6 +645,9 @@ impl<'a> GraphView<'a> {
                 Stroke::new(1.0, pal.border)
             };
             painter.rect_filled(r, radius, fill);
+            if block.cover.is_some() {
+                painter.rect_filled(r, radius, crate::listing::COVER_COLOR.gamma_multiply(0.2));
+            }
             let header_h = m.header_h() * z;
             let header = Rect::from_min_size(r.min, Vec2::new(r.width(), header_h));
             painter.rect_filled(
@@ -659,10 +664,14 @@ impl<'a> GraphView<'a> {
             let is_entry = prep.model.entry == Some(block.id);
             let title_color = if is_entry { pal.accent } else { pal.address };
             if draw_text {
+                let title = match block.cover {
+                    Some(n) => format!("{}  ran {n}x", block.title),
+                    None => block.title.clone(),
+                };
                 painter.text(
                     Pos2::new(r.left() + PAD_X * z, header.center().y),
                     Align2::LEFT_CENTER,
-                    &block.title,
+                    &title,
                     scaled_font.clone(),
                     title_color,
                 );
@@ -842,6 +851,7 @@ mod tests {
                     id,
                     title: format!("{id:#x}"),
                     lines: vec![vec![("mov".into(), TokenKind::Keyword)]],
+                    cover: None,
                 })
                 .collect(),
             edges: (1..n).map(|i| (i - 1, i, EdgeKind::Fallthrough)).collect(),
@@ -1016,6 +1026,7 @@ mod tests {
                 ],
                 vec![("ret".into(), TokenKind::Keyword)],
             ],
+            cover: None,
         };
         let wr = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(200.0, 100.0));
         let (cw, row, hh) = (8.0, 16.0, 24.0);

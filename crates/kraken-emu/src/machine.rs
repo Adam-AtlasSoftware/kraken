@@ -173,11 +173,18 @@ impl icicle_cpu::mem::ReadAfterHook for LogReads {
 /// The watched addresses that ran since the last [`take`](BlockLog::take)
 /// ([`Machine::track_addresses`]).
 #[derive(Debug, Clone, Default)]
-pub struct BlockLog(std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<u64>>>);
+pub struct BlockLog(std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<u64, u64>>>);
 
 impl BlockLog {
     /// The recorded addresses, and forgets them.
     pub fn take(&self) -> std::collections::BTreeSet<u64> {
+        std::mem::take(&mut *self.0.borrow_mut())
+            .into_keys()
+            .collect()
+    }
+
+    /// The recorded addresses with how often each ran, and forgets them.
+    pub fn take_counts(&self) -> std::collections::BTreeMap<u64, u64> {
         std::mem::take(&mut *self.0.borrow_mut())
     }
 }
@@ -650,7 +657,7 @@ impl Machine {
         let sink = log.0.clone();
         self.vm
             .hook_many_addresses(addrs, move |_: &mut Cpu, addr: u64| {
-                sink.borrow_mut().insert(addr);
+                *sink.borrow_mut().entry(addr).or_insert(0) += 1;
             });
         log
     }

@@ -299,6 +299,7 @@ impl ListingSource for FakeListing {
             operands,
             comment,
             patch: None,
+            cover: None,
         }
     }
 }
@@ -412,6 +413,7 @@ fn sample_cfg() -> CfgModel {
             id: i as u64,
             title: format!("0x{:x}", 0x401a30 + i * 0x2c),
             lines: lines.iter().map(|l| asm_line(l)).collect(),
+            cover: None,
         })
         .collect();
     CfgModel {
@@ -474,6 +476,7 @@ fn stress_cfg(n: usize) -> CfgModel {
             id,
             title: format!("0x{:x}", 0x401000 + i * 0x20),
             lines,
+            cover: None,
         });
     }
     CfgModel {

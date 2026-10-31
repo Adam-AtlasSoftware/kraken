@@ -933,6 +933,7 @@ fn stale_functions_get_a_marker_that_draws() {
 mod audit;
 #[cfg(unix)]
 mod bench;
+mod coverage;
 mod debug;
 mod emulate;
 mod first_run;

@@ -21,6 +21,7 @@ fn block(id: u64) -> BlockModel {
             ],
             vec![("ret".into(), TokenKind::Keyword)],
         ],
+        cover: None,
     }
 }
 

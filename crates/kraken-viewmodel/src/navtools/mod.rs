@@ -4,6 +4,7 @@
 
 mod bookmarks;
 mod call;
+mod coverage;
 pub mod ctype;
 mod edits;
 mod emulate;
@@ -25,6 +26,7 @@ pub use bookmarks::{BookmarkDialog, BookmarkItem, BookmarksPanel};
 pub use call::{
     CallBufferDetail, CallDetail, CallDialog, CallParam, ParamKind, RETURN_KINDS, parse_signature,
 };
+pub use coverage::{CoveragePanel, CoverageRunItem};
 pub use edits::{FunctionDialog, FunctionDialogKind, LocalDialog, TypeDialog, TypeMode};
 pub use emulate::{
     Difference, EmulateDialog, EmulateMode, EmulationPanel, EmulationResult, FileDetail, InputRow,
@@ -145,6 +147,8 @@ pub struct NavTools {
     pub search: SearchPanel,
     /// The Bookmarks tab.
     pub bookmarks: BookmarksPanel,
+    /// The coverage overlay of the Listing and the Graph.
+    pub coverage: CoveragePanel,
     /// The next-steps strip above the Decompiler.
     pub next_steps: NextStepsPanel,
     /// The Types tab.

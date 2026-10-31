@@ -13,8 +13,8 @@ pub use graph_view::{
 };
 pub use hex_view::{ByteSource, ByteState, HexView, HexViewResponse, SliceSource};
 pub use listing::{
-    ListingResponse, ListingRow, ListingSource, ListingView, OperandToken, PATCH_COLOR, RowMark,
-    format_bytes,
+    COVER_COLOR, ListingResponse, ListingRow, ListingSource, ListingView, OperandToken,
+    PATCH_COLOR, RowMark, format_bytes,
 };
 pub use theme::{KrakenTheme, Palette, TokenStyle};
 pub use token_text::{TokenClick, TokenText, TokenTextResponse};

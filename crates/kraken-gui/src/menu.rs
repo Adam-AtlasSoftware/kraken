@@ -33,6 +33,8 @@ pub struct MenuEnv<'a> {
     pub windows: bool,
     /// Learn mode is on.
     pub learn_mode: bool,
+    /// The coverage overlay is on.
+    pub coverage: bool,
     /// The dark theme is in use.
     pub dark: bool,
     pub recents: &'a [RecentProject],
@@ -111,6 +113,9 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::CheckPatches
             | AppAction::CallFunction
             | AppAction::ShowEmulation
+            | AppAction::RecordCoverage
+            | AppAction::ToggleCoverage
+            | AppAction::ClearCoverage
             | AppAction::CreateFunctionHere
             | AppAction::DeleteFunction
             | AppAction::ShowAiActivity
@@ -356,6 +361,10 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
                 item(ui, AppAction::CheckPatches, env, &mut out);
                 item(ui, AppAction::CallFunction, env, &mut out);
                 ui.separator();
+                item(ui, AppAction::RecordCoverage, env, &mut out);
+                toggle(ui, AppAction::ToggleCoverage, env.coverage, env, &mut out);
+                item(ui, AppAction::ClearCoverage, env, &mut out);
+                ui.separator();
                 item(ui, AppAction::ShowEmulation, env, &mut out);
                 item(ui, AppAction::EmulationHelp, env, &mut out);
             })
@@ -468,6 +477,7 @@ mod tests {
             has_function: false,
             windows: false,
             learn_mode: false,
+            coverage: false,
             dark: true,
             recents: &[],
             open_file: false,

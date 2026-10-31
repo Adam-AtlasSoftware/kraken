@@ -144,6 +144,9 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 | Verify patches... | Run the original and the patched program with the same input and record whether the patches changed anything |  |
 | Check patches | Look for patches over bytes the loader rewrites, across function ends, or on a signed file |  |
 | Call this function... | Run just this function in the emulator with arguments you give; shows its return value and what it wrote |  |
+| Record coverage... | Run the program in the sandboxed emulator and mark every block of code that ran |  |
+| Show coverage | Shade the instructions and graph blocks the recorded run executed, with how often |  |
+| Clear coverage | Forget the recorded coverage of this project |  |
 | Show emulation results | See what the last run or comparison did |  |
 | About running programs | What the emulator does, what it cannot do, and why running here is safe |  |
 
