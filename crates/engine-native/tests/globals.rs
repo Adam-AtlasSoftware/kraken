@@ -111,7 +111,12 @@ async fn dwarf_types_globals() {
 /// Decompiles the function at `entry` of a corpus program with the native engine in its worker.
 async fn corpus_function(binary: &str, entry: u64) -> Option<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/bin")
+        .join("../../corpus")
+        .join(if binary.contains(".exe") || binary.contains(".dll") {
+            "pe/bin"
+        } else {
+            "bin"
+        })
         .join(binary);
     let mut c = NativeConfig::discover()?;
     if !NativeEngine::is_usable(&c) {
@@ -216,4 +221,20 @@ async fn fini_text(e: &NativeEngine) -> String {
     .await
     .expect("decompile")
     .text
+}
+
+/// Strings the code points at print as literals, as Ghidra prints them.
+#[tokio::test(flavor = "multi_thread")]
+async fn string_pointers_print_as_literals() {
+    let Some(win) = corpus_function("win_tls-x64-O0.exe", 0x140001bf0).await else {
+        eprintln!("skipped: no native engine");
+        return;
+    };
+    eprintln!("{win}");
+    assert!(win.contains(" = \"Unknown error\";"), "{win}");
+    let vm = corpus_function("switch_vm-O2-stripped", 0x1011f0)
+        .await
+        .expect("engine");
+    eprintln!("{vm}");
+    assert!(vm.contains("FUN_001011c0(\"pc out of range\""), "{vm}");
 }

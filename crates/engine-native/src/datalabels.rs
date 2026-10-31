@@ -102,6 +102,24 @@ fn access_width(i: &Instruction) -> u32 {
     if b.contains("xmm") { 8 } else { 4 }
 }
 
+/// The width of what the code reads or writes through a register loaded by `lea reg, [data]`:
+/// the widest `[reg]` access among the next few instructions (the register may be overwritten
+/// later; a wrong guess only widens a label).
+fn width_through_lea(insns: &BTreeMap<u64, Instruction>, lea: &Instruction) -> Option<u32> {
+    let body = lea.body.to_ascii_lowercase();
+    let reg = body.split(',').next()?.trim().to_string();
+    if reg.is_empty() || !reg.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let needle = format!("[{reg}]");
+    insns
+        .range(lea.addr + 1..)
+        .take(48)
+        .filter(|(_, i)| i.body.to_ascii_lowercase().contains(&needle))
+        .map(|(_, i)| access_width(i))
+        .max()
+}
+
 /// Whether the symbol table's name for the data at `addr` is left out, as Ghidra leaves it out: a
 /// COFF symbol at the very start of a section is taken for the section's own.
 pub fn symbol_ignored(loaded: &Loaded, addr: u64) -> bool {
@@ -125,6 +143,10 @@ pub fn compute(
     let text: BTreeMap<u64, &str> = strings
         .iter()
         .map(|s| (s.address.0, s.value.as_str()))
+        .collect();
+    let strings_at: BTreeMap<u64, (&str, u32)> = strings
+        .iter()
+        .map(|s| (s.address.0, (s.value.as_str(), s.length.max(1))))
         .collect();
     let block_of = |a: u64| loaded.blocks.iter().find(|b| b.start.0 <= a && a < b.end.0);
     let is_code = |a: u64| loaded.is_code(a);
@@ -203,6 +225,21 @@ pub fn compute(
         wanted.contains(&v).then(|| "DAT".to_string())
     };
     let mut out = Vec::new();
+    // a string the code points at is typed data (`char[n]`), so the constant pointer prints as the
+    // literal
+    for a in refs.touched_targets() {
+        let Some(t) = strings_at.get(&a) else {
+            continue;
+        };
+        if block_of(a).is_some_and(|b| b.space == "ram") && !is_code(a) && !taken(a) {
+            out.push(DataLabel {
+                addr: a,
+                name: format!("s_{}_{a:08x}", string_label_text(t.0)),
+                decl: format!("char s[{}]", t.1),
+                size: t.1,
+            });
+        }
+    }
     let all: Vec<u64> = wanted.iter().copied().collect();
     for (k, a) in all.iter().enumerate() {
         if text.contains_key(a) {
@@ -250,7 +287,23 @@ pub fn compute(
         let width = refs
             .to(*a)
             .iter()
-            .filter_map(|r| insns.get(&r.from).map(access_width))
+            .filter_map(|r| {
+                let Some(i) = insns.get(&r.from) else {
+                    // a pointer slot (`.refptr`): what is read through the register it is
+                    // loaded into
+                    return refs
+                        .to(r.from)
+                        .iter()
+                        .filter_map(|s| insns.get(&s.from))
+                        .filter_map(|l| width_through_lea(insns, l))
+                        .max();
+                };
+                if i.mnemonic.eq_ignore_ascii_case("lea") {
+                    Some(width_through_lea(insns, i).unwrap_or(1))
+                } else {
+                    Some(access_width(i))
+                }
+            })
             .max()
             .unwrap_or(4);
         let mut size = width.min(8).min(u32::try_from(room).unwrap_or(8)).max(1);
