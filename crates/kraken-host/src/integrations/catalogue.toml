@@ -386,13 +386,20 @@ kind = "compat_layer"
 platforms = ["Windows programs"]
 formats = ["exe", "dll", "msi"]
 license = "LGPL-2.1-or-later"
-notice = "Wine runs the Windows program with your user's rights: it can read and write your files. KRAKEN asks before every run. Install it from your distribution; KRAKEN detects it."
+notice = "Wine is never shipped with KRAKEN. \"Use existing\" takes the wine on your PATH (your distribution's package); \"Install for me\" downloads Kron4ek's portable Wine build (an unofficial prebuilt of upstream Wine's source, pinned and checked by SHA-256 against the digest GitHub shows for the release file) into KRAKEN's data directory. Through `emulator_run` Wine runs the program with your user's rights and can read and write your files; `wine_run` runs it in a throw-away prefix inside a sandbox with no network. KRAKEN asks before every run."
 [emulator.detect]
 names = ["wine", "wine64"]
 probe = true
 [emulator.run]
 argv = ["{exe}", "{binary}"]
 gui = true
+[[emulator.artifact]]
+version = "11.20-wow64"
+url = "https://github.com/Kron4ek/Wine-Builds/releases/download/11.20/wine-11.20-amd64-wow64.tar.xz"
+sha256 = "482a493c755dcea776199b86560e0fb0f969bb0275c67d88120b0b35b0df34b9"
+size = 100025976
+format = "tar_xz"
+entry = "wine-11.20-amd64-wow64/bin/wine"
 
 # ---- Sysroots: the loader and shared libraries a dynamically linked program needs, so the
 # built-in emulator can run it. Pinned Debian 13 (trixie) packages from deb.debian.org, checked

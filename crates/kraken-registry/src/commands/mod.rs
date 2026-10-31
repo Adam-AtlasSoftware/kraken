@@ -60,6 +60,7 @@ mod types;
 mod ui;
 mod undo_entry;
 mod update;
+mod wine;
 
 pub use ai::{
     AiJobs, AiJobsOut, AiUsage, AiUsageArgs, AiUsageGroupView, AiUsageOut, AiUsageScope,
@@ -115,7 +116,7 @@ pub use edit::{
     SetLocal, SetLocalArgs, SetType, SetTypeArgs, Undo, UndoOut, UndoRun, UndoRunArgs,
 };
 pub use emulate::{
-    DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateCompare, EmulateCompareArgs,
+    CompareRuntime, DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT_SECONDS, EmulateCompare, EmulateCompareArgs,
     EmulateCompareOut, EmulateDifference, EmulateExit, EmulateExitKind, EmulateFile, EmulateInput,
     EmulateRun, EmulateRunArgs, EmulateRunOut, MAX_MAX_STEPS, MAX_TIMEOUT_SECONDS, with_sysroot,
 };
@@ -276,6 +277,7 @@ pub use update::{
     InstallView, SystemView, UpdateApplied, UpdateApply, UpdateBackend, UpdateCheck,
     UpdateCheckArgs, UpdateRollback, UpdateStatus, UpdateStatusOut,
 };
+pub use wine::{WineRun, WineRunArgs, WineRunOut};
 
 /// Arguments of a command that takes none.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -435,6 +437,7 @@ pub fn register_all(r: &mut Registry) {
     r.register(IntegrationUsePath);
     r.register(IntegrationRemove);
     r.register(EmulatorRun);
+    r.register(WineRun);
     r.register(LocalModelRecommend);
     r.register(LocalModelSetup);
     // Card LOCAL-SERVING: the models KRAKEN runs on this computer.

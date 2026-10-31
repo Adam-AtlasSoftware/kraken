@@ -159,6 +159,39 @@ opens the same comparison.
 
 ![The Emulation tab after comparing the original and the patched program: the first difference, both exits and the two outputs side by side with the changed line marked](images/emulation.png)
 
+## Running Windows programs under Wine
+
+The emulator runs Linux programs. For a Windows (PE) program with full fidelity, `wine_run` uses
+Wine from the integrations catalogue (set it up first: *Use existing* for the `wine` on your PATH,
+or *Install for me*; see [Emulators and tools](integrations.md#wine)). It is not the emulator: Wine
+executes the program for real, so the command always asks first, and an agent needs a person's
+approval.
+
+```
+wine_run {"target": "patched", "stdin": "hello\n", "argv": ["/v"], "return_files": true}
+```
+
+Every run gets a fresh Wine prefix inside a private scratch directory, with no host home, the
+environment scrubbed, `WINEDEBUG=-all`, winemenubuilder, Mono and Gecko off, and the program's
+directory's DLLs copied beside it. The process is confined by `kraken-confine`: a read-only view of
+the system through Landlock, no network, and writes only in the scratch directory (plus the one
+`/tmp/.wine-<uid>/server-...` directory Wine insists on for its server socket, made for the run and
+removed after it). The command refuses to run where that confinement is unavailable. Building the
+prefix takes a few seconds, so the default time limit is 60 seconds (at most 300). The result has the
+exit, stdout, stderr (4000 characters each, untrusted) and, with `return_files`, the files written.
+`windowed: true` starts Xvfb inside the same sandbox when it is on the PATH (without it the program
+has no display).
+
+To check a patched PE, add `"runtime": "wine"` to `emulate_compare` or `patch_verify`: both variants
+run under Wine and the differences are reported as usual.
+
+```
+patch_verify {"runtime": "wine"}
+```
+
+In the GUI, for a PE project, **Emulate > Run with Wine...** opens the Run dialog with *Run under
+Wine* ticked; the same checkbox appears in the Run, Compare and Verify dialogs.
+
 ## Calling one function
 
 `emulate_call` runs a single function instead of the whole program: give its `address` (or its

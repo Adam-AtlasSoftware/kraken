@@ -268,3 +268,60 @@ fn checking_patches_keeps_the_findings_until_the_patches_change() {
     r.vm.refresh_patches();
     assert!(r.vm.tools.patches.lint.is_none(), "stale after a reload");
 }
+
+#[test]
+fn running_under_wine_calls_wine_run_and_shows_its_notes() {
+    let mut r = opened(base_backend().on("wine_run", |a| {
+        assert_eq!(a["target"], "patched");
+        assert_eq!(a["argv"], json!(["/v"]));
+        assert_eq!(a["return_files"], true);
+        assert!(
+            a.get("max_steps").is_none() && a.get("argv0").is_none(),
+            "{a}"
+        );
+        Ok(json!({
+            "exit": {"kind": "code", "value": 0},
+            "stdout": u("hello from wine\n"),
+            "stderr": u(""),
+            "truncated": false,
+            "wine": "/usr/bin/wine",
+            "notes": ["ran under Wine in a fresh prefix, confined (landlock-v11+netns), 4.0s"],
+            "files": [],
+        }))
+    }));
+    if let Some(p) = r.vm.project.as_mut() {
+        p.format = "pe".into();
+    }
+    assert!(r.vm.is_windows_program());
+    r.vm.begin_emulate_wine(EmulateMode::RunPatched);
+    r.vm.tools.emulate_dialog.as_mut().expect("dialog").argv = "/v".into();
+    r.vm.submit_emulate();
+    assert!(r.vm.block_until_idle(WAIT));
+    let Some(EmulationResult::Run {
+        patched,
+        given,
+        run,
+    }) = r.vm.tools.emulation.result.clone()
+    else {
+        panic!("a run result");
+    };
+    assert!(patched && given.contains("under Wine"), "{given}");
+    assert_eq!(run.stdout, "hello from wine\n");
+    assert!(run.notes.iter().any(|n| n.contains("Wine: /usr/bin/wine")));
+    assert!(run.notes.iter().any(|n| n.contains("confined")));
+}
+
+#[test]
+fn a_comparison_under_wine_asks_for_the_wine_runtime() {
+    let mut r = opened(base_backend().on("patch_verify", |a| {
+        assert_eq!(a["runtime"], "wine");
+        assert!(a.get("return_files").is_none(), "{a}");
+        Err(kraken_proto::ProtoError::new(
+            kraken_proto::ErrorCode::Unsupported,
+            "stop here",
+        ))
+    }));
+    r.vm.begin_emulate_wine(EmulateMode::Verify);
+    r.vm.submit_emulate();
+    assert!(r.vm.block_until_idle(WAIT));
+}

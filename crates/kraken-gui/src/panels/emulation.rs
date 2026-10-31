@@ -329,6 +329,7 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let (mut go, mut cancel, mut pick) = (false, false, false);
     let mut remove = None;
     let patches = vm.tools.patches.items.len();
+    let windows = vm.is_windows_program();
     egui::Window::new(medium(d.mode.title(), 15.0))
         .id(Id::new("kraken_emulate_dialog"))
         .collapsible(false)
@@ -357,6 +358,24 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
                 }
             };
             ui.label(RichText::new(intro).color(p.text_dim));
+            if windows {
+                ui.checkbox(&mut d.wine, "Run under Wine").on_hover_text(
+                    "Run this Windows program with Wine in a throw-away prefix, with no \
+                         network and a read-only view of the system (Wine is set up in Tools > \
+                         Integrations)",
+                );
+                if d.wine {
+                    ui.label(
+                        RichText::new(
+                            "Wine runs the real program, not the emulator: the sandbox allows \
+                             writes only in a private folder that is removed afterwards, and \
+                             starting takes a few seconds. You are asked to confirm.",
+                        )
+                        .size(12.0)
+                        .color(s.warning),
+                    );
+                }
+            }
             if d.mode != EmulateMode::Run && patches == 0 {
                 ui.label(
                     RichText::new(

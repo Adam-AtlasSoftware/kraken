@@ -297,6 +297,10 @@ pub struct PatchVerifyArgs {
     /// Wall-clock limit of each run in seconds (default 20, at most 120).
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// `emulator` (default) or `wine`: run both variants of a Windows program under Wine in a
+    /// sandbox (`max_steps` is ignored, `timeout_seconds` defaults to 60).
+    #[serde(default)]
+    pub runtime: super::emulate::CompareRuntime,
 }
 
 /// Result of `patch_verify`: the comparison, and the verdict kept for the patch set.
@@ -344,7 +348,7 @@ impl Command for PatchVerify {
     async fn run(
         &self,
         s: &Session,
-        _ctx: &CallContext,
+        ctx: &CallContext,
         args: PatchVerifyArgs,
     ) -> Result<PatchVerifyOut, ProtoError> {
         let project = s.project()?;
@@ -354,6 +358,7 @@ impl Command for PatchVerify {
         let set_hash = patch_set_hash(&active);
         let compare = compare_variants(
             s,
+            ctx,
             EmulateCompareArgs {
                 stdin: args.stdin,
                 argv: args.argv,
@@ -364,6 +369,7 @@ impl Command for PatchVerify {
                 timeout_seconds: args.timeout_seconds,
                 a: None,
                 b: None,
+                runtime: args.runtime,
             },
             Some(active),
         )

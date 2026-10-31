@@ -67,7 +67,7 @@ Linux x86-64 builds, checked against upstream's releases on 2026-10-28.
 | Ryubing (Ryujinx fork) | Nintendo Switch | use your copy (releases are on its own GitLab without digests) |
 | MAME, ares | many systems | use your copy |
 | QEMU user mode (x86-64, AArch64, ARM, RISC-V 64) | Linux programs, with a GDB stub | detected from your install |
-| Wine | Windows programs | detected from your install |
+| Wine | Windows programs | **Use existing** (the `wine` on your PATH) or **Install for me**: Kron4ek's portable Wine 11.20 build (unofficial prebuilt of upstream Wine, pinned and checked by SHA-256 against the digest GitHub shows for the release file) |
 
 AppImages run with `APPIMAGE_EXTRACT_AND_RUN=1`, so they need no FUSE. Some emulators need system
 libraries of their own (for example melonDS wants `libenet`); the run log says what is missing.
@@ -143,6 +143,17 @@ being run), `{dir}` (a private run directory) and `{port}`; artifact URLs are `h
 an id that the built-in catalogue already uses is skipped. Your entries are marked "your manifest, not
 reviewed", because `argv` is a command KRAKEN will run. A file that does not parse is skipped, with the
 reason in the daemon's log.
+
+### Wine
+
+Wine is never bundled. In Tools > Integrations, *Use existing* takes the `wine` on your PATH, and
+*Install for me* downloads `wine-11.20-amd64-wow64.tar.xz` from the Kron4ek/Wine-Builds release
+page (about 95 MiB; x86-64 hosts only), refuses it unless its SHA-256 is
+`482a493c755dcea776199b86560e0fb0f969bb0275c67d88120b0b35b0df34b9`, and unpacks it under the data
+directory. That build is not made by the Wine project; if you would rather trust your distribution,
+install its `wine` package and use that. `emulator_run` starts Wine unconfined, with your user's
+rights. `wine_run` is the careful way to run a Windows program: see
+[Running Windows programs under Wine](emulation.md#running-windows-programs-under-wine).
 
 ## How a run works
 

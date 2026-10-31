@@ -170,6 +170,7 @@ const EXPECTED: &[&str] = &[
     "update_check",
     "update_rollback",
     "update_status",
+    "wine_run",
     "xrefs",
 ];
 

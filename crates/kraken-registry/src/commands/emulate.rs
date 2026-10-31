@@ -317,7 +317,9 @@ fn validate(args: &EmulateRunArgs) -> Result<Limits, ProtoError> {
 }
 
 /// Checks the seeded files and decodes their contents.
-fn decode_inputs(inputs: &[EmulateInput]) -> Result<Vec<(PathBuf, Vec<u8>)>, ProtoError> {
+pub(super) fn decode_inputs(
+    inputs: &[EmulateInput],
+) -> Result<Vec<(PathBuf, Vec<u8>)>, ProtoError> {
     if inputs.len() > MAX_INPUTS {
         return Err(invalid(format!("inputs has more than {MAX_INPUTS} files")));
     }
@@ -546,9 +548,9 @@ pub(super) struct Patched {
 }
 
 /// What one run produced, before it is shown.
-struct RawRun {
-    outcome: ProgramOutcome,
-    notes: Vec<String>,
+pub(super) struct RawRun {
+    pub(super) outcome: ProgramOutcome,
+    pub(super) notes: Vec<String>,
 }
 
 /// One run of `binary` in the confined runner. `runner` is the `kraken-emu-run` binary. When
@@ -793,7 +795,7 @@ fn written<'a>(
         .collect()
 }
 
-fn present(raw: RawRun, return_files: bool, inputs: &[EmulateInput]) -> EmulateRunOut {
+pub(super) fn present(raw: RawRun, return_files: bool, inputs: &[EmulateInput]) -> EmulateRunOut {
     let RawRun {
         outcome: o,
         mut notes,
@@ -908,6 +910,22 @@ pub struct EmulateCompareArgs {
     /// The second variant, same choices (default `patched`).
     #[serde(default)]
     pub b: Option<String>,
+    /// What runs the variants: `emulator` (default, KRAKEN's sandboxed emulator for Linux
+    /// programs) or `wine` (Windows programs under Wine in a sandbox; `max_steps` is ignored and
+    /// `timeout_seconds` defaults to 60).
+    #[serde(default)]
+    pub runtime: CompareRuntime,
+}
+
+/// What `emulate_compare` and `patch_verify` run the variants with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareRuntime {
+    /// KRAKEN's own emulator.
+    #[default]
+    Emulator,
+    /// Wine, from the integrations catalogue.
+    Wine,
 }
 
 /// One way the two runs differ.
@@ -972,10 +990,10 @@ impl Command for EmulateCompare {
     async fn run(
         &self,
         s: &Session,
-        _ctx: &CallContext,
+        ctx: &CallContext,
         args: EmulateCompareArgs,
     ) -> Result<EmulateCompareOut, ProtoError> {
-        compare_variants(s, args, None).await
+        compare_variants(s, ctx, args, None).await
     }
 }
 
@@ -984,6 +1002,7 @@ impl Command for EmulateCompare {
 /// caller; `None` reads the patches that are on now.
 pub(crate) async fn compare_variants(
     s: &Session,
+    ctx: &CallContext,
     args: EmulateCompareArgs,
     patches: Option<Vec<kraken_model::Patch>>,
 ) -> Result<EmulateCompareOut, ProtoError> {
@@ -998,6 +1017,7 @@ pub(crate) async fn compare_variants(
         inputs: args.inputs,
         return_files: true,
     };
+    let wine = args.runtime == CompareRuntime::Wine;
     let limits = validate(&base)?;
     let a = Variant::parse(args.a.as_deref().unwrap_or("original"))?;
     let b = Variant::parse(args.b.as_deref().unwrap_or("patched"))?;
@@ -1022,6 +1042,32 @@ pub(crate) async fn compare_variants(
         patches,
         engine_base: project.program().base.0,
     };
+    if wine {
+        ctx.require_approval(
+            "emulate_compare",
+            "Run two variants of the program under Wine".into(),
+            serde_json::json!({ "runtime": "wine" }),
+        )
+        .await?;
+        let spec = super::wine::wine_spec(s).await?;
+        let params = super::wine::WineParams::from_compare(&base, args.timeout_seconds)?;
+        return blocking(move || {
+            let (ra, rb) = std::thread::scope(|sc| {
+                let ha = sc.spawn(|| wine_variant(&a, &binary, &spec, &params, &patched));
+                let rb = wine_variant(&b, &binary, &spec, &params, &patched);
+                let ra = ha.join().unwrap_or_else(|_| {
+                    Err(problem(ErrorCode::Internal, "a comparison run panicked"))
+                });
+                (ra, rb)
+            });
+            let mut out = compare(ra?, rb?, &base.inputs);
+            for run in [&mut out.a, &mut out.b] {
+                run.notes.retain(|n| !n.starts_with("architecture "));
+            }
+            Ok(out)
+        })
+        .await;
+    }
     blocking(move || {
         let runner = find_runner();
         let (ra, rb) = std::thread::scope(|sc| {
@@ -1064,6 +1110,26 @@ impl Variant {
             }
         }
     }
+}
+
+fn wine_variant(
+    v: &Variant,
+    binary: &Path,
+    spec: &super::integrations::LaunchSpec,
+    params: &super::wine::WineParams,
+    patched: &Patched,
+) -> Result<RawRun, ProtoError> {
+    let copy;
+    let target = match v {
+        Variant::Original => binary,
+        Variant::Patched => {
+            let (bytes, _) = apply_project_patches(binary, &patched.patches, patched.engine_base)?;
+            copy = bytes;
+            return super::wine::run_wine_bytes(spec, binary, Some(&copy), params);
+        }
+        Variant::Other(p) => p,
+    };
+    super::wine::run_wine_bytes(spec, target, None, params)
 }
 
 fn run_variant(

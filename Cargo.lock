@@ -3152,6 +3152,7 @@ dependencies = [
  "async-trait",
  "engine-fake",
  "gdbstub",
+ "kraken-confine",
  "kraken-emu",
  "kraken-engine",
  "kraken-formats",

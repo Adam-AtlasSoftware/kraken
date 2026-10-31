@@ -4,7 +4,7 @@
 //! A run changes nothing in the project; it is a query that happens in the sandboxed emulator,
 //! so none of this asks for approval.
 
-use kraken_registry::commands::{EmulateCompareOut, EmulateRunOut};
+use kraken_registry::commands::{EmulateCompareOut, EmulateRunOut, WineRunOut};
 use serde_json::{Value, json};
 
 use super::NavTab;
@@ -119,6 +119,9 @@ pub struct EmulateDialog {
     pub max_steps: String,
     /// Time limit in seconds as typed; empty for the default.
     pub timeout: String,
+    /// Run a Windows program under Wine (`wine_run`, or `runtime: wine` for a comparison)
+    /// instead of in the emulator.
+    pub wine: bool,
     /// Why the last attempt failed.
     pub error: Option<String>,
     /// The run is in progress.
@@ -136,6 +139,7 @@ impl EmulateDialog {
             inputs: Vec::new(),
             max_steps: String::new(),
             timeout: String::new(),
+            wine: false,
             error: None,
             running: false,
         }
@@ -293,6 +297,23 @@ impl From<EmulateRunOut> for RunDetail {
     }
 }
 
+impl From<WineRunOut> for RunDetail {
+    fn from(o: WineRunOut) -> Self {
+        let mut notes = vec![format!("Wine: {}", o.wine)];
+        notes.extend(o.notes);
+        EmulateRunOut {
+            exit: o.exit,
+            stdout: o.stdout,
+            stderr: o.stderr,
+            steps: 0,
+            truncated: o.truncated,
+            notes,
+            files: o.files,
+        }
+        .into()
+    }
+}
+
 impl RunDetail {
     /// The output streams as line diffs against `other`: (stdout, stderr).
     pub fn diffs(&self, other: &RunDetail) -> (Vec<DiffLine>, Vec<DiffLine>) {
@@ -366,6 +387,22 @@ impl ViewModel {
         }
         if let Some(d) = self.tools.emulate_dialog.as_mut() {
             d.error = None;
+            d.wine = false;
+        }
+    }
+
+    /// True when the open program is a PE executable, the kind Wine runs.
+    pub fn is_windows_program(&self) -> bool {
+        self.project
+            .as_ref()
+            .is_some_and(|p| p.format.to_ascii_lowercase().starts_with("pe"))
+    }
+
+    /// Opens the Run dialog for running the program under Wine.
+    pub fn begin_emulate_wine(&mut self, mode: EmulateMode) {
+        self.begin_emulate(mode);
+        if let Some(d) = self.tools.emulate_dialog.as_mut() {
+            d.wine = true;
         }
     }
 
@@ -396,18 +433,16 @@ impl ViewModel {
         };
         d.error = None;
         d.running = true;
-        let (mode, given) = (d.mode, d.summary());
-        let command = match mode {
-            EmulateMode::Run | EmulateMode::RunPatched => {
-                args.insert("patched".into(), json!(mode == EmulateMode::RunPatched));
-                args.insert("return_files".into(), json!(true));
-                "emulate_run"
-            }
-            EmulateMode::Compare => "emulate_compare",
-            EmulateMode::Verify => "patch_verify",
+        let (mode, wine) = (d.mode, d.wine);
+        let given = if wine {
+            format!("{}, under Wine", d.summary())
+        } else {
+            d.summary()
         };
+        let command = command_for(mode, wine, &mut args);
         self.tools.emulation.running = true;
         self.tools.emulation.doing = match mode {
+            EmulateMode::Run if wine => "Running the program under Wine".into(),
             EmulateMode::Run => "Running the program".into(),
             EmulateMode::RunPatched => "Running the patched program".into(),
             EmulateMode::Compare | EmulateMode::Verify => {
@@ -416,7 +451,7 @@ impl ViewModel {
         };
         self.call(command, Value::Object(args), move |vm, res| {
             vm.tools.emulation.running = false;
-            let outcome = res.and_then(|v| accept(mode, given, v)).map_err(|e| {
+            let outcome = res.and_then(|v| accept(mode, wine, given, v)).map_err(|e| {
                 if e.message.contains("no byte patches") {
                     "The project has no byte patches yet. Stage one in the Patches tab, then \
                          compare."
@@ -461,8 +496,46 @@ impl ViewModel {
     }
 }
 
+/// The command a dialog in `mode` starts, with `args` adjusted to its schema.
+fn command_for(
+    mode: EmulateMode,
+    wine: bool,
+    args: &mut serde_json::Map<String, Value>,
+) -> &'static str {
+    args.insert("return_files".into(), json!(true));
+    match (mode, wine) {
+        (EmulateMode::Run | EmulateMode::RunPatched, false) => {
+            args.insert("patched".into(), json!(mode == EmulateMode::RunPatched));
+            "emulate_run"
+        }
+        (EmulateMode::Run | EmulateMode::RunPatched, true) => {
+            args.remove("max_steps");
+            args.remove("argv0");
+            let target = if mode == EmulateMode::RunPatched {
+                "patched"
+            } else {
+                "original"
+            };
+            args.insert("target".into(), json!(target));
+            "wine_run"
+        }
+        (EmulateMode::Compare | EmulateMode::Verify, wine) => {
+            args.remove("return_files");
+            if wine {
+                args.insert("runtime".into(), json!("wine"));
+            }
+            if mode == EmulateMode::Compare {
+                "emulate_compare"
+            } else {
+                "patch_verify"
+            }
+        }
+    }
+}
+
 fn accept(
     mode: EmulateMode,
+    wine: bool,
     given: String,
     v: Value,
 ) -> Result<EmulationResult, kraken_proto::ProtoError> {
@@ -470,7 +543,11 @@ fn accept(
         EmulateMode::Run | EmulateMode::RunPatched => EmulationResult::Run {
             patched: mode == EmulateMode::RunPatched,
             given,
-            run: Box::new(parse::<EmulateRunOut>(v)?.into()),
+            run: Box::new(if wine {
+                parse::<WineRunOut>(v)?.into()
+            } else {
+                parse::<EmulateRunOut>(v)?.into()
+            }),
         },
         EmulateMode::Compare | EmulateMode::Verify => {
             let c = parse::<EmulateCompareOut>(v)?;

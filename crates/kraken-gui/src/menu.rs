@@ -29,6 +29,8 @@ pub struct MenuEnv<'a> {
     pub can_forward: bool,
     /// A function is being viewed.
     pub has_function: bool,
+    /// The open program is a Windows (PE) executable.
+    pub windows: bool,
     /// Learn mode is on.
     pub learn_mode: bool,
     /// The dark theme is in use.
@@ -103,6 +105,7 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             | AppAction::RunInEmulator
             | AppAction::RunProgram
             | AppAction::RunPatched
+            | AppAction::RunWithWine
             | AppAction::ComparePatched
             | AppAction::VerifyPatches
             | AppAction::CheckPatches
@@ -127,6 +130,9 @@ pub fn disabled_reason(a: AppAction, env: &MenuEnv<'_>) -> Option<&'static str> 
             if !env.has_function =>
         {
             Some("Open a function first: click one in the Functions list.")
+        }
+        AppAction::RunWithWine if !env.windows => {
+            Some("Wine runs Windows programs; this program is not a PE executable.")
         }
         AppAction::ClearRecent if env.recents.is_empty() => Some("The list is already empty."),
         _ => None,
@@ -344,6 +350,7 @@ pub fn bar_measured(ui: &mut Ui, env: &MenuEnv<'_>) -> (Vec<MenuCmd>, f32) {
             ui.menu_button("Emulate", |ui| {
                 item(ui, AppAction::RunProgram, env, &mut out);
                 item(ui, AppAction::RunPatched, env, &mut out);
+                item(ui, AppAction::RunWithWine, env, &mut out);
                 item(ui, AppAction::ComparePatched, env, &mut out);
                 item(ui, AppAction::VerifyPatches, env, &mut out);
                 item(ui, AppAction::CheckPatches, env, &mut out);
@@ -459,6 +466,7 @@ mod tests {
             can_back: false,
             can_forward: false,
             has_function: false,
+            windows: false,
             learn_mode: false,
             dark: true,
             recents: &[],

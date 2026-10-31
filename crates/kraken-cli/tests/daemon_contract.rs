@@ -523,6 +523,7 @@ async fn every_registry_command_identical() {
         "integration_use_path",
         "integration_remove",
         "emulator_run",
+        "wine_run",
     ] {
         covered.insert(name.to_string());
     }
@@ -559,6 +560,11 @@ async fn every_registry_command_identical() {
             "emulator_run",
             json!({"id": "no-such-emulator"}),
             "not_found",
+        ),
+        (
+            "wine_run",
+            json!({"timeout_seconds": 0}),
+            "invalid_argument",
         ),
     ] {
         let r = cli_call(&s.daemon_cli, &s.cli_dir, name, &args).await;

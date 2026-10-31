@@ -76,6 +76,10 @@ fn the_emulate_menu_opens_the_run_dialog_and_a_comparison_without_patches_says_s
     k.h.run_steps(3);
     assert!(k.h.query_by_label("Run program...").is_some());
     assert!(k.h.query_by_label("Run patched program...").is_some());
+    assert!(
+        k.h.query_by_label("Run with Wine...").is_some(),
+        "listed, and disabled with a reason for a program that is not a PE file"
+    );
     assert!(k.h.query_by_label("About running programs").is_some());
     k.h.get_by_label("Compare original vs patched...").click();
     k.h.run_steps(4);

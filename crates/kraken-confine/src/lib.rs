@@ -76,6 +76,10 @@ pub struct Confinement {
     pub seccomp_only: bool,
     /// Further paths the child may read (never write), for example the analysed binary.
     pub extra_read_paths: Vec<PathBuf>,
+    /// Further directories the child may write (never execute in), each opened by the caller's
+    /// process before the child starts, so they must exist. For a program that insists on a
+    /// fixed place, such as a Wine server directory under `/tmp`.
+    pub extra_write_paths: Vec<PathBuf>,
     /// Paths the child may read and execute (the compiler's sysroot, with
     /// [`ReadScope::Toolchain`]); they are not affected by `deny_exec_in_dir`.
     pub exec_read_paths: Vec<PathBuf>,
@@ -84,6 +88,9 @@ pub struct Confinement {
     pub deny_exec_in_dir: bool,
     /// Resource limits replacing the scope's defaults (`None`: the defaults).
     pub limits: Option<Limits>,
+    /// `RLIMIT_NOFILE` replacing the default that [`Confinement::limits`] sets (a program such as Wine
+    /// keeps hundreds of files open).
+    pub open_files: Option<u64>,
 }
 
 /// How a child was kept off the network.
@@ -605,6 +612,15 @@ mod imp {
                 ))
                 .map_err(|e| err("extra read rule", &e))?;
         }
+        for path in &opts.extra_write_paths {
+            let fd = PathFd::new(path).map_err(|e| err("extra write path", &e))?;
+            created = created
+                .add_rule(PathBeneath::new(
+                    fd,
+                    AccessFs::from_all(ABI_TARGET) & !BitFlags::from_flag(AccessFs::Execute),
+                ))
+                .map_err(|e| err("extra write rule", &e))?;
+        }
         if let Ok(fd) = PathFd::new("/dev/null") {
             created = created
                 .add_rule(PathBeneath::new(
@@ -683,6 +699,7 @@ mod imp {
         let gid_map = format!("{gid} {gid} 1\n");
         let parent = std::process::id();
         let limits = opts.limits;
+        let open_files = opts.open_files;
         // Own process group, so a timeout can kill every descendant.
         cmd.process_group(0);
         // SAFETY: runs in the forked child before exec: plain syscalls plus the landlock crate's
@@ -721,7 +738,7 @@ mod imp {
                     limit(libc::RLIMIT_CPU, l.cpu_seconds);
                     limit(libc::RLIMIT_FSIZE, l.file_size);
                     limit(libc::RLIMIT_NPROC, l.processes);
-                    limit(libc::RLIMIT_NOFILE, RUNNER_OPEN_FILES);
+                    limit(libc::RLIMIT_NOFILE, open_files.unwrap_or(RUNNER_OPEN_FILES));
                 } else if scope == ReadScope::SystemLibraries {
                     limit(libc::RLIMIT_AS, RUNNER_MEMORY);
                     limit(libc::RLIMIT_CPU, RUNNER_CPU_SECONDS);

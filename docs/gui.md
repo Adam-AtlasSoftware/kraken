@@ -139,6 +139,7 @@ Help pages, the tour, shortcuts, learn mode and the user guide.
 |---|---|---|
 | Run program... | Run the program in the sandboxed emulator with the arguments, input, environment and files you give it |  |
 | Run patched program... | Run a copy with your byte patches applied in the sandboxed emulator |  |
+| Run with Wine... | Run this Windows program under Wine in a throw-away prefix with no network, then see its output (set Wine up in Tools > Integrations first) |  |
 | Compare original vs patched... | Run the original and the patched program with the same input and see what changed |  |
 | Verify patches... | Run the original and the patched program with the same input and record whether the patches changed anything |  |
 | Check patches | Look for patches over bytes the loader rewrites, across function ends, or on a signed file |  |

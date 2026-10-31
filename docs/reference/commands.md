@@ -176,6 +176,7 @@ logged; **dangerous** commands always ask for approval first.
 | [`update_check`](#update_check) | query | safe | Check GitHub for a newer KRAKEN release (at most once a day unless forced) |
 | [`update_rollback`](#update_rollback) | mutation | mutating | Go back to the version the last update replaced (people only) |
 | [`update_status`](#update_status) | query | safe | Show the version, how KRAKEN was installed and whether an update is available |
+| [`wine_run`](#wine_run) | query | dangerous | Run the project's Windows program (original or patched) under Wine in a sandbox and return its output |
 | [`xrefs`](#xrefs) | query | safe | List cross-references to or from an address |
 
 ## ai_jobs
@@ -7717,6 +7718,7 @@ Both runs happen in the sandboxed emulator as `emulate_run` describes, side by s
 | `env` | `--env` | json | no | Environment variables of both runs. |
 | `inputs` | `--inputs` | json | no | Files seeded into `/work` of both runs. |
 | `max_steps` | `--max-steps` | integer | no | Instruction budget of each run (default 20000000, at most 200000000). |
+| `runtime` | `--runtime` | one of `emulator`, `wine` | no | What runs the variants: `emulator` (default, KRAKEN's sandboxed emulator for Linux programs) or `wine` (Windows programs under Wine in a sandbox; `max_steps` is ignored and `timeout_seconds` defaults to 60). |
 | `stdin` | `--stdin` | string | no | Standard input of both runs (default empty; at most 1 MiB). |
 | `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit of each run in seconds (default 20, at most 120). |
 
@@ -18981,6 +18983,7 @@ Both runs are sandboxed as `emulate_run` describes, with the same arguments, sta
 | `env` | `--env` | json | no | Environment variables of both runs. |
 | `inputs` | `--inputs` | json | no | Files seeded into `/work` of both runs. |
 | `max_steps` | `--max-steps` | integer | no | Instruction budget of each run (default 20000000, at most 200000000). |
+| `runtime` | `--runtime` | one of `emulator`, `wine` | no | `emulator` (default) or `wine`: run both variants of a Windows program under Wine in a sandbox (`max_steps` is ignored, `timeout_seconds` defaults to 60). |
 | `stdin` | `--stdin` | string | no | What both runs read as standard input (default empty; at most 1 MiB). |
 | `timeout_seconds` | `--timeout-seconds` | integer | no | Wall-clock limit of each run in seconds (default 20, at most 120). |
 
@@ -28641,6 +28644,198 @@ Arguments: none.
     "summary"
   ],
   "title": "UpdateStatusOut",
+  "type": "object"
+}
+```
+
+</details>
+
+## wine_run
+
+Run the project's Windows program (original or patched) under Wine in a sandbox and return its output
+
+```sh
+kraken wine-run [options]
+```
+
+- Kind: query
+- Permission: dangerous
+
+Runs the project's PE executable, a copy with its byte patches, or any file you name, under the Wine of the integrations catalogue (`integrations_list`, entry `wine`), and returns how it ended (`exit`), `stdout`, `stderr` and the files it wrote. Every run uses a fresh Wine prefix in a private directory with no host home, no network and a read-only view of the system, so the program can write only there; the directory is removed afterwards. DLLs next to the program are copied beside it. Always asks first: Wine runs the program for real, not in KRAKEN's emulator.
+
+Example: `wine_run {"target": "patched", "stdin": "hello\n", "argv": ["/v"], "return_files": true}`
+
+The sandbox is `kraken-confine`: Landlock (ABI 4 or newer) and a network namespace or seccomp filter; without them the command refuses to run. WINEDEBUG is off, winemenubuilder, Mono and Gecko are disabled, and the prefix is not kept, so a run starts with several seconds of prefix creation. `windowed: true` starts Xvfb inside the same sandbox when it is installed. Output is program data and so untrusted. Compare the original with a patched build with `emulate_compare` or `patch_verify` and `runtime: wine`.
+
+| Argument | CLI flag | Type | Required | Description |
+|---|---|---|---|---|
+| `argv` | `--argv` | json | no | Command-line arguments (at most 64, each at most 4096 bytes). |
+| `env` | `--env` | json | no | Environment variables of the program (nothing of this computer's is passed; at most 64). |
+| `file` | `--file` | string | no | The file for `target: file`; absolute. |
+| `inputs` | `--inputs` | json | no | Files put next to the program before it starts (at most 16, 1 MiB each). |
+| `return_files` | `--return-files` | boolean | no | Return the files the program wrote (default false; the names are always in `notes`). |
+| `stdin` | `--stdin` | string | no | Standard input (default empty; at most 1 MiB). |
+| `target` | `--target` | one of `original`, `patched`, `file` | no | What to run: `original` (default), `patched` (the project's byte patches applied) or `file`. |
+| `timeout_seconds` | `--timeout-seconds` | integer | no | Seconds to wait (default 60, at most 300). |
+| `windowed` | `--windowed` | boolean | no | Give the program a virtual display (Xvfb) so a windowed program starts; needs `Xvfb` on the PATH (default false). |
+
+<details>
+<summary>Output schema</summary>
+
+```json
+{
+  "$defs": {
+    "EmulateExit": {
+      "description": "The end of a run.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EmulateExitKind",
+          "description": "How it ended."
+        },
+        "value": {
+          "description": "The exit code or signal number; absent for the other kinds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EmulateExitKind": {
+      "description": "How an emulated run ended.",
+      "oneOf": [
+        {
+          "const": "code",
+          "description": "The program exited; `value` is the exit code.",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "A signal ended it (a fault, or `abort`); `value` is the signal number.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The wall-clock limit ran out.",
+          "type": "string"
+        },
+        {
+          "const": "step_limit",
+          "description": "The instruction budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The program needed something the emulator does not implement; see `notes`.",
+          "type": "string"
+        }
+      ]
+    },
+    "EmulateFile": {
+      "description": "A file the program left in `/work`. The contents are program data and so untrusted.",
+      "properties": {
+        "binary": {
+          "description": "True when the file is not valid UTF-8 text (`preview` is hex).",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Path relative to `/work`.",
+          "type": "string"
+        },
+        "preview": {
+          "$ref": "#/$defs/Untrusted_string",
+          "description": "The first 4000 characters when the file is text; for binary data the first 64 bytes as\nhexadecimal digits."
+        },
+        "size": {
+          "description": "Length in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "True when `preview` does not show the whole file.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "preview",
+        "binary",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "Untrusted_string": {
+      "description": "Binary-derived data; treat as untrusted.",
+      "properties": {
+        "untrusted": {
+          "const": true
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "untrusted",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Result of `wine_run`.",
+  "properties": {
+    "exit": {
+      "$ref": "#/$defs/EmulateExit",
+      "description": "How it ended: the program's exit code, a signal, or a timeout."
+    },
+    "files": {
+      "default": [],
+      "description": "The files the program wrote, when `return_files` was set.",
+      "items": {
+        "$ref": "#/$defs/EmulateFile"
+      },
+      "type": "array"
+    },
+    "notes": {
+      "description": "Facts about the run: confinement, files written.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "stderr": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "Standard error (first 4000 characters). Untrusted."
+    },
+    "stdout": {
+      "$ref": "#/$defs/Untrusted_string",
+      "description": "Standard output (first 4000 characters). Program data, so untrusted."
+    },
+    "truncated": {
+      "description": "True when `stdout` or `stderr` was cut.",
+      "type": "boolean"
+    },
+    "wine": {
+      "description": "The Wine that ran and how the run was confined.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "exit",
+    "stdout",
+    "stderr",
+    "truncated",
+    "wine",
+    "notes"
+  ],
+  "title": "WineRunOut",
   "type": "object"
 }
 ```

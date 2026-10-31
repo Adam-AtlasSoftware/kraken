@@ -618,6 +618,7 @@ async fn every_registry_command_is_identical_over_cli_and_mcp() {
         ),
         ("integration_remove", json!({"id": "mgba"})),
         ("emulator_run", json!({"id": "mgba"})),
+        ("wine_run", json!({})),
         (
             "integration_install_start",
             json!({"id": "mgba", "accept_licence": true}),

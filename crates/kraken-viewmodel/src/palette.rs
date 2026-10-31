@@ -98,6 +98,8 @@ pub enum AppAction {
     RunProgram,
     /// Run the program with the byte patches applied.
     RunPatched,
+    /// Run a Windows program under Wine, in a sandbox.
+    RunWithWine,
     /// Run the original and the patched program with the same input and compare them.
     ComparePatched,
     /// Run original and patched with the same input and keep whether they agree.
@@ -144,7 +146,7 @@ pub enum AppAction {
 
 impl AppAction {
     /// Every action, in palette order.
-    pub const ALL: [AppAction; 64] = [
+    pub const ALL: [AppAction; 65] = [
         AppAction::GoTo,
         AppAction::Search,
         AppAction::RenameCurrent,
@@ -164,6 +166,7 @@ impl AppAction {
         AppAction::ImportSymbols,
         AppAction::RunProgram,
         AppAction::RunPatched,
+        AppAction::RunWithWine,
         AppAction::ComparePatched,
         AppAction::VerifyPatches,
         AppAction::CheckPatches,
@@ -298,6 +301,7 @@ impl AppAction {
             AppAction::ImportSymbols => "Import symbols...",
             AppAction::RunProgram => "Run program...",
             AppAction::RunPatched => "Run patched program...",
+            AppAction::RunWithWine => "Run with Wine...",
             AppAction::ComparePatched => "Compare original vs patched...",
             AppAction::VerifyPatches => "Verify patches...",
             AppAction::CheckPatches => "Check patches",
@@ -398,6 +402,9 @@ impl AppAction {
             AppAction::RunPatched => {
                 "Run a copy with your byte patches applied in the sandboxed emulator"
             }
+            AppAction::RunWithWine => {
+                "Run this Windows program under Wine in a throw-away prefix with no network, then see its output (set Wine up in Tools > Integrations first)"
+            }
             AppAction::ComparePatched => {
                 "Run the original and the patched program with the same input and see what changed"
             }
@@ -497,6 +504,7 @@ impl AppAction {
             "patch_import" => AppAction::ImportPatchFile,
             "symbols_import" => AppAction::ImportSymbols,
             "emulate_run" => AppAction::RunProgram,
+            "wine_run" => AppAction::RunWithWine,
             "emulate_compare" => AppAction::ComparePatched,
             "patch_verify" => AppAction::VerifyPatches,
             "patch_lint" => AppAction::CheckPatches,

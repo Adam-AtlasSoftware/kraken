@@ -1960,6 +1960,7 @@ impl ViewModel {
                 | AppAction::ImportSymbols
                 | AppAction::RunProgram
                 | AppAction::RunPatched
+                | AppAction::RunWithWine
                 | AppAction::ComparePatched
                 | AppAction::CallFunction
                 | AppAction::ShowEmulation
@@ -2046,6 +2047,7 @@ impl ViewModel {
             AppAction::ImportSymbols => self.begin_import_symbols(),
             AppAction::RunProgram => self.begin_emulate(EmulateMode::Run),
             AppAction::RunPatched => self.begin_emulate(EmulateMode::RunPatched),
+            AppAction::RunWithWine => self.begin_emulate_wine(EmulateMode::Run),
             AppAction::ComparePatched => self.begin_emulate(EmulateMode::Compare),
             AppAction::VerifyPatches => self.begin_emulate(EmulateMode::Verify),
             AppAction::CheckPatches => {
