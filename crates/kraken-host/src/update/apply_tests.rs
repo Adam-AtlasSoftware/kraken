@@ -411,3 +411,52 @@ async fn skipping_and_notices_follow_the_state_file() {
     assert_eq!(off.status_now().checks_disabled_by.as_deref(), Some("CI"));
     assert!(!off.check_due());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_second_update_before_a_restart_keeps_the_old_version() {
+    let f = Fixture::new();
+    // The same process (still 0.3.0 in memory) updates twice.
+    let u = f.script_updater();
+    u.apply(&quiet).await.expect("update");
+    assert!(!u.status_now().update_available, "0.4.0 is on disk already");
+    let e = u.apply(&quiet).await.expect_err("already installed");
+    assert!(e.message.contains("0.4.0 is already installed"), "{e:?}");
+    assert!(
+        fs::read_to_string(f.data.join("previous/0.3.0/bin/kraken"))
+            .expect("kept")
+            .contains("kraken 0.3.0")
+    );
+    // A newer release still installs, from the version on disk.
+    f.publish("0.5.0", &release_tar("0.5.0", "0.5.0", false), "0.5.0");
+    let done = u.apply(&quiet).await.expect("second update");
+    assert_eq!((done.from.as_str(), done.to.as_str()), ("0.4.0", "0.5.0"));
+    assert!(
+        fs::read_to_string(f.data.join("previous/0.4.0/bin/kraken"))
+            .expect("kept")
+            .contains("kraken 0.4.0")
+    );
+    let back = u.rollback().expect("rollback");
+    assert_eq!((back.from.as_str(), back.to.as_str()), ("0.5.0", "0.4.0"));
+    assert!(f.read("bin/kraken").contains("kraken 0.4.0"));
+    assert!(f.read("share/kraken/install.json").contains("\"0.4.0\""));
+}
+
+#[test]
+fn a_kept_copy_of_another_install_is_not_cleared() {
+    let d = tempfile::tempdir().expect("tmp");
+    let root = d.path().join("previous/0.4.0");
+    fs::create_dir_all(&root).expect("mkdir");
+    fs::write(
+        root.join(MANIFEST),
+        r#"{"version":"0.4.0","entries":[],"installed":"0.5.0"}"#,
+    )
+    .expect("manifest");
+    let e = clear_backup_root(&root, "0.4.0").expect_err("refused");
+    assert!(e.to_string().contains("only copy of 0.4.0"), "{e}");
+    assert!(root.join(MANIFEST).is_file());
+    // A copy kept by an older manifest (no `installed`) or a stray directory is cleared.
+    fs::write(root.join(MANIFEST), r#"{"version":"0.4.0","entries":[]}"#).expect("manifest");
+    clear_backup_root(&root, "0.4.0").expect("cleared");
+    assert!(!root.exists());
+}

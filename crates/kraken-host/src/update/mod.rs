@@ -272,9 +272,15 @@ impl HostUpdater {
         let settings = self.settings();
         let st = self.load_state();
         let latest = st.latest.as_deref().and_then(|v| Version::parse(v).ok());
+        // After an update that was not followed by a restart, the files on disk are newer.
+        let on_disk = self
+            .data_dir
+            .as_deref()
+            .map(|d| apply::installed_version(&self.kind, d, &self.current))
+            .unwrap_or_else(|| self.current.clone());
         let update_available = latest
             .as_ref()
-            .is_some_and(|l| check::is_newer(l, &self.current));
+            .is_some_and(|l| check::is_newer(l, &on_disk));
         let latest_text = latest.as_ref().map(ToString::to_string);
         let install = install::view(&self.kind, &self.exe, latest_text.as_deref(), &probe);
         let disabled = check::disabled_by(&*self.env, settings.check);

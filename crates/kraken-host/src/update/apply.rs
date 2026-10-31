@@ -267,6 +267,12 @@ fn check_version(
 struct Generation {
     version: String,
     entries: Vec<Kept>,
+    /// The version that update installed (older manifests lack it).
+    #[serde(default)]
+    installed: Option<String>,
+    /// The install receipt the update rewrote, set back to `version` by a rollback.
+    #[serde(default)]
+    receipt: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,20 +413,78 @@ fn prune_generations(data_dir: &Path, keep: &str) {
     }
 }
 
+fn receipt_path(prefix: &Path) -> PathBuf {
+    prefix.join("share/kraken/install.json")
+}
+
+fn receipt_version(path: &Path) -> Option<Version> {
+    let text = fs::read_to_string(path).ok()?;
+    if text.len() > 64 * 1024 {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Version::parse(v.get("version")?.as_str()?).ok()
+}
+
+/// The version the install holds on disk. It is newer than the running program after an update
+/// that was not followed by a restart, so a second update must start from it, not from the
+/// compiled-in version: otherwise it would overwrite the kept copy of the old version.
+pub fn installed_version(kind: &InstallKind, data_dir: &Path, running: &Version) -> Version {
+    let mut found = running.clone();
+    let mut consider = |v: Option<Version>| {
+        if let Some(v) = v
+            && v > found
+        {
+            found = v;
+        }
+    };
+    if let Some(prefix) = kind.prefix() {
+        consider(receipt_version(&receipt_path(prefix)));
+    }
+    consider(
+        newest_generation(data_dir)
+            .and_then(|(_, g)| g.installed)
+            .and_then(|v| Version::parse(&v).ok()),
+    );
+    found
+}
+
+/// Clears `previous/<old>` before a new generation is kept there, unless it is the only copy of
+/// `old` from an update that moved the install on to another version.
+fn clear_backup_root(backup_root: &Path, old: &str) -> Result<(), UpdateError> {
+    if fs::symlink_metadata(backup_root).is_err() {
+        return Ok(());
+    }
+    if let Ok(text) = fs::read(backup_root.join(MANIFEST))
+        && let Ok(g) = serde_json::from_slice::<Generation>(&text)
+        && let Some(w) = g.installed.filter(|w| w != old)
+    {
+        return Err(refused(format!(
+            "{} holds the only copy of {old}, kept when {w} was installed; restart KRAKEN or roll back first",
+            backup_root.display()
+        )));
+    }
+    check_replaceable(backup_root, true)?;
+    remove_any(backup_root).map_err(io_err("cannot clear the previous copy"))
+}
+
 fn update_receipt(prefix: &Path, version: &Version) {
-    let path = prefix.join("share/kraken/install.json");
-    let Ok(text) = fs::read_to_string(&path) else {
+    write_receipt_version(&receipt_path(prefix), &version.to_string());
+}
+
+fn write_receipt_version(path: &Path, version: &str) {
+    let Ok(text) = fs::read_to_string(path) else {
         return;
     };
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
         return;
     };
     if let Some(o) = v.as_object_mut() {
-        o.insert("version".into(), version.to_string().into());
+        o.insert("version".into(), version.into());
         if let Ok(t) = serde_json::to_string_pretty(&v) {
             let tmp = path.with_extension("json.tmp");
             if fs::write(&tmp, t).is_ok() {
-                let _ = fs::rename(&tmp, &path);
+                let _ = fs::rename(&tmp, path);
             }
         }
     }
@@ -449,12 +513,21 @@ pub async fn install(
             },
         ));
     }
-    if !is_newer(version, &ctx.current) {
+    let on_disk = installed_version(&ctx.kind, &ctx.data_dir, &ctx.current);
+    if on_disk != ctx.current && !is_newer(version, &on_disk) {
         return Err(refused(format!(
-            "{version} is not newer than the running {}; KRAKEN never downgrades",
-            ctx.current
+            "{on_disk} is already installed; restart KRAKEN to use it"
         )));
     }
+    if !is_newer(version, &on_disk) {
+        return Err(refused(format!(
+            "{version} is not newer than the running {on_disk}; KRAKEN never downgrades"
+        )));
+    }
+    let ctx = &ApplyContext {
+        current: on_disk,
+        ..ctx.clone()
+    };
     let asset = asset_name(&ctx.kind, version, &ctx.target);
     let base = format!("{}/v{version}", ctx.download_base);
 
@@ -569,13 +642,14 @@ async fn install_prefix(
         step(progress, "install", format!("installing {version}"));
         let old = ctx.current.to_string();
         let backup_root = previous_dir(&ctx.data_dir).join(&old);
-        if fs::symlink_metadata(&backup_root).is_ok() {
-            remove_any(&backup_root).map_err(io_err("cannot clear the previous copy"))?;
-        }
+        clear_backup_root(&backup_root, &old)?;
         let kept = swap(&entries, &backup_root)?;
+        let receipt = receipt_path(prefix);
         let generation = Generation {
             version: old.clone(),
             entries: kept.clone(),
+            installed: Some(version.to_string()),
+            receipt: receipt.is_file().then_some(receipt),
         };
         let manifest = serde_json::to_vec_pretty(&generation)
             .map_err(|e| refused(e.to_string()))?;
@@ -655,14 +729,14 @@ async fn install_appimage(
         step(progress, "install", format!("installing {version}"));
         let old = ctx.current.to_string();
         let backup_root = previous_dir(&ctx.data_dir).join(&old);
-        if fs::symlink_metadata(&backup_root).is_ok() {
-            remove_any(&backup_root).map_err(io_err("cannot clear the previous copy"))?;
-        }
+        clear_backup_root(&backup_root, &old)?;
         let rel = PathBuf::from(image.file_name().unwrap_or_default());
         let kept = swap(&[(part.clone(), image.to_path_buf(), rel)], &backup_root)?;
         let generation = Generation {
             version: old.clone(),
             entries: kept.clone(),
+            installed: Some(version.to_string()),
+            receipt: None,
         };
         let manifest = serde_json::to_vec_pretty(&generation)
             .map_err(|e| refused(e.to_string()))?;
@@ -765,8 +839,11 @@ pub fn rollback(data_dir: &Path, current: &str) -> Result<UpdateApplied, UpdateE
     }
     let _ = remove_any(&aside);
     let _ = remove_any(&dir);
+    if let Some(r) = &g.receipt {
+        write_receipt_version(r, &g.version);
+    }
     Ok(UpdateApplied {
-        from: current.to_string(),
+        from: g.installed.clone().unwrap_or_else(|| current.to_string()),
         to: g.version.clone(),
         replaced: g
             .entries
