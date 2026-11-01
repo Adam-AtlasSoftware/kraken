@@ -77,6 +77,9 @@ pub fn show(ui: &mut Ui, vm: &mut ViewModel) {
         }
         return;
     };
+    if let Some(why) = result.libs_hint() {
+        libs_banner(ui, vm, why);
+    }
     egui::ScrollArea::vertical()
         .id_salt("kraken_emulation")
         .auto_shrink([false, false])
@@ -160,6 +163,31 @@ fn exit_chip(ui: &mut Ui, r: &RunDetail) {
             .size(11.5)
             .color(pal(ui).text_dim),
     );
+}
+
+/// What stopped the last run, with the button that installs the portable libraries.
+fn libs_banner(ui: &mut Ui, vm: &mut ViewModel, why: &str) {
+    let p = pal(ui);
+    let s = style::status(style::dark(ui));
+    Frame::new()
+        .fill(p.row_hover)
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(why).size(12.0).color(s.warning));
+            if ui
+                .button("Install portable libraries")
+                .on_hover_text(
+                    "Downloads the pinned Debian libraries for the emulator (about 20 MB) and \
+                     shows the progress in Setup status; run the program again afterwards",
+                )
+                .clicked()
+            {
+                vm.tools.emulation.install_libs = true;
+            }
+        });
+    ui.add_space(4.0);
 }
 
 fn run_section(ui: &mut Ui, id: &str, title: &str, r: &RunDetail) {
@@ -330,6 +358,14 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
     let mut remove = None;
     let patches = vm.tools.patches.items.len();
     let windows = vm.is_windows_program();
+    let libs_hint = vm
+        .tools
+        .emulation
+        .result
+        .as_ref()
+        .and_then(|r| r.libs_hint())
+        .map(str::to_string);
+    let mut install_libs = false;
     egui::Window::new(medium(d.mode.title(), 15.0))
         .id(Id::new("kraken_emulate_dialog"))
         .collapsible(false)
@@ -338,6 +374,20 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
         .fixed_size(vec2(560.0, 0.0))
         .show(ctx, |ui| {
+            if let Some(why) = &libs_hint {
+                ui.label(RichText::new(why).size(12.0).color(s.warning));
+                if ui
+                    .button("Install portable libraries")
+                    .on_hover_text(
+                        "Downloads the pinned Debian libraries for the emulator (about 20 MB) \
+                         and shows the progress in Setup status; run again afterwards",
+                    )
+                    .clicked()
+                {
+                    install_libs = true;
+                }
+                ui.add_space(6.0);
+            }
             let intro = match d.mode {
                 EmulateMode::Run => {
                     "Runs the program in the sandboxed emulator. It never runs on this computer: \
@@ -549,6 +599,10 @@ pub fn dialog(ctx: &egui::Context, vm: &mut ViewModel) {
         });
     if let Some(i) = remove {
         d.inputs.remove(i);
+    }
+    if install_libs {
+        vm.tools.emulation.install_libs = true;
+        cancel = true;
     }
     if pick {
         let ctx2 = ctx.clone();

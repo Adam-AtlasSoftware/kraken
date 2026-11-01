@@ -13,8 +13,8 @@ env:
   JDK_URL: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz
   JDK_SHA256: 68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb
 
-# Pinned: emulator tests run on the runner's own libraries, and Ubuntu 26.04's use AVX, which the
-# emulated baseline CPU lacks.
+# Pinned to 24.04 for now: the `modern-host` job below checks the emulator on Ubuntu 26.04, whose
+# libraries assume x86-64-v3; move the rest once that job has stayed green.
 jobs:
   fmt:
     runs-on: ubuntu-24.04
@@ -79,6 +79,34 @@ jobs:
           grep -E -A1 -- '--- FAILED|panicked at|^error(\[|:)' test-output.log | grep -v '^--$' | head -60 | while IFS= read -r line; do
             echo "::error title=test failure::${line//%/%25}"
           done || true
+
+  # A dynamic program under the emulator on a host whose libraries are built for x86-64-v3.
+  modern-host:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache the pinned Ghidra sources and the compiled Sleigh files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/kraken-dev/ghidra-src
+            ~/.cache/kraken-dev/native-sla
+          key: kraken-dev-native-sla-${{ hashFiles('xtask/src/native_src.rs', 'xtask/src/native_sla.rs') }}
+      - name: Fetch the Ghidra sources and compile the Sleigh files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xtask native-src
+          cargo xtask native-sla
+          echo "KRAKEN_NATIVE_SPECS=$HOME/.cache/kraken-dev/native-sla/Ghidra_${GHIDRA_VERSION}_build" >> "$GITHUB_ENV"
+          echo "KRAKEN_REQUIRE_SPECS=1" >> "$GITHUB_ENV"
+      - name: Which C library this runner has
+        run: readelf -n /lib64/ld-linux-x86-64.so.2 | grep -i 'isa\|feature' || true
+      - run: cargo test -p kraken-emu --test vex -- --include-ignored
+      - run: cargo test -p kraken-e2e --test trace_native -- --include-ignored
+      - run: cargo test -p kraken-registry --test patch_verify -- --include-ignored
 
   deny:
     runs-on: ubuntu-24.04

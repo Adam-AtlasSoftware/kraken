@@ -74,6 +74,8 @@ pub struct SetupState2 {
     /// The last message, with whether it is an error.
     pub message: Option<(String, bool)>,
     inflight: bool,
+    /// Install the item this command fixes as soon as the report arrives.
+    install_after_report: Option<&'static str>,
 }
 
 impl SetupState2 {
@@ -174,9 +176,29 @@ impl SetupHub {
                 }
                 Err(e) => s.message = Some((e, true)),
             }
+            let wanted = s.install_after_report.take();
+            let item = wanted.and_then(|c| {
+                s.items
+                    .iter()
+                    .find(|i| i.fix_command.as_deref() == Some(c))
+                    .cloned()
+            });
+            if wanted.is_some() && item.is_none() {
+                s.message = Some(("That part is already installed.".into(), false));
+            }
             drop(s);
+            if let Some(item) = item {
+                me.install(&item);
+            }
             (me.repaint)();
         });
+    }
+
+    /// Opens the window and installs the part `command` fixes, for a button elsewhere in the
+    /// window that names the command rather than an item.
+    pub fn install_command(&self, command: &'static str) {
+        self.state().install_after_report = Some(command);
+        self.open();
     }
 
     /// Starts the install of `item` (the daemon asks the person first when an agent asks).
@@ -267,5 +289,47 @@ impl SetupHub {
             let _ = me.backend.call("job_cancel", json!({ "job_id": id })).await;
             (me.repaint)();
         });
+    }
+}
+
+#[cfg(test)]
+mod install_tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::testing::FakeBackend;
+    use kraken_proto::{ErrorCode, ProtoError};
+
+    #[test]
+    fn install_command_finds_the_item_in_the_report_and_starts_it() {
+        let started = Arc::new(AtomicBool::new(false));
+        let flag = started.clone();
+        let backend = FakeBackend::new()
+            .on("setup_status", |_| {
+                Ok(json!({"items": [{
+                    "id": "sysroots", "name": "Libraries", "purpose": "p", "state": "missing",
+                    "detail": "d", "fix": "f", "fix_command": "setup_sysroots",
+                }], "ready": 0, "not_ready": 1}))
+            })
+            .on("setup_sysroots", move |_| {
+                flag.store(true, Ordering::SeqCst);
+                Err(ProtoError::new(ErrorCode::Unsupported, "stop here"))
+            });
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let hub = SetupHub::new(Arc::new(backend), rt.handle().clone(), Arc::new(|| {}));
+        hub.install_command("setup_sysroots");
+        for _ in 0..200 {
+            if started.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the install did not start");
     }
 }

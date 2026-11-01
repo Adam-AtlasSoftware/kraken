@@ -1695,6 +1695,19 @@ impl LinuxProcess {
     }
 }
 
+/// Whether `exit` is a stop at an instruction the emulator lacks in code mapped from a library or
+/// the loader, rather than in the program itself.
+pub fn stopped_in_library(arch: Arch, exit: &Exit) -> bool {
+    let Exit::Unsupported { detail } = exit else {
+        return false;
+    };
+    let pc = detail
+        .rsplit_once(" at pc 0x")
+        .and_then(|(_, hex)| u64::from_str_radix(hex, 16).ok());
+    let lay = layout(arch);
+    pc.is_some_and(|pc| (lay.mmap_base..lay.stack_top).contains(&pc))
+}
+
 /// The signal a CPU fault becomes.
 pub(crate) fn fault_exit(detail: &str, pc: u64) -> Exit {
     let signal = if detail.starts_with("UnimplementedOp") {

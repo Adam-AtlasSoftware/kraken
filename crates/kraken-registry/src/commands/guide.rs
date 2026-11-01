@@ -187,6 +187,11 @@ async fn gather(
         blocking(move || Ok(super::emulate::needs_sysroot(&binary))).await?
     };
 
+    facts.host_libs_stopped = s.host_libs_stop() && {
+        let binary = binary.clone();
+        blocking(move || Ok(super::emulate::runs_on_host_libraries(&binary))).await?
+    };
+
     if let Some(address) = function {
         facts.current = current_function(s, ctx, address).await;
     }

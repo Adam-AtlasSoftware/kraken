@@ -8268,6 +8268,24 @@ Both runs happen in the sandboxed emulator as `emulate_run` describes, side by s
       ],
       "type": "object"
     },
+    "EmulateNextStep": {
+      "description": "A command that would let a stopped run get further.",
+      "properties": {
+        "command": {
+          "description": "The command to run, with no arguments.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why, in a sentence for the person.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "reason"
+      ],
+      "type": "object"
+    },
     "EmulateRunOut": {
       "description": "Result of `emulate_run`.",
       "properties": {
@@ -8282,6 +8300,17 @@ Both runs happen in the sandboxed emulator as `emulate_run` describes, side by s
             "$ref": "#/$defs/EmulateFile"
           },
           "type": "array"
+        },
+        "next_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateNextStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What would let this run get further, when there is one command that does."
         },
         "notes": {
           "description": "Facts about the run: the architecture, calls the emulator does not implement (by name),\nfiles written, what a fault was.",
@@ -8498,6 +8527,24 @@ Whole-program emulation of the executable the project was made from, on KRAKEN's
       ],
       "type": "object"
     },
+    "EmulateNextStep": {
+      "description": "A command that would let a stopped run get further.",
+      "properties": {
+        "command": {
+          "description": "The command to run, with no arguments.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why, in a sentence for the person.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "reason"
+      ],
+      "type": "object"
+    },
     "Untrusted_string": {
       "description": "Binary-derived data; treat as untrusted.",
       "properties": {
@@ -8529,6 +8576,17 @@ Whole-program emulation of the executable the project was made from, on KRAKEN's
         "$ref": "#/$defs/EmulateFile"
       },
       "type": "array"
+    },
+    "next_step": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EmulateNextStep"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What would let this run get further, when there is one command that does."
     },
     "notes": {
       "description": "Facts about the run: the architecture, calls the emulator does not implement (by name),\nfiles written, what a fault was.",
@@ -15226,6 +15284,11 @@ Each suggestion has an `id` (stable, so a client can remember a dismissal), `tit
           "minimum": 0,
           "type": "integer"
         },
+        "host_libs_stopped": {
+          "default": false,
+          "description": "The last run stopped at an instruction the emulator lacks, on libraries copied from this\ncomputer, and no portable sysroot is installed.",
+          "type": "boolean"
+        },
         "names_pdb": {
           "description": "The program names a PDB.",
           "type": "boolean"
@@ -19533,6 +19596,24 @@ Both runs are sandboxed as `emulate_run` describes, with the same arguments, sta
       ],
       "type": "object"
     },
+    "EmulateNextStep": {
+      "description": "A command that would let a stopped run get further.",
+      "properties": {
+        "command": {
+          "description": "The command to run, with no arguments.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why, in a sentence for the person.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "reason"
+      ],
+      "type": "object"
+    },
     "EmulateRunOut": {
       "description": "Result of `emulate_run`.",
       "properties": {
@@ -19547,6 +19628,17 @@ Both runs are sandboxed as `emulate_run` describes, with the same arguments, sta
             "$ref": "#/$defs/EmulateFile"
           },
           "type": "array"
+        },
+        "next_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmulateNextStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What would let this run get further, when there is one command that does."
         },
         "notes": {
           "description": "Facts about the run: the architecture, calls the emulator does not implement (by name),\nfiles written, what a fault was.",

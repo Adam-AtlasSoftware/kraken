@@ -24,6 +24,7 @@
 //! host only through the system calls this crate answers itself.
 
 pub mod arch;
+mod avx;
 pub mod call;
 #[cfg(unix)]
 pub mod confined;

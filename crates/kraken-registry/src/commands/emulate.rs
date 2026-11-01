@@ -181,6 +181,18 @@ pub struct EmulateRunOut {
     /// The files the program wrote, when `return_files` was set (at most 16).
     #[serde(default)]
     pub files: Vec<EmulateFile>,
+    /// What would let this run get further, when there is one command that does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<EmulateNextStep>,
+}
+
+/// A command that would let a stopped run get further.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EmulateNextStep {
+    /// The command to run, with no arguments.
+    pub command: String,
+    /// Why, in a sentence for the person.
+    pub reason: String,
 }
 
 /// Runs the program of the open project in the emulator.
@@ -242,11 +254,13 @@ impl Command for EmulateRun {
             patches,
             engine_base: project.program().base.0,
         };
-        blocking(move || {
+        let out = blocking(move || {
             let raw = emulate(&binary, &args, limits, &patched, find_runner())?;
             Ok(present(raw, args.return_files, &args.inputs))
         })
-        .await
+        .await?;
+        s.note_host_libs_stop(out.next_step.is_some());
+        Ok(out)
     }
 }
 
@@ -477,6 +491,13 @@ pub(super) fn needs_sysroot(path: &Path) -> bool {
         .is_some_and(|a| a != Arch::Riscv32 && sysroot_for(a).is_none())
 }
 
+/// A dynamically linked program that would run on this computer's own libraries, because no
+/// portable sysroot is installed for its architecture.
+pub(super) fn runs_on_host_libraries(path: &Path) -> bool {
+    super::guide::dynamic_elf_arch(path)
+        .is_some_and(|a| matches!(sysroot_for(a), Some(Sysroot::Host)))
+}
+
 /// Whether this computer has a loader for programs of `arch`.
 fn host_libraries(arch: Arch) -> bool {
     if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
@@ -551,6 +572,8 @@ pub(super) struct Patched {
 pub(super) struct RawRun {
     pub(super) outcome: ProgramOutcome,
     pub(super) notes: Vec<String>,
+    /// The libraries were copied from this computer (no portable sysroot is installed).
+    pub(super) host_libs: bool,
 }
 
 /// One run of `binary` in the confined runner. `runner` is the `kraken-emu-run` binary. When
@@ -635,14 +658,18 @@ fn emulate(
     spec.workdir = Some(guest);
 
     let run = |spec: &RunSpec| run_program_confined(spec, &runner, ConfinementOptions::default());
-    let ((outcome, report), _host_libs) =
+    let ((outcome, report), host_libs) =
         with_sysroot(&mut spec, &program, binary, &mut notes, run)?;
     if !report.is_confined() {
         notes.push(format!(
             "the emulator child ran with limited confinement: {report}"
         ));
     }
-    Ok(RawRun { outcome, notes })
+    Ok(RawRun {
+        outcome,
+        notes,
+        host_libs: host_libs.is_some(),
+    })
 }
 
 /// Runs `run` on `spec`; a dynamically linked program that needs a sysroot gets one (an
@@ -680,10 +707,7 @@ pub fn with_sysroot<T>(
                         "dynamic program: its loader and {} librar{} were copied from this \
                          computer into a private sysroot; nothing else of this computer is \
                          visible, so libraries opened by name at run time (dlopen, NSS, gconv) \
-                         are absent. If emulation stops at an unsupported vector instruction, \
-                         this system's libraries are built for newer CPUs (some distributions \
-                         build for x86-64-v3); in a source checkout `cargo xtask emu-sysroots` \
-                         extracts portable ones",
+                         are absent",
                         libs.libraries.len(),
                         if libs.libraries.len() == 1 {
                             "y"
@@ -799,7 +823,20 @@ pub(super) fn present(raw: RawRun, return_files: bool, inputs: &[EmulateInput]) 
     let RawRun {
         outcome: o,
         mut notes,
+        host_libs,
     } = raw;
+    let next_step =
+        (host_libs && kraken_emu::linux::stopped_in_library(o.arch, &o.exit)).then(|| {
+            EmulateNextStep {
+                command: "setup_sysroots".into(),
+                reason:
+                    "The run stopped at an instruction the emulator does not implement, inside \
+                     one of this computer's own libraries, which are built for newer CPUs than \
+                     the emulated x86-64-v3 one. Portable libraries (pinned Debian packages, \
+                     about 20 MB) run on it; once they are installed the next run uses them."
+                        .into(),
+            }
+        });
     let (kind, value) = match &o.exit {
         Exit::Code { code } => (EmulateExitKind::Code, Some(i64::from(*code))),
         Exit::Signal { signal, detail } => {
@@ -875,6 +912,7 @@ pub(super) fn present(raw: RawRun, return_files: bool, inputs: &[EmulateInput]) 
         } else {
             Vec::new()
         },
+        next_step,
     }
 }
 
@@ -1351,6 +1389,47 @@ mod tests {
             ..args()
         })
         .expect("maxima are allowed");
+    }
+
+    fn stopped(host_libs: bool, exit: Exit) -> EmulateRunOut {
+        let outcome = ProgramOutcome {
+            arch: Arch::X86_64,
+            exit,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            instructions: 1,
+            elapsed_ms: 1,
+            setup_ms: 0,
+            files: Vec::new(),
+            syscalls: BTreeMap::new(),
+            unknown_syscalls: Vec::new(),
+            notes: Vec::new(),
+        };
+        present(
+            RawRun {
+                outcome,
+                notes: Vec::new(),
+                host_libs,
+            },
+            false,
+            &[],
+        )
+    }
+
+    #[test]
+    fn a_stop_on_this_computers_libraries_names_the_install_command() {
+        let unsupported = || Exit::Unsupported {
+            detail: "UnimplementedOp `VAESENC` at pc 0x7ffff7f2d241".into(),
+        };
+        let step = stopped(true, unsupported()).next_step.expect("offered");
+        assert_eq!(step.command, "setup_sysroots");
+        assert_eq!(stopped(false, unsupported()).next_step, None);
+        assert_eq!(stopped(true, Exit::Code { code: 0 }).next_step, None);
+        // In the program itself other libraries change nothing.
+        let own = Exit::Unsupported {
+            detail: "UnimplementedOp `AESENC` at pc 0x555555551149".into(),
+        };
+        assert_eq!(stopped(true, own).next_step, None);
     }
 
     #[test]

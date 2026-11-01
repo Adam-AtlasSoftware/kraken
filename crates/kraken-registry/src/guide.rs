@@ -79,6 +79,10 @@ pub struct Facts {
     /// A dynamically linked program that needs a sysroot to run in the emulator, and none is
     /// installed for this architecture.
     pub needs_sysroot: bool,
+    /// The last run stopped at an instruction the emulator lacks, on libraries copied from this
+    /// computer, and no portable sysroot is installed.
+    #[serde(default)]
+    pub host_libs_stopped: bool,
     /// The function in view, when the caller names one.
     pub current: Option<CurrentFunction>,
 }
@@ -114,6 +118,7 @@ pub const RULES: &[(&str, Rule)] = &[
     ("name_functions", name_functions),
     ("set_local", set_local),
     ("sysroot", sysroot),
+    ("portable_libs", portable_libs),
     ("explore", explore),
 ];
 
@@ -283,6 +288,23 @@ fn sysroot(f: &Facts) -> Vec<Suggestion> {
     )]
 }
 
+fn portable_libs(f: &Facts) -> Vec<Suggestion> {
+    if !f.host_libs_stopped {
+        return Vec::new();
+    }
+    vec![sg(
+        "portable_libs",
+        "Install portable libraries for the emulator",
+        "The last run stopped at an instruction the emulator does not implement, inside one of \
+         this computer's own libraries. Portable ones run on the emulated CPU; Setup \
+         downloads them (about 20 MB from deb.debian.org) and the next run uses them."
+            .to_string(),
+        Some("setup_sysroots"),
+        json!({}),
+        true,
+    )]
+}
+
 /// A gentle first move when nothing else applies.
 fn explore(f: &Facts) -> Vec<Suggestion> {
     if !f.analysed || f.function_count == 0 {
@@ -295,6 +317,7 @@ fn explore(f: &Facts) -> Vec<Suggestion> {
         name_functions(f),
         set_local(f),
         sysroot(f),
+        portable_libs(f),
     ];
     if others.iter().any(|v| !v.is_empty()) {
         return Vec::new();
@@ -393,6 +416,21 @@ mod tests {
         let s = suggest(&f);
         assert_eq!(s[0].id, "debug_attach");
         assert_eq!(s[0].args, json!({"debug_file": "/d/a.debug"}));
+    }
+
+    #[test]
+    fn a_run_stopped_on_this_computers_libraries_suggests_the_portable_ones() {
+        let f = Facts {
+            binary: "/p/a.out".into(),
+            analysed: true,
+            function_count: 5,
+            debug: DebugFacts::None,
+            host_libs_stopped: true,
+            ..Facts::default()
+        };
+        let s = suggest(&f);
+        let found = s.iter().find(|x| x.id == "portable_libs").expect("offered");
+        assert_eq!(found.command.as_deref(), Some("setup_sysroots"));
     }
 
     #[test]

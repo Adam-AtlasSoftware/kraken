@@ -847,6 +847,7 @@ pub struct Session {
     config: SessionConfig,
     jobs: JobTable,
     ai: crate::ai::AiBoard,
+    host_libs_stop: Arc<std::sync::atomic::AtomicBool>,
     project: Arc<RwLock<Option<Arc<Project>>>>,
     rewrite: Option<Arc<dyn RewriteBackend>>,
     source_patch: Option<Arc<dyn crate::commands::SourcePatchBackend>>,
@@ -874,6 +875,7 @@ impl Session {
             config: SessionConfig::default(),
             jobs: JobTable::new(),
             ai: crate::ai::AiBoard::new(),
+            host_libs_stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             project: Arc::new(RwLock::new(None)),
             rewrite: None,
             source_patch: None,
@@ -1039,6 +1041,19 @@ impl Session {
     /// The job table.
     pub fn jobs(&self) -> &JobTable {
         &self.jobs
+    }
+
+    /// Records how the last `emulate_run` went: whether it stopped at an instruction the emulator
+    /// lacks, on libraries copied from this computer.
+    pub fn note_host_libs_stop(&self, stopped: bool) {
+        self.host_libs_stop
+            .store(stopped, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the last `emulate_run` stopped that way.
+    pub fn host_libs_stop(&self) -> bool {
+        self.host_libs_stop
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The board of AI work (rewrite jobs and anything else that calls a model here).

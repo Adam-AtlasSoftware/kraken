@@ -61,22 +61,42 @@ not found. For other architectures without a sysroot the command says so and nam
 Setup entry to install, or that riscv32 has none). The order is: a sysroot you built, an installed one,
 then this computer's libraries (x86 only).
 
-Why a portable sysroot can still be needed on x86-64: many distributions build glibc for x86-64-v3, with AVX2
-instructions inside, and the emulated CPU implements no VEX/AVX instructions (a program that
-executes one stops with `kind: unsupported`). Debian's glibc is built for baseline x86-64.
+### The emulated x86 CPU
 
-Two adjustments are made so such programs start, and each is listed in the run's `notes`:
+The x86 and x86-64 CPU is an **x86-64-v3** machine, and `CPUID` says so: SSE up to 4.2, POPCNT,
+AVX, AVX2, FMA (64-bit programs), F16C, BMI1, BMI2, LZCNT, MOVBE, and XGETBV/XSAVE/XRSTOR for the
+x87, SSE and AVX state. So a program built for x86-64-v3, or a C library built that way (Ubuntu
+26.04's `amd64v3` packages, CachyOS, ...), runs the way it does on a real CPU, and a library that
+picks its routines at start-up picks the AVX2 ones. `corpus/linux-rt/src/vex_ops.c` checks more
+than 1300 instruction forms against a real CPU's recorded results (`crates/kraken-emu/tests/vex.rs`);
+that test is how a dozen mistakes in the spec's description of these instructions were found and
+replaced (`crates/kraken-emu/src/avx.rs`).
+
+Floating-point vector results use the default MXCSR: round to nearest, exceptions masked, status
+flags not recorded. `rcpps`/`rsqrtps` return the exact quotient, more digits than real hardware's
+estimates, so a program comparing those bits exactly can see a difference. The x87 stack is not
+part of XSAVE here. `vmaskmov*` and `vpmaskmov*` access the whole operand, so one that hangs over
+into unmapped memory faults even where its mask is clear, unlike a real CPU. 64-bit programs are
+what the instruction test covers; 32-bit programs share the implementation but only run the
+corpus programs.
+
+Not implemented: FXSAVE, AVX-512, AES, PCLMULQDQ, SHA and GFNI, none but FXSAVE reported by `CPUID`. A program
+that really executes one ends with `kind: unsupported`, the instruction and its address.
+
+If that happens inside one of this computer's own libraries (not in the program itself), the result carries
+`next_step` naming `setup_sysroots`. The Run dialog and the Emulation tab show an **Install portable
+libraries** button, `next_steps` suggests the same, and the following run uses the installed
+libraries by itself.
+
+Two adjustments are made so programs start, and the first is listed in the run's `notes`:
 
 - A program linked from distribution objects can carry a minimum-CPU marker (the
-  `GNU_PROPERTY_X86_ISA_1_NEEDED` property, for example "x86-64-v3 needed") although it only uses
-  baseline instructions. The loader would then refuse to start it on the emulated baseline CPU
-  (`CPU ISA level is lower than required`). The emulator zeroes the marker in the copy it loads;
-  the file in the project is not touched and no instruction changes.
-- x86-64 dynamic programs run with `LD_BIND_NOW=1` (unless the run sets it itself), because the
-  lazy-binding trampoline uses FXSAVE, which the CPU model does not implement.
-
-Not supported: AVX/VEX instructions, and the other vector-state instructions (FXSAVE, XSAVE) of
-the CPU model. A program that really executes one ends with `kind: unsupported` and the address.
+  `GNU_PROPERTY_X86_ISA_1_NEEDED` property) although it only uses simpler instructions. For a
+  marker above x86-64-v3 the loader would refuse to start it (`CPU ISA level is lower than
+  required`), so the emulator zeroes the marker in the copy it loads; the file in the project is
+  not touched and no instruction changes.
+- x86-64 dynamic programs run with `LD_BIND_NOW=1` (unless the run sets it itself): FXSAVE is not
+  implemented, and a C library on a CPU without XSAVE would use it in its lazy-binding trampoline.
 
 ## What you need
 

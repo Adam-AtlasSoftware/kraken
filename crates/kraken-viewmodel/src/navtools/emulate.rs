@@ -262,6 +262,8 @@ pub struct RunDetail {
     pub files: Vec<FileDetail>,
     /// An output stream was cut.
     pub truncated: bool,
+    /// Why installing the portable libraries would help, when the run stopped on this computer's.
+    pub libs_hint: Option<String>,
 }
 
 impl From<EmulateRunOut> for RunDetail {
@@ -283,6 +285,10 @@ impl From<EmulateRunOut> for RunDetail {
             steps: o.steps,
             notes: o.notes,
             truncated: o.truncated,
+            libs_hint: o
+                .next_step
+                .filter(|n| n.command == "setup_sysroots")
+                .map(|n| n.reason),
             files: o
                 .files
                 .into_iter()
@@ -308,6 +314,7 @@ impl From<WineRunOut> for RunDetail {
             steps: 0,
             truncated: o.truncated,
             notes,
+            next_step: None,
             files: o.files,
         }
         .into()
@@ -375,6 +382,21 @@ pub struct EmulationPanel {
     pub result: Option<EmulationResult>,
     /// Why the last run failed outside the dialog.
     pub error: Option<String>,
+    /// The person pressed Install portable libraries; the window takes it from here.
+    pub install_libs: bool,
+}
+
+impl EmulationResult {
+    /// Why installing the portable libraries would let this run get further.
+    pub fn libs_hint(&self) -> Option<&str> {
+        match self {
+            EmulationResult::Run { run, .. } => run.libs_hint.as_deref(),
+            EmulationResult::Compare { a, b, .. } => {
+                a.libs_hint.as_deref().or(b.libs_hint.as_deref())
+            }
+            EmulationResult::Call(_) => None,
+        }
+    }
 }
 
 impl ViewModel {

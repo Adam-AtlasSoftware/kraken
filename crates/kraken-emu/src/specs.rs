@@ -148,7 +148,7 @@ struct Patch {
 /// * RISC-V: the control and status registers live in a second RAM space (`csreg`), which icicle's
 ///   SLEIGH compiler does not support (one RAM space per language). The named CSRs become
 ///   ordinary registers and the generic `csr` operand addresses [`RISCV_CSR_BASE`] in RAM.
-/// * x86: `CPUID` (see [`X86_CPUID`]).
+/// * x86: `CPUID` (see [`X86_CPUID`]) and AVX (see [`crate::avx`]).
 /// * AArch64: the 32-bit `BFXIL` mask (a constant icicle folds sign-extended).
 /// * ARM: the A32 `blx <imm>` operand sets the decoder context of its target to Thumb
 ///   (`TMode=1; globalset(reloc,TMode)`), which icicle's decoder rejects, so every A32-to-Thumb
@@ -205,15 +205,7 @@ fn patches(arch: Arch) -> (&'static str, Vec<Patch>) {
                 to: "[ reloc = ((inst_next+4) + (4*addr24) + (2*H24)) & 0xFFFFFFFF; ]".into(),
             }],
         ),
-        Arch::X86 | Arch::X86_64 => (
-            "x86",
-            vec![Patch {
-                file: "ia.sinc",
-                from: ":CPUID          is vexMode=0 & byte=0xf; byte=0xa2                  {",
-                until: Some(":DAA            is vexMode=0"),
-                to: X86_CPUID.into(),
-            }],
-        ),
+        Arch::X86 | Arch::X86_64 => ("x86", x86_patches()),
         // icicle folds the constant of `0xffffffff >> (32 - width)` as a sign-extended 64-bit
         // value, so the 32-bit BFXIL mask came out all ones and the instruction cleared every
         // bit it should keep (glibc's ld.so lost `l_relocated` that way).
@@ -227,6 +219,53 @@ fn patches(arch: Arch) -> (&'static str, Vec<Patch>) {
             }],
         ),
     }
+}
+
+/// `CPUID`, the `kvec` declaration and the wide statements of the AVX files (see [`crate::avx`]).
+fn x86_patches() -> Vec<Patch> {
+    let mut out = vec![
+        Patch {
+            file: "ia.sinc",
+            from: ":CPUID          is vexMode=0 & byte=0xf; byte=0xa2                  {",
+            until: Some(":DAA            is vexMode=0"),
+            to: X86_CPUID.into(),
+        },
+        Patch {
+            file: "ia.sinc",
+            from: "define pcodeop cpuid;\n",
+            until: None,
+            to: format!("define pcodeop cpuid;\n{}", crate::avx::DECLARE),
+        },
+        Patch {
+            file: "ia.sinc",
+            from: ":XGETBV         is vexMode=0 & byte=0x0F; byte=0x01; byte=0xD0  {",
+            until: Some("\n"),
+            to: crate::avx::X86_XGETBV.into(),
+        },
+        Patch {
+            file: "ia.sinc",
+            from: ":XRSTOR Mem    is vexMode=0",
+            until: Some(":XRSTORS Mem"),
+            to: crate::avx::xrstor_text(),
+        },
+        Patch {
+            file: "ia.sinc",
+            from: ":XSAVE  Mem    is vexMode=0",
+            until: Some(":XSAVEC  Mem"),
+            to: crate::avx::xsave_text(),
+        },
+    ];
+    out.extend(
+        crate::avx::spec_fixes()
+            .into_iter()
+            .map(|(file, from, to)| Patch {
+                file,
+                from,
+                until: None,
+                to,
+            }),
+    );
+    out
 }
 
 /// `CPUID` as one user op that returns the four result registers (leaf in `EAX`, sub-leaf in
@@ -275,13 +314,6 @@ pub fn overlay(processors: &Path, arch: Arch) -> Result<PathBuf, EmuError> {
     {
         return Ok(processors.to_path_buf());
     }
-    let key = {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        src.hash(&mut h);
-        files.hash(&mut h);
-        format!("{dir}-{:016x}", h.finish())
-    };
     let mut patched = files.clone();
     for p in &patches {
         let text = patched
@@ -307,6 +339,32 @@ pub fn overlay(processors: &Path, arch: Arch) -> Result<PathBuf, EmuError> {
             }
         }
     }
+    if matches!(arch, Arch::X86 | Arch::X86_64) {
+        let files = [
+            "ia.sinc",
+            "avx.sinc",
+            "avx_manual.sinc",
+            "avx2.sinc",
+            "avx2_manual.sinc",
+            "fma.sinc",
+            "lzcnt.sinc",
+            "bmi1.sinc",
+        ];
+        for file in files {
+            let text = match patched.get(file) {
+                Some(t) => t.clone(),
+                None => std::fs::read_to_string(src.join(file)).map_err(io)?,
+            };
+            patched.insert(file, crate::avx::rewrite_sinc(&text));
+        }
+    }
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        src.hash(&mut h);
+        patched.hash(&mut h);
+        format!("{dir}-{:016x}", h.finish())
+    };
     let base = overlay_cache().join(key);
     let out = base.join("Ghidra/Processors");
     if out.join(OVERLAY_MARK).is_file() {

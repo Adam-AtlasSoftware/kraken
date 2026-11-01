@@ -2,9 +2,9 @@
 //!
 //! Distribution objects carry a `GNU_PROPERTY_X86_ISA_1_NEEDED` property that the linker ORs
 //! into the program's note, so a program that only uses baseline instructions can still say
-//! "x86-64-v3 needed". The dynamic loader then refuses to start it on a CPU below that level. The
-//! emulated CPU is deliberately baseline x86-64, so the marker is zeroed in the private copy the
-//! emulator loads; no instruction of the program changes.
+//! "x86-64-v4 needed". The dynamic loader then refuses to start it on a CPU below that level. The
+//! emulated CPU is x86-64-v3, so a v4 marker is zeroed in the private copy the emulator loads; no
+//! instruction of the program changes.
 
 const PT_NOTE: u32 = 4;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
@@ -129,25 +129,22 @@ fn clear(d: &mut [u8]) -> Option<u32> {
     (found != 0).then_some(found)
 }
 
-/// Clears the x86 minimum-CPU marker of the ELF image `data` and returns the note to show, if
-/// the marker was set. Never fails: input it does not understand stays as it is.
+/// Clears the x86 minimum-CPU marker of the ELF image `data` when it asks for more than the
+/// emulated x86-64-v3 CPU, and returns the note to show. Never fails: input it does not
+/// understand stays as it is.
 pub fn clear_isa_needed(data: &mut [u8]) -> Option<String> {
+    const V4: u32 = 8;
     let mut scratch = data.to_vec();
     let found = clear(&mut scratch)?;
+    if found & V4 == 0 {
+        return None;
+    }
     data.copy_from_slice(&scratch);
-    let level = if found & 8 != 0 {
-        "x86-64-v4"
-    } else if found & 4 != 0 {
-        "x86-64-v3"
-    } else if found & 2 != 0 {
-        "x86-64-v2"
-    } else {
-        "x86-64-baseline"
-    };
-    Some(format!(
-        "Cleared the program's minimum-CPU marker ({level} needed) because the emulated CPU is \
-         baseline; the program's own instructions are unchanged."
-    ))
+    Some(
+        "Cleared the program's minimum-CPU marker (x86-64-v4 needed) because the emulated CPU \
+         is x86-64-v3; the program's own instructions are unchanged."
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -194,15 +191,23 @@ mod tests {
     }
 
     #[test]
+    fn a_level_the_emulated_cpu_meets_stays() {
+        let orig = elf64(&[(GNU_PROPERTY_X86_ISA_1_NEEDED, 7)]);
+        let mut d = orig.clone();
+        assert_eq!(clear_isa_needed(&mut d), None);
+        assert_eq!(d, orig);
+    }
+
+    #[test]
     fn the_needed_value_is_zeroed_and_nothing_else_changes() {
-        let orig = elf64(&[(0xc000_0002, 3), (GNU_PROPERTY_X86_ISA_1_NEEDED, 7)]);
+        let orig = elf64(&[(0xc000_0002, 3), (GNU_PROPERTY_X86_ISA_1_NEEDED, 15)]);
         let mut d = orig.clone();
         let note = clear_isa_needed(&mut d).expect("cleared");
-        assert!(note.contains("x86-64-v3 needed"), "{note}");
+        assert!(note.contains("x86-64-v4 needed"), "{note}");
         let diff: Vec<usize> = (0..d.len()).filter(|&i| d[i] != orig[i]).collect();
         assert_eq!(diff.len(), 1, "{diff:?}");
         let at = 120 + 12 + 4 + 16 + 8;
-        assert_eq!(&orig[at..at + 4], &7u32.to_le_bytes());
+        assert_eq!(&orig[at..at + 4], &15u32.to_le_bytes());
         assert_eq!(&d[at..at + 4], &[0; 4]);
         assert!(clear_isa_needed(&mut d).is_none());
     }
@@ -224,13 +229,13 @@ mod tests {
         note.extend(b"GNU\0");
         note.extend(GNU_PROPERTY_X86_ISA_1_NEEDED.to_le_bytes());
         note.extend(4u32.to_le_bytes());
-        note.extend(2u32.to_le_bytes());
+        note.extend(8u32.to_le_bytes());
         put32(&mut v, 52, PT_NOTE);
         put32(&mut v, 52 + 4, 84);
         put32(&mut v, 52 + 16, note.len() as u32);
         v.extend(note);
         let note = clear_isa_needed(&mut v).expect("cleared");
-        assert!(note.contains("x86-64-v2"), "{note}");
+        assert!(note.contains("x86-64-v4"), "{note}");
         assert_eq!(&v[84 + 24..84 + 28], &[0; 4]);
     }
 

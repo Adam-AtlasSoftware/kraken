@@ -151,6 +151,8 @@ pub struct KrakenApp {
     integrations_want: Option<IntegrationsWant>,
     /// The Setup status window and the install jobs it started.
     setup_hub: Option<kraken_viewmodel::setup_status::SetupHub>,
+    /// The part a button outside the Setup status window asked to install.
+    setup_install: Option<&'static str>,
     /// The window was asked for before the hub existed.
     setup_want: bool,
     prefs: Prefs,
@@ -273,6 +275,7 @@ impl KrakenApp {
             integrations: None,
             integrations_want: None,
             setup_hub: None,
+            setup_install: None,
             setup_want: false,
             prefs,
             is_demo: false,
@@ -870,6 +873,14 @@ impl KrakenApp {
 
     fn step_vm(&mut self, ctx: &egui::Context) {
         self.poll_daemon(ctx);
+        if self
+            .vm
+            .as_mut()
+            .is_some_and(|vm| std::mem::take(&mut vm.tools.emulation.install_libs))
+        {
+            self.setup_install = Some("setup_sysroots");
+            self.want_setup_status(ctx);
+        }
         let Some(vm) = self.vm.as_mut() else {
             return;
         };
@@ -1754,7 +1765,10 @@ impl KrakenApp {
             return;
         };
         if std::mem::take(&mut self.setup_want) {
-            hub.open();
+            match self.setup_install.take() {
+                Some(command) => hub.install_command(command),
+                None => hub.open(),
+            }
         }
         crate::setup_status::show(ctx, &hub);
     }

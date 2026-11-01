@@ -223,3 +223,6 @@ and `sched_yield` through raw system calls (no libc; `src/rt.h`). `build.sh` bui
 `expected/<name>.stdout` and `.exit` from the native x86-64 run (a fresh directory holding the program
 as `prog`, standard input `go`). qemu-user was not available when the AArch64 builds were added: they
 are checked against the same expected output under `kraken-emu` only.
+
+`vex_ops` is x86-64 only: one case per instruction form of x86-64-v3 (`src/gen_vex_cases.py` writes
+them), printing what each changed from a fixed state; `crates/kraken-emu/tests/vex.rs` compares under emulation.

@@ -225,12 +225,15 @@ fn arm_coprocessor_read(cpu: &mut Cpu, dst: pcode::VarNode, args: [pcode::Value;
     }
 }
 
-/// `CPUID` (the patched spec's `cpuid(EAX, ECX)`, see `specs::X86_CPUID`): a baseline x86-64 CPU
-/// (FPU, TSC, CX8, CMOV, MMX, FXSR, SSE, SSE2; SYSCALL, NX, LM, LAHF), so the C library picks its
-/// plain SSE2 routines. Every other leaf reads as zero. Output order: EAX, EBX, EDX, ECX.
-fn x86_cpuid(cpu: &mut Cpu, dst: pcode::VarNode, args: [pcode::Value; 2]) {
-    let leaf = cpu.read::<u32>(args[0]);
-    let regs: [u32; 4] = match leaf {
+/// The answers of `CPUID` for leaf `leaf`, sub-leaf `sub`, in the order EAX, EBX, EDX, ECX. This
+/// is what the CPU implements, an x86-64-v3 machine without XSAVE compaction or AVX-512:
+/// SSE up to 4.2, POPCNT, AVX, AVX2, FMA (64-bit only: Ghidra's 32-bit spec has no FMA), F16C,
+/// BMI1, BMI2, LZCNT and MOVBE, with the extended state of x87, SSE and AVX enabled. Every other
+/// leaf reads as zero.
+fn cpuid_regs(leaf: u32, sub: u32, fma: bool) -> [u32; 4] {
+    const XSTATE: u32 = 0b111;
+    const XSTATE_BYTES: u32 = 576 + 256;
+    match leaf {
         0 => [
             0xd,
             u32::from_le_bytes(*b"Genu"),
@@ -238,14 +241,47 @@ fn x86_cpuid(cpu: &mut Cpu, dst: pcode::VarNode, args: [pcode::Value; 2]) {
             u32::from_le_bytes(*b"ntel"),
         ],
         1 => {
+            // FPU, TSC, CX8, CMOV, MMX, FXSR, SSE, SSE2.
             let edx =
                 1 | (1 << 4) | (1 << 8) | (1 << 15) | (1 << 23) | (1 << 24) | (1 << 25) | (1 << 26);
-            [0x0009_06e0, 0x0000_0800, edx, 0]
+            // SSE3, SSSE3, CX16, SSE4.1, SSE4.2, MOVBE, POPCNT, XSAVE, OSXSAVE, AVX, F16C.
+            let ecx = 1
+                | (1 << 9)
+                | (1 << 13)
+                | (1 << 19)
+                | (1 << 20)
+                | (1 << 22)
+                | (1 << 23)
+                | (1 << 26)
+                | (1 << 27)
+                | (1 << 28)
+                | (1 << 29)
+                | (u32::from(fma) << 12);
+            [0x0009_06e0, 0x0000_0800, edx, ecx]
         }
+        // BMI1, AVX2, BMI2.
+        7 if sub == 0 => [0, (1 << 3) | (1 << 5) | (1 << 8), 0, 0],
+        0xd if sub == 0 => [XSTATE, XSTATE_BYTES, 0, XSTATE_BYTES],
         0x8000_0000 => [0x8000_0001, 0, 0, 0],
-        0x8000_0001 => [0, 0, (1 << 11) | (1 << 20) | (1 << 29), 1],
+        // SYSCALL, NX, LM; LAHF, LZCNT.
+        0x8000_0001 => [0, 0, (1 << 11) | (1 << 20) | (1 << 29), 1 | (1 << 5)],
         _ => [0; 4],
-    };
+    }
+}
+
+/// `CPUID` of the 64-bit CPU (the patched spec's `cpuid(EAX, ECX)`, see `specs::X86_CPUID`).
+fn x86_64_cpuid(cpu: &mut Cpu, dst: pcode::VarNode, args: [pcode::Value; 2]) {
+    let (leaf, sub) = (cpu.read::<u32>(args[0]), cpu.read::<u32>(args[1]));
+    write_cpuid(cpu, dst, cpuid_regs(leaf, sub, true));
+}
+
+/// `CPUID` of the 32-bit CPU.
+fn x86_cpuid(cpu: &mut Cpu, dst: pcode::VarNode, args: [pcode::Value; 2]) {
+    let (leaf, sub) = (cpu.read::<u32>(args[0]), cpu.read::<u32>(args[1]));
+    write_cpuid(cpu, dst, cpuid_regs(leaf, sub, false));
+}
+
+fn write_cpuid(cpu: &mut Cpu, dst: pcode::VarNode, regs: [u32; 4]) {
     if dst.size >= 16 {
         for (i, r) in regs.iter().enumerate() {
             cpu.write_var(dst.slice(4 * i as u8, 4), *r);
@@ -311,7 +347,19 @@ impl Machine {
         if matches!(arch, Arch::X86 | Arch::X86_64)
             && let Some(id) = vm.cpu.arch.sleigh.get_userop("cpuid")
         {
-            vm.cpu.set_helper(id, x86_cpuid);
+            let helper = if arch == Arch::X86_64 {
+                x86_64_cpuid
+            } else {
+                x86_cpuid
+            };
+            vm.cpu.set_helper(id, helper);
+        }
+        if matches!(arch, Arch::X86 | Arch::X86_64) {
+            for (name, f) in crate::avx::HELPERS {
+                if let Some(id) = vm.cpu.arch.sleigh.get_userop(name) {
+                    vm.cpu.set_helper(id, *f);
+                }
+            }
         }
         if arch == Arch::Aarch64 {
             for (name, f) in crate::neon::HELPERS {
@@ -775,5 +823,27 @@ impl Machine {
     /// Restores a snapshot taken from this machine.
     pub fn restore(&mut self, s: &icicle_vm::Snapshot) {
         self.vm.restore(s);
+    }
+}
+
+#[cfg(test)]
+mod cpuid_tests {
+    use super::cpuid_regs;
+
+    #[test]
+    fn cpuid_reports_x86_64_v3_and_no_avx512() {
+        let [_, _, _, ecx] = cpuid_regs(1, 0, true);
+        // SSSE3, FMA, SSE4.2, POPCNT, OSXSAVE, AVX.
+        for bit in [9, 12, 20, 23, 27, 28] {
+            assert_ne!(ecx & (1 << bit), 0, "leaf 1 ecx bit {bit}");
+        }
+        let [_, ebx, _, _] = cpuid_regs(7, 0, true);
+        assert_eq!(ebx, (1 << 3) | (1 << 5) | (1 << 8), "BMI1, AVX2, BMI2 only");
+        assert_eq!(cpuid_regs(7, 1, true), [0; 4]);
+        assert_eq!(
+            cpuid_regs(1, 0, false)[3] & (1 << 12),
+            0,
+            "no FMA in 32-bit mode"
+        );
     }
 }

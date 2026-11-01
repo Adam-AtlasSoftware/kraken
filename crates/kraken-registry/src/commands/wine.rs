@@ -563,6 +563,7 @@ pub(super) fn run_wine_bytes(
         started.elapsed().as_secs_f64()
     ));
     Ok(RawRun {
+        host_libs: false,
         outcome: ProgramOutcome {
             arch: Arch::X86_64,
             exit,

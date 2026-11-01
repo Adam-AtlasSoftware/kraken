@@ -42,6 +42,7 @@ fn run(stdout: &str, exit: &str, clean: bool) -> RunDetail {
             binary: false,
         }],
         truncated: false,
+        libs_hint: None,
     }
 }
 
@@ -177,6 +178,35 @@ fn screenshot_the_emulation_tab() {
     let path = dir.join("emulation.png");
     img.save(&path).expect("save png");
     println!("saved {}", path.display());
+}
+
+#[test]
+fn a_run_stopped_on_this_computers_libraries_offers_the_portable_ones() {
+    let mut k = kit(true);
+    ready(&mut k);
+    let ctx = k.h.ctx.clone();
+    k.h.state_mut().dispatch(AppAction::ShowEmulation, &ctx);
+    let mut stopped = run("", "stopped: the emulator lacks an instruction", false);
+    stopped.libs_hint = Some("Portable libraries run on the emulated CPU.".into());
+    let result = EmulationResult::Run {
+        patched: false,
+        given: "no arguments".into(),
+        run: Box::new(stopped),
+    };
+    assert_eq!(
+        result.libs_hint(),
+        Some("Portable libraries run on the emulated CPU.")
+    );
+    let vm = k.h.state_mut().view_model_mut().unwrap();
+    vm.tools.emulation.result = Some(result);
+    k.h.run_steps(3);
+    k.h.get_by_label("Install portable libraries").click();
+    k.h.run_steps(3);
+    let vm = k.h.state_mut().view_model_mut().unwrap();
+    assert!(
+        !vm.tools.emulation.install_libs,
+        "the window took the request"
+    );
 }
 
 fn call_result() -> EmulationResult {
