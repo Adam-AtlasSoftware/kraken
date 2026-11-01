@@ -1,17 +1,25 @@
 //! The body of `rewrite_harvest`, and how stored harvested cases reach a rewrite and its replay.
 
+#[cfg(unix)]
 use kraken_emu::confined::{DebugChild, find_runner};
+#[cfg(unix)]
 use kraken_emu::linux::RunSpec;
 use kraken_proto::{ErrorCode, Hex64, ProtoError};
-use kraken_registry::commands::{RewriteHarvestArgs, RewriteHarvestResult, with_sysroot};
+#[cfg(unix)]
+use kraken_registry::commands::with_sysroot;
+use kraken_registry::commands::{RewriteHarvestArgs, RewriteHarvestResult};
 use kraken_registry::{CallContext, JobReporter, Session};
+#[cfg(unix)]
 use kraken_sidecar::ConfinementOptions;
 
 use super::{RewriteService, progress, proto, with_store};
 use crate::abi::{Arg, Signature};
+#[cfg(unix)]
 use crate::error::RewriteError;
 use crate::fuzz::{FuzzOptions, fuzz_cases};
-use crate::harvest::{HarvestOptions, harvest_child};
+use crate::harvest::HarvestOptions;
+#[cfg(unix)]
+use crate::harvest::harvest_child;
 use crate::inputs::{Chain, InputSource, InputSpec, Recorded};
 use crate::lift::Lift;
 use crate::store::HarvestSplit;
@@ -127,6 +135,7 @@ impl RewriteService {
 }
 
 /// Starts the program confined, runs it to every entry of the function and records the cases.
+#[cfg(unix)]
 fn run_and_record(
     binary: &std::path::Path,
     args: &RewriteHarvestArgs,
@@ -180,4 +189,20 @@ fn run_and_record(
     )?;
     notes.extend(run.notes.iter().cloned());
     Ok((run, notes))
+}
+
+/// Harvesting needs the confined emulator child, which exists on Unix only.
+#[cfg(not(unix))]
+fn run_and_record(
+    _binary: &std::path::Path,
+    _args: &RewriteHarvestArgs,
+    _sig: &Signature,
+    _entry_listing: u64,
+    _image_base: u64,
+    _opts: &HarvestOptions,
+) -> Result<(crate::harvest::HarvestRun, Vec<String>), ProtoError> {
+    Err(problem(
+        ErrorCode::Unsupported,
+        "harvesting inputs needs the confined emulator, which runs on Linux and macOS only",
+    ))
 }

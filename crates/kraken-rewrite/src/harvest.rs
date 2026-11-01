@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(unix)]
 use kraken_emu::confined::{DebugChild, DebugReply, DebugRequest};
 use kraken_emu::session::SessionStop;
 
@@ -219,12 +220,14 @@ fn normalise(v: u64, bits: u8, signed: bool) -> u64 {
     }
 }
 
+#[cfg(unix)]
 fn emu(e: kraken_emu::EmuError) -> RewriteError {
     RewriteError::Unsupported(format!("the emulator: {e}"))
 }
 
 /// Runs the child until it exits (or a limit is hit), recording a case at every entry of the
 /// function at `entry` (an address in the emulator's address space).
+#[cfg(unix)]
 pub fn harvest_child(
     child: &mut DebugChild,
     sig: &Signature,
