@@ -85,6 +85,19 @@ support) comes from the toolchain's view of each file: function symbols per memb
 undefined symbols, and for the import libraries each symbol with its DLL. The objects behind the
 DLLs stay in the ignored `lib/.build/`.
 
+## The big-endian sets (`mips/`, `ppc32/`)
+
+The same four C programs, built the same way as the cross-architecture sets below, with Debian's
+cross compilers in the `cross` stage: `mips` with `mips-linux-gnu-gcc -march=mips32r2 -mabi=32`
+(o32, position independent with lazy stubs), `ppc32` with `powerpc-linux-gnu-gcc -mcpu=powerpc`
+(secure PLT, call stubs in `.text`). 16 binaries each, checked under `qemu-mips` and `qemu-ppc`
+against the x86-64 outputs (`<set>/QEMU-CHECK.txt`); `static_strops` prints another `hash=`
+there, as on the other 32-bit sets, because its `unsigned long` wraps at 32 bits.
+
+Fixtures with Ghidra 12.2 (`kraken-record --function-cap 32`): `switch_vm-<set>-O0`,
+`switch_vm-<set>-O2-stripped`, `pie_list-<set>-O2`, `stripped_calc-<set>-O0-stripped`. Ghidra's
+import through kraken takes `MIPS:BE:32:default` and `PowerPC:BE:32:e500`.
+
 ## The cross-architecture sets (`arm32/`, `aarch64/`, `riscv64/`, `riscv32/`)
 
 The four C programs (`static_strops`, `pie_list`, `stripped_calc`, `switch_vm`; `cpp_shapes` is
@@ -159,16 +172,16 @@ symbols). `crates/engine-native/tests/libraries.rs` opens all twelve.
 ## Rebuild
 
 ```
-corpus/build.sh [elf] [pe] [elf32] [lib] [arm32] [aarch64] [riscv64] [riscv32] [xlib]
+corpus/build.sh [elf] [pe] [elf32] [lib] [arm32] [aarch64] [riscv64] [riscv32] [xlib] [mips] [ppc32]
                                                      # needs docker; builds image, compiles in container
 python3 -I corpus/tools/groundtruth.py               # host, stdlib only; needs binutils (readelf, nm)
-python3 -I corpus/tools/groundtruth.py --set elf32   # likewise arm32, aarch64, riscv64, riscv32
+python3 -I corpus/tools/groundtruth.py --set elf32   # likewise arm32, aarch64, riscv64, riscv32, mips, ppc32
 python3 -I corpus/tools/groundtruth_pe.py            # host binutils with PE support (nm, objdump)
 python3 -I corpus/tools/groundtruth_lib.py           # host binutils with PE support (readelf, objdump, ar)
 python3 -I corpus/tools/groundtruth_lib.py --set xlib  # host readelf, objdump, ar
 ```
 
-With no set named, all nine are built. The PE and 32-bit sets were added with a second
+With no set named, all eleven are built. The PE and 32-bit sets were added with a second
 Containerfile layer (`gcc-mingw-w64-*-win32`, `gcc-multilib`), so the first layer and the ELF set
 built with it did not change; each set has its own `MANIFEST.sha256` and `TOOLCHAIN.txt`. The
 cross-architecture sets came with a third layer (the Linux cross compilers and their
@@ -176,7 +189,9 @@ cross-architecture sets came with a third layer (the Linux cross compilers and t
 second Containerfile stage, `cross`: apt removes `gcc-multilib` when it installs the Linux cross
 compilers (Debian declares them conflicting), so the elf, pe, elf32 and lib sets keep building in
 the first stage, `native`, which is the image they were built in. Rebuilding those four in it gave
-the committed binaries and `TOOLCHAIN.txt` files byte for byte.
+the committed binaries and `TOOLCHAIN.txt` files byte for byte. The big-endian sets add a layer at
+the end of the `cross` stage (`gcc-mips-linux-gnu`, `gcc-powerpc-linux-gnu` and their
+`libc6-dev-*-cross`).
 
 `build.sh` uses `docker run --rm -v corpus:/work` as the invoking user. Deterministic flags:
 `SOURCE_DATE_EPOCH=1704067200`, `-ffile-prefix-map=/work=.`, `-Wl,--build-id=none`, relative

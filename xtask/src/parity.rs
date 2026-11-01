@@ -1,7 +1,7 @@
 //! `cargo xtask parity`: how closely the native engine agrees with Ghidra, as numbers.
 //!
 //! Runs `parity_report` of `crates/engine-native/tests/agreement.rs` (every binary of
-//! `corpus/fixtures`, `corpus/pe/fixtures` and `corpus/elf32/fixtures` against the recorded Ghidra
+//! `corpus/fixtures` and of the `pe`, `elf32`, `mips` and `ppc32` sets against the recorded Ghidra
 //! results), joins the per-set sums with the rows of `parity.toml` (threshold and declared
 //! status), writes `parity.json` and regenerates the marked section of
 //! `docs/design/0014-native-engine.md`. The output holds no times or paths, so two runs on the
@@ -136,7 +136,15 @@ fn check_rows(root: &Path, rows: &[Row]) -> Result<()> {
         if !["parity", "partial", "missing"].contains(&r.status.as_str()) {
             return Err(format!("parity.toml: unknown status `{}`", r.status));
         }
-        if !["corpus", "corpus/pe", "corpus/elf32"].contains(&r.set.as_str()) {
+        if ![
+            "corpus",
+            "corpus/pe",
+            "corpus/elf32",
+            "corpus/mips",
+            "corpus/ppc32",
+        ]
+        .contains(&r.set.as_str())
+        {
             return Err(format!("parity.toml: unknown set `{}`", r.set));
         }
     }

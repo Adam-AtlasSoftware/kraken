@@ -17,8 +17,8 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use gimli::{
-    AttributeValue, DebuggingInformationEntry, DwTag, EndianSlice, LittleEndian, Unit, UnitOffset,
-    constants,
+    AttributeValue, DebuggingInformationEntry, DwTag, EndianSlice, Endianity, Reader,
+    RunTimeEndian, Unit, UnitOffset, constants,
 };
 use kraken_proto::{
     Composite, EnumDef, EnumVariant, Field, FunctionPrototype, Param, Primitive, PrimitiveClass,
@@ -26,7 +26,7 @@ use kraken_proto::{
 };
 use object::read::{Object, ObjectSection};
 
-type R<'a> = EndianSlice<'a, LittleEndian>;
+type R<'a> = EndianSlice<'a, RunTimeEndian>;
 
 /// Upper bound on DIEs read, so a hostile file cannot take unbounded time.
 const MAX_DIES: usize = 2_000_000;
@@ -166,7 +166,10 @@ pub fn parse(file: &object::File<'_>) -> Debug {
     if file.section_by_name(".debug_info").is_none() {
         return Debug::default();
     }
-    let mut importer = Importer::default();
+    let mut importer = Importer {
+        endian: crate::elf::Endian::of_file(file).gimli(),
+        ..Importer::default()
+    };
     let mut total = 0;
     import(&mut importer, &mut total, |name| {
         file.section_by_name(name)
@@ -205,7 +208,7 @@ fn import<'a>(
     let Ok(sections) = gimli::DwarfSections::load(load) else {
         return true;
     };
-    let dwarf = sections.borrow(|s| EndianSlice::new(s, LittleEndian));
+    let dwarf = sections.borrow(|s| EndianSlice::new(s, importer.endian));
     let mut units = dwarf.units();
     while let Ok(Some(header)) = units.next() {
         let Ok(unit) = dwarf.unit(header) else {
@@ -326,12 +329,9 @@ fn read_die(
                     } else if b.first() == Some(&(0x70 + frame_reg)) {
                         d.bpreg = sleb(&b[1..]);
                     } else if b.first() == Some(&0x03) && b.len() == 9 {
-                        d.location = b[1..].try_into().ok().map(u64::from_le_bytes);
+                        d.location = Some(e.0.endian().read_u64(&b[1..]));
                     } else if b.first() == Some(&0x03) && b.len() == 5 {
-                        d.location = b[1..]
-                            .try_into()
-                            .ok()
-                            .map(|x| u64::from(u32::from_le_bytes(x)));
+                        d.location = Some(u64::from(e.0.endian().read_u32(&b[1..])));
                     }
                 }
             }
@@ -493,6 +493,7 @@ enum Slot {
 
 #[derive(Default)]
 struct Importer {
+    endian: RunTimeEndian,
     types: Vec<TypeDef>,
     /// Name -> key ([`die_key`]) of the type that has it.
     names: HashMap<String, String>,

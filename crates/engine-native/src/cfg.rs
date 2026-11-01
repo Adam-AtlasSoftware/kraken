@@ -42,24 +42,33 @@ pub fn build(
             leaders.extend(i.targets.iter().copied().filter(|t| body.contains(t)));
         }
         if i.flow != Flow::Fallthrough {
-            leaders.insert(a + u64::from(i.length));
+            leaders.insert(a + u64::from(i.length + i.delay));
         }
     }
 
     // blocks: (start, end, count, last instruction)
     let mut blocks: Vec<(u64, u64, u32, u64)> = Vec::new();
     let mut prev_end: Option<u64> = None;
+    // the delay slots of the last instruction end: they run in its block, which it still ends
+    let mut slots_end = 0;
     for a in f.insns.iter() {
         let len = insns.get(a).map_or(1, |i| u64::from(i.length));
-        let new_block = leaders.contains(a) || prev_end != Some(*a) || blocks.is_empty();
+        let in_slot = *a < slots_end && prev_end == Some(*a);
+        let new_block =
+            !in_slot && (leaders.contains(a) || prev_end != Some(*a) || blocks.is_empty());
         if new_block {
             blocks.push((*a, a + len, 1, *a));
         } else if let Some(b) = blocks.last_mut() {
             b.1 = a + len;
             b.2 += 1;
-            b.3 = *a;
+            if !in_slot {
+                b.3 = *a;
+            }
         }
         prev_end = Some(a + len);
+        if !in_slot {
+            slots_end = a + len + insns.get(a).map_or(0, |i| u64::from(i.delay));
+        }
     }
     let starts: BTreeSet<u64> = blocks.iter().map(|b| b.0).collect();
 
@@ -82,11 +91,17 @@ pub fn build(
                 for t in &i.targets {
                     add(*start, *t, CfgEdgeKind::ConditionalTrue);
                 }
-                add(*start, *end, CfgEdgeKind::ConditionalFalse);
+                // Ghidra's edge out of a delay slot is a plain fall-through
+                let fall = if i.delay > 0 {
+                    CfgEdgeKind::Fallthrough
+                } else {
+                    CfgEdgeKind::ConditionalFalse
+                };
+                add(*start, *end, fall);
             }
             Flow::Jump => {
                 // an instruction that branches to itself (`HLT` in Sleigh) ends the flow
-                for t in i.targets.iter().filter(|t| **t != *last) {
+                for t in i.targets.iter().filter(|t| **t != *last || i.delay > 0) {
                     add(*start, *t, CfgEdgeKind::Jump);
                 }
             }
@@ -139,6 +154,7 @@ mod tests {
         Instruction {
             addr,
             length,
+            delay: 0,
             mnemonic: engine_native_sys::Mnemonic::new("X"),
             body: "".into(),
             flow,

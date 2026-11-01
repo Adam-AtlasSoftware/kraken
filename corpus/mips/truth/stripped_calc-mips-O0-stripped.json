@@ -1,0 +1,51 @@
+{
+  "binary": "stripped_calc-mips-O0-stripped",
+  "ground_truth_from": "stripped_calc-mips-O0",
+  "sha256": "c11e7b4ba800bf0076483400104ecf4cffe7dc04cd8901a9b0890db90ff85e81",
+  "source_file": "src/stripped_calc.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "skip_ws",
+      "demangled": "skip_ws",
+      "entry": "0x750",
+      "size": 160
+    },
+    {
+      "name": "parse_number",
+      "demangled": "parse_number",
+      "entry": "0x7f0",
+      "size": 272
+    },
+    {
+      "name": "parse_atom",
+      "demangled": "parse_atom",
+      "entry": "0x900",
+      "size": 380
+    },
+    {
+      "name": "parse_term",
+      "demangled": "parse_term",
+      "entry": "0xa7c",
+      "size": 400
+    },
+    {
+      "name": "parse_expr",
+      "demangled": "parse_expr",
+      "entry": "0xc0c",
+      "size": 292
+    },
+    {
+      "name": "evaluate",
+      "demangled": "evaluate",
+      "entry": "0xd30",
+      "size": 200
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0xdf8",
+      "size": 344
+    }
+  ]
+}

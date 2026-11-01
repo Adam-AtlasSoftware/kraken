@@ -71,6 +71,27 @@ const PROCESSORS: &[Processor] = &[
         title: "AArch64",
     },
     Processor {
+        id: "MIPS:BE:32:default",
+        sla: ("MIPS", "mips32be.sla"),
+        pointer_size: 4,
+        compilers: &["default"],
+        title: "big-endian MIPS",
+    },
+    Processor {
+        id: "MIPS:LE:32:default",
+        sla: ("MIPS", "mips32le.sla"),
+        pointer_size: 4,
+        compilers: &["default"],
+        title: "little-endian MIPS",
+    },
+    Processor {
+        id: "PowerPC:BE:32:default",
+        sla: ("PowerPC", "ppc_32_be.sla"),
+        pointer_size: 4,
+        compilers: &["default"],
+        title: "PowerPC",
+    },
+    Processor {
         id: "RISCV:LE:32:default",
         sla: ("RISCV", "riscv.ilp32d.sla"),
         pointer_size: 4,
@@ -286,6 +307,7 @@ pub fn load(data: &[u8], spec: &LoaderSpec) -> Result<Loaded, ProtoError> {
             })
             .collect(),
         context: Vec::new(),
+        entry_registers: Vec::new(),
     };
     if cortex {
         loaded_image.context = ranges
@@ -400,6 +422,9 @@ pub fn load(data: &[u8], spec: &LoaderSpec) -> Result<Loaded, ProtoError> {
         got_code: Vec::new(),
         default_names: BTreeMap::new(),
         global_pointer: None,
+        exec_segments: Vec::new(),
+        small_data: Vec::new(),
+        endian: crate::elf::Endian::from_big(p.id.contains(":BE:")),
         data_symbols: BTreeMap::new(),
     })
 }

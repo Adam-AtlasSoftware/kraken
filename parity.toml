@@ -206,3 +206,139 @@ format = "ELF x86"
 threshold = 0.98
 status = "parity"
 test = "native_jump_tables_agree_with_the_recorded_switches"
+
+# ---- big-endian MIPS and PowerPC ELF (corpus/mips, corpus/ppc32: four binaries each) ---------
+# Ghidra loses the switch of `vm_run` on MIPS, so jump_tables there has nothing to compare. On
+# PowerPC disassembly stops at .97 because Ghidra, not knowing `vm_fail` never returns in the
+# stripped build, runs on into `op_name`; types misses three anonymous `dt_` function types, and
+# globals counts Ghidra's `PTR_<import>` labels of the call stubs, which native calls by name.
+# `names` reads Ghidra's `<n>.plt_pic32.<import>` stub symbols as the import (see `stub_name` in
+# crates/engine-native/tests/agreement.rs).
+
+[[row]]
+capability = "functions"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_mips_and_powerpc"
+
+[[row]]
+capability = "names"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_mips_and_powerpc"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.74
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.8
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.99
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "memory"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.99
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "disassembly"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.98
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus/mips"
+format = "ELF MIPS BE"
+threshold = 0.98
+status = "parity"
+test = "native_jump_tables_agree_with_the_recorded_switches"
+
+[[row]]
+capability = "functions"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_mips_and_powerpc"
+
+[[row]]
+capability = "names"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_mips_and_powerpc"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.68
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.2
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.93
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "memory"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.99
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "disassembly"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.97
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus/ppc32"
+format = "ELF PowerPC BE"
+threshold = 0.98
+status = "parity"
+test = "native_jump_tables_agree_with_the_recorded_switches"

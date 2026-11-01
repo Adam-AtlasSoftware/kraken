@@ -48,6 +48,7 @@ fn session() -> Option<Session> {
             readonly: true,
         }],
         context: Vec::new(),
+        entry_registers: Vec::new(),
     };
     Some(Session::new("x86:LE:64:default", "gcc", img).expect("session"))
 }
@@ -205,6 +206,7 @@ fn context_ranges_select_thumb_code() {
             end: 0x1004,
             value: 1,
         }],
+        entry_registers: Vec::new(),
     };
     let mut s = Session::new("ARM:LE:32:v8", "default", img).expect("ARM session");
     let thumb = s.decode(0x1000, 2).expect("decode Thumb");

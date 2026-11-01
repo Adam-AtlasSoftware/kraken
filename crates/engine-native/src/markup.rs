@@ -10,8 +10,9 @@
 //!
 //! As Ghidra does, a structure is registered only when the file has what it describes: `Rela`
 //! with a `SHT_RELA` section, `Dyn` with a dynamic section, the symbol structure with a symbol
-//! table, the notes and `eh_frame_hdr` with their sections. Only x86 and x86-64 ELF files are
-//! covered; the other architectures carry processor-specific tag and type names.
+//! table, the notes and `eh_frame_hdr` with their sections. x86, x86-64, MIPS and PowerPC ELF
+//! files are covered; MIPS and PowerPC tag and type enums carry the processor's name and values,
+//! and ARM, AArch64 and RISC-V ones are left out.
 //! The headers are read with `object`. These types are listed, never given to the decompiler.
 
 use std::collections::BTreeSet;
@@ -24,12 +25,154 @@ use object::read::elf::{ElfFile, FileHeader, SectionHeader};
 use object::{Object, ObjectSection, ObjectSymbol};
 
 const EM_386: u16 = 3;
+const EM_MIPS: u16 = 8;
+const EM_PPC: u16 = 20;
+const EM_PPC64: u16 = 21;
 const EM_X86_64: u16 = 62;
 const SHT_RELA: u32 = 4;
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNAMIC: u32 = 6;
 const SHT_REL: u32 = 9;
 const SHT_DYNSYM: u32 = 11;
+
+const DYN_TAGS_MIPS: &[(&str, u64)] = &[
+    ("DT_MIPS_RLD_VERSION", 0x70000001),
+    ("DT_MIPS_TIME_STAMP", 0x70000002),
+    ("DT_MIPS_ICHECKSUM", 0x70000003),
+    ("DT_MIPS_IVERSION", 0x70000004),
+    ("DT_MIPS_FLAGS", 0x70000005),
+    ("DT_MIPS_BASE_ADDRESS", 0x70000006),
+    ("DT_MIPS_MSYM", 0x70000007),
+    ("DT_MIPS_CONFLICT", 0x70000008),
+    ("DT_MIPS_LIBLIST", 0x70000009),
+    ("DT_MIPS_LOCAL_GOTNO", 0x7000000a),
+    ("DT_MIPS_CONFLICTNO", 0x7000000b),
+    ("DT_MIPS_LIBLISTNO", 0x70000010),
+    ("DT_MIPS_SYMTABNO", 0x70000011),
+    ("DT_MIPS_UNREFEXTNO", 0x70000012),
+    ("DT_MIPS_GOTSYM", 0x70000013),
+    ("DT_MIPS_HIPAGENO", 0x70000014),
+    ("DT_MIPS_RLD_MAP", 0x70000016),
+    ("DT_MIPS_DELTA_CLASS", 0x70000017),
+    ("DT_MIPS_DELTA_CLASS_NO", 0x70000018),
+    ("DT_MIPS_DELTA_INSTANCE", 0x70000019),
+    ("DT_MIPS_DELTA_INSTANCE_NO", 0x7000001a),
+    ("DT_MIPS_DELTA_RELOC", 0x7000001b),
+    ("DT_MIPS_DELTA_RELOC_NO", 0x7000001c),
+    ("DT_MIPS_DELTA_SYM", 0x7000001d),
+    ("DT_MIPS_DELTA_SYM_NO", 0x7000001e),
+    ("DT_MIPS_DELTA_CLASSSYM", 0x70000020),
+    ("DT_MIPS_DELTA_CLASSSYM_NO", 0x70000021),
+    ("DT_MIPS_CXX_FLAGS", 0x70000022),
+    ("DT_MIPS_PIXIE_INIT", 0x70000023),
+    ("DT_MIPS_SYMBOL_LIB", 0x70000024),
+    ("DT_MIPS_LOCALPAGE_GOTIDX", 0x70000025),
+    ("DT_MIPS_LOCAL_GOTIDX", 0x70000026),
+    ("DT_MIPS_HIDDEN_GOTIDX", 0x70000027),
+    ("DT_MIPS_PROTECTED_GOTIDX", 0x70000028),
+    ("DT_MIPS_OPTIONS", 0x70000029),
+    ("DT_MIPS_INTERFACE", 0x7000002a),
+    ("DT_MIPS_DYNSTR_ALIGN", 0x7000002b),
+    ("DT_MIPS_INTERFACE_SIZE", 0x7000002c),
+    ("DT_MIPS_RLD_TEXT_RESOLVE_ADDR", 0x7000002d),
+    ("DT_MIPS_PERF_SUFFIX", 0x7000002e),
+    ("DT_MIPS_COMPACT_SIZE", 0x7000002f),
+    ("DT_MIPS_GP_VALUE", 0x70000030),
+    ("DT_MIPS_AUX_DYNAMIC", 0x70000031),
+    ("DT_MIPS_PLTGOT", 0x70000032),
+    ("DT_MIPS_RWPLT", 0x70000034),
+    ("DT_MIPS_RLD_MAP_REL", 0x70000035),
+];
+
+const DYN_TAGS_PPC: &[(&str, u64)] = &[("DT_PPC_GOT", 0x70000000), ("DT_PPC_OPT", 0x70000001)];
+
+const PROGRAM_HEADER_TYPES_MIPS: &[(&str, u64)] = &[
+    ("PT_MIPS_REGINFO", 0x70000000),
+    ("PT_MIPS_RTPROC", 0x70000001),
+    ("PT_MIPS_OPTIONS", 0x70000002),
+    ("PT_MIPS_ABIFLAGS", 0x70000003),
+    ("PT_MIPS_PSPREL1", 0x700000a0),
+    ("PT_MIPS_PSPREL2", 0x700000a1),
+];
+
+const SECTION_HEADER_TYPES_MIPS: &[(&str, u64)] = &[
+    ("SHT_MIPS_LIBLIST", 0x70000000),
+    ("SHT_MIPS_MSYM", 0x70000001),
+    ("SHT_MIPS_CONFLICT", 0x70000002),
+    ("SHT_MIPS_GPTAB", 0x70000003),
+    ("SHT_MIPS_UCODE", 0x70000004),
+    ("SHT_MIPS_DEBUG", 0x70000005),
+    ("SHT_MIPS_REGINFO", 0x70000006),
+    ("SHT_MIPS_PACKAGE", 0x70000007),
+    ("SHT_MIPS_PACKSYM", 0x70000008),
+    ("SHT_MIPS_RELD", 0x70000009),
+    ("", 0x7000000b),
+    ("SHT_MIPS_CONTENT", 0x7000000c),
+    ("SHT_MIPS_OPTIONS", 0x7000000d),
+    ("SHT_MIPS_SHDR", 0x70000010),
+    ("SHT_MIPS_FDESC", 0x70000011),
+    ("SHT_MIPS_EXTSYM", 0x70000012),
+    ("SHT_MIPS_DENSE", 0x70000013),
+    ("SHT_MIPS_PDESC", 0x70000014),
+    ("SHT_MIPS_LOCSYM", 0x70000015),
+    ("SHT_MIPS_AUXSYM", 0x70000016),
+    ("SHT_MIPS_OPTSYM", 0x70000017),
+    ("SHT_MIPS_LOCSTR", 0x70000018),
+    ("SHT_MIPS_LINE", 0x70000019),
+    ("SHT_MIPS_RFDESC", 0x7000001a),
+    ("SHT_MIPS_DELTASYM", 0x7000001b),
+    ("SHT_MIPS_DELTAINST", 0x7000001c),
+    ("SHT_MIPS_DELTACLASS", 0x7000001d),
+    ("SHT_MIPS_DWARF", 0x7000001e),
+    ("SHT_MIPS_DELTADECL", 0x7000001f),
+    ("SHT_MIPS_SYMBOL_LIB", 0x70000020),
+    ("SHT_MIPS_EVENTS", 0x70000021),
+    ("SHT_MIPS_TRANSLATE", 0x70000022),
+    ("SHT_MIPS_PIXIE", 0x70000023),
+    ("SHT_MIPS_XLATE", 0x70000024),
+    ("SHT_MIPS_XLATE_DEBUG", 0x70000025),
+    ("SHT_MIPS_WHIRL", 0x70000026),
+    ("SHT_MIPS_EH_REGION", 0x70000027),
+    ("SHT_MIPS_XLATE_OLD", 0x70000028),
+    ("SHT_MIPS_PDR_EXCEPTION", 0x70000029),
+    ("SHT_MIPS_ABIFLAGS", 0x7000002a),
+    ("SHT_MIPS_PSPREL", 0x700000a0),
+];
+
+const GPR_MASK_MIPS: &[(&str, u64)] = &[
+    ("gpr_zero", 0x1),
+    ("gpr_at", 0x2),
+    ("gpr_v0", 0x4),
+    ("gpr_v1", 0x8),
+    ("gpr_a0", 0x10),
+    ("gpr_a1", 0x20),
+    ("gpr_a2", 0x40),
+    ("gpr_a3", 0x80),
+    ("gpr_t0", 0x100),
+    ("gpr_t1", 0x200),
+    ("gpr_t2", 0x400),
+    ("gpr_t3", 0x800),
+    ("gpr_t4", 0x1000),
+    ("gpr_t5", 0x2000),
+    ("gpr_t6", 0x4000),
+    ("gpr_t7", 0x8000),
+    ("gpr_s0", 0x10000),
+    ("gpr_s1", 0x20000),
+    ("gpr_s2", 0x40000),
+    ("gpr_s3", 0x80000),
+    ("gpr_s4", 0x100000),
+    ("gpr_s5", 0x200000),
+    ("gpr_s6", 0x400000),
+    ("gpr_s7", 0x800000),
+    ("gpr_t8", 0x1000000),
+    ("gpr_t9", 0x2000000),
+    ("gpr_k0", 0x4000000),
+    ("gpr_k1", 0x8000000),
+    ("gpr_gp", 0x10000000),
+    ("gpr_sp", 0x20000000),
+    ("gpr_fp", 0x40000000),
+    ("gpr_ra", 0x80000000),
+];
 
 const DYN_TAGS: &[(&str, u64)] = &[
     ("DT_NULL", 0),
@@ -276,6 +419,8 @@ struct ElfFacts {
     section_names: BTreeSet<String>,
     /// The names of the functions the file imports.
     imports: BTreeSet<String>,
+    /// `namesz` and `descsz` of the `.note.package` note.
+    package_note: Option<(u32, u32)>,
 }
 
 fn elf_facts<Elf: FileHeader<Endian = Endianness>>(data: &[u8], is64: bool) -> Option<ElfFacts> {
@@ -296,6 +441,16 @@ fn elf_facts<Elf: FileHeader<Endian = Endianness>>(data: &[u8], is64: bool) -> O
             .sections()
             .filter_map(|s| s.name().ok().map(str::to_string))
             .collect(),
+        package_note: file
+            .section_by_name(".note.package")
+            .and_then(|s| s.data().ok())
+            .and_then(|b| {
+                let word = |at: usize| {
+                    b.get(at..at + 4)
+                        .map(|w| crate::elf::Endian::from_big(e == Endianness::Big).word(w) as u32)
+                };
+                Some((word(0)?, word(4)?))
+            }),
         imports: object::File::parse(data)
             .map(|o| {
                 o.dynamic_symbols()
@@ -307,7 +462,7 @@ fn elf_facts<Elf: FileHeader<Endian = Endianness>>(data: &[u8], is64: bool) -> O
     })
 }
 
-/// The markup types of the ELF file `data`; none for other machines than x86 and x86-64.
+/// The markup types of the ELF file `data`; none for machines other than x86, MIPS and PowerPC.
 fn elf_markup(data: &[u8]) -> Vec<TypeDef> {
     let facts = match data.get(4) {
         Some(1) => elf_facts::<object::elf::FileHeader32<Endianness>>(data, false),
@@ -317,9 +472,30 @@ fn elf_markup(data: &[u8]) -> Vec<TypeDef> {
     let Some(f) = facts else {
         return Vec::new();
     };
-    if !matches!(f.machine, EM_386 | EM_X86_64) {
+    if !matches!(f.machine, EM_386 | EM_X86_64 | EM_MIPS | EM_PPC | EM_PPC64) {
         return Vec::new();
     }
+    // Ghidra's enums of processor-specific values carry the processor's name
+    let suffix = match f.machine {
+        EM_MIPS => "_MIPS",
+        EM_PPC | EM_PPC64 => "_PPC",
+        _ => "",
+    };
+    let extended = |base: &[(&'static str, u64)], extra: &[(&'static str, u64)]| {
+        let mut all: Vec<(&'static str, u64)> = base.to_vec();
+        all.extend_from_slice(extra);
+        all.sort_by_key(|(_, v)| *v);
+        all
+    };
+    let dyn_extra = match f.machine {
+        EM_MIPS => DYN_TAGS_MIPS,
+        EM_PPC | EM_PPC64 => DYN_TAGS_PPC,
+        _ => &[],
+    };
+    let (ph_extra, sh_extra) = match f.machine {
+        EM_MIPS => (PROGRAM_HEADER_TYPES_MIPS, SECTION_HEADER_TYPES_MIPS),
+        _ => (&[][..], &[][..]),
+    };
     let w: u32 = if f.is64 { 8 } else { 4 };
     let c = if f.is64 { "Elf64" } else { "Elf32" };
     let word = |n: &str| slot(n, uint(w), u64::from(w));
@@ -358,7 +534,8 @@ fn elf_markup(data: &[u8]) -> Vec<TypeDef> {
     out.push(packed(&format!("{c}_Ehdr"), ehdr));
 
     if f.has_program_headers {
-        let mut fields = vec![slot("p_type", named("Elf_ProgramHeaderType"), 4)];
+        let ph_type = format!("Elf_ProgramHeaderType{suffix}");
+        let mut fields = vec![slot("p_type", named(&ph_type), 4)];
         if f.is64 {
             fields.push(u4("p_flags"));
             fields.extend(words(&[
@@ -373,25 +550,23 @@ fn elf_markup(data: &[u8]) -> Vec<TypeDef> {
         }
         out.push(packed(&format!("{c}_Phdr"), fields));
         out.push(enumeration(
-            "Elf_ProgramHeaderType",
+            &ph_type,
             4,
-            PROGRAM_HEADER_TYPES,
+            &extended(PROGRAM_HEADER_TYPES, ph_extra),
         ));
     }
     if f.has_section_headers {
-        let mut fields = vec![
-            u4("sh_name"),
-            slot("sh_type", named("Elf_SectionHeaderType"), 4),
-        ];
+        let sh_type = format!("Elf_SectionHeaderType{suffix}");
+        let mut fields = vec![u4("sh_name"), slot("sh_type", named(&sh_type), 4)];
         fields.extend(words(&["sh_flags", "sh_addr", "sh_offset", "sh_size"]));
         fields.push(u4("sh_link"));
         fields.push(u4("sh_info"));
         fields.extend(words(&["sh_addralign", "sh_entsize"]));
         out.push(packed(&format!("{c}_Shdr"), fields));
         out.push(enumeration(
-            "Elf_SectionHeaderType",
+            &sh_type,
             4,
-            SECTION_HEADER_TYPES,
+            &extended(SECTION_HEADER_TYPES, sh_extra),
         ));
     }
     if has_type(SHT_RELA) {
@@ -419,12 +594,39 @@ fn elf_markup(data: &[u8]) -> Vec<TypeDef> {
         out.push(packed(&format!("{c}_Sym"), fields));
     }
     if has_type(SHT_DYNAMIC) {
-        let tag = format!("{c}_DynTag");
+        let tag = format!("{c}_DynTag{suffix}");
         out.push(packed(
-            &format!("{c}_Dyn"),
+            &format!("{c}_Dyn{suffix}"),
             vec![slot("d_tag", named(&tag), u64::from(w)), word("d_val")],
         ));
-        out.push(enumeration(&tag, w, DYN_TAGS));
+        out.push(enumeration(&tag, w, &extended(DYN_TAGS, dyn_extra)));
+    }
+    if has_section(".reginfo") {
+        out.push(enumeration("Elf32_GPRMask_MIPS", 4, GPR_MASK_MIPS));
+        out.push(packed(
+            "Elf32_RegInfo_MIPS",
+            vec![
+                slot("ri_gprmask", named("Elf32_GPRMask_MIPS"), 4),
+                slot("field1_0x4", array(uint(4), 4), 16),
+                u4("ri_gp_value"),
+            ],
+        ));
+    }
+    if let Some((namesz, descsz)) = f.package_note {
+        out.push(packed(
+            &format!("ElfNote_{namesz}_{descsz}"),
+            vec![
+                u4("namesz"),
+                u4("descsz"),
+                u4("type"),
+                slot("name", named("string"), u64::from(namesz)),
+                slot(
+                    "description",
+                    array(uint(1), u64::from(descsz)),
+                    u64::from(descsz),
+                ),
+            ],
+        ));
     }
     if has_section(".note.ABI-tag") {
         out.push(packed(

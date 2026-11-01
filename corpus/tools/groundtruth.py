@@ -7,7 +7,8 @@ mangled and demangled). Stripped binaries (`*-stripped`) get the truth of their 
 twin: strip does not move code, so addresses are identical (verified via section headers).
 
 `--set <set>` does the same for another ELF set: corpus/<set>/bin -> corpus/<set>/truth, for the
-32-bit x86 set (elf32) and the cross-architecture sets (arm32, aarch64, riscv64, riscv32). The
+32-bit x86 set (elf32) and the cross-architecture sets (arm32, aarch64, riscv64, riscv32,
+mips, ppc32). The
 host `readelf` and `nm` read the symbol tables and DWARF of every architecture.
 
 Output: corpus/truth/<binary>.json
@@ -161,7 +162,7 @@ def text_layout(path):
 
 def main():
     global BIN, TRUTH
-    sets = ("elf32", "arm32", "aarch64", "riscv64", "riscv32")
+    sets = ("elf32", "arm32", "aarch64", "riscv64", "riscv32", "mips", "ppc32")
     if len(sys.argv) == 3 and sys.argv[1] == "--set" and sys.argv[2] in sets:
         BIN, TRUTH = CORPUS / sys.argv[2] / "bin", CORPUS / sys.argv[2] / "truth"
     elif sys.argv[1:] not in ([], ["--set", "elf"]):

@@ -7,8 +7,9 @@
 # object files, corpus/lib/bin), and the cross-architecture sets "arm32" (armv7-a hard-float
 # Linux), "aarch64", "riscv64" (rv64gc Linux) and "riscv32" (rv32imac, static, picolibc with
 # riscv32/src/linux_rt.c), each in corpus/<set>/bin, and "xlib" (libkr of the lib set as object
-# files, static libraries and shared libraries for those four, corpus/xlib/bin). Default: all
-# nine. Name sets to build only those:
+# files, static libraries and shared libraries for those four, corpus/xlib/bin), and the
+# big-endian Linux sets "mips" (mips32r2 o32) and "ppc32", each in corpus/<set>/bin. Default: all
+# eleven. Name sets to build only those:
 #   corpus/build.sh pe elf32
 set -euo pipefail
 
@@ -43,7 +44,7 @@ PROGRAMSX=(
 )
 # riscv32 programs: all static (there is no riscv32 Linux userland to link against).
 PROGRAMSRV32=(static_strops pie_list stripped_calc switch_vm)
-XSETS=(arm32 aarch64 riscv64 riscv32 xlib)
+XSETS=(arm32 aarch64 riscv64 riscv32 xlib mips ppc32)
 
 if [[ "${1:-}" != "--inside" ]]; then
   SETS=("$@")
@@ -89,7 +90,7 @@ if [[ "${1:-}" != "--inside" ]]; then
           && sha256sum ../lib/src/* ../tools/groundtruth_lib.py ../build.sh ../Containerfile \
              >> MANIFEST.sha256)
         ;;
-      arm32|aarch64|riscv64|riscv32)
+      arm32|aarch64|riscv64|riscv32|mips|ppc32)
         extra=()
         [[ $set == riscv32 ]] && extra=(src/linux_rt.c)
         (cd "$set" && find bin -type f | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256 \
@@ -400,6 +401,14 @@ for set in "$@"; do
       check_cross riscv64 qemu-riscv64 /usr/riscv64-linux-gnu
       ;;
     riscv32) build_riscv32 && check_cross riscv32 qemu-riscv32 /nonexistent ;;
+    mips)
+      build_cross mips mips-linux-gnu mips -march=mips32r2 -mabi=32
+      check_cross mips qemu-mips /usr/mips-linux-gnu
+      ;;
+    ppc32)
+      build_cross ppc32 powerpc-linux-gnu powerpc -mcpu=powerpc
+      check_cross ppc32 qemu-ppc /usr/powerpc-linux-gnu
+      ;;
     xlib) build_xlib ;;
     *) echo "unknown set $set" >&2; exit 2 ;;
   esac

@@ -31,7 +31,7 @@ use object::{
     SymbolIndex, SymbolKind,
 };
 
-use crate::elf::{ExportSymbol, ImportSymbol, Language, Loaded, PIE_BASE, PIE_BASE_32, le_word};
+use crate::elf::{Endian, ExportSymbol, ImportSymbol, Language, Loaded, PIE_BASE, PIE_BASE_32};
 
 /// Most bytes the sections of all objects may take together.
 const MAX_LAYOUT: u64 = 1 << 30;
@@ -514,6 +514,7 @@ fn empty_loaded(language: Language) -> Loaded {
         image: Image {
             segments: Vec::new(),
             context: Vec::new(),
+            entry_registers: Vec::new(),
         },
         blocks: Vec::new(),
         functions: BTreeMap::new(),
@@ -537,6 +538,9 @@ fn empty_loaded(language: Language) -> Loaded {
         got_code: Vec::new(),
         default_names: BTreeMap::new(),
         global_pointer: None,
+        exec_segments: Vec::new(),
+        small_data: Vec::new(),
+        endian: crate::elf::Endian::Little,
     }
 }
 
@@ -875,7 +879,7 @@ fn read_signed(bytes: &[u8], offset: u64, width: usize) -> i128 {
     else {
         return 0;
     };
-    let v = le_word(b);
+    let v = Endian::Little.word(b);
     let shift = 64 - 8 * width as u32;
     i128::from(((v << shift) as i64) >> shift)
 }
@@ -1312,6 +1316,7 @@ fn link(
     let mut image = Image {
         segments,
         context: Vec::new(),
+        entry_registers: Vec::new(),
     };
     // ARM: the mapping symbols say which code is Thumb
     if arm {
@@ -1502,6 +1507,7 @@ fn link(
                     got,
                     read: &read,
                     address_size: ptr as u8,
+                    endian: Endian::Little,
                 });
                 fde_starts.extend(frames.fde_starts);
                 landing_pads.extend(frames.landing_pads);
@@ -1586,6 +1592,9 @@ fn link(
         got_code: Vec::new(),
         default_names: BTreeMap::new(),
         global_pointer: None,
+        exec_segments: Vec::new(),
+        small_data: Vec::new(),
+        endian: crate::elf::Endian::Little,
     })
 }
 

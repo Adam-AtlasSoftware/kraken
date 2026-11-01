@@ -738,6 +738,22 @@ impl Program {
         labels
     }
 
+    /// The mnemonic as Ghidra lists it: an instruction in a delay slot gets a `_` in front.
+    fn shown_mnemonic(&self, i: &Instruction) -> String {
+        let in_slot = self.loaded.is_mips()
+            && i.addr >= 4
+            && self
+                .instruction(i.addr - 4)
+                .ok()
+                .flatten()
+                .is_some_and(|b| b.delay > 0);
+        if in_slot {
+            format!("_{}", i.mnemonic)
+        } else {
+            i.mnemonic.to_string()
+        }
+    }
+
     fn row(&self, funcs: &Funcs, i: &Instruction) -> DisasmRow {
         let mut bytes = vec![0u8; i.length as usize];
         self.loaded.image.read(i.addr, &mut bytes);
@@ -745,7 +761,7 @@ impl Program {
         DisasmRow {
             address: Hex64(i.addr),
             bytes: hex_bytes(&bytes),
-            mnemonic: i.mnemonic.to_string(),
+            mnemonic: self.shown_mnemonic(i),
             operands: operands(
                 &i.body,
                 |a| {
@@ -777,10 +793,8 @@ impl Program {
             .unwrap_or_else(|| "undefined".into());
         let operands = match len {
             1 | 2 | 4 | 8 => {
-                let mut v = [0u8; 8];
-                v[..len as usize].copy_from_slice(&bytes);
                 vec![OperandToken {
-                    text: format!("{:#x}", u64::from_le_bytes(v)),
+                    text: format!("{:#x}", self.loaded.endian.word(&bytes)),
                     kind: OperandKind::Immediate,
                     target: None,
                 }]
@@ -2013,7 +2027,22 @@ impl Decompiler for InProcessEngine {
 impl MemoryReader for InProcessEngine {
     async fn memory_map(&self, cancel: &CancellationToken) -> EngineResult<Vec<MemoryBlock>> {
         check(cancel)?;
-        Ok(self.program()?.loaded.blocks.clone())
+        let loaded = &self.program()?.loaded;
+        let mut blocks = loaded.blocks.clone();
+        // Ghidra's blocks show the permissions of the segment they are in; code discovery goes
+        // by the sections
+        for b in &mut blocks {
+            if !b.perms.ends_with('x')
+                && b.initialized
+                && loaded
+                    .exec_segments
+                    .iter()
+                    .any(|(s, e)| *s <= b.start.0 && b.end.0 <= *e)
+            {
+                b.perms.replace_range(2..3, "x");
+            }
+        }
+        Ok(blocks)
     }
 
     async fn read_bytes(

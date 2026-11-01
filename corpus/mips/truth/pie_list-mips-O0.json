@@ -1,0 +1,75 @@
+{
+  "binary": "pie_list-mips-O0",
+  "ground_truth_from": "pie_list-mips-O0",
+  "sha256": "14066f7f022a95ca63b153a97af91cf4750bf425f6d124cea791fba854961dcf",
+  "source_file": "src/pie_list.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0x810",
+      "size": 228
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0x8f4",
+      "size": 92
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0x950",
+      "size": 60
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0x98c",
+      "size": 108
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0x9f8",
+      "size": 148
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0xa8c",
+      "size": 252
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0xb88",
+      "size": 132
+    },
+    {
+      "name": "print_rec",
+      "demangled": "print_rec",
+      "entry": "0xc0c",
+      "size": 156
+    },
+    {
+      "name": "sum_weight",
+      "demangled": "sum_weight",
+      "entry": "0xca8",
+      "size": 72
+    },
+    {
+      "name": "list_free",
+      "demangled": "list_free",
+      "entry": "0xcf0",
+      "size": 148
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0xd84",
+      "size": 744
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "binary": "stripped_calc-ppc32-O0",
+  "ground_truth_from": "stripped_calc-ppc32-O0",
+  "sha256": "58acd2c4e86b1d57d653a72c9d4bdaf1712699fa434278bb45d9251900cee2fc",
+  "source_file": "src/stripped_calc.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "skip_ws",
+      "demangled": "skip_ws",
+      "entry": "0x674",
+      "size": 160
+    },
+    {
+      "name": "parse_number",
+      "demangled": "parse_number",
+      "entry": "0x714",
+      "size": 268
+    },
+    {
+      "name": "parse_atom",
+      "demangled": "parse_atom",
+      "entry": "0x820",
+      "size": 268
+    },
+    {
+      "name": "parse_term",
+      "demangled": "parse_term",
+      "entry": "0x92c",
+      "size": 284
+    },
+    {
+      "name": "parse_expr",
+      "demangled": "parse_expr",
+      "entry": "0xa48",
+      "size": 200
+    },
+    {
+      "name": "evaluate",
+      "demangled": "evaluate",
+      "entry": "0xb10",
+      "size": 156
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0xbac",
+      "size": 280
+    }
+  ]
+}

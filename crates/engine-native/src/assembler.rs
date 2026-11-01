@@ -35,6 +35,7 @@ fn decode_scratch(
             readonly: false,
         }],
         context: p.loaded.image.context.clone(),
+        entry_registers: Vec::new(),
     };
     let lang = &p.loaded.language;
     let mut s = Session::new(lang.id, lang.compiler, image).map_err(native)?;

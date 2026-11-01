@@ -20,8 +20,9 @@ use crate::{Result, cache_dir};
 
 /// Processors compiled: x86 (`x86-64.sla` for x86-64, `x86.sla` for 32-bit ELF and PE32) first,
 /// AArch64 second (decision 95), then ARM (A32 and Thumb-2, `ARM8_le.sla`) and RISC-V
-/// (`riscv.lp64d.sla`, `riscv.ilp32d.sla`).
-const PROCESSORS: &[&str] = &["x86", "AARCH64", "ARM", "RISCV"];
+/// (`riscv.lp64d.sla`, `riscv.ilp32d.sla`), then the big-endian ones, MIPS (`mips32be.sla`) and
+/// PowerPC (`ppc_32_be.sla`), with every variant their directories hold.
+const PROCESSORS: &[&str] = &["x86", "AARCH64", "ARM", "RISCV", "MIPS", "PowerPC"];
 
 /// The Makefile's SLEIGH_NAMES: CORE, SLEIGH and SLACOMP.
 const COMPILER_SOURCES: &[&str] = &[

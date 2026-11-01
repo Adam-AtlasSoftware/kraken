@@ -63,6 +63,24 @@ pub fn target(language: &str, thumb: bool) -> Option<Target> {
             attrs: "",
             nop: &[0x00, 0xf0, 0x20, 0xe3],
         }
+    } else if language.starts_with("MIPS:BE:32") {
+        Target {
+            triple: "mips-linux-gnu",
+            attrs: "",
+            nop: &[0, 0, 0, 0],
+        }
+    } else if language.starts_with("MIPS:LE:32") {
+        Target {
+            triple: "mipsel-linux-gnu",
+            attrs: "",
+            nop: &[0, 0, 0, 0],
+        }
+    } else if language.starts_with("PowerPC:BE:32") {
+        Target {
+            triple: "powerpc-linux-gnu",
+            attrs: "",
+            nop: &[0x60, 0x00, 0x00, 0x00],
+        }
     } else if language.starts_with("RISCV:LE:64") {
         Target {
             triple: "riscv64-linux-gnu",

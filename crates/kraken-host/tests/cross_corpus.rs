@@ -15,6 +15,7 @@ struct Set {
     name: &'static str,
     arch: &'static str,
     bits: u8,
+    endian: &'static str,
     binaries: usize,
 }
 
@@ -23,24 +24,42 @@ const SETS: &[Set] = &[
         name: "arm32",
         arch: "ARM",
         bits: 32,
+        endian: "little",
         binaries: 20,
     },
     Set {
         name: "aarch64",
         arch: "AArch64",
         bits: 64,
+        endian: "little",
         binaries: 16,
     },
     Set {
         name: "riscv64",
         arch: "RISC-V 64",
         bits: 64,
+        endian: "little",
         binaries: 16,
     },
     Set {
         name: "riscv32",
         arch: "RISC-V 32",
         bits: 32,
+        endian: "little",
+        binaries: 16,
+    },
+    Set {
+        name: "mips",
+        arch: "MIPS",
+        bits: 32,
+        endian: "big",
+        binaries: 16,
+    },
+    Set {
+        name: "ppc32",
+        arch: "PowerPC",
+        bits: 32,
+        endian: "big",
         binaries: 16,
     },
 ];
@@ -78,6 +97,10 @@ fn cross_sets_match_their_manifests_and_probe_as_their_architecture() {
             s.join("Ghidra/Processors/ARM/data/languages/ARM8_le.sla")
                 .is_file()
                 && s.join("Ghidra/Processors/RISCV/data/languages/riscv.ilp32d.sla")
+                    .is_file()
+                && s.join("Ghidra/Processors/MIPS/data/languages/mips32be.sla")
+                    .is_file()
+                && s.join("Ghidra/Processors/PowerPC/data/languages/ppc_32_be.sla")
                     .is_file()
         });
     println!("native engine ready for the cross sets: {native_ready}");
@@ -118,7 +141,7 @@ fn cross_sets_match_their_manifests_and_probe_as_their_architecture() {
             assert_eq!(p.kind, "executable", "{}/{file}", set.name);
             assert_eq!(p.arch.as_deref(), Some(set.arch), "{}/{file}", set.name);
             assert_eq!(p.bits, Some(set.bits), "{}/{file}", set.name);
-            assert_eq!(p.endian.as_deref(), Some("little"), "{}/{file}", set.name);
+            assert_eq!(p.endian.as_deref(), Some(set.endian), "{}/{file}", set.name);
             assert_eq!(p.sha256, listed[file], "{}/{file}", set.name);
             assert_eq!(
                 p.stripped,

@@ -209,6 +209,22 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 | memory | `corpus/elf32` | ELF x86 | 100.0% | 100.0% | 99.0% | parity |
 | disassembly | `corpus/elf32` | ELF x86 | 98.5% | 100.0% | 98.0% | parity |
 | jump_tables | `corpus/elf32` | ELF x86 | 100.0% | 87.5% | 98.0% | parity |
+| functions | `corpus/mips` | ELF MIPS BE | 100.0% | 98.6% | 99.0% | parity |
+| names | `corpus/mips` | ELF MIPS BE | 100.0% | 100.0% | 99.0% | parity |
+| decompile_text | `corpus/mips` | ELF MIPS BE | 74.6% | 53.2% | 74.0% | partial |
+| globals | `corpus/mips` | ELF MIPS BE | 80.0% | 100.0% | 80.0% | partial |
+| types | `corpus/mips` | ELF MIPS BE | 100.0% | 22.2% | 99.0% | parity |
+| memory | `corpus/mips` | ELF MIPS BE | 100.0% | 100.0% | 99.0% | parity |
+| disassembly | `corpus/mips` | ELF MIPS BE | 99.1% | 100.0% | 98.0% | parity |
+| jump_tables | `corpus/mips` | ELF MIPS BE | 100.0% | 0.0% | 98.0% | parity |
+| functions | `corpus/ppc32` | ELF PowerPC BE | 100.0% | 92.9% | 99.0% | parity |
+| names | `corpus/ppc32` | ELF PowerPC BE | 100.0% | 100.0% | 99.0% | parity |
+| decompile_text | `corpus/ppc32` | ELF PowerPC BE | 68.8% | 71.9% | 68.0% | partial |
+| globals | `corpus/ppc32` | ELF PowerPC BE | 20.0% | 100.0% | 20.0% | partial |
+| types | `corpus/ppc32` | ELF PowerPC BE | 93.9% | 22.2% | 93.0% | partial |
+| memory | `corpus/ppc32` | ELF PowerPC BE | 100.0% | 100.0% | 99.0% | parity |
+| disassembly | `corpus/ppc32` | ELF PowerPC BE | 97.5% | 100.0% | 97.0% | parity |
+| jump_tables | `corpus/ppc32` | ELF PowerPC BE | 100.0% | 100.0% | 98.0% | parity |
 
 <!-- parity:end -->
 

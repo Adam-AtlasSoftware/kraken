@@ -1,0 +1,33 @@
+{
+  "binary": "switch_vm-mips-O2-stripped",
+  "ground_truth_from": "switch_vm-mips-O2",
+  "sha256": "3ad2572985b6aad71f13271d4897bd8d7ea50df9a8103105001b78e0a8b20c28",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x5f0",
+      "size": 124
+    },
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x7e0",
+      "size": 72
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x828",
+      "size": 1112
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xc80",
+      "size": 244
+    }
+  ]
+}

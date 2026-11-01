@@ -1,0 +1,9 @@
+base-image: debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+mips-linux-gnu-gcc: mips-linux-gnu-gcc (Debian 14.2.0-13) 14.2.0
+ld: GNU ld (GNU Binutils for Debian) 2.44
+flags: -march=mips32r2 -mabi=32
+dpkg: binutils-mips-linux-gnu 2.44-3cross1+nmu1+b1
+dpkg: gcc-14-mips-linux-gnu 14.2.0-13cross1
+dpkg: gcc-mips-linux-gnu 4:14.2.0-1
+dpkg: libc6-dev-mips-cross 2.40-5cross1
+dpkg: qemu-user 1:10.0.13+ds-0+deb13u1

@@ -11,8 +11,8 @@ The [native engine page](native-engine.md#native-or-ghidra) compares them.
 
 | File | Example | Native engine | Ghidra engine |
 |---|---|---|---|
-| Linux program (ELF, static or dynamic, PIE or not) | `/usr/bin/ls` | x86-64, 32-bit x86, ARM (A32 and Thumb-2), AArch64, RISC-V 64, RISC-V 32 | yes |
-| Linux shared library (ELF) | `libkr.so` | x86-64, 32-bit x86, ARM, AArch64, RISC-V 64 | yes |
+| Linux program (ELF, static or dynamic, PIE or not) | `/usr/bin/ls` | x86-64, 32-bit x86, ARM (A32 and Thumb-2), AArch64, RISC-V 64, RISC-V 32, MIPS (32-bit, either byte order), PowerPC (32-bit) | yes |
+| Linux shared library (ELF) | `libkr.so` | x86-64, 32-bit x86, ARM, AArch64, RISC-V 64, MIPS, PowerPC | yes |
 | Linux object file (ELF relocatable) | `kr.o` | x86-64, 32-bit x86, ARM, AArch64, RISC-V 64, RISC-V 32 | yes |
 | Linux static library (`ar` archive of objects) | `libkr.a` | x86-64, 32-bit x86, ARM, AArch64, RISC-V: all members in one project | no |
 | Windows program or DLL (PE) | `app.exe`, `kr.dll` | x86, x86-64 | yes |

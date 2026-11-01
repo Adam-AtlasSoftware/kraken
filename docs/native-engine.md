@@ -326,7 +326,7 @@ import dialog all take the same ones):
 | Option | Meaning |
 |---|---|
 | `--loader raw` | Read the file as one block of memory instead of by its format. |
-| `--language` | The processor: `cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`, `riscv64` (the native engine) or any Ghidra language id (`x86:LE:16:Real Mode`, `MIPS:LE:32:default`; Ghidra). |
+| `--language` | The processor: `cortex-m`, `arm`, `aarch64`, `x86`, `x86-64`, `riscv32`, `riscv64`, `mips`, `mipsel`, `ppc` (the native engine) or any Ghidra language id (`x86:LE:16:Real Mode`, `SuperH4:LE:32:default`; Ghidra). |
 | `--base` | Address of the first byte. Default 0. |
 | `--offset`, `--length` | Map only part of the file (skip a header, drop a trailer). |
 | `--entry` | Where execution starts. Default: the reset vector of a Cortex-M vector table, else the base. For Thumb code the low bit may be set. |
@@ -429,11 +429,48 @@ then carries a warning that the type was not applied. Variables the decompiler i
 register that no symbol covers cannot always be named. The Ghidra engine does not support this
 edit yet and answers `unsupported`; use the native engine.
 
+## MIPS and PowerPC
+
+32-bit MIPS (big- and little-endian) and 32-bit PowerPC ELF programs open like any other, under
+`auto` too, so the MIPS program out of a router's firmware needs no JVM. Older spec trees lack the
+two processors: `auto` then says so and picks Ghidra until `kraken setup --native` has compiled
+them.
+
+What the engine does for them:
+
+- **Delay slots.** The instruction after a MIPS branch runs before the branch takes effect: it
+  stays in the branch's block, lists with Ghidra's `_` in front of its mnemonic, and its references
+  are its own.
+- **The GOT.** There are no relocations for a MIPS GOT, so the loader fills it from
+  `DT_MIPS_LOCAL_GOTNO`, `DT_MIPS_GOTSYM` and the dynamic symbols, and keeps it constant for the
+  decompiler. An import with a stub lands on the stub, one without on the `EXTERNAL` block, whose
+  addresses are Ghidra's.
+- **`t9` and `gp`.** Each function is decompiled knowing `t9` holds its address, as position
+  independent code expects, and `gp` the value of `.reginfo` (else `.got` + 0x7ff0); a load of `t9`
+  from the GOT followed by `jalr` is a call reference, and calls to `exit` and friends end the flow.
+- **`.MIPS.stubs` and PowerPC call stubs.** Stubs are named after their imports. PowerPC's sit in
+  `.text`, load a `.plt` slot through `r30` and jump through `ctr`; Ghidra keeps the linker's symbol
+  (`00008000.got2.plt_pic32.printf@@GLIBC_2.4`) when the program is not stripped, the native engine
+  calls them `printf` either way.
+- **Small data.** `r13` (`_SDA_BASE_`) and `r2` (`_SDA2_BASE_`) are known on entry when the
+  symbol table has them.
+- **Language.** PowerPC ELF is `PowerPC:BE:32:default`, the classic instruction set with floating
+  point. Ghidra's loader lists no variant and may take `e500`, which gives the same mnemonics on
+  this code. `R6` MIPS is recognised from `e_flags`.
+
+Agreement with Ghidra over `corpus/mips` and `corpus/ppc32` is in the table of ADR 0014. On these
+sets the native engine recovers switches Ghidra gives up on (`vm_run` at `-O0` on MIPS), and it
+stops where Ghidra runs into the next function after a call that never returns.
+
+Not there yet: micro-MIPS and MIPS16 modes, PowerPC VLE, 64-bit MIPS and PowerPC (function
+descriptors), `kraken-emu` does not run these processors (card EM-11; `qemu-mips` runs the corpus).
+
 ## What does not work yet
 
-- Mach-O files, big-endian ELF (ARM BE8, AArch64 BE), processors other than x86, ARM, AArch64 and
-  RISC-V (this includes raw images of other processors and 16-bit real-mode x86). With `auto`
-  these go to Ghidra. Intel HEX and S-record
+- Mach-O files, big-endian ELF other than 32-bit MIPS and PowerPC (ARM BE8, AArch64 BE), 64-bit
+  MIPS and PowerPC, processors other than x86, ARM, AArch64, RISC-V, MIPS and PowerPC (this
+  includes raw images of other processors and 16-bit real-mode x86). With `auto` these go to
+  Ghidra. Intel HEX and S-record
   files must be converted to a flat binary first (`objcopy -I ihex -O binary`).
 - COFF objects and libraries for processors other than x86 and x86-64 (Windows on ARM), thin
   archives, and LLVM bitcode members. RISC-V objects assembled with linker relaxation are read

@@ -23,6 +23,58 @@ pub const PIE_BASE: u64 = 0x10_0000;
 /// Ghidra's default image base for 32-bit ELF objects linked at 0.
 pub const PIE_BASE_32: u64 = 0x1_0000;
 
+/// The byte order of a program's data and code words.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Endian {
+    /// Least significant byte first.
+    #[default]
+    Little,
+    /// Most significant byte first.
+    Big,
+}
+
+impl Endian {
+    /// The unsigned word of up to 8 bytes in `b`.
+    pub fn word(self, b: &[u8]) -> u64 {
+        let b = &b[..b.len().min(8)];
+        let fold = |a: u64, x: &u8| a << 8 | u64::from(*x);
+        match self {
+            Endian::Little => b.iter().rev().fold(0, fold),
+            Endian::Big => b.iter().fold(0, fold),
+        }
+    }
+
+    /// The low `out.len()` bytes of `v`, in this order.
+    pub fn write(self, v: u64, out: &mut [u8]) {
+        let n = out.len().min(8);
+        match self {
+            Endian::Little => out[..n].copy_from_slice(&v.to_le_bytes()[..n]),
+            Endian::Big => out[..n].copy_from_slice(&v.to_be_bytes()[8 - n..]),
+        }
+    }
+
+    /// The order of a file by whether it is big-endian.
+    pub fn from_big(big: bool) -> Endian {
+        if big { Endian::Big } else { Endian::Little }
+    }
+
+    /// The `object` crate's name for this order.
+    pub fn of_file(file: &object::File<'_>) -> Endian {
+        match file.endianness() {
+            Endianness::Little => Endian::Little,
+            Endianness::Big => Endian::Big,
+        }
+    }
+
+    /// gimli's name for this order.
+    pub fn gimli(self) -> gimli::RunTimeEndian {
+        match self {
+            Endian::Little => gimli::RunTimeEndian::Little,
+            Endian::Big => gimli::RunTimeEndian::Big,
+        }
+    }
+}
+
 /// Sleigh language and compiler spec for a supported architecture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Language {
@@ -80,6 +132,8 @@ pub struct Loaded {
     pub members: Vec<String>,
     /// Language for Sleigh and the decompiler.
     pub language: Language,
+    /// Byte order of the program's words.
+    pub endian: Endian,
     /// Image base (0 or [`PIE_BASE`]).
     pub base: u64,
     /// Bytes the decompiler and disassembler read.
@@ -118,6 +172,9 @@ pub struct Loaded {
     /// Function pointers from `.init_array`, `.fini_array` and `.preinit_array`, and the start
     /// of `.plt` (the resolver stub).
     pub init_pointers: Vec<u64>,
+    /// Ranges of the ELF segments mapped executable, which may hold more than the code (MIPS and
+    /// PowerPC linkers put `.rodata` in the text segment).
+    pub exec_segments: Vec<(u64, u64)>,
     /// Pointer-sized values in data that may point at code: relative-relocation addends and, for
     /// images without them, aligned words of the data sections. Weak function candidates.
     pub data_pointers: Vec<u64>,
@@ -139,8 +196,11 @@ pub struct Loaded {
     /// Names for functions without a symbol, as Ghidra gives them: `_DT_INIT`, `_DT_FINI`,
     /// `_INIT_<n>`, `_FINI_<n>`.
     pub default_names: BTreeMap<u64, String>,
-    /// RISC-V's global pointer (`__global_pointer$`, which `gp` holds), after rebasing.
+    /// The global pointer `gp` holds, after rebasing: RISC-V's `__global_pointer$`, MIPS' `_gp`.
     pub global_pointer: Option<u64>,
+    /// PowerPC's small-data bases: (register number, value), `r13` from `_SDA_BASE_` and `r2`
+    /// from `_SDA2_BASE_` (32-bit) or `.TOC.` (64-bit).
+    pub small_data: Vec<(u8, u64)>,
     /// Defined object symbols (variables) by address, for the decompiler's global scope.
     pub data_symbols: BTreeMap<u64, DataSymbol>,
 }
@@ -221,6 +281,11 @@ impl Loaded {
         self.language.id.starts_with("ARM:")
     }
 
+    /// Whether this is MIPS code (32 or 64 bit, either byte order).
+    pub fn is_mips(&self) -> bool {
+        self.language.id.starts_with("MIPS:")
+    }
+
     /// Whether the code at `addr` decodes as Thumb (ARM only).
     pub fn is_thumb(&self, addr: u64) -> bool {
         self.is_arm() && crate::arm::is_thumb(&self.image.context, addr)
@@ -248,9 +313,11 @@ impl Loaded {
 
     /// Whether `addr` lies in a PLT section.
     pub fn in_plt(&self, addr: u64) -> bool {
-        self.blocks
-            .iter()
-            .any(|b| b.name.starts_with(".plt") && b.start.0 <= addr && addr < b.end.0)
+        self.blocks.iter().any(|b| {
+            (b.name.starts_with(".plt") || b.name == ".MIPS.stubs")
+                && b.start.0 <= addr
+                && addr < b.end.0
+        })
     }
 }
 
@@ -264,12 +331,12 @@ struct ProgramHeader {
     memsz: u64,
 }
 
-/// The program header table of a little-endian ELF file, in file order (the numbering Ghidra's
+/// The program header table of an ELF file, in file order (the numbering Ghidra's
 /// `segment_<n>.<m>` blocks use).
-fn program_headers(data: &[u8]) -> Vec<ProgramHeader> {
+fn program_headers(data: &[u8], endian: Endian) -> Vec<ProgramHeader> {
     let word = |at: usize, n: usize| -> Option<u64> {
         let b = data.get(at..at.checked_add(n)?)?;
-        Some(b.iter().rev().fold(0u64, |a, x| a << 8 | u64::from(*x)))
+        Some(endian.word(b))
     };
     let is64 = data.get(4) == Some(&2);
     let (phoff, entsize, num) = if is64 {
@@ -304,6 +371,41 @@ fn program_headers(data: &[u8]) -> Vec<ProgramHeader> {
 
 fn bad(msg: impl Into<String>) -> ProtoError {
     ProtoError::new(ErrorCode::InvalidArgument, msg)
+}
+
+/// The language of an ELF file: its machine and byte order, and for MIPS the architecture
+/// level and ABI in `e_flags`.
+fn elf_language(file: &object::File<'_>) -> Result<Language, ProtoError> {
+    const EF_MIPS_ABI2: u32 = 0x20;
+    const EF_MIPS_ARCH: u32 = 0xf000_0000;
+    const EF_MIPS_ARCH_32R6: u32 = 0x9000_0000;
+    let flags = match file.flags() {
+        object::FileFlags::Elf { e_flags, .. } => e_flags.0,
+        _ => 0,
+    };
+    let big = file.endianness() == Endianness::Big;
+    let pick = |be: &'static str, le: &'static str, pointer_size| Language {
+        id: if big { be } else { le },
+        compiler: "default",
+        pointer_size,
+    };
+    match file.architecture() {
+        Architecture::Mips if flags & EF_MIPS_ARCH == EF_MIPS_ARCH_32R6 => {
+            Ok(pick("MIPS:BE:32:R6", "MIPS:LE:32:R6", 4))
+        }
+        Architecture::Mips => Ok(pick("MIPS:BE:32:default", "MIPS:LE:32:default", 4)),
+        Architecture::Mips64 if flags & EF_MIPS_ABI2 != 0 => {
+            Ok(pick("MIPS:BE:64:64-32addr", "MIPS:LE:64:64-32addr", 4))
+        }
+        Architecture::Mips64 => Ok(pick("MIPS:BE:64:default", "MIPS:LE:64:default", 8)),
+        Architecture::PowerPc => Ok(pick("PowerPC:BE:32:default", "PowerPC:LE:32:default", 4)),
+        Architecture::PowerPc64 => Ok(pick("PowerPC:BE:64:default", "PowerPC:LE:64:default", 8)),
+        arch if big => Err(ProtoError::new(
+            ErrorCode::Unsupported,
+            format!("big-endian {arch:?} is not supported by the native engine yet"),
+        )),
+        arch => language(arch),
+    }
 }
 
 pub(crate) fn language(arch: Architecture) -> Result<Language, ProtoError> {
@@ -380,13 +482,8 @@ pub fn load_with(
             ),
         ));
     }
-    if file.endianness() != Endianness::Little {
-        return Err(ProtoError::new(
-            ErrorCode::Unsupported,
-            "big-endian ELF is not supported by the native engine yet",
-        ));
-    }
-    let language = language(file.architecture())?;
+    let endian = Endian::of_file(&file);
+    let language = elf_language(&file)?;
     let ptr = language.pointer_size as usize;
 
     let lowest = file
@@ -404,7 +501,7 @@ pub fn load_with(
     let bias = base.wrapping_sub(lowest);
     let at = |a: u64| a.wrapping_add(bias);
 
-    let phdrs = program_headers(data);
+    let phdrs = program_headers(data, endian);
     let relro = phdrs
         .iter()
         .find(|h| h.kind == PT_GNU_RELRO && h.memsz > 0)
@@ -433,6 +530,7 @@ pub fn load_with(
     let mut image = Image {
         segments,
         context: Vec::new(),
+        entry_registers: Vec::new(),
     };
     let arm = language.id.starts_with("ARM:");
 
@@ -450,6 +548,8 @@ pub fn load_with(
             continue;
         }
         let name = sec.name().unwrap_or("").to_string();
+        // Ghidra's MIPS loader marks the GOT constant
+        let mips_got = file_is_mips(&file) && name == ".got";
         // the loader makes the RELRO range read-only once it has relocated it
         let in_relro =
             relro.is_some_and(|(lo, hi)| lo <= at(sec.address()) && at(sec.address()) < hi);
@@ -464,7 +564,7 @@ pub fn load_with(
             end: at(sec.address() + sec.size()).into(),
             perms: MemoryBlock::perms_string(
                 true,
-                sh_flags.contains(SHF_WRITE) && !in_relro,
+                sh_flags.contains(SHF_WRITE) && !in_relro && !mips_got,
                 sh_flags.contains(SHF_EXECINSTR),
             ),
             initialized: sec.kind() != SectionKind::UninitializedData,
@@ -591,13 +691,18 @@ pub fn load_with(
 
     let entry = (file.entry() != 0).then(|| code_at(at(file.entry()), crate::arm::rank::SYMBOL));
 
+    let exec_segments = phdrs
+        .iter()
+        .filter(|h| h.kind == PT_LOAD && ProgramFlags(h.flags).contains(PF_X))
+        .map(|h| (at(h.vaddr), at(h.vaddr + h.memsz)))
+        .collect();
     let mut init_pointers = Vec::new();
     let mut default_names: BTreeMap<u64, String> = BTreeMap::new();
     // REL relocations (32-bit x86) keep the addend in the slot
     let slot_word = |off: u64| -> i64 {
         let mut buf = vec![0u8; ptr];
         if image.read(at(off), &mut buf) {
-            le_word(&buf) as i64
+            endian.word(&buf) as i64
         } else {
             0
         }
@@ -607,6 +712,8 @@ pub fn load_with(
         .into_iter()
         .flatten()
         .filter(|(_, r)| matches!(r.target(), RelocationTarget::Absolute))
+        // (MIPS `.rel.dyn` starts with an empty entry)
+        .filter(|(_, r)| !matches!(r.flags(), RelocationFlags::Elf { r_type } if r_type.0 == 0))
         .map(|(off, r)| {
             let addend = if r.has_implicit_addend() {
                 slot_word(off)
@@ -630,7 +737,7 @@ pub fn load_with(
         let all_ones = if ptr == 4 { 0xffff_ffff } else { u64::MAX };
         for (i, chunk) in bytes.chunks_exact(ptr).enumerate() {
             let slot = sec.address() + (i * ptr) as u64;
-            let mut v = le_word(chunk);
+            let mut v = endian.word(chunk);
             if v == 0 {
                 v = relative.get(&slot).map(|a| *a as u64).unwrap_or(0);
             }
@@ -652,7 +759,7 @@ pub fn load_with(
         && let Ok(bytes) = dynamic.data()
     {
         for e in bytes.chunks_exact(2 * ptr) {
-            let (tag, val) = (le_word(&e[..ptr]), le_word(&e[ptr..]));
+            let (tag, val) = (endian.word(&e[..ptr]), endian.word(&e[ptr..]));
             let name = match tag {
                 12 => "_DT_INIT",
                 13 => "_DT_FINI",
@@ -703,7 +810,7 @@ pub fn load_with(
             let Ok(bytes) = sec.data() else { continue };
             let skip = (sec.address() % ptr as u64) as usize;
             for chunk in bytes.get(skip..).unwrap_or_default().chunks_exact(ptr) {
-                let v = le_word(chunk);
+                let v = endian.word(chunk);
                 if v != 0 {
                     // these are guesses, and so are the modes they suggest (a walk that does
                     // not look like code drops an even one)
@@ -753,7 +860,71 @@ pub fn load_with(
             pointer_slots.push((at(off), t));
         }
     }
+    let mips = file_is_mips(&file);
+    let ppc = matches!(
+        file.architecture(),
+        Architecture::PowerPc | Architecture::PowerPc64
+    );
+    // MIPS and PowerPC code reaches its imports through the GOT, so the slots get the addresses
+    // of Ghidra's EXTERNAL block: one word per undefined dynamic symbol, in table order
+    let mut externals: BTreeMap<u64, String> = BTreeMap::new();
+    if mips || ppc {
+        let top = blocks.iter().map(|b| b.end.0).max().unwrap_or(0);
+        let start = top.div_ceil(0x1000) * 0x1000;
+        let undefined = file
+            .dynamic_symbols()
+            .filter(|s| s.is_undefined())
+            .filter_map(|s| s.name().ok().filter(|n| !n.is_empty()));
+        for (i, name) in undefined.enumerate() {
+            externals.insert(start + (i * ptr) as u64, name.to_string());
+        }
+        let external = |name: &str| externals.iter().find(|(_, n)| *n == name).map(|(a, _)| *a);
+        if mips {
+            for (slot, value) in mips_got_slots(&file, endian, ptr) {
+                let value = match value {
+                    GotValue::Image(v) => Some(at(v)),
+                    GotValue::Import(n) => external(&n),
+                };
+                pointer_slots.extend(value.map(|v| (at(slot), v)));
+            }
+        }
+        if let Some(dynsyms) = file.dynamic_symbol_table() {
+            for (off, r) in file.dynamic_relocations().into_iter().flatten() {
+                let RelocationTarget::Symbol(idx) = r.target() else {
+                    continue;
+                };
+                let name = dynsyms
+                    .symbol_by_index(idx)
+                    .ok()
+                    .filter(|s| s.is_undefined());
+                let slot = name.and_then(|s| external(s.name().ok()?));
+                if !matches!(r.flags(), RelocationFlags::Elf { r_type } if r_type.0 == 21) {
+                    pointer_slots.extend(slot.map(|v| (at(off), v)));
+                }
+            }
+        }
+    }
     pointer_slots.sort_unstable();
+    pointer_slots.dedup_by_key(|(s, _)| *s);
+    // the decompiler reads what the loader leaves in the image: PowerPC's `.got2` and MIPS' GOT
+    if mips || ppc {
+        for (slot, value) in &pointer_slots {
+            let mut w = vec![0u8; ptr];
+            endian.write(*value, &mut w);
+            image.write(*slot, &w);
+        }
+    }
+    // only constant slots fold into named targets in the decompiler: Ghidra's MIPS loader marks
+    // the GOT constant, and on PowerPC `.got2` is RELRO
+    if mips || ppc {
+        let name = if mips { ".got" } else { ".got2" };
+        let section = file
+            .section_by_name(name)
+            .map(|s| (at(s.address()), at(s.address() + s.size())));
+        for (lo, hi) in section.into_iter().chain(relro.filter(|_| ppc)) {
+            keep_constant(&mut image, lo, hi);
+        }
+    }
 
     let mut imports: Vec<ImportSymbol> = file
         .dynamic_symbols()
@@ -841,7 +1012,7 @@ pub fn load_with(
         }
         let mut buf = vec![0u8; ptr];
         if image.read(at(off), &mut buf) {
-            let v = le_word(&buf);
+            let v = endian.word(&buf);
             if v != 0 {
                 got_code.push(at(v));
             }
@@ -866,6 +1037,7 @@ pub fn load_with(
                     .map(|s| s.address()),
                 read: &read,
                 address_size: ptr as u8,
+                endian,
             })
         }
         None => crate::eh::Frames::default(),
@@ -906,11 +1078,37 @@ pub fn load_with(
         _ if !interp => "Linux program (statically linked)",
         _ => "Linux program",
     };
-    let global_pointer = file
-        .symbols()
-        .chain(file.dynamic_symbols())
-        .find(|s| s.name() == Ok("__global_pointer$"))
-        .map(|s| at(s.address()));
+    let named = |want: &str| {
+        file.symbols()
+            .chain(file.dynamic_symbols())
+            .find(|s| s.name() == Ok(want))
+            .map(|s| at(s.address()))
+    };
+    let global_pointer = if mips {
+        mips_gp(&file, endian).map(at).or_else(|| named("_gp"))
+    } else {
+        named("__global_pointer$")
+    };
+    let small_data: Vec<(u8, u64)> = if file.architecture() == Architecture::PowerPc {
+        [(13, named("_SDA_BASE_")), (2, named("_SDA2_BASE_"))]
+            .into_iter()
+            .filter_map(|(r, v)| Some((r, v?)))
+            .collect()
+    } else if file.architecture() == Architecture::PowerPc64 {
+        named(".TOC.").map(|t| (2, t)).into_iter().collect()
+    } else {
+        Vec::new()
+    };
+    // what every function may assume on entry: functions that do not set the global pointer up
+    // themselves use the one the program's start-up code left
+    if mips {
+        image
+            .entry_registers
+            .extend(global_pointer.map(|gp| ("gp".to_string(), gp)));
+    }
+    image
+        .entry_registers
+        .extend(small_data.iter().map(|(r, v)| (format!("r{r}"), *v)));
     // Ghidra stands the imported symbols up as one pointer-sized slot each in an EXTERNAL block on
     // the next page after the image
     if !imports.is_empty() {
@@ -928,11 +1126,13 @@ pub fn load_with(
     }
     Ok(Loaded {
         global_pointer,
+        small_data,
         format: "elf",
         container: "elf",
         description: description.into(),
         members: Vec::new(),
         language,
+        endian,
         base,
         image,
         blocks,
@@ -942,7 +1142,7 @@ pub fn load_with(
         debug,
         plt,
         import_slots: BTreeMap::new(),
-        externals: BTreeMap::new(),
+        externals,
         pdata_starts: Vec::new(),
         conventions: BTreeMap::new(),
         pic_base: (ptr == 4)
@@ -953,6 +1153,7 @@ pub fn load_with(
             })
             .flatten(),
         entry,
+        exec_segments,
         init_pointers,
         data_pointers,
         pointer_slots,
@@ -963,14 +1164,6 @@ pub fn load_with(
         got_code,
         default_names,
     })
-}
-
-/// A little-endian word of up to 8 bytes.
-pub(crate) fn le_word(b: &[u8]) -> u64 {
-    let n = b.len().min(8);
-    let mut w = [0u8; 8];
-    w[..n].copy_from_slice(&b[..n]);
-    u64::from_le_bytes(w)
 }
 
 /// The entries of `.plt`, `.plt.sec`, `.plt.got` and `.iplt`, named after the symbol of the GOT
@@ -984,7 +1177,11 @@ fn plt_entries(
     functions: &BTreeMap<u64, String>,
     ptr: usize,
 ) -> BTreeMap<u64, String> {
+    if file_is_mips(file) {
+        return mips_stubs(file, bias);
+    }
     let irelative = match file.architecture() {
+        Architecture::PowerPc => object::elf::R_PPC_IRELATIVE,
         Architecture::X86_64 => R_X86_64_IRELATIVE,
         Architecture::I386 => R_386_IRELATIVE,
         Architecture::Arm => R_ARM_IRELATIVE,
@@ -993,6 +1190,7 @@ fn plt_entries(
         _ => return BTreeMap::new(),
     };
     let arm = file.architecture() == Architecture::Arm;
+    let endian = Endian::of_file(file);
     let ifuncs = ifunc_names(file, bias);
     let mut slots: BTreeMap<u64, Option<String>> = BTreeMap::new();
     let dynsyms = file.dynamic_symbol_table();
@@ -1020,7 +1218,7 @@ fn plt_entries(
         let Ok(bytes) = sec.data() else { continue };
         let size = if rela { 3 * ptr } else { 2 * ptr };
         for r in bytes.chunks_exact(size) {
-            let word = |i: usize| le_word(&r[i * ptr..(i + 1) * ptr]);
+            let word = |i: usize| endian.word(&r[i * ptr..(i + 1) * ptr]);
             // the relocation type is the low byte of a 32-bit r_info, the low word of a 64-bit one
             let mask = if ptr == 4 { 0xff } else { 0xffff_ffff };
             if word(1) & mask != u64::from(irelative.0) {
@@ -1038,7 +1236,7 @@ fn plt_entries(
                         }
                         let b = file_bytes(data, &s)?;
                         let at = (word(0) - lo) as usize;
-                        b.get(at..at + ptr).map(le_word)
+                        b.get(at..at + ptr).map(|w| endian.word(w))
                     })
                     .unwrap_or(0)
             }
@@ -1056,8 +1254,255 @@ fn plt_entries(
     }
     match file.architecture() {
         Architecture::X86_64 | Architecture::I386 => x86_plt(file, data, bias, &slots, ptr),
+        Architecture::PowerPc => ppc_stubs(file, data, bias, &slots),
         _ => risc_plt(file, data, bias, &slots, ptr),
     }
+}
+
+fn file_is_mips(file: &object::File<'_>) -> bool {
+    matches!(
+        file.architecture(),
+        Architecture::Mips | Architecture::Mips64
+    )
+}
+
+/// The value of a tag of the `.dynamic` section.
+fn dynamic_tag(file: &object::File<'_>, endian: Endian, ptr: usize, tag: u64) -> Option<u64> {
+    let bytes = file.section_by_name(".dynamic")?.data().ok()?;
+    bytes
+        .chunks_exact(2 * ptr)
+        .find_map(|e| (endian.word(&e[..ptr]) == tag).then(|| endian.word(&e[ptr..])))
+}
+
+/// The lazy stubs of a MIPS image, named after their imports: an undefined dynamic function
+/// symbol with a value is the address of its stub.
+fn mips_stubs(file: &object::File<'_>, bias: u64) -> BTreeMap<u64, String> {
+    file.dynamic_symbols()
+        .filter(|s| s.is_undefined() && s.address() != 0)
+        .filter_map(|s| {
+            let name = s.name().ok()?;
+            Some((s.address().wrapping_add(bias), name.to_string()))
+        })
+        .collect()
+}
+
+/// The global pointer of a MIPS image at link time: `ri_gp_value` of `.reginfo`, else the GOT's
+/// address plus the 0x7ff0 the ABI fixes.
+fn mips_gp(file: &object::File<'_>, endian: Endian) -> Option<u64> {
+    let reginfo = file
+        .section_by_name(".reginfo")
+        .and_then(|s| s.data().ok()?.get(20..24).map(|b| endian.word(b)))
+        .filter(|v| *v != 0);
+    reginfo.or_else(|| Some(file.section_by_name(".got")?.address() + 0x7ff0))
+}
+
+/// What a GOT slot holds once the program runs.
+enum GotValue {
+    /// An address in the image, at link time.
+    Image(u64),
+    /// The address of the named import.
+    Import(String),
+}
+
+/// What the dynamic linker puts in the GOT of a MIPS image, as (slot, value) at link time. There
+/// are no relocations for it: after the two reserved entries `DT_MIPS_LOCAL_GOTNO` slots hold
+/// addresses in the image, and one slot follows per dynamic symbol from `DT_MIPS_GOTSYM`, which
+/// gets the symbol's value (a stub's address for an undefined function that has one).
+fn mips_got_slots(file: &object::File<'_>, endian: Endian, ptr: usize) -> Vec<(u64, GotValue)> {
+    const DT_MIPS_LOCAL_GOTNO: u64 = 0x7000_000a;
+    const DT_MIPS_SYMTABNO: u64 = 0x7000_0011;
+    const DT_MIPS_GOTSYM: u64 = 0x7000_0013;
+    const DT_PLTGOT: u64 = 3;
+    let tag = |t| dynamic_tag(file, endian, ptr, t);
+    let (Some(got), Some(local), Some(gotsym), Some(symtabno)) = (
+        tag(DT_PLTGOT),
+        tag(DT_MIPS_LOCAL_GOTNO),
+        tag(DT_MIPS_GOTSYM),
+        tag(DT_MIPS_SYMTABNO),
+    ) else {
+        return Vec::new();
+    };
+    let w = ptr as u64;
+    let Some(section) = file
+        .sections()
+        .find(|s| (s.address()..s.address() + s.size()).contains(&got))
+    else {
+        return Vec::new();
+    };
+    let Ok(bytes) = section.data() else {
+        return Vec::new();
+    };
+    let slot_value = |i: u64| {
+        let off = (got - section.address() + i * w) as usize;
+        bytes.get(off..off + ptr).map(|b| endian.word(b))
+    };
+    let mut out = Vec::new();
+    for i in 2..local {
+        // (a page entry of an image linked at 0 holds 0)
+        if let Some(v) = slot_value(i) {
+            out.push((got + i * w, GotValue::Image(v)));
+        }
+    }
+    let Some(table) = file.dynamic_symbol_table() else {
+        return out;
+    };
+    for (n, index) in (gotsym..symtabno).enumerate() {
+        let Ok(sym) = table.symbol_by_index(object::SymbolIndex(index as usize)) else {
+            continue;
+        };
+        let slot = got + (local + n as u64) * w;
+        if sym.address() != 0 {
+            out.push((slot, GotValue::Image(sym.address())));
+        } else if let Ok(name) = sym.name() {
+            out.push((slot, GotValue::Import(name.to_string())));
+        }
+    }
+    out
+}
+
+/// Makes the initialized bytes in `lo..hi` read-only for the decompiler.
+fn keep_constant(image: &mut Image, lo: u64, hi: u64) {
+    let mut parts = Vec::with_capacity(image.segments.len() + 2);
+    for s in std::mem::take(&mut image.segments) {
+        let end = s.start + s.mem_size;
+        if s.readonly || hi <= s.start || end <= lo || s.start + s.data.len() as u64 <= lo {
+            parts.push(s);
+            continue;
+        }
+        let a = (lo.max(s.start) - s.start) as usize;
+        let b = ((hi.min(end) - s.start) as usize).min(s.data.len());
+        let split_at = s.start + b as u64;
+        if a > 0 {
+            parts.push(Segment {
+                start: s.start,
+                data: s.data[..a].to_vec(),
+                mem_size: a as u64,
+                readonly: false,
+            });
+        }
+        parts.push(Segment {
+            start: s.start + a as u64,
+            data: s.data[a..b].to_vec(),
+            mem_size: (b - a) as u64,
+            readonly: true,
+        });
+        if end > split_at {
+            parts.push(Segment {
+                start: split_at,
+                data: s.data[b..].to_vec(),
+                mem_size: end - split_at,
+                readonly: false,
+            });
+        }
+    }
+    image.segments = parts;
+}
+
+/// The values PowerPC position-independent functions put in `r30`: `bcl 20,31,.+4`, then
+/// `mflr r30; addis r30,r30,hi; addi r30,r30,lo` among the prologue's instructions.
+fn ppc_pic_bases(file: &object::File<'_>, data: &[u8]) -> Vec<u64> {
+    const BCL_NEXT: u64 = 0x429f_0005;
+    const ADDIS_R30: u64 = 0x3fde;
+    const ADDI_R30: u64 = 0x3bde;
+    let endian = Endian::of_file(file);
+    let mut out = BTreeSet::new();
+    for sec in file.sections().filter(|s| s.kind() == SectionKind::Text) {
+        let Some(bytes) = file_bytes(data, &sec) else {
+            continue;
+        };
+        let words: Vec<u64> = bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| endian.word(b))
+            .collect();
+        for (i, _) in words.iter().enumerate().filter(|(_, w)| **w == BCL_NEXT) {
+            let after = &words[i + 1..words.len().min(i + 16)];
+            let part = |op: u64| {
+                after
+                    .iter()
+                    .find(|w| *w >> 16 == op)
+                    .map(|w| i64::from(*w as u16 as i16))
+            };
+            if let (Some(hi), Some(lo)) = (part(ADDIS_R30), part(ADDI_R30)) {
+                let lr = sec.address() + 4 * (i as u64 + 1);
+                out.insert(lr.wrapping_add_signed((hi << 16) + lo) & 0xffff_ffff);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Names the call stubs of a 32-bit PowerPC image after their `.plt` slots. The linker leaves
+/// them in `.text` or `.glink`, and each loads the slot and jumps through `ctr`: `lwz r11,d(r30)`
+/// or `addis r11,r30,hi; lwz r11,lo(r11)` in position-independent code (`r30` is the GOT pointer
+/// `DT_PPC_GOT`, or the middle of an object's part of `.got2`, which only the functions that
+/// set it up tell), `lis r11,hi; lwz r11,lo(r11)` elsewhere.
+fn ppc_stubs(
+    file: &object::File<'_>,
+    data: &[u8],
+    bias: u64,
+    slots: &BTreeMap<u64, Option<String>>,
+) -> BTreeMap<u64, String> {
+    const DT_PPC_GOT: u64 = 0x7000_0000;
+    const MTCTR_R11: u64 = 0x7d69_03a6;
+    const BCTR: u64 = 0x4e80_0420;
+    let endian = Endian::of_file(file);
+    let mut bases = ppc_pic_bases(file, data);
+    bases.extend(dynamic_tag(file, endian, 4, DT_PPC_GOT));
+    let lo16 = |w: u64| i64::from(w as u16 as i16);
+    // (entry, offset from r30 or the slot's address)
+    let mut stubs: Vec<(u64, Result<i64, u64>)> = Vec::new();
+    for sec in file.sections() {
+        let Ok(".text" | ".glink" | ".iplt" | ".plt") = sec.name() else {
+            continue;
+        };
+        if sec.kind() != SectionKind::Text {
+            continue;
+        }
+        let Some(bytes) = file_bytes(data, &sec) else {
+            continue;
+        };
+        let word = |i: usize| bytes.get(i * 4..i * 4 + 4).map(|b| endian.word(b));
+        for i in 0..bytes.len() / 4 {
+            let (Some(a), Some(b), Some(c)) = (word(i), word(i + 1), word(i + 2)) else {
+                break;
+            };
+            let at = sec.address() + (i * 4) as u64;
+            if a >> 16 == 0x817e && b == MTCTR_R11 && c == BCTR {
+                stubs.push((at, Ok(lo16(a))));
+            } else if word(i + 3) == Some(BCTR) && c == MTCTR_R11 && b >> 16 == 0x816b {
+                let high = lo16(a) << 16;
+                match a >> 16 {
+                    0x3d7e => stubs.push((at, Ok(high + lo16(b)))),
+                    0x3d60 => stubs.push((at, Err((high + lo16(b)) as u64 & 0xffff_ffff))),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let relative = |base: u64, offset: i64| slots.get(&base.wrapping_add_signed(offset));
+    // a wrong base only hits a slot by chance: the base that reaches the most slots goes first
+    bases.sort_by_key(|b| {
+        let hits = stubs
+            .iter()
+            .filter(|(_, s)| matches!(s, Ok(o) if relative(*b, *o).is_some()));
+        std::cmp::Reverse(hits.count())
+    });
+    let mut out = BTreeMap::new();
+    for (at, stub) in stubs {
+        let name = match stub {
+            Ok(o) => bases.iter().find_map(|b| relative(*b, o)),
+            Err(slot) => slots.get(&slot),
+        };
+        let Some(n) = name else { continue };
+        let entry = at.wrapping_add(bias);
+        out.insert(
+            entry,
+            n.clone().unwrap_or_else(|| format!("FUN_{entry:08x}")),
+        );
+    }
+    out
 }
 
 /// The name Ghidra gives the IRELATIVE stub of each resolver: of the IFUNC symbols at an address
@@ -1249,6 +1694,79 @@ mod tests {
 
     fn block<'a>(l: &'a Loaded, name: &str) -> &'a MemoryBlock {
         l.blocks.iter().find(|b| b.name == name).expect(name)
+    }
+
+    fn set(name: &str) -> Vec<u8> {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus")
+            .join(name);
+        std::fs::read(p).expect("corpus binary")
+    }
+
+    #[test]
+    fn words_read_and_write_in_either_byte_order() {
+        assert_eq!(Endian::Little.word(&[1, 2, 3, 4]), 0x0403_0201);
+        assert_eq!(Endian::Big.word(&[1, 2, 3, 4]), 0x0102_0304);
+        assert_eq!(Endian::Big.word(&[0xff]), 0xff);
+        let mut b = [0u8; 4];
+        Endian::Big.write(0x1122_3344, &mut b);
+        assert_eq!(b, [0x11, 0x22, 0x33, 0x44]);
+        Endian::Little.write(0x1122_3344, &mut b);
+        assert_eq!(b, [0x44, 0x33, 0x22, 0x11]);
+    }
+
+    #[test]
+    fn a_big_endian_mips_program_loads_with_its_got_and_stubs() {
+        let l = load(&set("mips/bin/switch_vm-mips-O0"), None).expect("load");
+        assert_eq!(l.language.id, "MIPS:BE:32:default");
+        assert_eq!(l.endian, Endian::Big);
+        assert_eq!(l.base, PIE_BASE_32);
+        assert_eq!(l.functions.get(&0x1114c).map(String::as_str), Some("main"));
+        assert_eq!(l.plt.get(&0x11240).map(String::as_str), Some("printf"));
+        // `_gp` is 0x7ff0 past the start of the GOT
+        let got = block(&l, ".got");
+        assert_eq!(l.global_pointer, Some(got.start.0 + 0x7ff0));
+        assert_eq!(got.perms, "r--");
+        // a local slot holds a page of the rebased image, an imported function's slot its stub,
+        // and the image shows what the dynamic linker leaves there
+        let slot = |at: u64| {
+            let mut b = [0u8; 4];
+            assert!(l.image.read(at, &mut b));
+            Endian::Big.word(&b)
+        };
+        let k = l
+            .pointer_slots
+            .iter()
+            .find(|(_, t)| *t == 0x11240)
+            .expect("printf slot");
+        assert!(got.start.0 <= k.0 && k.0 < got.end.0);
+        assert_eq!(slot(k.0), 0x11240);
+        assert!(
+            l.pointer_slots
+                .iter()
+                .any(|(s, t)| *t == PIE_BASE_32 && slot(*s) == *t)
+        );
+        // the code of an import without a stub goes to Ghidra's EXTERNAL block
+        let ext = block(&l, "EXTERNAL");
+        assert!(
+            l.externals
+                .keys()
+                .all(|a| ext.start.0 <= *a && *a < ext.end.0)
+        );
+        assert!(l.externals.values().any(|n| n == "__cxa_finalize"));
+    }
+
+    #[test]
+    fn powerpc_call_stubs_take_the_names_of_their_plt_slots() {
+        let l = load(&set("ppc32/bin/switch_vm-ppc32-O2-stripped"), None).expect("load");
+        assert_eq!(l.language.id, "PowerPC:BE:32:default");
+        assert_eq!(l.endian, Endian::Big);
+        assert_eq!(l.plt.get(&0x10d60).map(String::as_str), Some("printf"));
+        assert_eq!(l.plt.get(&0x10db0).map(String::as_str), Some("memset"));
+        assert_eq!(
+            l.plt.get(&0x10d50).map(String::as_str),
+            Some("__libc_start_main")
+        );
     }
 
     #[test]

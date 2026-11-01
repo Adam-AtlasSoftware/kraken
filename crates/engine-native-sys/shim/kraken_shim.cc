@@ -364,6 +364,11 @@ public:
 /// A Sleigh architecture over the callback load image. It owns a private Sleigh translator (the
 /// base class shares one per language through a static map, which would tie sessions together).
 class KrakenArchitecture : public ghidra::SleighArchitecture {
+public:
+  // registers with a known value on entry to every function
+  std::vector<ghidra::TrackedContext> entryRegisters;
+
+private:
   rust::Box<ImageSource> *pending;
   std::unique_ptr<ghidra::Sleigh> *sleighOut;
 
@@ -563,12 +568,19 @@ std::unique_ptr<Session> new_session(rust::Str language_id, rust::Str compiler_i
     auto impl = std::make_unique<Session::Impl>();
     std::string target = std::string(language_id) + ":" + std::string(compiler_id);
     rust::Vec<ContextOut> painted = image->context_ranges();
+    rust::Vec<EntryRegister> entry = image->entry_registers();
     rust::Box<ImageSource> img = std::move(image);
     impl->arch = std::make_unique<KrakenArchitecture>(target, &impl->errs, &img, &impl->sleigh);
     ghidra::DocumentStorage store;
     impl->arch->init(store);
     impl->arch->readonlypropagate = true;
     impl->condExec = target.compare(0, 4, "x86:") != 0;
+    for (const EntryRegister &r : entry) {
+      ghidra::TrackedContext t;
+      t.loc = impl->arch->translate->getRegister(std::string(r.name));
+      t.val = r.value;
+      impl->arch->entryRegisters.push_back(t);
+    }
     // context the loader worked out (ARM's TMode where the code is Thumb), painted before
     // anything is decoded; each range is its own region, so a `globalset` of an instruction
     // (`blx` into the other mode) repaints at most up to the next range
@@ -641,10 +653,11 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
       Address here(ram, at);
       CollectAsm as;
       CollectPcode pc;
-      ghidra::int4 len;
+      ghidra::int4 len, whole;
       try {
         len = a->translate->printAssembly(as, here);
-        a->translate->oneInstruction(pc, here);
+        // the p-code of a branch includes its delay slots, and so does this length
+        whole = a->translate->oneInstruction(pc, here);
       } catch (ghidra::LowlevelError &) {
         break; // undecodable or unmapped bytes end the run
       }
@@ -653,6 +666,7 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
       InsnOut row;
       row.addr = at;
       row.length = static_cast<uint32_t>(len);
+      row.delay = whole > len ? static_cast<uint32_t>(whole - len) : 0;
       row.mnemonic = rust::String(as.mnem);
       row.body = rust::String(as.body);
       row.flow = FL_FALLTHROUGH;
@@ -666,7 +680,7 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
           row.fallthrough = falls;
         }
       };
-      const uint64_t after = at + static_cast<uint64_t>(len);
+      const uint64_t after = at + static_cast<uint64_t>(whole > len ? whole : len);
       // conditional execution: the instruction does what its other p-code says, or nothing
       bool guarded = false;
       for (const auto &op : pc.ops) {
@@ -757,7 +771,7 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
       }
       // A repeat prefix (`REP STOSQ`) is p-code that branches back to its own start and out to
       // the next instruction: the instruction loops internally and then falls through.
-      uint64_t next = at + static_cast<uint64_t>(len);
+      uint64_t next = at + static_cast<uint64_t>(whole > len ? whole : len);
       bool self = false, toNext = false;
       for (const auto &op : pc.ops) {
         if ((op.opc == ghidra::CPUI_BRANCH || op.opc == ghidra::CPUI_CBRANCH) && !op.in.empty() &&
@@ -784,6 +798,14 @@ rust::Vec<InsnOut> Session::decode(uint64_t addr, uint32_t max) {
   });
 }
 
+namespace {
+// Asks Sleigh for an instruction's own length, ignoring its text.
+class AssemblyLength : public ghidra::AssemblyEmit {
+public:
+  void dump(const Address &, const std::string &, const std::string &) override {}
+};
+} // namespace
+
 rust::Vec<PcodeOpOut> Session::lift(uint64_t start, uint64_t end) {
   return guarded("lift", [&]() {
     rust::Vec<PcodeOpOut> out;
@@ -795,10 +817,34 @@ rust::Vec<PcodeOpOut> Session::lift(uint64_t start, uint64_t end) {
       ghidra::int4 len = a->translate->oneInstruction(pc, Address(ram, at));
       if (len <= 0)
         break;
+      // the p-code of a branch holds its delay slot's: find that run of operations
+      size_t slot_from = pc.ops.size(), slot_to = pc.ops.size();
+      uint64_t slot_at = at;
+      {
+        AssemblyLength own;
+        ghidra::int4 first = a->translate->printAssembly(own, Address(ram, at));
+        if (first > 0 && first < len) {
+          slot_at = at + static_cast<uint64_t>(first);
+          CollectPcode slot;
+          a->translate->oneInstruction(slot, Address(ram, slot_at));
+          size_t n = slot.ops.size();
+          for (size_t i = 0; n > 0 && i + n <= pc.ops.size(); ++i) {
+            bool same = true;
+            for (size_t j = 0; same && j < n; ++j)
+              same = pc.ops[i + j].opc == slot.ops[j].opc;
+            if (same) {
+              slot_from = i;
+              slot_to = i + n;
+              break;
+            }
+          }
+        }
+      }
       uint32_t seq = 0;
       for (const auto &op : pc.ops) {
         PcodeOpOut o;
         o.addr = at;
+        o.source = (seq >= slot_from && seq < slot_to) ? slot_at : at;
         o.seq = seq++;
         o.opcode = rust::String(ghidra::get_opname(op.opc));
         o.has_output = op.has_out;
@@ -888,6 +934,21 @@ public:
 
 Funcdata *functionAt(ghidra::Architecture *a, uint64_t addr) {
   Address at(a->getDefaultCodeSpace(), addr);
+  // MIPS' position-independent functions find the GOT from their own address, which the caller
+  // leaves in t9; Ghidra's MIPS analysis assumes the same
+  const bool mips = a->archid.compare(0, 5, "MIPS:") == 0;
+  const auto &entry = static_cast<KrakenArchitecture *>(a)->entryRegisters;
+  if (mips || !entry.empty()) {
+    ghidra::TrackedSet &tracked = a->context->createSet(at, at + 1);
+    tracked.clear();
+    tracked.insert(tracked.end(), entry.begin(), entry.end());
+    if (mips) {
+      ghidra::TrackedContext t9;
+      t9.loc = a->translate->getRegister("t9");
+      t9.val = addr;
+      tracked.push_back(t9);
+    }
+  }
   ghidra::Scope *global = a->symboltab->getGlobalScope();
   Funcdata *fd = global->queryFunction(at);
   if (fd == nullptr) {

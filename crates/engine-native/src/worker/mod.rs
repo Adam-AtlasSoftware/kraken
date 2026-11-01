@@ -206,6 +206,7 @@ pub(crate) struct WireVarnode {
 pub(crate) struct WirePcodeOp {
     pub addr: u64,
     pub seq: u32,
+    pub source: u64,
     pub opcode: String,
     pub output: Option<WireVarnode>,
     pub inputs: Vec<WireVarnode>,
@@ -221,6 +222,7 @@ impl From<engine_native_sys::PcodeOp> for WirePcodeOp {
         WirePcodeOp {
             addr: op.addr,
             seq: op.seq,
+            source: op.source,
             opcode: op.opcode,
             output: op.output.map(v),
             inputs: op.inputs.into_iter().map(v).collect(),
@@ -238,6 +240,7 @@ impl From<WirePcodeOp> for engine_native_sys::PcodeOp {
         engine_native_sys::PcodeOp {
             addr: op.addr,
             seq: op.seq,
+            source: op.source,
             opcode: op.opcode,
             output: op.output.map(v),
             inputs: op.inputs.into_iter().map(v).collect(),

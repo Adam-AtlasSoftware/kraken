@@ -1,0 +1,45 @@
+{
+  "binary": "switch_vm-mips-O0",
+  "ground_truth_from": "switch_vm-mips-O0",
+  "sha256": "475b6655f7a1b81697fc8b85590e774447884624ec212af5f1d8c64381986db1",
+  "source_file": "src/switch_vm.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x780",
+      "size": 108
+    },
+    {
+      "name": "push",
+      "demangled": "push",
+      "entry": "0x7ec",
+      "size": 168
+    },
+    {
+      "name": "pop",
+      "demangled": "pop",
+      "entry": "0x894",
+      "size": 160
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x934",
+      "size": 1724
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xff0",
+      "size": 348
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x114c",
+      "size": 228
+    }
+  ]
+}

@@ -6,7 +6,7 @@
 //! `cargo test -p engine-native --test agreement -- --nocapture` prints the numbers for the
 //! guarded binaries; `-- --ignored --nocapture` prints them for all 20 (and with
 //! `KRAKEN_AGREEMENT_SET=corpus/pe`, `corpus/elf32`, `corpus/arm32`, `corpus/aarch64`,
-//! `corpus/riscv64` or `corpus/riscv32` for those sets). Names are compared by entry,
+//! `corpus/riscv64`, `corpus/riscv32`, `corpus/mips` or `corpus/ppc32` for those sets). Names are compared by entry,
 //! signatures without spacing (exactly, and by types alone).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -127,6 +127,16 @@ async fn compare(binary: &str, c: NativeConfig) -> Report {
 }
 
 /// [`compare`] for a binary of the corpus set in `set` (`corpus`, `corpus/pe`, `corpus/elf32`).
+/// The import behind Ghidra's name of a 32-bit PowerPC call stub, which is the linker's local
+/// symbol (`00008000.got2.plt_pic32.printf@@GLIBC_2.4`): the native engine calls the stub `printf`,
+/// as Ghidra itself does once the symbol table is stripped.
+fn stub_name(name: &str) -> &str {
+    match name.split_once("plt_pic32.") {
+        Some((_, rest)) => rest.split('@').next().unwrap_or(rest),
+        None => name,
+    }
+}
+
 async fn compare_in(set: &str, binary: &str, c: NativeConfig) -> Report {
     compare_full(set, binary, c, false).await
 }
@@ -213,7 +223,7 @@ async fn compare_full(set: &str, binary: &str, c: NativeConfig, extras: bool) ->
             }
             continue;
         };
-        let their_name = s["name"].as_str().unwrap_or("").to_string();
+        let their_name = stub_name(s["name"].as_str().unwrap_or("")).to_string();
         if their_name != mine.name && std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
             eprintln!(
                 "  {binary} name differs at {entry:#x}: native {:?}, Ghidra {their_name:?}",
@@ -650,6 +660,17 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
             )
         })
         .collect();
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for b in e.memory_map(&cancel).await.expect("memory map") {
+            eprintln!(
+                "  {binary} block {:#x} {:#x} {}",
+                b.start.0, b.end.0, b.perms
+            );
+        }
+        for b in &theirs {
+            eprintln!("  {binary} Ghidra block {:#x} {:#x} {}", b.0, b.1, b.2);
+        }
+    }
     let mine: BTreeSet<(u64, u64, String)> = e
         .memory_map(&cancel)
         .await
@@ -695,6 +716,11 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
     }
     let theirs_addrs: BTreeSet<u64> = theirs.iter().map(|t| t.0).collect();
     mine.retain(|(a, _)| theirs_addrs.contains(a));
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for t in theirs.difference(&mine) {
+            eprintln!("  {binary} disasm only Ghidra: {:#x} {}", t.0, t.1);
+        }
+    }
     r.disassembly.add(&theirs, &mine);
 
     // jump tables: (jump, target) pairs, Ghidra's read from the recorded CFGs by the fake engine
@@ -914,6 +940,51 @@ async fn agrees_with_ghidra_on_pe_and_elf32() {
     }
 }
 
+/// Big-endian 32-bit MIPS and PowerPC against Ghidra's fixtures, delay slots, GOT calls and
+/// stubs included. Where Ghidra gives up on a switch and the native engine does not, its bodies
+/// are the shorter ones, so the bar for those is below the others'.
+#[tokio::test(flavor = "multi_thread")]
+async fn agrees_with_ghidra_on_mips_and_powerpc() {
+    for (set, binary) in [
+        ("corpus/mips", "switch_vm-mips-O0"),
+        ("corpus/mips", "stripped_calc-mips-O0-stripped"),
+        ("corpus/mips", "pie_list-mips-O2"),
+        ("corpus/ppc32", "switch_vm-ppc32-O0"),
+        ("corpus/ppc32", "stripped_calc-ppc32-O0-stripped"),
+        ("corpus/ppc32", "pie_list-ppc32-O2"),
+    ] {
+        let Some(c) = config() else { return };
+        let langs = c.spec_root.join("Ghidra/Processors");
+        if !langs.join("MIPS/data/languages/mips32be.sla").is_file()
+            || !langs.join("PowerPC/data/languages/ppc_32_be.sla").is_file()
+        {
+            eprintln!("skipped: the spec tree has no MIPS or PowerPC specifications");
+            return;
+        }
+        let r = compare_in(set, binary, c).await;
+        print(binary, &r);
+        assert_eq!(r.functions.recall(), 1.0, "{binary}: functions");
+        assert_eq!(r.names.recall(), 1.0, "{binary}: names {}", r.names);
+        assert!(r.bodies.recall() >= 0.75, "{binary}: bodies {}", r.bodies);
+        assert!(
+            r.callers.recall() >= 0.95,
+            "{binary}: callers {}",
+            r.callers
+        );
+        assert!(r.edges.recall() >= 0.8, "{binary}: cfg edges {}", r.edges);
+        assert!(
+            r.imports.recall() >= 0.95,
+            "{binary}: imports {}",
+            r.imports
+        );
+        assert!(
+            r.exports.recall() >= 0.95,
+            "{binary}: exports {}",
+            r.exports
+        );
+    }
+}
+
 /// ARM (A32 and Thumb-2), AArch64, RISC-V 64 and RISC-V 32 against Ghidra's fixtures. Ghidra
 /// leaves RISC-V PLT entries unnamed (`FUN_ram_...`) where the native engine names them after
 /// their imports, hence the lower bar for names there.
@@ -1074,7 +1145,7 @@ fn measure_json(s: &Score) -> Value {
     })
 }
 
-/// The numbers behind `cargo xtask parity`: every binary of the three fixture sets, summed per
+/// The numbers behind `cargo xtask parity`: every binary of the five fixture sets, summed per
 /// set, written as JSON to the file named by `KRAKEN_PARITY_OUT`. Run it through the xtask.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "run by `cargo xtask parity`"]
@@ -1084,7 +1155,13 @@ async fn parity_report() {
         return;
     };
     let mut sets = serde_json::Map::new();
-    for set in ["corpus", "corpus/pe", "corpus/elf32"] {
+    for set in [
+        "corpus",
+        "corpus/pe",
+        "corpus/elf32",
+        "corpus/mips",
+        "corpus/ppc32",
+    ] {
         let mut names: Vec<String> = std::fs::read_dir(root().join(set).join("fixtures"))
             .expect("fixtures")
             .filter_map(|e| e.ok())

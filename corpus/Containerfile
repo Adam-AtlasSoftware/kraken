@@ -30,3 +30,10 @@ RUN apt-get update \
        libc6-dev-armhf-cross libc6-dev-arm64-cross libc6-dev-riscv64-cross \
        gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf qemu-user \
     && rm -rf /var/lib/apt/lists/*
+
+# The big-endian sets: mips (o32) and ppc32 Linux cross compilers with their glibc. A layer of its
+# own, so the layers above (and the sets built with them) stay as they were.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       gcc-mips-linux-gnu gcc-powerpc-linux-gnu libc6-dev-mips-cross libc6-dev-powerpc-cross \
+    && rm -rf /var/lib/apt/lists/*

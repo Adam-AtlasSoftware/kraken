@@ -128,7 +128,7 @@ impl Builder<'_> {
     /// another function (and so counts as a call).
     fn instruction(&mut self, i: &Instruction, is_tail: &dyn Fn(u64) -> bool) {
         let a = i.addr;
-        let next = a + u64::from(i.length);
+        let next = a + u64::from(i.length + i.delay);
         let flow_kind = match i.flow {
             Flow::Call => Some(XrefKind::Call),
             Flow::Jump | Flow::ConditionalJump => Some(XrefKind::Jump),
@@ -136,7 +136,7 @@ impl Builder<'_> {
         };
         if let Some(kind) = flow_kind {
             for t in &i.targets {
-                if !self.mapped(*t) || *t == a {
+                if !self.mapped(*t) || (*t == a && i.delay == 0) {
                     continue;
                 }
                 let kind = if i.flow == Flow::Jump && is_tail(*t) {
@@ -467,6 +467,7 @@ mod tests {
         Instruction {
             addr,
             length: 2,
+            delay: 0,
             mnemonic: Mnemonic::new("X"),
             body: "".into(),
             flow: Flow::Fallthrough,

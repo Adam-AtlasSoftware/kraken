@@ -114,22 +114,48 @@ fn callee_saved(loaded: &Loaded, offset: u64) -> bool {
         let w = loaded.pointer_size() as u64;
         let n = offset.wrapping_sub(0x2000) / w;
         offset >= 0x2000 && matches!(n, 3 | 8 | 9 | 18..=27)
+    } else if id.starts_with("MIPS:") {
+        // s0-s7, gp, sp and s8
+        matches!(offset / loaded.pointer_size() as u64, 16..=23 | 28..=30)
+    } else if id.starts_with("PowerPC:") {
+        // r1, r2 and r13-r31
+        matches!(offset / loaded.pointer_size() as u64, 1 | 2 | 13..=31)
     } else {
         false
     }
 }
 
-/// Registers whose value is known everywhere: RISC-V's `gp`, which the start-up code points at
-/// `__global_pointer$` for the linker's gp-relative addressing.
+/// The register that holds [`Loaded::global_pointer`]: RISC-V's `gp`, which the start-up code
+/// points at `__global_pointer$`, or MIPS' `gp`, which every position-independent function
+/// sets up from `t9` and reloads after each call (PowerPC's small-data bases are
+/// [`Loaded::small_data`]).
+fn global_register(loaded: &Loaded) -> Varnode {
+    let w = loaded.pointer_size() as u32;
+    let offset = if loaded.is_mips() {
+        28 * u64::from(w)
+    } else {
+        0x2000 + 3 * u64::from(w)
+    };
+    Varnode {
+        space: "register".into(),
+        offset,
+        size: w,
+    }
+}
+
+/// Registers whose value is known everywhere.
 fn fixed_registers(loaded: &Loaded, state: &mut State) {
     if let Some(gp) = loaded.global_pointer {
-        let w = loaded.pointer_size() as u32;
+        state.set(&global_register(loaded), Some(gp), None);
+    }
+    let w = loaded.pointer_size() as u32;
+    for (n, v) in &loaded.small_data {
         let reg = Varnode {
             space: "register".into(),
-            offset: 0x2000 + 3 * u64::from(w),
+            offset: u64::from(*n) * u64::from(w),
             size: w,
         };
-        state.set(&reg, Some(gp), None);
+        state.set(&reg, Some(*v), None);
     }
 }
 
@@ -140,6 +166,9 @@ pub struct Found {
     pub refs: Vec<Computed>,
     /// Code addresses built or loaded (function pointer candidates), Thumb bit cleared.
     pub code: Vec<u64>,
+    /// Targets of indirect calls through a known value (`jalr t9` of a GOT slot), which are
+    /// that instruction's call references on MIPS and PowerPC.
+    pub calls: Vec<u64>,
 }
 
 /// The flow of a function body that the propagation follows: where control comes from at each
@@ -153,9 +182,19 @@ struct Body<'a> {
 impl Body<'_> {
     /// Whether control falls from the instruction before `addr` into it.
     fn falls_into(&self, addr: u64) -> bool {
-        self.insns.range(..addr).next_back().is_some_and(|(a, i)| {
-            a + u64::from(i.length) == addr && i.fallthrough && i.flow != Flow::Jump
-        })
+        let mut before = self.insns.range(..addr).rev();
+        let Some((a, i)) = before.next() else {
+            return false;
+        };
+        if a + u64::from(i.length) != addr {
+            return false;
+        }
+        // an instruction in a delay slot passes on the way its branch goes
+        let branch = before
+            .next()
+            .filter(|(b, j)| j.delay > 0 && *b + u64::from(j.length) == *a)
+            .map_or(*i, |(_, j)| *j);
+        branch.fallthrough && branch.flow != Flow::Jump
     }
 }
 
@@ -216,6 +255,8 @@ pub fn function(
         .retain(|r| r.kind != XrefKind::Data || !accesses.contains(&(r.from, r.to)));
     found.code.sort_unstable();
     found.code.dedup();
+    found.calls.sort_unstable();
+    found.calls.dedup();
     Ok(found)
 }
 
@@ -245,7 +286,13 @@ fn memory_value(loaded: &Loaded, addr: u64, size: u32) -> Option<u64> {
     loaded
         .image
         .read(addr, &mut buf)
-        .then(|| crate::elf::le_word(&buf))
+        .then(|| loaded.endian.word(&buf))
+}
+
+/// Whether a known target makes an indirect call a call reference: the code of MIPS and PowerPC
+/// calls its imports and its own functions through registers it loads from the GOT.
+fn known_calls(loaded: &Loaded) -> bool {
+    loaded.is_mips() || loaded.language.id.starts_with("PowerPC:")
 }
 
 fn mapped(loaded: &Loaded, addr: u64) -> bool {
@@ -385,7 +432,7 @@ fn run(loaded: &Loaded, ops: &[PcodeOp], body: &Body, found: &mut Found) {
             let contiguous = current.is_some_and(|p| {
                 body.insns
                     .get(&p)
-                    .is_some_and(|i| p + u64::from(i.length) == op.addr)
+                    .is_some_and(|i| p + u64::from(i.length + i.delay) == op.addr)
             });
             current = Some(op.addr);
             memory = ops[n..]
@@ -416,7 +463,7 @@ fn run(loaded: &Loaded, ops: &[PcodeOp], body: &Body, found: &mut Found) {
                 flush(&mut pending, found, false);
             }
         }
-        let at = op.addr;
+        let at = op.source;
         let flow = matches!(
             op.opcode.as_str(),
             "BRANCH" | "CBRANCH" | "CALL" | "BRANCHIND" | "CALLIND" | "RETURN"
@@ -496,9 +543,11 @@ fn run(loaded: &Loaded, ops: &[PcodeOp], body: &Body, found: &mut Found) {
                             kind: XrefKind::Read,
                         });
                     }
-                    // the pointer loaded from a relocated slot is referred to as well
+                    // the pointer loaded from a relocated slot is referred to as well (on MIPS
+                    // GOT slots hold pages too: the arithmetic after the load makes the reference)
                     if let Some(t) = slot_target(loaded, addr)
                         && mapped(loaded, t)
+                        && !loaded.is_mips()
                     {
                         found.refs.push(Computed {
                             from: at,
@@ -536,6 +585,19 @@ fn run(loaded: &Loaded, ops: &[PcodeOp], body: &Body, found: &mut Found) {
                     && let Some(v) = input(0)
                 {
                     escape(loaded, at, v, found);
+                    if op.opcode == "CALLIND"
+                        && known_calls(loaded)
+                        && (loaded.is_code(v) || loaded.externals.contains_key(&v))
+                    {
+                        if loaded.is_code(v) {
+                            found.calls.push(v);
+                        }
+                        found.refs.push(Computed {
+                            from: at,
+                            to: v,
+                            kind: XrefKind::Call,
+                        });
+                    }
                 }
                 if op.opcode != "BRANCHIND" {
                     let ptr = loaded.pointer_size() as u32;
@@ -560,6 +622,10 @@ fn run(loaded: &Loaded, ops: &[PcodeOp], body: &Body, found: &mut Found) {
         let Some(out) = &op.output else {
             continue;
         };
+        // the image has one global pointer, whatever the arithmetic that rebuilds it
+        if loaded.is_mips() && loaded.global_pointer.is_some() && *out == global_register(loaded) {
+            continue;
+        }
         // a register written drops its waiting reference, unless it is a copy of one
         if let Some(k) = State::key(out) {
             pending.remove(&k);

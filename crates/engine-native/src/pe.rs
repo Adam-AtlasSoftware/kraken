@@ -26,7 +26,7 @@ use object::read::{Object, ObjectSection, ObjectSymbol};
 use object::{FileKind, SymbolKind};
 
 use crate::discover::{in_ranges, merge_ranges};
-use crate::elf::{ExportSymbol, ImportSymbol, Language, Loaded, le_word};
+use crate::elf::{Endian, ExportSymbol, ImportSymbol, Language, Loaded};
 
 /// Largest image (`SizeOfImage`) the loader lays out; every section is cut to the image.
 const MAX_IMAGE: u64 = 1 << 30;
@@ -262,7 +262,7 @@ impl Rva<'_> {
     }
 
     fn word(&self, rva: u32, ptr: usize) -> Option<u64> {
-        self.bytes(rva, ptr).map(le_word)
+        self.bytes(rva, ptr).map(|b| Endian::Little.word(b))
     }
 }
 
@@ -571,6 +571,7 @@ fn load_pe<Pe: ImageNtHeaders>(
     let image = Image {
         segments,
         context: Vec::new(),
+        entry_registers: Vec::new(),
     };
 
     // thunks: `jmp [slot]` (rip-relative on x86-64, absolute on x86)
@@ -890,6 +891,7 @@ fn load_pe<Pe: ImageNtHeaders>(
             got: None,
             read: &read,
             address_size: ptr as u8,
+            endian: Endian::Little,
         });
         fde_starts = frames.fde_starts.iter().map(|a| at(*a) & mask).collect();
         landing_pads = frames
@@ -1074,6 +1076,9 @@ fn load_pe<Pe: ImageNtHeaders>(
         got_code: Vec::new(),
         default_names,
         global_pointer: None,
+        exec_segments: Vec::new(),
+        small_data: Vec::new(),
+        endian: crate::elf::Endian::Little,
     })
 }
 

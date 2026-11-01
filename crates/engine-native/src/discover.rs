@@ -308,6 +308,8 @@ fn walk(
     // operands are not function pointers, propagation finds the real ones
     let propagate = crate::constprop::wanted(loaded);
     let mut seen: BTreeSet<u64> = BTreeSet::new();
+    // delay slots, which only count as walked once flow arrives by itself
+    let mut slots: BTreeSet<u64> = BTreeSet::new();
     let mut work = vec![entry];
     if let Some(pads) = loaded.landing_pads.get(&entry) {
         work.extend(pads.iter().copied());
@@ -400,14 +402,23 @@ fn walk(
         // jump with `add r2, r3; bx r2`)
         let mut added_to: &[(u64, u32)] = &[];
         loop {
-            if seen.contains(&pc) || seen.len() >= MAX_BODY || !loaded.is_code(pc) {
+            // an instruction seen as a delay slot is walked on from when a jump lands on it
+            let revisit = slots.remove(&pc);
+            if (seen.contains(&pc) && !revisit) || seen.len() >= MAX_BODY || !loaded.is_code(pc) {
                 break;
             }
-            let Some(insn) = lane.instruction(env.decoded, pc)? else {
+            let Some(first) = lane.instruction(env.decoded, pc)? else {
+                break;
+            };
+            let (slot, delay) = (pc + u64::from(first.length), first.delay);
+            if delay > 0 && lane.instruction(env.decoded, slot)?.is_some() && seen.insert(slot) {
+                slots.insert(slot);
+            }
+            let Some(insn) = lane.decoded(env.decoded, &pc) else {
                 break;
             };
             seen.insert(pc);
-            let next = pc + u64::from(insn.length);
+            let next = slot + u64::from(delay);
             // the return address a call pushes is not a function pointer: after a call that
             // never returns it is the padding past the body, which would be taken for a start
             let is_call = matches!(insn.flow, Flow::Call | Flow::IndirectCall);
@@ -498,7 +509,11 @@ fn walk(
                             .get(&r.addr)
                             .is_some_and(|n| is_noreturn_name(loaded, n))
                     });
-                    if ends {
+                    // a MIPS lazy stub calls the resolver, which goes on in the function itself
+                    let stub = loaded.is_mips() && loaded.in_plt(pc);
+                    let noreturn = got_call(loaded, &lane, env.decoded, pc)
+                        .is_some_and(|t| env.noreturn.contains(&t));
+                    if ends || stub || noreturn {
                         break;
                     }
                 }
@@ -548,6 +563,7 @@ fn walk(
         match crate::constprop::function(loaded, session, &body, &switches) {
             Ok(found) => {
                 consts.extend(found.code);
+                calls.extend(found.calls);
                 computed = found.refs;
             }
             Err(NativeError::Native(_)) => {}
@@ -583,12 +599,51 @@ fn walk(
 }
 
 /// Whether the RISC mnemonic is a trap that does not come back: RISC-V `ebreak` and `unimp`,
-/// ARM `udf`, AArch64 `brk` (what `__builtin_trap` and `_start` end with).
+/// ARM `udf`, AArch64 `brk`, MIPS `break`, PowerPC `trap` (what `__builtin_trap` and `_start`
+/// end with).
 fn is_trap(mnemonic: &str) -> bool {
     matches!(
         mnemonic,
-        "ebreak" | "c.ebreak" | "unimp" | "c.unimp" | "udf" | "udf.w" | "brk"
+        "ebreak" | "c.ebreak" | "unimp" | "c.unimp" | "udf" | "udf.w" | "brk" | "break" | "trap"
     )
+}
+
+/// The target of the MIPS `jalr t9` at `pc` when the code before it loads `t9` from a GOT slot
+/// (`lw t9,-0x7fc0(gp)`): calls reach imports and other functions that way, and the walk has to
+/// know the ones that never return.
+fn got_call(
+    loaded: &Loaded,
+    lane: &Lane<'_>,
+    shared: &BTreeMap<u64, Instruction>,
+    pc: u64,
+) -> Option<u64> {
+    let gp = loaded.global_pointer.filter(|_| loaded.is_mips())?;
+    let before = |n: u64| lane.decoded(shared, &pc.checked_sub(n * 4)?);
+    for (back, i) in (1..16u64).filter_map(|n| Some((n, before(n)?))) {
+        if back > 1 && (!i.fallthrough || i.flow != Flow::Fallthrough) {
+            return None;
+        }
+        let Some(operand) = i.body.strip_prefix("t9,") else {
+            continue;
+        };
+        if &*i.mnemonic != "lw" {
+            return None;
+        }
+        let digits = operand.strip_suffix("(gp)")?.trim();
+        let (negative, digits) = match digits.strip_prefix('-') {
+            Some(d) => (true, d),
+            None => (false, digits),
+        };
+        let offset = i64::from_str_radix(digits.strip_prefix("0x").unwrap_or(digits), 16).ok()?;
+        let slot = gp.wrapping_add_signed(if negative { -offset } else { offset });
+        let k = loaded.pointer_slots.partition_point(|(s, _)| *s < slot);
+        return loaded
+            .pointer_slots
+            .get(k)
+            .filter(|(s, _)| *s == slot)
+            .map(|(_, t)| *t);
+    }
+    None
 }
 
 /// Whether a jump from `pc` to `t` in the function at `entry` passes the entry of another
@@ -1033,7 +1088,11 @@ impl Walker<'_> {
             .collect();
         let pool_word = |a: u64| pools.range(a.saturating_sub(3)..=a).next().is_some();
         // the smallest instruction: 2 bytes for Thumb and compressed RISC-V, else 4
-        let step = if loaded.language.id.starts_with("AARCH64") {
+        let id = loaded.language.id;
+        let step = if ["AARCH64", "MIPS", "PowerPC"]
+            .iter()
+            .any(|p| id.starts_with(p))
+        {
             4
         } else {
             2
@@ -1067,7 +1126,7 @@ impl Walker<'_> {
                     let small = a % 4 == 0
                         && a + 4 <= ge
                         && loaded.image.read(a, &mut w)
-                        && !(0x1_0000..0xffff_0000).contains(&u32::from_le_bytes(w));
+                        && !(0x1_0000..0xffff_0000).contains(&loaded.endian.word(&w));
                     if pool_word(a) || small {
                         a += 4;
                         continue;
@@ -1105,7 +1164,7 @@ impl Walker<'_> {
                         if matches!(j.flow, Flow::Return | Flow::IndirectJump | Flow::Jump)
                             && !j.fallthrough
                         {
-                            ok = pc + u64::from(j.length) <= ge;
+                            ok = pc + u64::from(j.length + j.delay) <= ge;
                             break;
                         }
                         pc += u64::from(j.length);

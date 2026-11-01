@@ -1,0 +1,45 @@
+{
+  "binary": "switch_vm-ppc32-O0",
+  "ground_truth_from": "switch_vm-ppc32-O0",
+  "sha256": "a6ea5e452beab708a27312262687b1a4524d18c4692579c172aa9ec7d1827b83",
+  "source_file": "src/switch_vm.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x784",
+      "size": 88
+    },
+    {
+      "name": "push",
+      "demangled": "push",
+      "entry": "0x7dc",
+      "size": 156
+    },
+    {
+      "name": "pop",
+      "demangled": "pop",
+      "entry": "0x878",
+      "size": 156
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x914",
+      "size": 972
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xce0",
+      "size": 248
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0xdd8",
+      "size": 184
+    }
+  ]
+}

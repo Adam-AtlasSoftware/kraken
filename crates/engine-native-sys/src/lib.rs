@@ -81,9 +81,26 @@ pub struct Image {
     /// Context variables over address ranges, applied in order (later ones win); addresses
     /// outside them keep the language's defaults.
     pub context: Vec<ContextRange>,
+    /// Registers (by the language's names) with a value the decompiler may assume on entry to
+    /// every function, such as the global pointer of a MIPS program.
+    pub entry_registers: Vec<(String, u64)>,
 }
 
 impl Image {
+    /// Overwrites the initialized bytes at `addr` (what a loader's fix-ups put there); bytes
+    /// past a segment's file contents stay as they are.
+    pub fn write(&mut self, addr: u64, bytes: &[u8]) {
+        for s in &mut self.segments {
+            let Some(off) = addr.checked_sub(s.start).map(|o| o as usize) else {
+                continue;
+            };
+            if off + bytes.len() <= s.data.len() {
+                s.data[off..off + bytes.len()].copy_from_slice(bytes);
+                return;
+            }
+        }
+    }
+
     /// Fills `buf` with the bytes at `addr`; unmapped bytes past the first read as zero. False
     /// when `addr` itself is unmapped.
     pub fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
@@ -272,6 +289,9 @@ pub struct Instruction {
     pub addr: u64,
     /// Length in bytes.
     pub length: u32,
+    /// Bytes of delay slots after the instruction (MIPS): the instructions there run before its
+    /// branch takes effect, and flow goes on after them.
+    pub delay: u32,
     /// Mnemonic as Sleigh prints it (such as `MOV`).
     pub mnemonic: Mnemonic,
     /// Operand text as Sleigh prints it.
@@ -354,6 +374,9 @@ pub struct PcodeOp {
     pub addr: u64,
     /// Index within the instruction.
     pub seq: u32,
+    /// Address of the instruction that does this: `addr`, or the delay slot of the branch at
+    /// `addr` (whose p-code holds the slot's).
+    pub source: u64,
     /// Opcode name such as `COPY` or `INT_ADD`.
     pub opcode: String,
     /// Output varnode, if any.
@@ -510,6 +533,16 @@ mod real {
         fn readonly_ranges(&self) -> Vec<u64> {
             self.0.readonly_pairs()
         }
+        fn entry_registers(&self) -> Vec<ffi::EntryRegister> {
+            self.0
+                .entry_registers
+                .iter()
+                .map(|(name, value)| ffi::EntryRegister {
+                    name: name.clone(),
+                    value: *value,
+                })
+                .collect()
+        }
         fn context_ranges(&self) -> Vec<ffi::ContextOut> {
             self.0
                 .context
@@ -533,6 +566,7 @@ mod real {
         struct InsnOut {
             addr: u64,
             length: u32,
+            delay: u32,
             mnemonic: String,
             body: String,
             flow: u8,
@@ -548,6 +582,11 @@ mod real {
         struct JumpEdgeOut {
             op: u64,
             target: u64,
+        }
+
+        struct EntryRegister {
+            name: String,
+            value: u64,
         }
 
         struct ContextOut {
@@ -566,6 +605,7 @@ mod real {
         struct PcodeOpOut {
             addr: u64,
             seq: u32,
+            source: u64,
             opcode: String,
             has_output: bool,
             output: VarnodeOut,
@@ -601,6 +641,7 @@ mod real {
             fn load_fill(self: &ImageSource, addr: u64, buf: &mut [u8]) -> bool;
             fn readonly_ranges(self: &ImageSource) -> Vec<u64>;
             fn context_ranges(self: &ImageSource) -> Vec<ContextOut>;
+            fn entry_registers(self: &ImageSource) -> Vec<EntryRegister>;
             fn interrupted(self: &ImageSource) -> bool;
         }
 
@@ -960,6 +1001,7 @@ impl Session {
                         mnemonic: Mnemonic::new(&r.mnemonic),
                         body: Operands::from(r.body.as_str()),
                         flow: Flow::from_code(r.flow),
+                        delay: r.delay,
                         fallthrough: r.fallthrough,
                         via_pointer: r.via_pointer,
                         targets: r.targets.into_boxed_slice(),
@@ -993,6 +1035,7 @@ impl Session {
                 .map(|o| PcodeOp {
                     addr: o.addr,
                     seq: o.seq,
+                    source: o.source,
                     opcode: o.opcode,
                     output: o.has_output.then(|| vn(o.output)),
                     inputs: o.inputs.into_iter().map(vn).collect(),
@@ -1411,6 +1454,7 @@ mod tests {
                 readonly: true,
             }],
             context: Vec::new(),
+            entry_registers: Vec::new(),
         };
         let mut buf = [0xffu8; 4];
         assert!(img.read(0x1001, &mut buf));

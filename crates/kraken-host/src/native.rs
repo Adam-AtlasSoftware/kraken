@@ -87,6 +87,8 @@ impl NativeProbe {
 pub type BinaryFit = Result<(), String>;
 
 const EM_386: u16 = 3;
+const EM_MIPS: u16 = 8;
+const EM_PPC: u16 = 20;
 const EM_ARM: u16 = 40;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
@@ -94,9 +96,19 @@ const EM_RISCV: u16 = 243;
 const PE_I386: u16 = 0x014c;
 const PE_AMD64: u16 = 0x8664;
 
+/// The `e_machine` of an ELF header, in the file's byte order.
+fn elf_machine(head: &[u8]) -> u16 {
+    let bytes = head.get(18..20).map_or([0, 0], |b| [b[0], b[1]]);
+    if head.get(5) == Some(&2) {
+        u16::from_be_bytes(bytes)
+    } else {
+        u16::from_le_bytes(bytes)
+    }
+}
+
 /// Reads the header of `path`: the native engine opens little-endian ELF files for x86-64,
-/// 32-bit x86, ARM (A32 and Thumb), AArch64, RISC-V 64 and RISC-V 32, and PE images for x86
-/// and x86-64, and nothing else yet. Unreadable files are reported as fitting, so the engine
+/// 32-bit x86, ARM (A32 and Thumb), AArch64, RISC-V 64 and RISC-V 32, 32-bit MIPS and PowerPC
+/// ELF files of either byte order, and PE images for x86 and x86-64, and nothing else yet. Unreadable files are reported as fitting, so the engine
 /// itself says what is wrong with them.
 pub fn binary_fit(path: &Path) -> BinaryFit {
     let mut head = vec![0u8; 4096];
@@ -139,14 +151,17 @@ pub fn binary_fit_in(path: &Path, specs: Option<&Path>) -> BinaryFit {
 }
 
 /// The processor directory and `.sla` file an ELF header needs, for the processors added after
-/// the first spec trees (ARM, RISC-V); `None` for the rest.
+/// the first spec trees (ARM, RISC-V, MIPS, PowerPC); `None` for the rest.
 fn sla_of_header(head: &[u8]) -> Option<(&'static str, &'static str)> {
     if head.get(..4) != Some(b"\x7fELF") {
         return None;
     }
-    let machine = head.get(18..20).map(|b| u16::from_le_bytes([b[0], b[1]]))?;
-    match (machine, head.get(4)) {
+    match (elf_machine(head), head.get(4)) {
         (EM_ARM, _) => Some(("ARM", "ARM8_le.sla")),
+        (EM_MIPS, _) if head.get(5) == Some(&2) => Some(("MIPS", "mips32be.sla")),
+        (EM_MIPS, _) => Some(("MIPS", "mips32le.sla")),
+        (EM_PPC, _) if head.get(5) == Some(&2) => Some(("PowerPC", "ppc_32_be.sla")),
+        (EM_PPC, _) => Some(("PowerPC", "ppc_32_le.sla")),
         (EM_RISCV, Some(2)) => Some(("RISCV", "riscv.lp64d.sla")),
         (EM_RISCV, _) => Some(("RISCV", "riscv.ilp32d.sla")),
         _ => None,
@@ -169,22 +184,22 @@ pub fn fit_of_header(head: &[u8]) -> BinaryFit {
                 .into(),
         );
     }
-    let machine = head
-        .get(18..20)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .unwrap_or(0);
-    if head.get(5) != Some(&1) {
+    let machine = elf_machine(head);
+    if head.get(5) != Some(&1) && !(head.get(4) == Some(&1) && matches!(machine, EM_MIPS | EM_PPC))
+    {
         return Err(
-            "it is a big-endian ELF file (the native engine opens little-endian only)".into(),
+            "it is a big-endian ELF file for another processor than 32-bit MIPS or PowerPC \
+             (the native engine opens little-endian ones otherwise)"
+                .into(),
         );
     }
     if head.get(4) != Some(&2) {
-        if matches!(machine, EM_386 | EM_ARM | EM_RISCV) {
+        if matches!(machine, EM_386 | EM_ARM | EM_RISCV | EM_MIPS | EM_PPC) {
             return Ok(());
         }
         return Err(format!(
             "it is a 32-bit ELF file for machine type {machine} (the native engine opens 32-bit \
-             x86, ARM and RISC-V 32 only)"
+             x86, ARM, RISC-V 32, MIPS and PowerPC only)"
         ));
     }
     if !matches!(machine, EM_X86_64 | EM_AARCH64 | EM_RISCV) {
@@ -306,7 +321,7 @@ pub fn choose(
                 choice,
                 reason: "auto picked native: the native library and the compiled .sla files are \
                          available and the binary is an ELF file (x86-64, 32-bit x86, ARM, \
-                         AArch64, RISC-V), a PE image or an object file (x86, x86-64, or an ELF \
+                         AArch64, RISC-V, MIPS, PowerPC), a PE image or an object file (x86, x86-64, or an ELF \
                          object of those processors)"
                     .into(),
             },
@@ -461,7 +476,7 @@ pub fn plan_setup(
 }
 
 /// Whether the spec tree at `root` has every processor the native engine opens: x86, AArch64,
-/// ARM and RISC-V.
+/// ARM, RISC-V, MIPS and PowerPC.
 pub fn has_all_processors(root: &Path) -> bool {
     [
         "x86/data/languages/x86-64.sla",
@@ -470,6 +485,8 @@ pub fn has_all_processors(root: &Path) -> bool {
         "ARM/data/languages/ARM8_le.sla",
         "RISCV/data/languages/riscv.lp64d.sla",
         "RISCV/data/languages/riscv.ilp32d.sla",
+        "MIPS/data/languages/mips32be.sla",
+        "PowerPC/data/languages/ppc_32_be.sla",
     ]
     .iter()
     .all(|f| root.join("Ghidra/Processors").join(f).is_file())
@@ -556,7 +573,8 @@ mod tests {
         // no library: native is out for every processor
         let s = choose_raw(EngineChoice::Auto, &probe(false, false), "arm").unwrap();
         assert_eq!(s.kind, EngineKind::Ghidra);
-        assert!(raw_native_supported("x86-64") && !raw_native_supported("mips"));
+        assert!(raw_native_supported("x86-64") && !raw_native_supported("sparc"));
+        assert!(raw_native_supported("MIPS:BE:32:default"));
     }
 
     #[test]
@@ -587,7 +605,7 @@ mod tests {
             (b"MZ\x90\0".to_vec(), "no PE header"),
             (b"\xca\xfe\xba\xbe".to_vec(), "not an ELF or PE file"),
             (pe_head(0x1c0), "PE machine type is 0x01c0"),
-            (elf_head(1, 1, 8), "32-bit ELF file for machine type 8"),
+            (elf_head(1, 1, 2), "32-bit ELF file for machine type 2"),
             (elf_head(2, 2, EM_X86_64), "big-endian"),
             (elf_head(2, 1, 8), "machine type is 8"),
         ] {
@@ -601,6 +619,19 @@ mod tests {
             assert!(s.reason.contains(needle), "{}", s.reason);
         }
         assert!(fit_of_header(&elf_head(2, 1, EM_AARCH64)).is_ok());
+        // big-endian 32-bit MIPS and PowerPC; the byte order of the file gives the machine
+        let mut big = elf_head(1, 2, 0);
+        big[18..20].copy_from_slice(&EM_MIPS.to_be_bytes());
+        assert!(fit_of_header(&big).is_ok());
+        assert_eq!(sla_of_header(&big), Some(("MIPS", "mips32be.sla")));
+        big[18..20].copy_from_slice(&EM_PPC.to_be_bytes());
+        assert!(fit_of_header(&big).is_ok());
+        assert_eq!(sla_of_header(&big), Some(("PowerPC", "ppc_32_be.sla")));
+        assert!(fit_of_header(&elf_head(1, 1, EM_MIPS)).is_ok());
+        // the 64-bit ones stay with Ghidra
+        let mut big64 = elf_head(2, 2, 0);
+        big64[18..20].copy_from_slice(&EM_MIPS.to_be_bytes());
+        assert!(fit_of_header(&big64).is_err());
         assert!(fit_of_header(&elf_head(1, 1, EM_386)).is_ok());
         assert!(fit_of_header(&elf_head(1, 1, EM_ARM)).is_ok());
         assert!(fit_of_header(&elf_head(1, 1, EM_RISCV)).is_ok());
