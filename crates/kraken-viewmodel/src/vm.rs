@@ -686,10 +686,11 @@ impl ViewModel {
         engine: Option<EngineChoice>,
         raw: Option<RawLoad>,
     ) {
-        self.create_project_full(binary, project_dir, engine, raw, None);
+        self.create_project_full(binary, project_dir, engine, raw, None, None);
     }
 
-    /// [`create_project_raw`](Self::create_project_raw) that also attaches the program's
+    /// [`create_project_raw`](Self::create_project_raw) that also picks a universal binary's
+    /// architecture (`slice`) and attaches the program's
     /// separate debug file (`debug_file` of `project_create`).
     pub fn create_project_full(
         &mut self,
@@ -698,6 +699,7 @@ impl ViewModel {
         engine: Option<EngineChoice>,
         raw: Option<RawLoad>,
         debug_file: Option<String>,
+        slice: Option<String>,
     ) {
         let binary = binary.into();
         self.connection = Connection::Opening(format!("Loading {}...", file_name(&binary)));
@@ -711,6 +713,9 @@ impl ViewModel {
         }
         if let Some(d) = debug_file {
             args["debug_file"] = json!(d);
+        }
+        if let Some(s) = slice {
+            args["slice"] = json!(s);
         }
         self.call("project_create", args, |vm, res| vm.project_opened(res));
     }

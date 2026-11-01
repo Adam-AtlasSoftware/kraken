@@ -205,6 +205,8 @@ pub fn compute(
             || loaded.import_slots.contains_key(&a)
             || loaded.externals.contains_key(&a)
             || loaded.plt.contains_key(&a)
+            // the Mach-O header: Ghidra's markup of it leaves no labels to code
+            || block_of(a).is_some_and(|b| b.name == "__TEXT")
     };
     // a field or an element of a variable DWARF types: the typed variable prints it
     let inside_typed = |a: u64| {

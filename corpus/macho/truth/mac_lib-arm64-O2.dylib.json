@@ -1,0 +1,28 @@
+{
+ "binary": "mac_lib-arm64-O2.dylib",
+ "ground_truth_from": "mac_lib-arm64-O2.dylib",
+ "sha256": "cfbdb1d81370de2d0b83065cb7692dae06d0118165473e72df8126300a76a929",
+ "source_file": "macho/src/mac_lib.c",
+ "opt": "O2",
+ "arch": "arm64",
+ "functions": [
+  {
+   "name": "_kr_hash",
+   "demangled": "kr_hash",
+   "entry": "0x540",
+   "size": 52
+  },
+  {
+   "name": "_kr_add",
+   "demangled": "kr_add",
+   "entry": "0x574",
+   "size": 24
+  },
+  {
+   "name": "_kr_show",
+   "demangled": "kr_show",
+   "entry": "0x58c",
+   "size": 108
+  }
+ ]
+}

@@ -225,6 +225,10 @@ pub struct ProjectCreateArgs {
     /// `debuginfo_probe`. It must match the program (build-id or debug-link CRC).
     #[serde(default)]
     pub debug_file: Option<String>,
+    /// A universal macOS binary: which architecture to open (`x86-64`, `arm64`;
+    /// `binary_probe` lists them under `slices`). Not needed when KRAKEN opens only one of them.
+    #[serde(default)]
+    pub slice: Option<String>,
 }
 
 /// How `project_create` reads the file.
@@ -273,8 +277,44 @@ impl ProjectCreateArgs {
             length: self.length,
             entry: self.entry,
             debug_file: self.debug_file.clone().filter(|d| !d.trim().is_empty()),
+            slice: self.slice.clone().filter(|s| !s.trim().is_empty()),
         })
     }
+}
+
+/// The architecture to open of a universal Mach-O binary, `None` for any other file: `wanted`,
+/// or the only slice KRAKEN opens. Several and no `wanted` is an error that lists them.
+fn universal_slice(path: &Path, wanted: Option<&str>) -> Result<Option<String>, ProtoError> {
+    // Opening a FIFO or device would block; the regular-file check later refuses those.
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return Ok(None);
+    }
+    let mut head = vec![0u8; 4096];
+    let opened = std::fs::File::open(path).and_then(|mut f| {
+        use std::io::Read;
+        let n = f.read(&mut head)?;
+        Ok((n, f.metadata()?.len()))
+    });
+    // an unreadable file is reported by the engine, like any other
+    let Ok((n, len)) = opened else {
+        return Ok(None);
+    };
+    if !kraken_engine::fat::is_universal(&head[..n]) {
+        return match wanted {
+            Some(_) => Err(ProtoError::new(
+                ErrorCode::InvalidArgument,
+                "`slice` applies to a universal macOS binary; this file is not one",
+            )),
+            None => Ok(None),
+        };
+    }
+    let Some(all) = kraken_engine::fat::slices_in(&head[..n], len) else {
+        return Err(ProtoError::new(
+            ErrorCode::InvalidArgument,
+            "the table of this universal binary is damaged",
+        ));
+    };
+    Ok(Some(kraken_engine::fat::pick(&all, wanted)?.arch.clone()))
 }
 
 /// For an Intel HEX or S-record file: its loader format and the processor its contents suggest.
@@ -365,6 +405,9 @@ impl Command for ProjectCreate {
         .await?;
         let mut loader = args.loader_spec()?;
         if args.loader != Some(LoaderKind::Raw) {
+            let (binary, wanted) = (args.binary.clone(), loader.slice.clone());
+            loader.slice =
+                blocking(move || universal_slice(Path::new(&binary), wanted.as_deref())).await?;
             let binary = args.binary.clone();
             let found = blocking(move || firmware_loader(Path::new(&binary))).await?;
             if let Some((format, language)) = found {

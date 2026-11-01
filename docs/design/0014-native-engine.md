@@ -195,7 +195,7 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 | jump_tables | `corpus` | ELF x86-64 | 100.0% | 92.7% | 98.0% | parity |
 | functions | `corpus/pe` | PE x86-64 and x86 | 100.0% | 82.9% | 99.0% | parity |
 | names | `corpus/pe` | PE x86-64 and x86 | 99.4% | 99.4% | 99.0% | parity |
-| decompile_text | `corpus/pe` | PE x86-64 and x86 | 79.4% | 71.0% | 77.0% | partial |
+| decompile_text | `corpus/pe` | PE x86-64 and x86 | 79.6% | 71.2% | 77.0% | partial |
 | globals | `corpus/pe` | PE x86-64 and x86 | 89.4% | 83.1% | 87.0% | partial |
 | types | `corpus/pe` | PE x86-64 and x86 | 100.0% | 7.6% | 99.0% | parity |
 | memory | `corpus/pe` | PE x86-64 and x86 | 100.0% | 100.0% | 95.0% | parity |
@@ -233,6 +233,14 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 | memory | `corpus/mipsel` | ELF MIPS LE | 100.0% | 100.0% | 99.0% | parity |
 | disassembly | `corpus/mipsel` | ELF MIPS LE | 98.8% | 100.0% | 98.0% | parity |
 | jump_tables | `corpus/mipsel` | ELF MIPS LE | 100.0% | 0.0% | 98.0% | parity |
+| functions | `corpus/macho` | Mach-O x86-64 and AArch64 | 100.0% | 98.7% | 99.0% | parity |
+| names | `corpus/macho` | Mach-O x86-64 and AArch64 | 100.0% | 100.0% | 99.0% | parity |
+| decompile_text | `corpus/macho` | Mach-O x86-64 and AArch64 | 83.1% | 86.1% | 80.0% | partial |
+| globals | `corpus/macho` | Mach-O x86-64 and AArch64 | 55.1% | 100.0% | 50.0% | partial |
+| types | `corpus/macho` | Mach-O x86-64 and AArch64 | 13.0% | 2.8% | 12.0% | partial |
+| memory | `corpus/macho` | Mach-O x86-64 and AArch64 | 100.0% | 100.0% | 95.0% | parity |
+| disassembly | `corpus/macho` | Mach-O x86-64 and AArch64 | 100.0% | 100.0% | 98.0% | parity |
+| jump_tables | `corpus/macho` | Mach-O x86-64 and AArch64 | 100.0% | 100.0% | 98.0% | parity |
 
 <!-- parity:end -->
 

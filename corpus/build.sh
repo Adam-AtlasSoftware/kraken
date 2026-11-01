@@ -9,7 +9,9 @@
 # riscv32/src/linux_rt.c), each in corpus/<set>/bin, and "xlib" (libkr of the lib set as object
 # files, static libraries and shared libraries for those four, corpus/xlib/bin), and the
 # Linux sets "mips" and "mipsel" (mips32r2 o32) and "ppc32", each in corpus/<set>/bin. Default:
-# all twelve. Name sets to build only those:
+# all twelve. "macho" (x86-64 and arm64, corpus/macho/bin) is built by corpus/macho/build.sh on
+# the host, with zig and LLVM instead of the container, and only when named. Name sets to build
+# only those:
 #   corpus/build.sh pe elf32
 set -euo pipefail
 
@@ -47,7 +49,15 @@ PROGRAMSRV32=(static_strops pie_list stripped_calc switch_vm)
 XSETS=(arm32 aarch64 riscv64 riscv32 xlib mips mipsel ppc32)
 
 if [[ "${1:-}" != "--inside" ]]; then
-  SETS=("$@")
+  SETS=()
+  for set in "$@"; do
+    if [[ $set == macho ]]; then
+      bash "$HERE/macho/build.sh"
+      [[ $# -eq 1 ]] && exit 0
+    else
+      SETS+=("$set")
+    fi
+  done
   [[ ${#SETS[@]} -eq 0 ]] && SETS=(elf pe elf32 lib "${XSETS[@]}")
   NATIVE=() CROSS=()
   for set in "${SETS[@]}"; do

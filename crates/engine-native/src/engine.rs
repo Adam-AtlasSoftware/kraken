@@ -1025,7 +1025,12 @@ pub(crate) fn release_free_memory() {
 /// engine and the worker client share it.
 pub(crate) fn check_format(spec: &LoaderSpec) -> EngineResult<()> {
     match spec.format.as_deref() {
-        Some(f) if !matches!(f, "elf" | "pe" | "coff" | "ar" | "raw" | "ihex" | "srec") => {
+        Some(f)
+            if !matches!(
+                f,
+                "elf" | "pe" | "macho" | "coff" | "ar" | "raw" | "ihex" | "srec"
+            ) =>
+        {
             Err(ProtoError::new(
                 ErrorCode::Unsupported,
                 format!("format {f:?} is not supported by the native engine"),
@@ -1055,6 +1060,14 @@ fn build_program(
             format!("cannot read {}: {e}", path.display()),
         )
     })?;
+    // a universal binary is one Mach-O file among others: everything below sees that one
+    let data = match kraken_engine::fat::slices(&data).filter(|_| !spec.is_raw()) {
+        Some(all) => {
+            let s = kraken_engine::fat::pick(&all, spec.slice.as_deref())?;
+            data[s.offset as usize..(s.offset + s.size) as usize].to_vec()
+        }
+        None => data,
+    };
     say(
         OpenStage::Symbols,
         format!(
@@ -1238,6 +1251,11 @@ fn build_program(
         {
             by_name.entry(c).or_default().push(*entry);
         }
+        if loaded.format == "macho"
+            && let Some(c) = name.strip_prefix('_').filter(|c| !c.starts_with('_'))
+        {
+            by_name.entry(c.to_string()).or_default().push(*entry);
+        }
     }
     // a PE function whose primary name is a section symbol (`.text`) still has its own name
     // among the other symbols at its entry, and Ghidra types it by that
@@ -1295,8 +1313,13 @@ fn build_program(
             continue;
         }
         // the parameter names of the C library headers, as Ghidra shows them (`__format`);
-        // the Windows tables carry the Windows headers' names
-        if !loaded.is_pe() {
+        // the Windows tables carry the Windows headers' names; Ghidra leaves the parameters of
+        // an underscored Mach-O name unnamed
+        if loaded.format == "macho" {
+            for (i, param) in proto.params.iter_mut().enumerate() {
+                param.name = Some(format!("param_{}", i + 1));
+            }
+        } else if !loaded.is_pe() {
             for param in &mut proto.params {
                 if let Some(n) = param.name.as_mut().filter(|n| !n.starts_with("__")) {
                     n.insert_str(0, "__");

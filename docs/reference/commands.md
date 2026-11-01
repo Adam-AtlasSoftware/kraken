@@ -1350,6 +1350,36 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
         }
       ]
     },
+    "BinarySlice": {
+      "description": "One architecture of a universal macOS binary.",
+      "properties": {
+        "arch": {
+          "description": "The name `project_create` takes as `slice`: `x86-64`, `arm64`.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Size of this slice in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supported": {
+          "description": "Whether KRAKEN opens it.",
+          "type": "boolean"
+        },
+        "title": {
+          "description": "The same in plain words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arch",
+        "title",
+        "size",
+        "supported"
+      ],
+      "type": "object"
+    },
     "DebugLink": {
       "description": "A `.gnu_debuglink` section: the name of a separate debug file and the CRC-32 of its bytes.",
       "properties": {
@@ -1791,6 +1821,13 @@ Example: `binary_probe {"path": "/usr/bin/ls"}`
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
+    },
+    "slices": {
+      "description": "The architectures of a universal macOS binary; `project_create` takes one as `slice`.",
+      "items": {
+        "$ref": "#/$defs/BinarySlice"
+      },
+      "type": "array"
     },
     "stripped": {
       "description": "True when the file has no symbol table (function names are gone); absent when unknown.",
@@ -19850,6 +19887,7 @@ Files with no header (firmware, ROMs, boot code) open with `loader: raw` and a `
 | `length` | `--length` | json | no | Raw images: how many bytes to map from `offset`; default the rest of the file. |
 | `loader` | `--loader` | json | no | How to read the file: `auto` (default: the file's own format) or `raw` (a flat image with no header: firmware, a ROM, boot code; needs `language`). |
 | `offset` | `--offset` | json | no | Raw images: file offset where the image starts (skips a header); default 0. |
+| `slice` | `--slice` | string | no | A universal macOS binary: which architecture to open (`x86-64`, `arm64`; `binary_probe` lists them under `slices`). Not needed when KRAKEN opens only one of them. |
 
 <details>
 <summary>Output schema</summary>

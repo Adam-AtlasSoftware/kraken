@@ -2,7 +2,7 @@
 
 KRAKEN ships as a few programs: `kraken` (the command line and MCP server), `krakend` (the background daemon) and `kraken-gui`. It has two analysis engines:
 
-- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN. It opens Linux and Windows programs and libraries of every kind (see [Supported files](#supported-files)). The Linux release (archive, AppImage and AUR package) carries it ready to use, with Ghidra's processor specifications compiled for it; new projects use it whenever it can open the file.
+- **Native** needs no Java and no Ghidra: the decompiler is a library linked into KRAKEN. It opens Linux, Windows and macOS programs and libraries of every kind (see [Supported files](#supported-files)). The Linux release (archive, AppImage and AUR package) carries it ready to use, with Ghidra's processor specifications compiled for it; new projects use it whenever it can open the file.
 - **Ghidra** opens every format and reads debug-info types. It needs Ghidra and a JDK 25 at run time, which `kraken setup` downloads on first run; they are not part of the release archive.
 
 The [native engine page](native-engine.md#native-or-ghidra) compares them.
@@ -19,11 +19,15 @@ The [native engine page](native-engine.md#native-or-ghidra) compares them.
 | Windows object file (COFF) | `kr.obj` | x86, x86-64 | yes |
 | Windows static library (COFF archive) | `kr.lib`, mingw `libkr.a` | x86, x86-64: all members in one project | no |
 | Windows import library | `kernel32.lib`, `libkr.dll.a` | the list of imported symbols and their DLL (no code) | no |
+| macOS program or library (Mach-O) | `app`, `libkr.dylib`, plug-ins | x86-64, arm64 (Apple silicon) | yes |
+| macOS universal (fat) binary | `app` with two architectures | x86-64, arm64: KRAKEN asks which one | no |
 | .NET assembly (exe or dll) | `app.dll` | goes to the .NET engine | goes to the .NET engine |
 
 `kraken binary-probe --path <file>` (and the import dialog in the GUI) says what a file is in
-plain words, lists the members of a library, and names the engine `auto` would pick. Libraries
-(archives) open with the native engine only.
+plain words, lists the members of a library and the architectures of a universal binary, and
+names the engine `auto` would pick. Libraries (archives) and universal binaries open with the
+native engine only; `kraken project-create --slice arm64` picks the architecture, and the GUI asks
+when there is more than one it can open.
 
 Platforms: Linux x86_64 is supported today. macOS (Apple silicon) and Windows (x86_64) archives are published when their builds succeed and are experimental.
 

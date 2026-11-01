@@ -48,8 +48,9 @@ impl Default for Picker {
 
 /// The picker's filters. A portal filter cannot say "no extension", and most Linux programs
 /// have none, so "Programs" also lists every file.
-const PROGRAM_EXTENSIONS: [&str; 10] =
-    ["", "exe", "dll", "so", "elf", "bin", "o", "obj", "a", "lib"];
+const PROGRAM_EXTENSIONS: [&str; 11] = [
+    "", "exe", "dll", "so", "dylib", "elf", "bin", "o", "obj", "a", "lib",
+];
 
 impl Picker {
     fn spawn(
@@ -188,6 +189,8 @@ pub struct ImportDialog {
     pub raw_load: RawLoad,
     /// Whether the engine was set from the probe's recommendation yet.
     engine_set: bool,
+    /// Which architecture of a universal binary.
+    pub(crate) slice: Option<String>,
     picker: Picker,
 }
 
@@ -248,6 +251,7 @@ pub fn describe(p: &BinaryProbeOut) -> String {
     }
     let mut chars = p.description.chars();
     let mut s = match chars.next() {
+        Some(_) if p.description.starts_with("macOS") => p.description.clone(),
         Some(c) => c.to_uppercase().chain(chars).collect::<String>(),
         None => format!("A {} file", p.format.label()),
     };
@@ -426,6 +430,7 @@ impl ImportDialog {
             raw: false,
             raw_load: RawLoad::default(),
             engine_set: false,
+            slice: None,
             picker: Picker::default(),
         }
     }
@@ -458,6 +463,11 @@ impl ImportDialog {
             return;
         };
         self.engine_set = true;
+        self.slice = p
+            .slices
+            .iter()
+            .find(|s| s.supported)
+            .map(|s| s.arch.clone());
         let recommended = p.recommended_engine;
         let native_ready = p
             .engines
@@ -597,11 +607,55 @@ impl ImportDialog {
         Some(Choice::NewProject {
             binary: self.binary.clone(),
             project_dir: self.project_dir(),
-            engine: self.engine,
+            // the wizard asks nothing about a Mach-O file, whatever the configured default
+            engine: if self.goes_to_native() {
+                EngineChoice::Auto
+            } else {
+                self.engine
+            },
             analyze: self.analyze,
             raw: self.raw_active().then(|| self.raw_load.clone()),
             debug_file: None,
+            slice: self.slice.clone(),
         })
+    }
+
+    /// Whether the file is a universal binary with more than one architecture KRAKEN opens: the
+    /// one thing to ask about it.
+    pub fn asks_for_slice(&self) -> bool {
+        self.probed()
+            .is_some_and(|p| p.slices.iter().filter(|s| s.supported).count() > 1)
+    }
+
+    /// Whether the file is Mach-O and the native engine can take it, so no engine is asked for.
+    pub fn goes_to_native(&self) -> bool {
+        self.probed().is_some_and(|p| {
+            p.format == BinaryFormat::MachO && p.recommended_engine == Some(EngineKind::Native)
+        })
+    }
+
+    /// The choice of architecture of a universal binary.
+    pub(crate) fn slice_row(&mut self, ui: &mut Ui, p: &BinaryProbeOut) {
+        let pal = pal(ui);
+        ui.label(medium("Which version?", 13.0).color(pal.text_strong));
+        ui.label(
+            RichText::new("This file holds the same program for several kinds of Mac.")
+                .color(pal.text_dim),
+        );
+        for s in p.slices.iter().filter(|s| s.supported) {
+            let on = self.slice.as_deref() == Some(s.arch.as_str());
+            let label = format!("{} ({})", s.title, human_size(s.size));
+            if ui
+                .radio(on, label)
+                .on_hover_text(
+                    "KRAKEN analyzes one version. The code is usually the same; pick another \
+                     import to look at the other one.",
+                )
+                .clicked()
+            {
+                self.slice = Some(s.arch.clone());
+            }
+        }
     }
 
     /// Applies a loader preset: the processor and the usual load address.
@@ -984,6 +1038,10 @@ impl ImportDialog {
                 && can_import
             {
                 ui.add_space(8.0);
+                if self.asks_for_slice() {
+                    self.slice_row(ui, pr);
+                    ui.add_space(8.0);
+                }
                 self.raw_section(ui, pr);
             }
             if can_import {
@@ -1143,6 +1201,19 @@ mod tests {
         assert!(d.blocker().unwrap().contains("slashes"));
         d.name = String::new();
         assert!(d.blocker().unwrap().contains("name"));
+    }
+
+    #[test]
+    fn a_thin_mach_o_file_asks_nothing() {
+        let tmp = crate::testutil::tempdir();
+        let cfg = cfg_in(tmp.path());
+        let d = probed(&cfg, "macho/bin/pie_list-arm64-O2");
+        assert!(!d.asks_for_slice());
+        assert_eq!(d.slice, None);
+        let fat = probed(&cfg, "macho/bin/pie_list-fat-O2");
+        assert!(fat.asks_for_slice());
+        assert!(fat.goes_to_native());
+        assert_eq!(fat.slice.as_deref(), Some("x86-64"));
     }
 
     #[test]

@@ -32,6 +32,11 @@ pub struct LoaderSpec {
     /// native engine, a PDB for Ghidra. Checked against the program before it is recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_file: Option<String>,
+    /// A universal Mach-O binary: the architecture to open (`x86-64`, `arm64`), as
+    /// [`crate::fat::slices`] names them. Needed when the file holds more than one the engine
+    /// opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<String>,
 }
 
 /// Short names for processors (what a person types) and the Sleigh language id each stands for.

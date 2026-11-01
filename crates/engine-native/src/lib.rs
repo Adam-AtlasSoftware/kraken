@@ -1,6 +1,6 @@
 //! KRAKEN's native (JVM-free) engine (ADR 0014), phases 1 to 3 and the mutator of phase 4.
 //!
-//! ELF images are loaded with the `object` crate, functions are discovered by recursive descent
+//! ELF, PE and Mach-O images are loaded with the `object` crate, functions are discovered by recursive descent
 //! over Sleigh flow information (with `.eh_frame` landing pads and noreturn propagation), and
 //! Ghidra's C++ decompiler (built from source by `engine-native-sys`) runs in-process behind the
 //! same capability traits as the Ghidra sidecar: loader, analyzer, function lister, decompiler,
@@ -38,6 +38,7 @@ mod engine;
 mod jumpcache;
 pub mod libc;
 pub mod listing;
+pub mod macho;
 pub mod markup;
 mod mutate;
 mod native;

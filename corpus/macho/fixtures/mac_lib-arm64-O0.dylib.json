@@ -1,0 +1,1641 @@
+{
+  "exports": [
+    {"address": "0x540", "kind": "function", "name": "_kr_hash"},
+    {"address": "0x5cc", "kind": "function", "name": "_kr_add"},
+    {"address": "0x5fc", "kind": "function", "name": "_kr_show"},
+    {"address": "0x678", "kind": "data", "name": "_kr_version"},
+    {"address": "0x8000", "kind": "data", "name": "_kr_counter"},
+    {"address": "0x8008", "kind": "data", "name": "_kr_add_ptr"}
+  ],
+  "functions": [
+    {
+      "cfg": {
+        "blocks": [
+          {"end": "0x560", "instructions": 8, "start": "0x540"},
+          {"end": "0x56c", "instructions": 3, "start": "0x560"},
+          {"end": "0x570", "instructions": 1, "start": "0x56c"},
+          {"end": "0x588", "instructions": 6, "start": "0x570"},
+          {"end": "0x590", "instructions": 2, "start": "0x588"},
+          {"end": "0x5a0", "instructions": 4, "start": "0x590"}
+        ],
+        "edges": [
+          {"from": "0x540", "kind": "jump", "to": "0x560"},
+          {"from": "0x560", "kind": "conditional_false", "to": "0x56c"},
+          {"from": "0x560", "kind": "conditional_true", "to": "0x590"},
+          {"from": "0x56c", "kind": "jump", "to": "0x570"},
+          {"from": "0x570", "kind": "fallthrough", "to": "0x588"},
+          {"from": "0x588", "kind": "jump", "to": "0x560"}
+        ],
+        "function": "0x540"
+      },
+      "decompile": {
+        "completeness": {"kind": "complete"},
+        "function": {"kind": "native", "offset": "0x540", "space": "ram"},
+        "language": "c",
+        "text": "\nuint _kr_hash(byte *param_1)\n\n{\n  uint local_1c;\n  byte *local_18;\n  \n  local_1c = 0x811c9dc5;\n  local_18 = param_1;\n  while (*local_18 != 0) {\n    local_1c = _mix(local_1c,*local_18);\n    local_18 = local_18 + 1;\n  }\n  return local_1c;\n}\n",
+        "tokens": [
+          {"end": 5, "kind": "type", "start": 1, "symbol": "uint"},
+          {"end": 14, "kind": "function", "start": 6, "symbol": "_kr_hash", "target": {"kind": "native", "offset": "0x540", "space": "ram"}},
+          {"end": 19, "kind": "type", "start": 15, "symbol": "byte"},
+          {"end": 21, "kind": "op", "start": 20},
+          {"end": 28, "kind": "variable", "start": 21, "symbol": "param_1"},
+          {"end": 39, "kind": "type", "start": 35, "symbol": "uint"},
+          {"end": 48, "kind": "variable", "start": 40, "symbol": "local_1c"},
+          {"end": 56, "kind": "type", "start": 52, "symbol": "byte"},
+          {"end": 58, "kind": "op", "start": 57},
+          {"end": 66, "kind": "variable", "start": 58, "symbol": "local_18"},
+          {"end": 81, "kind": "variable", "start": 73, "symbol": "local_1c", "varnode": "(stack, 0xffffffffffffffe4, 4)"},
+          {"end": 83, "kind": "op", "start": 82},
+          {"end": 94, "kind": "constant", "start": 84, "symbol": "0x811c9dc5", "varnode": "(const, 0x811c9dc5, 4)"},
+          {"end": 106, "kind": "variable", "start": 98, "symbol": "local_18", "varnode": "(unique, 0x10000019, 8)"},
+          {"end": 108, "kind": "op", "start": 107},
+          {"end": 116, "kind": "variable", "start": 109, "symbol": "param_1", "varnode": "(register, 0x4000, 8)"},
+          {"end": 125, "kind": "op", "start": 120},
+          {"end": 128, "kind": "op", "start": 127},
+          {"end": 136, "kind": "variable", "start": 128, "symbol": "local_18", "varnode": "(stack, 0xffffffffffffffe8, 8)"},
+          {"end": 139, "kind": "op", "start": 137},
+          {"end": 141, "kind": "constant", "start": 140, "symbol": "0", "varnode": "(const, 0x0, 1)"},
+          {"end": 157, "kind": "variable", "start": 149, "symbol": "local_1c", "varnode": "(register, 0x4000, 4)"},
+          {"end": 159, "kind": "op", "start": 158},
+          {"end": 164, "kind": "function", "start": 160, "symbol": "_mix", "target": {"kind": "native", "offset": "0x5a0", "space": "ram"}},
+          {"end": 173, "kind": "variable", "start": 165, "symbol": "local_1c", "varnode": "(stack, 0xffffffffffffffe4, 4)"},
+          {"end": 174, "kind": "op", "start": 173},
+          {"end": 175, "kind": "op", "start": 174},
+          {"end": 183, "kind": "variable", "start": 175, "symbol": "local_18", "varnode": "(stack, 0xffffffffffffffe8, 8)"},
+          {"end": 198, "kind": "variable", "start": 190, "symbol": "local_18", "varnode": "(unique, 0x10000021, 8)"},
+          {"end": 200, "kind": "op", "start": 199},
+          {"end": 209, "kind": "variable", "start": 201, "symbol": "local_18", "varnode": "(stack, 0xffffffffffffffe8, 8)"},
+          {"end": 211, "kind": "op", "start": 210},
+          {"end": 213, "kind": "constant", "start": 212, "symbol": "1", "varnode": "(const, 0x1, 8)"},
+          {"end": 227, "kind": "op", "start": 221},
+          {"end": 236, "kind": "variable", "start": 228, "symbol": "local_1c", "varnode": "(stack, 0xffffffffffffffe4, 4)"}
+        ],
+        "warnings": []
+      },
+      "disassembly": [
+        {
+          "address": "0x540",
+          "bytes": "ff8300d1",
+          "flow": "fallthrough",
+          "labels": ["_kr_hash"],
+          "mnemonic": "sub",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x20"}
+          ]
+        },
+        {
+          "address": "0x544",
+          "bytes": "fd7b01a9",
+          "flow": "fallthrough",
+          "mnemonic": "stp",
+          "operands": [
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x30"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x548",
+          "bytes": "fd430091",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"}
+          ]
+        },
+        {
+          "address": "0x54c",
+          "bytes": "e00700f9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "x0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x550",
+          "bytes": "a8b89352",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "#"}, {"kind": "immediate", "text": "0x9dc5"}]
+        },
+        {
+          "address": "0x554",
+          "bytes": "8823b072",
+          "flow": "fallthrough",
+          "mnemonic": "movk",
+          "operands": [
+            {"kind": "register", "text": "w8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x811c"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "L"},
+            {"kind": "other", "text": "S"},
+            {"kind": "other", "text": "L"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "other", "text": "1"},
+            {"kind": "other", "text": "6"}
+          ]
+        },
+        {
+          "address": "0x558",
+          "bytes": "e80700b9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "w8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x4"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x55c", "bytes": "01000014", "flow": "jump", "mnemonic": "b", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x560", "space": "ram"}, "text": "LAB_00000560"}]},
+        {
+          "address": "0x560",
+          "bytes": "e80740f9",
+          "flow": "fallthrough",
+          "labels": ["LAB_00000560"],
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "x8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x564",
+          "bytes": "08014039",
+          "flow": "fallthrough",
+          "mnemonic": "ldrb",
+          "operands": [{"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "["}, {"kind": "register", "text": "x8"}, {"kind": "other", "text": "]"}]
+        },
+        {
+          "address": "0x568",
+          "bytes": "48010034",
+          "flow": "conditional_jump",
+          "mnemonic": "cbz",
+          "operands": [{"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "symbol", "target": {"kind": "native", "offset": "0x590", "space": "ram"}, "text": "LAB_00000590"}]
+        },
+        {"address": "0x56c", "bytes": "01000014", "flow": "jump", "mnemonic": "b", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x570", "space": "ram"}, "text": "LAB_00000570"}]},
+        {
+          "address": "0x570",
+          "bytes": "e00740b9",
+          "flow": "fallthrough",
+          "labels": ["LAB_00000570"],
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "w0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x4"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x574",
+          "bytes": "e80740f9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "x8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x578",
+          "bytes": "09050091",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "x9"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x1"}
+          ]
+        },
+        {
+          "address": "0x57c",
+          "bytes": "e90700f9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "x9"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x580",
+          "bytes": "01014039",
+          "flow": "fallthrough",
+          "mnemonic": "ldrb",
+          "operands": [{"kind": "register", "text": "w1"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "["}, {"kind": "register", "text": "x8"}, {"kind": "other", "text": "]"}]
+        },
+        {"address": "0x584", "bytes": "07000094", "flow": "call", "mnemonic": "bl", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x5a0", "space": "ram"}, "text": "_mix"}]},
+        {
+          "address": "0x588",
+          "bytes": "e00700b9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "w0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x4"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x58c", "bytes": "f5ffff17", "flow": "jump", "mnemonic": "b", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x560", "space": "ram"}, "text": "LAB_00000560"}]},
+        {
+          "address": "0x590",
+          "bytes": "e00740b9",
+          "flow": "fallthrough",
+          "labels": ["LAB_00000590"],
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "w0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x4"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x594",
+          "bytes": "fd7b41a9",
+          "flow": "fallthrough",
+          "mnemonic": "ldp",
+          "operands": [
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x30"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x598",
+          "bytes": "ff830091",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x20"}
+          ]
+        },
+        {"address": "0x59c", "bytes": "c0035fd6", "flow": "return", "mnemonic": "ret", "operands": []}
+      ],
+      "summary": {
+        "completeness": {"kind": "complete"},
+        "fn_hash": "2681e6405fef2431315cd62ac72201f4f318628d60005d8a26a5cd3cec7ca0c1",
+        "locator": {"kind": "native", "offset": "0x540", "space": "ram"},
+        "name": "_kr_hash",
+        "signature": "uint _kr_hash(byte * param_1)",
+        "size": 96
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x540", "to_function": {"address": "0x540", "name": "_kr_hash"}},
+        {"from": "0x55c", "from_function": {"address": "0x540", "name": "_kr_hash"}, "kind": "jump", "to": "0x560"},
+        {"from": "0x568", "from_function": {"address": "0x540", "name": "_kr_hash"}, "kind": "jump", "to": "0x590"},
+        {"from": "0x56c", "from_function": {"address": "0x540", "name": "_kr_hash"}, "kind": "jump", "to": "0x570"},
+        {"from": "0x584", "from_function": {"address": "0x540", "name": "_kr_hash"}, "kind": "call", "to": "0x5a0", "to_function": {"address": "0x5a0", "name": "_mix"}},
+        {"from": "0x58c", "from_function": {"address": "0x540", "name": "_kr_hash"}, "kind": "jump", "to": "0x560"},
+        {"from": "0x610", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "call", "to": "0x540", "to_function": {"address": "0x540", "name": "_kr_hash"}},
+        {"from": "0xc0e0", "kind": "data", "to": "0x540", "to_function": {"address": "0x540", "name": "_kr_hash"}}
+      ]
+    },
+    {
+      "cfg": {"blocks": [{"end": "0x5cc", "instructions": 11, "start": "0x5a0"}], "edges": [], "function": "0x5a0"},
+      "decompile": {
+        "completeness": {"kind": "complete"},
+        "function": {"kind": "native", "offset": "0x5a0", "space": "ram"},
+        "language": "c",
+        "text": "\nint _mix(uint param_1,byte param_2)\n\n{\n  return (param_1 ^ param_2) * 0x1000193;\n}\n",
+        "tokens": [
+          {"end": 4, "kind": "type", "start": 1, "symbol": "int"},
+          {"end": 9, "kind": "function", "start": 5, "symbol": "_mix", "target": {"kind": "native", "offset": "0x5a0", "space": "ram"}},
+          {"end": 14, "kind": "type", "start": 10, "symbol": "uint"},
+          {"end": 22, "kind": "variable", "start": 15, "symbol": "param_1"},
+          {"end": 27, "kind": "type", "start": 23, "symbol": "byte"},
+          {"end": 35, "kind": "variable", "start": 28, "symbol": "param_2"},
+          {"end": 48, "kind": "op", "start": 42},
+          {"end": 57, "kind": "variable", "start": 50, "symbol": "param_1", "varnode": "(register, 0x4000, 4)"},
+          {"end": 59, "kind": "op", "start": 58},
+          {"end": 67, "kind": "variable", "start": 60, "symbol": "param_2", "varnode": "(register, 0x4008, 1)"},
+          {"end": 70, "kind": "op", "start": 69},
+          {"end": 80, "kind": "constant", "start": 71, "symbol": "0x1000193", "varnode": "(const, 0x1000193, 4)"}
+        ],
+        "warnings": []
+      },
+      "disassembly": [
+        {
+          "address": "0x5a0",
+          "bytes": "ff4300d1",
+          "flow": "fallthrough",
+          "labels": ["_mix"],
+          "mnemonic": "sub",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"}
+          ]
+        },
+        {
+          "address": "0x5a4",
+          "bytes": "e00f00b9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "w0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0xc"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5a8",
+          "bytes": "e12f0039",
+          "flow": "fallthrough",
+          "mnemonic": "strb",
+          "operands": [
+            {"kind": "register", "text": "w1"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0xb"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5ac",
+          "bytes": "e80f40b9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "w8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0xc"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5b0",
+          "bytes": "e92f4039",
+          "flow": "fallthrough",
+          "mnemonic": "ldrb",
+          "operands": [
+            {"kind": "register", "text": "w9"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0xb"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5b4",
+          "bytes": "0801094a",
+          "flow": "fallthrough",
+          "mnemonic": "eor",
+          "operands": [{"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "w9"}]
+        },
+        {
+          "address": "0x5b8",
+          "bytes": "69328052",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "w9"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "#"}, {"kind": "immediate", "text": "0x193"}]
+        },
+        {
+          "address": "0x5bc",
+          "bytes": "0920a072",
+          "flow": "fallthrough",
+          "mnemonic": "movk",
+          "operands": [
+            {"kind": "register", "text": "w9"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x100"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "L"},
+            {"kind": "other", "text": "S"},
+            {"kind": "other", "text": "L"},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "other", "text": "1"},
+            {"kind": "other", "text": "6"}
+          ]
+        },
+        {
+          "address": "0x5c0",
+          "bytes": "007d091b",
+          "flow": "fallthrough",
+          "mnemonic": "mul",
+          "operands": [{"kind": "register", "text": "w0"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "w9"}]
+        },
+        {
+          "address": "0x5c4",
+          "bytes": "ff430091",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"}
+          ]
+        },
+        {"address": "0x5c8", "bytes": "c0035fd6", "flow": "return", "mnemonic": "ret", "operands": []}
+      ],
+      "summary": {
+        "completeness": {"kind": "complete"},
+        "fn_hash": "8c67e562499e0e856360aac4c782e4b998d17e3e2e921a12c156daafc9d50fe9",
+        "locator": {"kind": "native", "offset": "0x5a0", "space": "ram"},
+        "name": "_mix",
+        "signature": "int _mix(uint param_1, byte param_2)",
+        "size": 44
+      },
+      "xrefs": [
+        {"from": "0x584", "from_function": {"address": "0x540", "name": "_kr_hash"}, "kind": "call", "to": "0x5a0", "to_function": {"address": "0x5a0", "name": "_mix"}},
+        {"from": "0xc0e2", "kind": "data", "to": "0x5a0", "to_function": {"address": "0x5a0", "name": "_mix"}}
+      ]
+    },
+    {
+      "cfg": {"blocks": [{"end": "0x5fc", "instructions": 12, "start": "0x5cc"}], "edges": [], "function": "0x5cc"},
+      "decompile": {
+        "completeness": {"kind": "complete"},
+        "function": {"kind": "native", "offset": "0x5cc", "space": "ram"},
+        "language": "c",
+        "text": "\nint _kr_add(int param_1,int param_2)\n\n{\n  _kr_counter = _kr_counter + 1;\n  return param_1 + param_2;\n}\n",
+        "tokens": [
+          {"end": 4, "kind": "type", "start": 1, "symbol": "int"},
+          {"end": 12, "kind": "function", "start": 5, "symbol": "_kr_add", "target": {"kind": "native", "offset": "0x5cc", "space": "ram"}},
+          {"end": 16, "kind": "type", "start": 13, "symbol": "int"},
+          {"end": 24, "kind": "variable", "start": 17, "symbol": "param_1"},
+          {"end": 28, "kind": "type", "start": 25, "symbol": "int"},
+          {"end": 36, "kind": "variable", "start": 29, "symbol": "param_2"},
+          {"end": 54, "kind": "variable", "start": 43, "symbol": "_kr_counter", "target": {"kind": "native", "offset": "0x8000", "space": "ram"}, "varnode": "(ram, 0x8000, 4)"},
+          {"end": 56, "kind": "op", "start": 55},
+          {"end": 68, "kind": "variable", "start": 57, "symbol": "_kr_counter", "target": {"kind": "native", "offset": "0x8000", "space": "ram"}, "varnode": "(ram, 0x8000, 4)"},
+          {"end": 70, "kind": "op", "start": 69},
+          {"end": 72, "kind": "constant", "start": 71, "symbol": "1", "varnode": "(const, 0x1, 4)"},
+          {"end": 82, "kind": "op", "start": 76},
+          {"end": 90, "kind": "variable", "start": 83, "symbol": "param_1", "varnode": "(register, 0x4000, 4)"},
+          {"end": 92, "kind": "op", "start": 91},
+          {"end": 100, "kind": "variable", "start": 93, "symbol": "param_2", "varnode": "(register, 0x4008, 4)"}
+        ],
+        "warnings": []
+      },
+      "disassembly": [
+        {
+          "address": "0x5cc",
+          "bytes": "ff4300d1",
+          "flow": "fallthrough",
+          "labels": ["_kr_add"],
+          "mnemonic": "sub",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"}
+          ]
+        },
+        {
+          "address": "0x5d0",
+          "bytes": "e00f00b9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "w0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0xc"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5d4",
+          "bytes": "e10b00b9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "w1"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5d8",
+          "bytes": "49000090",
+          "flow": "fallthrough",
+          "mnemonic": "adrp",
+          "operands": [{"kind": "register", "text": "x9"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x8000"}]
+        },
+        {
+          "address": "0x5dc",
+          "bytes": "280140b9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [{"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "["}, {"kind": "register", "text": "x9"}, {"kind": "other", "text": "]"}]
+        },
+        {
+          "address": "0x5e0",
+          "bytes": "08050011",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "w8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "w8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x1"}
+          ]
+        },
+        {
+          "address": "0x5e4",
+          "bytes": "280100b9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [{"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "["}, {"kind": "register", "text": "x9"}, {"kind": "other", "text": "]"}]
+        },
+        {
+          "address": "0x5e8",
+          "bytes": "e80f40b9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "w8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0xc"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5ec",
+          "bytes": "e90b40b9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "w9"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x5f0",
+          "bytes": "0001090b",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [{"kind": "register", "text": "w0"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "w8"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "w9"}]
+        },
+        {
+          "address": "0x5f4",
+          "bytes": "ff430091",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"}
+          ]
+        },
+        {"address": "0x5f8", "bytes": "c0035fd6", "flow": "return", "mnemonic": "ret", "operands": []}
+      ],
+      "summary": {
+        "completeness": {"kind": "complete"},
+        "fn_hash": "c25d6d6be928486bcad24bcd174dc7f78ac6672af26b54db383354750d96f8fb",
+        "locator": {"kind": "native", "offset": "0x5cc", "space": "ram"},
+        "name": "_kr_add",
+        "signature": "int _kr_add(int param_1, int param_2)",
+        "size": 48
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x5cc", "to_function": {"address": "0x5cc", "name": "_kr_add"}},
+        {"from": "0x5dc", "from_function": {"address": "0x5cc", "name": "_kr_add"}, "kind": "read", "to": "0x8000"},
+        {"from": "0x5e4", "from_function": {"address": "0x5cc", "name": "_kr_add"}, "kind": "write", "to": "0x8000"},
+        {"from": "0x8008", "kind": "data", "to": "0x5cc", "to_function": {"address": "0x5cc", "name": "_kr_add"}},
+        {"from": "0xc0e3", "kind": "data", "to": "0x5cc", "to_function": {"address": "0x5cc", "name": "_kr_add"}}
+      ]
+    },
+    {
+      "cfg": {
+        "blocks": [
+          {"end": "0x614", "instructions": 6, "start": "0x5fc"},
+          {"end": "0x64c", "instructions": 14, "start": "0x614"},
+          {"end": "0x654", "instructions": 2, "start": "0x64c"},
+          {"end": "0x660", "instructions": 3, "start": "0x654"}
+        ],
+        "edges": [{"from": "0x5fc", "kind": "fallthrough", "to": "0x614"}, {"from": "0x614", "kind": "fallthrough", "to": "0x64c"}, {"from": "0x64c", "kind": "fallthrough", "to": "0x654"}],
+        "function": "0x5fc"
+      },
+      "decompile": {
+        "completeness": {"kind": "complete"},
+        "function": {"kind": "native", "offset": "0x5fc", "space": "ram"},
+        "language": "c",
+        "text": "\nint _kr_show(byte *param_1)\n\n{\n  int iVar1;\n  char acStack_58 [64];\n  byte *local_18;\n  \n  local_18 = param_1;\n  _kr_hash(param_1);\n  ___snprintf_chk(acStack_58,0x40,0,0x40,0x67f);\n  iVar1 = _puts(acStack_58);\n  return iVar1;\n}\n",
+        "tokens": [
+          {"end": 4, "kind": "type", "start": 1, "symbol": "int"},
+          {"end": 13, "kind": "function", "start": 5, "symbol": "_kr_show", "target": {"kind": "native", "offset": "0x5fc", "space": "ram"}},
+          {"end": 18, "kind": "type", "start": 14, "symbol": "byte"},
+          {"end": 20, "kind": "op", "start": 19},
+          {"end": 27, "kind": "variable", "start": 20, "symbol": "param_1"},
+          {"end": 37, "kind": "type", "start": 34, "symbol": "int"},
+          {"end": 43, "kind": "variable", "start": 38, "symbol": "iVar1"},
+          {"end": 51, "kind": "type", "start": 47, "symbol": "char"},
+          {"end": 62, "kind": "variable", "start": 52, "symbol": "acStack_58"},
+          {"end": 66, "kind": "constant", "start": 64, "symbol": "64"},
+          {"end": 75, "kind": "type", "start": 71, "symbol": "byte"},
+          {"end": 77, "kind": "op", "start": 76},
+          {"end": 85, "kind": "variable", "start": 77, "symbol": "local_18"},
+          {"end": 100, "kind": "variable", "start": 92, "symbol": "local_18", "varnode": "(unique, 0x1000002b, 8)"},
+          {"end": 102, "kind": "op", "start": 101},
+          {"end": 110, "kind": "variable", "start": 103, "symbol": "param_1", "varnode": "(register, 0x4000, 8)"},
+          {"end": 122, "kind": "function", "start": 114, "symbol": "_kr_hash", "target": {"kind": "native", "offset": "0x540", "space": "ram"}},
+          {"end": 130, "kind": "variable", "start": 123, "symbol": "param_1", "varnode": "(register, 0x4000, 8)"},
+          {"end": 150, "kind": "function", "start": 135, "symbol": "___snprintf_chk", "target": {"kind": "native", "offset": "0x66c", "space": "ram"}},
+          {"end": 161, "kind": "variable", "start": 151, "symbol": "acStack_58"},
+          {"end": 162, "kind": "op", "start": 161},
+          {"end": 166, "kind": "constant", "start": 162, "symbol": "0x40", "varnode": "(const, 0x40, 8)"},
+          {"end": 167, "kind": "op", "start": 166},
+          {"end": 168, "kind": "constant", "start": 167, "symbol": "0", "varnode": "(const, 0x0, 8)"},
+          {"end": 169, "kind": "op", "start": 168},
+          {"end": 173, "kind": "constant", "start": 169, "symbol": "0x40", "varnode": "(const, 0x40, 8)"},
+          {"end": 174, "kind": "op", "start": 173},
+          {"end": 179, "kind": "constant", "start": 174, "symbol": "0x67f", "varnode": "(const, 0x67f, 8)"},
+          {"end": 189, "kind": "variable", "start": 184, "symbol": "iVar1", "varnode": "(register, 0x4000, 4)"},
+          {"end": 191, "kind": "op", "start": 190},
+          {"end": 197, "kind": "function", "start": 192, "symbol": "_puts", "target": {"kind": "native", "offset": "0x660", "space": "ram"}},
+          {"end": 208, "kind": "variable", "start": 198, "symbol": "acStack_58"},
+          {"end": 219, "kind": "op", "start": 213},
+          {"end": 225, "kind": "variable", "start": 220, "symbol": "iVar1", "varnode": "(register, 0x4000, 4)"}
+        ],
+        "warnings": []
+      },
+      "disassembly": [
+        {
+          "address": "0x5fc",
+          "bytes": "ffc301d1",
+          "flow": "fallthrough",
+          "labels": ["_kr_show"],
+          "mnemonic": "sub",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x70"}
+          ]
+        },
+        {
+          "address": "0x600",
+          "bytes": "fd7b06a9",
+          "flow": "fallthrough",
+          "mnemonic": "stp",
+          "operands": [
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x30"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x60"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x604",
+          "bytes": "fd830191",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x60"}
+          ]
+        },
+        {
+          "address": "0x608",
+          "bytes": "a0831ff8",
+          "flow": "fallthrough",
+          "mnemonic": "stur",
+          "operands": [
+            {"kind": "register", "text": "x0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "-0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x60c",
+          "bytes": "a0835ff8",
+          "flow": "fallthrough",
+          "mnemonic": "ldur",
+          "operands": [
+            {"kind": "register", "text": "x0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "-0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x610", "bytes": "ccffff97", "flow": "call", "mnemonic": "bl", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x540", "space": "ram"}, "text": "_kr_hash"}]},
+        {
+          "address": "0x614",
+          "bytes": "e9030091",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "x9"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "sp"}]
+        },
+        {
+          "address": "0x618",
+          "bytes": "08000090",
+          "flow": "fallthrough",
+          "mnemonic": "adrp",
+          "operands": [{"kind": "register", "text": "x8"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x0"}]
+        },
+        {
+          "address": "0x61c",
+          "bytes": "08e11991",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "x8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x678"}
+          ]
+        },
+        {
+          "address": "0x620",
+          "bytes": "280100f9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [{"kind": "register", "text": "x8"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "["}, {"kind": "register", "text": "x9"}, {"kind": "other", "text": "]"}]
+        },
+        {
+          "address": "0x624",
+          "bytes": "e80300aa",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "x8"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "x0"}]
+        },
+        {
+          "address": "0x628",
+          "bytes": "280500f9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "x8"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "x9"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x62c",
+          "bytes": "e0630091",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "x0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x18"}
+          ]
+        },
+        {
+          "address": "0x630",
+          "bytes": "e00b00f9",
+          "flow": "fallthrough",
+          "mnemonic": "str",
+          "operands": [
+            {"kind": "register", "text": "x0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x634",
+          "bytes": "030880d2",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "x3"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "#"}, {"kind": "immediate", "text": "0x40"}]
+        },
+        {
+          "address": "0x638",
+          "bytes": "e10303aa",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "x1"}, {"kind": "other", "text": ", "}, {"kind": "register", "text": "x3"}]
+        },
+        {
+          "address": "0x63c",
+          "bytes": "02008052",
+          "flow": "fallthrough",
+          "mnemonic": "mov",
+          "operands": [{"kind": "register", "text": "w2"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "#"}, {"kind": "immediate", "text": "0x0"}]
+        },
+        {
+          "address": "0x640",
+          "bytes": "04000090",
+          "flow": "fallthrough",
+          "mnemonic": "adrp",
+          "operands": [{"kind": "register", "text": "x4"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x0"}]
+        },
+        {
+          "address": "0x644",
+          "bytes": "84fc1991",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "x4"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x4"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "symbol", "target": {"kind": "native", "offset": "0x67f", "space": "ram"}, "text": "s_%s:%u_0000067f"}
+          ]
+        },
+        {
+          "address": "0x648",
+          "bytes": "09000094",
+          "flow": "call",
+          "mnemonic": "bl",
+          "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x66c", "space": "ram"}, "text": "___snprintf_chk"}]
+        },
+        {
+          "address": "0x64c",
+          "bytes": "e00b40f9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "x0"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x10"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x650", "bytes": "04000094", "flow": "call", "mnemonic": "bl", "operands": [{"kind": "symbol", "target": {"kind": "native", "offset": "0x660", "space": "ram"}, "text": "_puts"}]},
+        {
+          "address": "0x654",
+          "bytes": "fd7b46a9",
+          "flow": "fallthrough",
+          "mnemonic": "ldp",
+          "operands": [
+            {"kind": "register", "text": "x29"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "x30"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x60"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {
+          "address": "0x658",
+          "bytes": "ffc30191",
+          "flow": "fallthrough",
+          "mnemonic": "add",
+          "operands": [
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "register", "text": "sp"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x70"}
+          ]
+        },
+        {"address": "0x65c", "bytes": "c0035fd6", "flow": "return", "mnemonic": "ret", "operands": []}
+      ],
+      "summary": {
+        "completeness": {"kind": "complete"},
+        "fn_hash": "a00f60dabccf54da79a2af4ef6f91742f5b9233283908060bf49917f5159d512",
+        "locator": {"kind": "native", "offset": "0x5fc", "space": "ram"},
+        "name": "_kr_show",
+        "signature": "int _kr_show(byte * param_1)",
+        "size": 100
+      },
+      "xrefs": [
+        {"from": "0x0", "kind": "data", "to": "0x5fc", "to_function": {"address": "0x5fc", "name": "_kr_show"}},
+        {"from": "0x610", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "call", "to": "0x540", "to_function": {"address": "0x540", "name": "_kr_hash"}},
+        {"from": "0x620", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "data", "to": "0x678"},
+        {"from": "0x644", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "data", "to": "0x67f"},
+        {"from": "0x648", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "call", "to": "0x66c", "to_function": {"address": "0x66c", "name": "___snprintf_chk"}},
+        {"from": "0x650", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "call", "to": "0x660", "to_function": {"address": "0x660", "name": "_puts"}},
+        {"from": "0xc0e4", "kind": "data", "to": "0x5fc", "to_function": {"address": "0x5fc", "name": "_kr_show"}}
+      ]
+    },
+    {
+      "cfg": {"blocks": [{"end": "0x66c", "instructions": 3, "start": "0x660"}], "edges": [{"from": "0x660", "kind": "switch", "to": "0x660"}], "function": "0x660"},
+      "decompile": {
+        "completeness": {"kind": "complete"},
+        "function": {"kind": "native", "offset": "0x660", "space": "ram"},
+        "language": "c",
+        "text": "\n/* WARNING: Unknown calling convention -- yet parameter storage is locked */\n\nint _puts(char *param_1)\n\n{\n  int iVar1;\n  \n                    /* WARNING: Could not recover jumptable at 0x00000668. Too many branches */\n                    /* WARNING: Treating indirect jump as call */\n  iVar1 = (*(code *)PTR__puts_00004000)((int)param_1);\n  return iVar1;\n}\n",
+        "tokens": [
+          {"end": 4, "kind": "comment", "start": 1},
+          {"end": 12, "kind": "comment", "start": 4},
+          {"end": 20, "kind": "comment", "start": 13},
+          {"end": 28, "kind": "comment", "start": 21},
+          {"end": 39, "kind": "comment", "start": 29},
+          {"end": 42, "kind": "comment", "start": 40},
+          {"end": 46, "kind": "comment", "start": 43},
+          {"end": 56, "kind": "comment", "start": 47},
+          {"end": 64, "kind": "comment", "start": 57},
+          {"end": 67, "kind": "comment", "start": 65},
+          {"end": 74, "kind": "comment", "start": 68},
+          {"end": 77, "kind": "comment", "start": 74},
+          {"end": 82, "kind": "type", "start": 79, "symbol": "int"},
+          {"end": 88, "kind": "function", "start": 83, "symbol": "_puts", "target": {"kind": "native", "offset": "0x660", "space": "ram"}},
+          {"end": 93, "kind": "type", "start": 89, "symbol": "char"},
+          {"end": 95, "kind": "op", "start": 94},
+          {"end": 102, "kind": "variable", "start": 95, "symbol": "param_1"},
+          {"end": 112, "kind": "type", "start": 109, "symbol": "int"},
+          {"end": 118, "kind": "variable", "start": 113, "symbol": "iVar1"},
+          {"end": 146, "kind": "comment", "start": 143},
+          {"end": 154, "kind": "comment", "start": 146},
+          {"end": 160, "kind": "comment", "start": 155},
+          {"end": 164, "kind": "comment", "start": 161},
+          {"end": 172, "kind": "comment", "start": 165},
+          {"end": 182, "kind": "comment", "start": 173},
+          {"end": 185, "kind": "comment", "start": 183},
+          {"end": 197, "kind": "comment", "start": 186},
+          {"end": 201, "kind": "comment", "start": 198},
+          {"end": 206, "kind": "comment", "start": 202},
+          {"end": 215, "kind": "comment", "start": 207},
+          {"end": 218, "kind": "comment", "start": 215},
+          {"end": 242, "kind": "comment", "start": 239},
+          {"end": 250, "kind": "comment", "start": 242},
+          {"end": 259, "kind": "comment", "start": 251},
+          {"end": 268, "kind": "comment", "start": 260},
+          {"end": 273, "kind": "comment", "start": 269},
+          {"end": 276, "kind": "comment", "start": 274},
+          {"end": 281, "kind": "comment", "start": 277},
+          {"end": 284, "kind": "comment", "start": 281},
+          {"end": 292, "kind": "variable", "start": 287, "symbol": "iVar1", "varnode": "(register, 0x4000, 4)"},
+          {"end": 294, "kind": "op", "start": 293},
+          {"end": 297, "kind": "op", "start": 296},
+          {"end": 302, "kind": "type", "start": 298, "symbol": "code"},
+          {"end": 304, "kind": "op", "start": 303},
+          {"end": 323, "kind": "variable", "start": 305, "symbol": "PTR__puts_00004000", "target": {"kind": "native", "offset": "0x4000", "space": "ram"}, "varnode": "(ram, 0x4000, 8)"},
+          {"end": 329, "kind": "type", "start": 326, "symbol": "int"},
+          {"end": 337, "kind": "variable", "start": 330, "symbol": "param_1", "varnode": "(register, 0x4000, 8)"},
+          {"end": 348, "kind": "op", "start": 342},
+          {"end": 354, "kind": "variable", "start": 349, "symbol": "iVar1", "varnode": "(register, 0x4000, 4)"}
+        ],
+        "warnings": []
+      },
+      "disassembly": [
+        {
+          "address": "0x660",
+          "bytes": "30000090",
+          "flow": "fallthrough",
+          "labels": ["_puts"],
+          "mnemonic": "adrp",
+          "operands": [{"kind": "register", "text": "x16"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x4000"}]
+        },
+        {
+          "address": "0x664",
+          "bytes": "100240f9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [{"kind": "register", "text": "x16"}, {"kind": "other", "text": ", "}, {"kind": "other", "text": "["}, {"kind": "register", "text": "x16"}, {"kind": "other", "text": "]"}]
+        },
+        {"address": "0x668", "bytes": "00021fd6", "flow": "indirect", "mnemonic": "br", "operands": [{"kind": "register", "text": "x16"}]}
+      ],
+      "summary": {
+        "completeness": {"kind": "complete"},
+        "fn_hash": "6ee38399f4b201d1bd6677e8b86d83edd263a48724abf7f1d395f25c547d41d9",
+        "locator": {"kind": "native", "offset": "0x660", "space": "ram"},
+        "name": "_puts",
+        "signature": "int _puts(char * param_1)",
+        "size": 12
+      },
+      "xrefs": [
+        {"from": "0x650", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "call", "to": "0x660", "to_function": {"address": "0x660", "name": "_puts"}},
+        {"from": "0x664", "from_function": {"address": "0x660", "name": "_puts"}, "kind": "read", "to": "0x4000"},
+        {"from": "0x668", "from_function": {"address": "0x660", "name": "_puts"}, "kind": "jump", "to": "0x660", "to_function": {"address": "0x660", "name": "_puts"}},
+        {"from": "0x4000", "kind": "data", "to": "0x660", "to_function": {"address": "0x660", "name": "_puts"}}
+      ]
+    },
+    {
+      "cfg": {"blocks": [{"end": "0x678", "instructions": 3, "start": "0x66c"}], "edges": [{"from": "0x66c", "kind": "switch", "to": "0x66c"}], "function": "0x66c"},
+      "decompile": {
+        "completeness": {"kind": "complete"},
+        "function": {"kind": "native", "offset": "0x66c", "space": "ram"},
+        "language": "c",
+        "text": "\nvoid ___snprintf_chk(void)\n\n{\n                    /* WARNING: Could not recover jumptable at 0x00000674. Too many branches */\n                    /* WARNING: Treating indirect jump as call */\n  (*(code *)PTR____snprintf_chk_00004008)();\n  return;\n}\n",
+        "tokens": [
+          {"end": 5, "kind": "type", "start": 1, "symbol": "void"},
+          {"end": 21, "kind": "function", "start": 6, "symbol": "___snprintf_chk", "target": {"kind": "native", "offset": "0x66c", "space": "ram"}},
+          {"end": 26, "kind": "keyword", "start": 22, "symbol": "void"},
+          {"end": 54, "kind": "comment", "start": 51},
+          {"end": 62, "kind": "comment", "start": 54},
+          {"end": 68, "kind": "comment", "start": 63},
+          {"end": 72, "kind": "comment", "start": 69},
+          {"end": 80, "kind": "comment", "start": 73},
+          {"end": 90, "kind": "comment", "start": 81},
+          {"end": 93, "kind": "comment", "start": 91},
+          {"end": 105, "kind": "comment", "start": 94},
+          {"end": 109, "kind": "comment", "start": 106},
+          {"end": 114, "kind": "comment", "start": 110},
+          {"end": 123, "kind": "comment", "start": 115},
+          {"end": 126, "kind": "comment", "start": 123},
+          {"end": 150, "kind": "comment", "start": 147},
+          {"end": 158, "kind": "comment", "start": 150},
+          {"end": 167, "kind": "comment", "start": 159},
+          {"end": 176, "kind": "comment", "start": 168},
+          {"end": 181, "kind": "comment", "start": 177},
+          {"end": 184, "kind": "comment", "start": 182},
+          {"end": 189, "kind": "comment", "start": 185},
+          {"end": 192, "kind": "comment", "start": 189},
+          {"end": 197, "kind": "op", "start": 196},
+          {"end": 202, "kind": "type", "start": 198, "symbol": "code"},
+          {"end": 204, "kind": "op", "start": 203},
+          {"end": 233, "kind": "variable", "start": 205, "symbol": "PTR____snprintf_chk_00004008", "target": {"kind": "native", "offset": "0x4008", "space": "ram"}, "varnode": "(ram, 0x4008, 8)"},
+          {"end": 246, "kind": "op", "start": 240}
+        ],
+        "warnings": []
+      },
+      "disassembly": [
+        {
+          "address": "0x66c",
+          "bytes": "30000090",
+          "flow": "fallthrough",
+          "labels": ["___snprintf_chk"],
+          "mnemonic": "adrp",
+          "operands": [{"kind": "register", "text": "x16"}, {"kind": "other", "text": ", "}, {"kind": "immediate", "text": "0x4000"}]
+        },
+        {
+          "address": "0x670",
+          "bytes": "100640f9",
+          "flow": "fallthrough",
+          "mnemonic": "ldr",
+          "operands": [
+            {"kind": "register", "text": "x16"},
+            {"kind": "other", "text": ", "},
+            {"kind": "other", "text": "["},
+            {"kind": "register", "text": "x16"},
+            {"kind": "other", "text": ","},
+            {"kind": "other", "text": " "},
+            {"kind": "other", "text": "#"},
+            {"kind": "immediate", "text": "0x8"},
+            {"kind": "other", "text": "]"}
+          ]
+        },
+        {"address": "0x674", "bytes": "00021fd6", "flow": "indirect", "mnemonic": "br", "operands": [{"kind": "register", "text": "x16"}]}
+      ],
+      "summary": {
+        "completeness": {"kind": "complete"},
+        "fn_hash": "db14c4c802a83f50fe9754b7c07bf81bbafed9b21b6c125bf245ec5fd622d82d",
+        "locator": {"kind": "native", "offset": "0x66c", "space": "ram"},
+        "name": "___snprintf_chk",
+        "signature": "undefined ___snprintf_chk()",
+        "size": 12
+      },
+      "xrefs": [
+        {"from": "0x648", "from_function": {"address": "0x5fc", "name": "_kr_show"}, "kind": "call", "to": "0x66c", "to_function": {"address": "0x66c", "name": "___snprintf_chk"}},
+        {"from": "0x670", "from_function": {"address": "0x66c", "name": "___snprintf_chk"}, "kind": "read", "to": "0x4008"},
+        {"from": "0x674", "from_function": {"address": "0x66c", "name": "___snprintf_chk"}, "kind": "jump", "to": "0x66c", "to_function": {"address": "0x66c", "name": "___snprintf_chk"}},
+        {"from": "0x4008", "kind": "data", "to": "0x66c", "to_function": {"address": "0x66c", "name": "___snprintf_chk"}}
+      ]
+    }
+  ],
+  "ghidra_version": "12.2",
+  "imports": [
+    {"address": "0x660", "kind": "function", "library": "/usr/lib/libSystem.B.dylib", "name": "_puts"},
+    {"address": "0x66c", "kind": "function", "library": "/usr/lib/libSystem.B.dylib", "name": "___snprintf_chk"},
+    {"kind": "data", "name": "dyld_stub_binder"}
+  ],
+  "memory": [
+    {"end": "0x540", "initialized": true, "kind": "default", "name": "__TEXT", "perms": "r-x", "space": "ram", "start": "0x0"},
+    {"end": "0x660", "initialized": true, "kind": "default", "name": "__text", "perms": "r-x", "space": "ram", "start": "0x540"},
+    {"end": "0x678", "initialized": true, "kind": "default", "name": "__stubs", "perms": "r-x", "space": "ram", "start": "0x660"},
+    {"end": "0x67f", "initialized": true, "kind": "default", "name": "__const", "perms": "r--", "space": "ram", "start": "0x678"},
+    {"end": "0x688", "initialized": true, "kind": "default", "name": "__cstring", "perms": "r--", "space": "ram", "start": "0x67f"},
+    {"end": "0x16d0", "initialized": true, "kind": "default", "name": "__unwind_info", "perms": "r--", "space": "ram", "start": "0x688"},
+    {"end": "0x4000", "initialized": true, "kind": "default", "name": "__eh_frame", "perms": "r--", "space": "ram", "start": "0x16d0"},
+    {"end": "0x4010", "initialized": true, "kind": "default", "name": "__got", "perms": "rw-", "space": "ram", "start": "0x4000"},
+    {"end": "0x8000", "initialized": true, "kind": "default", "name": "__DATA_CONST", "perms": "rw-", "space": "ram", "start": "0x4010"},
+    {"end": "0x8010", "initialized": true, "kind": "default", "name": "__data", "perms": "rw-", "space": "ram", "start": "0x8000"},
+    {"end": "0xc000", "initialized": true, "kind": "default", "name": "__DATA", "perms": "rw-", "space": "ram", "start": "0x8010"},
+    {"end": "0xc590", "initialized": true, "kind": "default", "name": "__LINKEDIT", "perms": "r--", "space": "ram", "start": "0xc000"},
+    {"end": "0xd100", "initialized": false, "kind": "external", "name": "EXTERNAL", "perms": "rw-", "space": "ram", "start": "0xd000"}
+  ],
+  "program": {"arch": "AARCH64:LE:64:AppleSilicon", "base": "0x0", "format": "macho", "sha256": "4f36ff0cfcfc5511a56162fad7099d842f1caf3138e6a097d4bac16bf4d4603b", "size": 50576},
+  "recording": {
+    "function_cap": 200,
+    "functions_listed": 6,
+    "functions_recorded": 6,
+    "functions_skipped": 0,
+    "recorder": "kraken-record 0.4.0",
+    "string_cap": 300,
+    "strings_listed": 30,
+    "strings_recorded": 30,
+    "type_cap": 200,
+    "types_listed": 22,
+    "types_recorded": 22
+  },
+  "strings": [
+    {"address": "0x460", "encoding": "ascii", "length": 32, "value": "/usr/local/lib/libmac_lib.dylib"},
+    {"address": "0x4d0", "encoding": "ascii", "length": 32, "value": "/usr/lib/libSystem.B.dylib"},
+    {"address": "0x678", "encoding": "ascii", "length": 7, "value": "kr-1.2"},
+    {"address": "0x67f", "encoding": "ascii", "length": 6, "value": "%s:%u"},
+    {"address": "0xc070", "encoding": "ascii", "length": 6, "value": "_puts"},
+    {"address": "0xc076", "encoding": "ascii", "length": 16, "value": "___snprintf_chk"},
+    {"address": "0xc08a", "encoding": "ascii", "length": 5, "value": "_kr_"},
+    {"address": "0xc096", "encoding": "ascii", "length": 6, "value": "-show"},
+    {"address": "0xc097", "encoding": "ascii", "length": 5, "value": "show"},
+    {"address": "0xc09c", "encoding": "ascii", "length": 6, "value": ">hash"},
+    {"address": "0xc09d", "encoding": "ascii", "length": 5, "value": "hash"},
+    {"address": "0xc0a2", "encoding": "ascii", "length": 9, "value": "Cversion"},
+    {"address": "0xc0a3", "encoding": "ascii", "length": 8, "value": "version"},
+    {"address": "0xc0ab", "encoding": "ascii", "length": 9, "value": "Hcounter"},
+    {"address": "0xc0ac", "encoding": "ascii", "length": 8, "value": "counter"},
+    {"address": "0xc0ba", "encoding": "ascii", "length": 5, "value": "_ptr"},
+    {
+      "address": "0xc0e1",
+      "encoding": "ascii",
+      "length": 5,
+      "value": "\n`,0"
+    },
+    {"address": "0xc27a", "encoding": "ascii", "length": 5, "value": "_mix"},
+    {"address": "0xc27f", "encoding": "ascii", "length": 17, "value": "dyld_stub_binder"},
+    {"address": "0xc290", "encoding": "ascii", "length": 16, "value": "___snprintf_chk"},
+    {"address": "0xc2a0", "encoding": "ascii", "length": 6, "value": "_puts"},
+    {"address": "0xc2a6", "encoding": "ascii", "length": 9, "value": "_kr_hash"},
+    {"address": "0xc2af", "encoding": "ascii", "length": 8, "value": "_kr_add"},
+    {"address": "0xc2b7", "encoding": "ascii", "length": 9, "value": "_kr_show"},
+    {"address": "0xc2c0", "encoding": "ascii", "length": 12, "value": "_kr_counter"},
+    {"address": "0xc2cc", "encoding": "ascii", "length": 12, "value": "_kr_add_ptr"},
+    {"address": "0xc2d8", "encoding": "ascii", "length": 12, "value": "_kr_version"},
+    {"address": "0xc2e4", "encoding": "ascii", "length": 16, "value": "./src/mac_lib.c"},
+    {"address": "0xc2f4", "encoding": "ascii", "length": 103, "value": "/home/adam/Dev/repos/KRAKEN/.claude/worktrees/wf_ce76eab2-f52-2/corpus/macho/.build/mac_lib-arm64-O0.o"},
+    {"address": "0xc3d0", "encoding": "ascii", "length": 17, "value": "libmac_lib.dylib"}
+  ],
+  "types": [
+    {
+      "align": 1,
+      "fields": [
+        {"name": "type", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "offset", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "CS_BlobIndex",
+      "size": 8
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "magic", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "length", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "version", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "flags", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "hashOffset", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "identOffset", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nSpecialSlots", "offset": 24, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nCodeSlots", "offset": 28, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "codeLimit", "offset": 32, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "hashSize", "offset": 36, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 1}},
+        {"name": "hashType", "offset": 37, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 1}},
+        {"name": "platform", "offset": 38, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 1}},
+        {"name": "pageSize", "offset": 39, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 1}},
+        {"name": "spare2", "offset": 40, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "scatterOffset", "offset": 44, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "teamOffset", "offset": 48, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "spare3", "offset": 52, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "codeLimit64", "offset": 56, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "execSegBase", "offset": 64, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "execSegLimit", "offset": 72, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "execSegFlags", "offset": 80, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}}
+      ],
+      "kind": "struct",
+      "name": "CS_CodeDirectory",
+      "size": 88
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "magic", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "length", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "count", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "index", "offset": 12, "type": {"count": 1, "element": {"kind": "named", "name": "CS_BlobIndex"}, "kind": "array"}}
+      ],
+      "kind": "struct",
+      "name": "CS_SuperBlob",
+      "size": 20
+    },
+    {"kind": "typedef", "name": "ImageBaseOffset64", "target": {"kind": "pointer", "size": 8, "target": {"class": "void", "kind": "primitive", "signed": false, "size": 0}}},
+    {
+      "align": 1,
+      "fields": [
+        {"name": "tool", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "version", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "build_tool_version",
+      "size": 8
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "platform", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "minos", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "sdk", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "ntools", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "build_tool_version[]", "offset": 24, "type": {"count": 1, "element": {"kind": "named", "name": "build_tool_version"}, "kind": "array"}}
+      ],
+      "kind": "struct",
+      "name": "build_version_command",
+      "size": 32
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "dataoff", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "datasize", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "dyld_chained_fixups_command",
+      "size": 16
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "fixups_version", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "starts_offset", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "imports_offset", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "symbols_offset", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "imports_count", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "imports_format", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "symbols_format", "offset": 24, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "dyld_chained_fixups_header",
+      "size": 28
+    },
+    {
+      "align": 4,
+      "fields": [
+        {"bitfield": {"bit_offset": 0, "bit_size": 8}, "name": "lib_ordinal", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"bitfield": {"bit_offset": 0, "bit_size": 1}, "name": "weak_import", "offset": 1, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"bitfield": {"bit_offset": 1, "bit_size": 23}, "name": "name_offset", "offset": 1, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "dyld_chained_import",
+      "size": 4
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "seg_count", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "seg_info_offset", "offset": 4, "type": {"count": 4, "element": {"class": "int", "kind": "primitive", "signed": false, "size": 4}, "kind": "array"}}
+      ],
+      "kind": "struct",
+      "name": "dyld_chained_starts_in_image",
+      "size": 20
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "size", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "page_size", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 2}},
+        {"name": "pointer_format", "offset": 6, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 2}},
+        {"name": "segment_offset", "offset": 8, "type": {"kind": "named", "name": "ImageBaseOffset64"}},
+        {"name": "max_valid_pointer", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "page_count", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 2}},
+        {"name": "page_starts", "offset": 22, "type": {"count": 1, "element": {"class": "int", "kind": "primitive", "signed": false, "size": 2}, "kind": "array"}}
+      ],
+      "kind": "struct",
+      "name": "dyld_chained_starts_in_segment",
+      "size": 24
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "name", "offset": 0, "type": {"kind": "named", "name": "lc_str"}},
+        {"name": "timestamp", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "current_version", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "compatibility_version", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "dylib",
+      "size": 16
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "dylib", "offset": 8, "type": {"kind": "named", "name": "dylib"}}
+      ],
+      "kind": "struct",
+      "name": "dylib_command",
+      "size": 24
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "ilocalsym", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nlocalsym", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "iextdefsym", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nextdefsym", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "iundefsym", "offset": 24, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nundefsym", "offset": 28, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "tocoff", "offset": 32, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "ntoc", "offset": 36, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "modtaboff", "offset": 40, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nmodtab", "offset": 44, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "extrefsymoff", "offset": 48, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nextrefsyms", "offset": 52, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "indirectsymoff", "offset": 56, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nindirectsyms", "offset": 60, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "extreloff", "offset": 64, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nextrel", "offset": 68, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "locreloff", "offset": 72, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nlocrel", "offset": 76, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "dysymtab_command",
+      "size": 80
+    },
+    {"align": 1, "fields": [{"name": "offset", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}], "kind": "struct", "name": "lc_str", "size": 4},
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "dataoff", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "datasize", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "linkedit_data_command",
+      "size": 16
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "magic", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cputype", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cpusubtype", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "filetype", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "ncmds", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "sizeofcmds", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "flags", "offset": 24, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "reserved", "offset": 28, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "mach_header",
+      "size": 32
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "n_strx", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "n_type", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 1}},
+        {"name": "n_sect", "offset": 5, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 1}},
+        {"name": "n_desc", "offset": 6, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 2}},
+        {"name": "n_value", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}}
+      ],
+      "kind": "struct",
+      "name": "nlist",
+      "size": 16
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "sectname", "offset": 0, "type": {"kind": "named", "name": "string"}},
+        {"name": "segname", "offset": 16, "type": {"kind": "named", "name": "string"}},
+        {"name": "addr", "offset": 32, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "size", "offset": 40, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "offset", "offset": 48, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "align", "offset": 52, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "reloff", "offset": 56, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nrelocs", "offset": 60, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "flags", "offset": 64, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "reserved1", "offset": 68, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "reserved2", "offset": 72, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "reserved3", "offset": 76, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "section",
+      "size": 80
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "segname", "offset": 8, "type": {"kind": "named", "name": "string"}},
+        {"name": "vmaddr", "offset": 24, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "vmsize", "offset": 32, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "fileoff", "offset": 40, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "filesize", "offset": 48, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 8}},
+        {"name": "maxprot", "offset": 56, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "initprot", "offset": 60, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nsects", "offset": 64, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "flags", "offset": 68, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "segment_command",
+      "size": 72
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "symoff", "offset": 8, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "nsyms", "offset": 12, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "stroff", "offset": 16, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "strsize", "offset": 20, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}}
+      ],
+      "kind": "struct",
+      "name": "symtab_command",
+      "size": 24
+    },
+    {
+      "align": 1,
+      "fields": [
+        {"name": "cmd", "offset": 0, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "cmdsize", "offset": 4, "type": {"class": "int", "kind": "primitive", "signed": false, "size": 4}},
+        {"name": "uuid", "offset": 8, "type": {"count": 16, "element": {"class": "int", "kind": "primitive", "signed": false, "size": 1}, "kind": "array"}}
+      ],
+      "kind": "struct",
+      "name": "uuid_command",
+      "size": 24
+    }
+  ]
+}

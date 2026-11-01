@@ -406,3 +406,69 @@ format = "ELF MIPS LE"
 threshold = 0.98
 status = "parity"
 test = "native_jump_tables_agree_with_the_recorded_switches"
+
+# ---- Mach-O (corpus/macho: x86-64 and arm64, 24 binaries, a stripped pair, libraries) ---------
+
+[[row]]
+capability = "functions"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.99
+status = "parity"
+test = "finds_every_function_of_the_truth"
+
+[[row]]
+capability = "names"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.99
+status = "parity"
+test = "finds_every_function_of_the_truth"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.8
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.5
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.12
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "memory"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.95
+status = "parity"
+test = "segments_become_ghidra_blocks"
+
+[[row]]
+capability = "disassembly"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.98
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus/macho"
+format = "Mach-O x86-64 and AArch64"
+threshold = 0.98
+status = "parity"
+test = "parity_report"

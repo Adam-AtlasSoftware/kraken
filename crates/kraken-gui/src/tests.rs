@@ -611,6 +611,7 @@ mod live {
                 analyze: true,
                 raw: None,
                 debug_file: None,
+                slice: None,
             },
             &ctx,
         );
@@ -698,6 +699,7 @@ mod live {
                 analyze: true,
                 raw: None,
                 debug_file: None,
+                slice: None,
             },
             &ctx,
         );
@@ -779,6 +781,7 @@ mod live {
                 analyze: false,
                 raw: None,
                 debug_file: None,
+                slice: None,
             },
             &ctx,
         );
@@ -823,6 +826,7 @@ mod live {
                 analyze: true,
                 raw: None,
                 debug_file: None,
+                slice: None,
             },
             &ctx,
         );

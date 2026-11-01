@@ -216,6 +216,9 @@ pub struct BinaryProbeOut {
     /// Why it cannot, when `supported` is false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// The architectures of a universal macOS binary; `project_create` takes one as `slice`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slices: Vec<BinarySlice>,
     /// For a file in no known format: ways to open it as a raw image (`project_create` with
     /// `loader: raw`), most likely first, recognised from the layouts of firmware and ROM images.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -224,6 +227,19 @@ pub struct BinaryProbeOut {
     /// emulators run it; absent when no known layout matched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<PlatformInfo>,
+}
+
+/// One architecture of a universal macOS binary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BinarySlice {
+    /// The name `project_create` takes as `slice`: `x86-64`, `arm64`.
+    pub arch: String,
+    /// The same in plain words.
+    pub title: String,
+    /// Size of this slice in bytes.
+    pub size: u64,
+    /// Whether KRAKEN opens it.
+    pub supported: bool,
 }
 
 /// Facts of an Intel HEX or S-record file; `None` when the file is neither.
@@ -785,7 +801,32 @@ pub fn probe_binary(
     } else {
         crate::session::hash_file(&abs)?
     };
-    let facts = facts_of(&data, whole);
+    let mut facts = facts_of(&data, whole);
+    let slices: Vec<BinarySlice> = kraken_engine::fat::slices_in(&data, size)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| BinarySlice {
+            arch: s.arch,
+            title: s.title,
+            size: s.size,
+            supported: s.supported,
+        })
+        .collect();
+    if !slices.is_empty() {
+        let list: Vec<&str> = slices.iter().map(|s| s.arch.as_str()).collect();
+        facts.arch = Some(list.join(", "));
+        facts.description = Some(format!(
+            "macOS universal binary with {} architecture{}",
+            slices.len(),
+            if slices.len() == 1 { "" } else { "s" }
+        ));
+        if !slices.iter().any(|s| s.supported) {
+            facts.problem = Some(format!(
+                "none of its architectures can be opened yet: {}",
+                list.join(", ")
+            ));
+        }
+    }
     let identified = kraken_formats::identify(&data);
     // only a file in no known format is looked at again, for raw-image layouts
     let head = if facts.format.is_none() {
@@ -821,6 +862,12 @@ pub fn probe_binary(
                 .into(),
         ),
         _ => recommend(factory, &abs, format),
+    };
+    // a universal binary goes to the native engine whatever the machine has
+    let recommended_engine = if slices.is_empty() {
+        recommended_engine
+    } else {
+        Some(EngineKind::Native)
     };
     let engines = factory.engine_status();
     let problem = match format {
@@ -919,6 +966,7 @@ pub fn probe_binary(
         engines,
         supported,
         problem,
+        slices,
         raw_options,
         platform,
     })
@@ -1356,5 +1404,17 @@ mod tests {
         let out = probe_binary(&NoGhidra, &corpus("bin/pie_list-O0")).unwrap();
         assert!(out.supported);
         assert!(out.problem.unwrap().contains("kraken setup"));
+    }
+
+    #[test]
+    fn a_universal_binary_lists_its_architectures() {
+        let out = probe_binary(&OneEngine, &corpus("macho/bin/pie_list-fat-O2")).unwrap();
+        assert_eq!(out.format, BinaryFormat::MachO);
+        assert_eq!(out.arch.as_deref(), Some("x86-64, arm64"));
+        assert_eq!(out.slices.len(), 2);
+        assert_eq!(out.slices[1].title, "Apple silicon (arm64)");
+        assert!(out.slices.iter().all(|s| s.supported));
+        assert_eq!(out.recommended_engine, Some(EngineKind::Native));
+        assert!(out.supported);
     }
 }

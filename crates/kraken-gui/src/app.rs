@@ -859,8 +859,9 @@ impl KrakenApp {
                 analyze,
                 raw,
                 debug_file,
+                slice,
             } => {
-                vm.create_project_full(binary, project_dir, Some(engine), raw, debug_file);
+                vm.create_project_full(binary, project_dir, Some(engine), raw, debug_file, slice);
                 self.auto_analyze = analyze;
             }
             Choice::Demo => return,

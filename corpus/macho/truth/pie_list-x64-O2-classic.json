@@ -1,0 +1,34 @@
+{
+ "binary": "pie_list-x64-O2-classic",
+ "ground_truth_from": "pie_list-x64-O2-classic",
+ "sha256": "9dd472c96480b0854a0f63bce0a7273e971496d1cf9724efab32cd6be42a55af",
+ "source_file": "src/pie_list.c",
+ "opt": "O2",
+ "arch": "x64",
+ "functions": [
+  {
+   "name": "_list_push",
+   "demangled": "list_push",
+   "entry": "0x100000630",
+   "size": 32
+  },
+  {
+   "name": "_list_sort",
+   "demangled": "list_sort",
+   "entry": "0x100000650",
+   "size": 160
+  },
+  {
+   "name": "_list_each",
+   "demangled": "list_each",
+   "entry": "0x1000006f0",
+   "size": 64
+  },
+  {
+   "name": "_main",
+   "demangled": "main",
+   "entry": "0x100000730",
+   "size": 1093
+  }
+ ]
+}

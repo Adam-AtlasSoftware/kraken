@@ -12,7 +12,9 @@ use crate::import::{Picked, Picker};
 use crate::recent::{self, RecentProject};
 use crate::style::{self, card, medium, pal};
 
-/// What the person picked on the welcome screen.
+/// What the person picked on the welcome screen. Made once per click and consumed at once, so
+/// the size of `NewProject` costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     /// The built-in demo.
@@ -30,10 +32,13 @@ pub enum Choice {
         raw: Option<RawLoad>,
         /// The program's separate debug file, already checked against it.
         debug_file: Option<String>,
+        /// Which architecture of a universal macOS binary.
+        slice: Option<String>,
     },
 }
 
 /// Something the welcome screen asks the app for.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WelcomeAction {
     /// Open or create a project.

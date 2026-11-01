@@ -145,9 +145,9 @@ pub fn macho(d: &[u8]) -> Option<Identified> {
 
 fn cpu_name(cpu: u32) -> (&'static str, Option<&'static str>) {
     match cpu {
-        7 => ("x86", Some("native")),
+        7 => ("x86", Some("ghidra")),
         0x0100_0007 => ("x86-64", Some("native")),
-        12 => ("ARM", Some("native")),
+        12 => ("ARM", Some("ghidra")),
         0x0100_000c => ("AArch64", Some("native")),
         18 => ("PowerPC", Some("ghidra")),
         0x0100_0012 => ("PowerPC 64", Some("ghidra")),

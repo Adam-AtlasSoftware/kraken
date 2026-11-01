@@ -143,6 +143,7 @@ fn check_rows(root: &Path, rows: &[Row]) -> Result<()> {
             "corpus/mips",
             "corpus/mipsel",
             "corpus/ppc32",
+            "corpus/macho",
         ]
         .contains(&r.set.as_str())
         {

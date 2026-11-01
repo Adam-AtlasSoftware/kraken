@@ -121,10 +121,11 @@ pub struct ExportSymbol {
 /// Everything the engine needs from the file.
 #[derive(Debug, Clone)]
 pub struct Loaded {
-    /// The family the code follows: `elf`, or `pe` for Windows code (PE images and COFF
-    /// objects).
+    /// The family the code follows: `elf`, `macho`, or `pe` for Windows code (PE images and
+    /// COFF objects).
     pub format: &'static str,
-    /// The file's own format: `elf`, `pe`, `coff` (an object file) or `ar` (an archive).
+    /// The file's own format: `elf`, `pe`, `macho`, `coff` (an object file) or `ar` (an
+    /// archive).
     pub container: &'static str,
     /// What the file is, in plain words (`Linux shared library`).
     pub description: String,
@@ -253,7 +254,15 @@ impl Loaded {
     pub fn is_code(&self, addr: u64) -> bool {
         self.blocks
             .iter()
-            .any(|b| b.initialized && b.perms.ends_with('x') && b.start.0 <= addr && addr < b.end.0)
+            // the block `__TEXT` is what is left of that segment around its sections: the Mach-O
+            // header and load commands, mapped executable but not code
+            .any(|b| {
+                b.initialized
+                    && b.perms.ends_with('x')
+                    && b.name != "__TEXT"
+                    && b.start.0 <= addr
+                    && addr < b.end.0
+            })
     }
 
     /// Pointer size in bytes.
@@ -472,6 +481,9 @@ pub fn load_with(
     let file = object::File::parse(data).map_err(|e| bad(format!("cannot parse binary: {e}")))?;
     if file.format() == BinaryFormat::Pe {
         return crate::pe::load_with(data, base_override, external_debug);
+    }
+    if file.format() == BinaryFormat::MachO {
+        return crate::macho::load(data, base_override);
     }
     if file.format() != BinaryFormat::Elf {
         return Err(ProtoError::new(

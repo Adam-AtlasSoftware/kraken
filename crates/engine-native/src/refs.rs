@@ -117,7 +117,11 @@ impl Builder<'_> {
     fn mapped(&self, a: u64) -> bool {
         let blocks = &self.loaded.blocks;
         let i = blocks.partition_point(|b| b.start.0 <= a);
-        blocks[..i].iter().rev().any(|b| a < b.end.0)
+        // a Mach-O library is linked at 0, where its header holds no target of a small constant
+        blocks[..i]
+            .iter()
+            .rev()
+            .any(|b| a < b.end.0 && !(self.loaded.base == 0 && b.name == "__TEXT"))
     }
 
     fn add(&mut self, from: u64, to: u64, kind: XrefKind) {

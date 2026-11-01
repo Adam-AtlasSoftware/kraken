@@ -102,6 +102,35 @@ fn open_wizard(k: &mut Kit, path: &Path) {
 }
 
 #[test]
+fn a_universal_binary_asks_only_which_version() {
+    let mut services = crate::services::Services::offline();
+    services.cfg.native_in_process = true;
+    let mut k = kit_from(services, &options(false), false);
+    open_wizard(&mut k, &corpus("macho/bin/pie_list-fat-O2"));
+    until(&mut k, "the probe", |k| {
+        k.h.state()
+            .import_wizard()
+            .and_then(|w| w.dialog.as_ref())
+            .is_some_and(|d| d.probed().is_some())
+    });
+    k.h.run_steps(3);
+    next(&mut k);
+    assert_eq!(step(&k), ImportStep::Slice, "the one question");
+    assert!(has(&k, "Which version?"));
+    assert!(has(&k, "Intel 64-bit (x86-64)"));
+    k.h.get_by_label_contains("Apple silicon (arm64)").click();
+    k.h.run_steps(3);
+    next(&mut k);
+    assert_ne!(step(&k), ImportStep::Engine, "a Mach-O file has one engine");
+    let w = k.h.state().import_wizard().unwrap();
+    assert!(w.commands().iter().any(|c| c.contains("--slice arm64")));
+    match w.choice() {
+        Some(Choice::NewProject { slice, .. }) => assert_eq!(slice.as_deref(), Some("arm64")),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn the_wizard_finds_checks_and_attaches_a_separate_debug_file() {
     let tmp = tempfile::Builder::new().prefix("wizard").tempdir().unwrap();
     let Some((prog, debug, other)) = split_program(tmp.path()) else {

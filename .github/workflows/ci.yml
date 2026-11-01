@@ -213,6 +213,7 @@ jobs:
           - corpus
           - corpus/pe
           - corpus/elf32
+          - corpus/macho
           - corpus/arm32
           - corpus/aarch64
           - corpus/riscv64

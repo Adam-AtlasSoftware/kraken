@@ -9,7 +9,7 @@
 ## What it does
 
 **Analyze**
-- Finds functions and decompiles them to C-like code with Ghidra's decompiler: through the native engine (no Java; ELF and Windows PE, x86 and x86-64) or the optional Ghidra engine (ELF, PE and Mach-O, many processors).
+- Finds functions and decompiles them to C-like code with Ghidra's decompiler: through the native engine (no Java; ELF, Windows PE and macOS Mach-O) or the optional Ghidra engine (ELF, PE and Mach-O, many processors).
 - Listing, hex, control-flow graph, cross-references, strings, imports and exports, memory map.
 - Rename functions, set types and comments. Search, filter and jump between views.
 
@@ -66,7 +66,7 @@ kraken list-functions --project ~/kraken-projects/ls --limit 20
 kraken-gui                             # or open the app and pick the project
 ```
 
-New projects use the native engine when it can open the file, else the optional Ghidra engine (Mach-O, other processors, Windows debug information), which `kraken setup` downloads with a JDK on first use. The [native engine page](docs/native-engine.md) compares the two. The practice programs in [`corpus/bin/`](corpus/bin) are a good start, and the [tutorial](docs/tutorial.md) walks through a first session.
+New projects use the native engine when it can open the file, else the optional Ghidra engine (other processors), which `kraken setup` downloads with a JDK on first use. The [native engine page](docs/native-engine.md) compares the two. The practice programs in [`corpus/bin/`](corpus/bin) are a good start, and the [tutorial](docs/tutorial.md) walks through a first session.
 
 Connect an agent: `claude mcp add kraken -- kraken mcp --project ~/kraken-projects/ls`.
 

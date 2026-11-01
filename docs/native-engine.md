@@ -30,7 +30,7 @@ new projects.
 |---|---|---|
 | Needs Java and a Ghidra download | No | Yes (`kraken setup`, about 3 GB) |
 | Start of a new project | Seconds (a small program is ready in well under a second) | About a minute of analysis for a small program |
-| File formats | ELF (x86-64, 32-bit x86, ARM and Thumb-2, AArch64, RISC-V 64 and 32) and PE (x86, x86-64); object files and static libraries for those (COFF and import libraries for x86 and x86-64) | ELF, PE, Mach-O, object files, many processors; no archives |
+| File formats | ELF (x86-64, 32-bit x86, ARM and Thumb-2, AArch64, RISC-V 64 and 32), PE (x86, x86-64) and Mach-O programs and libraries (x86-64, arm64, universal binaries); object files and static libraries for ELF and PE (COFF and import libraries for x86 and x86-64) | ELF, PE, Mach-O, object files, many processors; no archives or universal binaries |
 | Function list, disassembly, hex, memory map | Yes | Yes |
 | Assemble instructions (`assemble`, the patch dialog) | x86 and x86-64 built in (labels, symbol names, NOP padding, checked through Sleigh); ARM, AArch64 and RISC-V with `llvm-mc` on PATH | All processors (SLEIGH assembler) |
 | Decompiler | Yes (the same Ghidra decompiler) | Yes |
@@ -43,9 +43,9 @@ new projects.
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
 | Runs where | Linux | Linux; macOS and Windows experimental |
 
-Use native to get going quickly, for ELF programs (x86, ARM, AArch64, RISC-V) and Windows PE
-images. Switch a project to Ghidra (create it again with `--engine ghidra`) when you need Mach-O
-files or other processors. A program's PDB is read by both engines when it sits next to the
+Use native to get going quickly, for ELF programs (x86, ARM, AArch64, RISC-V), Windows PE images
+and macOS programs. Switch a project to Ghidra (create it again with `--engine ghidra`) when you
+need other processors. A program's PDB is read by both engines when it sits next to the
 program (`app.exe` and `app.pdb`); the native engine also takes one from anywhere with
 `debuginfo_attach` (see `docs/debug-info.md`).
 
@@ -466,12 +466,36 @@ Not there yet: micro-MIPS and MIPS16 modes, PowerPC VLE, 64-bit MIPS and PowerPC
 descriptors), and relocatable MIPS and PowerPC object files, which go to Ghidra. `kraken-emu` does
 not run these processors yet; `qemu-mips` and `qemu-ppc` run the corpus.
 
+## macOS programs (Mach-O)
+
+A Mach-O file opens with no questions: `auto` sends x86-64 and arm64 programs, libraries and
+plug-ins to the native engine, laid out the way Ghidra lays them out. The language of arm64 code
+is `AARCH64:LE:64:AppleSilicon` with Apple's calling convention, and x86-64 uses the `gcc` compiler
+spec. Blocks carry the section names (`__text`, `__cstring`), symbols keep their leading underscore
+(`_printf`), and the function at the entry point is called `entry` with `_main` as a second name.
+Both ways of binding imports are read, chained fixups and the older `LC_DYLD_INFO` tables: each
+`__stubs` entry is a function named after its import, a pointer of an import without a stub points
+into the `EXTERNAL` block, and rebased pointers hold their targets. Stripped programs keep their
+function starts in `LC_FUNCTION_STARTS`, `__unwind_info` and `__eh_frame`.
+
+A universal binary holds a program for several kinds of Mac. `binary_probe` lists them under
+`slices`; the import wizard asks which one in plain words, or `project_create` takes `slice`
+(`x86-64`, `arm64`). When only one can be opened it is picked without asking. One project holds one
+architecture; import the file again for the other.
+
+The numbers are in the parity table of [ADR 0014](design/0014-native-engine.md), measured on
+`corpus/macho`.
+
 ## What does not work yet
 
-- Mach-O files, big-endian ELF other than 32-bit MIPS and PowerPC (ARM BE8, AArch64 BE), 64-bit
-  MIPS and PowerPC, processors other than x86, ARM, AArch64, RISC-V, MIPS and PowerPC (this
-  includes raw images of other processors and 16-bit real-mode x86). With `auto` these go to
-  Ghidra. Intel HEX and S-record
+- 32-bit Mach-O files and Mach-O object files (a universal binary's 32-bit and PowerPC
+  slices are listed but do not open), Objective-C classes and Swift metadata as types, dSYM
+  bundles, and patch export from a universal binary (a thin Mach-O exports as usual; code
+  signatures are not refreshed).
+- Big-endian ELF other than 32-bit MIPS and PowerPC (ARM BE8, AArch64 BE), 64-bit MIPS and
+  PowerPC, processors other than x86, ARM, AArch64, RISC-V, MIPS and PowerPC (this includes raw
+  images of other processors and 16-bit real-mode x86). With `auto` these go to Ghidra. Intel HEX
+  and S-record
   files must be converted to a flat binary first (`objcopy -I ihex -O binary`).
 - COFF objects and libraries for processors other than x86 and x86-64 (Windows on ARM), thin
   archives, and LLVM bitcode members. RISC-V objects assembled with linker relaxation are read

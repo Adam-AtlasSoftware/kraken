@@ -1,0 +1,46 @@
+{
+ "binary": "switch_vm-arm64-O0",
+ "ground_truth_from": "switch_vm-arm64-O0",
+ "sha256": "c15f8958ecdd4fdeded711a7a7e1174d7e0485f5c4ef763b644db58d86a38787",
+ "source_file": "src/switch_vm.c",
+ "opt": "O0",
+ "arch": "arm64",
+ "functions": [
+  {
+   "name": "_vm_run",
+   "demangled": "vm_run",
+   "entry": "0x1000004f0",
+   "size": 904
+  },
+  {
+   "name": "_vm_fail",
+   "demangled": "vm_fail",
+   "entry": "0x100000878",
+   "size": 76
+  },
+  {
+   "name": "_push",
+   "demangled": "push",
+   "entry": "0x1000008c4",
+   "size": 104
+  },
+  {
+   "name": "_pop",
+   "demangled": "pop",
+   "entry": "0x10000092c",
+   "size": 92
+  },
+  {
+   "name": "_op_name",
+   "demangled": "op_name",
+   "entry": "0x100000988",
+   "size": 328
+  },
+  {
+   "name": "_main",
+   "demangled": "main",
+   "entry": "0x100000ad0",
+   "size": 152
+  }
+ ]
+}

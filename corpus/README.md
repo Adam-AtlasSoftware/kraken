@@ -3,7 +3,7 @@
 Small prebuilt x86_64 ELF programs with DWARF-derived ground truth (decisions 23, 65, 78), plus
 smaller sets: Windows PE images (`pe/`), 32-bit x86 ELF programs (`elf32/`), one library built as
 every kind of library and object file (`lib/`), and the same C programs for ARM and RISC-V
-(`arm32/`, `aarch64/`, `riscv64/`, `riscv32/`) with the expected outputs of the x86-64 builds
+(`arm32/`, `aarch64/`, `riscv64/`, `riscv32/`), macOS programs (`macho/`) with the expected outputs of the x86-64 builds
 (`expected/`), see below.
 Binaries are committed. Rebuilding is a manual job: it should open a PR, never run in normal CI.
 
@@ -54,6 +54,18 @@ objects' DWARF; `name` is the COFF symbol (`_on_tls@12` on x86) and `demangled` 
 `pe/fixtures/` holds Ghidra recordings of five of the images with the first 32 functions each
 (`kraken-record --corpus corpus/pe --function-cap 32`); recording all 14 with the default cap
 takes about 60 MB, which is why only these are committed.
+
+## The Mach-O set (`macho/`)
+
+The four C programs of `src/` and `macho/src/mac_lib.c` (exports, data, a private helper) for
+x86-64 and arm64, `-O0` and `-O2`, built by `macho/build.sh` (`corpus/build.sh macho`) on any
+Linux host with zig 0.15.2 and LLVM: zig's clang and its macOS headers compile, `ld64.lld` links
+against zig's `libSystem.tbd` stub. No Apple SDK is involved and no Apple binary is in the set.
+`pie_list-<arch>-O2-classic` keeps the `LC_DYLD_INFO` tables where the others have chained fixups,
+`stripped_calc-<arch>-O2-stripped` has no local symbols, and `pie_list-fat-O2` is a universal binary
+of the two `pie_list` builds (`llvm-lipo`). There is no debug information. The truth comes from the
+symbol table (`python3 -I corpus/tools/groundtruth_macho.py`). All but the universal binary have
+Ghidra fixtures in `macho/fixtures/`; Ghidra's loader takes one Mach-O image at a time.
 
 ## The 32-bit ELF set (`elf32/`)
 

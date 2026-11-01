@@ -462,6 +462,11 @@ async fn compare_full(set: &str, binary: &str, c: NativeConfig, extras: bool) ->
             None => break,
         }
     }
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for (a, v) in theirs.difference(&mine) {
+            eprintln!("  {binary} string only Ghidra: {a:#x} {v:?}");
+        }
+    }
     let complete = fx["recording"]["strings_listed"] == fx["recording"]["strings_recorded"];
     if !complete {
         let lowest_capped: BTreeSet<_> = mine
@@ -679,6 +684,16 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
         .filter(|b| b.kind != kraken_proto::MemoryKind::Overlay)
         .map(|b| (b.start.0, b.end.0, b.perms.clone()))
         .collect();
+    if std::env::var_os("KRAKEN_AGREEMENT_DIFF").is_some() {
+        for (a, b, p) in theirs.symmetric_difference(&mine) {
+            let who = if theirs.contains(&(*a, *b, p.clone())) {
+                "Ghidra"
+            } else {
+                "native"
+            };
+            eprintln!("  {binary} block only {who}: {a:#x}..{b:#x} {p}");
+        }
+    }
     r.memory.add(&theirs, &mine);
 
     // disassembly: the (address, mnemonic) pairs of the recorded functions
@@ -729,7 +744,9 @@ async fn measure_extras(set: &str, binary: &str, e: &NativeEngine, fx: &Value, r
     )
     .expect("fixture for the fake engine");
     let fake = engine_fake::FakeEngine::new(fixture);
-    let theirs = jump_pairs(&fake, &cancel).await;
+    let mut theirs = jump_pairs(&fake, &cancel).await;
+    // a Mach-O stub jumps through a slot Ghidra's loader points back at the stub: no table
+    theirs.retain(|(j, t)| set != "corpus/macho" || j.wrapping_sub(*t) > 16);
     // the fixtures may hold the first functions only: compare the tables whose jump lies in the
     // body Ghidra recorded for one of them (so a table of the last recorded function counts, and
     // so does one the native engine places in a function of its own)
@@ -1157,6 +1174,7 @@ async fn parity_report() {
         return;
     };
     let mut sets = serde_json::Map::new();
+    let only = std::env::var("KRAKEN_PARITY_ONLY").ok();
     for set in [
         "corpus",
         "corpus/pe",
@@ -1164,7 +1182,11 @@ async fn parity_report() {
         "corpus/mips",
         "corpus/mipsel",
         "corpus/ppc32",
+        "corpus/macho",
     ] {
+        if only.as_deref().is_some_and(|o| o != set) {
+            continue;
+        }
         let mut names: Vec<String> = std::fs::read_dir(root().join(set).join("fixtures"))
             .expect("fixtures")
             .filter_map(|e| e.ok())

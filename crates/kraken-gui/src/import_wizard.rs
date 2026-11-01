@@ -32,6 +32,8 @@ pub enum ImportStep {
     File,
     /// What the file is.
     Kind,
+    /// Universal binaries: which architecture.
+    Slice,
     /// Which engine opens it.
     Engine,
     /// Raw files: processor, base address, entry.
@@ -383,6 +385,7 @@ impl ImportWizard {
             engine,
             analyze,
             raw,
+            slice,
             ..
         }) = self.dialog.as_ref()?.choice()
         else {
@@ -405,6 +408,7 @@ impl ImportWizard {
             analyze,
             raw,
             debug_file: self.debug_file(),
+            slice,
         })
     }
 }
@@ -425,7 +429,15 @@ impl WizardFlow for ImportWizard {
     const ID: &'static str = "import";
 
     fn steps(&self) -> Vec<ImportStep> {
-        let mut v = vec![ImportStep::File, ImportStep::Kind, ImportStep::Engine];
+        let mut v = vec![ImportStep::File, ImportStep::Kind];
+        let d = self.dialog.as_ref();
+        if d.is_some_and(ImportDialog::asks_for_slice) {
+            v.push(ImportStep::Slice);
+        }
+        // a Mach-O file has one engine to go to: nothing to ask
+        if !d.is_some_and(ImportDialog::goes_to_native) {
+            v.push(ImportStep::Engine);
+        }
         if self.dialog.as_ref().is_some_and(ImportDialog::raw_active) || self.records() {
             v.push(ImportStep::Loader);
         }
@@ -449,6 +461,7 @@ impl WizardFlow for ImportWizard {
         match step {
             ImportStep::File => "File",
             ImportStep::Kind => "What it is",
+            ImportStep::Slice => "Version",
             ImportStep::Engine => "Engine",
             ImportStep::Loader => "Loading",
             ImportStep::DebugInfo => "Debug information",
@@ -464,6 +477,9 @@ impl WizardFlow for ImportWizard {
             }
             ImportStep::Kind => {
                 "KRAKEN looks at the file and says what it is and what it can do with it."
+            }
+            ImportStep::Slice => {
+                "A universal binary holds the same program for several kinds of Mac. KRAKEN analyzes one of them."
             }
             ImportStep::Engine => {
                 "The engine does the analysis. The recommended one is already chosen."
@@ -494,7 +510,9 @@ impl WizardFlow for ImportWizard {
                 }
             }
             ImportStep::Kind => self.dialog.as_ref().and_then(ImportDialog::probe_blocker),
-            ImportStep::Engine => self.dialog.as_ref().and_then(ImportDialog::probe_blocker),
+            ImportStep::Slice | ImportStep::Engine => {
+                self.dialog.as_ref().and_then(ImportDialog::probe_blocker)
+            }
             ImportStep::Loader if self.records() => self
                 .dialog
                 .as_ref()
@@ -543,6 +561,7 @@ impl WizardFlow for ImportWizard {
             engine,
             analyze,
             raw,
+            slice,
             ..
         }) = self.choice()
         else {
@@ -554,6 +573,9 @@ impl WizardFlow for ImportWizard {
             quote(&project_dir),
             engine.as_str()
         );
+        if let Some(s) = slice {
+            c.push_str(&format!(" --slice {}", quote(&s)));
+        }
         if let Some(r) = raw {
             if !r.records {
                 c.push_str(" --loader raw");
@@ -587,11 +609,20 @@ pub fn body(ui: &mut Ui, w: &mut ImportWizard) {
     match w.step {
         ImportStep::File => file_step(ui, w),
         ImportStep::Kind => kind_step(ui, w),
+        ImportStep::Slice => slice_step(ui, w),
         ImportStep::Engine => engine_step(ui, w),
         ImportStep::Loader => loader_step(ui, w),
         ImportStep::DebugInfo => debug_step(ui, w),
         ImportStep::Analysis => analysis_step(ui, w),
         ImportStep::Summary => summary_step(ui, w),
+    }
+}
+
+fn slice_step(ui: &mut Ui, w: &mut ImportWizard) {
+    if let Some(d) = w.dialog.as_mut()
+        && let Some(p) = d.probed().cloned()
+    {
+        d.slice_row(ui, &p);
     }
 }
 

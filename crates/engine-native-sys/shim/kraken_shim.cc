@@ -301,6 +301,9 @@ public:
       std::string hex = name.substr(decomp.size());
       if (hex.size() < 8)
         hex.insert(0, 8 - hex.size(), '0');
+      // addresses past 32 bits: Ghidra prints as many digits as they need
+      while (hex.size() > 8 && hex[0] == '0')
+        hex.erase(0, 1);
       label = "LAB_" + hex;
     }
     push(label, TK_OTHER, label, ram, ram ? off : 0);

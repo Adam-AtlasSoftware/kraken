@@ -63,6 +63,11 @@ pub fn is_noreturn_name(loaded: &Loaded, name: &str) -> bool {
     if name == "__libc_start_main" && crate::constprop::wanted(loaded) {
         return false;
     }
+    // Mach-O symbols carry a leading underscore: `_exit` is C's `exit`
+    let name = match loaded.format {
+        "macho" => name.strip_prefix('_').unwrap_or(name),
+        _ => name,
+    };
     NORETURN.contains(&name)
         || (loaded.is_pe() && crate::win32::noreturn_names().any(|n| n == name))
 }
@@ -1109,7 +1114,13 @@ impl Walker<'_> {
         let exec: Vec<(u64, u64)> = loaded
             .blocks
             .iter()
-            .filter(|b| b.initialized && b.perms.ends_with('x') && !b.name.starts_with(".plt"))
+            .filter(|b| {
+                b.initialized
+                    && b.perms.ends_with('x')
+                    && !b.name.starts_with(".plt")
+                    // the Mach-O header and load commands: mapped executable, but data
+                    && b.name != "__TEXT"
+            })
             .map(|b| (b.start.0, b.end.0))
             .collect();
         for (lo, hi) in exec {
