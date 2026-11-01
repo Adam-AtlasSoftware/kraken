@@ -200,6 +200,9 @@ pub fn case_from_registers(
                 sse += 1;
                 Arg::Float { bits: v as u32 }
             }
+            // The registers alone do not say how a structure was classified or where its
+            // stack part is; such functions get generated inputs instead.
+            Param::Struct(_) => return None,
         };
         args.push(arg);
     }
@@ -240,9 +243,12 @@ pub fn harvest_child(
             child.initial.arch
         )));
     }
-    if !sig.fits_registers() {
+    let sse = sig.params.iter().filter(|p| p.is_sse()).count();
+    if sig.params.len() - sse > INT_REGS.len() || sse > SSE_REGS.len() || sig.returns_in_memory() {
         return Err(RewriteError::Unsupported(
-            "the function takes more arguments than fit in registers".into(),
+            "the function takes more arguments than fit in registers, or returns a large \
+             structure through a hidden pointer"
+                .into(),
         ));
     }
     child
@@ -376,6 +382,7 @@ mod tests {
             name: "f".into(),
             params,
             ret: Ret::Void,
+            variadic_from: None,
         }
     }
 

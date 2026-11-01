@@ -292,9 +292,10 @@ fn c_type(bits: u8, signed: bool) -> String {
 
 /// The C prototype of a signature.
 pub fn c_prototype(sig: &Signature) -> String {
-    let ret = match sig.ret {
+    let ret = match &sig.ret {
         Ret::Void => "void".to_string(),
-        Ret::Int { bits, signed } => c_type(bits, signed),
+        Ret::Int { bits, signed } => c_type(*bits, *signed),
+        Ret::Struct(s) => format!("struct {}", s.name),
         Ret::Ptr => "const void *".to_string(),
         Ret::Double => "double".to_string(),
         Ret::Float => "float".to_string(),
@@ -310,6 +311,7 @@ pub fn c_prototype(sig: &Signature) -> String {
                 Param::Buf | Param::FnPtr => format!("void *a{i}"),
                 Param::Double => format!("double a{i}"),
                 Param::Float => format!("float a{i}"),
+                Param::Struct(s) => format!("struct {} a{i}", s.name),
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -334,12 +336,13 @@ pub(crate) fn shim_fn_with(sig: &Signature, path: &str, pre: &str) -> String {
         })
         .collect();
     let call = format!("{path}({})", args.join(", "));
-    let body = match sig.ret {
+    let body = match &sig.ret {
         Ret::Void => format!("unsafe {{ {call} }};"),
         Ret::Int { bits, signed } => format!(
             "(unsafe {{ {call} }}) as {}",
-            crate::abi::int_ty(bits, signed)
+            crate::abi::int_ty(*bits, *signed)
         ),
+        Ret::Struct(_) => format!("unsafe {{ {call} }}"),
         Ret::Ptr => format!("(unsafe {{ {call} }}) as *const u8"),
         Ret::Double | Ret::Float => format!("unsafe {{ {call} }}"),
     };
@@ -353,6 +356,14 @@ pub(crate) fn shim_fn_with(sig: &Signature, path: &str, pre: &str) -> String {
 /// own symbol names or sections, which would export something the manifest does not list.
 fn module_code(unit: &RewriteUnit, uses: &str) -> Result<String, RewriteError> {
     let code = &unit.rust_code;
+    let s = &unit.signature;
+    if matches!(s.ret, Ret::Struct(_)) || s.params.iter().any(|p| matches!(p, Param::Struct(_))) {
+        return Err(RewriteError::Unsupported(format!(
+            "unit {} ({}) passes a structure by value, which the library export does not \
+             support yet",
+            unit.id, unit.anchor.name
+        )));
+    }
     if let Some(why) = lint_translation(code) {
         return Err(RewriteError::Store(format!(
             "unit {} ({}): {why}",
@@ -939,6 +950,7 @@ mod tests {
                 bits: 32,
                 signed: true,
             },
+            variadic_from: None,
         }
     }
 
@@ -1095,6 +1107,7 @@ mod tests {
             name: "f".into(),
             params: vec![],
             ret: Ret::Void,
+            variadic_from: None,
         };
         assert_eq!(c_prototype(&v), "void f(void);");
         assert!(shim_fn(&v, "l::f").contains("unsafe { l::f() };"));

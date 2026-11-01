@@ -50,6 +50,7 @@ fn doubles_travel_as_bit_patterns_in_and_out() {
         name: "scale".into(),
         params: vec![Param::Double, int(0)],
         ret: Ret::Double,
+        variadic_from: None,
     };
     let r = runner(
         &sig,
@@ -77,6 +78,7 @@ fn a_callback_is_called_recorded_and_answers_by_the_values_its_arguments_point_t
         name: "apply".into(),
         params: vec![Param::Buf, Param::Buf, Param::FnPtr],
         ret: i32_ret(),
+        variadic_from: None,
     };
     let r = runner(
         &sig,
@@ -191,6 +193,7 @@ fn a_pointer_graph_is_laid_out_with_its_embedded_pointers() {
         name: "sum".into(),
         params: vec![Param::Buf],
         ret: i32_ret(),
+        variadic_from: None,
     };
     let r = runner(&sig, SUM_LIST);
     let obs = r.run(&[list_graph(&[3, 4, 5])]).expect("run");
@@ -214,6 +217,7 @@ fn reading_past_an_object_faults_like_it_does_in_the_emulator() {
         name: "peek".into(),
         params: vec![Param::Buf],
         ret: i32_ret(),
+        variadic_from: None,
     };
     let r = runner(
         &sig,

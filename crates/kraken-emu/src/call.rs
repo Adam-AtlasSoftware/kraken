@@ -34,6 +34,10 @@ pub enum Value {
     F32 { bits: u32 },
     /// A `double` (IEEE-754 bits).
     F64 { bits: u64 },
+    /// One eightbyte passed in memory whatever registers are free: a piece of a structure the
+    /// System V ABI passes on the stack (class MEMORY, or too few registers left for all of it).
+    /// 64-bit architectures only; the words of one structure are consecutive stack slots.
+    StackWord { bits: u64 },
 }
 
 impl Value {
@@ -74,7 +78,7 @@ impl Value {
         match *self {
             Value::Int { bits, .. } => (usize::from(bits).max(8)).div_ceil(8),
             Value::F32 { .. } => 4,
-            Value::F64 { .. } => 8,
+            Value::F64 { .. } | Value::StackWord { .. } => 8,
         }
     }
 
@@ -102,7 +106,7 @@ impl Value {
                 }
             }
             Value::F32 { bits } => u64::from(bits),
-            Value::F64 { bits } => bits,
+            Value::F64 { bits } | Value::StackWord { bits } => bits,
         }
     }
 }
@@ -170,7 +174,9 @@ pub fn place(arch: Arch, args: &[Value]) -> Placement {
         Arch::X86_64 | Arch::Aarch64 => {
             let mut next_fp = 0usize;
             for a in args {
-                if a.is_float() {
+                if matches!(a, Value::StackWord { .. }) {
+                    // fall through to the stack
+                } else if a.is_float() {
                     if next_fp < 8 {
                         locs.push(Loc::Reg(match (arch, a) {
                             (Arch::X86_64, _) => XMM[next_fp],
@@ -1152,5 +1158,21 @@ mod tests {
         for v in [0.0, -2.5, 1e300, f64::INFINITY] {
             assert_eq!(f64::from_bits(st0_to_f64(&f64_to_st0(v.to_bits()))), v);
         }
+    }
+
+    #[test]
+    fn stack_words_take_the_stack_while_registers_are_free() {
+        let w = |bits| Value::StackWord { bits };
+        let p = place(Arch::X86_64, &[w(1), i(), w(2), d()]);
+        assert_eq!(
+            p.locs,
+            vec![
+                Loc::Stack(0),
+                Loc::Reg("RDI"),
+                Loc::Stack(8),
+                Loc::Reg("XMM0")
+            ]
+        );
+        assert_eq!(p.stack_size, 16);
     }
 }

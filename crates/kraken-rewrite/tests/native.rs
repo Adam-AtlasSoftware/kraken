@@ -18,6 +18,7 @@ fn sig() -> Signature {
             bits: 32,
             signed: true,
         },
+        variadic_from: None,
     }
 }
 

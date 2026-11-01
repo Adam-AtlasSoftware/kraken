@@ -31,6 +31,7 @@ fn cmp_sig(name: &str) -> Signature {
             bits: 32,
             signed: true,
         },
+        variadic_from: None,
     }
 }
 
@@ -102,6 +103,7 @@ fn vm_run_sig() -> Signature {
             bits: 32,
             signed: true,
         },
+        variadic_from: None,
     }
 }
 
@@ -200,6 +202,7 @@ fn unknown_import_is_reported_not_guessed() {
         // The hidden result object, the vector and the separator.
         params: vec![Param::Buf, Param::Buf, Param::Buf],
         ret: Ret::Void,
+        variadic_from: None,
     };
     let r = o
         .call(

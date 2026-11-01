@@ -27,8 +27,8 @@ use kraken_emu::loader::{Image, SlotKind};
 use kraken_emu::{Arch, EmuError, Machine, Perm, SpecRoots, Stop};
 
 use crate::abi::{
-    Arg, Callback, GlobalWrite, Observation, Param, Ret, Signature, Termination, callback_tag,
-    check_graph, mask, place_object_for,
+    Arg, Callback, GlobalWrite, Observation, Param, Ret, Signature, StructWord, Termination,
+    callback_tag, check_graph, mask, place_object_for, struct_result, struct_words,
 };
 use crate::clib::{ctype_b_table, format_printf};
 use crate::error::RewriteError;
@@ -243,6 +243,10 @@ struct Laid {
     values: Vec<Value>,
     /// Every object: address and length.
     buffers: Vec<(u64, usize)>,
+    /// Where a MEMORY structure result is written (the hidden first argument).
+    sret: Option<(u64, usize)>,
+    /// SSE registers the arguments use (what `al` holds for a variadic callee).
+    sse: usize,
 }
 
 /// A loaded program image plus the emulator that runs functions of it.
@@ -441,12 +445,14 @@ impl FunctionOracle {
         sig: &Signature,
         args: &[Arg],
     ) -> Result<Observation, RewriteError> {
-        let doubles = sig.params.iter().filter(|p| p.is_sse()).count();
-        if sig.params.len() - doubles > 6 || doubles > 8 {
+        sig.check().map_err(RewriteError::Unsupported)?;
+        if self.image.arch != Arch::X86_64
+            && (sig.variadic_from.is_some()
+                || matches!(sig.ret, Ret::Struct(_))
+                || sig.params.iter().any(|p| matches!(p, Param::Struct(_))))
+        {
             return Err(RewriteError::Unsupported(
-                "more than six integer or eight floating-point parameters (stack arguments are \
-                 not modelled)"
-                    .into(),
+                "structures by value and variadic calls are modelled for x86-64 only".into(),
             ));
         }
         if sig.params.len() != args.len() {
@@ -476,7 +482,7 @@ impl FunctionOracle {
         // whole run down: the case is one the oracle could not evaluate.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.lay_out(args, sig, &mut mapped)
-                .and_then(|laid| self.run_call(entry, sig, &laid.values, &laid.buffers))
+                .and_then(|laid| self.run_call(entry, sig, &laid))
         }))
         .unwrap_or_else(|_| {
             Ok(Observation::failed(Termination::Unsupported {
@@ -520,8 +526,50 @@ impl FunctionOracle {
         let arch = self.image.arch;
         let ptr = |v: u64| Value::ptr(arch, v);
         let mut laid = Laid::default();
+        let mut ints = 0usize;
+        if let Ret::Struct(shape) = &sig.ret
+            && sig.returns_in_memory()
+        {
+            // The result goes where the hidden first argument points; this is no argument
+            // object of the case, so it is mapped behind them below and not compared as one.
+            let at = self.map_object(&vec![0u8; shape.size()], mapped, 255)?;
+            laid.sret = Some((at, shape.size()));
+            laid.values.push(ptr(at));
+            ints = 1;
+        }
         for (i, (p, a)) in sig.params.iter().zip(args).enumerate() {
+            match p {
+                Param::Int { .. } | Param::Buf | Param::FnPtr => ints += 1,
+                Param::Double | Param::Float => laid.sse += 1,
+                Param::Struct(_) => {}
+            }
             match (p, a) {
+                (Param::Struct(shape), Arg::Struct { data }) => {
+                    if data.len() != shape.size() {
+                        return Err(RewriteError::Unsupported(format!(
+                            "argument {i} is {} bytes, its structure {} bytes",
+                            data.len(),
+                            shape.size()
+                        )));
+                    }
+                    for w in struct_words(shape, data, ints, laid.sse) {
+                        match w {
+                            StructWord::Int(v) => {
+                                ints += 1;
+                                laid.values.push(Value::Int {
+                                    bits: 64,
+                                    signed: false,
+                                    value: v,
+                                });
+                            }
+                            StructWord::Sse(v) => {
+                                laid.sse += 1;
+                                laid.values.push(Value::F64 { bits: v });
+                            }
+                            StructWord::Mem(v) => laid.values.push(Value::StackWord { bits: v }),
+                        }
+                    }
+                }
                 (Param::Int { bits, signed }, Arg::Int { value }) => {
                     laid.values.push(Value::Int {
                         bits: *bits,
@@ -616,9 +664,9 @@ impl FunctionOracle {
         &mut self,
         entry: u64,
         sig: &Signature,
-        values: &[Value],
-        buffers: &[(u64, usize)],
+        laid: &Laid,
     ) -> Result<Observation, RewriteError> {
+        let (values, buffers) = (&laid.values[..], &laid.buffers[..]);
         self.clear_registers()?;
         // The call-site stack pointer is 16-byte aligned (8 on ARM); x86 then pushes the return
         // address.
@@ -631,6 +679,11 @@ impl FunctionOracle {
             self.layout.return_addr(),
         )
         .map_err(from_emu)?;
+        if sig.variadic_from.is_some() {
+            self.m
+                .write_reg("RAX", laid.sse.min(8) as u64)
+                .map_err(from_emu)?;
+        }
 
         let start = self.m.icount();
         let termination = loop {
@@ -701,7 +754,7 @@ impl FunctionOracle {
                 Ret::Int { bits, .. } => Some(RetKind::Int { bits }),
                 Ret::Double => Some(RetKind::F64),
                 Ret::Float => Some(RetKind::F32),
-                Ret::Void | Ret::Ptr => None,
+                Ret::Void | Ret::Ptr | Ret::Struct(_) => None,
             };
             if let Some(k) = kind {
                 obs.ret = read_return(&mut self.m, k).map_err(from_emu)?;
@@ -716,6 +769,18 @@ impl FunctionOracle {
                 obs.ret_object = Some(crate::ptrdesc::describe_pointer(p, &blocks, &mut |a, n| {
                     m.read_vec(a, n).unwrap_or_default()
                 }));
+            }
+            if let Ret::Struct(shape) = &sig.ret {
+                let mut bytes = match laid.sret {
+                    Some((at, len)) => self.m.read_vec(at, len).map_err(from_emu)?,
+                    None => {
+                        let m = &mut self.m;
+                        struct_result(shape, &mut |r| m.read_reg(r).unwrap_or(0))
+                            .unwrap_or_default()
+                    }
+                };
+                shape.zero_padding(&mut bytes);
+                obs.ret_bytes = Some(bytes);
             }
             for &(addr, len) in buffers {
                 obs.buffers

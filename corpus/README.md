@@ -15,6 +15,7 @@ Binaries are committed. Rebuilding is a manual job: it should open a PR, never r
 | `pie_list.c` | PIE (`-fPIE -pie`), function pointers (comparators, visitors in a table), struct-heavy singly linked list |
 | `stripped_calc.c` | recursive-descent expression evaluator; the `-stripped` binaries are the intended "no symbols" targets |
 | `cpp_shapes.cpp` | C++: class hierarchy, virtual methods and vtables, a class template, `std::string`/`std::vector`/`unique_ptr` (many libstdc++ instantiations) |
+| `abi_shapes.c` | System V x86-64 calling-convention shapes, one noinline function each: structures by value (INTEGER, SSE, mixed, MEMORY) and structure results (sret), eight integer and ten `double` arguments, variadic callees (`al`), `float`/`double` arithmetic; no libc calls |
 | `switch_vm.c` | bytecode VM: dense `switch` compiled to a jump table, plus a `noreturn` error function (`vm_fail`) |
 
 Each program is deterministic, uses no network or files, and exits 0.

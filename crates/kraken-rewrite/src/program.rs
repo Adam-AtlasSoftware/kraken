@@ -176,12 +176,13 @@ fn main_source(entry: &RewriteUnit, modules: &[String], image: bool, init: &[Str
             (Param::Double, _) => "0.0".to_string(),
             (Param::Float, _) => "0.0f32".to_string(),
             (Param::FnPtr, _) => "unsafe { std::mem::transmute::<usize, _>(0usize) }".to_string(),
+            (Param::Struct(_), _) => "unsafe { std::mem::zeroed() }".to_string(),
         })
         .collect();
     let call = format!("{}::{}({})", module_of(entry), sig.name, args.join(", "));
     let finish = match sig.ret {
         Ret::Int { .. } => format!("let code = unsafe {{ {call} }} as i32;"),
-        Ret::Void | Ret::Ptr | Ret::Double | Ret::Float => {
+        Ret::Void | Ret::Ptr | Ret::Double | Ret::Float | Ret::Struct(_) => {
             format!("unsafe {{ {call} }};\n    let code = 0;")
         }
     };

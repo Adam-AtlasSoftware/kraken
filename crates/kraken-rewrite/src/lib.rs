@@ -20,6 +20,7 @@ pub mod difftest;
 pub mod error;
 pub mod export;
 pub mod fetch;
+pub mod fpolicy;
 pub mod fuzz;
 pub mod harvest;
 pub mod hints;
@@ -61,7 +62,11 @@ pub use service::{
 pub const PTRDESC_SOURCE: &str = include_str!("runtime/ptrdesc.rs");
 
 /// The runtime shim ([`rt`]) as source text: the program crate's `src/rt.rs`.
-pub const RT_SOURCE: &str = include_str!("runtime/rt.rs");
+pub const RT_SOURCE: &str = concat!(
+    include_str!("runtime/rt.rs"),
+    "\n",
+    include_str!("runtime/rt_eh.rs")
+);
 
 /// The shim as a module `rt` for the function-level test of a translation (the module
 /// documentation lines are dropped: they are inner attributes). The shim is KRAKEN's own code:
@@ -111,10 +116,17 @@ as C does); `rt::puts`, `rt::putchar`, `rt::eputs`, `rt::eputc`, `rt::fflush_std
 `rt::fmodf`, `rt::fmin`, `rt::fmax`, `rt::fminf`, `rt::fmaxf`, `rt::hypot`, `rt::ldexp`. C++ \
 runtime: `rt::operator_new(n)` (`operator new`, also `new[]`), `rt::operator_delete(p)` (every \
 `operator delete`), `rt::throw_length_error(msg)`, `rt::throw_out_of_range(msg)`, \
-`rt::throw_logic_error(msg)`, `rt::throw_invalid_argument(msg)`, `rt::throw_bad_alloc()` (an \
-exception nobody catches: the program ends as libstdc++ ends it), `rt::cxa_guard_acquire`, \
+`rt::throw_logic_error(msg)`, `rt::throw_invalid_argument(msg)`, `rt::throw_bad_alloc()`, \
+`rt::throw(\"type\", \"what\")` (a `throw` of that C++ type), `rt::cxa_guard_acquire`, \
 `rt::cxa_guard_release`, `rt::cxa_atexit`, `rt::cxa_pure_virtual`, `rt::stack_chk_fail`, \
-`rt::unwind_resume` (for `_Unwind_Resume` on a cleanup path). Calling the shim is preferred \
+`rt::unwind_resume` (for `_Unwind_Resume` with no exception in hand). Exceptions: a throw with \
+no handler active ends the program as libstdc++ does (`terminate`, then `abort`). Where the \
+decompile has a handler (`__cxa_begin_catch` on a landing pad), write the protected code as a \
+closure: `match rt::try_catch(|| { ...protected code... }) { Ok(v) => v, Err(e) => { ...handler... } }` \
+with `e: rt::CxxException` (`e.type_name`, `e.what`, `e.what_ptr()`); compare `e.type_name` with \
+the C++ type names the handlers name, give an exception a handler does not take back with \
+`rt::rethrow(e)` (also for `throw;` and for the cleanup path that ends in `_Unwind_Resume`). \
+Calling the shim is preferred \
 over re-deriving a C library function; `print!`, `eprint!` and `std::process::exit` remain \
 fine where the decompile prints a constant or exits. A translated function that another \
 translated function calls keeps its C ABI (`extern \"C\"`, integers, floats and raw pointers); \

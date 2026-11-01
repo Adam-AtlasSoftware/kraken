@@ -1,0 +1,117 @@
+{
+  "binary": "abi_shapes-O2-stripped",
+  "ground_truth_from": "abi_shapes-O2",
+  "sha256": "43dfd2c5be9cef42ba37fddf6d0b1bbdba0cc050a16124937b39442a12733608",
+  "source_file": "src/abi_shapes.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x1040",
+      "size": 707
+    },
+    {
+      "name": "small_swap",
+      "demangled": "small_swap",
+      "entry": "0x1440",
+      "size": 8
+    },
+    {
+      "name": "small_dot",
+      "demangled": "small_dot",
+      "entry": "0x1450",
+      "size": 29
+    },
+    {
+      "name": "mixed_scale",
+      "demangled": "mixed_scale",
+      "entry": "0x1470",
+      "size": 25
+    },
+    {
+      "name": "vec2_rot",
+      "demangled": "vec2_rot",
+      "entry": "0x1490",
+      "size": 43
+    },
+    {
+      "name": "fpair_mix",
+      "demangled": "fpair_mix",
+      "entry": "0x14c0",
+      "size": 41
+    },
+    {
+      "name": "large_make",
+      "demangled": "large_make",
+      "entry": "0x14f0",
+      "size": 30
+    },
+    {
+      "name": "large_sum",
+      "demangled": "large_sum",
+      "entry": "0x1510",
+      "size": 26
+    },
+    {
+      "name": "late_struct",
+      "demangled": "late_struct",
+      "entry": "0x1530",
+      "size": 72
+    },
+    {
+      "name": "eight_args",
+      "demangled": "eight_args",
+      "entry": "0x1580",
+      "size": 62
+    },
+    {
+      "name": "ten_doubles",
+      "demangled": "ten_doubles",
+      "entry": "0x15c0",
+      "size": 117
+    },
+    {
+      "name": "mixed_stack",
+      "demangled": "mixed_stack",
+      "entry": "0x1640",
+      "size": 110
+    },
+    {
+      "name": "sum_ints",
+      "demangled": "sum_ints",
+      "entry": "0x16b0",
+      "size": 201
+    },
+    {
+      "name": "sum_doubles",
+      "demangled": "sum_doubles",
+      "entry": "0x1780",
+      "size": 267
+    },
+    {
+      "name": "float_fma",
+      "demangled": "float_fma",
+      "entry": "0x1890",
+      "size": 9
+    },
+    {
+      "name": "poly",
+      "demangled": "poly",
+      "entry": "0x18a0",
+      "size": 49
+    },
+    {
+      "name": "sum3",
+      "demangled": "sum3",
+      "entry": "0x18e0",
+      "size": 9
+    },
+    {
+      "name": "fdiv_sum",
+      "demangled": "fdiv_sum",
+      "entry": "0x18f0",
+      "size": 29
+    }
+  ]
+}

@@ -21,7 +21,7 @@ use super::{
     with_store,
 };
 use crate::abi::{Arg, Callback, Param, Signature};
-use crate::difftest::{CaseRecord, Counterexample, DiffOptions, Verdict, compare};
+use crate::difftest::{CaseRecord, Counterexample, DiffOptions, Verdict};
 use crate::error::RewriteError;
 use crate::lift::Lift;
 use crate::native::{Build, build_full};
@@ -94,6 +94,19 @@ fn parse_arg(i: usize, param: &Param, v: &Value) -> Result<Arg, ProtoError> {
             }),
             _ => Err(bad("must be \"ascending\" or \"descending\"")),
         },
+        Param::Struct(sh) => {
+            let h = v
+                .get("hex")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("must be {\"hex\": ..} with the bytes of the structure"))?;
+            let clean: String = h.chars().filter(|c| !c.is_whitespace()).collect();
+            let data = crate::abi::from_hex(&clean)
+                .ok_or_else(|| bad("has an odd or non-hex `hex` string"))?;
+            if data.len() != sh.size() {
+                return Err(bad("has the wrong number of bytes for its structure"));
+            }
+            Ok(Arg::Struct { data })
+        }
         Param::Buf => {
             if let Some(h) = v.get("hex").and_then(Value::as_str) {
                 let clean: String = h.chars().filter(|c| !c.is_whitespace()).collect();
@@ -234,7 +247,12 @@ fn replay_cases(
     for case in cases {
         let native = runner.run(&case.args)?;
         replay.cases_run += 1;
-        let differences = compare(&case.expected, &native);
+        let differences = crate::difftest::compare_with(
+            &case.expected,
+            &native,
+            &unit.signature.ret,
+            opts.float_policy,
+        );
         if differences.is_empty() {
             replay.passed += 1;
         } else {
@@ -924,6 +942,7 @@ mod tests {
                 Param::Buf,
             ],
             ret: Ret::Void,
+            variadic_from: None,
         }
     }
 

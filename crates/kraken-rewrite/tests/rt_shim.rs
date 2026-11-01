@@ -465,9 +465,13 @@ fn the_prompt_lists_only_functions_the_shim_has() {
             continue;
         }
         named += 1;
-        let ok = [format!("pub fn {name}("), format!("pub unsafe fn {name}(")]
-            .iter()
-            .any(|d| RT_SOURCE.contains(d));
+        let ok = [
+            format!("pub fn {name}("),
+            format!("pub fn {name}<"),
+            format!("pub unsafe fn {name}("),
+        ]
+        .iter()
+        .any(|d| RT_SOURCE.contains(d));
         assert!(
             ok,
             "the prompt names rt::{name}, which the shim does not define"

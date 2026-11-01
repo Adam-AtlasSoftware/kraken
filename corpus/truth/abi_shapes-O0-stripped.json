@@ -1,0 +1,117 @@
+{
+  "binary": "abi_shapes-O0-stripped",
+  "ground_truth_from": "abi_shapes-O0",
+  "sha256": "8fc69229bc49546b3b719ce56efce804a2c7538cea8de90232f9c90608f64936",
+  "source_file": "src/abi_shapes.c",
+  "opt": "O0",
+  "functions": [
+    {
+      "name": "small_swap",
+      "demangled": "small_swap",
+      "entry": "0x1139",
+      "size": 26
+    },
+    {
+      "name": "small_dot",
+      "demangled": "small_dot",
+      "entry": "0x1153",
+      "size": 50
+    },
+    {
+      "name": "mixed_scale",
+      "demangled": "mixed_scale",
+      "entry": "0x1185",
+      "size": 90
+    },
+    {
+      "name": "vec2_rot",
+      "demangled": "vec2_rot",
+      "entry": "0x11df",
+      "size": 109
+    },
+    {
+      "name": "fpair_mix",
+      "demangled": "fpair_mix",
+      "entry": "0x124c",
+      "size": 76
+    },
+    {
+      "name": "large_make",
+      "demangled": "large_make",
+      "entry": "0x1298",
+      "size": 101
+    },
+    {
+      "name": "large_sum",
+      "demangled": "large_sum",
+      "entry": "0x12fd",
+      "size": 46
+    },
+    {
+      "name": "late_struct",
+      "demangled": "late_struct",
+      "entry": "0x132b",
+      "size": 161
+    },
+    {
+      "name": "eight_args",
+      "demangled": "eight_args",
+      "entry": "0x13cc",
+      "size": 140
+    },
+    {
+      "name": "ten_doubles",
+      "demangled": "ten_doubles",
+      "entry": "0x1458",
+      "size": 232
+    },
+    {
+      "name": "mixed_stack",
+      "demangled": "mixed_stack",
+      "entry": "0x1540",
+      "size": 230
+    },
+    {
+      "name": "sum_ints",
+      "demangled": "sum_ints",
+      "entry": "0x1626",
+      "size": 309
+    },
+    {
+      "name": "sum_doubles",
+      "demangled": "sum_doubles",
+      "entry": "0x175b",
+      "size": 344
+    },
+    {
+      "name": "float_fma",
+      "demangled": "float_fma",
+      "entry": "0x18b3",
+      "size": 31
+    },
+    {
+      "name": "poly",
+      "demangled": "poly",
+      "entry": "0x18d2",
+      "size": 78
+    },
+    {
+      "name": "sum3",
+      "demangled": "sum3",
+      "entry": "0x1920",
+      "size": 36
+    },
+    {
+      "name": "fdiv_sum",
+      "demangled": "fdiv_sum",
+      "entry": "0x1944",
+      "size": 74
+    },
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x198e",
+      "size": 915
+    }
+  ]
+}

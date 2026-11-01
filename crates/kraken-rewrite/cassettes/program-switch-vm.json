@@ -5,8 +5,8 @@
       "fingerprint": {
         "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "dcfcd65b39e63f0971f7bfbb05d89b2dc0203c8db85f6d44ba547ca9df8b9d54",
-        "key": "3e86935c464d0328c61de6f4860b9ce35913f55d4d46e7b060b6509eaec9a7d2"
+        "messages_hash": "851911254f9f717e2e205b22083aa93dfaf2b0463c4ff3ff7af1a1c13cec53e2",
+        "key": "df00654ece730fb1893a0f80f87d752f791c66a295328c1f89981bf7d3260709"
       },
       "events": [
         {
@@ -23,62 +23,8 @@
       "fingerprint": {
         "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "3ad5fa75e1e993bad4a27f7099cc8be9484d27a4040661422a7d27fd9a1a9749",
-        "key": "eba2f2ff2e234aca4181ab04f8c7c65a0115e17cb3dc16c4fc4cf0f65a2a3f80"
-      },
-      "events": [
-        {
-          "type": "text_delta",
-          "text": "<kraken-rust>\n// Reference translation of switch_vm `push`; calls the translated `vm_fail`.\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; 32],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\n/// Pushes `v`; a full stack ends the program through `vm_fail`.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn push(vm: *mut Vm, v: i32) {\n    unsafe {\n        if (*vm).sp >= 32 {\n            vm_fail(b\"stack overflow\\0\".as_ptr() as _, (*vm).pc);\n        }\n        let sp = (*vm).sp;\n        (*vm).stack[sp as usize] = v;\n        (*vm).sp = sp.wrapping_add(1);\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
-        },
-        {
-          "type": "finish",
-          "reason": "stop"
-        }
-      ]
-    },
-    {
-      "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
-        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "ee2b9b2af7f53d6713a555005aa2d5c41c7bc633148ddf7479711ea11ccdb5c9",
-        "key": "fe7b974bcfb52a6d47926a954e4dfccd8e590ce1252e9ce9cc609846ce789be0"
-      },
-      "events": [
-        {
-          "type": "text_delta",
-          "text": "<kraken-rust>\n// Reference translation of switch_vm `pop`; calls the translated `vm_fail`.\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; 32],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\n/// Pops the top of the stack; an empty stack ends the program through `vm_fail`.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn pop(vm: *mut Vm) -> i32 {\n    unsafe {\n        if (*vm).sp <= 0 {\n            vm_fail(b\"stack underflow\\0\".as_ptr() as _, (*vm).pc);\n        }\n        (*vm).sp = (*vm).sp.wrapping_sub(1);\n        (*vm).stack[(*vm).sp as usize]\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
-        },
-        {
-          "type": "finish",
-          "reason": "stop"
-        }
-      ]
-    },
-    {
-      "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
-        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "33b393d524a133b6502f7ee9d00bf872c337f4822aa5dd2df5ffc065204a3da7",
-        "key": "fba5845459eb10703eafe40efb3af466eb2b8c7cf9215e688b9cfe969372e64c"
-      },
-      "events": [
-        {
-          "type": "text_delta",
-          "text": "<kraken-rust>\n// Reference translation of switch_vm `vm_run`; calls the translated `push`, `pop` and `vm_fail`.\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; 32],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\n/// Runs bytecode `code[..len]` on `vm`; returns the top of the stack at HALT (0 when empty).\n/// An operand or a jump target is fetched without a bounds check, as in the original.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn vm_run(vm: *mut Vm, code: *const u8, len: u32) -> i32 {\n    unsafe {\n        loop {\n            if (*vm).pc >= len {\n                vm_fail(b\"pc out of range\\0\".as_ptr() as _, (*vm).pc);\n            }\n            let op = *code.add((*vm).pc as usize);\n            (*vm).pc = (*vm).pc.wrapping_add(1);\n            (*vm).steps = (*vm).steps.wrapping_add(1);\n            match op {\n                0 => {\n                    return if (*vm).sp != 0 {\n                        (*vm).stack[((*vm).sp - 1) as usize]\n                    } else {\n                        0\n                    };\n                }\n                1 => {\n                    let imm = *code.add((*vm).pc as usize) as i8 as i32;\n                    (*vm).pc = (*vm).pc.wrapping_add(1);\n                    push(vm as _, imm);\n                }\n                2 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_add(b));\n                }\n                3 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_sub(b));\n                }\n                4 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_mul(b));\n                }\n                5 => {\n                    let a = pop(vm as _);\n                    push(vm as _, a);\n                    push(vm as _, a);\n                }\n                6 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, b);\n                    push(vm as _, a);\n                }\n                7 => {\n                    pop(vm as _);\n                }\n                8 => {\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_neg());\n                }\n                9 => {\n                    let a = pop(vm as _);\n                    if a != 0 {\n                        (*vm).pc = u32::from(*code.add((*vm).pc as usize));\n                    } else {\n                        (*vm).pc = (*vm).pc.wrapping_add(1);\n                    }\n                }\n                10 => {\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_sub(1));\n                }\n                11 => {\n                    // The original reads stack[sp - 1] without checking sp; so does this.\n                    let top = *(*vm).stack.as_ptr().offset((*vm).sp as isize - 1);\n                    rt::printf(b\"out: %d\\n\\0\".as_ptr(), &[rt::Arg::Int(i64::from(top))]);\n                }\n                12 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a & b);\n                }\n                13 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a | b);\n                }\n                14 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a ^ b);\n                }\n                _ => vm_fail(b\"bad opcode\\0\".as_ptr() as _, (*vm).pc.wrapping_sub(1)),\n            }\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
-        },
-        {
-          "type": "finish",
-          "reason": "stop"
-        }
-      ]
-    },
-    {
-      "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
-        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "61acc10196e25a716615856a41e2d1537ef2582bfa15e7a60c0ba7516862c683",
-        "key": "0700e14b01ef733d10cc3a0e06318a9281a28329032afd2cf9be731a263409f6"
+        "messages_hash": "0479570ae6d48cc093f2a3087abc944d332d079b69e85a8c2af8803e8400e73e",
+        "key": "db7c2623091f1cdefa07274034b3279f90880bf8821c9eb6f4cef7b97157c8d5"
       },
       "events": [
         {
@@ -95,8 +41,62 @@
       "fingerprint": {
         "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "41d748516168863d2b8e817049b585e1fbe5f07e887c744f3ba7484c1eb3b80d",
-        "key": "31e2ce9dd774e9074b10cbc9edca1fc59aa3db793fe217c723ec0a4202cf657b"
+        "messages_hash": "04859658a65d0ae0f56bf1f1f7005a63166143ecc5b084feafd18fa286612688",
+        "key": "8dbf1376bba3d19b66a774f0a2f1f702a1207f848cf6bd34659a9c52495fb5c7"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of switch_vm `push`; calls the translated `vm_fail`.\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; 32],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\n/// Pushes `v`; a full stack ends the program through `vm_fail`.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn push(vm: *mut Vm, v: i32) {\n    unsafe {\n        if (*vm).sp >= 32 {\n            vm_fail(b\"stack overflow\\0\".as_ptr() as _, (*vm).pc);\n        }\n        let sp = (*vm).sp;\n        (*vm).stack[sp as usize] = v;\n        (*vm).sp = sp.wrapping_add(1);\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "4e94235e37fafce62acf97d53599975ff4b906cc1cfc38631a9da751ad82a216",
+        "key": "cd55f6604980e01225a83caa84d8b69485f84f61879e3ad8e59e809bb0b1fc8e"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of switch_vm `pop`; calls the translated `vm_fail`.\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; 32],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\n/// Pops the top of the stack; an empty stack ends the program through `vm_fail`.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn pop(vm: *mut Vm) -> i32 {\n    unsafe {\n        if (*vm).sp <= 0 {\n            vm_fail(b\"stack underflow\\0\".as_ptr() as _, (*vm).pc);\n        }\n        (*vm).sp = (*vm).sp.wrapping_sub(1);\n        (*vm).stack[(*vm).sp as usize]\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "0d9be881148cb80cc2bebd600b3a8a24747125be6edd98ccc0cc499758fa26cd",
+        "key": "a6d39bcfce022bb5b9cdf5568cee2f0865460fe07c4647de78f8972532449f56"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of switch_vm `vm_run`; calls the translated `push`, `pop` and `vm_fail`.\n\n#[repr(C)]\npub struct Vm {\n    pub stack: [i32; 32],\n    pub sp: i32,\n    pub pc: u32,\n    pub steps: u64,\n}\n\n/// Runs bytecode `code[..len]` on `vm`; returns the top of the stack at HALT (0 when empty).\n/// An operand or a jump target is fetched without a bounds check, as in the original.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn vm_run(vm: *mut Vm, code: *const u8, len: u32) -> i32 {\n    unsafe {\n        loop {\n            if (*vm).pc >= len {\n                vm_fail(b\"pc out of range\\0\".as_ptr() as _, (*vm).pc);\n            }\n            let op = *code.add((*vm).pc as usize);\n            (*vm).pc = (*vm).pc.wrapping_add(1);\n            (*vm).steps = (*vm).steps.wrapping_add(1);\n            match op {\n                0 => {\n                    return if (*vm).sp != 0 {\n                        (*vm).stack[((*vm).sp - 1) as usize]\n                    } else {\n                        0\n                    };\n                }\n                1 => {\n                    let imm = *code.add((*vm).pc as usize) as i8 as i32;\n                    (*vm).pc = (*vm).pc.wrapping_add(1);\n                    push(vm as _, imm);\n                }\n                2 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_add(b));\n                }\n                3 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_sub(b));\n                }\n                4 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_mul(b));\n                }\n                5 => {\n                    let a = pop(vm as _);\n                    push(vm as _, a);\n                    push(vm as _, a);\n                }\n                6 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, b);\n                    push(vm as _, a);\n                }\n                7 => {\n                    pop(vm as _);\n                }\n                8 => {\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_neg());\n                }\n                9 => {\n                    let a = pop(vm as _);\n                    if a != 0 {\n                        (*vm).pc = u32::from(*code.add((*vm).pc as usize));\n                    } else {\n                        (*vm).pc = (*vm).pc.wrapping_add(1);\n                    }\n                }\n                10 => {\n                    let a = pop(vm as _);\n                    push(vm as _, a.wrapping_sub(1));\n                }\n                11 => {\n                    // The original reads stack[sp - 1] without checking sp; so does this.\n                    let top = *(*vm).stack.as_ptr().offset((*vm).sp as isize - 1);\n                    rt::printf(b\"out: %d\\n\\0\".as_ptr(), &[rt::Arg::Int(i64::from(top))]);\n                }\n                12 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a & b);\n                }\n                13 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a | b);\n                }\n                14 => {\n                    let b = pop(vm as _);\n                    let a = pop(vm as _);\n                    push(vm as _, a ^ b);\n                }\n                _ => vm_fail(b\"bad opcode\\0\".as_ptr() as _, (*vm).pc.wrapping_sub(1)),\n            }\n        }\n    }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "b30b6c8c2ab80762836c6db641626047edab1254195856c886fd454d11733130",
+        "key": "3e1a285f4dcfaf906557ef3f3b0fe93993a1cfb4d97096e2dc3bb0260245b00e"
       },
       "events": [
         {

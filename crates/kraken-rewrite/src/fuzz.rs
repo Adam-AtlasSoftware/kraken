@@ -79,7 +79,7 @@ fn mutate_bytes(data: &mut [u8], protected: &BTreeSet<usize>, rng: &mut Rng) {
 fn mutate_arg(arg: &mut Arg, rng: &mut Rng) {
     match arg {
         Arg::Int { value } => *value = mutate_int(*value, rng),
-        Arg::Buf { data } => mutate_bytes(data, &BTreeSet::new(), rng),
+        Arg::Buf { data } | Arg::Struct { data } => mutate_bytes(data, &BTreeSet::new(), rng),
         Arg::Double { bits } => *bits ^= 1 << rng.below(20),
         Arg::Float { bits } => *bits ^= 1 << rng.below(12),
         Arg::FnPtr { callback } => {

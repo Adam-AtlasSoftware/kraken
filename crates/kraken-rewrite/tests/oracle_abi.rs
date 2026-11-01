@@ -56,6 +56,7 @@ fn sig(params: Vec<Param>, ret: Ret) -> Signature {
         name: "f".into(),
         params,
         ret,
+        variadic_from: None,
     }
 }
 

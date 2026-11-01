@@ -3,7 +3,7 @@
 //! harvested (recorded from a run of the real program, [`Recorded`], made by `harvest.rs`) and
 //! fuzzed (seeded mutations of recorded cases, `fuzz.rs`). The generators live here.
 
-use crate::abi::{Arg, Callback, Link, Param, Signature};
+use crate::abi::{Arg, Callback, Link, Param, Scalar, Signature, StructShape};
 use crate::error::RewriteError;
 
 /// A producer of test cases.
@@ -32,6 +32,7 @@ pub fn case_fits(sig: &Signature, case: &[Arg]) -> bool {
                     | (Arg::Double { .. }, Param::Double)
                     | (Arg::Float { .. }, Param::Float)
                     | (Arg::FnPtr { .. }, Param::FnPtr)
+                    | (Arg::Struct { .. }, Param::Struct(_))
             )
         })
 }
@@ -260,6 +261,9 @@ pub enum ParamGen {
     Float,
     /// One of the host callbacks.
     FnPtr,
+    /// A structure by value: every field random (small integers half the time, the `double`
+    /// edge values and fractions for floating-point fields).
+    ByValue(StructShape),
     /// A pointer to an object that holds pointers to further objects (see [`ObjectGen`]).
     Graph(ObjectGen),
     /// A struct of unknown layout: every aligned word of a 32-byte object is null, a small
@@ -573,6 +577,29 @@ fn gen_param(
             },
             0,
         ),
+        ParamGen::ByValue(shape) => {
+            let (offsets, size, _) = shape.layout();
+            let mut data = vec![0u8; size];
+            for (f, off) in shape.fields.iter().zip(offsets) {
+                let bytes: Vec<u8> = match f {
+                    Scalar::Double => gen_double(rng).to_le_bytes().to_vec(),
+                    Scalar::Float => (f64::from_bits(gen_double(rng)) as f32)
+                        .to_bits()
+                        .to_le_bytes()
+                        .to_vec(),
+                    Scalar::Int { bits, .. } => {
+                        let v = if rng.below(2) == 0 {
+                            rng.below(256)
+                        } else {
+                            rng.next_u64()
+                        };
+                        v.to_le_bytes()[..usize::from(*bits) / 8].to_vec()
+                    }
+                };
+                data[off..off + bytes.len()].copy_from_slice(&bytes);
+            }
+            (Arg::Struct { data }, 0)
+        }
         ParamGen::FnPtr => {
             let cb =
                 Callback::ALL[usize::try_from(rng.below(Callback::ALL.len() as u64)).unwrap_or(0)];

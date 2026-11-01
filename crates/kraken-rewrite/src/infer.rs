@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::abi::{Param, Ret, Signature};
+use crate::abi::{Param, Ret, Signature, StructShape};
 use crate::difftest::{Generator, InputSpec, IntGen, ParamGen, TextGen};
 
 /// Why a signature cannot be checked yet.
@@ -249,7 +249,26 @@ enum Mode {
     Program,
 }
 
-fn classify_param(decl: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Param, Unsupported> {
+/// Resolves the name of a structure type to its fields (from the program's type store).
+pub type StructLookup<'a> = &'a dyn Fn(&str) -> Option<StructShape>;
+
+fn struct_of(ty: &str, structs: Option<StructLookup<'_>>) -> Option<StructShape> {
+    if is_pointer(ty) {
+        return None;
+    }
+    let word = ty
+        .trim()
+        .strip_prefix("struct ")
+        .unwrap_or_else(|| base_word(ty));
+    structs?(word.trim())
+}
+
+fn classify_param(
+    decl: &str,
+    mode: Mode,
+    structs: Option<StructLookup<'_>>,
+    notes: &mut Vec<String>,
+) -> Result<Param, Unsupported> {
     let ty = param_type(decl);
     if is_function_pointer(&ty) {
         return Ok(Param::FnPtr);
@@ -267,6 +286,10 @@ fn classify_param(decl: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Par
     }
     match int_type(&ty) {
         Some((bits, signed)) => Ok(Param::Int { bits, signed }),
+        None if struct_of(&ty, structs).is_some() => {
+            let shape = struct_of(&ty, structs).ok_or_else(|| un("structure type"))?;
+            Ok(Param::Struct(shape))
+        }
         None if mode == Mode::Program => {
             notes.push(format!(
                 "parameter `{decl}` has a type the signature does not size; it is passed as a \
@@ -284,7 +307,12 @@ fn classify_param(decl: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Par
     }
 }
 
-fn classify_ret(ty: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Ret, Unsupported> {
+fn classify_ret(
+    ty: &str,
+    mode: Mode,
+    structs: Option<StructLookup<'_>>,
+    notes: &mut Vec<String>,
+) -> Result<Ret, Unsupported> {
     let ty = ty.trim();
     if ty == "void" {
         return Ok(Ret::Void);
@@ -310,6 +338,10 @@ fn classify_ret(ty: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Ret, Un
     }
     match int_type(ty) {
         Some((bits, signed)) => Ok(Ret::Int { bits, signed }),
+        None if struct_of(ty, structs).is_some() => {
+            let shape = struct_of(ty, structs).ok_or_else(|| un("structure type"))?;
+            Ok(Ret::Struct(shape))
+        }
         None if program => {
             notes.push(format!(
                 "the result type `{ty}` is not sized by the signature; it is returned as a 64-bit \
@@ -326,7 +358,24 @@ fn classify_ret(ty: &str, mode: Mode, notes: &mut Vec<String>) -> Result<Ret, Un
 
 /// Reads `signature` (as `list_functions` renders it) into a [`Signature`] named `name`.
 pub fn infer_signature(signature: &str, name: &str) -> Result<Signature, Unsupported> {
-    infer_with(signature, name, None, Mode::Function, &mut Vec::new())
+    infer_with(signature, name, None, Mode::Function, None, &mut Vec::new())
+}
+
+/// [`infer_signature`] where `structs` resolves the names of structure types, so a structure
+/// passed or returned by value becomes a [`Param::Struct`] or [`Ret::Struct`].
+pub fn infer_signature_with_structs(
+    signature: &str,
+    name: &str,
+    structs: StructLookup<'_>,
+) -> Result<Signature, Unsupported> {
+    infer_with(
+        signature,
+        name,
+        None,
+        Mode::Function,
+        Some(structs),
+        &mut Vec::new(),
+    )
 }
 
 /// What [`infer_signature_for_program`] read.
@@ -351,7 +400,14 @@ pub fn infer_signature_for_program(
     display: &str,
 ) -> Result<ProgramSignature, Unsupported> {
     let mut guesses = Vec::new();
-    let sig = infer_with(signature, name, Some(display), Mode::Program, &mut guesses)?;
+    let sig = infer_with(
+        signature,
+        name,
+        Some(display),
+        Mode::Program,
+        None,
+        &mut guesses,
+    )?;
     Ok(ProgramSignature {
         signature: sig,
         compile_only: None,
@@ -410,6 +466,7 @@ fn infer_with(
     name: &str,
     display: Option<&str>,
     mode: Mode,
+    structs: Option<StructLookup<'_>>,
     notes: &mut Vec<String>,
 ) -> Result<Signature, Unsupported> {
     let sig = signature.trim();
@@ -421,7 +478,7 @@ fn infer_with(
     if ret_ty.is_empty() {
         return Err(un("the signature has no result type"));
     }
-    let ret = classify_ret(ret_ty, mode, notes)?;
+    let ret = classify_ret(ret_ty, mode, structs, notes)?;
     let inner = sig[open + 1..close].trim();
     let decls = if inner.is_empty() || inner == "void" {
         Vec::new()
@@ -433,19 +490,15 @@ fn infer_with(
     }
     let params = decls
         .iter()
-        .map(|d| classify_param(d, mode, notes))
+        .map(|d| classify_param(d, mode, structs, notes))
         .collect::<Result<Vec<_>, _>>()?;
     let sig = Signature {
         name: name.to_string(),
         params,
         ret,
+        variadic_from: None,
     };
-    if !sig.fits_registers() {
-        return Err(un(
-            "more than six integer or eight floating-point parameters (stack arguments are not \
-             modelled)",
-        ));
-    }
+    sig.check().map_err(un)?;
     Ok(sig)
 }
 
@@ -473,6 +526,7 @@ pub fn generic_inputs(sig: &Signature) -> InputSpec {
             Param::Double => ParamGen::Double,
             Param::Float => ParamGen::Float,
             Param::FnPtr => ParamGen::FnPtr,
+            Param::Struct(sh) => ParamGen::ByValue(sh.clone()),
         })
         .collect();
     InputSpec {
@@ -566,21 +620,36 @@ mod tests {
         for (text, needle) in [
             ("long double f(int w)", "floating-point"),
             ("int f(long double w)", "floating-point"),
-            (
-                "int f(int a, double b, double c, double d, double e, double g, double h, double i, double j, double k)",
-                "eight",
-            ),
             ("int printf(char * __format, ...)", "variadic"),
-            (
-                "int f(int a, int b, int c, int d, int e, int g, int h)",
-                "six",
-            ),
             ("undefined FUN_00101020()", "result type"),
             ("int f(vec3 v)", "vec3"),
         ] {
             let e = sig(text).expect_err(text);
             assert!(e.0.contains(needle), "{text}: {e}");
         }
+    }
+
+    #[test]
+    fn arguments_beyond_the_registers_and_structures_by_value_are_inferred() {
+        let s = sig("int f(int a, int b, int c, int d, int e, int g, int h, double x)")
+            .expect("stack arguments");
+        assert_eq!(s.params.len(), 8);
+        let lookup = |name: &str| {
+            (name == "vec2").then(|| StructShape {
+                name: "Vec2".into(),
+                fields: vec![crate::abi::Scalar::Double, crate::abi::Scalar::Double],
+            })
+        };
+        let s = infer_signature_with_structs("vec2 rot(vec2 v, double c)", "rot", &lookup)
+            .expect("structure");
+        assert!(matches!(&s.params[0], Param::Struct(sh) if sh.name == "Vec2"));
+        assert!(matches!(&s.ret, Ret::Struct(_)));
+        let s = infer_signature_with_structs("int f(struct vec2 v)", "f", &lookup).expect("sig");
+        assert!(matches!(&s.params[0], Param::Struct(_)));
+        // A pointer to it is still a buffer, and an unknown type is still refused.
+        let s = infer_signature_with_structs("int f(vec2 * v)", "f", &lookup).expect("sig");
+        assert_eq!(s.params, vec![Param::Buf]);
+        assert!(infer_signature_with_structs("int f(vec3 v)", "f", &lookup).is_err());
     }
 
     #[test]
@@ -625,7 +694,7 @@ mod tests {
     fn pointer_and_untyped_results_are_accepted_and_pointers_are_checked() {
         let r = infer_signature_for_program("char * op_name(uint op)", "op_name", "op_name")
             .expect("sig");
-        assert_eq!((r.signature.ret, r.compile_only), (Ret::Ptr, None));
+        assert_eq!((r.signature.ret.clone(), r.compile_only), (Ret::Ptr, None));
         assert_eq!(
             sig("node * node_new(int id, char * name, int x, int y, double w)")
                 .expect("a function-level signature too")

@@ -293,6 +293,10 @@ impl RewriteTask {
         if !self.layout_notes.trim().is_empty() {
             user.push_str(&format!("Layout notes:\n{}\n\n", self.layout_notes.trim()));
         }
+        let abi_notes = self.signature.prompt_notes();
+        if !abi_notes.is_empty() {
+            user.push_str(&format!("Calling convention notes:\n{abi_notes}\n\n"));
+        }
         if let Some(h) = &self.hints {
             user.push_str(&hints_text(h, self.hints_from_agent));
         }

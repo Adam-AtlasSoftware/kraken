@@ -3,8 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::abi::{Arg, Observation, Signature, Termination};
+use crate::abi::{Arg, Observation, Ret, Signature, Termination};
 use crate::error::RewriteError;
+use crate::fpolicy::FloatPolicy;
 use crate::native::{Build, NativeRunner, RunnerImage, build_full};
 use crate::oracle::FunctionOracle;
 use crate::sandbox::Confinement;
@@ -30,6 +31,9 @@ pub struct DiffOptions {
     pub trusted_prelude: String,
     /// The program image the runner installs, so translations can use the program's globals.
     pub image: Option<RunnerImage>,
+    /// How `float` and `double` results are compared (exact unless `[rewrite] float_ulp` says
+    /// otherwise).
+    pub float_policy: FloatPolicy,
 }
 
 impl Default for DiffOptions {
@@ -41,6 +45,7 @@ impl Default for DiffOptions {
             confinement: Confinement::default(),
             trusted_prelude: String::new(),
             image: None,
+            float_policy: FloatPolicy::Exact,
         }
     }
 }
@@ -129,8 +134,19 @@ fn clip_desc(d: Option<&str>) -> String {
     }
 }
 
-/// Compares what the original and the translation did.
+/// Compares what the original and the translation did, floating-point results bit for bit.
 pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
+    compare_with(orig, native, &Ret::Void, FloatPolicy::Exact)
+}
+
+/// [`compare`] for a function with result type `ret`: `float`, `double` and structure results
+/// follow `policy`.
+pub fn compare_with(
+    orig: &Observation,
+    native: &Observation,
+    ret: &Ret,
+    policy: FloatPolicy,
+) -> Vec<String> {
     let mut d = Vec::new();
     if !same_class(&orig.termination, &native.termination) {
         d.push(format!(
@@ -154,10 +170,26 @@ pub fn compare(orig: &Observation, native: &Observation) -> Vec<String> {
         ));
     }
     if orig.termination == Termination::Returned {
-        if orig.ret != native.ret {
+        if !policy.ret_agree(ret, orig.ret, native.ret) {
             d.push(format!(
                 "return value: original {:?}, translation {:?}",
                 orig.ret, native.ret
+            ));
+        }
+        let bytes_agree = match (ret, &orig.ret_bytes, &native.ret_bytes) {
+            (Ret::Struct(sh), Some(a), Some(b)) => policy.struct_agree(sh, a, b),
+            _ => orig.ret_bytes == native.ret_bytes,
+        };
+        if !bytes_agree {
+            d.push(format!(
+                "structure result: original {}, translation {}",
+                orig.ret_bytes
+                    .as_deref()
+                    .map_or("none".into(), crate::abi::to_hex),
+                native
+                    .ret_bytes
+                    .as_deref()
+                    .map_or("none".into(), crate::abi::to_hex)
             ));
         }
         if orig.ret_object != native.ret_object {
@@ -241,6 +273,7 @@ fn input_size(args: &[Arg]) -> usize {
     args.iter()
         .map(|a| match a {
             Arg::Int { .. } | Arg::Double { .. } | Arg::Float { .. } | Arg::FnPtr { .. } => 1,
+            Arg::Struct { data } => data.len(),
             Arg::Buf { data } => data.len(),
             Arg::Graph { objects, .. } => objects.iter().map(Vec::len).sum(),
         })
@@ -288,7 +321,7 @@ pub fn run_differential(
         if matches!(orig.termination, Termination::Fault { .. }) {
             faults += 1;
         }
-        let differences = compare(&orig, &native);
+        let differences = compare_with(&orig, &native, &sig.ret, opts.float_policy);
         if differences.is_empty() {
             report.passed += 1;
         } else {

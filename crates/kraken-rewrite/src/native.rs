@@ -43,6 +43,7 @@ pub struct NativeRunner {
 
 /// Result of building a translation.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Build {
     /// Ready to run.
     Ready(Box<NativeRunner>),
@@ -64,6 +65,11 @@ fn runner_source(sig: &Signature, image: Option<&RunnerImage>, shim: bool) -> St
         .map(|(i, p)| match p {
             Param::Double => format!("f64::from_bits(vals[{i}])"),
             Param::Float => format!("f32::from_bits(vals[{i}] as u32)"),
+            Param::Struct(sh) => format!(
+                "unsafe {{ std::ptr::read_unaligned(sbytes[vals[{i}] as usize].as_ptr() as *const \
+                 translation::{}) }}",
+                sh.name
+            ),
             Param::FnPtr => {
                 format!("unsafe {{ std::mem::transmute::<usize, _>(vals[{i}] as usize) }}")
             }
@@ -75,11 +81,11 @@ fn runner_source(sig: &Signature, image: Option<&RunnerImage>, shim: bool) -> St
         sig.name,
         call_args.join(", ")
     );
-    let body = match sig.ret {
+    let body = match &sig.ret {
         Ret::Void => format!("{call};\n    let ret: Option<u64> = None;"),
         Ret::Int { bits, .. } => format!(
             "let r = {call};\n    let ret: Option<u64> = Some((r as u64) & {:#x}u64);",
-            mask(bits)
+            mask(*bits)
         ),
         // A pointer result is described by what it points at, as the oracle does: heap blocks
         // differ in address between the two sides (see `ptrdesc`).
@@ -103,6 +109,12 @@ fn runner_source(sig: &Signature, image: Option<&RunnerImage>, shim: bool) -> St
         }
         Ret::Float => format!(
             "let r: f32 = {call};\n    let ret: Option<u64> = Some(u64::from(r.to_bits()));"
+        ),
+        Ret::Struct(sh) => format!(
+            "let r: translation::{n} = {call};\n    let ret: Option<u64> = None;\n    \
+             ret_bytes = Some(unsafe {{ std::slice::from_raw_parts(&r as *const translation::{n} \
+             as *const u8, std::mem::size_of::<translation::{n}>()) }}.to_vec());",
+            n = sh.name
         ),
     };
     let body = if sig.ret == Ret::Ptr {
@@ -253,6 +265,7 @@ fn main() {{
     let argv: Vec<String> = std::env::args().collect();
 {install}    let case = std::fs::read_to_string(&argv[1]).unwrap();
     let mut bufs: Vec<Buf> = Vec::new();
+    let mut sbytes: Vec<Vec<u8>> = Vec::new();
     // Per argument: (is a pointer to bufs[idx], plain value or index).
     let mut slots: Vec<(bool, u64)> = Vec::new();
     let mut links: Vec<(usize, usize, usize, usize, usize)> = Vec::new(); // first, from, off, to, to_off
@@ -261,6 +274,10 @@ fn main() {{
         let (kind, rest) = line.split_once(' ').unwrap_or((line, ""));
         match kind {{
             "i" | "d" => slots.push((false, u64::from_str_radix(rest, 16).unwrap())),
+            "s" => {{
+                sbytes.push(unhex(rest));
+                slots.push((false, (sbytes.len() - 1) as u64));
+            }}
             "f" => {{
                 let k: u32 = rest.parse().unwrap();
                 let addr = if k == 0 {{ cb0 as usize as u64 }} else {{ cb1 as usize as u64 }};
@@ -296,6 +313,7 @@ fn main() {{
     }}
     let objs: Vec<(u64, usize)> = bufs.iter().zip(&addrs).map(|(b, a)| (*a, b.len)).collect();
     OBJECTS.with(|o| *o.borrow_mut() = objs.clone());
+    let mut ret_bytes: Option<Vec<u8>> = None;
     let vals: Vec<u64> = slots
         .iter()
         .map(|&(is_buf, v)| if is_buf {{ addrs[v as usize] }} else {{ v }})
@@ -305,6 +323,10 @@ fn main() {{
     match ret {{
         Some(r) => writeln!(out, "ret {{:x}}", r).unwrap(),
         None => writeln!(out, "ret none").unwrap(),
+    }}
+    if let Some(b) = &ret_bytes {{
+        let hex: String = b.iter().map(|x| format!("{{:02x}}", x)).collect();
+        writeln!(out, "rs {{}}", hex).unwrap();
     }}
     if let Some(o) = &ret_object {{
         writeln!(out, "ro {{}}", o).unwrap();
@@ -387,18 +409,17 @@ fn build_parts(
     if let Some(why) = lint_translation(rust_code) {
         return Ok(Build::Rejected(why));
     }
-    if !sig.fits_registers() {
-        return Err(RewriteError::Unsupported(
-            "more than six integer or eight floating-point parameters".into(),
-        ));
-    }
+    sig.check().map_err(RewriteError::Unsupported)?;
     let tc = toolchain()?;
     let dir = scratch_dir("kraken-rewrite-")?;
     let wr = |name: &str, text: &str| {
         std::fs::write(dir.path().join(name), text)
             .map_err(|e| RewriteError::Compile(format!("{name}: {e}")))
     };
-    wr("translation.rs", &format!("{trusted}{rust_code}"))?;
+    wr(
+        "translation.rs",
+        &format!("{trusted}{}{rust_code}", sig.type_defs()),
+    )?;
     wr(
         "main.rs",
         &runner_source(sig, image, trusted.contains("mod rt {")),
@@ -482,6 +503,12 @@ impl NativeRunner {
                 }
                 (Param::Buf, Arg::Buf { data }) => {
                     case.push_str(&format!("b {}\n", to_hex(data)));
+                }
+                (Param::Struct(sh), Arg::Struct { data }) => {
+                    if data.len() != sh.size() {
+                        return Err(RewriteError::Unsupported("structure size".into()));
+                    }
+                    case.push_str(&format!("s {}\n", to_hex(data)));
                 }
                 (Param::Double, Arg::Double { bits }) => {
                     case.push_str(&format!("d {bits:x}\n"));
@@ -569,6 +596,14 @@ impl NativeRunner {
                     }
                     (Some("buf"), Some(_), None) => obs.buffers.push(Vec::new()),
                     (Some("cb"), Some(ev), _) => obs.callbacks.push(ev.to_string()),
+                    (Some("rs"), Some(h), _) => {
+                        let mut b = from_hex(h)
+                            .ok_or_else(|| RewriteError::Native("bad structure result".into()))?;
+                        if let Ret::Struct(sh) = &self.sig.ret {
+                            sh.zero_padding(&mut b);
+                        }
+                        obs.ret_bytes = Some(b);
+                    }
                     (Some("ro"), Some(_), _) => {
                         obs.ret_object = line.strip_prefix("ro ").map(str::to_string);
                     }

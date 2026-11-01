@@ -214,6 +214,9 @@ pub struct RewriteConfig {
     pub max_attempts: u32,
     /// Functions of a program rewrite translated at once (`[rewrite] parallel`).
     pub parallel: u32,
+    /// Units in the last place a `float`/`double` result may differ by (`[rewrite] float_ulp`;
+    /// 0 compares bit for bit).
+    pub float_ulp: u32,
 }
 
 /// Functions translated at once when nothing says otherwise.
@@ -230,6 +233,7 @@ impl Default for RewriteConfig {
             max_callees: 6,
             max_attempts: DEFAULT_ATTEMPTS,
             parallel: DEFAULT_PARALLEL,
+            float_ulp: 0,
         }
     }
 }
@@ -254,6 +258,7 @@ impl RewriteService {
             RewriteConfig {
                 parallel: kraken_assist::rewrite_parallel(path.as_deref())
                     .unwrap_or(DEFAULT_PARALLEL),
+                float_ulp: kraken_assist::rewrite_float_ulp(path.as_deref()).unwrap_or(0),
                 ..RewriteConfig::default()
             },
         )
@@ -374,6 +379,10 @@ fn render_arg(a: &Arg) -> String {
         Arg::Double { bits } => format!("{}", f64::from_bits(*bits)),
         Arg::Float { bits } => format!("{}f", f32::from_bits(*bits)),
         Arg::FnPtr { callback } => format!("callback {callback:?}"),
+        Arg::Struct { data } => {
+            let head: String = data.iter().take(32).map(|b| format!("{b:02x}")).collect();
+            format!("struct[{}]={head}", data.len())
+        }
         Arg::Graph { objects, links } => {
             let sizes: Vec<String> = objects.iter().map(|o| o.len().to_string()).collect();
             format!("graph[{}; {} links]", sizes.join(","), links.len())
@@ -1767,6 +1776,7 @@ impl RewriteService {
             seed: args.seed.unwrap_or(defaults.seed),
             random_cases: args.cases.map_or(defaults.random_cases, |c| c as usize),
             confinement: self.cfg.confinement.clone(),
+            float_policy: crate::fpolicy::FloatPolicy::from_ulps(self.cfg.float_ulp),
             ..defaults
         };
         let train = {

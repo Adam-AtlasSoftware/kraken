@@ -69,6 +69,17 @@ A recorded input holds what the function was handed. Globals it reads are not re
 
 In the Spec view, **Edit the spec** lets you correct what the model wrote. KRAKEN checks that every fact cites an address, and stores the edit as the function's newest spec, which "Rewrite from the spec" then uses.
 
+#### Calling-convention shapes (System V x86-64)
+
+The test calls the original and the Rust function with the same values placed the same way, so these shapes can be compared and not only integers, pointers and `double`s:
+
+- **More arguments than registers.** Integers and pointers beyond the sixth and `float`/`double`s beyond the eighth go on the stack, on both sides.
+- **Structures by value.** A structure of integers, pointers, `float`s and `double`s is classified as the ABI says: up to 16 bytes it travels in registers (INTEGER eightbytes in `rdi`.., SSE eightbytes in `xmm0`..), and when the registers left cannot hold all of it, or it is larger than 16 bytes, it is copied to the stack. A result of up to 16 bytes comes back in `rax`/`rdx`/`xmm0`/`xmm1` by class; a larger one is written through a hidden first argument. Results are compared field by field (padding bytes are ignored). The Rust function takes and returns a `#[repr(C)]` type that KRAKEN defines in front of the translation (`f0`, `f1`, ... as fields); the prompt says so.
+- **Variadic functions.** The Rust function takes the variadic arguments as ordinary parameters, and the test sets `al` to the number of SSE registers used, as every caller of a variadic function must. The prompt tells the model which parameters stand for the variadic arguments.
+- **`float` and `double` results.** Compared bit for bit by default. Set `float_ulp` in the `[rewrite]` table of `config.toml` (for example `float_ulp = 4`; `[rewrite]` with only that key keeps using your normal model) to accept results up to that many units in the last place apart, for a translation that adds in another order or uses another libm. Two NaNs always agree; a NaN never agrees with a number; infinities agree only with themselves. The setting applies to results and to the `float`/`double` fields of a structure result.
+
+KRAKEN reads these shapes from the decompiler's signature when it can: stack arguments always, structures when the type store describes the structure as plain integer, pointer and floating-point fields. A variadic function is checked when its signature is written out with the arguments to pass, as the corpus program `corpus/src/abi_shapes.c` does (`tests/abi_shapes.rs` compares every shape of it, at `-O0` and `-O2`, against hand-written Rust). The library export of rewritten functions does not support structures by value yet and says so.
+
 ### 4. Accept
 
 Accepting marks one version of a function as the one to export. Accept a function in its detail view, or use **Accept all verified** in the Rewrite tab. That asks you to confirm and lists how many functions it will accept. Agents can translate and test, but accepting is reserved for you.
@@ -118,14 +129,14 @@ Ordinary C and C++ programs for Linux on x86-64 work, not just small examples:
 - **Globals.** The program's data (globals, static variables, constant tables, strings) is copied into the Rust program as one shared block at the addresses the decompiler shows. Every translated function reads and writes the same block, so state that one function sets is seen by the next, as in the original.
 - **Floating point.** `float` and `double` parameters and results, and the math library (`sinf`, `powf`, `sqrt`, `lroundf`, ...), with the same results as the original.
 - **Files and the C library.** Programs that write or read files (`fopen`, `fwrite`, `fprintf`, `perror`, ...), parse numbers (`strtod`, `strtol`, `atoi`), sort (`qsort`) or use `rand`. The files each program writes are compared too, not just what it prints.
-- **C++.** Methods (they are named after their class, for example `Button_begin`), destructors, lambdas, library templates compiled into the program (`std::vector` growth, `std::sort` helpers), `new` and `delete`, and errors that end the program (`std::length_error`) with the same message. Exceptions that are caught are not modelled.
+- **C++.** Methods (they are named after their class, for example `Button_begin`), destructors, lambdas, library templates compiled into the program (`std::vector` growth, `std::sort` helpers), `new` and `delete`, and errors that end the program (`std::length_error`) with the same message. Exceptions that are caught are translated with `rt::try_catch(|| { ... })` around the protected code, an `Err(e)` arm for the handler (`e.type_name`, `e.what`) and `rt::rethrow(e)` for what a handler does not take; an exception no handler takes ends the program with libstdc++'s `terminate` message and `abort`. The shim implements this and its tests cover it; whole-program checks of C++ programs that catch depend on the emulated original unwinding too, and have not been run on a program of the corpus yet.
 - **Functions reached through pointers.** Callbacks, dispatch tables and vtables in the program's data are found when a function that runs uses the table, and the table points at the Rust functions.
 
 The test of each function on its own is a help, not a gate. A function whose own test fails, or cannot run (for example because it needs a pointer to an object the test cannot build), is still put in the program and marked **not checked on its own** (`unchecked`). The comparison of the whole program decides, and when it finds a difference, the repair rounds translate the likeliest function again with that difference as evidence.
 
 For example, two C++ audio simulators of about 30 and 47 functions (floats, globals, `std::vector`, `.wav` files) were rewritten this way and matched the original on all 11 cases, including the files they write. One needed a second run and two repair rounds. If a run stops part way, start it again: translations from earlier runs that are still valid are reused, so only the rest is translated.
 
-Limits: Linux x86-64 programs only; at most six integer and eight floating-point parameters per function; no varargs functions of the program itself; no threads, no `fork`, no network, no clock; exceptions that are caught are not modelled. A model run is slow: with a terminal agent each function takes one to two minutes, so a whole program translates several functions at once (below).
+Limits: Linux x86-64 programs only; in whole-program mode a structure passed by value is read as a 64-bit register and a variadic function of the program itself is not checked on its own (see the calling-convention shapes above for one function at a time); no threads, no `fork`, no network, no clock. A model run is slow: with a terminal agent each function takes one to two minutes, so a whole program translates several functions at once (below).
 
 ### Faster: parallel levels and the cache
 

@@ -162,6 +162,7 @@ pub fn load_rewrite_config(path: Option<&Path>) -> Result<Option<ProviderConfig>
     let mut rewrite = rewrite.clone();
     if let Some(t) = rewrite.as_table_mut() {
         t.remove("parallel");
+        t.remove("float_ulp");
         if t.is_empty() {
             return Ok(None);
         }
@@ -179,6 +180,16 @@ pub fn rewrite_parallel(path: Option<&Path>) -> Option<u32> {
     let table: toml::Table = text.parse().ok()?;
     let n = table.get("rewrite")?.get("parallel")?.as_integer()?;
     u32::try_from(n).ok().filter(|n| *n > 0)
+}
+
+/// `float_ulp` of the `[rewrite]` table: how many units in the last place a translated function's
+/// `float` or `double` result may differ from the original's (0, the default, is bit for bit).
+/// `None` when it is missing or not a non-negative integer.
+pub fn rewrite_float_ulp(path: Option<&Path>) -> Option<u32> {
+    let text = std::fs::read_to_string(path?).ok()?;
+    let table: toml::Table = text.parse().ok()?;
+    let n = table.get("rewrite")?.get("float_ulp")?.as_integer()?;
+    u32::try_from(n).ok()
 }
 
 /// The backend a text-only task (the rewrite pipeline) runs on: `[rewrite]` when the file has
@@ -279,5 +290,17 @@ mod tests {
         std::fs::write(&path, "[provider]\nkind = \"ollama\"\n").expect("write");
         assert_eq!(rewrite_parallel(Some(&path)), None);
         assert_eq!(rewrite_parallel(None), None);
+    }
+
+    #[test]
+    fn float_ulp_is_read_and_is_no_provider_override() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[rewrite]\nfloat_ulp = 4\n").expect("write");
+        assert_eq!(rewrite_float_ulp(Some(&path)), Some(4));
+        assert!(matches!(load_rewrite_config(Some(&path)), Ok(None)));
+        std::fs::write(&path, "[rewrite]\nfloat_ulp = -1\n").expect("write");
+        assert_eq!(rewrite_float_ulp(Some(&path)), None);
+        assert_eq!(rewrite_float_ulp(None), None);
     }
 }

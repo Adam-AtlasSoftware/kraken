@@ -26,6 +26,7 @@ PROGRAMS=(
   "pie_list:-fPIE -pie"
   "stripped_calc:"
   "cpp_shapes:"
+  "abi_shapes:"
   "switch_vm:"
 )
 # 32-bit ELF programs (same sources, gcc -m32).
