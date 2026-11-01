@@ -182,3 +182,50 @@ fn the_receipt_names_the_script_install() {
     );
     assert_eq!(kind.id(), "script");
 }
+
+// A throwaway test key and a prehashed signature of "abc  kraken-0.4.0-x.tar.gz\n" made with it
+// (rsign), with the trusted comment the release workflow writes. Not the release key.
+const TEST_PUBKEY: &str = "RWQAS8IwejLSSdYnOjMLzWIIlo7D4mZpWCGhI8FfQM2T0BAdtAanBEdU";
+const TEST_SIG: &str = "untrusted comment: signature from rsign secret key
+RUQAS8IwejLSSSs9SJx33YS7LxTb/KccbBR4S0D0kv8ubDC/lccmXFR1PxFJ+0LMx3UgkXYRlqJUuECUErqMgtT9SqtIbqA7zQM=
+trusted comment: kraken v0.4.0 SHA256SUMS
+o2aqTOjCcoDWQJ4P2Qa+fqR5dDH5xai0YhnSUsPCs8eYp8rHPYAVdTrIrUzY+9W/biJRv1gQDCucu3VN+abRCw==
+";
+
+#[test]
+fn openssl_verifies_minisign_signatures_without_minisign() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path();
+    if !run(d, "openssl_can_verify").0 {
+        eprintln!("skipped: no OpenSSL 3 with BLAKE2b");
+        return;
+    }
+    std::fs::write(d.join("SUMS"), "abc  kraken-0.4.0-x.tar.gz\n").unwrap();
+    std::fs::write(d.join("SUMS.minisig"), TEST_SIG).unwrap();
+    let call = |file: &str, sig: &str, key: &str| {
+        run(d, &format!("verify_with_openssl {file} {sig} {key}")).0
+    };
+    assert!(call("SUMS", "SUMS.minisig", TEST_PUBKEY));
+    // A changed list, a changed trusted comment and another key are all refused.
+    std::fs::write(d.join("OTHER"), "abd  kraken-0.4.0-x.tar.gz\n").unwrap();
+    assert!(!call("OTHER", "SUMS.minisig", TEST_PUBKEY));
+    std::fs::write(d.join("bad.minisig"), TEST_SIG.replace("v0.4.0", "v0.5.0")).unwrap();
+    assert!(!call("SUMS", "bad.minisig", TEST_PUBKEY));
+    assert!(!call(
+        "SUMS",
+        "SUMS.minisig",
+        "RWQcuc9uv/vL6fNGCFoY+ea132bmfUHhfczZGY/UgdNbC08hjU6DYmln"
+    ));
+}
+
+#[test]
+fn only_the_pinned_unsigned_releases_skip_the_signature() {
+    let t = tempfile::tempdir().unwrap();
+    for tag in ["v0.1.0", "v0.2.0", "v0.3.0"] {
+        let (ok, _) = run(t.path(), &format!("unsigned_release_sums {tag}"));
+        assert!(ok, "{tag} should be pinned");
+    }
+    for tag in ["v0.3.1", "v0.4.0", "v0.3.0-rc1", "v1.0.0"] {
+        assert!(!run(t.path(), &format!("unsigned_release_sums {tag}")).0, "{tag}");
+    }
+}

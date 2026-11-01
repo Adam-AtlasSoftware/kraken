@@ -10,8 +10,9 @@
 # Authenticity: SHA256SUMS comes from the same origin as the archive, so on its own it only
 # guards against corruption. Releases carry a detached minisign signature (SHA256SUMS.minisig)
 # made with the release key whose public half is embedded below (the same key KRAKEN's updater
-# has compiled in, docs/design/0015-updates.md). The check is mandatory: a missing minisign tool
-# or signature aborts the install. Releases up to v0.3.0 were not signed.
+# has compiled in, docs/design/0015-updates.md). The check is mandatory and uses minisign, or
+# OpenSSL 3 when minisign is not installed; a missing signature aborts the install. Releases up
+# to v0.3.0 were not signed: the SHA-256 of each one's SHA256SUMS is pinned below instead.
 #
 # The script writes an install receipt, <prefix>/share/kraken/install.json, so that KRAKEN knows
 # it was installed this way and can update itself (`kraken update`).
@@ -55,12 +56,71 @@ verify_signature() {
     return 0
   fi
   [ -n "$sig" ] && [ -f "$sig" ] || die "release has no SHA256SUMS.minisig; nothing was installed"
-  command -v minisign >/dev/null 2>&1 ||
-    die "minisign is required to verify this release (https://jedisct1.github.io/minisign/)"
-  # minisign 0.11 and later verify the prehashed signatures the release workflow makes.
-  minisign -V -P "$pubkey" -m "$sums" -x "$sig" >/dev/null ||
-    die "signature check failed for SHA256SUMS; nothing was installed"
+  if command -v minisign >/dev/null 2>&1; then
+    # minisign 0.11 and later verify the prehashed signatures the release workflow makes.
+    minisign -V -P "$pubkey" -m "$sums" -x "$sig" >/dev/null ||
+      die "signature check failed for SHA256SUMS; nothing was installed"
+  elif openssl_can_verify; then
+    verify_with_openssl "$sums" "$sig" "$pubkey" ||
+      die "signature check failed for SHA256SUMS; nothing was installed"
+  else
+    die "minisign (https://jedisct1.github.io/minisign/) or OpenSSL 3 is required to verify this release"
+  fi
   echo "Signature OK"
+}
+
+# True when OpenSSL 3 with Ed25519 and BLAKE2b-512 is available (LibreSSL is not enough).
+openssl_can_verify() {
+  command -v openssl >/dev/null 2>&1 || return 1
+  case "$(openssl version 2>/dev/null)" in
+    "OpenSSL 3."*) ;;
+    *) return 1 ;;
+  esac
+  openssl list -digest-algorithms 2>/dev/null | grep -qi blake2b512
+}
+
+# Verifies a prehashed minisign signature with OpenSSL: Ed25519 over the BLAKE2b-512 hash of the
+# file, then the global signature over the signature and the trusted comment.
+# $1 = file, $2 = .minisig, $3 = public key (base64 line of the .pub file)
+verify_with_openssl() {
+  local file=$1 sig=$2 pubkey=$3 d rc line3 comment
+  d=$(mktemp -d) || return 1
+  (
+    printf '%s' "$pubkey" | base64 -d > "$d/pk" 2>/dev/null || exit 1
+    [ "$(wc -c < "$d/pk")" -eq 42 ] && [ "$(head -c 2 "$d/pk")" = "Ed" ] || exit 1
+    sed -n 2p "$sig" | base64 -d > "$d/s" 2>/dev/null || exit 1
+    [ "$(wc -c < "$d/s")" -eq 74 ] && [ "$(head -c 2 "$d/s")" = "ED" ] || exit 1
+    # The key id in the signature must be the embedded key's.
+    [ "$(head -c 10 "$d/pk" | tail -c 8 | od -An -tx1)" = "$(head -c 10 "$d/s" | tail -c 8 | od -An -tx1)" ] || exit 1
+    { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; tail -c 32 "$d/pk"; } > "$d/pk.der"
+    openssl pkey -pubin -inform DER -in "$d/pk.der" -out "$d/pk.pem" 2>/dev/null || exit 1
+    tail -c 64 "$d/s" > "$d/s.bin"
+    openssl dgst -blake2b512 -binary "$file" > "$d/h" || exit 1
+    openssl pkeyutl -verify -pubin -inkey "$d/pk.pem" -rawin -in "$d/h" -sigfile "$d/s.bin" \
+      >/dev/null 2>&1 || exit 1
+    line3=$(sed -n 3p "$sig")
+    comment=${line3#trusted comment: }
+    [ "$line3" != "$comment" ] || exit 1
+    { cat "$d/s.bin"; printf '%s' "$comment"; } > "$d/g"
+    sed -n 4p "$sig" | base64 -d > "$d/gs" 2>/dev/null || exit 1
+    [ "$(wc -c < "$d/gs")" -eq 64 ] || exit 1
+    openssl pkeyutl -verify -pubin -inkey "$d/pk.pem" -rawin -in "$d/g" -sigfile "$d/gs" \
+      >/dev/null 2>&1 || exit 1
+  )
+  rc=$?
+  rm -rf "$d"
+  return $rc
+}
+
+# Releases made before signing began, with the SHA-256 of their SHA256SUMS. Only these exact
+# lists are accepted without a signature.
+unsigned_release_sums() {
+  case "$1" in
+    v0.1.0) echo 8908b23a5a563dd857b51b6b1a59b4455245aa9ac24f012f3aa28fbb3b4ea668 ;;
+    v0.2.0) echo 2d55d438d835a79ac628f8588b8afbeaa5b9b61d98e7482b7e9b1159e396f667 ;;
+    v0.3.0) echo 2ae926d3c93952279b73e89de5ac949c102a6b704b9ba4e9bf7353406651d5b6 ;;
+    *) return 1 ;;
+  esac
 }
 
 # Checks that the signature was made for this release: its trusted comment must be
@@ -123,8 +183,10 @@ esac
 
 if command -v sha256sum >/dev/null 2>&1; then
   check_sums() { sha256sum -c "$1" >/dev/null; }
+  sha256_of() { sha256sum < "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then
   check_sums() { shasum -a 256 -c "$1" >/dev/null; }
+  sha256_of() { shasum -a 256 < "$1" | cut -d' ' -f1; }
 else
   die "need sha256sum or shasum to verify the download"
 fi
@@ -157,8 +219,15 @@ sig_file=""
 if fetch "$base/download/$tag/SHA256SUMS.minisig" "$work/SHA256SUMS.minisig" 2>/dev/null; then
   sig_file="$work/SHA256SUMS.minisig"
 fi
-verify_signature "$work/SHA256SUMS" "$sig_file" "$KRAKEN_MINISIGN_PUBKEY" 1
-check_trusted_comment "$sig_file" "$tag"
+if pinned=$(unsigned_release_sums "$tag"); then
+  # A release from before signing: its SHA256SUMS must be the exact list pinned above.
+  [ "$(sha256_of "$work/SHA256SUMS")" = "$pinned" ] ||
+    die "SHA256SUMS of $tag is not the published one; nothing was installed"
+  echo "Release list OK ($tag predates signed releases; its list is pinned in this script)"
+else
+  verify_signature "$work/SHA256SUMS" "$sig_file" "$KRAKEN_MINISIGN_PUBKEY" 1
+  check_trusted_comment "$sig_file" "$tag"
+fi
 
 # Keep only the line for our archive (exact name match), then verify it.
 grep -F "  $archive" "$work/SHA256SUMS" | grep -x ".\{64\}  $archive" > "$work/archive.sha256" ||
@@ -205,7 +274,11 @@ case ":$PATH:" in
   *":$prefix/bin:"*) ;;
   *) echo "Add $prefix/bin to your PATH, for example:  export PATH=\"$prefix/bin:\$PATH\"" ;;
 esac
-echo "Updates: KRAKEN tells you when a new version is out; \`kraken update\` installs it."
+if unsigned_release_sums "$tag" >/dev/null; then
+  echo "Updates: $tag predates the updater; run this install command again to update."
+else
+  echo "Updates: KRAKEN tells you when a new version is out; \`kraken update\` installs it."
+fi
 if [ -d "$prefix/share/kraken/native-sla" ]; then
   cat <<'EOF'
 
