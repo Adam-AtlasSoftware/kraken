@@ -2,7 +2,7 @@
 //! jump tables, reads, writes and taken addresses from the instructions' memory operands and
 //! constants, and pointers stored in data (relocated slots).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use engine_native_sys::{Flow, Instruction, RefKind};
 use kraken_proto::XrefKind;
@@ -76,6 +76,22 @@ fn overlaps(a: (u64, u32), b: (u64, u32)) -> bool {
     a.0 < b.0 + u64::from(b.1) && b.0 < a.0 + u64::from(a.1)
 }
 
+/// The instructions of `f`'s body, ascending: walking its ranges once is much cheaper than a
+/// lookup per instruction, on a map of millions.
+fn body_of<'a>(f: &Func, insns: &'a BTreeMap<u64, Instruction>) -> Vec<&'a Instruction> {
+    let mut out = Vec::with_capacity(f.insns.len());
+    let mut wanted = f.insns.iter().copied().peekable();
+    for &(start, end) in &f.ranges {
+        for (a, i) in insns.range(start..end) {
+            while wanted.next_if(|w| w < a).is_some() {}
+            if wanted.next_if_eq(a).is_some() {
+                out.push(i);
+            }
+        }
+    }
+    out
+}
+
 /// One reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ref {
@@ -90,7 +106,8 @@ pub struct Ref {
 struct Builder<'a> {
     loaded: &'a Loaded,
     lowest: u64,
-    set: BTreeSet<Ref>,
+    /// In no order, with duplicates, until [`RefIndex::build`] sorts it.
+    set: Vec<Ref>,
     /// References found by constant propagation, which replace the operand references of RISC
     /// code (whose operands hold literal-pool and page addresses, not what the code refers to).
     computed: Option<&'a ComputedRefs>,
@@ -104,7 +121,7 @@ impl Builder<'_> {
     }
 
     fn add(&mut self, from: u64, to: u64, kind: XrefKind) {
-        self.set.insert(Ref { from, to, kind });
+        self.set.push(Ref { from, to, kind });
     }
 
     /// The references of one instruction. `is_tail(t)` says whether a jump to `t` leaves for
@@ -194,10 +211,10 @@ impl RefIndex {
         let mut b = Builder {
             loaded,
             lowest: loaded.blocks.first().map_or(0, |b| b.start.0),
-            set: BTreeSet::new(),
+            set: Vec::new(),
             computed: crate::constprop::wanted(loaded).then_some(computed),
         };
-        let mut done: BTreeSet<u64> = BTreeSet::new();
+        let mut done: HashSet<u64> = HashSet::with_capacity(insns.len());
         let pic32 = loaded.pointer_size() == 4 && loaded.pic_base.is_some();
         let mask = if loaded.pointer_size() == 4 {
             0xffff_ffff
@@ -221,22 +238,19 @@ impl RefIndex {
                 }
             }
             let tails: BTreeSet<(u64, u64)> = f.tail_calls.iter().copied().collect();
+            let body = body_of(f, insns);
             if b.computed.is_some() {
                 // propagation already followed the registers
-                for a in f.insns.iter() {
-                    if let Some(i) = insns.get(a)
-                        && done.insert(*a)
-                    {
-                        b.instruction(i, &|t| tails.contains(&(*a, t)));
+                for i in &body {
+                    if done.insert(i.addr) {
+                        b.instruction(i, &|t| tails.contains(&(i.addr, t)));
                     }
                 }
                 continue;
             }
             let mut leaders: BTreeSet<u64> = f.switches.values().flatten().copied().collect();
-            for a in f.insns.iter() {
-                if let Some(i) = insns.get(a)
-                    && matches!(i.flow, Flow::Jump | Flow::ConditionalJump)
-                {
+            for i in &body {
+                if matches!(i.flow, Flow::Jump | Flow::ConditionalJump) {
                     leaders.extend(i.targets.iter().copied());
                 }
             }
@@ -254,13 +268,13 @@ impl RefIndex {
                 bases.extend(loaded.pic_base.map(|g| ("EBX".to_string(), g, true)));
             }
             let mut thunk_reg: Option<&'static str> = None;
-            for a in f.insns.iter() {
-                let Some(i) = insns.get(a) else { continue };
+            for i in &body {
+                let a = &i.addr;
                 if prev_end != Some(*a) || leaders.contains(a) {
                     held.clear();
                     bases.retain(|(_, _, keep)| *keep);
                 }
-                let dest = i.body.split(',').next().unwrap_or("").trim().to_string();
+                let dest = i.body.split(',').next().unwrap_or("").trim();
                 let pic_setup = thunk_reg.take().and_then(|reg| {
                     let imm = i
                         .body
@@ -274,11 +288,11 @@ impl RefIndex {
                     bases.retain(|(r, _, _)| r != reg);
                     bases.push((reg.to_string(), base, true));
                 } else {
-                    for (reg, base, _) in bases.clone() {
-                        let Some(d) = base_disp(&i.body, &reg) else {
+                    for (reg, base, _) in &bases {
+                        let Some(d) = base_disp(&i.body, reg) else {
                             continue;
                         };
-                        let to = base.wrapping_add_signed(d) & mask;
+                        let to = (*base).wrapping_add_signed(d) & mask;
                         if b.mapped(to) && !done.contains(a) {
                             let kind = memory_kind(&i.mnemonic, &i.body);
                             b.add(*a, to, kind);
@@ -289,22 +303,21 @@ impl RefIndex {
                     }
                     // a write to a base register ends it (`ebx` excepted: restoring it before a
                     // return does not change what other blocks see)
-                    bases.retain(|(r, _, _)| r == "EBX" || dest != *r);
-                    let mnemonic = i.mnemonic.to_ascii_uppercase();
+                    bases.retain(|(r, _, _)| r == "EBX" || dest != r);
                     let taken = i
                         .refs
                         .iter()
                         .find(|r| r.kind == RefKind::Data && r.addr != *a && b.mapped(r.addr));
-                    if mnemonic == "LEA"
+                    if i.mnemonic.eq_ignore_ascii_case("LEA")
                         && let Some(r) = taken
                     {
-                        bases.push((dest.clone(), r.addr, false));
+                        bases.push((dest.to_string(), r.addr, false));
                     }
-                    if mnemonic == "MOV"
+                    if i.mnemonic.eq_ignore_ascii_case("MOV")
                         && let Some(r) = i.refs.iter().find(|r| r.kind == RefKind::Read)
                         && let Some(target) = readonly_pointer(r.addr)
                     {
-                        bases.push((dest.clone(), target, false));
+                        bases.push((dest.to_string(), target, false));
                     }
                 }
                 if matches!(i.flow, Flow::Call | Flow::IndirectCall) {
@@ -374,7 +387,9 @@ impl RefIndex {
                 b.add(*slot, *target, XrefKind::Data);
             }
         }
-        let by_from: Vec<Ref> = b.set.into_iter().collect();
+        let mut by_from = b.set;
+        by_from.sort_unstable();
+        by_from.dedup();
         let mut by_to: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
         for (i, r) in by_from.iter().enumerate() {
             by_to.entry(r.to).or_default().push(i as u32);
@@ -437,5 +452,51 @@ impl RefIndex {
     /// Whether there are none.
     pub fn is_empty(&self) -> bool {
         self.by_from.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use engine_native_sys::Mnemonic;
+
+    use super::*;
+
+    fn insn(addr: u64) -> Instruction {
+        Instruction {
+            addr,
+            length: 2,
+            mnemonic: Mnemonic::new("X"),
+            body: "".into(),
+            flow: Flow::Fallthrough,
+            fallthrough: true,
+            via_pointer: false,
+            targets: Box::default(),
+            refs: Box::default(),
+            reg_reads: &[],
+            reg_writes: &[],
+        }
+    }
+
+    #[test]
+    fn a_body_is_its_own_instructions_in_order() {
+        // decoding from another start left 0x13 inside the range; 0x20 is not in the map
+        let insns: BTreeMap<u64, Instruction> = [0x10, 0x12, 0x13, 0x14, 0x30, 0x40]
+            .into_iter()
+            .map(|a| (a, insn(a)))
+            .collect();
+        let f = Func {
+            entry: 0x10,
+            name: "f".into(),
+            insns: Arc::from(vec![0x10, 0x12, 0x14, 0x20, 0x30]),
+            ranges: vec![(0x10, 0x16), (0x20, 0x22), (0x30, 0x32)],
+            switches: BTreeMap::new(),
+            tail_calls: Vec::new(),
+            noreturn: false,
+            returns: true,
+        };
+        let got: Vec<u64> = body_of(&f, &insns).iter().map(|i| i.addr).collect();
+        assert_eq!(got, [0x10, 0x12, 0x14, 0x30]);
     }
 }

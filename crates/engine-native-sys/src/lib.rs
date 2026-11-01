@@ -20,8 +20,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 #[cfg(kraken_native)]
 use std::sync::atomic::Ordering;
+use std::sync::{OnceLock, RwLock};
 #[cfg(kraken_native)]
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 /// Errors from the native library.
@@ -152,7 +153,119 @@ impl Flow {
     }
 }
 
-/// One decoded instruction.
+/// The one copy of each value [`intern`] was given.
+type Interned<T> = RwLock<HashSet<&'static T>>;
+
+/// A mnemonic. A big program has millions of instructions and a few hundred mnemonics, so each
+/// text is kept once for the life of the process.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Mnemonic(&'static str);
+
+impl Mnemonic {
+    /// The mnemonic with the text `text`.
+    pub fn new(text: &str) -> Mnemonic {
+        static SEEN: OnceLock<Interned<str>> = OnceLock::new();
+        Mnemonic(intern(SEEN.get_or_init(Default::default), text))
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &'static str {
+        self.0
+    }
+}
+
+impl std::ops::Deref for Mnemonic {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for Mnemonic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.0, f)
+    }
+}
+
+impl std::fmt::Display for Mnemonic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// Operand text. Most of it is shorter than a pointer pair plus a little and lives inside the
+/// instruction: a small allocation per instruction, between the nodes of the maps discovery
+/// merges and frees, would keep those pages from going back to the system.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Operands {
+    /// Up to [`Operands::INLINE`] bytes.
+    Inline(u8, [u8; Operands::INLINE]),
+    /// Longer text.
+    Heap(Box<str>),
+}
+
+impl Operands {
+    /// The longest text kept inline.
+    pub const INLINE: usize = 22;
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Operands::Inline(n, b) => std::str::from_utf8(&b[..usize::from(*n)]).unwrap_or(""),
+            Operands::Heap(s) => s,
+        }
+    }
+}
+
+impl From<&str> for Operands {
+    fn from(text: &str) -> Operands {
+        if text.len() <= Operands::INLINE {
+            let mut b = [0; Operands::INLINE];
+            b[..text.len()].copy_from_slice(text.as_bytes());
+            Operands::Inline(text.len() as u8, b)
+        } else {
+            Operands::Heap(text.into())
+        }
+    }
+}
+
+impl std::ops::Deref for Operands {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Debug for Operands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+/// `value`'s one copy in `seen`, made the first time. The leak is bounded: what is interned comes
+/// from the small sets a Sleigh specification can print or touch, not from the bytes of a program.
+fn intern<T: ?Sized + Eq + std::hash::Hash>(seen: &Interned<T>, value: &T) -> &'static T
+where
+    Box<T>: for<'a> From<&'a T>,
+{
+    let read = seen.read().unwrap_or_else(|p| p.into_inner());
+    if let Some(known) = read.get(value) {
+        return known;
+    }
+    drop(read);
+    let mut write = seen.write().unwrap_or_else(|p| p.into_inner());
+    if let Some(known) = write.get(value) {
+        return known;
+    }
+    let kept: &'static T = Box::leak(Box::<T>::from(value));
+    write.insert(kept);
+    kept
+}
+
+/// One decoded instruction. A program keeps every one of them, so the fields are as small as
+/// they can be: slices without spare capacity, and shared text and register lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction {
     /// Address.
@@ -160,9 +273,9 @@ pub struct Instruction {
     /// Length in bytes.
     pub length: u32,
     /// Mnemonic as Sleigh prints it (such as `MOV`).
-    pub mnemonic: String,
+    pub mnemonic: Mnemonic,
     /// Operand text as Sleigh prints it.
-    pub body: String,
+    pub body: Operands,
     /// Control flow out of the instruction.
     pub flow: Flow,
     /// Whether execution can continue with the next instruction.
@@ -170,14 +283,14 @@ pub struct Instruction {
     /// An indirect jump whose target is loaded from a constant address (a stub, not a switch).
     pub via_pointer: bool,
     /// Branch and call targets in the default code space.
-    pub targets: Vec<u64>,
+    pub targets: Box<[u64]>,
     /// Constants and absolute memory operands (candidate references), one per address, sorted.
-    pub refs: Vec<Reference>,
+    pub refs: Box<[Reference]>,
     /// Registers the instruction's p-code reads, as (offset in the register space, size),
     /// sorted and deduplicated.
-    pub reg_reads: Vec<(u64, u32)>,
+    pub reg_reads: &'static [(u64, u32)],
     /// Registers the instruction's p-code writes, as (offset, size), sorted and deduplicated.
-    pub reg_writes: Vec<(u64, u32)>,
+    pub reg_writes: &'static [(u64, u32)],
 }
 
 /// What an instruction does with an address it mentions.
@@ -356,11 +469,12 @@ pub struct UserComment {
 
 /// Registers packed as `offset << 8 | size` by the shim, unpacked, sorted and deduplicated.
 #[cfg(kraken_native)]
-fn unpack_regs(packed: &[u64]) -> Vec<(u64, u32)> {
+fn unpack_regs(packed: &[u64]) -> &'static [(u64, u32)] {
+    static SEEN: OnceLock<Interned<[(u64, u32)]>> = OnceLock::new();
     let mut v: Vec<(u64, u32)> = packed.iter().map(|p| (p >> 8, (p & 0xff) as u32)).collect();
     v.sort_unstable();
     v.dedup();
-    v
+    intern(SEEN.get_or_init(Default::default), v.as_slice())
 }
 
 #[cfg(kraken_native)]
@@ -843,13 +957,13 @@ impl Session {
                     Instruction {
                         addr: r.addr,
                         length: r.length,
-                        mnemonic: r.mnemonic,
-                        body: r.body,
+                        mnemonic: Mnemonic::new(&r.mnemonic),
+                        body: Operands::from(r.body.as_str()),
                         flow: Flow::from_code(r.flow),
                         fallthrough: r.fallthrough,
                         via_pointer: r.via_pointer,
-                        targets: r.targets,
-                        refs,
+                        targets: r.targets.into_boxed_slice(),
+                        refs: refs.into_boxed_slice(),
                         reg_reads: unpack_regs(&r.reg_reads),
                         reg_writes: unpack_regs(&r.reg_writes),
                     }
@@ -1261,6 +1375,31 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_operands_stay_in_the_instruction_and_read_back() {
+        let short = "RAX,qword ptr [RBP]";
+        assert!(matches!(Operands::from(short), Operands::Inline(..)));
+        assert_eq!(&*Operands::from(short), short);
+        let exact = "x".repeat(Operands::INLINE);
+        assert!(matches!(
+            Operands::from(exact.as_str()),
+            Operands::Inline(..)
+        ));
+        assert_eq!(&*Operands::from(exact.as_str()), exact);
+        let long = "é".repeat(Operands::INLINE);
+        assert!(matches!(Operands::from(long.as_str()), Operands::Heap(_)));
+        assert_eq!(&*Operands::from(long.as_str()), long);
+        assert_eq!(&*Operands::from(""), "");
+    }
+
+    #[test]
+    fn a_mnemonic_is_kept_once() {
+        let (a, b) = (Mnemonic::new("MOV"), Mnemonic::new(&String::from("MOV")));
+        assert!(std::ptr::eq(a.as_str(), b.as_str()));
+        assert_eq!(a, b);
+        assert_ne!(a, Mnemonic::new("LEA"));
+    }
 
     #[test]
     fn image_reads_zero_fill_and_report_mapping() {

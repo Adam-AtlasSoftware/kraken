@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use kraken_proto::{ErrorCode, ProtoError};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use crate::backend::{Backend, BackendEvent, CommandInfo};
+use crate::backend::{Backend, BackendEvent, CallAs, CommandInfo};
 
 type Handler = Box<dyn FnMut(&Value) -> Result<Value, ProtoError> + Send>;
 
@@ -145,6 +146,45 @@ impl Backend for FakeBackend {
 
     fn events(&self) -> broadcast::Receiver<BackendEvent> {
         self.events.subscribe()
+    }
+}
+
+/// A backend whose every answer takes `delay`, as the queries of a big program can: what the GUI
+/// does meanwhile is what a test of a stalled query looks at.
+pub struct SlowBackend {
+    inner: Arc<dyn Backend>,
+    delay: Duration,
+}
+
+impl SlowBackend {
+    /// `inner`, with `delay` before each answer.
+    pub fn new(inner: Arc<dyn Backend>, delay: Duration) -> Self {
+        SlowBackend { inner, delay }
+    }
+}
+
+#[async_trait]
+impl Backend for SlowBackend {
+    async fn call(&self, command: &str, args: Value) -> Result<Value, ProtoError> {
+        tokio::time::sleep(self.delay).await;
+        self.inner.call(command, args).await
+    }
+
+    async fn call_as(&self, who: &CallAs, command: &str, args: Value) -> Result<Value, ProtoError> {
+        tokio::time::sleep(self.delay).await;
+        self.inner.call_as(who, command, args).await
+    }
+
+    async fn publish_selection(&self, selection: Option<Value>) -> Result<(), ProtoError> {
+        self.inner.publish_selection(selection).await
+    }
+
+    fn commands(&self) -> Vec<CommandInfo> {
+        self.inner.commands()
+    }
+
+    fn events(&self) -> broadcast::Receiver<BackendEvent> {
+        self.inner.events()
     }
 }
 

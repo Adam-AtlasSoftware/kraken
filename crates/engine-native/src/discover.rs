@@ -217,10 +217,14 @@ struct Env<'a> {
     loaded: &'a Loaded,
     names: &'a BTreeMap<u64, String>,
     noreturn: &'a BTreeSet<u64>,
+    /// What every lane decoded in earlier waves.
+    decoded: &'a BTreeMap<u64, Instruction>,
 }
 
-/// One decoder: a session and the instructions it has decoded so far (decoding depends only on
-/// the address, so the lanes' caches agree wherever they overlap).
+/// One decoder: a session and the instructions it decoded in this wave, which join the ones all
+/// lanes share when the wave ends (decoding depends only on the address, so the lanes agree
+/// wherever they overlap). Each lane keeping its own cache cost a copy of the program per session
+/// by the later rounds: 25 GB on a 62 MB binary.
 struct Lane<'a> {
     session: &'a mut Session,
     insns: BTreeMap<u64, Instruction>,
@@ -229,21 +233,43 @@ struct Lane<'a> {
 }
 
 impl Lane<'_> {
-    fn instruction(&mut self, addr: u64) -> NativeResult<Option<&Instruction>> {
+    fn instruction<'s>(
+        &'s mut self,
+        shared: &'s BTreeMap<u64, Instruction>,
+        addr: u64,
+    ) -> NativeResult<Option<&'s Instruction>> {
+        if let Some(i) = shared.get(&addr) {
+            return Ok(Some(i));
+        }
         if !self.insns.contains_key(&addr) {
             let run = self.session.decode(addr, CHUNK)?;
             // instructions past a branch are kept too
             for i in run {
-                self.insns.entry(i.addr).or_insert(i);
+                if !shared.contains_key(&i.addr) {
+                    self.insns.entry(i.addr).or_insert(i);
+                }
             }
         }
         Ok(self.insns.get(&addr))
     }
 
+    /// An instruction this walk has already decoded.
+    fn decoded<'s>(
+        &'s self,
+        shared: &'s BTreeMap<u64, Instruction>,
+        addr: &u64,
+    ) -> Option<&'s Instruction> {
+        shared.get(addr).or_else(|| self.insns.get(addr))
+    }
+
     /// `addr` past alignment padding (`NOP`, `INT3`), if it decodes.
-    fn skip_padding(&mut self, mut addr: u64) -> NativeResult<u64> {
+    fn skip_padding(
+        &mut self,
+        shared: &BTreeMap<u64, Instruction>,
+        mut addr: u64,
+    ) -> NativeResult<u64> {
         for _ in 0..16 {
-            match self.instruction(addr)? {
+            match self.instruction(shared, addr)? {
                 Some(i) if matches!(i.mnemonic.as_str(), "NOP" | "INT3" | "nop") => {
                     addr += u64::from(i.length);
                 }
@@ -288,7 +314,7 @@ fn walk(
     }
     // x86: a function that starts (past `endbr`) with a jump out of itself is a thunk, its
     // target a function (gcc's `frame_dummy` jumping back to `register_tm_clones`)
-    let thunk_pc = match lane.instruction(entry)? {
+    let thunk_pc = match lane.instruction(env.decoded, entry)? {
         Some(i) if i.mnemonic.to_ascii_lowercase().starts_with("endbr") => {
             entry + u64::from(i.length)
         }
@@ -372,12 +398,12 @@ fn walk(
         let mut pc = start;
         // the registers the previous instruction wrote when it was an `add` (ARM switches
         // jump with `add r2, r3; bx r2`)
-        let mut added_to: Vec<(u64, u32)> = Vec::new();
+        let mut added_to: &[(u64, u32)] = &[];
         loop {
             if seen.contains(&pc) || seen.len() >= MAX_BODY || !loaded.is_code(pc) {
                 break;
             }
-            let Some(insn) = lane.instruction(pc)? else {
+            let Some(insn) = lane.instruction(env.decoded, pc)? else {
                 break;
             };
             seen.insert(pc);
@@ -482,9 +508,9 @@ fn walk(
                 break;
             }
             added_to = if insn.mnemonic.starts_with("add") {
-                insn.reg_writes.clone()
+                insn.reg_writes
             } else {
-                Vec::new()
+                &[]
             };
             pc = next;
         }
@@ -496,7 +522,9 @@ fn walk(
     let insns: Vec<u64> = seen.into_iter().collect();
     let mut ranges: Vec<(u64, u64)> = Vec::new();
     for a in &insns {
-        let len = lane.insns.get(a).map_or(1, |i| u64::from(i.length));
+        let len = lane
+            .decoded(env.decoded, a)
+            .map_or(1, |i| u64::from(i.length));
         match ranges.last_mut() {
             Some((_, e)) if *e >= *a => *e = (*e).max(a + len),
             _ => ranges.push((*a, a + len)),
@@ -508,8 +536,16 @@ fn walk(
     }
     let mut computed = Vec::new();
     if propagate {
-        let body: Vec<&Instruction> = insns.iter().filter_map(|a| lane.insns.get(a)).collect();
-        match crate::constprop::function(loaded, &mut *lane.session, &body, &switches) {
+        let Lane {
+            session,
+            insns: own,
+            ..
+        } = lane;
+        let body: Vec<&Instruction> = insns
+            .iter()
+            .filter_map(|a| env.decoded.get(a).or_else(|| own.get(a)))
+            .collect();
+        match crate::constprop::function(loaded, session, &body, &switches) {
             Ok(found) => {
                 consts.extend(found.code);
                 computed = found.refs;
@@ -629,6 +665,8 @@ enum Source {
 struct Walker<'a> {
     loaded: &'a Loaded,
     lanes: Vec<Lane<'a>>,
+    /// The instructions of the waves that have ended.
+    decoded: BTreeMap<u64, Instruction>,
     names: BTreeMap<u64, String>,
     noreturn: BTreeSet<u64>,
     /// Jump tables recovered or taken from the cache, until a callee turns out not to return.
@@ -663,12 +701,25 @@ impl Walker<'_> {
             if out.contains(&target) || self.noreturn.contains(&target) {
                 continue;
             }
-            let after = self.lanes[0].skip_padding(next)?;
+            let after = self.lanes[0].skip_padding(&self.decoded, next)?;
             if after != target && functions.contains_key(&after) {
                 out.insert(target);
             }
         }
         Ok(out)
+    }
+
+    /// Moves what the lanes decoded in the wave that ended to where they all see it.
+    fn pool_decoded(&mut self) {
+        for lane in &mut self.lanes {
+            let mut own = std::mem::take(&mut lane.insns);
+            // `append` rebuilds the whole map: not for the few left by a small wave
+            if own.len() * 16 >= self.decoded.len() {
+                self.decoded.append(&mut own);
+            } else {
+                self.decoded.extend(own);
+            }
+        }
     }
 
     /// Walks `wave` (distinct entries) on all lanes at once; the walks are independent, so the
@@ -686,6 +737,7 @@ impl Walker<'_> {
             loaded: self.loaded,
             names: &self.names,
             noreturn: &self.noreturn,
+            decoded: &self.decoded,
         };
         let tasks: Vec<(u64, Option<Cached>)> = wave
             .iter()
@@ -821,7 +873,9 @@ impl Walker<'_> {
                     .collect();
                 wave.sort_unstable();
                 wave.dedup();
-                let Some(done) = self.walk_wave(&wave, (functions.len(), covered), cancel)? else {
+                let done = self.walk_wave(&wave, (functions.len(), covered), cancel)?;
+                self.pool_decoded();
+                let Some(done) = done else {
                     return Ok(None);
                 };
                 let mut thunks = Vec::new();
@@ -918,7 +972,7 @@ impl Walker<'_> {
         let mut cands: BTreeMap<u64, u64> = BTreeMap::new();
         for f in functions.values() {
             for &(_, end) in &f.ranges {
-                let a = self.lanes[0].skip_padding(end)?;
+                let a = self.lanes[0].skip_padding(&self.decoded, end)?;
                 if a == end
                     || a % 16 != 0
                     || !loaded.is_code(a)
@@ -926,7 +980,7 @@ impl Walker<'_> {
                     || f.contains(a)
                     || functions.contains_key(&a)
                     || self.names.contains_key(&a)
-                    || self.lanes[0].instruction(a)?.is_none()
+                    || self.lanes[0].instruction(&self.decoded, a)?.is_none()
                 {
                     continue;
                 }
@@ -943,7 +997,7 @@ impl Walker<'_> {
                 cands.remove(t);
             }
             for &i in f.insns.iter() {
-                let Some(insn) = self.lanes[0].instruction(i)? else {
+                let Some(insn) = self.lanes[0].instruction(&self.decoded, i)? else {
                     continue;
                 };
                 let (flow, targets) = (insn.flow, insn.targets.clone());
@@ -1019,7 +1073,7 @@ impl Walker<'_> {
                         continue;
                     }
                     let lane = &mut self.lanes[0];
-                    let Some(i) = lane.instruction(a)?.cloned() else {
+                    let Some(i) = lane.instruction(&self.decoded, a)?.cloned() else {
                         a += step;
                         continue;
                     };
@@ -1045,7 +1099,7 @@ impl Walker<'_> {
                         if pc >= ge || pool_word(pc) {
                             break;
                         }
-                        let Some(j) = lane.instruction(pc)?.cloned() else {
+                        let Some(j) = lane.instruction(&self.decoded, pc)?.cloned() else {
                             break;
                         };
                         if matches!(j.flow, Flow::Return | Flow::IndirectJump | Flow::Jump)
@@ -1116,6 +1170,7 @@ pub fn walk_function(
         loaded,
         names: &names,
         noreturn: &noreturn,
+        decoded: &BTreeMap::new(),
     };
     let mut lane = Lane {
         session,
@@ -1129,6 +1184,10 @@ pub fn walk_function(
 
 /// Code smaller than this is discovered on one session: starting another costs more than it saves.
 pub const PARALLEL_MIN_CODE: u64 = 256 * 1024;
+
+/// Code smaller than this is discovered on one session when the jump tables come from the cache:
+/// there is only the decoding to share.
+pub const PARALLEL_WARM_CODE: u64 = 4 * 1024 * 1024;
 
 /// How many sessions discovery and the analysis job use: `KRAKEN_NATIVE_THREADS` if set (1 to
 /// 16), else the number of CPUs, at most 6 and at most one per 3 GB of available memory (each
@@ -1159,6 +1218,8 @@ pub struct Options<'a> {
     pub threads: usize,
     /// The code size (bytes) from which more than one session is used.
     pub parallel_min_code: u64,
+    /// The same when the jump tables come from the cache.
+    pub parallel_warm_code: u64,
     /// Called a few times a second, and after each batch of functions, with how far it got.
     pub progress: Option<ProgressFn<'a>>,
 }
@@ -1171,6 +1232,7 @@ impl Options<'_> {
             cache: JumpCache::default(),
             threads: default_threads(),
             parallel_min_code: PARALLEL_MIN_CODE,
+            parallel_warm_code: PARALLEL_WARM_CODE,
             progress: None,
         }
     }
@@ -1188,6 +1250,7 @@ pub fn discover(
         cache,
         threads,
         parallel_min_code,
+        parallel_warm_code,
         progress,
     } = options;
     let mut names: BTreeMap<u64, String> = BTreeMap::new();
@@ -1240,10 +1303,8 @@ pub fn discover(
         .map(|b| b.end.0 - b.start.0)
         .sum();
     // a session holds its own copy of the specification (some 200 MB with the function names), so
-    // they are only worth having when the decompiler is going to be asked; with the answers of an
-    // earlier run in the cache they are not (setting them up costs as much as the decoding they
-    // would share)
-    let extra = if code >= parallel_min_code && cache.is_empty() {
+    // with the answers of an earlier run in the cache only a big program's decoding pays for them
+    let extra = if code >= parallel_min_code && (cache.is_empty() || code >= parallel_warm_code) {
         threads.saturating_sub(1)
     } else {
         0
@@ -1299,6 +1360,7 @@ pub fn discover(
     let mut w = Walker {
         loaded,
         lanes,
+        decoded: BTreeMap::new(),
         names,
         noreturn: noreturn.clone(),
         tables: BTreeMap::new(),
@@ -1347,12 +1409,8 @@ pub fn discover(
                 f.noreturn = noreturn.contains(&f.entry);
             }
             // keep what the bodies use; the rest was decoded speculatively past branches
-            let mut insns: BTreeMap<u64, Instruction> = BTreeMap::new();
-            for lane in std::mem::take(&mut w.lanes) {
-                for (a, i) in lane.insns {
-                    insns.entry(a).or_insert(i);
-                }
-            }
+            w.pool_decoded();
+            let mut insns = std::mem::take(&mut w.decoded);
             let body: BTreeSet<u64> = functions
                 .values()
                 .flat_map(|f| f.insns.iter().copied())

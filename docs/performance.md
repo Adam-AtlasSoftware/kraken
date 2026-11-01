@@ -34,6 +34,8 @@ is this tree. Times are wall clock. Cold opens vary by about 15 % with the load 
 | First list of strings (`libpython`) | 5.8 s | **0.1 s** |
 | Decompile the same function again (p95) | 8.3 s | **0.15 ms in process, 7 ms through the worker** |
 | A GUI frame (decompiler, listing, graph, function list) | at most 2 ms | at most 2 ms (nothing to fix) |
+| Peak memory, first open of a stripped 62 MB program | 24.9 GB | **10.4 GB** |
+| Open that program again | 79.5 s | **30.7 s** |
 
 The two things that decide how big a program can be are the first open (the decompiler's switch
 analysis, one decompiler pass per jump table) and memory. The GUI, the daemon and the other queries
@@ -166,6 +168,74 @@ The slowest decompiles (12 s) are single huge functions: the decompiler's own ti
 A first open of these takes a long time because of a handful of functions whose switch analysis takes
 minutes and gigabytes in the decompiler itself; the cache and the heartbeat make it a one-time cost.
 
+## A stripped 62 MB Rust program
+
+`kraken` itself, stripped: 47 MB of code, 86 508 functions, 9.9 million instructions, 19 578 jump table
+recoveries. Through the worker, 6 sessions, on a 32-thread machine with other builds running (load 9
+to 15 for "after", about 1 at the start of "before"). The same 86 508 functions before and after.
+
+| | Before | After |
+|---|---:|---:|
+| Open, first time | 362 s | **250 s** |
+| Open with saved state | 79.5 s | **30.7 s** |
+| Peak RSS, first open | 24.9 GB | **10.4 GB** |
+| Peak RSS, open with saved state | 5.5 GB | 6.3 GB (the 5 extra sessions while they run) |
+| RSS after the first open | 7.3 GB | 7.3 GB |
+| RSS after an open with saved state | 5.4 GB | 4.8 GB |
+| Types, references and labels | 6.0 s | 4.2 s |
+| `list_functions` pages of 500: p50 / p95 | 4.8 / 7.4 ms | 5.6 / 5.9 ms |
+| `decompile`, 200 functions: p50 / p95 | 24 / 93 ms | 13 / 56 ms |
+| `xrefs` to an entry, `cfg`: p95 | 1.8 / 0.8 ms | 4.2 / 1.2 ms |
+| Strings, whole list in pages of 500 | 92 ms | about 160 ms |
+
+The query rows did not change in the code; they differ with the load of the machine. Nine of the 200
+sampled functions fail to decompile, before and after.
+
+Three things were in the way, found by sampling the process (`gdb` as the parent of an in-process
+run, as `perf` was not available) and by timing each round of discovery:
+
+1. **Each session kept its own decoded instructions.** The later rounds of discovery walk every
+   function again on whichever session is free, so by the end each of the 6 sessions held most of the
+   program: the RSS went from 11 GB to 25 GB in the last minute of the open, all of it `Session::decode`
+   decoding what another session had already decoded. The sessions now share what earlier batches
+   decoded, which takes the peak from 25 GB to 10 GB and leaves the later rounds nothing to decode.
+2. **An open with saved state decoded on one session.** With the answers of the switch analysis saved
+   there is nothing left to do but decode (51 s of the 80 s, 5 microseconds an instruction) and walk
+   seven rounds (3 s each). Code of 4 MiB and more now uses all the sessions there too. Setting up five
+   sessions takes 0.3 s on a stripped program, and the rounds take under a second each.
+3. **The reference index allocated per instruction.** Building it copied the first operand and
+   upper-cased the mnemonic for every instruction, looked each one up twice in a map of ten million,
+   and kept a sorted set of references and of visited addresses. It now borrows the text, walks each
+   body's ranges once, and sorts the references at the end.
+
+An instruction also takes less room: a mnemonic and a list of registers are kept once for the life of
+the process (Sleigh prints a few hundred mnemonics and few register sets), and operand text up to 22
+bytes lives in the instruction. That gives back about 0.5 GB here. Of what is left after an open, about
+2.6 GB was in use by the allocator's count; most of the rest it holds in partly free pages, which is
+why the RSS after a first open did not move and is the next thing to look at.
+
+The GUI on the same program, through a real daemon (`cargo xtask bench gui`). Largest function
+0x38e0830: 52 814 bytes, 3 197 graph blocks, 18.6 s to decompile. Times in milliseconds.
+
+| phase | frames | p50 | p95 | max |
+|---|---:|---:|---:|---:|
+| scroll the function list (200 to 1 600 rows loaded) | 300 | 0.26 | 0.33 | 0.48 |
+| frames while the largest function decompiles | 7 304 | 0.44 | 0.69 | 12.92 |
+| scroll the decompiler | 200 | 0.32 | 0.36 | 0.43 |
+| scroll the listing | 200 | 0.56 | 0.64 | 0.75 |
+| while the graph loads (328 ms) | 123 | 0.34 | 0.69 | 18.16 |
+| graph, steady | 100 | 1.01 | 1.06 | 1.13 |
+| graph, zoom in and out | 100 | 0.99 | 1.39 | 1.40 |
+
+## The window while a query is slow
+
+No frame waits for an answer. `no_frame_waits_for_a_slow_query` (`crates/kraken-gui/src/tests/slow_query.rs`)
+runs the whole application with every backend answer held back 900 ms, opens a project, selects a
+function, and goes to the listing, the graph and the strings while queries are out; the longest frame
+was 105 ms in a debug build, and it fails at 600 ms. The list of imports or exports with a filter
+searched every row on every frame (and a filter loads the whole list); it now searches when the filter
+or the rows change.
+
 ## Memory
 
 | | RSS after open | Peak |
@@ -175,11 +245,11 @@ minutes and gigabytes in the decompiler itself; the cache and the heartbeat make
 | `libQt6Widgets` | 1.1 GB | 19.7 GB |
 | `cargo` | 5.4 GB | 13.0 GB |
 
-About 600 bytes per instruction are kept (the decoded instruction with its text and the registers it
-reads and writes), plus about 200 MB for the decompiler and the Sleigh specification of each session.
+About 300 bytes per instruction are in use (the decoded instruction with its text, and the
+indexes over them; see [A stripped 62 MB Rust program](#a-stripped-62-mb-rust-program)), plus about 200 MB for the decompiler and the Sleigh specification of each session.
 A first open uses up to 6 sessions at once. The peak of Qt Widgets is the switch analysis of its
 worst functions running on several sessions at the same time; lower `KRAKEN_NATIVE_THREADS` to trade
-time for memory. A smaller instruction representation is the next step if memory matters more.
+time for memory.
 
 ## Through `krakend`
 
@@ -358,8 +428,8 @@ counting on screen. A cancelled open leaves no session and no worker. Run it aga
 - **The analysis job** is the decompiler's own time spread over up to 6 sessions; a program with a
   few huge functions still waits for them (each decompile has the per-function limit).
 - **Memory** for the largest programs (above).
-- **Warm opens** (6 s for `libpython`, 26 s for `cargo`) are the decoding of every instruction with
-  Sleigh. Spreading it over several sessions did not pay for the sessions' setup (measured: no change).
+- **Warm opens** are the decoding of every instruction with Sleigh: 5 s for `libpython` (one session,
+  under 4 MiB of code), 14 s for `cargo`, 31 s for the 62 MB program on 6 sessions.
 
 ## Reproducing
 

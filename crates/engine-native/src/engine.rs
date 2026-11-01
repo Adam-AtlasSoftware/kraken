@@ -745,7 +745,7 @@ impl Program {
         DisasmRow {
             address: Hex64(i.addr),
             bytes: hex_bytes(&bytes),
-            mnemonic: i.mnemonic.clone(),
+            mnemonic: i.mnemonic.to_string(),
             operands: operands(
                 &i.body,
                 |a| {

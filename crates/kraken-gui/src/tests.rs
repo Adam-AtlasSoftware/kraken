@@ -948,6 +948,7 @@ mod patches;
 mod setup_status;
 mod shell;
 mod shots;
+mod slow_query;
 mod titlebar;
 mod types;
 mod updates;

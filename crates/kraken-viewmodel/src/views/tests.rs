@@ -953,6 +953,11 @@ fn imports_filter_by_name_and_library_and_load_every_page_to_do_so() {
     assert_eq!(r.vm.views.imports.visible(), vec![2]);
     r.vm.set_symbols_filter(SymbolTable::Imports, "LIBC");
     assert_eq!(r.vm.views.imports.visible(), vec![0, 1]);
+    // drawn every frame, so the rows are not searched again
+    assert!(matches!(
+        r.vm.views.imports.visible(),
+        std::borrow::Cow::Borrowed(_)
+    ));
 
     r.vm.ensure_symbols(SymbolTable::Exports);
     r.settle();

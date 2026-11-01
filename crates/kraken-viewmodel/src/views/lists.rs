@@ -1,5 +1,7 @@
 //! The Strings, Imports and Exports lists: paged, filterable, and linked to cross-references.
 
+use std::borrow::Cow;
+
 use kraken_proto::{Page, StringEncoding, SymbolKind};
 use serde_json::{Value, json};
 
@@ -31,7 +33,18 @@ pub struct PagedList<T> {
     /// The filter text. For strings the engine applies it; for imports and exports the view
     /// applies it to the rows loaded.
     pub filter: String,
+    /// The rows that matched `filter` the last time it or the rows changed: a filtered list is
+    /// drawn every frame, and a big program exports tens of thousands of symbols.
+    matched: Option<Matched>,
     pub(crate) req: u64,
+}
+
+/// Which rows matched a filter.
+#[derive(Debug, Clone)]
+struct Matched {
+    filter: String,
+    rows: usize,
+    indexes: Vec<usize>,
 }
 
 impl<T> Default for PagedList<T> {
@@ -44,6 +57,7 @@ impl<T> Default for PagedList<T> {
             error: None,
             total: None,
             filter: String::new(),
+            matched: None,
             req: 0,
         }
     }
@@ -85,13 +99,13 @@ pub struct SymbolItem {
 }
 
 impl SymbolItem {
+    /// Whether the name or the library holds `needle`, which is in lower case.
     fn matches(&self, needle: &str) -> bool {
-        let n = needle.to_lowercase();
-        self.name.to_lowercase().contains(&n)
+        self.name.to_lowercase().contains(needle)
             || self
                 .library
                 .as_deref()
-                .is_some_and(|l| l.to_lowercase().contains(&n))
+                .is_some_and(|l| l.to_lowercase().contains(needle))
     }
 }
 
@@ -115,16 +129,35 @@ impl SymbolTable {
 
 impl PagedList<SymbolItem> {
     /// Indexes of the rows that match the filter.
-    pub fn visible(&self) -> Vec<usize> {
+    pub fn visible(&self) -> Cow<'_, [usize]> {
         if self.filter.is_empty() {
-            return (0..self.items.len()).collect();
+            return Cow::Owned((0..self.items.len()).collect());
         }
+        match &self.matched {
+            Some(m) if m.filter == self.filter && m.rows == self.items.len() => {
+                Cow::Borrowed(&m.indexes)
+            }
+            _ => Cow::Owned(self.matching()),
+        }
+    }
+
+    fn matching(&self) -> Vec<usize> {
+        let needle = self.filter.to_lowercase();
         self.items
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.matches(&self.filter))
+            .filter(|(_, s)| s.matches(&needle))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// Works out the rows that match, after the filter or the rows changed.
+    fn rematch(&mut self) {
+        self.matched = (!self.filter.is_empty()).then(|| Matched {
+            filter: self.filter.clone(),
+            rows: self.items.len(),
+            indexes: self.matching(),
+        });
     }
 }
 
@@ -263,7 +296,9 @@ impl ViewModel {
 
     /// Sets the filter (names and libraries, case-insensitive, applied to loaded rows).
     pub fn set_symbols_filter(&mut self, table: SymbolTable, filter: impl Into<String>) {
-        self.symbols_mut(table).filter = filter.into();
+        let l = self.symbols_mut(table);
+        l.filter = filter.into();
+        l.rematch();
     }
 
     /// Loads the next page when the rows on screen get near the end.
@@ -311,6 +346,7 @@ impl ViewModel {
                     l.next_cursor = page.next_cursor;
                     l.total = page.total;
                     l.loaded = true;
+                    l.rematch();
                 }
                 Err(e) => l.error = Some(plain_error(&e)),
             }

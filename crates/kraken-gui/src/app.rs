@@ -718,6 +718,20 @@ impl KrakenApp {
         }
     }
 
+    /// The demo with every query taking `delay`, for tests of what the window does meanwhile.
+    #[cfg(test)]
+    pub(crate) fn start_slow_demo(&mut self, ctx: &egui::Context, delay: Duration) {
+        let d = demo_project().expect("demo project");
+        self.is_demo = true;
+        let slow = kraken_viewmodel::testing::SlowBackend::new(d.backend, delay);
+        let mut vm = self.new_vm(Arc::new(slow), ctx);
+        vm.create_project(
+            d.binary.to_string_lossy().into_owned(),
+            d.project_dir.to_string_lossy().into_owned(),
+        );
+        self.vm = Some(vm);
+    }
+
     pub fn start_demo(&mut self, ctx: &egui::Context) {
         self.release_current(None);
         match demo_project() {

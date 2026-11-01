@@ -139,18 +139,18 @@ mod tests {
         Instruction {
             addr,
             length,
-            mnemonic: "X".into(),
-            body: String::new(),
+            mnemonic: engine_native_sys::Mnemonic::new("X"),
+            body: "".into(),
             flow,
             fallthrough: matches!(
                 flow,
                 Flow::Fallthrough | Flow::Call | Flow::IndirectCall | Flow::ConditionalJump
             ),
             via_pointer: false,
-            targets,
-            refs: Vec::new(),
-            reg_reads: Vec::new(),
-            reg_writes: Vec::new(),
+            targets: targets.into(),
+            refs: Box::default(),
+            reg_reads: &[],
+            reg_writes: &[],
         }
     }
 

@@ -36,6 +36,7 @@ fn run(
             cache,
             threads,
             parallel_min_code: min_code,
+            parallel_warm_code: min_code,
             ..Options::new(use_symbols)
         },
     )

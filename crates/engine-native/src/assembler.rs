@@ -43,9 +43,9 @@ fn decode_scratch(
         .into_iter()
         .map(|i| Decoded {
             length: i.length,
-            mnemonic: i.mnemonic,
-            body: i.body,
-            targets: i.targets,
+            mnemonic: i.mnemonic.to_string(),
+            body: i.body.to_string(),
+            targets: i.targets.into_vec(),
         })
         .collect())
 }
