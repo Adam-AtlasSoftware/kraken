@@ -516,7 +516,7 @@ fn walk(
                     });
                     // a MIPS lazy stub calls the resolver, which goes on in the function itself
                     let stub = loaded.is_mips() && loaded.in_plt(pc);
-                    let noreturn = got_call(loaded, &lane, env.decoded, pc)
+                    let noreturn = got_call(loaded, lane, env.decoded, pc)
                         .is_some_and(|t| env.noreturn.contains(&t));
                     if ends || stub || noreturn {
                         break;
