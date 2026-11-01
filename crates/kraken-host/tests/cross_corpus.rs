@@ -56,6 +56,13 @@ const SETS: &[Set] = &[
         binaries: 16,
     },
     Set {
+        name: "mipsel",
+        arch: "MIPS",
+        bits: 32,
+        endian: "little",
+        binaries: 16,
+    },
+    Set {
         name: "ppc32",
         arch: "PowerPC",
         bits: 32,

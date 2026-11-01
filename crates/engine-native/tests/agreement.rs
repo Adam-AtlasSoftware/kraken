@@ -6,8 +6,8 @@
 //! `cargo test -p engine-native --test agreement -- --nocapture` prints the numbers for the
 //! guarded binaries; `-- --ignored --nocapture` prints them for all 20 (and with
 //! `KRAKEN_AGREEMENT_SET=corpus/pe`, `corpus/elf32`, `corpus/arm32`, `corpus/aarch64`,
-//! `corpus/riscv64`, `corpus/riscv32`, `corpus/mips` or `corpus/ppc32` for those sets). Names are compared by entry,
-//! signatures without spacing (exactly, and by types alone).
+//! `corpus/riscv64`, `corpus/riscv32`, `corpus/mips`, `corpus/mipsel` or `corpus/ppc32` for those
+//! sets). Names are compared by entry, signatures without spacing (exactly, and by types alone).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -940,7 +940,7 @@ async fn agrees_with_ghidra_on_pe_and_elf32() {
     }
 }
 
-/// Big-endian 32-bit MIPS and PowerPC against Ghidra's fixtures, delay slots, GOT calls and
+/// 32-bit MIPS of both byte orders and big-endian PowerPC against Ghidra's fixtures, delay slots, GOT calls and
 /// stubs included. Where Ghidra gives up on a switch and the native engine does not, its bodies
 /// are the shorter ones, so the bar for those is below the others'.
 #[tokio::test(flavor = "multi_thread")]
@@ -949,6 +949,8 @@ async fn agrees_with_ghidra_on_mips_and_powerpc() {
         ("corpus/mips", "switch_vm-mips-O0"),
         ("corpus/mips", "stripped_calc-mips-O0-stripped"),
         ("corpus/mips", "pie_list-mips-O2"),
+        ("corpus/mipsel", "switch_vm-mipsel-O0"),
+        ("corpus/mipsel", "switch_vm-mipsel-O2-stripped"),
         ("corpus/ppc32", "switch_vm-ppc32-O0"),
         ("corpus/ppc32", "stripped_calc-ppc32-O0-stripped"),
         ("corpus/ppc32", "pie_list-ppc32-O2"),
@@ -1145,7 +1147,7 @@ fn measure_json(s: &Score) -> Value {
     })
 }
 
-/// The numbers behind `cargo xtask parity`: every binary of the five fixture sets, summed per
+/// The numbers behind `cargo xtask parity`: every binary of the six fixture sets, summed per
 /// set, written as JSON to the file named by `KRAKEN_PARITY_OUT`. Run it through the xtask.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "run by `cargo xtask parity`"]
@@ -1160,6 +1162,7 @@ async fn parity_report() {
         "corpus/pe",
         "corpus/elf32",
         "corpus/mips",
+        "corpus/mipsel",
         "corpus/ppc32",
     ] {
         let mut names: Vec<String> = std::fs::read_dir(root().join(set).join("fixtures"))

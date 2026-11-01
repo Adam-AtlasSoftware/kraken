@@ -1,0 +1,33 @@
+{
+  "binary": "switch_vm-mipsel-O2",
+  "ground_truth_from": "switch_vm-mipsel-O2",
+  "sha256": "ab7636cb092e7132fe4ee73c5a73e3c45bcbcce510e7a9b92d616256767d5a07",
+  "source_file": "src/switch_vm.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x5f0",
+      "size": 124
+    },
+    {
+      "name": "vm_fail",
+      "demangled": "vm_fail",
+      "entry": "0x7e0",
+      "size": 72
+    },
+    {
+      "name": "vm_run",
+      "demangled": "vm_run",
+      "entry": "0x828",
+      "size": 1112
+    },
+    {
+      "name": "op_name",
+      "demangled": "op_name",
+      "entry": "0xc80",
+      "size": 244
+    }
+  ]
+}

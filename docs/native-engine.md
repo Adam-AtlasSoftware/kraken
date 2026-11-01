@@ -463,7 +463,8 @@ sets the native engine recovers switches Ghidra gives up on (`vm_run` at `-O0` o
 stops where Ghidra runs into the next function after a call that never returns.
 
 Not there yet: micro-MIPS and MIPS16 modes, PowerPC VLE, 64-bit MIPS and PowerPC (function
-descriptors), `kraken-emu` does not run these processors (card EM-11; `qemu-mips` runs the corpus).
+descriptors), and relocatable MIPS and PowerPC object files, which go to Ghidra. `kraken-emu` does
+not run these processors yet; `qemu-mips` and `qemu-ppc` run the corpus.
 
 ## What does not work yet
 

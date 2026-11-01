@@ -1,10 +1,11 @@
-//! The native engine on ARM (A32 and Thumb-2), AArch64, RISC-V 64 and RISC-V 32: the corpus sets
-//! `corpus/arm32`, `corpus/aarch64`, `corpus/riscv64` and `corpus/riscv32` (see the corpus
-//! README). Needs the native build and a spec tree with the ARM, AARCH64 and RISCV
-//! specifications (`cargo xtask native-sla`); skips otherwise.
+//! The native engine on ARM (A32 and Thumb-2), AArch64, RISC-V 64, RISC-V 32, MIPS and PowerPC:
+//! the corpus sets `corpus/arm32`, `corpus/aarch64`, `corpus/riscv64`, `corpus/riscv32`,
+//! `corpus/mips`, `corpus/mipsel` and `corpus/ppc32` (see the corpus README). Needs the native
+//! build and a spec tree with the ARM, AARCH64, RISCV, MIPS and PowerPC specifications
+//! (`cargo xtask native-sla`); skips otherwise.
 //!
 //! `cargo test -p engine-native --test arch -- --ignored --nocapture` sweeps every binary of the
-//! four sets (truth recall with names and sizes, and the time each open takes).
+//! sets (truth recall with names and sizes, and the time each open takes).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,7 +20,9 @@ use kraken_engine::{
 use kraken_proto::{DisasmScope, FunctionSummary, Hex64, Locator, PageRequest};
 use serde_json::Value;
 
-const SETS: &[&str] = &["arm32", "aarch64", "riscv64", "riscv32"];
+const SETS: &[&str] = &[
+    "arm32", "aarch64", "riscv64", "riscv32", "mips", "mipsel", "ppc32",
+];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -35,7 +38,7 @@ fn isolation() -> Isolation {
     }
 }
 
-/// A config whose spec tree has the four processors, or `None` (skipped).
+/// A config whose spec tree has the processors, or `None` (skipped).
 fn config(use_symbols: bool) -> Option<NativeConfig> {
     let Some(mut c) = NativeConfig::discover() else {
         eprintln!("skipped: no Sleigh spec tree (cargo xtask native-sla)");
@@ -51,6 +54,8 @@ fn config(use_symbols: bool) -> Option<NativeConfig> {
         ("AARCH64", "AARCH64.sla"),
         ("RISCV", "riscv.lp64d.sla"),
         ("RISCV", "riscv.ilp32d.sla"),
+        ("MIPS", "mips32be.sla"),
+        ("PowerPC", "ppc_32_be.sla"),
     ] {
         if !langs
             .join(proc_dir)
@@ -183,7 +188,13 @@ fn code_bytes(map: &[(u64, bool)], start: u64, size: u64) -> u64 {
 /// code only, as the body (and Ghidra's) does.
 fn truth(set: &str, binary: &str, base: u64) -> BTreeMap<u64, Truth> {
     let data = std::fs::read(bin(set, binary)).expect("binary");
-    let pie = u16::from_le_bytes([data[16], data[17]]) == 3;
+    let e_type = [data[16], data[17]];
+    let big = data[5] == 2;
+    let pie = (if big {
+        u16::from_be_bytes(e_type)
+    } else {
+        u16::from_le_bytes(e_type)
+    }) == 3;
     let map = if set == "arm32" {
         mapping(set, binary)
     } else {

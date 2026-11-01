@@ -8,8 +8,8 @@
 # Linux), "aarch64", "riscv64" (rv64gc Linux) and "riscv32" (rv32imac, static, picolibc with
 # riscv32/src/linux_rt.c), each in corpus/<set>/bin, and "xlib" (libkr of the lib set as object
 # files, static libraries and shared libraries for those four, corpus/xlib/bin), and the
-# big-endian Linux sets "mips" (mips32r2 o32) and "ppc32", each in corpus/<set>/bin. Default: all
-# eleven. Name sets to build only those:
+# Linux sets "mips" and "mipsel" (mips32r2 o32) and "ppc32", each in corpus/<set>/bin. Default:
+# all twelve. Name sets to build only those:
 #   corpus/build.sh pe elf32
 set -euo pipefail
 
@@ -44,7 +44,7 @@ PROGRAMSX=(
 )
 # riscv32 programs: all static (there is no riscv32 Linux userland to link against).
 PROGRAMSRV32=(static_strops pie_list stripped_calc switch_vm)
-XSETS=(arm32 aarch64 riscv64 riscv32 xlib mips ppc32)
+XSETS=(arm32 aarch64 riscv64 riscv32 xlib mips mipsel ppc32)
 
 if [[ "${1:-}" != "--inside" ]]; then
   SETS=("$@")
@@ -90,7 +90,7 @@ if [[ "${1:-}" != "--inside" ]]; then
           && sha256sum ../lib/src/* ../tools/groundtruth_lib.py ../build.sh ../Containerfile \
              >> MANIFEST.sha256)
         ;;
-      arm32|aarch64|riscv64|riscv32|mips|ppc32)
+      arm32|aarch64|riscv64|riscv32|mips|mipsel|ppc32)
         extra=()
         [[ $set == riscv32 ]] && extra=(src/linux_rt.c)
         (cd "$set" && find bin -type f | LC_ALL=C sort | xargs sha256sum > MANIFEST.sha256 \
@@ -404,6 +404,10 @@ for set in "$@"; do
     mips)
       build_cross mips mips-linux-gnu mips -march=mips32r2 -mabi=32
       check_cross mips qemu-mips /usr/mips-linux-gnu
+      ;;
+    mipsel)
+      build_cross mipsel mipsel-linux-gnu mipsel -march=mips32r2 -mabi=32
+      check_cross mipsel qemu-mipsel /usr/mipsel-linux-gnu
       ;;
     ppc32)
       build_cross ppc32 powerpc-linux-gnu powerpc -mcpu=powerpc

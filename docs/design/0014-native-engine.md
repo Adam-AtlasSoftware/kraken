@@ -225,6 +225,14 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 | memory | `corpus/ppc32` | ELF PowerPC BE | 100.0% | 100.0% | 99.0% | parity |
 | disassembly | `corpus/ppc32` | ELF PowerPC BE | 97.5% | 100.0% | 97.0% | parity |
 | jump_tables | `corpus/ppc32` | ELF PowerPC BE | 100.0% | 100.0% | 98.0% | parity |
+| functions | `corpus/mipsel` | ELF MIPS LE | 100.0% | 97.1% | 99.0% | parity |
+| names | `corpus/mipsel` | ELF MIPS LE | 100.0% | 100.0% | 99.0% | parity |
+| decompile_text | `corpus/mipsel` | ELF MIPS LE | 59.8% | 29.7% | 59.0% | partial |
+| globals | `corpus/mipsel` | ELF MIPS LE | 100.0% | 100.0% | 99.0% | parity |
+| types | `corpus/mipsel` | ELF MIPS LE | 100.0% | 20.0% | 99.0% | parity |
+| memory | `corpus/mipsel` | ELF MIPS LE | 100.0% | 100.0% | 99.0% | parity |
+| disassembly | `corpus/mipsel` | ELF MIPS LE | 98.8% | 100.0% | 98.0% | parity |
+| jump_tables | `corpus/mipsel` | ELF MIPS LE | 100.0% | 0.0% | 98.0% | parity |
 
 <!-- parity:end -->
 

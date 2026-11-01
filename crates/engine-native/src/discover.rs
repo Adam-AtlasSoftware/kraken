@@ -618,30 +618,38 @@ fn got_call(
     pc: u64,
 ) -> Option<u64> {
     let gp = loaded.global_pointer.filter(|_| loaded.is_mips())?;
+    // the register the target is in, followed through `or t9,v0,zero` (unoptimized code)
+    let mut reg = "t9".to_string();
     let before = |n: u64| lane.decoded(shared, &pc.checked_sub(n * 4)?);
     for (back, i) in (1..16u64).filter_map(|n| Some((n, before(n)?))) {
         if back > 1 && (!i.fallthrough || i.flow != Flow::Fallthrough) {
             return None;
         }
-        let Some(operand) = i.body.strip_prefix("t9,") else {
+        let mut operands = i.body.split(',').map(str::trim);
+        if operands.next() != Some(reg.as_str()) {
             continue;
-        };
-        if &*i.mnemonic != "lw" {
-            return None;
         }
-        let digits = operand.strip_suffix("(gp)")?.trim();
-        let (negative, digits) = match digits.strip_prefix('-') {
-            Some(d) => (true, d),
-            None => (false, digits),
-        };
-        let offset = i64::from_str_radix(digits.strip_prefix("0x").unwrap_or(digits), 16).ok()?;
-        let slot = gp.wrapping_add_signed(if negative { -offset } else { offset });
-        let k = loaded.pointer_slots.partition_point(|(s, _)| *s < slot);
-        return loaded
-            .pointer_slots
-            .get(k)
-            .filter(|(s, _)| *s == slot)
-            .map(|(_, t)| *t);
+        let source = operands.next()?;
+        match (i.mnemonic.as_str(), operands.next()) {
+            ("or" | "move", Some("zero") | None) => reg = source.to_string(),
+            ("lw", None) => {
+                let digits = source.strip_suffix("(gp)")?.trim();
+                let (negative, digits) = match digits.strip_prefix('-') {
+                    Some(d) => (true, d),
+                    None => (false, digits),
+                };
+                let offset =
+                    i64::from_str_radix(digits.strip_prefix("0x").unwrap_or(digits), 16).ok()?;
+                let slot = gp.wrapping_add_signed(if negative { -offset } else { offset });
+                let k = loaded.pointer_slots.partition_point(|(s, _)| *s < slot);
+                return loaded
+                    .pointer_slots
+                    .get(k)
+                    .filter(|(s, _)| *s == slot)
+                    .map(|(_, t)| *t);
+            }
+            _ => return None,
+        }
     }
     None
 }

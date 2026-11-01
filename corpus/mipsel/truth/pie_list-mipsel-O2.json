@@ -1,0 +1,57 @@
+{
+  "binary": "pie_list-mipsel-O2",
+  "ground_truth_from": "pie_list-mipsel-O2",
+  "sha256": "13386533360d4c9e8e1687e800cf10b619c9a5f370489fb6d5f4befe2db9736a",
+  "source_file": "src/pie_list.c",
+  "opt": "O2",
+  "functions": [
+    {
+      "name": "main",
+      "demangled": "main",
+      "entry": "0x660",
+      "size": 616
+    },
+    {
+      "name": "cmp_id",
+      "demangled": "cmp_id",
+      "entry": "0xa40",
+      "size": 16
+    },
+    {
+      "name": "cmp_dist",
+      "demangled": "cmp_dist",
+      "entry": "0xa50",
+      "size": 48
+    },
+    {
+      "name": "node_new",
+      "demangled": "node_new",
+      "entry": "0xa80",
+      "size": 176
+    },
+    {
+      "name": "cmp_name",
+      "demangled": "cmp_name",
+      "entry": "0xb30",
+      "size": 28
+    },
+    {
+      "name": "list_push",
+      "demangled": "list_push",
+      "entry": "0xb4c",
+      "size": 28
+    },
+    {
+      "name": "list_sort",
+      "demangled": "list_sort",
+      "entry": "0xb68",
+      "size": 188
+    },
+    {
+      "name": "list_each",
+      "demangled": "list_each",
+      "entry": "0xc24",
+      "size": 88
+    }
+  ]
+}

@@ -342,3 +342,67 @@ format = "ELF PowerPC BE"
 threshold = 0.98
 status = "parity"
 test = "native_jump_tables_agree_with_the_recorded_switches"
+
+[[row]]
+capability = "functions"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_mips_and_powerpc"
+
+[[row]]
+capability = "names"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.99
+status = "parity"
+test = "agrees_with_ghidra_on_mips_and_powerpc"
+
+[[row]]
+capability = "decompile_text"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.59
+status = "partial"
+test = "parity_report"
+
+[[row]]
+capability = "globals"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.99
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "types"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.99
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "memory"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.99
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "disassembly"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.98
+status = "parity"
+test = "parity_report"
+
+[[row]]
+capability = "jump_tables"
+set = "corpus/mipsel"
+format = "ELF MIPS LE"
+threshold = 0.98
+status = "parity"
+test = "native_jump_tables_agree_with_the_recorded_switches"
