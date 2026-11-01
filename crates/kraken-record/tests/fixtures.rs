@@ -34,7 +34,7 @@ fn load(name: &str) -> FixtureFile {
 #[test]
 fn a_fixture_exists_for_every_corpus_binary() {
     let names = names();
-    assert_eq!(names.len(), 20);
+    assert_eq!(names.len(), 24);
     for n in &names {
         assert!(fixture_path(n).is_file(), "missing fixture for {n}");
     }

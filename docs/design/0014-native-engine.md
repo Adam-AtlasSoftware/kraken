@@ -185,13 +185,13 @@ Recall and precision against the Ghidra 12.2 fixtures (`parity.toml` holds the t
 
 | Capability | Set | Format | Recall | Precision | Threshold | Status |
 |---|---|---|---|---|---|---|
-| functions | `corpus` | ELF x86-64 | 99.8% | 81.8% | 99.0% | parity |
+| functions | `corpus` | ELF x86-64 | 99.8% | 83.4% | 99.0% | parity |
 | names | `corpus` | ELF x86-64 | 99.8% | 99.8% | 99.0% | parity |
-| decompile_text | `corpus` | ELF x86-64 | 60.6% | 59.9% | 58.0% | partial |
-| globals | `corpus` | ELF x86-64 | 85.2% | 75.4% | 80.0% | partial |
-| types | `corpus` | ELF x86-64 | 97.1% | 13.4% | 96.0% | parity |
-| memory | `corpus` | ELF x86-64 | 100.0% | 100.0% | 99.0% | parity |
-| disassembly | `corpus` | ELF x86-64 | 99.4% | 100.0% | 98.0% | parity |
+| decompile_text | `corpus` | ELF x86-64 | 65.8% | 65.3% | 58.0% | partial |
+| globals | `corpus` | ELF x86-64 | 83.6% | 77.3% | 80.0% | partial |
+| types | `corpus` | ELF x86-64 | 97.6% | 14.5% | 96.0% | parity |
+| memory | `corpus` | ELF x86-64 | 99.7% | 100.0% | 99.0% | parity |
+| disassembly | `corpus` | ELF x86-64 | 99.5% | 100.0% | 98.0% | parity |
 | jump_tables | `corpus` | ELF x86-64 | 100.0% | 92.7% | 98.0% | parity |
 | functions | `corpus/pe` | PE x86-64 and x86 | 100.0% | 82.9% | 99.0% | parity |
 | names | `corpus/pe` | PE x86-64 and x86 | 99.4% | 99.4% | 99.0% | parity |
