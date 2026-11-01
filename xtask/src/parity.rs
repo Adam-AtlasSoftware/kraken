@@ -1,8 +1,8 @@
 //! `cargo xtask parity`: how closely the native engine agrees with Ghidra, as numbers.
 //!
 //! Runs `parity_report` of `crates/engine-native/tests/agreement.rs` (every binary of
-//! `corpus/fixtures` and of the `pe`, `elf32`, `mips`, `mipsel` and `ppc32` sets against the recorded Ghidra
-//! results), joins the per-set sums with the rows of `parity.toml` (threshold and declared
+//! `corpus/fixtures` and of the `pe`, `elf32`, `mips`, `mipsel`, `ppc32` and `macho` sets against
+//! the recorded Ghidra results), joins the per-set sums with the rows of `parity.toml` (threshold and declared
 //! status), writes `parity.json` and regenerates the marked section of
 //! `docs/design/0014-native-engine.md`. The output holds no times or paths, so two runs on the
 //! same tree give the same bytes. A row below its threshold, or whose declared status does not
