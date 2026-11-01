@@ -226,6 +226,9 @@ fn only_the_pinned_unsigned_releases_skip_the_signature() {
         assert!(ok, "{tag} should be pinned");
     }
     for tag in ["v0.3.1", "v0.4.0", "v0.3.0-rc1", "v1.0.0"] {
-        assert!(!run(t.path(), &format!("unsigned_release_sums {tag}")).0, "{tag}");
+        assert!(
+            !run(t.path(), &format!("unsigned_release_sums {tag}")).0,
+            "{tag}"
+        );
     }
 }
