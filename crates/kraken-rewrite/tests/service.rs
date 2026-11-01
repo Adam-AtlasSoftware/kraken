@@ -1937,6 +1937,7 @@ async fn rewrite_check_lists_what_the_host_and_the_program_provide() {
 
 /// The emulator's child program, built next to the test binaries (or named by `KRAKEN_EMU_RUN`).
 /// Without it the harvest test is skipped, unless `KRAKEN_REQUIRE_SANDBOX=1`.
+#[cfg(unix)]
 fn need_emu_runner() -> bool {
     if kraken_emu::confined::find_runner().is_some_and(|p| p.is_file()) {
         return true;
@@ -1946,6 +1947,11 @@ fn need_emu_runner() -> bool {
         "kraken-emu-run is not built (cargo build -p kraken-emu --bin kraken-emu-run)"
     );
     eprintln!("skipped: kraken-emu-run is not built");
+    false
+}
+
+#[cfg(not(unix))]
+fn need_emu_runner() -> bool {
     false
 }
 

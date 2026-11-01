@@ -13,9 +13,11 @@ env:
   JDK_URL: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz
   JDK_SHA256: 68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb
 
+# Pinned: emulator tests run on the runner's own libraries, and Ubuntu 26.04's use AVX, which the
+# emulated baseline CPU lacks.
 jobs:
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -24,7 +26,7 @@ jobs:
       - run: cargo fmt --all --check
 
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -33,7 +35,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -79,7 +81,7 @@ jobs:
           done || true
 
   deny:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -87,7 +89,7 @@ jobs:
           command: check
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install mdBook
@@ -96,7 +98,7 @@ jobs:
       - run: mdbook build docs
 
   real-ghidra:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +176,7 @@ jobs:
   # the hash of the xtask files that pin them. Tests of this engine print "skipped: ..." and pass
   # when a prerequisite is missing; here that is a failure, so a green leg means the comparison ran.
   native:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -239,7 +241,7 @@ jobs:
   # the `testing` feature for the pytest suite, which runs against a FakeEngine-backed in-process
   # project plus a private krakend with its scripted fake engine. No Ghidra is needed.
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

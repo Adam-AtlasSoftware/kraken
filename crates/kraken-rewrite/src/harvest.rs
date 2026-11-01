@@ -13,6 +13,7 @@ use kraken_emu::confined::{DebugChild, DebugReply, DebugRequest};
 use kraken_emu::session::SessionStop;
 
 use crate::abi::{Arg, Callback, Link, Param, Signature};
+#[cfg(unix)]
 use crate::error::RewriteError;
 
 /// Limits of a harvest.
