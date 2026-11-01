@@ -284,18 +284,65 @@ impl Signature {
         if self.params.len() > 32 {
             return Err("at most 32 parameters".into());
         }
+        let mut shapes: Vec<&StructShape> = Vec::new();
         for p in &self.params {
             if let Param::Struct(s) = p {
-                s.validate()?;
+                shapes.push(s);
             }
         }
         if let Ret::Struct(s) = &self.ret {
+            shapes.push(s);
+        }
+        for (i, s) in shapes.iter().enumerate() {
             s.validate()?;
+            if shapes[..i]
+                .iter()
+                .any(|t| t.name == s.name && t.fields != s.fields)
+            {
+                return Err(format!(
+                    "two structure shapes are both named `{}` but have different fields",
+                    s.name
+                ));
+            }
         }
         if self.variadic_from.is_some_and(|v| v > self.params.len()) {
             return Err("the variadic index is past the last parameter".into());
         }
+        if let Some(v) = self.variadic_from {
+            for (i, p) in self.params.iter().enumerate().skip(v) {
+                match p {
+                    Param::Float => {
+                        return Err(format!(
+                            "variadic argument {i} is a float: C passes it as a double (see `Signature::promoted`)"
+                        ));
+                    }
+                    Param::Int { bits, .. } if *bits < 32 => {
+                        return Err(format!(
+                            "variadic argument {i} is narrower than 32 bits: C passes it as an int (see `Signature::promoted`)"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// The signature with C's default argument promotions applied to the variadic parameters:
+    /// `float` becomes `double`, integers narrower than 32 bits become 32-bit with their sign.
+    /// The oracle, the native runner and the Rust prototype all take the promoted form.
+    pub fn promoted(&self) -> Signature {
+        let mut out = self.clone();
+        if let Some(v) = self.variadic_from {
+            for p in out.params.iter_mut().skip(v) {
+                match p {
+                    Param::Float => *p = Param::Double,
+                    Param::Int { bits, .. } if *bits < 32 => *bits = 32,
+                    _ => {}
+                }
+            }
+        }
+        out
     }
 
     /// The structure types the signature uses, each once, as `#[repr(C)]` Rust definitions.
@@ -383,6 +430,12 @@ impl Signature {
 
     /// The Rust `extern "C"` declaration this signature maps to, with pointers as `*mut u8`.
     pub fn rust_prototype(&self) -> String {
+        self.rust_prototype_abi("C-unwind")
+    }
+
+    /// [`Self::rust_prototype`] with another ABI string (`"C"` for the exported shims, which
+    /// must not unwind into C).
+    pub fn rust_prototype_abi(&self, abi: &str) -> String {
         let params: Vec<String> = self
             .params
             .iter()
@@ -405,7 +458,7 @@ impl Signature {
             Ret::Struct(s) => format!(" -> {}", s.name),
         };
         format!(
-            "pub unsafe extern \"C\" fn {}({}){ret}",
+            "pub unsafe extern \"{abi}\" fn {}({}){ret}",
             self.name,
             params.join(", ")
         )
@@ -808,7 +861,7 @@ mod tests {
         };
         assert_eq!(
             sig.rust_prototype(),
-            "pub unsafe extern \"C\" fn f(a0: S, a1: i32) -> S"
+            "pub unsafe extern \"C-unwind\" fn f(a0: S, a1: i32) -> S"
         );
         assert_eq!(sig.type_defs().matches("struct S").count(), 1);
         let notes = sig.prompt_notes();
@@ -816,5 +869,37 @@ mod tests {
             notes.contains("already defined") && notes.contains("variadic"),
             "{notes}"
         );
+    }
+
+    #[test]
+    fn variadic_arguments_must_be_promoted_and_shape_names_unique() {
+        let int = |bits| Param::Int { bits, signed: true };
+        let sig = Signature {
+            name: "f".into(),
+            params: vec![int(32), Param::Float, int(8)],
+            ret: Ret::Void,
+            variadic_from: Some(1),
+        };
+        assert!(sig.check().is_err());
+        let p = sig.promoted();
+        p.check().expect("promoted");
+        assert_eq!(p.params, vec![int(32), Param::Double, int(32)]);
+        let rp = p.rust_prototype();
+        assert!(rp.contains("a1: f64") && rp.contains("a2: i32"), "{rp}");
+        let shape = |f: &[Scalar]| StructShape {
+            name: "S".into(),
+            fields: f.to_vec(),
+        };
+        let i32f = Scalar::Int {
+            bits: 32,
+            signed: true,
+        };
+        let clash = Signature {
+            name: "g".into(),
+            params: vec![Param::Struct(shape(&[i32f]))],
+            ret: Ret::Struct(shape(&[Scalar::Double])),
+            variadic_from: None,
+        };
+        assert!(clash.check().unwrap_err().contains("different fields"));
     }
 }

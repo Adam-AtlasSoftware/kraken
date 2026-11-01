@@ -95,6 +95,34 @@ fn an_exception_the_handler_does_not_take_ends_the_program_like_terminate() {
 }
 
 #[test]
+fn an_exception_crosses_a_c_unwind_function_to_its_callers_handler() {
+    let Some(r) = runner(
+        r#"
+unsafe extern "C-unwind" fn thrower(n: i32) -> i32 {
+    if n < 0 {
+        rt::throw("std::runtime_error", "negative");
+    }
+    n + 1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn f(n: i32) -> i32 {
+    match rt::try_catch(|| unsafe { thrower(n) }) {
+        Ok(v) => v,
+        Err(e) => -(e.what.len() as i32),
+    }
+}
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(r.run(&arg(4)).expect("run").ret, Some(5));
+    let caught = r.run(&arg(-1)).expect("run");
+    assert_eq!(caught.termination, Termination::Returned);
+    assert_eq!(caught.ret, Some(u64::from(-8i32 as u32)));
+}
+
+#[test]
 fn an_exception_with_no_handler_at_all_terminates() {
     let Some(r) = runner(
         r#"

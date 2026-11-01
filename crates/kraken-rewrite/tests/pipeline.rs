@@ -152,11 +152,9 @@ async fn registry_decompile_feeds_the_task_prompt() {
     };
     assert!(content.contains("<decompile untrusted=\"true\">"));
     assert!(content.contains("<callee untrusted=\"true\" name=\"vm_fail\""));
-    assert!(
-        content.contains(
-            "pub unsafe extern \"C\" fn vm_run(a0: *mut u8, a1: *mut u8, a2: u32) -> i32"
-        )
-    );
+    assert!(content.contains(
+        "pub unsafe extern \"C-unwind\" fn vm_run(a0: *mut u8, a1: *mut u8, a2: u32) -> i32"
+    ));
 }
 
 #[tokio::test]

@@ -117,7 +117,8 @@ comparing return values, memory it writes, and what it prints; any difference fa
 Reproduce the original's behaviour exactly, including its quirks, before you make it nice.\n\
 \n\
 Rules.\n\
-1. Define exactly one `#[unsafe(no_mangle)] pub unsafe extern \"C\" fn` with the given name, with \
+1. Define exactly one `#[unsafe(no_mangle)] pub unsafe extern \"C-unwind\" fn` with the given name (`C-unwind`, so that a C++ exception \
+modelled as a panic can cross the function), with \
 the parameter and return types of the prototype you are given (you may use typed pointers such \
 as `*const Record` where the prototype says `*mut u8`; they are ABI-identical). Define any \
 `#[repr(C)]` struct you need with the exact field offsets implied by the decompile and the \
@@ -379,14 +380,16 @@ impl RewriteTask {
             .filter(|c| !c.is_empty())
             .ok_or_else(|| RewriteError::Output("no <kraken-rust> block".into()))?;
         let needle = format!("extern \"C\" fn {}(", self.signature.name);
-        if !code.contains(&needle) {
+        let needle_unwind = format!("extern \"C-unwind\" fn {}(", self.signature.name);
+        if !code.contains(&needle) && !code.contains(&needle_unwind) {
             return Err(RewriteError::Output(format!(
                 "the code does not define `{needle}...`"
             )));
         }
         for r in &self.reused {
             let def = format!("extern \"C\" fn {}(", r.symbol());
-            if code.contains(&def) {
+            let def_unwind = format!("extern \"C-unwind\" fn {}(", r.symbol());
+            if code.contains(&def) || code.contains(&def_unwind) {
                 return Err(RewriteError::Output(format!(
                     "the code defines `{}`, which is already translated and in scope",
                     r.symbol()

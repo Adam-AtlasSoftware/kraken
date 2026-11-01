@@ -3,10 +3,10 @@
   "entries": [
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "026176752ed81198d213bcd259f63ade04373840f1862919f945f4721bd2b3cb",
-        "key": "71f683a772c8de61feb6271e51bad8f1b85899e6c68af14e34e86f0b9fa53d7e"
+        "messages_hash": "60cfe100128e8cd56c95738b6fbf50df9ae8aad3d6f115c32df7f454e52fc96f",
+        "key": "ce75715278914118ee749b50441f3e3ba9a6cfaff448654262301b7576cd821a"
       },
       "events": [
         {
@@ -21,46 +21,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "1ca31272c522a1c7b09a77aae1430aaa4a4d84e156677da50a548c16ba0df53b",
-        "key": "d71ac992cc10ee6fc1ce0cc21aa5f10463bd9efe17885f67a67e416a5f389608"
-      },
-      "events": [
-        {
-          "type": "text_delta",
-          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_name`: `strcmp` of the names (called through a function\n// pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_name(a: *const Record, b: *const Record) -> i32 {\n    unsafe { rt::strcmp((*a).name.as_ptr(), (*b).name.as_ptr()) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
-        },
-        {
-          "type": "finish",
-          "reason": "stop"
-        }
-      ]
-    },
-    {
-      "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
-        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "b23a5d82587dc2e97bc9fd8b422d2512246a5db06764904cc28bdb40f9a61688",
-        "key": "cf00fbf30020ab984151efcf9b5e7a609fa5fdd6e37fa87df67967a774677d15"
-      },
-      "events": [
-        {
-          "type": "text_delta",
-          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id`: the difference of the ids (called through a\n// function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
-        },
-        {
-          "type": "finish",
-          "reason": "stop"
-        }
-      ]
-    },
-    {
-      "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
-        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "dedfd04746d286933f913f82f31d0ebb00c09e39d7af178d340a14adfb6ba4b2",
-        "key": "d6d5cfeb31d5f7b174f028ef11d8ac3b761900a5195cd7027fffb5da33ebe3e1"
+        "messages_hash": "f9de9f23b5e627066dc6f87622af75df12f37954df2a7a97a694ee1f7f95c95d",
+        "key": "bfe26b57cae49a9ef187b4fa700cc9be205126158615e9afb668b776dd7fb820"
       },
       "events": [
         {
@@ -75,10 +39,46 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "c7f3ba9ff787abbe21d3a8cea7eb7668857b6f3d550620ae827dbbe3d870b07f",
-        "key": "a8ddb381a1250b7017edf78c3981a44c9fb4ea4ead45508636ea01b317fcc973"
+        "messages_hash": "7da8bec22c024ca123fc12b6a85da40fffde84e65a498922de6ffe1eff16ac14",
+        "key": "f81cca9b055feecf75879dc46a0617e26d9f87ec91927b560cabbf4954eaaf78"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_id`: the difference of the ids (called through a\n// function pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n/// `return a->id - b->id;` The subtraction wraps, as the generated code does.\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_id(a: *const Record, b: *const Record) -> i32 {\n    unsafe { (*a).id.wrapping_sub((*b).id) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "4e320035e6773f8cab198395c505d50d9da5fec4fde700f91fdf8179a4a01187",
+        "key": "9d142c44359aa6db3b0a0855dca298354a9601ff0a52867daa0457077cd57666"
+      },
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "<kraken-rust>\n// Reference translation of pie_list `cmp_name`: `strcmp` of the names (called through a function\n// pointer only).\n\n#[repr(C)]\npub struct Point {\n    pub x: i32,\n    pub y: i32,\n}\n\n#[repr(C)]\npub struct Record {\n    pub id: i32,\n    pub name: [u8; 16],\n    pub pos: Point,\n    pub weight: f64,\n}\n\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn cmp_name(a: *const Record, b: *const Record) -> i32 {\n    unsafe { rt::strcmp((*a).name.as_ptr(), (*b).name.as_ptr()) }\n}\n</kraken-rust>\n<kraken-result>{\"assumptions\": [], \"unsupported\": []}</kraken-result>"
+        },
+        {
+          "type": "finish",
+          "reason": "stop"
+        }
+      ]
+    },
+    {
+      "fingerprint": {
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
+        "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "messages_hash": "a2da841f900105329fb811a29590ec4f294ffda3e10431d889bc70c3fbdf7342",
+        "key": "33d5bf927f59e071df0d30f091835d4fd14e148a6ec6e53a6e98f8b4e40c86eb"
       },
       "events": [
         {
@@ -93,10 +93,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "043ce6065645092345b92727e36088396e479e9b7d23f21af64277903462ba48",
-        "key": "d56bf8da89430c228bbbc7ad8cdc82243490b44601f0d4da86a92bae91cbc478"
+        "messages_hash": "7f60a2daf9d5ef3ab224be512301954e8d716783719e6f313533d3ee7c0473a2",
+        "key": "2b8b4902e1de5463e2b543f53d290dca938c067e23d321134d18f195e3217cb5"
       },
       "events": [
         {
@@ -111,10 +111,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "27f1b25ea12540c7379d56909e92c75674a5f9bf1f47e007fdef217c5aadb9fe",
-        "key": "353c169601012517e9f301c16347b88565b6a3cb5ac09f8ec5413a3ab1c04124"
+        "messages_hash": "48d7d6c722f34059841c611adc3de4dc3fe6d082b15f1651a78157d6afb61c06",
+        "key": "3996199bf15ded7e2c269f0f9f536aa300ee7eedc0638642aa0e43f9e7bc4fe4"
       },
       "events": [
         {
@@ -129,10 +129,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "1fba631e87ec0bad0705bd1a15e58a1a0f67865ca1f69fd0e7b2202d3daf9501",
-        "key": "937f34aef5edd8d58e575d1b52a4f1202d48cd583486b7a371b09ce448f7197e"
+        "messages_hash": "a9f7a0a90ba9d2625034eee8412d845f4867e08e6a2a1dd1c6418f27f27e2895",
+        "key": "aa52dca64469b59732296b306cd9aa23439235c21b8d8b976151bf5359d750eb"
       },
       "events": [
         {
@@ -147,10 +147,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "8db311daca54378f6caee617cee018b7e2c42a0de0893e185d2a4c92a1fff3c9",
-        "key": "737f2229810e9dbad570e42662a26a6afdd768435fa13d821596388cf26e45a3"
+        "messages_hash": "14858ad390fa4135a80e2f3732f43a69d72c97dbeb152f1d82503e01ae30f26d",
+        "key": "2445fd097cdaa9394927d879fccca3f18dde572d61f0fe98004f8567bb7c923d"
       },
       "events": [
         {
@@ -165,10 +165,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "6e57f0682ccc4fb3504c28662de8c8ccfa92d05923ed3dd02bb29c82a2831970",
-        "key": "22f989bc98178f862d83269de0d9c6dc9d449353607900554f95c58b3a081ad4"
+        "messages_hash": "c1b74ad4767e5a5a2a2b13b9c436b9e49c8a9d55a982af7a24b90d0fdc35b3c5",
+        "key": "05296b946e9ca9d13d48c860c01523fc40e9783326a2ee35a0a182036effc077"
       },
       "events": [
         {
@@ -183,10 +183,10 @@
     },
     {
       "fingerprint": {
-        "system_hash": "8c031bd83dab746b621539919f906ef9ad834f0e3b68b8758cbc5684b47f1153",
+        "system_hash": "f3ab36671634100538618a9e1f5b3847ff0feb7083431f99c15b41199da12068",
         "tools_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "messages_hash": "db03065ce965d51fe11631b9df5bb602fdb9b8678cc622fee89b372fe0fb0def",
-        "key": "61b6b7d1db8bee9f22ba3a6743b6667bfd809702ce5a231d0c23d20c47ee12de"
+        "messages_hash": "ea538d96163df9b45d0c453c973b7d3eafa7192f93e4f1dec13f0a855fc5a74c",
+        "key": "a95a1e5af7a00858b1f71836af1b65c66b421e4900325ce8d9f285dec6e35e66"
       },
       "events": [
         {

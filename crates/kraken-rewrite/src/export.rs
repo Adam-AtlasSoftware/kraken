@@ -198,7 +198,7 @@ fn original_module(u: &RewriteUnit, symbol: Option<&str>) -> (String, OriginalCa
     let linkable = link.is_some();
     let name = link.unwrap_or(shown);
     let decl = sig
-        .rust_prototype()
+        .rust_prototype_abi("C")
         .replacen("pub unsafe extern \"C\" fn ", "pub fn ", 1);
     let text = if linkable {
         format!(
@@ -208,7 +208,7 @@ fn original_module(u: &RewriteUnit, symbol: Option<&str>) -> (String, OriginalCa
             addr = u.anchor.address,
         )
     } else {
-        let mut head = sig.rust_prototype();
+        let mut head = sig.rust_prototype_abi("C");
         for i in 0..sig.params.len() {
             head = head.replacen(&format!("a{i}:"), &format!("_a{i}:"), 1);
         }
@@ -348,7 +348,7 @@ pub(crate) fn shim_fn_with(sig: &Signature, path: &str, pre: &str) -> String {
     };
     format!(
         "#[unsafe(no_mangle)]\n{} {{\n    {pre}{body}\n}}\n",
-        sig.rust_prototype()
+        sig.rust_prototype_abi("C")
     )
 }
 

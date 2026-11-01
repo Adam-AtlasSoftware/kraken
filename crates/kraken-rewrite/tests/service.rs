@@ -454,7 +454,7 @@ async fn a_cassette_translation_is_verified_stored_and_listed() {
     assert!(out.get("counterexample").is_none());
     assert_eq!(
         out["rust_prototype"],
-        "pub unsafe extern \"C\" fn cmp_id(a0: *mut u8, a1: *mut u8) -> i32"
+        "pub unsafe extern \"C-unwind\" fn cmp_id(a0: *mut u8, a1: *mut u8) -> i32"
     );
     assert_eq!(out["assumptions"][0]["value"], "struct record is 40 bytes");
     assert!(

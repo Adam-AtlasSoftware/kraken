@@ -63,7 +63,7 @@ fn taken_note(names: &[String]) -> String {
     format!(
         "{TAKEN_NOTE_HEAD}{}. Where the decompile uses such a pointer, pass the translated \
          function itself as a function pointer of the shape its callee expects, for example \
-         `Some(name as unsafe extern \"C\" fn(*mut u8, *mut u8) -> i32)`; a table of them is a \
+         `Some(name as unsafe extern \"C-unwind\" fn(*mut u8, *mut u8) -> i32)`; a table of them is a \
          `static` array of those pointers, in the order of the original table. Do not call them \
          unless the decompile does.",
         names.join(", ")
