@@ -314,12 +314,10 @@ pub fn compute(
                 return None;
             }
             let mut bytes = vec![0u8; ptr as usize];
-            loaded.image.read(*a, &mut bytes).then(|| {
-                bytes
-                    .iter()
-                    .enumerate()
-                    .fold(0u64, |v, (i, b)| v | (u64::from(*b) << (8 * i)))
-            })
+            loaded
+                .image
+                .read(*a, &mut bytes)
+                .then(|| loaded.endian.word(&bytes))
         });
         let pointer = stored.filter(|v| *v != 0).and_then(|v| target_label(*a, v));
         if let Some(t) = pointer {
