@@ -172,7 +172,24 @@ impl NativeEngine {
                 let _ = (method, idle, total, cancel);
                 Err(kraken_engine::unsupported("worker test hooks in-process"))
             },
-            w => w.test_progress_call(method, idle, total, cancel).await
+            w => w.test_progress_call(method, idle, total, false, cancel).await
+        )
+    }
+
+    /// Test only: as [`Self::worker_test_progress`], with a silence that warns instead of kills.
+    pub async fn worker_test_quiet(
+        &self,
+        method: &str,
+        idle: std::time::Duration,
+        total: Option<std::time::Duration>,
+        cancel: &CancellationToken,
+    ) -> EngineResult<serde_json::Value> {
+        route!(self,
+            _l => {
+                let _ = (method, idle, total, cancel);
+                Err(kraken_engine::unsupported("worker test hooks in-process"))
+            },
+            w => w.test_progress_call(method, idle, total, true, cancel).await
         )
     }
 }

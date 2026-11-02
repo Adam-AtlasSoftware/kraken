@@ -72,13 +72,19 @@ pub struct WorkerOptions {
     /// Hard deadline for a request other than opening and decompiling, and for the gap between
     /// two progress events of an analysis job (its idle limit).
     pub request_timeout: Duration,
-    /// Idle limit of an open: the longest gap between two progress reports of the loader and
-    /// discovery. A worker that reports nothing for this long is hung and is killed.
+    /// The longest quiet gap between two progress reports of an open or an analysis job. A long
+    /// step of a big program can stay quiet for minutes, so this warns and the work goes on,
+    /// unless `idle_kills` is set.
     pub open_idle_timeout: Duration,
+    /// Kill a worker that stays quiet for `open_idle_timeout` instead of warning.
+    pub idle_kills: bool,
     /// Overall cap of an open, however much progress it reports, before the size term below.
     pub open_timeout: Duration,
     /// Overall cap of an analysis job, before the size term below.
     pub analyze_timeout: Duration,
+    /// Exact overall caps of opens and analysis jobs, in place of the size-scaled ones.
+    pub open_cap: Option<Duration>,
+    pub analyze_cap: Option<Duration>,
     /// Added to the overall caps of opens and analysis jobs for every MiB of the binary, so a big
     /// binary gets a longer cap than a small one.
     pub timeout_per_mib: Duration,
@@ -104,8 +110,11 @@ impl Default for WorkerOptions {
             confinement: ConfinementOptions::default(),
             request_timeout: Duration::from_secs(60),
             open_idle_timeout: Duration::from_secs(120),
+            idle_kills: false,
             open_timeout: Duration::from_secs(1800),
             analyze_timeout: Duration::from_secs(3600),
+            open_cap: None,
+            analyze_cap: None,
             timeout_per_mib: Duration::from_secs(30),
             decompile_grace: Duration::from_secs(5),
             cancel_grace: Duration::from_secs(2),
@@ -119,6 +128,13 @@ impl Default for WorkerOptions {
 impl WorkerOptions {
     /// Overall cap of an open (`analyze` false) or an analysis job for a binary of `bytes`.
     pub fn total_cap(&self, analyze: bool, bytes: u64) -> Duration {
+        if let Some(cap) = if analyze {
+            self.analyze_cap
+        } else {
+            self.open_cap
+        } {
+            return cap;
+        }
         let base = if analyze {
             self.analyze_timeout
         } else {

@@ -122,6 +122,10 @@ struct Draft {
     ghidra_home: String,
     java_home: String,
     max_heap_mb: String,
+    /// `[engine_limits]`, in minutes as people think of them.
+    idle_limit: String,
+    open_limit: String,
+    analyze_limit: String,
     titlebar: kraken_host::TitlebarMode,
 }
 
@@ -220,6 +224,31 @@ fn keyboard(ui: &mut Ui, env: &SettingsEnv<'_>, actions: &mut Vec<SettingsAction
         ui.label(RichText::new(&k.blurb).size(12.0).color(p.text_dim));
         ui.add_space(4.0);
     }
+}
+
+/// A limit in seconds as the field shows it, in minutes.
+fn minutes_text(secs: Option<u64>) -> String {
+    secs.map(|s| {
+        if s.is_multiple_of(60) {
+            (s / 60).to_string()
+        } else {
+            format!("{:.1}", s as f64 / 60.0)
+        }
+    })
+    .unwrap_or_default()
+}
+
+/// What a limit field holds, in seconds.
+fn minutes_value(text: &str) -> Result<Option<u64>, String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    t.parse::<f64>()
+        .ok()
+        .filter(|m| m.is_finite() && *m >= 0.0 && *m <= 525_600.0)
+        .map(|m| Some((m * 60.0).round() as u64))
+        .ok_or_else(|| "A time limit must be a number of minutes, or empty.".to_string())
 }
 
 fn mib(bytes: u64) -> f64 {
@@ -357,6 +386,9 @@ impl Settings {
             ghidra_home: show(&cfg.ghidra_home),
             java_home: show(&cfg.java_home),
             max_heap_mb: cfg.max_heap_mb.map(|m| m.to_string()).unwrap_or_default(),
+            idle_limit: minutes_text(cfg.engine_limits.idle_limit_secs),
+            open_limit: minutes_text(cfg.engine_limits.open_limit_secs),
+            analyze_limit: minutes_text(cfg.engine_limits.analyze_limit_secs),
             titlebar: cfg.local_serving.titlebar,
         };
     }
@@ -381,6 +413,11 @@ impl Settings {
                     .filter(|m| (256..=262_144).contains(m))
                     .ok_or("The memory limit must be a number of MiB between 256 and 262144.")?,
             )
+        };
+        cfg.engine_limits = kraken_host::config::EngineLimits {
+            idle_limit_secs: minutes_value(&self.draft.idle_limit)?,
+            open_limit_secs: minutes_value(&self.draft.open_limit)?,
+            analyze_limit_secs: minutes_value(&self.draft.analyze_limit)?,
         };
         for (what, p) in [("Ghidra", &cfg.ghidra_home), ("JDK", &cfg.java_home)] {
             if let Some(p) = p
@@ -834,6 +871,46 @@ impl Settings {
                 );
                 ui.end_row();
             });
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("How long the native engine may work on a big program, in minutes. Leave a field empty for the default; 0 means no limit. You can always press Cancel.")
+                .size(12.0)
+                .color(p.text_dim),
+        );
+        egui::Grid::new("kraken_settings_limits")
+            .num_columns(2)
+            .spacing([10.0, 6.0])
+            .show(ui, |ui| {
+                for (label, hint, tip, field) in [
+                    (
+                        "Stop if silent for",
+                        "keep going, with a warning",
+                        "Stop when the engine reports nothing for this long. Empty warns and keeps going, because one step of a big program can stay quiet for minutes",
+                        &mut self.draft.idle_limit,
+                    ),
+                    (
+                        "Stop opening after",
+                        "30 minutes plus 30 seconds per MiB",
+                        "The longest an open may take, however much progress it reports",
+                        &mut self.draft.open_limit,
+                    ),
+                    (
+                        "Stop analysis after",
+                        "an hour plus 30 seconds per MiB",
+                        "The longest an analysis may take, however much progress it reports",
+                        &mut self.draft.analyze_limit,
+                    ),
+                ] {
+                    ui.label(label);
+                    ui.add(
+                        egui::TextEdit::singleline(field)
+                            .hint_text(hint)
+                            .desired_width(260.0),
+                    )
+                    .on_hover_text(tip);
+                    ui.end_row();
+                }
+            });
         for (var, what) in [
             ("KRAKEN_GHIDRA_HOME", "Ghidra folder"),
             ("KRAKEN_JAVA_HOME", "Java folder"),
@@ -1056,6 +1133,22 @@ fn status_view(ui: &mut Ui, v: &Value) {
 }
 
 #[cfg(test)]
+mod limits_tests {
+    use super::*;
+
+    #[test]
+    fn limit_fields_are_minutes_and_empty_is_the_default() {
+        assert_eq!(minutes_value(" ").unwrap(), None);
+        assert_eq!(minutes_value("0").unwrap(), Some(0));
+        assert_eq!(minutes_value("2.5").unwrap(), Some(150));
+        assert!(minutes_value("soon").is_err() && minutes_value("-1").is_err());
+        assert_eq!(minutes_text(Some(180)), "3");
+        assert_eq!(minutes_text(Some(90)), "1.5");
+        assert_eq!(minutes_text(None), "");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -1107,6 +1200,7 @@ mod tests {
                 max_heap_mb: "4096".into(),
                 engine: kraken_registry::EngineChoice::Auto,
                 titlebar: Default::default(),
+                ..Draft::default()
             },
             ..Settings::default()
         };

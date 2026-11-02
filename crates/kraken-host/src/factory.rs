@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use engine_dotnet::{
@@ -385,6 +386,15 @@ impl NativeEngineFactory {
         }
         let mut opts = engine_native::WorkerOptions::default();
         opts.confinement.allow_unconfined = self.cfg.allow_unconfined;
+        let limits = &self.cfg.engine_limits;
+        if let Some(secs) = limits.idle_limit_secs.filter(|s| *s > 0) {
+            opts.open_idle_timeout = Duration::from_secs(secs);
+            opts.idle_kills = true;
+        }
+        // 0 is "never": a decade is the same thing to a timer.
+        let cap = |secs: u64| Duration::from_secs(if secs == 0 { 10 * 365 * 86_400 } else { secs });
+        opts.open_cap = limits.open_limit_secs.map(cap);
+        opts.analyze_cap = limits.analyze_limit_secs.map(cap);
         engine_native::Isolation::Worker(opts)
     }
 

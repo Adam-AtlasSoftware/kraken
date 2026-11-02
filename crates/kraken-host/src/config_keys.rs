@@ -53,6 +53,24 @@ pub const CONFIG_KEYS: &[ConfigKey] = &[
         false,
     ),
     key(
+        "engine_limits.idle_limit_secs",
+        "a whole number of seconds",
+        "Stop an open or analysis that reports nothing for this long; unset warns and goes on",
+        false,
+    ),
+    key(
+        "engine_limits.open_limit_secs",
+        "a whole number of seconds, 0 for never",
+        "Stop opening a program after this long",
+        false,
+    ),
+    key(
+        "engine_limits.analyze_limit_secs",
+        "a whole number of seconds, 0 for never",
+        "Stop an analysis after this long",
+        false,
+    ),
+    key(
         "max_heap_mb",
         "a whole number of MiB",
         "Upper bound of the Ghidra sidecar's JVM heap",

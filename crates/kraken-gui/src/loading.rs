@@ -12,6 +12,9 @@ use crate::style::{self, card, medium, pal};
 /// An open that ends sooner than this never shows the screen (no flash for small programs).
 pub const SHOW_AFTER: Duration = Duration::from_millis(300);
 
+/// Quiet for this long, the screen says when it last heard from the engine.
+const QUIET_AFTER: Duration = Duration::from_secs(15);
+
 /// What a stage does, for its hover text.
 fn stage_help(stage: OpenStage) -> &'static str {
     match stage {
@@ -164,6 +167,23 @@ pub fn show(ui: &mut Ui, loading: &LoadingState, now: Instant) -> bool {
                         loading.counts_text().is_some() && msg.contains("functions found");
                     if !msg.is_empty() && !repeats {
                         ui.label(RichText::new(msg).size(12.0).color(p.text_dim));
+                    }
+                    let age =
+                        now.saturating_duration_since(loading.updated.unwrap_or(loading.started));
+                    if age >= QUIET_AFTER {
+                        ui.label(
+                            RichText::new(format!(
+                                "Last update {} ago. The step above is still running.",
+                                clock(age)
+                            ))
+                            .size(12.0)
+                            .color(p.text_dim),
+                        )
+                        .on_hover_text(
+                            "Some steps of a big program report nothing for minutes. KRAKEN keeps \
+                             going, and Cancel stops it at any time. Time limits are in Settings > \
+                             Analysis engine.",
+                        );
                     }
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {

@@ -441,6 +441,39 @@ async fn silent_worker_is_killed_at_the_idle_limit_not_the_cap() {
     alive(&e).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quiet_step_outlives_the_idle_limit_and_ends_at_the_cap() {
+    let Some(e) = open(options()).await else {
+        return;
+    };
+    let c = CancellationToken::new();
+    let started = std::time::Instant::now();
+    let err = e
+        .worker_test_quiet(
+            "test_hang",
+            Duration::from_millis(200),
+            Some(Duration::from_millis(1500)),
+            &c,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout, "{err}");
+    assert_eq!(err.details.expect("details")["reason"], "total_limit");
+    assert!(started.elapsed() >= Duration::from_millis(1400));
+    alive(&e).await;
+}
+
+#[test]
+fn explicit_caps_replace_the_scaled_ones() {
+    let o = WorkerOptions {
+        open_cap: Some(Duration::from_secs(5)),
+        analyze_cap: Some(Duration::from_secs(9)),
+        ..WorkerOptions::default()
+    };
+    assert_eq!(o.total_cap(false, 1 << 30), Duration::from_secs(5));
+    assert_eq!(o.total_cap(true, 1 << 30), Duration::from_secs(9));
+}
+
 #[test]
 fn overall_cap_scales_with_the_binary() {
     let o = WorkerOptions::default();

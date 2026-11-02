@@ -539,3 +539,16 @@ cargo xtask native-sla
 KRAKEN_AGREEMENT_SET=corpus/pe cargo test -p engine-native --test agreement \
   agreement_over_the_corpus -- --ignored --nocapture
 ```
+
+## Big programs and time limits
+
+Opening a big program for the first time can take many minutes. The loading screen shows the stage, the counts and when it last heard from the engine. One step can stay quiet for minutes, so silence is not treated as a hang: after two minutes the screen says it is still working and the work goes on. **Cancel** stops it at any time.
+
+An open still ends after 30 minutes plus 30 seconds per MiB of the program, and an analysis after an hour plus 30 seconds per MiB. Change this in **Settings > Analysis engine**, or in `config.toml` (values in seconds; restart the background engine afterwards):
+
+```toml
+[engine_limits]
+idle_limit_secs = 600      # stop when nothing is reported for this long; unset warns and goes on
+open_limit_secs = 0        # 0 means no limit
+analyze_limit_secs = 14400
+```

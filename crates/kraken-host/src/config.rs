@@ -300,6 +300,9 @@ pub struct KrakenConfig {
     /// (`kraken-native-worker`). A decompiler crash then takes the process down; for hosts
     /// without the worker. Default false.
     pub native_in_process: bool,
+    /// The `[engine_limits]` table: how long the native engine may work on a big program.
+    #[serde(skip_serializing_if = "EngineLimits::is_empty")]
+    pub engine_limits: EngineLimits,
     /// Upper bound of the sidecar JVM heap in MiB.
     pub max_heap_mb: Option<u64>,
     /// Run the sidecar without Landlock confinement when the host lacks it (default false).
@@ -359,6 +362,29 @@ pub struct KrakenConfig {
 
 fn is_default_debuginfo(s: &DebugInfoSettings) -> bool {
     *s == DebugInfoSettings::default()
+}
+
+/// The `[engine_limits]` table. Unset keeps the default; every value is in seconds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct EngineLimits {
+    /// Stop an open or analysis that reports nothing for this long. Unset, it warns instead and
+    /// goes on: one step of a big program can stay quiet for minutes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_limit_secs: Option<u64>,
+    /// Stop an open after this long; 0 means never. Unset: 30 minutes plus 30 seconds per MiB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_limit_secs: Option<u64>,
+    /// Stop an analysis after this long; 0 means never. Unset: an hour plus 30 seconds per MiB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analyze_limit_secs: Option<u64>,
+}
+
+impl EngineLimits {
+    /// True when nothing is set.
+    pub fn is_empty(&self) -> bool {
+        *self == EngineLimits::default()
+    }
 }
 
 fn is_default_updates(s: &UpdateSettings) -> bool {

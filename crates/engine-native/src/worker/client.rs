@@ -96,6 +96,8 @@ pub(crate) struct Limits<'a> {
     deadline: Duration,
     /// Overall cap that progress cannot extend.
     total: Option<Duration>,
+    /// Passing the idle deadline warns and the request goes on, up to `total`.
+    soft: bool,
     /// Progress events of the request: each one restarts the idle deadline, and is passed on.
     progress: Option<(&'a mut JobSubscription, Forward<'a>)>,
 }
@@ -143,6 +145,7 @@ impl WorkerEngine {
         Limits {
             deadline: self.opts.request_timeout,
             total: None,
+            soft: false,
             progress: None,
         }
     }
@@ -155,6 +158,7 @@ impl WorkerEngine {
                 .decompile_timeout
                 .map_or(self.opts.request_timeout, |t| t + self.opts.decompile_grace),
             total: None,
+            soft: false,
             progress: None,
         }
     }
@@ -165,6 +169,7 @@ impl WorkerEngine {
         method: &str,
         idle: Duration,
         total: Option<Duration>,
+        soft: bool,
         cancel: &CancellationToken,
     ) -> Result<Value, ProtoError> {
         let live = self.ensure(cancel).await?;
@@ -180,6 +185,7 @@ impl WorkerEngine {
             Limits {
                 deadline: idle,
                 total,
+                soft,
                 progress: Some((&mut sub, Forward::Drop)),
             },
             cancel,
@@ -292,6 +298,7 @@ impl WorkerEngine {
                 Limits {
                     deadline: self.opts.open_idle_timeout,
                     total: Some(self.opts.total_cap(false, bytes)),
+                    soft: !self.opts.idle_kills,
                     progress: Some((&mut sub, report.map_or(Forward::Drop, Forward::Open))),
                 },
                 cancel,
@@ -453,6 +460,7 @@ impl WorkerEngine {
                 .deadline
                 .max(self.opts.request_timeout),
             total: Some(self.opts.total_cap(true, bytes)),
+            soft: !self.opts.idle_kills,
             progress: Some((&mut sub, Forward::Job(&tx))),
         };
         let v = self
@@ -560,6 +568,7 @@ impl WorkerEngine {
         let Limits {
             deadline,
             total,
+            soft,
             progress,
         } = limits;
         let (mut sub, to) = match progress {
@@ -572,6 +581,8 @@ impl WorkerEngine {
         tokio::pin!(sleep);
         let cap = tokio::time::sleep(total.unwrap_or(Duration::MAX / 4));
         tokio::pin!(cap);
+        let mut last: Option<WireProgress> = None;
+        let mut quiet = Duration::ZERO;
         let reply = loop {
             let next_event = async {
                 match sub.as_mut() {
@@ -582,15 +593,9 @@ impl WorkerEngine {
             tokio::select! {
                 r = &mut call => break r,
                 Some(p) = next_event => {
-                    match to {
-                        Forward::Drop => {}
-                        Forward::Job(tx) => forward(tx, p),
-                        Forward::Open(r) => {
-                            if let Some(u) = p.detail.and_then(|d| serde_json::from_value(d).ok()) {
-                                r(u);
-                            }
-                        }
-                    }
+                    last = Some(p.clone());
+                    quiet = Duration::ZERO;
+                    pass_on(&to, p);
                     sleep.as_mut().reset(tokio::time::Instant::now() + deadline);
                 }
                 () = &mut cap, if total.is_some() => {
@@ -612,6 +617,20 @@ impl WorkerEngine {
                     })));
                 }
                 () = &mut sleep => {
+                    if soft {
+                        // Quiet is not stuck: one step of a big program can take minutes. The
+                        // overall cap and Cancel still end it.
+                        quiet += deadline;
+                        if let Some(mut p) = last.clone() {
+                            p.message = still_working(quiet);
+                            if let Some(d) = p.detail.as_mut().and_then(Value::as_object_mut) {
+                                d.insert("message".into(), json!(p.message));
+                            }
+                            pass_on(&to, p);
+                        }
+                        sleep.as_mut().reset(tokio::time::Instant::now() + deadline);
+                        continue;
+                    }
                     live.kill();
                     return Err(ProtoError::new(
                         ErrorCode::Timeout,
@@ -699,6 +718,28 @@ impl WorkerEngine {
             "log_tail": live.log.tail(LOG_TAIL),
         }))
     }
+}
+
+/// Hands a progress event to whoever follows the request.
+fn pass_on(to: &Forward<'_>, p: WireProgress) {
+    match to {
+        Forward::Drop => {}
+        Forward::Job(tx) => forward(tx, p),
+        Forward::Open(r) => {
+            if let Some(u) = p.detail.and_then(|d| serde_json::from_value(d).ok()) {
+                r(u);
+            }
+        }
+    }
+}
+
+/// What the person reads while a step stays quiet.
+fn still_working(quiet: Duration) -> String {
+    format!(
+        "Still working: this step has reported nothing for {} minutes. Big programs can take a \
+         while here; Cancel stops it.",
+        quiet.as_secs().div_ceil(60)
+    )
 }
 
 fn forward(tx: &ProgressSender, p: WireProgress) {
