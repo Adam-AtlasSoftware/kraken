@@ -7,7 +7,7 @@
 mod common;
 
 use common::*;
-use kraken_emu::{Arch, Exit, RunSpec, run_program};
+use kraken_emu::{Arch, Exit, Machine, Perm, RunSpec, Stop, run_program};
 
 fn case_name(line: &str) -> &str {
     line.split(':').next().unwrap_or(line)
@@ -47,6 +47,34 @@ fn every_vex_case_matches_the_recorded_cpu() {
         out.exit.describe()
     );
     assert_eq!(got.len(), want.len());
+}
+
+/// The recorded run cannot show this one: on the CPU it ends the program.
+#[test]
+#[ignore = "needs Ghidra processor sources for the SLEIGH specs (KRAKEN_GHIDRA_HOME or the dev cache)"]
+fn a_masked_move_faults_on_a_selected_element_past_the_mapping() {
+    const CODE: u64 = 0x10000;
+    const DATA: u64 = 0x20000;
+    let moves: [(&str, [u8; 5]); 2] = [
+        ("load", [0xc4, 0xe2, 0x7d, 0x2c, 0x08]), // vmaskmovps ymm1, ymm0, [rax]
+        ("store", [0xc4, 0xe2, 0x7d, 0x2e, 0x08]), // vmaskmovps [rax], ymm0, ymm1
+    ];
+    for (what, code) in moves {
+        let mut m = Machine::new(Arch::X86_64, &specs(Arch::X86_64)).expect("machine");
+        m.map(CODE, 0x1000, Perm::RW).expect("map");
+        m.write_mem(CODE, &code).expect("code");
+        m.protect(CODE, 0x1000, Perm::RX).expect("protect");
+        m.map(DATA, 0x1000, Perm::RW).expect("map");
+        m.write_reg("RAX", DATA + 0x1000 - 16).expect("rax");
+        // the first element of the upper half lies past the page
+        m.write_reg_bytes("YMM0_H", &[0x80; 16]).expect("mask");
+        m.set_pc(CODE);
+        let stop = m.run(1);
+        assert!(
+            matches!(stop, Stop::Fault { pc: CODE, .. }),
+            "{what}: {stop:?}"
+        );
+    }
 }
 
 #[test]

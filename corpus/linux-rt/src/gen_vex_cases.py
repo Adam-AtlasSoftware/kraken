@@ -319,6 +319,59 @@ for t in ("vpgatherdd ymm1, [r10 + ymm5*4], ymm6", "vpgatherdq ymm1, [r10 + xmm5
           "vgatherdpd ymm1, [r10 + xmm5*2], ymm6", "vpgatherdd xmm1, [r10 + xmm5*4], xmm6"):
     c(t)
 
+# The mask forms write xmm0, which may also be an operand the flags depend on.
+for setup, op in (("vmovdqa xmm0, xmm6", "pcmpistrm xmm0, xmm7, 0x40"),
+                  ("vmovdqa xmm0, xmm3", "pcmpistrm xmm0, xmm2, 0x40"),
+                  ("vmovdqa xmm0, xmm3", "pcmpistrm xmm0, xmm2, 0x48"),
+                  ("vmovdqa xmm0, xmm7", "pcmpistrm xmm6, xmm0, 0x40"),
+                  ("vmovdqa xmm0, xmm6", "vpcmpistrm xmm0, xmm7, 0x40"),
+                  ("vmovdqa xmm0, xmm3", "vpcmpistrm xmm0, xmm2, 0x40"),
+                  ("vmovdqa xmm0, xmm3\n\tmov eax, 16\n\tmov edx, 16", "pcmpestrm xmm0, xmm2, 0x40"),
+                  ("vmovdqa xmm0, xmm3\n\tmov eax, 16\n\tmov edx, 16", "vpcmpestrm xmm0, xmm2, 0x40")):
+    c(f"{setup}\n\t{op}", ZSOC)
+
+# Explicit lengths are signed, 32 bits of them without REX.W.
+for lengths, op in (("mov eax, -1\n\tmov edx, 5", "pcmpestri xmm6, xmm7, 0x0c"),
+                    ("mov eax, 5\n\tmov edx, -3", "pcmpestrm xmm6, xmm7, 0x40"),
+                    ("mov eax, 0x80000000\n\tmov edx, 5", "pcmpestri xmm6, xmm7, 0x0c"),
+                    ("mov eax, -2\n\tmov edx, 5", "vpcmpestri xmm6, xmm7, 0x0c"),
+                    ("movabs rax, 0x100000003\n\tmov edx, 5", "pcmpestri xmm6, xmm7, 0x0c"),
+                    ("mov rax, -1\n\tmov rdx, 5", ".byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xf7, 0x0c"),
+                    ("movabs rax, 0x100000003\n\tmov rdx, 5", ".byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xf7, 0x0c"),
+                    ("mov rax, -1\n\tmov rdx, 5", ".byte 0xc4, 0xe3, 0xf9, 0x61, 0xf7, 0x0c")):
+    c(f"{lengths}\n\t{op}", ZSOC)
+
+# Two pairs of 0x8000 wrap to the most negative value.
+c("mov eax, 0x80008000\n\tvmovd xmm1, eax\n\tvpbroadcastd ymm1, xmm1\n\tvpmaddwd ymm2, ymm1, ymm1")
+c("mov eax, 0x80008000\n\tvmovd xmm1, eax\n\tvpshufd xmm1, xmm1, 0\n\tpmaddwd xmm1, xmm1")
+
+# A memory source has one element, whatever the source index says.
+c("vinsertps xmm1, xmm2, dword ptr [rsi], 0xd3")
+c("insertps xmm1, dword ptr [rsi], 0x50")
+
+# Both control forms. The status bits are masked: they are sticky on a CPU and never set here.
+c("stmxcsr [rdi]\n\tand dword ptr [rdi], 0xffc0")
+c("vstmxcsr [rdi]\n\tand dword ptr [rdi], 0xffc0")
+c("mov dword ptr [rdi], 0x3f80\n\tvldmxcsr [rdi]\n\tvstmxcsr [rdi + 4]\n\t"
+  "mov dword ptr [rdi], 0x1f80\n\tvldmxcsr [rdi]")
+
+# `tail` is the last 16 bytes before an unmapped page, so these need the mask to hold accesses
+# back; ymm2 selects its low half. A store writes through, and the last case reads it back.
+LOW = "mov rax, [rip + tail]\n\tvpcmpeqd xmm2, xmm2, xmm2\n\t"
+for t in ("vmaskmovps ymm1, ymm2, [rax]", "vmaskmovpd ymm1, ymm2, [rax]",
+          "vpmaskmovd ymm1, ymm2, [rax]", "vpmaskmovq ymm1, ymm2, [rax]"):
+    c(f"{LOW}{t}\n\txor eax, eax", 0)
+for t in ("vmaskmovps [rax], ymm2, ymm3", "vmaskmovpd [rax], ymm2, ymm5",
+          "vpmaskmovd [rax], ymm2, ymm7", "vpmaskmovq [rax], ymm2, ymm3"):
+    c(f"{LOW}{t}\n\tvmovdqu xmm1, [rax]\n\txor eax, eax", 0)
+
+# With a clear mask nothing is touched: not an unmapped page, not read-only memory.
+CLEAR = "vpxor xmm2, xmm2, xmm2\n\t"
+c(f"mov rax, [rip + tail]\n\tadd rax, 16\n\t{CLEAR}vmaskmovps ymm1, ymm2, [rax]\n\txor eax, eax", 0)
+c(f"mov rax, [rip + tail]\n\tadd rax, 16\n\t{CLEAR}vpmaskmovq [rax], ymm2, ymm3\n\txor eax, eax", 0)
+c(f"lea rax, [rip + name_0]\n\t{CLEAR}vmaskmovps [rax], ymm2, ymm3\n\txor eax, eax", 0)
+c(f"lea rax, [rip + name_0]\n\t{CLEAR}vpmaskmovd [rax], ymm2, ymm3\n\txor eax, eax", 0)
+
 out = [".intel_syntax noprefix", ".text"]
 for i, (t, _) in enumerate(cases):
     out += [f"case_{i}:", f"\t{t}", "\tret"]

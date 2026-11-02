@@ -12,6 +12,8 @@ typedef unsigned char u8;
 #define NR_write 1
 #define NR_close 3
 #define NR_lseek 8
+#define NR_mmap 9
+#define NR_munmap 11
 #define NR_rt_sigaction 13
 #define NR_pipe 22
 #define NR_sched_yield 24

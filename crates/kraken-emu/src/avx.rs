@@ -13,7 +13,8 @@
 //! * [`BODIES`], [`spec_fixes`] and the small rewrites in [`rewrite_sinc`] replace statements that
 //!   icicle cannot lift, and those a run against a real CPU found wrong in the spec
 //!   (`corpus/linux-rt/src/vex_ops.c`).
-//! * [`kgather`] does the gathers, whose memory access the spec leaves out.
+//! * [`kgather`] does the gathers, whose memory access the spec leaves out, and [`kmask`] the
+//!   masked moves, which touch only the elements their mask selects.
 //!
 //! Floating-point results follow the default MXCSR: round to nearest, exceptions masked, status
 //! flags not recorded. A pseudo-op missing from [`OPS`] keeps Ghidra's name and stops the program
@@ -557,8 +558,11 @@ pub(crate) const OPS: &[(&str, Impl)] = &[
     ("vpmaddwd", |x| {
         let mut r = [0; 32];
         for i in 0..8 {
-            let v = i32::from(at::<i16>(&x.a, 2 * i)) * i32::from(at::<i16>(&x.b, 2 * i))
-                + i32::from(at::<i16>(&x.a, 2 * i + 1)) * i32::from(at::<i16>(&x.b, 2 * i + 1));
+            // Two pairs of 0x8000 sum to 2^31, which the instruction wraps.
+            let v = (i32::from(at::<i16>(&x.a, 2 * i)) * i32::from(at::<i16>(&x.b, 2 * i)))
+                .wrapping_add(
+                    i32::from(at::<i16>(&x.a, 2 * i + 1)) * i32::from(at::<i16>(&x.b, 2 * i + 1)),
+                );
             set::<i32>(&mut r, i, v);
         }
         r
@@ -876,10 +880,6 @@ pub(crate) const OPS: &[(&str, Impl)] = &[
         r[0] = (0..4).fold(0, |m, i| m | ((at::<u64>(&x.a, i) >> 63) as u8) << i);
         r
     }),
-    ("vmaskmovps", |x| maskmov::<u32>(x, |m| m >> 31 != 0)),
-    ("vmaskmovpd", |x| maskmov::<u64>(x, |m| m >> 63 != 0)),
-    ("vpmaskmovd", |x| maskmov::<u32>(x, |m| m >> 31 != 0)),
-    ("vpmaskmovq", |x| maskmov::<u64>(x, |m| m >> 63 != 0)),
     ("vpcmpistri", |x| pcmpstr(x, false).index),
     ("vpcmpestri", |x| pcmpstr(x, true).index),
     ("vpcmpistrm", |x| pcmpstr(x, false).mask),
@@ -1146,17 +1146,6 @@ fn movl(x: &In) -> V {
     r
 }
 
-/// `vmaskmov*`: the load form masks `b`; the store form also gets the old memory in `c` and keeps
-/// it where the mask is clear. `a` is the mask.
-fn maskmov<T: El + Default>(x: &In, on: impl Fn(T) -> bool) -> V {
-    let mut r = [0; 32];
-    for i in 0..32 / T::SIZE {
-        let keep = if x.n >= 3 { at(&x.c, i) } else { T::default() };
-        set(&mut r, i, if on(at(&x.a, i)) { at(&x.b, i) } else { keep });
-    }
-    r
-}
-
 /// What the `pcmp?str?` family computes.
 struct StrMatch {
     index: V,
@@ -1255,7 +1244,7 @@ fn pcmpstr(x: &In, explicit: bool) -> StrMatch {
 
 /// The helpers by SLEIGH user-op name.
 pub(crate) const HELPERS: &[(&str, icicle_cpu::exec::helpers::PcodeOpHelper)] =
-    &[("kvec", kvec), ("kgather", kgather)];
+    &[("kvec", kvec), ("kgather", kgather), ("kmask", kmask)];
 
 /// Bits 12-14 of `kvec`'s operation number hold the operand count.
 const COUNT_SHIFT: u32 = 12;
@@ -1295,6 +1284,57 @@ pub(crate) fn kvec(cpu: &mut Cpu, dst: VarNode, args: [Value; 2]) {
             cpu.exception.code = ExceptionCode::InvalidOpSize as u32;
             cpu.exception.value = u64::from(dst.size);
         }
+    }
+}
+
+/// In the first operand of [`kmask`], above the element size: the move is a store.
+const MASK_STORE: u32 = 0x100;
+
+/// `kmask(size, half, address, 0, mask0, mask1, data0, data1)`: one 128-bit half of `vmaskmov*`
+/// and `vpmaskmov*`. Only the elements whose mask bit is set reach memory, so a clear element
+/// neither faults nor rewrites its bytes, which is what code at the end of a page relies on. A
+/// load returns the half with the other elements zero.
+pub(crate) fn kmask(cpu: &mut Cpu, dst: VarNode, args: [Value; 2]) {
+    let flags: u32 = cpu.read_dynamic(args[0]).zxt();
+    let half: u32 = cpu.read_dynamic(args[1]).zxt();
+    let half = half as usize & 1;
+    let size = (flags & 0xff) as usize;
+    let store = flags & MASK_STORE != 0;
+    let s = cpu.args;
+    let (mask, data) = (s[2 + half].to_le_bytes(), s[4 + half].to_le_bytes());
+    let base = (s[0] as u64).wrapping_add(16 * half as u64);
+    let mut out = [0u8; 16];
+    for at in (0..16).step_by(size.max(1)) {
+        if mask[at + size - 1] >> 7 == 0 {
+            continue;
+        }
+        let addr = base.wrapping_add(at as u64);
+        let done = if store {
+            cpu.mem
+                .write_bytes(addr, &data[at..at + size], perm::WRITE)
+                .map_err(ExceptionCode::from_store_error)
+        } else {
+            cpu.mem
+                .read_bytes(addr, &mut out[at..at + size], perm::READ)
+                .map_err(ExceptionCode::from_load_error)
+        };
+        if let Err(code) = done {
+            cpu.exception.code = code as u32;
+            cpu.exception.value = addr;
+            return;
+        }
+    }
+    if !store {
+        cpu.write_var(dst, u128::from_le_bytes(out));
+    }
+}
+
+/// The element size of a masked move, for [`kmask`].
+fn mask_element(op: &str) -> Option<u32> {
+    match op {
+        "vmaskmovps" | "vpmaskmovd" => Some(4),
+        "vmaskmovpd" | "vpmaskmovq" => Some(8),
+        _ => None,
     }
 }
 
@@ -1578,30 +1618,41 @@ fn rewrite_stmt(stmt: &str, n: usize) -> Option<String> {
             (*op).to_string()
         }
     };
-    let id = op_id(&op)?;
+    let mask_size = mask_element(&op);
+    let store = mask_size.is_some() && matches!(lhs, "m128" | "m256");
+    let id = match mask_size {
+        Some(size) => (size | if store { MASK_STORE } else { 0 }) as usize,
+        None => op_id(&op)?,
+    };
     let explicit = matches!(op.as_str(), "vpcmpestri" | "vpcmpestrm");
     let lengths: Vec<&str> = if explicit {
         vec![args.get(3)?, args.get(4)?]
     } else {
         Vec::new()
     };
+    let mut pre = String::new();
     if explicit {
         args.truncate(3);
-    } else if args.len() == 2
-        && matches!(
-            op.as_str(),
-            "vmaskmovps" | "vmaskmovpd" | "vpmaskmovd" | "vpmaskmovq"
-        )
-        && (lhs == "m256" || lhs == "m128")
-    {
-        // A masked store keeps the old memory where the mask is clear.
-        args.push(lhs);
+    }
+    let address = format!("ka{n}");
+    if mask_size.is_some() {
+        // The constructor passes the address (see `rewrite_sinc`); memory is `kmask`'s to read.
+        pre.push_str(&format!("local {address} = Mem; "));
+        if !store {
+            args.truncate(1);
+        }
+        args.insert(0, &address);
+    }
+    let imm = format!("kim{n}");
+    if op == "vinsertps" && args.get(1) == Some(&"m32") {
+        // A memory source has only the one element: the source index does not apply.
+        pre.push_str(&format!("local {imm}:1 = imm8:1 & 0x3f; "));
+        args[2] = &imm;
     }
     if args.is_empty() || args.len() > 3 {
         return None;
     }
     let imm_form = args.len() == 2 && args[1].starts_with("imm8");
-    let mut pre = String::new();
     let mut slots = Vec::new();
     for (i, a) in args.iter().enumerate() {
         if is_wide(a) {
@@ -1617,15 +1668,48 @@ fn rewrite_stmt(stmt: &str, n: usize) -> Option<String> {
         slots.push("0:1".to_string());
     }
     if explicit {
-        slots[1] = lengths[0].to_string();
-        slots[3] = lengths[1].to_string();
+        for (i, length) in lengths.iter().enumerate() {
+            // The length is signed, and the form without REX.W takes 32 bits of it.
+            slots[2 * i + 1] = if length.starts_with('E') {
+                pre.push_str(&format!("local kl{n}_{i}:8 = sext({length}); "));
+                format!("kl{n}_{i}")
+            } else {
+                (*length).to_string()
+            };
+        }
     }
     if imm_form {
         // `c[1]` tells `vpermil*` that the second operand is an immediate.
         slots[4] = "256:2".to_string();
     }
     let number = id | (args.len() << COUNT_SHIFT);
-    let call = |half: u8| format!("kvec({number}:2, {half}:1, {})", slots.join(", "));
+    let helper = if mask_size.is_some() { "kmask" } else { "kvec" };
+    let call = |half: u8| format!("{helper}({number}:2, {half}:1, {})", slots.join(", "));
+    if store {
+        let upper = if lhs == "m256" {
+            format!("; {}", call(1))
+        } else {
+            String::new()
+        };
+        return Some(format!("{pre}{}{upper}", call(0)));
+    }
+    let string_compare = matches!(
+        op.as_str(),
+        "vpcmpistri" | "vpcmpestri" | "vpcmpistrm" | "vpcmpestrm"
+    );
+    if string_compare {
+        // Before the result: the mask forms write XMM0, which may be an operand.
+        let flag_op = if explicit {
+            "kflags_estr"
+        } else {
+            "kflags_istr"
+        };
+        let number = op_id(flag_op)? | (args.len() << COUNT_SHIFT);
+        pre.push_str(&format!(
+            "local kf{n}:8 = kvec({number}:2, 0:1, {}); ",
+            slots.join(", ")
+        ));
+    }
     let mut text = if is_wide(lhs) || lhs.ends_with(":32") {
         format!(
             "{pre}local kr{n}:32 = 0; kr{n}[0,128] = {}; kr{n}[128,128] = {}; {lhs} = kr{n}",
@@ -1638,20 +1722,10 @@ fn rewrite_stmt(stmt: &str, n: usize) -> Option<String> {
     if vex.is_some() && lhs == "XMM0" {
         text.push_str("; YMM0_H = zext(0:1)");
     }
-    if matches!(
-        op.as_str(),
-        "vpcmpistri" | "vpcmpestri" | "vpcmpistrm" | "vpcmpestrm"
-    ) {
-        let flag_op = if explicit {
-            "kflags_estr"
-        } else {
-            "kflags_istr"
-        };
-        let number = op_id(flag_op)? | (args.len() << COUNT_SHIFT);
+    if string_compare {
         text.push_str(&format!(
-            "; local kf{n}:8 = kvec({number}:2, 0:1, {}); CF = kf{n}[0,8]; ZF = kf{n}[8,8]; \
-             SF = kf{n}[16,8]; OF = kf{n}[24,8]; AF = 0; PF = 0",
-            slots.join(", ")
+            "; CF = kf{n}[0,8]; ZF = kf{n}[8,8]; SF = kf{n}[16,8]; OF = kf{n}[24,8]; AF = 0; \
+             PF = 0"
         ));
     }
     Some(text)
@@ -1684,7 +1758,8 @@ fn rewrite_line(line: &str, n: usize) -> Option<String> {
 }
 
 /// Declares `kvec`; the file with `CPUID` holds the other pseudo-op declarations.
-pub(crate) const DECLARE: &str = "define pcodeop kvec;\ndefine pcodeop kgather;\n";
+pub(crate) const DECLARE: &str =
+    "define pcodeop kvec;\ndefine pcodeop kgather;\ndefine pcodeop kmask;\n";
 
 /// A line of a `VTESTPS`/`VTESTPD` constructor on `ymm` registers (`pd` for the second). Ghidra
 /// picks single bits out of a 256-bit value, which icicle cannot lift.
@@ -1766,6 +1841,35 @@ pub(crate) fn rewrite_sinc(text: &str) -> String {
                     None => lines.push(format!("\t{stmt}")),
                 }
             }
+            skipping = true;
+            continue;
+        }
+        // `kmask` needs the address, where the operand's table hands over the value.
+        let line = if t.starts_with(":VMASKMOVP") || t.starts_with(":VPMASKMOV") {
+            line.replace("m128", "Mem").replace("m256", "Mem")
+        } else {
+            line.to_string()
+        };
+        let line = line.as_str();
+        // The source index of `vinsertps` only applies to a register, and an operand table
+        // cannot tell the two apart: one constructor each.
+        if t.starts_with(":VINSERTPS XmmReg1, vexVVVV_XmmReg, XmmReg2_m32") {
+            let body = |source: &str, tmp: usize| {
+                let stmt =
+                    format!("local tmp:16 = vinsertps_avx( vexVVVV_XmmReg, {source}, imm8:1 );");
+                let call = rewrite_line(&stmt, n * 8 + tmp).unwrap_or(stmt);
+                format!("{{\n{call}\n\tZmmReg1 = zext(tmp);")
+            };
+            lines.push(line.replace("XmmReg2_m32", "m32"));
+            lines.push(format!("{}\n}}", body("m32", 0)));
+            lines.push(
+                line.replace(", XmmReg2_m32, imm8 is", ", XmmReg2, imm8 is")
+                    .replace(
+                        "(XmmReg1 & ZmmReg1) ... & XmmReg2_m32",
+                        "mod=3 & XmmReg1 & ZmmReg1 & XmmReg2",
+                    ),
+            );
+            lines.push(body("XmmReg2", 1));
             skipping = true;
             continue;
         }
@@ -1891,6 +1995,8 @@ fn narrow_zext(line: &str, narrow_tmp: bool, n: usize) -> Option<String> {
 /// Ghidra's spec, as checked against a real CPU (`corpus/linux-rt/src/vex_ops.c`). The statements
 /// go through [`rewrite_line`].
 const BODIES: &[(&str, &[&str])] = &[
+    (":VLDMXCSR m32", &["MXCSR = m32;"]),
+    (":VSTMXCSR m32", &["m32 = MXCSR;"]),
     (
         ":VPINSRD XmmReg1, vexVVVV_XmmReg, rm32, imm8",
         &[
@@ -2168,6 +2274,71 @@ mod tests {
             "{s}"
         );
         assert!(s.ends_with("local tmp:32 = kr56;"), "{s}");
+    }
+
+    #[test]
+    fn string_compares_take_their_flags_before_the_result() {
+        let s = rewrite_line("XMM0 = vpcmpistrm_avx( XmmReg1, XmmReg2_m128, imm8:1 );", 1).unwrap();
+        let flags = s.find("local kf8:8 = kvec(").expect("flags");
+        let result = s.find("XMM0 = kvec(").expect("result");
+        assert!(flags < result, "{s}");
+    }
+
+    #[test]
+    fn the_short_explicit_lengths_are_signed() {
+        let s = rewrite_line(
+            "ECX = vpcmpestri_avx( XmmReg1, XmmReg2_m128, imm8:1, EAX, EDX );",
+            1,
+        )
+        .unwrap();
+        assert!(s.contains("local kl8_0:8 = sext(EAX);"), "{s}");
+        assert!(s.contains("local kl8_1:8 = sext(EDX);"), "{s}");
+        let wide = rewrite_line(
+            "ECX = vpcmpestri_avx( XmmReg1, XmmReg2_m128, imm8:1, RAX, RDX );",
+            1,
+        )
+        .unwrap();
+        assert!(!wide.contains("sext"), "{wide}");
+    }
+
+    #[test]
+    fn masked_moves_pass_the_address_and_never_touch_the_operand() {
+        let load = rewrite_line("local tmp:32 = vmaskmovps_avx( vexVVVV_YmmReg, m256 );", 1);
+        let load = load.unwrap();
+        assert!(load.contains("local ka8 = Mem;"), "{load}");
+        let number = 4 | 2 << COUNT_SHIFT;
+        assert!(
+            load.contains(&format!("kmask({number}:2, 1:1, ka8, 0:1")),
+            "{load}"
+        );
+        assert!(!load.contains("m256"), "{load}");
+        let store = rewrite_line("m128 = vpmaskmovq_avx2( vexVVVV_XmmReg, XmmReg1 );", 1);
+        let store = store.unwrap();
+        let number = 8 | MASK_STORE | 3 << COUNT_SHIFT;
+        assert!(store.contains(&format!("kmask({number}:2, 0:1")), "{store}");
+        assert!(!store.contains("m128"), "{store}");
+    }
+
+    #[test]
+    fn the_masked_move_constructors_name_their_address() {
+        let s = rewrite_sinc(
+            ":VMASKMOVPS m256, vexVVVV_YmmReg, YmmReg1 is x; YmmReg1 ... & m256\n{\n\
+             \tm256 = vmaskmovps_avx( vexVVVV_YmmReg, YmmReg1 );\n}\n",
+        );
+        assert!(s.contains("YmmReg1 ... & Mem"), "{s}");
+        assert!(s.contains("kmask("), "{s}");
+    }
+
+    #[test]
+    fn insertps_from_memory_has_no_source_index() {
+        let s = rewrite_sinc(
+            ":VINSERTPS XmmReg1, vexVVVV_XmmReg, XmmReg2_m32, imm8 is x; (XmmReg1 & ZmmReg1) ... \
+             & XmmReg2_m32; imm8\n{\n\tlocal tmp:16 = vinsertps_avx( vexVVVV_XmmReg, \
+             XmmReg2_m32, imm8:1 );\n\tZmmReg1 = zext(tmp);\n}\n",
+        );
+        assert_eq!(s.matches(":VINSERTPS").count(), 2, "{s}");
+        assert_eq!(s.matches("imm8:1 & 0x3f").count(), 1, "{s}");
+        assert!(s.contains("mod=3 & XmmReg1 & ZmmReg1 & XmmReg2"), "{s}");
     }
 
     #[test]

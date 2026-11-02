@@ -388,6 +388,10 @@ impl Machine {
                 }
             }
         }
+        if matches!(arch, Arch::X86 | Arch::X86_64) {
+            // What the kernel starts a process with: all exceptions masked.
+            m.write_reg("MXCSR", 0x1f80)?;
+        }
         if matches!(arch, Arch::Riscv32 | Arch::Riscv64) {
             // The CSRs of the patched spec (see specs::riscv_overlay); all zero.
             m.map(

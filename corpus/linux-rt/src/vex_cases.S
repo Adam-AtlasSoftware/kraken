@@ -4007,6 +4007,193 @@ case_1330:
 case_1331:
 	vpgatherdd xmm1, [r10 + xmm5*4], xmm6
 	ret
+case_1332:
+	vmovdqa xmm0, xmm6
+	pcmpistrm xmm0, xmm7, 0x40
+	ret
+case_1333:
+	vmovdqa xmm0, xmm3
+	pcmpistrm xmm0, xmm2, 0x40
+	ret
+case_1334:
+	vmovdqa xmm0, xmm3
+	pcmpistrm xmm0, xmm2, 0x48
+	ret
+case_1335:
+	vmovdqa xmm0, xmm7
+	pcmpistrm xmm6, xmm0, 0x40
+	ret
+case_1336:
+	vmovdqa xmm0, xmm6
+	vpcmpistrm xmm0, xmm7, 0x40
+	ret
+case_1337:
+	vmovdqa xmm0, xmm3
+	vpcmpistrm xmm0, xmm2, 0x40
+	ret
+case_1338:
+	vmovdqa xmm0, xmm3
+	mov eax, 16
+	mov edx, 16
+	pcmpestrm xmm0, xmm2, 0x40
+	ret
+case_1339:
+	vmovdqa xmm0, xmm3
+	mov eax, 16
+	mov edx, 16
+	vpcmpestrm xmm0, xmm2, 0x40
+	ret
+case_1340:
+	mov eax, -1
+	mov edx, 5
+	pcmpestri xmm6, xmm7, 0x0c
+	ret
+case_1341:
+	mov eax, 5
+	mov edx, -3
+	pcmpestrm xmm6, xmm7, 0x40
+	ret
+case_1342:
+	mov eax, 0x80000000
+	mov edx, 5
+	pcmpestri xmm6, xmm7, 0x0c
+	ret
+case_1343:
+	mov eax, -2
+	mov edx, 5
+	vpcmpestri xmm6, xmm7, 0x0c
+	ret
+case_1344:
+	movabs rax, 0x100000003
+	mov edx, 5
+	pcmpestri xmm6, xmm7, 0x0c
+	ret
+case_1345:
+	mov rax, -1
+	mov rdx, 5
+	.byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xf7, 0x0c
+	ret
+case_1346:
+	movabs rax, 0x100000003
+	mov rdx, 5
+	.byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xf7, 0x0c
+	ret
+case_1347:
+	mov rax, -1
+	mov rdx, 5
+	.byte 0xc4, 0xe3, 0xf9, 0x61, 0xf7, 0x0c
+	ret
+case_1348:
+	mov eax, 0x80008000
+	vmovd xmm1, eax
+	vpbroadcastd ymm1, xmm1
+	vpmaddwd ymm2, ymm1, ymm1
+	ret
+case_1349:
+	mov eax, 0x80008000
+	vmovd xmm1, eax
+	vpshufd xmm1, xmm1, 0
+	pmaddwd xmm1, xmm1
+	ret
+case_1350:
+	vinsertps xmm1, xmm2, dword ptr [rsi], 0xd3
+	ret
+case_1351:
+	insertps xmm1, dword ptr [rsi], 0x50
+	ret
+case_1352:
+	stmxcsr [rdi]
+	and dword ptr [rdi], 0xffc0
+	ret
+case_1353:
+	vstmxcsr [rdi]
+	and dword ptr [rdi], 0xffc0
+	ret
+case_1354:
+	mov dword ptr [rdi], 0x3f80
+	vldmxcsr [rdi]
+	vstmxcsr [rdi + 4]
+	mov dword ptr [rdi], 0x1f80
+	vldmxcsr [rdi]
+	ret
+case_1355:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vmaskmovps ymm1, ymm2, [rax]
+	xor eax, eax
+	ret
+case_1356:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vmaskmovpd ymm1, ymm2, [rax]
+	xor eax, eax
+	ret
+case_1357:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vpmaskmovd ymm1, ymm2, [rax]
+	xor eax, eax
+	ret
+case_1358:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vpmaskmovq ymm1, ymm2, [rax]
+	xor eax, eax
+	ret
+case_1359:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vmaskmovps [rax], ymm2, ymm3
+	vmovdqu xmm1, [rax]
+	xor eax, eax
+	ret
+case_1360:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vmaskmovpd [rax], ymm2, ymm5
+	vmovdqu xmm1, [rax]
+	xor eax, eax
+	ret
+case_1361:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vpmaskmovd [rax], ymm2, ymm7
+	vmovdqu xmm1, [rax]
+	xor eax, eax
+	ret
+case_1362:
+	mov rax, [rip + tail]
+	vpcmpeqd xmm2, xmm2, xmm2
+	vpmaskmovq [rax], ymm2, ymm3
+	vmovdqu xmm1, [rax]
+	xor eax, eax
+	ret
+case_1363:
+	mov rax, [rip + tail]
+	add rax, 16
+	vpxor xmm2, xmm2, xmm2
+	vmaskmovps ymm1, ymm2, [rax]
+	xor eax, eax
+	ret
+case_1364:
+	mov rax, [rip + tail]
+	add rax, 16
+	vpxor xmm2, xmm2, xmm2
+	vpmaskmovq [rax], ymm2, ymm3
+	xor eax, eax
+	ret
+case_1365:
+	lea rax, [rip + name_0]
+	vpxor xmm2, xmm2, xmm2
+	vmaskmovps [rax], ymm2, ymm3
+	xor eax, eax
+	ret
+case_1366:
+	lea rax, [rip + name_0]
+	vpxor xmm2, xmm2, xmm2
+	vpmaskmovd [rax], ymm2, ymm3
+	xor eax, eax
+	ret
 .bss
 .p2align 6
 xarea:
@@ -6676,6 +6863,76 @@ name_1330:
 	.asciz "vgatherdpd ymm1, [r10 + xmm5*2], ymm6"
 name_1331:
 	.asciz "vpgatherdd xmm1, [r10 + xmm5*4], xmm6"
+name_1332:
+	.asciz "vmovdqa xmm0, xmm6; pcmpistrm xmm0, xmm7, 0x40"
+name_1333:
+	.asciz "vmovdqa xmm0, xmm3; pcmpistrm xmm0, xmm2, 0x40"
+name_1334:
+	.asciz "vmovdqa xmm0, xmm3; pcmpistrm xmm0, xmm2, 0x48"
+name_1335:
+	.asciz "vmovdqa xmm0, xmm7; pcmpistrm xmm6, xmm0, 0x40"
+name_1336:
+	.asciz "vmovdqa xmm0, xmm6; vpcmpistrm xmm0, xmm7, 0x40"
+name_1337:
+	.asciz "vmovdqa xmm0, xmm3; vpcmpistrm xmm0, xmm2, 0x40"
+name_1338:
+	.asciz "vmovdqa xmm0, xmm3; mov eax, 16; mov edx, 16; pcmpestrm xmm0, xmm2, 0x40"
+name_1339:
+	.asciz "vmovdqa xmm0, xmm3; mov eax, 16; mov edx, 16; vpcmpestrm xmm0, xmm2, 0x40"
+name_1340:
+	.asciz "mov eax, -1; mov edx, 5; pcmpestri xmm6, xmm7, 0x0c"
+name_1341:
+	.asciz "mov eax, 5; mov edx, -3; pcmpestrm xmm6, xmm7, 0x40"
+name_1342:
+	.asciz "mov eax, 0x80000000; mov edx, 5; pcmpestri xmm6, xmm7, 0x0c"
+name_1343:
+	.asciz "mov eax, -2; mov edx, 5; vpcmpestri xmm6, xmm7, 0x0c"
+name_1344:
+	.asciz "movabs rax, 0x100000003; mov edx, 5; pcmpestri xmm6, xmm7, 0x0c"
+name_1345:
+	.asciz "mov rax, -1; mov rdx, 5; .byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xf7, 0x0c"
+name_1346:
+	.asciz "movabs rax, 0x100000003; mov rdx, 5; .byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xf7, 0x0c"
+name_1347:
+	.asciz "mov rax, -1; mov rdx, 5; .byte 0xc4, 0xe3, 0xf9, 0x61, 0xf7, 0x0c"
+name_1348:
+	.asciz "mov eax, 0x80008000; vmovd xmm1, eax; vpbroadcastd ymm1, xmm1; vpmaddwd ymm2, ymm1, ymm1"
+name_1349:
+	.asciz "mov eax, 0x80008000; vmovd xmm1, eax; vpshufd xmm1, xmm1, 0; pmaddwd xmm1, xmm1"
+name_1350:
+	.asciz "vinsertps xmm1, xmm2, dword ptr [rsi], 0xd3"
+name_1351:
+	.asciz "insertps xmm1, dword ptr [rsi], 0x50"
+name_1352:
+	.asciz "stmxcsr [rdi]; and dword ptr [rdi], 0xffc0"
+name_1353:
+	.asciz "vstmxcsr [rdi]; and dword ptr [rdi], 0xffc0"
+name_1354:
+	.asciz "mov dword ptr [rdi], 0x3f80; vldmxcsr [rdi]; vstmxcsr [rdi + 4]; mov dword ptr [rdi], 0x1f80; vldmxcsr [rdi]"
+name_1355:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vmaskmovps ymm1, ymm2, [rax]; xor eax, eax"
+name_1356:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vmaskmovpd ymm1, ymm2, [rax]; xor eax, eax"
+name_1357:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vpmaskmovd ymm1, ymm2, [rax]; xor eax, eax"
+name_1358:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vpmaskmovq ymm1, ymm2, [rax]; xor eax, eax"
+name_1359:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vmaskmovps [rax], ymm2, ymm3; vmovdqu xmm1, [rax]; xor eax, eax"
+name_1360:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vmaskmovpd [rax], ymm2, ymm5; vmovdqu xmm1, [rax]; xor eax, eax"
+name_1361:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vpmaskmovd [rax], ymm2, ymm7; vmovdqu xmm1, [rax]; xor eax, eax"
+name_1362:
+	.asciz "mov rax, [rip + tail]; vpcmpeqd xmm2, xmm2, xmm2; vpmaskmovq [rax], ymm2, ymm3; vmovdqu xmm1, [rax]; xor eax, eax"
+name_1363:
+	.asciz "mov rax, [rip + tail]; add rax, 16; vpxor xmm2, xmm2, xmm2; vmaskmovps ymm1, ymm2, [rax]; xor eax, eax"
+name_1364:
+	.asciz "mov rax, [rip + tail]; add rax, 16; vpxor xmm2, xmm2, xmm2; vpmaskmovq [rax], ymm2, ymm3; xor eax, eax"
+name_1365:
+	.asciz "lea rax, [rip + name_0]; vpxor xmm2, xmm2, xmm2; vmaskmovps [rax], ymm2, ymm3; xor eax, eax"
+name_1366:
+	.asciz "lea rax, [rip + name_0]; vpxor xmm2, xmm2, xmm2; vpmaskmovd [rax], ymm2, ymm3; xor eax, eax"
 .data
 .globl cases
 .p2align 3
@@ -8012,4 +8269,39 @@ cases:
 	.quad case_1329, name_1329, 2261
 	.quad case_1330, name_1330, 2261
 	.quad case_1331, name_1331, 2261
+	.quad case_1332, name_1332, 2241
+	.quad case_1333, name_1333, 2241
+	.quad case_1334, name_1334, 2241
+	.quad case_1335, name_1335, 2241
+	.quad case_1336, name_1336, 2241
+	.quad case_1337, name_1337, 2241
+	.quad case_1338, name_1338, 2241
+	.quad case_1339, name_1339, 2241
+	.quad case_1340, name_1340, 2241
+	.quad case_1341, name_1341, 2241
+	.quad case_1342, name_1342, 2241
+	.quad case_1343, name_1343, 2241
+	.quad case_1344, name_1344, 2241
+	.quad case_1345, name_1345, 2241
+	.quad case_1346, name_1346, 2241
+	.quad case_1347, name_1347, 2241
+	.quad case_1348, name_1348, 2261
+	.quad case_1349, name_1349, 2261
+	.quad case_1350, name_1350, 2261
+	.quad case_1351, name_1351, 2261
+	.quad case_1352, name_1352, 2261
+	.quad case_1353, name_1353, 2261
+	.quad case_1354, name_1354, 2261
+	.quad case_1355, name_1355, 0
+	.quad case_1356, name_1356, 0
+	.quad case_1357, name_1357, 0
+	.quad case_1358, name_1358, 0
+	.quad case_1359, name_1359, 0
+	.quad case_1360, name_1360, 0
+	.quad case_1361, name_1361, 0
+	.quad case_1362, name_1362, 0
+	.quad case_1363, name_1363, 0
+	.quad case_1364, name_1364, 0
+	.quad case_1365, name_1365, 0
+	.quad case_1366, name_1366, 0
 	.quad 0, 0, 0

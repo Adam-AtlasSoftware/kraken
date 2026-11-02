@@ -52,10 +52,17 @@ static void doubles(int r, double a, double b, double c, double d) {
   __builtin_memcpy(in.ymm[r], v, 32);
 }
 
+// 16 bytes that end where the mapped memory does.
+void *tail;
+
 static void setup(void) {
+  unsigned char *pages = (unsigned char *)sys6(NR_mmap, 0, 8192, 3, 0x22, -1, 0);
+  sys3(NR_munmap, (i64)(pages + 4096), 4096, 0);
+  tail = pages + 4080;
   fill(in.ymm, sizeof in.ymm);
   fill(src, sizeof src);
   fill(table, sizeof table);
+  __builtin_memcpy(tail, table, 16);
   // Selectors, masks and strings the instructions treat specially.
   for (int i = 0; i < 16; i++)
     in.ymm[4][i * 2] &= 0x80;
