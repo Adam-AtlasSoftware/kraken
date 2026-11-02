@@ -5,6 +5,8 @@
 use engine_native_sys::Image;
 use kraken_proto::{Hex64, MemoryBlock, StringEncoding, StringEntry};
 
+use crate::elf::Endian;
+
 /// Longest value reported, in characters (as the Ghidra sidecar caps them).
 pub const MAX_CHARS: usize = 4096;
 
@@ -21,9 +23,10 @@ pub fn scan(
     blocks: &[MemoryBlock],
     min_len: u32,
     referenced: &[u64],
+    endian: Endian,
 ) -> Vec<StringEntry> {
     let min = min_len.max(1) as usize;
-    let mut out = scan_plain(image, blocks, min);
+    let mut out = scan_plain(image, blocks, min, endian);
     let mut defined: Vec<StringEntry> = Vec::new();
     for at in referenced {
         let Some(b) = blocks.iter().find(|b| {
@@ -72,7 +75,12 @@ pub fn scan(
     out
 }
 
-fn scan_plain(image: &Image, blocks: &[MemoryBlock], min: usize) -> Vec<StringEntry> {
+fn scan_plain(
+    image: &Image,
+    blocks: &[MemoryBlock],
+    min: usize,
+    endian: Endian,
+) -> Vec<StringEntry> {
     let mut out = Vec::new();
     for b in blocks {
         if b.space != "ram" || !b.initialized || b.perms.ends_with('x') {
@@ -100,15 +108,27 @@ fn scan_plain(image: &Image, blocks: &[MemoryBlock], min: usize) -> Vec<StringEn
         }
         // the dynamic string table is defined as UTF-8 strings by Ghidra's ELF loader
         let defined_utf8 = b.name == ".dynstr";
-        scan_block(b.start.0, &bytes, min, defined_utf8, &mut out);
+        scan_block(b.start.0, &bytes, min, defined_utf8, endian, &mut out);
     }
     out.sort_by_key(|s| s.address);
     out
 }
 
-fn scan_block(base: u64, bytes: &[u8], min: usize, defined_utf8: bool, out: &mut Vec<StringEntry>) {
+fn scan_block(
+    base: u64,
+    bytes: &[u8],
+    min: usize,
+    defined_utf8: bool,
+    endian: Endian,
+    out: &mut Vec<StringEntry>,
+) {
     let mut taken = vec![false; bytes.len()];
-    // UTF-16LE first: two-byte aligned runs of (char, 0) pairs ending in a zero pair
+    let unit: fn([u8; 2]) -> u16 = match endian {
+        Endian::Little => u16::from_le_bytes,
+        Endian::Big => u16::from_be_bytes,
+    };
+    // UTF-16 first, in the program's byte order: two-byte aligned runs of plain characters ending
+    // in a zero unit
     let mut i = (base % 2) as usize;
     while i + 1 < bytes.len() {
         let start = i;
@@ -117,7 +137,7 @@ fn scan_block(base: u64, bytes: &[u8], min: usize, defined_utf8: bool, out: &mut
         // ends the attempt (reading on to the next zero pair could not make it succeed)
         let mut plain = true;
         while i + 1 < bytes.len() {
-            let u = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+            let u = unit([bytes[i], bytes[i + 1]]);
             if u == 0 {
                 break;
             }
@@ -217,11 +237,27 @@ mod tests {
 
     fn found(bytes: &[u8], min: usize) -> Vec<(u64, String, StringEncoding, u32)> {
         let mut out = Vec::new();
-        scan_block(0x1000, bytes, min, false, &mut out);
+        scan_block(0x1000, bytes, min, false, Endian::Little, &mut out);
         out.sort_by_key(|s| s.address);
         out.into_iter()
             .map(|s| (s.address.0, s.value, s.encoding, s.length))
             .collect()
+    }
+
+    #[test]
+    fn wide_strings_follow_the_byte_order_of_the_program() {
+        let mut bytes: Vec<u8> = "wide".encode_utf16().flat_map(u16::to_be_bytes).collect();
+        bytes.extend([0, 0]);
+        let mut out = Vec::new();
+        scan_block(0x1000, &bytes, 4, false, Endian::Big, &mut out);
+        let wide: Vec<_> = out
+            .iter()
+            .filter(|s| matches!(s.encoding, StringEncoding::Utf16))
+            .map(|s| s.value.as_str())
+            .collect();
+        assert_eq!(wide, ["wide"]);
+        let found = found(&bytes, 4);
+        assert!(found.iter().all(|s| s.2 != StringEncoding::Utf16));
     }
 
     #[test]

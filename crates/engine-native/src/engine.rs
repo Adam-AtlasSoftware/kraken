@@ -667,6 +667,7 @@ impl Program {
                     &self.loaded.blocks,
                     min_len,
                     &self.refs().data_targets(),
+                    self.loaded.endian,
                 ))
             })
             .clone()

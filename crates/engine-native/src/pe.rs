@@ -1127,7 +1127,7 @@ mod tests {
         let end = l.base + u64::from(image_size);
         assert!(l.blocks.iter().all(|b| b.end.0 <= end), "{:?}", l.blocks);
         // and the string scan reads no more than the file holds
-        let strings = crate::strings::scan(&l.image, &l.blocks, 4, &[]);
+        let strings = crate::strings::scan(&l.image, &l.blocks, 4, &[], crate::elf::Endian::Little);
         assert!(!strings.is_empty());
 
         let mut big = corpus("win_tls-x64-O0.exe");
