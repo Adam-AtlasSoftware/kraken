@@ -64,7 +64,7 @@ impl RunKind {
     /// What the progress line says while it works.
     pub fn working_text(self) -> &'static str {
         match self {
-            RunKind::Chat => "Thinking...",
+            RunKind::Chat => "Waiting for the model...",
             RunKind::ExplainFunction => "Reading the function...",
             RunKind::ExplainSelection => "Reading the selection...",
             RunKind::Overview => "Looking over the program...",
@@ -219,6 +219,13 @@ pub enum ChatItem {
         text: String,
         /// More is coming.
         streaming: bool,
+    },
+    /// What the model showed of its thinking; `active` while it goes on.
+    Thinking {
+        /// Text so far.
+        text: String,
+        /// More may come.
+        active: bool,
     },
     /// A tool call.
     Tool(ToolChip),
@@ -375,6 +382,26 @@ pub(crate) struct ActiveRun {
     pub(crate) last_text: String,
     /// Where approval answers go (a terminal agent asking for one of its own tools).
     pub(crate) approvals: Option<ApprovalHandle>,
+    /// What the run is doing right now.
+    pub(crate) phase: RunPhase,
+    /// When it entered that phase.
+    pub(crate) phase_since: std::time::Instant,
+    /// The whole conversation, when the loop that ran it sent it.
+    pub(crate) transcript: Option<Vec<kraken_agent::Message>>,
+}
+
+/// What a run is doing, as far as anyone can tell from the outside.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RunPhase {
+    /// Nothing has come back since the request went out.
+    #[default]
+    Waiting,
+    /// The model reports that it is thinking.
+    Thinking,
+    /// Words are arriving.
+    Writing,
+    /// A tool is running.
+    Tool(String),
 }
 
 /// Everything the assistant panels show.
@@ -509,6 +536,30 @@ impl AssistState {
     /// What the run in flight is doing, for the progress line.
     pub fn running(&self) -> Option<RunKind> {
         self.run.as_ref().map(|r| r.kind)
+    }
+
+    /// One line on what the run in flight is doing and for how long; `None` when it is idle.
+    pub fn status_line(&self) -> Option<String> {
+        let r = self.run.as_ref()?;
+        let what = match &r.phase {
+            RunPhase::Waiting if r.kind == RunKind::Chat => {
+                if self.backend.as_ref().is_some_and(ActiveBackend::is_agent) {
+                    "Waiting for the agent".to_string()
+                } else {
+                    "Waiting for the model".to_string()
+                }
+            }
+            RunPhase::Waiting => r.kind.working_text().trim_end_matches('.').to_string(),
+            RunPhase::Thinking => "Thinking".to_string(),
+            RunPhase::Writing => "Writing".to_string(),
+            RunPhase::Tool(name) => format!("Running {name}"),
+        };
+        let secs = r.phase_since.elapsed().as_secs();
+        Some(if secs >= 2 {
+            format!("{what}... {secs}s")
+        } else {
+            format!("{what}...")
+        })
     }
 
     /// True once the person asked to stop and the run is winding down.

@@ -283,6 +283,11 @@ impl Mapper {
                     text: sanitize(&text),
                 }]
             }
+            AcpEvent::AgentThought { text } => {
+                vec![AgentEvent::ThinkingDelta {
+                    text: sanitize(&text),
+                }]
+            }
             AcpEvent::ToolCall(info) => self.tool_call(info),
             AcpEvent::ToolCallUpdate(change) => self.tool_update(change),
             _ => Vec::new(),
@@ -451,6 +456,9 @@ fn compose_prompt(spec: &RunSpec, fresh: bool) -> String {
             text.push_str(&earlier.join("\n"));
         }
         text.push_str("\n\n---\n\n");
+    } else if let Some(note) = spec.config.turn_note.as_deref() {
+        text.push_str(note);
+        text.push_str("\n\n");
     }
     text.push_str(last);
     text
@@ -952,34 +960,46 @@ impl Job {
         lock(&self.shared.stats).insert(self.spec.config.run_id.clone(), mapper.stats.clone());
 
         let mut keep = chat && !gone;
+        let mut ending = Vec::new();
         match result {
             Ok(end) => {
                 let (stop, why) = stop_for(end);
                 if let Some(why) = why {
-                    let _ = self
-                        .send(AgentEvent::Error {
-                            message: why.to_string(),
-                        })
-                        .await;
+                    ending.push(AgentEvent::Error {
+                        message: why.to_string(),
+                    });
                 }
-                let _ = self
-                    .send(AgentEvent::Done {
-                        usage: Usage::default(),
-                        stop,
-                        message: last_step.trim().to_string(),
-                    })
-                    .await;
+                ending.push(AgentEvent::Done {
+                    usage: Usage::default(),
+                    stop,
+                    message: last_step.trim().to_string(),
+                });
             }
             Err(e) => {
-                keep = false;
-                self.finish_with_error(e.to_string()).await;
+                // A turn that failed (a rate limit, say) leaves the agent and all it knows in
+                // place; only an agent that is gone is started again.
+                keep = keep && !matches!(e, kraken_acp::AcpError::Disconnected { .. });
+                let message = e.to_string();
+                ending.push(AgentEvent::Error {
+                    message: message.clone(),
+                });
+                ending.push(AgentEvent::Done {
+                    usage: Usage::default(),
+                    stop: StopReason::Error,
+                    message,
+                });
             }
         }
         *lock(&self.shared.active) = None;
+        // Put back before `Done`: the next turn can start the moment it is seen, and finding no
+        // session it would begin a new one that remembers nothing.
         if keep && !self.shared.closed.load(Ordering::SeqCst) {
             *lock(&self.shared.chat) = Some(Live { host, rx });
         } else {
             host.shutdown().await;
+        }
+        for ev in ending {
+            let _ = self.send(ev).await;
         }
     }
 

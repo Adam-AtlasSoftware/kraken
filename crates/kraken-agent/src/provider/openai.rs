@@ -173,6 +173,14 @@ impl ChunkParser for OpenAiParser {
         }
         let mut out = Vec::new();
         if let Some(choice) = v.pointer("/choices/0") {
+            // Servers name this differently: llama.cpp and DeepSeek one way, Ollama the other.
+            for key in ["/delta/reasoning_content", "/delta/reasoning"] {
+                if let Some(text) = choice.pointer(key).and_then(Value::as_str)
+                    && !text.is_empty()
+                {
+                    out.push(StreamEvent::ThinkingDelta { text: text.into() });
+                }
+            }
             if let Some(text) = choice.pointer("/delta/content").and_then(Value::as_str)
                 && !text.is_empty()
             {

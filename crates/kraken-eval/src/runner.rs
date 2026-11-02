@@ -354,6 +354,7 @@ impl Transcript {
                     is_error: *is_error,
                 });
             }
+            AgentEvent::ThinkingDelta { .. } | AgentEvent::Transcript { .. } => {}
             AgentEvent::Error { message } => {
                 self.flush_text();
                 self.entries.push(TranscriptEntry::Error {

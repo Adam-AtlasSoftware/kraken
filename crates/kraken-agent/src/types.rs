@@ -102,6 +102,10 @@ pub enum StreamEvent {
     TextDelta {
         text: String,
     },
+    /// The model is thinking; `text` is what it shows of that, empty when it shows nothing.
+    ThinkingDelta {
+        text: String,
+    },
     ToolCallDelta {
         index: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,6 +152,7 @@ impl StreamAssembler {
     pub fn push(&mut self, ev: &StreamEvent) {
         match ev {
             StreamEvent::TextDelta { text } => self.text.push_str(text),
+            StreamEvent::ThinkingDelta { .. } => {}
             StreamEvent::ToolCallDelta {
                 index,
                 id,

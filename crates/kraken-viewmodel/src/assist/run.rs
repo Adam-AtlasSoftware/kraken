@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use super::review::build_review;
 use super::{
     ActiveRun, AutoNameState, BackendChoice, ChatItem, ExplainCard, InterestingRow, OverviewCard,
-    OverviewOffer, PermissionCard, PermissionState, ProposalCard, ProposalState, RunKind, ToolChip,
-    VmCommands,
+    OverviewOffer, PermissionCard, PermissionState, ProposalCard, ProposalState, RunKind, RunPhase,
+    ToolChip, VmCommands,
 };
 use crate::errors::plain_error;
 use crate::state::{Connection, ToastLevel};
@@ -38,7 +38,9 @@ function, add a comment) when the person asks you to; an edit that would overwri
 work comes back as a proposal and waits for their approval, so say so and carry on. Keep answers \
 short, and point to functions by their address, written like 0x401000.";
 
-const MAX_HISTORY: usize = 24;
+const MAX_HISTORY: usize = 400;
+/// Tool results kept word for word in the conversation; older ones are left out.
+const KEEP_TOOL_RESULTS: usize = 40;
 const MAX_WRITES: usize = 30;
 
 fn text_of(v: &Value) -> String {
@@ -97,7 +99,43 @@ fn append_text(items: &mut Vec<ChatItem>, text: &str) {
     }
 }
 
+fn append_thinking(items: &mut Vec<ChatItem>, text: &str) {
+    if let Some(ChatItem::Thinking {
+        text: t,
+        active: true,
+    }) = items.last_mut()
+    {
+        t.push_str(text);
+    } else {
+        items.push(ChatItem::Thinking {
+            text: text.to_string(),
+            active: true,
+        });
+    }
+}
+
+fn end_thinking(items: &mut [ChatItem]) {
+    if let Some(ChatItem::Thinking { active, .. }) = items.last_mut() {
+        *active = false;
+    }
+}
+
+/// Keeps the conversation a size the model can take: older tool results are left out, and the
+/// oldest turns go whole, so a tool result never loses the call it answers.
+fn trim_history(history: &mut Vec<Message>) {
+    kraken_agent::compact::elide_all_but(history, KEEP_TOOL_RESULTS);
+    if history.len() > MAX_HISTORY {
+        let from = history.len() - MAX_HISTORY;
+        let start = history[from..]
+            .iter()
+            .position(|m| matches!(m, Message::User { .. }))
+            .map_or(history.len(), |i| from + i);
+        history.drain(..start);
+    }
+}
+
 fn end_stream(items: &mut Vec<ChatItem>) {
+    end_thinking(items);
     for item in items.iter_mut().rev() {
         match item {
             ChatItem::Assistant { streaming, .. } => *streaming = false,
@@ -119,6 +157,10 @@ fn parse_addr(s: &str) -> Option<u64> {
 const AUTO_CONTINUE_TEXT: &str = "Continue where you left off.";
 /// Stands in for the assistant's side of the history when it stopped without saying anything.
 const LIMIT_PLACEHOLDER: &str = "I reached my limit for one question and stopped before answering.";
+/// The same when the person stopped it.
+const STOPPED_PLACEHOLDER: &str = "(The person stopped me before I answered.)";
+/// The same when the model failed.
+const FAILED_PLACEHOLDER: &str = "(My answer failed; the error was shown to the person.)";
 
 fn is_limit_stop(stop: StopReason) -> bool {
     matches!(
@@ -278,6 +320,9 @@ impl ViewModel {
             wrote: false,
             last_text: String::new(),
             approvals: None,
+            phase: RunPhase::default(),
+            phase_since: std::time::Instant::now(),
+            transcript: None,
         });
         Some((seq, engine, cancel))
     }
@@ -624,12 +669,17 @@ impl ViewModel {
             self.project.as_ref().map(|p| p.binary_path.clone().into()),
         ));
         let mut system_extra = ASSISTANT_CHAT_PROMPT.to_string();
-        if let Some(cur) = &self.current {
-            system_extra.push_str(&format!(
-                " The person is currently reading the function at {:#x}.",
+        let reading = self.current.as_ref().map(|cur| {
+            format!(
+                "The person is currently reading the function at {:#x}.",
                 cur.address
-            ));
+            )
+        });
+        if let Some(r) = &reading {
+            system_extra.push(' ');
+            system_extra.push_str(r);
         }
+        let turn_note = reading.map(|r| format!("({r})"));
         let mut messages = self.assist.history.clone();
         messages.push(Message::user(text));
         self.assist.history = messages.clone();
@@ -639,8 +689,9 @@ impl ViewModel {
             token_budget: Some(150_000),
             run_id,
             system_extra: Some(system_extra),
-            max_tokens: Some(2000),
+            max_tokens: Some(8192),
             temperature: Some(0.3),
+            turn_note,
             ..AgentConfig::default()
         };
         let poster = self.poster();
@@ -918,14 +969,36 @@ impl ViewModel {
             return;
         };
         let kind = run.kind;
+        let phase = match &ev {
+            AgentEvent::ThinkingDelta { .. } => Some(RunPhase::Thinking),
+            AgentEvent::TextDelta { .. } => Some(RunPhase::Writing),
+            AgentEvent::ToolCallStarted { name, .. } => Some(RunPhase::Tool(sanitize(name))),
+            AgentEvent::ToolCallFinished { .. } | AgentEvent::StepUsage { .. } => {
+                Some(RunPhase::Waiting)
+            }
+            _ => None,
+        };
+        if let Some(p) = phase
+            && p != run.phase
+        {
+            run.phase = p;
+            run.phase_since = std::time::Instant::now();
+        }
         match ev {
             AgentEvent::TextDelta { text } => {
                 run.last_text.push_str(&text);
                 let visible = run.filter.push(&text);
                 if !visible.is_empty() {
+                    end_thinking(&mut self.assist.items);
                     append_text(&mut self.assist.items, &visible);
                 }
             }
+            AgentEvent::ThinkingDelta { text } => {
+                if !text.is_empty() && kind == RunKind::Chat {
+                    append_thinking(&mut self.assist.items, &text);
+                }
+            }
+            AgentEvent::Transcript { messages } => run.transcript = Some(messages),
             AgentEvent::ToolCallStarted {
                 id,
                 name,
@@ -1082,6 +1155,7 @@ impl ViewModel {
                 let wrote = run.wrote;
                 let user_stopped = run.stopping;
                 let final_text = std::mem::take(&mut run.last_text);
+                let transcript = run.transcript.take();
                 self.assist.run = None;
                 self.withdraw_permissions();
                 self.assist_backend_notes();
@@ -1091,33 +1165,40 @@ impl ViewModel {
                 end_stream(&mut self.assist.items);
                 self.assist.usage.add(usage);
                 let mut continue_chat = false;
+                let holds_transcript = transcript.is_some();
+                if let Some(messages) = transcript {
+                    self.assist.history = messages;
+                }
+                // Whatever ended the turn, the question and what was said stay in the
+                // conversation: the next message goes on from here.
+                let said = sanitize(final_text.trim());
+                let say = |history: &mut Vec<Message>, fallback: &str| {
+                    if holds_transcript && !matches!(history.last(), Some(Message::User { .. })) {
+                        return;
+                    }
+                    history.push(Message::Assistant {
+                        content: if said.is_empty() {
+                            fallback.to_string()
+                        } else {
+                            said.clone()
+                        },
+                        tool_calls: Vec::new(),
+                    });
+                };
                 match stop {
                     StopReason::Completed => {
-                        let content = sanitize(final_text.trim());
-                        if !content.is_empty() {
-                            self.assist.history.push(Message::Assistant {
-                                content,
-                                tool_calls: Vec::new(),
-                            });
+                        if !holds_transcript && !said.is_empty() {
+                            say(&mut self.assist.history, "");
                         }
                     }
                     StopReason::Cancelled => {
-                        self.assist.history.pop();
+                        say(&mut self.assist.history, STOPPED_PLACEHOLDER);
                         self.assist
                             .items
                             .push(ChatItem::Notice("Stopped.".to_string()));
                     }
                     other if is_limit_stop(other) => {
-                        // Keep the question and what was said, so going on has its context.
-                        let partial = sanitize(final_text.trim());
-                        self.assist.history.push(Message::Assistant {
-                            content: if partial.is_empty() {
-                                LIMIT_PLACEHOLDER.to_string()
-                            } else {
-                                partial
-                            },
-                            tool_calls: Vec::new(),
-                        });
+                        say(&mut self.assist.history, LIMIT_PLACEHOLDER);
                         let max = if user_stopped {
                             0
                         } else {
@@ -1135,12 +1216,9 @@ impl ViewModel {
                             self.assist.items.push(ChatItem::Notice(n));
                         }
                     }
-                    _ => {
-                        self.assist.history.pop();
-                    }
+                    _ => say(&mut self.assist.history, FAILED_PLACEHOLDER),
                 }
-                let keep = self.assist.history.len().saturating_sub(MAX_HISTORY);
-                self.assist.history.drain(..keep);
+                trim_history(&mut self.assist.history);
                 if wrote {
                     self.refresh_after_edit();
                 }

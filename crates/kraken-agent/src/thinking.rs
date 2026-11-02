@@ -104,7 +104,7 @@ pub fn apply_anthropic(body: &mut Value, effort: Effort, continues_tool_turn: bo
     let model = body["model"].as_str().unwrap_or_default();
     if !takes_thinking_budget(model) {
         if effort != Effort::Off {
-            body["thinking"] = json!({"type": "adaptive"});
+            body["thinking"] = json!({"type": "adaptive", "display": "summarized"});
         }
         let level = effort.openai_effort().unwrap_or("low");
         body["output_config"] = json!({"effort": level});
@@ -201,7 +201,8 @@ mod tests {
         for model in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"] {
             let mut b = json!({"model": model, "max_tokens": 1000});
             apply_anthropic(&mut b, Effort::High, false);
-            assert_eq!(b["thinking"], json!({"type": "adaptive"}), "{model}");
+            assert_eq!(b["thinking"]["type"], "adaptive", "{model}");
+            assert_eq!(b["thinking"]["display"], "summarized", "{model}");
             assert_eq!(b["output_config"]["effort"], "high", "{model}");
             assert_eq!(b["max_tokens"], 1000);
         }

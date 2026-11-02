@@ -38,6 +38,9 @@ pub struct AgentConfig {
     pub temperature: Option<f32>,
     /// How many times a reply cut off by the length limit is continued in one run.
     pub max_continuations: usize,
+    /// Something trusted that changes between turns, for a backend that keeps its own session
+    /// and reads `system_extra` only when it starts.
+    pub turn_note: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -51,6 +54,7 @@ impl Default for AgentConfig {
             max_tokens: None,
             temperature: None,
             max_continuations: 8,
+            turn_note: None,
         }
     }
 }
@@ -74,6 +78,10 @@ pub enum StopReason {
 pub enum AgentEvent {
     /// Sanitised assistant text.
     TextDelta {
+        text: String,
+    },
+    /// The model is thinking. Sanitised; empty when it does not show its reasoning.
+    ThinkingDelta {
         text: String,
     },
     ToolCallStarted {
@@ -111,6 +119,11 @@ pub enum AgentEvent {
     },
     Error {
         message: String,
+    },
+    /// The whole conversation as the run left it, every tool call answered. Sent just before
+    /// [`AgentEvent::Done`] by a loop that holds it; a terminal agent keeps its own.
+    Transcript {
+        messages: Vec<Message>,
     },
     Done {
         usage: Usage,
@@ -261,6 +274,91 @@ fn sanitize_value(v: &Value) -> Value {
     }
 }
 
+/// Answers the calls of the last assistant message that have no result, so the conversation can
+/// go on: every model API refuses a tool call left open.
+fn close_open_calls(messages: &mut Vec<Message>) {
+    let Some(at) = messages
+        .iter()
+        .rposition(|m| matches!(m, Message::Assistant { .. }))
+    else {
+        return;
+    };
+    let Message::Assistant { tool_calls, .. } = &messages[at] else {
+        return;
+    };
+    let open: Vec<(String, String)> = tool_calls
+        .iter()
+        .filter(|c| {
+            !messages[at..].iter().any(
+                |m| matches!(m, Message::ToolResult { tool_call_id, .. } if *tool_call_id == c.id),
+            )
+        })
+        .map(|c| (c.id.clone(), c.name.clone()))
+        .collect();
+    for (tool_call_id, name) in open {
+        messages.push(Message::ToolResult {
+            tool_call_id,
+            name,
+            content: "Not run: the assistant was stopped first.".to_string(),
+            is_error: true,
+        });
+    }
+}
+
+/// Splits the `<think>` sections some local models put in their text from what they say. A tag
+/// may arrive across two chunks, so the end of a chunk that could start one is held back.
+#[derive(Debug, Default)]
+struct ThinkSplitter {
+    inside: bool,
+    held: String,
+}
+
+const THINK_OPEN: &str = "<think>";
+const THINK_CLOSE: &str = "</think>";
+
+impl ThinkSplitter {
+    /// Takes a chunk; returns what is text and what is thinking.
+    fn push(&mut self, chunk: &str) -> (String, String) {
+        let mut rest = std::mem::take(&mut self.held);
+        rest.push_str(chunk);
+        let (mut shown, mut thought) = (String::new(), String::new());
+        loop {
+            let tag = if self.inside { THINK_CLOSE } else { THINK_OPEN };
+            let out = if self.inside {
+                &mut thought
+            } else {
+                &mut shown
+            };
+            if let Some(at) = rest.find(tag) {
+                out.push_str(&rest[..at]);
+                rest.drain(..at + tag.len());
+                self.inside = !self.inside;
+                continue;
+            }
+            let keep = (1..tag.len())
+                .rev()
+                .find(|n| {
+                    rest.is_char_boundary(rest.len().saturating_sub(*n))
+                        && rest.ends_with(&tag[..*n])
+                })
+                .unwrap_or(0);
+            out.push_str(&rest[..rest.len() - keep]);
+            self.held = rest[rest.len() - keep..].to_string();
+            return (shown, thought);
+        }
+    }
+
+    /// The stream ended: what was held back is what it looked like.
+    fn finish(&mut self) -> (String, String) {
+        let held = std::mem::take(&mut self.held);
+        if self.inside {
+            (String::new(), held)
+        } else {
+            (held, String::new())
+        }
+    }
+}
+
 enum Flow {
     Continue,
     Stop(StopReason, String),
@@ -273,9 +371,20 @@ impl Loop {
         }
     }
 
+    async fn emit_thinking(&self, text: &str) {
+        if !text.is_empty() {
+            self.emit(AgentEvent::ThinkingDelta {
+                text: sanitize(text),
+            })
+            .await;
+        }
+    }
+
     async fn run(mut self, mut messages: Vec<Message>) {
         let mut usage = Usage::default();
         let (stop, message) = self.drive(&mut messages, &mut usage).await;
+        close_open_calls(&mut messages);
+        self.emit(AgentEvent::Transcript { messages }).await;
         if stop == StopReason::Error {
             self.emit(AgentEvent::Error {
                 message: message.clone(),
@@ -390,22 +499,52 @@ impl Loop {
                 }
             };
             let mut asm = StreamAssembler::default();
+            let mut think = ThinkSplitter::default();
+            let mut said = String::new();
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(ev) => {
-                        if let StreamEvent::TextDelta { text } = &ev {
-                            let t = sanitize(text);
-                            if !t.is_empty() {
-                                self.emit(AgentEvent::TextDelta { text: t }).await;
-                            }
+                    Ok(StreamEvent::TextDelta { text }) => {
+                        let (shown, thought) = think.push(&text);
+                        self.emit_thinking(&thought).await;
+                        let t = sanitize(&shown);
+                        if !t.is_empty() {
+                            said.push_str(&t);
+                            self.emit(AgentEvent::TextDelta { text: t }).await;
                         }
-                        asm.push(&ev);
+                        asm.push(&StreamEvent::TextDelta { text: shown });
                     }
-                    Err(AgentError::Cancelled) => {
-                        return (StopReason::Cancelled, "Run cancelled.".into());
+                    Ok(StreamEvent::ThinkingDelta { text }) => {
+                        self.emit(AgentEvent::ThinkingDelta {
+                            text: sanitize(&text),
+                        })
+                        .await;
                     }
-                    Err(e) => return (StopReason::Error, sanitize(&e.to_string())),
+                    Ok(ev) => asm.push(&ev),
+                    Err(e) => {
+                        // What was said so far stays part of the conversation.
+                        if !said.trim().is_empty() {
+                            messages.push(Message::Assistant {
+                                content: said,
+                                tool_calls: Vec::new(),
+                            });
+                        }
+                        return match e {
+                            AgentError::Cancelled => {
+                                (StopReason::Cancelled, "Run cancelled.".into())
+                            }
+                            e => (StopReason::Error, sanitize(&e.to_string())),
+                        };
+                    }
                 }
+            }
+            let (shown, thought) = think.finish();
+            self.emit_thinking(&thought).await;
+            if !shown.is_empty() {
+                self.emit(AgentEvent::TextDelta {
+                    text: sanitize(&shown),
+                })
+                .await;
+                asm.push(&StreamEvent::TextDelta { text: shown });
             }
             let done = asm.finish();
             usage.add(done.usage);
@@ -580,5 +719,67 @@ impl Loop {
             content,
             is_error,
         });
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    fn run(chunks: &[&str]) -> (String, String) {
+        let mut s = ThinkSplitter::default();
+        let (mut shown, mut thought) = (String::new(), String::new());
+        for c in chunks {
+            let (a, b) = s.push(c);
+            shown.push_str(&a);
+            thought.push_str(&b);
+        }
+        let (a, b) = s.finish();
+        (shown + &a, thought + &b)
+    }
+
+    #[test]
+    fn think_sections_leave_the_text_even_across_chunks() {
+        assert_eq!(
+            run(&["<think>why</think>Hello"]),
+            ("Hello".into(), "why".into())
+        );
+        assert_eq!(
+            run(&["<th", "ink>w", "hy</th", "ink>He", "llo"]),
+            ("Hello".into(), "why".into())
+        );
+        assert_eq!(run(&["a < b, x<y"]), ("a < b, x<y".into(), String::new()));
+        assert_eq!(run(&["tail <th"]), ("tail <th".into(), String::new()));
+        assert_eq!(run(&["<think>cut off"]), (String::new(), "cut off".into()));
+        assert_eq!(run(&["é<"]), ("é<".into(), String::new()));
+    }
+
+    #[test]
+    fn calls_left_open_are_answered() {
+        let call = |id: &str| ToolCall {
+            id: id.into(),
+            name: "decompile".into(),
+            arguments: Value::Null,
+        };
+        let mut m = vec![
+            Message::user("q"),
+            Message::Assistant {
+                content: String::new(),
+                tool_calls: vec![call("a"), call("b")],
+            },
+            Message::ToolResult {
+                tool_call_id: "a".into(),
+                name: "decompile".into(),
+                content: "x".into(),
+                is_error: false,
+            },
+        ];
+        close_open_calls(&mut m);
+        assert_eq!(m.len(), 4);
+        assert!(
+            matches!(&m[3], Message::ToolResult { tool_call_id, is_error: true, .. } if tool_call_id == "b")
+        );
+        close_open_calls(&mut m);
+        assert_eq!(m.len(), 4, "nothing left to answer");
     }
 }

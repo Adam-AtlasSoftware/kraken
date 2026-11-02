@@ -125,8 +125,14 @@ fn chat_streams_text_and_shows_tool_chips_with_results() {
     assert!(!streaming);
     assert!(r.vm.assist.usage.total() > 0, "usage is counted");
     assert_eq!(r.vm.assist.badge().expect("backend").model, "test-model");
-    // The conversation is remembered for the next question.
-    assert_eq!(r.vm.assist.history.len(), 2);
+    // The conversation is remembered for the next question, with what the tool said.
+    assert_eq!(r.vm.assist.history.len(), 4);
+    assert!(
+        r.vm.assist
+            .history
+            .iter()
+            .any(|m| matches!(m, kraken_agent::Message::ToolResult { .. }))
+    );
     assert!(
         r.history_for("rename").is_empty(),
         "reading changes nothing"
@@ -287,8 +293,19 @@ fn stop_cancels_a_run_that_is_waiting_for_the_model() {
         "{:?}",
         r.vm.assist.items
     );
-    // The unanswered question is not kept as history.
-    assert!(r.vm.assist.history.is_empty());
+    // The question stays in the conversation, so the next message goes on from it.
+    assert!(
+        matches!(
+            r.vm.assist.history.first(),
+            Some(kraken_agent::Message::User { .. })
+        ),
+        "{:?}",
+        r.vm.assist.history
+    );
+    assert!(matches!(
+        r.vm.assist.history.last(),
+        Some(kraken_agent::Message::Assistant { .. })
+    ));
 
     // A task can be stopped too.
     r.vm.assist_explain_function(0x401340);
@@ -341,8 +358,11 @@ fn a_local_model_goes_on_by_itself_after_the_limit_and_the_note_is_not_a_user_bu
         r.vm.assist.items.last(),
         Some(ChatItem::Assistant { text, .. }) if text.contains("All done")
     ));
-    // Question, what it said at the limit, the hidden prompt, the answer.
-    assert_eq!(r.vm.assist.history.len(), 4);
+    // Everything the run did is there, ending in the answer.
+    assert!(matches!(
+        r.vm.assist.history.last(),
+        Some(kraken_agent::Message::Assistant { content, .. }) if content.contains("All done")
+    ));
     assert!(r.vm.assist.last_input_tokens > 0);
 }
 

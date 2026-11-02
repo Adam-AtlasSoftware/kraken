@@ -212,7 +212,10 @@ fn shape(events: &[AgentEvent]) -> Vec<&'static str> {
             AgentEvent::Error { .. } => "error",
             AgentEvent::Done { .. } => "done",
             // Only the built-in loop reports these; the shape compares backends.
-            AgentEvent::StepUsage { .. } | AgentEvent::Compacted { .. } => continue,
+            AgentEvent::StepUsage { .. }
+            | AgentEvent::Compacted { .. }
+            | AgentEvent::ThinkingDelta { .. }
+            | AgentEvent::Transcript { .. } => continue,
         };
         if name == "text" && out.last() == Some(&"text") {
             continue;

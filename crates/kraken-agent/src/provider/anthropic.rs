@@ -205,6 +205,10 @@ impl ChunkParser for AnthropicParser {
                         name: cb["name"].as_str().map(String::from),
                         arguments: String::new(),
                     });
+                } else if cb["type"] == "thinking" || cb["type"] == "redacted_thinking" {
+                    out.push(StreamEvent::ThinkingDelta {
+                        text: String::new(),
+                    });
                 } else if let Some(text) = cb["text"].as_str().filter(|t| !t.is_empty()) {
                     out.push(StreamEvent::TextDelta { text: text.into() });
                 }
@@ -216,6 +220,11 @@ impl ChunkParser for AnthropicParser {
                     Some("text_delta") => {
                         if let Some(t) = d["text"].as_str() {
                             out.push(StreamEvent::TextDelta { text: t.into() });
+                        }
+                    }
+                    Some("thinking_delta") => {
+                        if let Some(t) = d["thinking"].as_str() {
+                            out.push(StreamEvent::ThinkingDelta { text: t.into() });
                         }
                     }
                     Some("input_json_delta") => {

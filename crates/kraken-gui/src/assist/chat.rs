@@ -472,9 +472,11 @@ fn progress(ui: &mut Ui, vm: &ViewModel, p: &Palette) {
         }
         ui.spinner();
         let text = if vm.assist.stopping() {
-            "Stopping..."
+            "Stopping...".to_string()
         } else {
-            kind.working_text()
+            vm.assist
+                .status_line()
+                .unwrap_or_else(|| kind.working_text().to_string())
         };
         ui.label(RichText::new(text).color(p.text_dim));
     });
@@ -503,6 +505,7 @@ fn draw_item(ui: &mut Ui, vm: &ViewModel, p: &Palette, item: &ChatItem, acts: &m
                 ui.label(RichText::new("\u{2026}").color(p.text_dim));
             }
         }
+        ChatItem::Thinking { text, active } => thinking_block(ui, p, text, *active),
         ChatItem::Tool(c) => tool_chip(ui, p, &s, c),
         ChatItem::Proposal(c) => proposal_card(ui, p, &s, c, acts),
         ChatItem::Permission(c) => permission_card(ui, p, &s, c, acts),
@@ -523,6 +526,28 @@ fn draw_item(ui: &mut Ui, vm: &ViewModel, p: &Palette, item: &ChatItem, acts: &m
                     ui.add(egui::Label::new(RichText::new(t).color(s.danger)).wrap());
                 });
         }
+    }
+}
+
+/// What the model showed of its thinking: folded, with its last line while it goes on.
+fn thinking_block(ui: &mut Ui, p: &Palette, text: &str, active: bool) {
+    let last = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    let title = if active { "Thinking" } else { "Thought" };
+    egui::CollapsingHeader::new(RichText::new(title).italics().size(12.5).color(p.text_dim))
+        .id_salt(("kraken_thinking", text.len().min(1), ui.next_auto_id()))
+        .show(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.text_dim)).wrap());
+        })
+        .header_response
+        .on_hover_text("What the model reasoned before answering");
+    if active {
+        ui.add(
+            egui::Label::new(RichText::new(last).italics().size(12.0).color(p.text_dim)).truncate(),
+        );
     }
 }
 

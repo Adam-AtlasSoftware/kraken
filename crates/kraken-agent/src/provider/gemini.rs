@@ -175,6 +175,10 @@ impl ChunkParser for GeminiParser {
         {
             for p in parts {
                 if let Some(t) = p["text"].as_str().filter(|t| !t.is_empty()) {
+                    if p["thought"] == true {
+                        out.push(StreamEvent::ThinkingDelta { text: t.into() });
+                        continue;
+                    }
                     out.push(StreamEvent::TextDelta { text: t.into() });
                 } else if let Some(fc) = p.get("functionCall") {
                     let index = self.next_call;
