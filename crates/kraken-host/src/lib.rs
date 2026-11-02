@@ -21,6 +21,7 @@ pub mod dotnet_setup;
 pub mod factory;
 pub mod infer;
 pub mod integrations;
+pub mod launchers;
 pub mod llama_setup;
 pub mod local_models;
 pub mod managed;

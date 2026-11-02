@@ -10088,6 +10088,13 @@ Only catalogue ids are accepted, never a URL. The download resumes from a partia
       "description": "`emulator`, `compat_layer` or `tool`.",
       "type": "string"
     },
+    "launcher": {
+      "description": "How to start KRAKEN's copy from the system: the command and the application list.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "license": {
       "description": "SPDX identifier of the licence (`GPL-2.0-or-later`, `Proprietary`, `Non-commercial`, ...).",
       "type": "string"
@@ -10433,6 +10440,13 @@ Example: `integration_use_path {"id": "pcsx2", "path": "/opt/pcsx2/pcsx2-qt"}`
       "description": "`emulator`, `compat_layer` or `tool`.",
       "type": "string"
     },
+    "launcher": {
+      "description": "How to start KRAKEN's copy from the system: the command and the application list.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "license": {
       "description": "SPDX identifier of the licence (`GPL-2.0-or-later`, `Proprietary`, `Non-commercial`, ...).",
       "type": "string"
@@ -10678,6 +10692,13 @@ Arguments: none.
         "kind": {
           "description": "`emulator`, `compat_layer` or `tool`.",
           "type": "string"
+        },
+        "launcher": {
+          "description": "How to start KRAKEN's copy from the system: the command and the application list.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "license": {
           "description": "SPDX identifier of the licence (`GPL-2.0-or-later`, `Proprietary`, `Non-commercial`, ...).",

@@ -107,6 +107,9 @@ pub struct IntegrationView {
     pub argv: Vec<String>,
     /// Running install, when there is one.
     pub progress: Option<InstallProgress>,
+    /// How to start KRAKEN's copy from the system: the command and the application list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<String>,
 }
 
 /// What to run for an emulator.

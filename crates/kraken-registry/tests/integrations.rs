@@ -44,6 +44,7 @@ fn view(id: &str, key: bool, status: IntegrationStatus) -> IntegrationView {
         debuggable: true,
         argv: vec!["{exe}".into()],
         progress: None,
+        launcher: None,
     }
 }
 

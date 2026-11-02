@@ -475,9 +475,10 @@ impl Settings {
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok::<String, String>(
-                    "Ghidra and the JDK are installed. KRAKEN finds them on its own.".into(),
-                )
+                let launcher = kraken_host::launchers::publish_ghidra(&layout).unwrap_or_default();
+                Ok::<String, String>(format!(
+                    "Ghidra and the JDK are installed. KRAKEN finds them on its own. {launcher}"
+                ))
             }
             .await;
             let _ = tx.send(SetupMsg::Done(result));

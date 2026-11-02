@@ -37,6 +37,7 @@ fn row(id: &str, name: &str, status: IntegrationStatus) -> IntegrationView {
         debuggable: false,
         argv: vec!["{exe}".into(), "{binary}".into()],
         progress: None,
+        launcher: None,
     }
 }
 

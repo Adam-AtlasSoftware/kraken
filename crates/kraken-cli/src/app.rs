@@ -537,6 +537,12 @@ pub fn build_cli(registry: &Registry) -> Command {
                  emulator; there is no riscv32 sysroot.",
             )
             .arg(
+                Arg::new("launchers")
+                    .long("launchers")
+                    .action(ArgAction::SetTrue)
+                    .help("Add Ghidra and the emulators KRAKEN installed to the application list and PATH"),
+            )
+            .arg(
                 Arg::new("dotnet")
                     .long("dotnet")
                     .action(ArgAction::SetTrue)

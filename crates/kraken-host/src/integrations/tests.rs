@@ -781,3 +781,28 @@ async fn real_debian_sysroots_install_for_every_architecture() {
         }
     }
 }
+
+#[tokio::test]
+async fn installing_publishes_a_command_and_removing_withdraws_it() {
+    let f = fixture(false);
+    let bin = f.root.join("../bin");
+    let places = crate::launchers::Places {
+        bin: bin.clone(),
+        apps: f.root.join("../apps"),
+        path_env: bin.clone().into_os_string(),
+        profiles: Vec::new(),
+        windows: false,
+    };
+    let c = f.catalogue.with_places(places);
+    let v = c.install("toyemu", true).await.unwrap();
+    assert!(
+        v.launcher
+            .as_deref()
+            .is_some_and(|n| n.contains("`toyemu`"))
+    );
+    assert!(bin.join("toyemu").is_file());
+    // gui = false: a command, and nothing in the application list.
+    assert!(!f.root.join("../apps/kraken-toyemu.desktop").exists());
+    c.remove("toyemu").unwrap();
+    assert!(!bin.join("toyemu").exists());
+}

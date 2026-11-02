@@ -4,7 +4,8 @@
 //! the upstream's own release on the user's machine (pinned version, SHA-256 checked before
 //! anything is unpacked) into `<data dir>/integrations/<id>/<version>/`. An entry can also use a
 //! copy the person already has: found on `PATH` or in a well-known place, or a path they chose.
-//! Removing deletes only what KRAKEN installed.
+//! Removing deletes only what KRAKEN installed. What KRAKEN downloads also gets a command and,
+//! for a windowed emulator, an entry in the system's application list (see [`crate::launchers`]).
 //!
 //! The manifest format is in [`manifest`]; the catalogue that ships with KRAKEN is compiled in
 //! (`catalogue.toml`) and the person's own emulators are TOML files in
@@ -25,6 +26,7 @@ use kraken_registry::commands::{
 use serde::{Deserialize, Serialize};
 
 use crate::config::KrakenConfig;
+use crate::launchers::{self, Launcher, Places};
 use crate::llama_setup::data_dir_with;
 use crate::provision::{
     ArchiveFormat, ArtifactSpec, Fetcher, HttpsFetcher, Progress, download, extract_tar_gz,
@@ -51,6 +53,12 @@ struct Saved {
     /// Bytes of the installed copy.
     #[serde(default)]
     disk_bytes: u64,
+    /// The command published for KRAKEN's copy.
+    #[serde(default)]
+    command: Option<String>,
+    /// How to start KRAKEN's copy from the system, or why that could not be set up.
+    #[serde(default)]
+    launcher_note: Option<String>,
 }
 
 type State = BTreeMap<String, Saved>;
@@ -66,6 +74,7 @@ pub struct Integrations {
     state_lock: Mutex<()>,
     progress: Arc<Mutex<BTreeMap<String, InstallProgress>>>,
     probes: Mutex<HashMap<PathBuf, Option<String>>>,
+    places: Option<Places>,
 }
 
 impl std::fmt::Debug for Integrations {
@@ -101,6 +110,7 @@ impl Integrations {
         me.path_env = None;
         me.home = std::env::var_os("HOME").map(PathBuf::from);
         me.flatpak_dirs = flatpak_export_dirs(me.home.as_deref());
+        me.places = Places::system();
         Ok(me)
     }
 
@@ -117,7 +127,92 @@ impl Integrations {
             state_lock: Mutex::new(()),
             progress: Arc::new(Mutex::new(BTreeMap::new())),
             probes: Mutex::new(HashMap::new()),
+            places: None,
         }
+    }
+
+    /// Publishes commands and application entries in `places`.
+    pub fn with_places(mut self, places: Places) -> Self {
+        self.places = Some(places);
+        self
+    }
+
+    /// The launcher of KRAKEN's copy of `e`; libraries and toolchains have none.
+    fn launcher(&self, e: &Entry, saved: &Saved) -> Option<Launcher> {
+        if !matches!(e.kind.as_str(), "emulator" | "compat_layer" | "tool") {
+            return None;
+        }
+        let exe = self
+            .root
+            .join(&e.id)
+            .join(saved.version.as_ref()?)
+            .join(saved.entry.as_ref()?);
+        let mut env: Vec<(String, String)> = e
+            .run
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if exe
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".appimage")
+        {
+            env.push(("APPIMAGE_EXTRACT_AND_RUN".into(), "1".into()));
+        }
+        Some(Launcher {
+            id: e.id.clone(),
+            name: e.name.clone(),
+            summary: e.summary.clone(),
+            command: e.detect.names.first().unwrap_or(&e.id).clone(),
+            exe,
+            env,
+            path_dirs: Vec::new(),
+            app: e.kind == "emulator" && e.run.gui,
+            icon: None,
+            categories: "Game;Emulator;".into(),
+        })
+    }
+
+    /// Publishes KRAKEN's copy of `e` and remembers the outcome. A failure here leaves the
+    /// install working, so it becomes the note and not an error.
+    fn publish(&self, e: &Entry) -> Result<(), ProtoError> {
+        let Some(places) = &self.places else {
+            return Ok(());
+        };
+        let saved = self.load_state().remove(&e.id).unwrap_or_default();
+        let Some(l) = self.launcher(e, &saved) else {
+            return Ok(());
+        };
+        let out = launchers::publish(places, &l);
+        self.update_state(|st| {
+            let s = st.entry(e.id.clone()).or_default();
+            match out {
+                Ok(p) => {
+                    s.command = Some(p.command);
+                    s.launcher_note = Some(p.note);
+                }
+                Err(why) => {
+                    s.launcher_note = Some(format!("Not added to the system: {why}"));
+                }
+            }
+        })
+    }
+
+    /// Publishes everything KRAKEN downloaded; the notes, by name.
+    pub fn publish_all(&self) -> Result<Vec<(String, String)>, ProtoError> {
+        let mut out = Vec::new();
+        for (e, _) in self.entries() {
+            self.publish(&e)?;
+            if let Some(note) = self
+                .load_state()
+                .remove(&e.id)
+                .and_then(|s| s.launcher_note)
+            {
+                out.push((e.name.clone(), note));
+            }
+        }
+        Ok(out)
     }
 
     /// Looks for system copies on `path` (a `PATH` value) and under `home`.
@@ -328,6 +423,7 @@ impl Integrations {
             debuggable: e.run.gdb_argv.is_some(),
             argv: e.run.argv.clone(),
             progress,
+            launcher: saved.launcher_note.clone(),
         }
     }
 
@@ -430,7 +526,8 @@ impl Integrations {
             s.version = Some(version);
             s.entry = Some(program);
             s.disk_bytes = disk;
-        })
+        })?;
+        self.publish(e)
     }
 }
 
@@ -770,9 +867,15 @@ impl IntegrationsBackend for Integrations {
     }
 
     fn remove(&self, id: &str) -> Result<IntegrationRemoveOut, ProtoError> {
-        self.entry(id)?;
+        let (entry, _) = self.entry(id)?;
         if lock(&self.progress).contains_key(id) {
             return Err(invalid("it is being installed right now"));
+        }
+        let saved = self.load_state().remove(id).unwrap_or_default();
+        if let (Some(places), Some(l), Some(command)) =
+            (&self.places, self.launcher(&entry, &saved), &saved.command)
+        {
+            launchers::withdraw(places, &l, command);
         }
         let dir = self.root.join(id);
         let freed = dir_size(&dir);

@@ -143,6 +143,20 @@ fn field<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or_default()
 }
 
+/// Adds Ghidra and the emulators KRAKEN installed earlier to the system; one line for each.
+fn refresh_launchers() -> Result<Vec<String>, ProtoError> {
+    let mut lines = Vec::new();
+    if let Some(note) = kraken_host::provision::Layout::from_env()
+        .and_then(|l| kraken_host::launchers::publish_ghidra(&l))
+    {
+        lines.push(format!("Ghidra: {note}"));
+    }
+    for (name, note) in kraken_host::integrations::Integrations::system()?.publish_all()? {
+        lines.push(format!("{name}: {note}"));
+    }
+    Ok(lines)
+}
+
 pub(crate) async fn run_setup(
     _env: &CliEnv,
     sm: &ArgMatches,
@@ -151,6 +165,21 @@ pub(crate) async fn run_setup(
     err: &mut dyn Write,
 ) -> i32 {
     let flag = |n: &str| sm.try_get_one::<bool>(n).ok().flatten().copied() == Some(true);
+    if flag("launchers") {
+        return match refresh_launchers() {
+            Ok(lines) => {
+                if json_out {
+                    emit(out, &format!("{}\n", serde_json::json!(lines)));
+                } else if lines.is_empty() {
+                    emit(out, "KRAKEN has installed nothing to add yet.\n");
+                } else {
+                    emit(out, &format!("{}\n", lines.join("\n")));
+                }
+                0
+            }
+            Err(e) => fail(&e, json_out, err),
+        };
+    }
     let task = if flag("dotnet") {
         SetupTask::Dotnet
     } else if flag("native") {
@@ -189,10 +218,11 @@ pub(crate) async fn run_setup(
     }
     let text = match task {
         SetupTask::Ghidra => format!(
-            "Ghidra:    {}\nJDK:       {}\nExtension: {}\nReady: KRAKEN finds these on its own (KRAKEN_GHIDRA_HOME and KRAKEN_JAVA_HOME take precedence).\n",
+            "Ghidra:    {}\nJDK:       {}\nExtension: {}\nReady: KRAKEN finds these on its own (KRAKEN_GHIDRA_HOME and KRAKEN_JAVA_HOME take precedence).\n{}\n",
             field(&v, "ghidra_home"),
             field(&v, "java_home"),
-            field(&v, "ext_jar")
+            field(&v, "ext_jar"),
+            field(&v, "launcher")
         ),
         SetupTask::Dotnet => format!(
             ".NET runtime: {}\nSidecar:      {}\nReady: KRAKEN opens .NET assemblies with these (KRAKEN_DOTNET_ROOT and KRAKEN_DOTNET_EXT_DLL take precedence).\n",

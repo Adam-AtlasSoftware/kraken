@@ -149,12 +149,19 @@ impl HostSetup {
         })
         .await
         .map_err(to_proto)?;
+        // Tests give the setup a fetcher; they stay out of the person's folders.
+        let launcher = self
+            .fetcher
+            .is_none()
+            .then(|| crate::launchers::publish_ghidra(layout))
+            .flatten();
         let show = |o: &Option<PathBuf>| o.as_ref().map(|p| p.display().to_string());
         Ok(json!({
             "runtime_dir": layout.root(),
             "ghidra_home": show(&p.ghidra_home),
             "java_home": show(&p.java_home),
             "ext_jar": show(&p.ext_jar),
+            "launcher": launcher,
         }))
     }
 

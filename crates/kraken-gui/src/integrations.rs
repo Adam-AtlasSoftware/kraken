@@ -184,6 +184,9 @@ fn detail(ui: &mut Ui, hub: &IntegrationsHub) {
             if !r.homepage.is_empty() {
                 ui.hyperlink_to(&r.homepage, &r.homepage);
             }
+            if let Some(l) = &r.launcher {
+                ui.add(egui::Label::new(RichText::new(l).color(p.text_dim)).wrap());
+            }
             ui.add_space(6.0);
             if !r.notice.is_empty() {
                 ui.add_space(6.0);

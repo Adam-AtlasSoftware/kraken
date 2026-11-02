@@ -25,7 +25,7 @@ Open and import programs and projects, and settings.
 | Import symbols... | Name functions from a link map, CSV, splat file or IDA script; preview first, undo as one step |  |
 | Export debug information... | Write what you learned (names, prototypes, types, globals) as a debug file for gdb and lldb, or as a splat, SARIF, CSV or map file |  |
 | Close project | Stop working on this project and go back to the start | `Ctrl+W` |
-| Settings... | Sections on the left, each with its settings on the right: appearance, keyboard shortcuts, AI, the engine | `Ctrl+,` |
+| Settings... | Engine paths, theme, daemon status and setup | `Ctrl+,` |
 | Quit | Close KRAKEN. Your work is already saved | `Ctrl+Q` |
 
 ### Edit
@@ -435,7 +435,7 @@ How to use it:
 
 - Press Stop on a row to end that work. What it finished is kept.
 - Click the AI chip in the top bar to come here while work runs.
-- Set limits and a daily budget in Settings > Limits and cost.
+- Set limits and a daily budget in Settings > AI.
 
 ## Keyboard shortcuts
 

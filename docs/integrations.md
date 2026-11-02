@@ -163,3 +163,21 @@ directory with its output going to `emulator.log`, and returns the command line,
 the first 4000 characters of output (program data, so untrusted). A windowed emulator is left running;
 close its window to end it. The temporary directory is not deleted, so the emulator can keep using
 the patched copy.
+
+## Starting installed programs from your system
+
+Everything KRAKEN downloads can be started without KRAKEN. Installing an emulator, compatibility layer or tool adds a command, and a windowed emulator also gets an entry in your application list. **Ghidra** gets both when `kraken setup` or the Setup button installs it, and its command brings KRAKEN's own JDK with it. The integration's page shows the command.
+
+| | Commands | Application list |
+|---|---|---|
+| Linux | `~/.local/bin` (or `XDG_BIN_HOME`) | `~/.local/share/applications` |
+| Windows | `%LOCALAPPDATA%\KRAKEN\bin`, added to your user `Path` | Start Menu, in the KRAKEN folder |
+
+All of this is per user and never needs `sudo` or an administrator.
+
+- **Your own programs win.** When another program already uses a name, KRAKEN's command is called `kraken-<id>` (for example `kraken-pcsx2`), and a file of yours is never replaced.
+- **`PATH`.** If the folder is not on your `PATH`, KRAKEN adds one marked line to your login scripts (`~/.profile`, and `~/.bash_profile`, `~/.zprofile` or fish's `conf.d` where you use them). Open a new terminal, or log in again, for it to take effect.
+- **Removing** an integration removes its command and entry. Only files carrying KRAKEN's mark are removed, and the `PATH` line stays.
+- **Copies you installed yourself** stay as they are: KRAKEN adds nothing for a program found on your system or a path you chose.
+
+`kraken setup --launchers` does this for what KRAKEN installed earlier, such as a Ghidra from an older version.
