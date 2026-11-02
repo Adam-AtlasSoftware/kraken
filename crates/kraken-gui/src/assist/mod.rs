@@ -6,6 +6,7 @@
 
 mod agent_demo;
 mod agents_ui;
+pub(crate) mod attach;
 pub(crate) mod automate;
 mod chat;
 mod demo;
@@ -78,6 +79,40 @@ pub struct AssistUi {
     pub requests: Vec<AssistRequest>,
     /// The Automate dialog.
     pub automate: automate::AutomateUi,
+    /// Pictures waiting to go with the next message.
+    pub attached: Vec<kraken_viewmodel::assist::Attachment>,
+    /// Why the last picture could not be attached.
+    pub attach_error: Option<String>,
+    /// A message sent while the assistant was busy; it goes out when it is done.
+    pub queued: Option<(String, Vec<kraken_viewmodel::assist::Attachment>)>,
+    /// What was sent, oldest first, for the Up key.
+    pub sent: Vec<String>,
+    /// Which of `sent` the box shows, counted from the newest.
+    pub recall: Option<usize>,
+    /// Answers of the file picker.
+    pub picked: Option<std::sync::mpsc::Receiver<Vec<std::path::PathBuf>>>,
+}
+
+impl AssistUi {
+    /// Attaches the picture at `path`, or says why not.
+    pub fn attach_file(&mut self, path: &std::path::Path) {
+        match attach::from_file(path) {
+            Ok(a) => self.attach(a),
+            Err(e) => self.attach_error = Some(e),
+        }
+    }
+
+    fn attach(&mut self, a: kraken_viewmodel::assist::Attachment) {
+        if self.attached.len() >= attach::MAX_ATTACHED {
+            self.attach_error = Some(format!(
+                "A message can carry {} pictures.",
+                attach::MAX_ATTACHED
+            ));
+            return;
+        }
+        self.attach_error = None;
+        self.attached.push(a);
+    }
 }
 
 /// Adds the Assistant tab to the leaf that holds the Hex tab (or the focused leaf).

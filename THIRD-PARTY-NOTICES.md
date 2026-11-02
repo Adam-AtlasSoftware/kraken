@@ -452,7 +452,7 @@ expression in its `Cargo.toml`. For crates offered under a choice of licenses (`
 elects the license compatible with GPL-3.0-or-later. Where several crates ship an identical
 license text, it is printed once.
 
-607 crates in 32 license groups.
+617 crates in 32 license groups.
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -7636,6 +7636,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - calloop-wayland-source 0.3.0 (<https://github.com/smithay/calloop-wayland-source>)
 - calloop-wayland-source 0.4.1 (<https://github.com/smithay/calloop-wayland-source>)
 - cfg_aliases 0.2.2 (<https://github.com/katharostech/cfg_aliases>)
+- color_quant 1.1.0 (<https://github.com/image-rs/color_quant.git>)
 - combine 4.6.9 (<https://github.com/Marwes/combine>)
 - convert_case 0.10.0 (<https://github.com/rutrum/convert-case>)
 - crunchy 0.2.4 (<https://github.com/eira-fransham/crunchy>)
@@ -7666,6 +7667,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - minisign-verify 0.3.0 (<https://github.com/jedisct1/rust-minisign-verify>)
 - mio 1.2.4 (<https://github.com/tokio-rs/mio>)
 - nix 0.31.3 (<https://github.com/nix-rust/nix>)
+- nom 8.0.0 (<https://github.com/rust-bakery/nom>)
 - nu-ansi-term 0.50.3 (<https://github.com/nushell/nu-ansi-term>)
 - objc-sys 0.3.5 (<https://github.com/madsmtm/objc2>)
 - objc2 0.5.3 (<https://github.com/madsmtm/objc2>)
@@ -7688,6 +7690,8 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - objc2-user-notifications 0.2.2 (<https://github.com/madsmtm/objc2>)
 - orbclient 0.3.55 (<https://gitlab.redox-os.org/redox-os/orbclient>)
 - ordered-float 5.5.0 (<https://github.com/reem/rust-ordered-float>)
+- os_pipe 1.2.3 (<https://github.com/oconnor663/os_pipe.rs>)
+- pulldown-cmark 0.13.6 (<https://github.com/raphlinus/pulldown-cmark>)
 - quick-xml 0.41.0 (<https://github.com/tafia/quick-xml>)
 - redox_syscall 0.4.1 (<https://gitlab.redox-os.org/redox-os/syscall>)
 - redox_syscall 0.5.18 (<https://gitlab.redox-os.org/redox-os/syscall>)
@@ -7727,6 +7731,7 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
 - tracing-attributes 0.1.31 (<https://github.com/tokio-rs/tracing>)
 - tracing-core 0.1.36 (<https://github.com/tokio-rs/tracing>)
 - tracing-subscriber 0.3.23 (<https://github.com/tokio-rs/tracing>)
+- tree_magic_mini 3.2.2 (<https://github.com/mbrubeck/tree_magic/>)
 - try-lock 0.2.5 (<https://github.com/seanmonstar/try-lock>)
 - twox-hash 2.1.5 (<https://github.com/shepmaster/twox-hash>)
 - typed-arena 2.0.2 (<https://github.com/SimonSapin/rust-typed-arena>)
@@ -7857,6 +7862,29 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
+
+**LICENSE** — nom 8.0.0
+
+    Copyright (c) 2014-2019 Geoffroy Couprie
+
+    Permission is hereby granted, free of charge, to any person obtaining
+    a copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be
+    included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+    NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+    LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+    WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 **LICENSE** — hyper 1.12.0
 
@@ -8578,6 +8606,30 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+**LICENSE** — tree_magic_mini 3.2.2
+
+    MIT License
+
+    Copyright (c) 2017 Aaron Hancock
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 **LICENSE** — serde-xml-rs 0.8.2
 
     MIT License
@@ -9070,6 +9122,30 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
     WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+**LICENSE** — pulldown-cmark 0.13.6
+
+    The MIT License
+
+    Copyright 2015 Google Inc. All rights reserved.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+
 **LICENSE** — nu-ansi-term 0.50.3
 
     The MIT License (MIT)
@@ -9339,6 +9415,30 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
+**LICENSE** — color_quant 1.1.0
+
+    The MIT License (MIT)
+
+    Copyright (c) 2016 PistonDevelopers
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 **LICENSE** — xkbcommon-dl 0.4.2
 
     The MIT License (MIT)
@@ -9435,6 +9535,28 @@ No license file in the source of: clipboard-win 5.4.1. They are distributed unde
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+**LICENSE** — os_pipe 1.2.3
+
+    The MIT License (MIT)
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
 
 **LICENSE.txt** — libm 0.2.16
 
@@ -9825,6 +9947,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - getrandom 0.2.17 (<https://github.com/rust-random/getrandom>)
 - getrandom 0.3.4 (<https://github.com/rust-random/getrandom>)
 - getrandom 0.4.3 (<https://github.com/rust-random/getrandom>)
+- gif 0.14.2 (<https://github.com/image-rs/image-gif>)
 - gimli 0.33.0 (<https://github.com/gimli-rs/gimli>)
 - gimli 0.34.0 (<https://github.com/gimli-rs/gimli>)
 - gpu-allocator 0.28.0 (<https://github.com/Traverse-Research/gpu-allocator>)
@@ -9846,6 +9969,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - idna 1.1.0 (<https://github.com/servo/rust-url/>)
 - ihex 3.0.0 (<http://github.com/martinmroz/ihex>)
 - image 0.25.10 (<https://github.com/image-rs/image>)
+- image-webp 0.2.4 (<https://github.com/image-rs/image-webp>)
 - ipnet 2.12.2 (<https://github.com/krisprice/ipnet>)
 - is_terminal_polyfill 1.70.2 (<https://github.com/polyfill-rs/is_terminal_polyfill>)
 - itertools 0.15.0 (<https://github.com/rust-itertools/itertools>)
@@ -9882,6 +10006,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - pastey 0.2.3 (<https://github.com/as1100k/pastey>)
 - pdb2 0.11.0 (<https://github.com/afranchuk/pdb>)
 - percent-encoding 2.3.2 (<https://github.com/servo/rust-url/>)
+- petgraph 0.8.3 (<https://github.com/petgraph/petgraph>)
 - pkg-config 0.3.34 (<https://github.com/rust-lang/pkg-config-rs>)
 - plain 0.2.3 (<https://github.com/randomites/plain>)
 - png 0.18.1 (<https://github.com/image-rs/image-png>)
@@ -9965,6 +10090,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - type-map 0.5.1 (<https://github.com/kardeiz/type-map>)
 - typed-path 0.12.3 (<https://github.com/chipsenkbeil/typed-path>)
 - typenum 1.20.1 (<https://github.com/paholg/typenum>)
+- unicase 2.10.0 (<https://github.com/seanmonstar/unicase>)
 - unicode-segmentation 1.13.3 (<https://github.com/unicode-rs/unicode-segmentation>)
 - unicode-width 0.2.2 (<https://github.com/unicode-rs/unicode-width>)
 - unicode-xid 0.2.6 (<https://github.com/unicode-rs/unicode-xid>)
@@ -10012,11 +10138,12 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 - windows_x86_64_gnu 0.52.6 (<https://github.com/microsoft/windows-rs>)
 - windows_x86_64_gnullvm 0.52.6 (<https://github.com/microsoft/windows-rs>)
 - windows_x86_64_msvc 0.52.6 (<https://github.com/microsoft/windows-rs>)
+- wl-clipboard-rs 0.9.4 (<https://github.com/YaLTeR/wl-clipboard-rs>)
 - x11rb 0.13.2 (<https://github.com/psychon/x11rb>)
 - x11rb-protocol 0.13.2 (<https://github.com/psychon/x11rb>)
 - xattr 1.6.1 (<https://github.com/Stebalien/xattr>)
 
-**LICENSE-APACHE, LICENSE-APACHE.txt, LICENSE-Apache, LICENSE.APACHE** — android-activity 0.6.1, arboard 3.7.0, fdeflate 0.3.7, half 2.7.1, image 0.25.10, naga 30.0.1, naga-types 30.0.1, num-conv 0.2.2, range-alloc 0.1.5, simdutf8 0.1.5, time 0.3.55, time-core 0.1.9, time-macros 0.2.32, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-emscripten 30.0.1, wgpu-core-deps-wasm 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1
+**LICENSE-APACHE, LICENSE-APACHE.txt, LICENSE-Apache, LICENSE.APACHE** — android-activity 0.6.1, arboard 3.7.0, fdeflate 0.3.7, half 2.7.1, image 0.25.10, image-webp 0.2.4, naga 30.0.1, naga-types 30.0.1, num-conv 0.2.2, range-alloc 0.1.5, simdutf8 0.1.5, time 0.3.55, time-core 0.1.9, time-macros 0.2.32, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-emscripten 30.0.1, wgpu-core-deps-wasm 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1
 
                                      Apache License
                                Version 2.0, January 2004
@@ -14852,7 +14979,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     See the License for the specific language governing permissions and
     limitations under the License.
 
-**LICENSE-APACHE** — ahash 0.8.12, arbitrary 1.5.0, arrayvec 0.7.8, async-recursion 1.2.0, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.3, cc 1.8.0, cfg-if 1.0.5, cgl 0.3.2, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, cpp_demangle 0.5.1, crossbeam-utils 0.8.23, displaydoc 0.2.7, either 1.19.0, errno 0.3.14, euclid 0.22.14, filetime 0.2.29, find-msvc-tools 0.1.14, fixedbitset 0.5.7, flate2 1.1.10, form_urlencoded 1.2.2, gimli 0.33.0, gimli 0.34.0, hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, hermit-abi 0.5.3, httparse 1.10.1, idna 1.1.0, itertools 0.15.0, jobserver 0.1.35, js-sys 0.3.106, khronos-egl 6.0.0, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.34, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot 0.12.5, parking_lot_core 0.9.12, pdb2 0.11.0, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0, ron 0.11.0, rustc-demangle 0.1.28, rustc_version 0.4.1, scoped-tls 1.0.1, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, signal-hook-registry 1.4.8, smallvec 1.16.3, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, thread_local 1.1.10, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, vcpkg 0.2.15, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl 0.1.12, xattr 1.6.1
+**LICENSE-APACHE** — ahash 0.8.12, arbitrary 1.5.0, arrayvec 0.7.8, async-recursion 1.2.0, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.3, cc 1.8.0, cfg-if 1.0.5, cgl 0.3.2, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, cpp_demangle 0.5.1, crossbeam-utils 0.8.23, displaydoc 0.2.7, either 1.19.0, errno 0.3.14, euclid 0.22.14, filetime 0.2.29, find-msvc-tools 0.1.14, fixedbitset 0.5.7, flate2 1.1.10, form_urlencoded 1.2.2, gif 0.14.2, gimli 0.33.0, gimli 0.34.0, hashbrown 0.12.3, hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, hermit-abi 0.5.3, httparse 1.10.1, idna 1.1.0, itertools 0.15.0, jobserver 0.1.35, js-sys 0.3.106, khronos-egl 6.0.0, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.34, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot 0.12.5, parking_lot_core 0.9.12, pdb2 0.11.0, percent-encoding 2.3.2, petgraph 0.8.3, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0, ron 0.11.0, rustc-demangle 0.1.28, rustc_version 0.4.1, scoped-tls 1.0.1, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, signal-hook-registry 1.4.8, smallvec 1.16.3, smol_str 0.2.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, thread_local 1.1.10, unicase 2.10.0, unicode-segmentation 1.13.3, unicode-width 0.2.2, unicode-xid 0.2.6, url 2.5.8, vcpkg 0.2.15, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl 0.1.12, wl-clipboard-rs 0.9.4, xattr 1.6.1
 
                                   Apache License
                             Version 2.0, January 2004
@@ -17540,7 +17667,29 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-**LICENSE-MIT** — either 1.19.0, itertools 0.15.0, serde_with 3.24.0, serde_with_macros 3.24.0
+**LICENSE-MIT** — unicase 2.10.0
+
+    Copyright (c) 2014-2026 Sean McArthur
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+
+**LICENSE-MIT** — either 1.19.0, itertools 0.15.0, petgraph 0.8.3, serde_with 3.24.0, serde_with_macros 3.24.0
 
     Copyright (c) 2015
 
@@ -18579,6 +18728,34 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
 **LICENSE-MIT** — font-types 0.12.7, read-fonts 0.41.0, skrifa 0.44.0
 
     Copyright (c) 2019 Fontations Developers
+
+    Permission is hereby granted, free of charge, to any
+    person obtaining a copy of this software and associated
+    documentation files (the "Software"), to deal in the
+    Software without restriction, including without
+    limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following
+    conditions:
+
+    The above copyright notice and this permission notice
+    shall be included in all copies or substantial portions
+    of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+
+**LICENSE-MIT** — wl-clipboard-rs 0.9.4
+
+    Copyright (c) 2019 Ivan Molodetskikh
 
     Permission is hereby granted, free of charge, to any
     person obtaining a copy of this software and associated
@@ -19739,7 +19916,7 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-**LICENSE-MIT** — fdeflate 0.3.7, image 0.25.10
+**LICENSE-MIT** — fdeflate 0.3.7, image 0.25.10, image-webp 0.2.4
 
     MIT License
 
@@ -20198,6 +20375,30 @@ No license file in the source of: block2 0.5.1, block2 0.6.2, dispatch 0.2.0, ic
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
+
+**LICENSE-MIT** — gif 0.14.2
+
+    The MIT License (MIT)
+
+    Copyright (c) 2015 nwin
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 
 **LICENSE-MIT** — ihex 3.0.0
 

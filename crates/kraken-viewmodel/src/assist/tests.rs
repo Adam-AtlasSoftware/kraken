@@ -1457,3 +1457,35 @@ fn yolo_exports_without_a_card_and_deny_never_offers_it() {
     assert!(permission_card(&r).is_none());
     assert!(!exported(&r));
 }
+
+#[test]
+fn a_picture_stays_in_the_conversation_ahead_of_its_message() {
+    let mut r = rig(vec![say("A chart.")]);
+    let picture = crate::assist::Attachment {
+        media_type: "image/png".into(),
+        data: "QUJD".into(),
+        preview: std::sync::Arc::new(crate::assist::Preview {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        }),
+    };
+    r.vm.assist_send_with("what is this?", vec![picture]);
+    r.settle();
+    assert!(matches!(
+        &r.vm.assist.history[0],
+        kraken_agent::Message::Image { media_type, data } if media_type == "image/png" && data == "QUJD"
+    ));
+    assert!(matches!(
+        &r.vm.assist.history[1],
+        kraken_agent::Message::User { content } if content == "what is this?"
+    ));
+}
+
+#[test]
+fn a_message_with_neither_words_nor_pictures_is_not_sent() {
+    let mut r = rig(vec![say("x")]);
+    r.vm.assist_send_with("  ", Vec::new());
+    assert!(!r.vm.assist.busy());
+    assert!(r.vm.assist.items.is_empty());
+}

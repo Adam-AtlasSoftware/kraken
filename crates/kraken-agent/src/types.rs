@@ -24,6 +24,13 @@ pub enum Message {
     User {
         content: String,
     },
+    /// A picture the person attached; it belongs to the `User` message after it.
+    Image {
+        /// `image/png` or `image/jpeg`.
+        media_type: String,
+        /// The file, base64.
+        data: String,
+    },
     Assistant {
         #[serde(default)]
         content: String,

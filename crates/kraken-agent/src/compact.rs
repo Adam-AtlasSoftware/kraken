@@ -29,6 +29,7 @@ pub fn estimate_tokens(bytes: usize) -> u64 {
 pub fn message_bytes(m: &Message) -> usize {
     match m {
         Message::User { content } => content.len(),
+        Message::Image { data, .. } => data.len(),
         Message::Assistant {
             content,
             tool_calls,

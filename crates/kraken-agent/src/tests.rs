@@ -808,3 +808,35 @@ async fn a_safe_tool_can_be_made_to_ask() {
     assert!(asked);
     assert_eq!(fake.called(), ["read_strings"]);
 }
+
+#[test]
+fn every_provider_sends_a_picture_before_the_text() {
+    use crate::provider::{anthropic, gemini, openai};
+    let req = ChatRequest {
+        system: "s".into(),
+        messages: vec![
+            Message::Image {
+                media_type: "image/png".into(),
+                data: "QUJD".into(),
+            },
+            Message::user("what is this?"),
+        ],
+        tools: vec![],
+        max_tokens: None,
+        temperature: None,
+    };
+    let a = anthropic::build_request("m", 100, &req);
+    assert_eq!(a["messages"][0]["content"][0]["type"], "image");
+    assert_eq!(a["messages"][0]["content"][0]["source"]["data"], "QUJD");
+    assert_eq!(a["messages"][1]["content"], "what is this?");
+    let o = openai::build_request("m", &req, false);
+    assert_eq!(
+        o["messages"][1]["content"][0]["image_url"]["url"],
+        "data:image/png;base64,QUJD"
+    );
+    let g = gemini::build_request(&req);
+    assert_eq!(
+        g["contents"][0]["parts"][0]["inlineData"]["mimeType"],
+        "image/png"
+    );
+}

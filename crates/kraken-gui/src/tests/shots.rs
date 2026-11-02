@@ -374,3 +374,38 @@ fn patch_wizard_to_preview(k: &mut Kit) {
     }
     k.h.run_steps(10);
 }
+
+/// `KRAKEN_SHOT_DIR=<dir> cargo test -p kraken-gui screenshot_the_assistant -- --ignored`.
+#[test]
+#[ignore = "writes a PNG file and needs a GPU; run by hand"]
+fn screenshot_the_assistant_with_markdown() {
+    use kraken_viewmodel::assist::ChatItem;
+    let mut k = kit_with(true, true);
+    k.h.set_size(egui::vec2(1280.0, 1500.0));
+    ready_demo(&mut k);
+    k.h.state_mut().pending_nav().bring_to_front = Some(crate::workspace::Tab::Assistant);
+    let vm = k.h.state_mut().view_model_mut().expect("vm");
+    vm.assist.items = vec![
+        ChatItem::User("What does this program do?\nKeep it short.".into()),
+        ChatItem::Thinking {
+            text: "It reads a list.\nThen it walks it.".into(),
+            active: false,
+        },
+        ChatItem::Assistant {
+            text: "# Summary\n\nThis is a **linked list** demo; see `list_push` at 0x401340.\n\n\
+                   ## Steps\n\n1. It reads *input* from `stdin`.\n2. It calls [the docs](https://example.com).\n\n\
+                   - **Key point:** nothing is freed\n- Nested:\n  - one\n  - two\n\n\
+                   ```c\nint main(void) { return 0; }\n```\n\n> A quoted remark.\n\n\
+                   | Function | Size |\n|---|---|\n| `main` | 42 |\n| `list_push` | 96 |\n"
+                .into(),
+            streaming: false,
+        },
+    ];
+    save(&mut k, "assistant.png");
+    let vm = k.h.state_mut().view_model_mut().expect("vm");
+    vm.assist.items.push(ChatItem::Notice("Stopped.".into()));
+    if let Some(ChatItem::Assistant { text, .. }) = vm.assist.items.get_mut(2) {
+        text.truncate(text.find("```").unwrap_or(text.len()));
+    }
+    save(&mut k, "assistant-top.png");
+}

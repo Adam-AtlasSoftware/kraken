@@ -73,6 +73,13 @@ pub fn build_request(model: &str, req: &ChatRequest, send_tools: bool) -> Value 
     for m in &req.messages {
         match m {
             Message::User { content } => messages.push(json!({"role": "user", "content": content})),
+            Message::Image { media_type, data } => messages.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:{media_type};base64,{data}")},
+                }],
+            })),
             Message::Assistant {
                 content,
                 tool_calls,

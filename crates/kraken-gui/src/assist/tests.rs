@@ -493,3 +493,76 @@ fn a_shell_approval_card_shows_the_command_and_always_allow_writes_the_project_f
     assert!(text.contains("\"stat\""), "{text}");
     let _ = std::fs::remove_file(dir.join("assistant-shell.toml"));
 }
+
+fn key(key: Key, shift: bool) -> Event {
+    Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers {
+            shift,
+            ..Modifiers::NONE
+        },
+    }
+}
+
+#[test]
+fn enter_sends_and_shift_enter_starts_a_new_line() {
+    let mut h = Harness::new(Services::offline());
+    h.provide(vec![vec![
+        kraken_agent::StreamEvent::TextDelta {
+            text: "**Done.**".into(),
+        },
+        kraken_agent::StreamEvent::Finish {
+            reason: kraken_agent::FinishReason::Stop,
+        },
+    ]]);
+    h.app.pending_nav().bring_to_front = Some(crate::workspace::Tab::Assistant);
+    h.step();
+    h.app.pending_nav().assist.focus_input = true;
+    h.step();
+    h.step();
+    h.step_with(vec![Event::Text("one".into())]);
+    h.step_with(vec![key(Key::Enter, true)]);
+    h.step_with(vec![Event::Text("two".into())]);
+    assert_eq!(h.app.pending_nav().assist.input, "one\ntwo");
+    h.step_with(vec![key(Key::Enter, false)]);
+    h.run_until("the answer", |a| !a.view_model().expect("vm").assist.busy());
+    assert_eq!(h.app.pending_nav().assist.input, "");
+    let vm = h.app.view_model().expect("vm");
+    assert!(
+        vm.assist
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::User(t) if t == "one\ntwo")),
+        "{:?}",
+        vm.assist.items
+    );
+}
+
+#[test]
+fn a_message_with_a_picture_shows_it_and_sends_it() {
+    let mut h = Harness::new(Services::offline());
+    h.provide(vec![vec![kraken_agent::StreamEvent::Finish {
+        reason: kraken_agent::FinishReason::Stop,
+    }]]);
+    let picture = kraken_viewmodel::assist::Attachment {
+        media_type: "image/png".into(),
+        data: "QUJD".into(),
+        preview: std::sync::Arc::new(kraken_viewmodel::assist::Preview {
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 255],
+        }),
+    };
+    h.app
+        .view_model_mut()
+        .expect("vm")
+        .assist_send_with("", vec![picture]);
+    h.run_until("the answer", |a| !a.view_model().expect("vm").assist.busy());
+    h.step();
+    let vm = h.app.view_model().expect("vm");
+    assert!(matches!(vm.assist.items[0], ChatItem::Attachments(_)));
+    assert!(matches!(vm.assist.items[1], ChatItem::User(_)));
+}

@@ -420,6 +420,26 @@ impl Mapper {
 }
 
 /// The text the agent is prompted with.
+/// The pictures of the newest message: those right before the last `User`.
+fn last_images(messages: &[Message]) -> Vec<(String, String)> {
+    let Some(at) = messages
+        .iter()
+        .rposition(|m| matches!(m, Message::User { .. }))
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = messages[..at]
+        .iter()
+        .rev()
+        .map_while(|m| match m {
+            Message::Image { media_type, data } => Some((media_type.clone(), data.clone())),
+            _ => None,
+        })
+        .collect();
+    out.reverse();
+    out
+}
+
 fn compose_prompt(spec: &RunSpec, fresh: bool) -> String {
     let last = spec
         .messages
@@ -896,6 +916,7 @@ impl Job {
         };
         let Live { host, mut rx } = live;
         let prompt = compose_prompt(&self.spec, fresh);
+        let images = last_images(&self.spec.messages);
         let mut mapper = Mapper::new(self.registry.clone());
         let mut waiting: HashMap<String, PermissionRequest> = HashMap::new();
         let mut cancelled = false;
@@ -904,7 +925,7 @@ impl Job {
         let mut gone = false;
 
         let result = {
-            let fut = host.prompt(&prompt);
+            let fut = host.prompt_with(&prompt, &images);
             tokio::pin!(fut);
             loop {
                 tokio::select! {

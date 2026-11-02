@@ -74,6 +74,25 @@ impl RunKind {
     }
 }
 
+/// A small copy of an attached picture, for the screen: RGBA, row by row.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Preview {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+/// A picture attached to a message. Cheap to clone: chat items are cloned every frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    /// `image/png` or `image/jpeg`.
+    pub media_type: String,
+    /// The file, base64.
+    pub data: Arc<str>,
+    /// What the screen shows.
+    pub preview: Arc<Preview>,
+}
+
 /// One tool call, shown as a compact chip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolChip {
@@ -213,6 +232,8 @@ pub struct OverviewCard {
 pub enum ChatItem {
     /// What the person typed (or a button asked for).
     User(String),
+    /// The pictures of the message after it.
+    Attachments(Vec<Attachment>),
     /// What the assistant said; `streaming` while words still arrive.
     Assistant {
         /// Text so far.

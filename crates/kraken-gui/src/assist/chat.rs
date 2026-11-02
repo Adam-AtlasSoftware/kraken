@@ -1,6 +1,8 @@
 //! The Assistant tab: provider line, conversation, progress and input.
 
-use egui::{Align, Color32, Frame, Id, Key, Layout, Margin, RichText, Sense, Stroke, Ui, vec2};
+use egui::{
+    Align, Color32, Frame, Id, Key, Layout, Margin, Modifiers, RichText, Sense, Stroke, Ui, vec2,
+};
 use kraken_gui_widgets::Palette;
 use kraken_viewmodel::ViewModel;
 use kraken_viewmodel::assist::{
@@ -337,48 +339,134 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
         }
         ui.add_space(4.0);
     }
-    ui.horizontal(|ui| {
-        let w = (ui.available_width() - 70.0).max(80.0);
-        let edit = egui::TextEdit::singleline(&mut a.input)
-            .id(Id::new("kraken_assist_input_text"))
-            .hint_text(if has_backend {
-                "Ask about this program..."
+    take_picked(a);
+    attached_strip(ui, a, p);
+    if let Some((text, images)) = &a.queued {
+        let n = images.len();
+        let mut drop_it = false;
+        ui.horizontal(|ui| {
+            let what = if text.trim().is_empty() {
+                format!("{n} pictures")
             } else {
-                "Set up an AI model or agent first (Settings > AI)"
+                text.clone()
+            };
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("Sends when the assistant is done: {what}"))
+                        .size(11.5)
+                        .color(p.text_dim),
+                )
+                .truncate(),
+            );
+            drop_it = ui
+                .small_button("Cancel")
+                .on_hover_text("Do not send this message")
+                .clicked();
+        });
+        if drop_it && let Some((text, images)) = a.queued.take() {
+            a.input = text;
+            a.attached = images;
+        }
+    }
+    if !busy && let Some((text, images)) = a.queued.take() {
+        vm.assist_send_with(&text, images);
+    }
+    // Along the bottom edge: the box grows upwards and the buttons stay by the last line.
+    let row = vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Max), |ui| {
+        if ui
+            .add_enabled(has_backend, egui::Button::new("+"))
+            .on_hover_text("Attach a picture. You can also paste one, or drop it on the window")
+            .on_disabled_hover_text("Choose an AI model or a terminal agent first (Settings > AI)")
+            .clicked()
+        {
+            pick_pictures(a, ui.ctx());
+        }
+        let w = (ui.available_width() - 70.0).max(80.0);
+        let id = Id::new("kraken_assist_input_text");
+        let focused = ui.memory(|m| m.has_focus(id));
+        // Read before the box: it takes these keys for itself.
+        let (enter, up, down, pasted) = ui.input(|i| {
+            let paste_key = i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { key: Key::V, pressed: true, modifiers, .. } if modifiers.command)
+            });
+            let has_text = i.events.iter().any(|e| matches!(e, egui::Event::Paste(t) if !t.is_empty()));
+            (
+                i.events.iter().any(|e| {
+                    matches!(e, egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. } if !modifiers.shift)
+                }),
+                i.key_pressed(Key::ArrowUp),
+                i.key_pressed(Key::ArrowDown),
+                paste_key && !has_text,
+            )
+        });
+        if focused && pasted {
+            match super::attach::from_clipboard() {
+                Some(Ok(image)) => a.attach(image),
+                Some(Err(e)) => a.attach_error = Some(e),
+                None => {}
+            }
+        }
+        if focused {
+            recall(a, up, down);
+        }
+        let input = &mut a.input;
+        let r = egui::ScrollArea::vertical()
+            .id_salt("kraken_assist_input_scroll")
+            .max_height(180.0)
+            .min_scrolled_height(0.0)
+            .max_width(w)
+            .auto_shrink([false, true])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                let edit = egui::TextEdit::multiline(input)
+                    .id(id)
+                    .return_key(egui::KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                    .desired_rows(1)
+                    .hint_text(if has_backend {
+                        "Ask about this program..."
+                    } else {
+                        "Set up an AI model or agent first (Settings > AI)"
+                    })
+                    .desired_width(w);
+                ui.add_enabled(has_backend, edit)
+                    .on_hover_text("Type a question and press Enter. Shift+Enter starts a new line")
+                    .on_disabled_hover_text(
+                        "Choose an AI model or a terminal agent first (Settings > AI)",
+                    )
             })
-            .desired_width(w);
-        let r = ui
-            .add_enabled(has_backend, edit)
-            .on_hover_text("Type a question about this program and press Enter")
-            .on_disabled_hover_text("Choose an AI model or a terminal agent first (Settings > AI)");
-        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            .inner;
         if a.focus_input {
             a.focus_input = false;
             r.request_focus();
         }
+        let ready = !a.input.trim().is_empty() || !a.attached.is_empty();
+        let enter = enter && r.has_focus() && ready;
         if busy {
             if ui
                 .button("Stop")
-                .on_hover_text("Stop the assistant now")
+                .on_hover_text("Stop the assistant now. The conversation stays")
                 .clicked()
             {
                 vm.assist_stop();
             }
+            if enter && a.queued.is_none() {
+                remember(a);
+                a.queued = Some((std::mem::take(&mut a.input), std::mem::take(&mut a.attached)));
+            }
         } else {
             let send = ui
-                .add_enabled(
-                    has_backend && !a.input.trim().is_empty(),
-                    egui::Button::new("Send"),
-                )
+                .add_enabled(has_backend && ready, egui::Button::new("Send"))
                 .on_hover_text("Send the question (Enter)")
                 .on_disabled_hover_text(if has_backend {
                     "Type a question first"
                 } else {
                     "Choose an AI model or a terminal agent first (Settings > AI)"
                 });
-            if send.clicked() || (enter && !a.input.trim().is_empty()) {
+            if send.clicked() || enter {
+                remember(a);
                 let text = std::mem::take(&mut a.input);
-                vm.assist_send(&text);
+                vm.assist_send_with(&text, std::mem::take(&mut a.attached));
                 a.focus_input = true;
             }
         }
@@ -401,6 +489,114 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
     };
     ui.label(RichText::new(line).size(11.0).color(p.text_dim))
         .on_hover_text(FOOTER_HINT);
+}
+
+/// Keeps what is being sent for the Up key.
+fn remember(a: &mut AssistUi) {
+    let t = a.input.trim();
+    if !t.is_empty() && a.sent.last().map(String::as_str) != Some(t) {
+        a.sent.push(t.to_string());
+    }
+    a.recall = None;
+}
+
+/// Up and Down walk through what was sent, but only from an empty box or one showing an old
+/// message, so they still move the cursor in text being written.
+fn recall(a: &mut AssistUi, up: bool, down: bool) {
+    let showing = a
+        .recall
+        .is_some_and(|n| a.sent.iter().rev().nth(n).is_some_and(|t| *t == a.input));
+    if !showing {
+        a.recall = None;
+        if !a.input.is_empty() {
+            return;
+        }
+    }
+    let next = match (up, down, a.recall) {
+        (true, _, None) => Some(0),
+        (true, _, Some(n)) => Some((n + 1).min(a.sent.len().saturating_sub(1))),
+        (_, true, Some(0)) => {
+            a.input.clear();
+            a.recall = None;
+            return;
+        }
+        (_, true, Some(n)) => Some(n - 1),
+        _ => return,
+    };
+    if let Some(text) = next.and_then(|n| a.sent.iter().rev().nth(n)) {
+        a.input = text.clone();
+        a.recall = next;
+    }
+}
+
+/// The pictures waiting to go out, each with a way to take it off.
+fn attached_strip(ui: &mut Ui, a: &mut AssistUi, p: &Palette) {
+    if let Some(e) = a.attach_error.clone() {
+        let s = style::status(style::dark(ui));
+        ui.horizontal(|ui| {
+            ui.add(egui::Label::new(RichText::new(e).size(11.5).color(s.danger)).wrap());
+            if ui.small_button("OK").on_hover_text("Dismiss").clicked() {
+                a.attach_error = None;
+            }
+        });
+    }
+    if a.attached.is_empty() {
+        return;
+    }
+    let mut remove = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, image) in a.attached.iter().enumerate() {
+            super::attach::thumbnail(ui, image, 56.0);
+            if ui
+                .small_button("\u{00d7}")
+                .on_hover_text("Take this picture off the message")
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        }
+        ui.label(
+            RichText::new("goes with your next message")
+                .size(11.5)
+                .color(p.text_dim),
+        );
+    });
+    if let Some(i) = remove {
+        a.attached.remove(i);
+    }
+}
+
+/// Opens the file picker on its own thread; the choice arrives through `a.picked`.
+fn pick_pictures(a: &mut AssistUi, ctx: &egui::Context) {
+    if a.picked.is_some() {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.picked = Some(rx);
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        let files = rfd::FileDialog::new()
+            .set_title("Attach a picture")
+            .add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+            .pick_files()
+            .unwrap_or_default();
+        let _ = tx.send(files);
+        ctx.request_repaint();
+    });
+}
+
+fn take_picked(a: &mut AssistUi) {
+    let Some(rx) = &a.picked else { return };
+    match rx.try_recv() {
+        Ok(files) => {
+            a.picked = None;
+            for f in files {
+                a.attach_file(&f);
+            }
+        }
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => a.picked = None,
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+    }
 }
 
 const FOOTER_HINT: &str = "Tokens are the pieces of text the model reads and writes. \
@@ -498,8 +694,26 @@ fn draw_item(ui: &mut Ui, vm: &ViewModel, p: &Palette, item: &ChatItem, acts: &m
                     ui.add(egui::Label::new(RichText::new(t).color(p.text_strong)).wrap());
                 });
         }
+        ChatItem::Attachments(images) => {
+            ui.horizontal_wrapped(|ui| {
+                for image in images {
+                    super::attach::thumbnail(ui, image, 96.0)
+                        .on_hover_text("Sent with the message below");
+                }
+            });
+        }
         ChatItem::Assistant { text, streaming } => {
-            ui.label(RichText::new("Assistant").size(11.0).color(p.accent));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Assistant").size(11.0).color(p.accent));
+                if !*streaming
+                    && ui
+                        .small_button("Copy")
+                        .on_hover_text("Copy this answer as Markdown")
+                        .clicked()
+                {
+                    ui.ctx().copy_text(text.clone());
+                }
+            });
             text::paragraphs(ui, vm, p, text, 13.5, &mut acts.goto);
             if *streaming {
                 ui.label(RichText::new("\u{2026}").color(p.text_dim));
@@ -1091,6 +1305,43 @@ pub fn confidence_color(c: kraken_viewmodel::assist::Confidence, dark: bool) -> 
         kraken_viewmodel::assist::Confidence::High => s.success,
         kraken_viewmodel::assist::Confidence::Medium => s.info,
         kraken_viewmodel::assist::Confidence::Low => s.warning,
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn up_walks_back_and_down_comes_home_but_not_over_a_draft() {
+        let mut a = AssistUi {
+            sent: vec!["first".into(), "second".into()],
+            ..AssistUi::default()
+        };
+        recall(&mut a, true, false);
+        assert_eq!(a.input, "second");
+        recall(&mut a, true, false);
+        assert_eq!(a.input, "first");
+        recall(&mut a, true, false);
+        assert_eq!(a.input, "first", "stays at the oldest");
+        recall(&mut a, false, true);
+        assert_eq!(a.input, "second");
+        recall(&mut a, false, true);
+        assert_eq!(a.input, "");
+        a.input = "my draft".into();
+        recall(&mut a, true, false);
+        assert_eq!(a.input, "my draft");
+    }
+
+    #[test]
+    fn what_was_sent_is_remembered_once() {
+        let mut a = AssistUi {
+            input: "  hello ".into(),
+            ..AssistUi::default()
+        };
+        remember(&mut a);
+        remember(&mut a);
+        assert_eq!(a.sent, ["hello"]);
     }
 }
 

@@ -18,9 +18,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::review::build_review;
 use super::{
-    ActiveRun, AutoNameState, BackendChoice, ChatItem, ExplainCard, InterestingRow, OverviewCard,
-    OverviewOffer, PermissionCard, PermissionState, ProposalCard, ProposalState, RunKind, RunPhase,
-    ToolChip, VmCommands,
+    ActiveRun, Attachment, AutoNameState, BackendChoice, ChatItem, ExplainCard, InterestingRow,
+    OverviewCard, OverviewOffer, PermissionCard, PermissionState, ProposalCard, ProposalState,
+    RunKind, RunPhase, ToolChip, VmCommands,
 };
 use crate::errors::plain_error;
 use crate::state::{Connection, ToastLevel};
@@ -41,6 +41,8 @@ short, and point to functions by their address, written like 0x401000.";
 const MAX_HISTORY: usize = 400;
 /// Tool results kept word for word in the conversation; older ones are left out.
 const KEEP_TOOL_RESULTS: usize = 40;
+/// Pictures kept in the conversation.
+const KEEP_IMAGES: usize = 8;
 const MAX_WRITES: usize = 30;
 
 fn text_of(v: &Value) -> String {
@@ -124,6 +126,17 @@ fn end_thinking(items: &mut [ChatItem]) {
 /// oldest turns go whole, so a tool result never loses the call it answers.
 fn trim_history(history: &mut Vec<Message>) {
     kraken_agent::compact::elide_all_but(history, KEEP_TOOL_RESULTS);
+    // Every request carries the whole conversation; pictures are what makes that expensive.
+    let pictures = history
+        .iter()
+        .filter(|m| matches!(m, Message::Image { .. }))
+        .count();
+    let mut drop = pictures.saturating_sub(KEEP_IMAGES);
+    history.retain(|m| {
+        let old = drop > 0 && matches!(m, Message::Image { .. });
+        drop -= usize::from(old);
+        !old
+    });
     if history.len() > MAX_HISTORY {
         let from = history.len() - MAX_HISTORY;
         let start = history[from..]
@@ -615,7 +628,18 @@ impl ViewModel {
             return;
         }
         self.assist.auto_continues = 0;
-        self.assist_chat_turn(text, true);
+        self.assist_chat_turn(text, true, Vec::new());
+    }
+
+    /// Sends a message with pictures; the text may be empty then.
+    pub fn assist_send_with(&mut self, text: &str, images: Vec<Attachment>) {
+        let text = match text.trim() {
+            "" if images.is_empty() => return,
+            "" => "Have a look at this.",
+            t => t,
+        };
+        self.assist.auto_continues = 0;
+        self.assist_chat_turn(text, true, images);
     }
 
     /// How many times the chat may go on by itself after a limit: only for a free model on this
@@ -637,7 +661,7 @@ impl ViewModel {
         kraken_assist::AiLimits::load(path.as_deref()).auto_continue_limit()
     }
 
-    fn assist_chat_turn(&mut self, text: &str, show_user: bool) {
+    fn assist_chat_turn(&mut self, text: &str, show_user: bool, images: Vec<Attachment>) {
         let Some((seq, engine, cancel)) = self.assist_begin_with(
             RunKind::Chat,
             text.to_string(),
@@ -647,6 +671,16 @@ impl ViewModel {
         ) else {
             return;
         };
+        if !images.is_empty() {
+            // Above the text they belong to.
+            let at = self.assist.items.len().saturating_sub(1);
+            self.assist
+                .items
+                .insert(at, ChatItem::Attachments(images.clone()));
+            if let Some(r) = self.assist.run.as_mut() {
+                r.first_item += 1;
+            }
+        }
         let run_id = self.assist.run_ids.next_id();
         let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
         let danger = self.assist_danger_mode();
@@ -681,6 +715,12 @@ impl ViewModel {
         }
         let turn_note = reading.map(|r| format!("({r})"));
         let mut messages = self.assist.history.clone();
+        for i in &images {
+            messages.push(Message::Image {
+                media_type: i.media_type.clone(),
+                data: i.data.to_string(),
+            });
+        }
         messages.push(Message::user(text));
         self.assist.history = messages.clone();
         let config = AgentConfig {
@@ -1223,7 +1263,7 @@ impl ViewModel {
                     self.refresh_after_edit();
                 }
                 if continue_chat {
-                    self.assist_chat_turn(AUTO_CONTINUE_TEXT, false);
+                    self.assist_chat_turn(AUTO_CONTINUE_TEXT, false, Vec::new());
                 }
             }
         }

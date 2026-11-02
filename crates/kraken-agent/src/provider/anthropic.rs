@@ -76,6 +76,14 @@ pub fn build_request(model: &str, default_max_tokens: u32, req: &ChatRequest) ->
             Message::User { content } => {
                 messages.push(json!({"role": "user", "content": content}));
             }
+            // The API joins consecutive user messages into one turn.
+            Message::Image { media_type, data } => messages.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": data},
+                }],
+            })),
             Message::Assistant {
                 content,
                 tool_calls,

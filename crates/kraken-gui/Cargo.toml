@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 # default_fonts is deliberately off: the app bundles IBM Plex (decision 93).
 eframe = { version = "=0.36.2", default-features = false, features = [
     "glow",
@@ -22,7 +23,8 @@ eframe = { version = "=0.36.2", default-features = false, features = [
 ] }
 egui = { version = "=0.36.2", default-features = false }
 egui_dock = "=0.21.1"
-image = { version = "0.25", default-features = false, features = ["png"] }
+arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 kraken-acp = { path = "../kraken-acp", version = "0.4.0" }
 kraken-agent = { path = "../kraken-agent", version = "0.4.0" }
 kraken-assist = { path = "../kraken-assist", version = "0.4.0" }
@@ -38,6 +40,7 @@ krakend = { path = "../krakend", version = "0.4.0" }
 serde.workspace = true
 serde_json.workspace = true
 toml = "0.8"
+pulldown-cmark = { version = "0.13", default-features = false }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time"] }
 

@@ -299,6 +299,7 @@ async fn untrusted_canary_does_not_change_tool_selection_or_reach_the_system_pro
                     assert!(content.ends_with("</tool_result>"));
                 }
                 Message::User { content } => assert!(!content.contains(CANARY)),
+                Message::Image { .. } => {}
                 Message::Assistant { content, .. } => assert!(!content.contains(CANARY)),
                 Message::ToolResult { .. } => {}
             }

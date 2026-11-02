@@ -15,8 +15,8 @@ use std::time::Duration;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest, EnvVariable,
-    Implementation, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PromptRequest,
-    ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    ImageContent, Implementation, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest,
+    PromptRequest, ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
     TextContent, WriteTextFileRequest,
 };
@@ -894,6 +894,15 @@ impl AcpHost {
     /// Sends one user message and waits for the turn to end. Streaming happens through the event
     /// channel; [`AcpEvent::TurnEnded`] is emitted last.
     pub async fn prompt(&self, text: &str) -> Result<TurnEnd, AcpError> {
+        self.prompt_with(text, &[]).await
+    }
+
+    /// As [`prompt`](Self::prompt), with pictures (media type, base64 data) before the text.
+    pub async fn prompt_with(
+        &self,
+        text: &str,
+        images: &[(String, String)],
+    ) -> Result<TurnEnd, AcpError> {
         {
             let mut busy = self
                 .prompting
@@ -908,10 +917,14 @@ impl AcpHost {
             .cancelled
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = false;
-        let request = PromptRequest::new(
-            self.session_id.clone(),
-            vec![ContentBlock::Text(TextContent::new(text.to_string()))],
-        );
+        let mut blocks: Vec<ContentBlock> = images
+            .iter()
+            .map(|(media_type, data)| {
+                ContentBlock::Image(ImageContent::new(data.clone(), media_type.clone()))
+            })
+            .collect();
+        blocks.push(ContentBlock::Text(TextContent::new(text.to_string())));
+        let request = PromptRequest::new(self.session_id.clone(), blocks);
         let result = self.cx.send_request(request).block_task().await;
         *self
             .prompting

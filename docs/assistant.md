@@ -339,6 +339,8 @@ Assistant tab, or in the config:
 danger_mode = "ask"   # deny | ask | yolo
 ```
 
+A terminal agent's own tools (its file and shell tools, outside KRAKEN) are not covered by this mode: they follow the `[permissions]` table. When you allow a dangerous KRAKEN command, by YOLO or on its card, KRAKEN leaves a one-use approval for exactly that command that lapses within a minute, so you are not asked a second time.
+
 The shell below has its own, stricter policy, whatever this mode is.
 
 ## The shell and the emulator
@@ -732,3 +734,11 @@ The `kraken-assist` crate holds the logic and has no GUI dependencies:
 - `Task::explain_function`, `explain_selection`, `overview` and `auto_name` each bundle a prompt, a tool subset and budgets; `Assistant::run` runs one on either backend and parses the result block the model ends with.
 - `plan_agent` finds an agent in the catalogue, applies the chosen model and arguments and checks that it can run.
 - `Glossary::builtin()` gives `get`, `mnemonic` and fuzzy `lookup` for learn-mode tooltips.
+
+## Writing to the assistant
+
+Press **Enter** to send and **Shift+Enter** for a new line; the box grows with what you write. With an empty box, **Up** and **Down** go through what you sent. If the assistant is busy, Enter holds your message and sends it when the assistant finishes.
+
+Attach a picture by pasting it (Ctrl+V), dropping it on the window or pressing **+**. Pictures go to the model with your message; KRAKEN makes large ones smaller first, and the model has to be able to read images. With a project open, a dropped picture goes to the assistant rather than being opened.
+
+**Stop** ends the current answer and keeps the conversation: your question and what the assistant had said so far stay, so the next message goes on from there. Only **New chat** clears it. A status line under the conversation says what the assistant is doing and for how long, and when the model shows its reasoning it appears as a folded *Thought* above the answer.

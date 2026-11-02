@@ -88,6 +88,10 @@ pub fn build_request(req: &ChatRequest) -> Value {
             Message::User { content } => {
                 contents.push(json!({"role": "user", "parts": [{"text": content}]}));
             }
+            Message::Image { media_type, data } => contents.push(json!({
+                "role": "user",
+                "parts": [{"inlineData": {"mimeType": media_type, "data": data}}],
+            })),
             Message::Assistant {
                 content,
                 tool_calls,

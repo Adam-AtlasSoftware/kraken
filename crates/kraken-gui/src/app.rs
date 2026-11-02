@@ -1362,7 +1362,19 @@ impl KrakenApp {
         if hovering {
             drop_overlay(ctx);
         }
-        if let Some(path) = dropped.first() {
+        // With a project open a picture goes to the assistant; anything else is opened.
+        let project = self.vm.is_some();
+        let (pictures, others): (Vec<_>, Vec<_>) = dropped
+            .iter()
+            .partition(|p| project && crate::assist::attach::is_image(p));
+        for path in &pictures {
+            self.state.assist.attach_file(path);
+        }
+        if !pictures.is_empty() {
+            self.state.bring_to_front = Some(Tab::Assistant);
+            self.state.assist.focus_input = true;
+        }
+        if let Some(path) = others.first() {
             self.open_path(path, ctx);
         }
         if let Some(n) = self.next_steps
