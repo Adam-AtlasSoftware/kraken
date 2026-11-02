@@ -691,6 +691,14 @@ pub fn build_cli(registry: &Registry) -> Command {
             .subcommand_required(true)
             .subcommand(Command::new("list").about("Show which agents are detected, available, missing or unsupported"))
             .subcommand(
+                Command::new("bridge")
+                    .about("Serve ACP for a command-line tool that has no ACP mode (KRAKEN starts this itself)")
+                    .hide(true)
+                    .arg(Arg::new("style").long("style").required(true))
+                    .arg(Arg::new("program").long("program").required(true))
+                    .arg(Arg::new("args").num_args(0..).last(true).allow_hyphen_values(true)),
+            )
+            .subcommand(
                 Command::new("setup")
                     .about("Download Node.js if needed and install an agent's adapter")
                     .arg(Arg::new("id").required(true).value_name("AGENT").help("claude, codex, gemini or a custom id"))

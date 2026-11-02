@@ -401,6 +401,8 @@ fn screenshot_the_assistant_with_markdown() {
             streaming: false,
         },
     ];
+    k.h.state_mut().pending_nav().assist.input =
+        "Awesome, you are correct. I am interested in implementing some mods by directly patching the game and would like your help with\nthe second line of this message.".into();
     save(&mut k, "assistant.png");
     let vm = k.h.state_mut().view_model_mut().expect("vm");
     vm.assist.items.push(ChatItem::Notice("Stopped.".into()));

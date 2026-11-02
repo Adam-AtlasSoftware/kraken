@@ -426,7 +426,7 @@ impl RewriteForm {
                         ui.label("Agent");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.agent)
-                                .hint_text("claude, codex or gemini")
+                                .hint_text("claude, codex, gemini, qwen, antigravity or your own")
                                 .desired_width(320.0),
                         )
                         .on_hover_text("Which terminal agent; set it up on the Assistant page first");

@@ -83,7 +83,10 @@ fn the_settings_list_models_and_agents_in_one_picker_and_run_the_setup_consent()
     {
         let hub = h.app.settings().ai.hub().expect("hub");
         let ids: Vec<_> = hub.rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, ["claude", "codex", "gemini", "fake"]);
+        assert_eq!(
+            ids,
+            ["claude", "codex", "gemini", "qwen", "antigravity", "fake"]
+        );
     }
     // The agent form draws: availability, the notice, the model fields.
     assert_eq!(

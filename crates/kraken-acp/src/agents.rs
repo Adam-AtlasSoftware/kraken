@@ -1,6 +1,7 @@
 //! The agent catalogue: built-in profiles plus the person's `agents.toml`, and whether each
 //! agent can run on this machine ("detected", "available", "missing", "unsupported").
 
+use crate::print_bridge::BridgeStyle;
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -62,6 +63,10 @@ struct CustomAgent {
     /// Extra environment variables the agent may inherit.
     #[serde(default)]
     env_allow: Vec<String>,
+    /// `print` for a tool without ACP: it gets the message in place of `{prompt}` in `args`, or
+    /// on its stdin, and what it prints is the answer. Leave it out for an ACP agent.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 /// `agents.toml`: custom ACP agents, and extra environment variables for any agent.
@@ -87,6 +92,60 @@ struct AgentsFile {
 
 /// The file name inside the config directory.
 pub const AGENTS_FILE: &str = "agents.toml";
+
+/// An id for an agent called `name`: lower-case letters, digits and `-`.
+pub fn agent_id(name: &str) -> String {
+    name.to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Adds an agent to `agents.toml`, keeping what is there, and returns its id. `print` marks a
+/// tool without ACP. Nothing is written unless the file still reads afterwards.
+pub fn add_agent(
+    config_dir: &Path,
+    name: &str,
+    command: &str,
+    args: &[String],
+    print: bool,
+) -> Result<String, String> {
+    let (name, command) = (name.trim(), command.trim());
+    let id = agent_id(name);
+    if id.is_empty() {
+        return Err("Give the agent a name.".to_string());
+    }
+    if command.is_empty() {
+        return Err("Say which command starts the agent.".to_string());
+    }
+    let path = config_dir.join(AGENTS_FILE);
+    let old = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("{} cannot be read: {e}", path.display())),
+    };
+    let mut entry = toml::Table::new();
+    entry.insert("id".into(), id.clone().into());
+    entry.insert("name".into(), name.into());
+    entry.insert("command".into(), command.into());
+    entry.insert("args".into(), args.to_vec().into());
+    if print {
+        entry.insert("mode".into(), "print".into());
+    }
+    let entry = toml::to_string(&entry).map_err(|e| e.to_string())?;
+    let sep = if old.is_empty() || old.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let text = format!("{old}{sep}\n[[agent]]\n{entry}");
+    parse_catalogue(&text, &path, builtin_profiles()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(config_dir).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text)
+        .map_err(|e| format!("{} cannot be written: {e}", path.display()))?;
+    Ok(id)
+}
 
 /// Every known agent: the built-ins (with the person's `env_allow` additions applied) followed by
 /// custom ones. A missing file means no additions.
@@ -127,6 +186,16 @@ fn parse_catalogue(
             c.args,
         );
         p.env_allowlist = c.env_allow;
+        match c.mode.as_deref() {
+            None | Some("acp") => {}
+            Some("print") => p.setup = AgentSetup::Bridge(BridgeStyle::Text),
+            Some(other) => {
+                return Err(AgentsFileError::Parse {
+                    path: path.to_path_buf(),
+                    message: format!("agent `{}`: unknown mode `{other}`", p.id),
+                });
+            }
+        }
         profiles.push(p);
     }
     for (id, names) in file.env_allow {
@@ -225,6 +294,7 @@ impl Resolver {
     pub fn status(&self, profile: &AgentProfile) -> AgentStatus {
         match profile.setup {
             AgentSetup::Command => self.command_status(profile),
+            AgentSetup::Bridge(style) => self.bridge_status(profile, style),
             AgentSetup::NodeAdapter(spec) => {
                 if let Err(reason) = self.platform.supports_agents() {
                     return AgentStatus::Unsupported { reason };
@@ -282,6 +352,45 @@ impl Resolver {
                 }
             }
         }
+    }
+
+    /// A tool without ACP runs under `kraken agents bridge`.
+    fn bridge_status(&self, profile: &AgentProfile, style: BridgeStyle) -> AgentStatus {
+        let tool = match self.command_status(profile) {
+            AgentStatus::Detected(l) => l,
+            other => return other,
+        };
+        let name = if cfg!(windows) {
+            "kraken.exe"
+        } else {
+            "kraken"
+        };
+        let kraken = std::env::var_os("KRAKEN_EXE")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let me = std::env::current_exe().ok()?;
+                Some(me.parent()?.join(name)).filter(|p| p.is_file())
+            })
+            .or_else(|| find_in_path(name, self.path_env.as_deref().map(OsStr::new)));
+        let Some(program) = kraken else {
+            return AgentStatus::Missing {
+                reason: "KRAKEN's own `kraken` command, which runs this agent, was not found"
+                    .to_string(),
+            };
+        };
+        let mut args: Vec<OsString> = ["agents", "bridge", "--style", style.as_str(), "--program"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        args.push(tool.program.clone().into_os_string());
+        args.push("--".into());
+        args.extend(tool.args);
+        AgentStatus::Detected(LaunchSpec {
+            via: format!("{} found", tool.program.display()),
+            program,
+            args,
+            path_prepend: None,
+        })
     }
 
     fn command_status(&self, profile: &AgentProfile) -> AgentStatus {
@@ -343,10 +452,59 @@ pub fn report(resolver: &Resolver, profiles: &[AgentProfile]) -> Vec<AgentReport
                 summary: p.summary.clone(),
                 status: status.label().to_string(),
                 detail,
-                builtin: matches!(p.setup, AgentSetup::NodeAdapter(_)),
+                builtin: crate::profile::builtin_profile(&p.id).is_some(),
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod add_tests {
+    use super::*;
+
+    #[test]
+    fn an_added_agent_joins_the_catalogue_and_keeps_the_file() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(AGENTS_FILE), "[env_allow]\nclaude = [\"X\"]").unwrap();
+        let args = vec!["-p".to_string(), "{prompt}".to_string()];
+        let id = add_agent(d.path(), "My Tool 2", "mytool", &args, true).unwrap();
+        assert_eq!(id, "my-tool-2");
+        let all = load_catalogue(Some(d.path())).unwrap();
+        let p = all.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(p.display_name, "My Tool 2");
+        assert_eq!(p.args, args);
+        assert_eq!(p.setup, AgentSetup::Bridge(BridgeStyle::Text));
+        assert!(
+            all.iter()
+                .find(|p| p.id == "claude")
+                .unwrap()
+                .env_allowlist
+                .contains(&"X".to_string())
+        );
+    }
+
+    #[test]
+    fn a_clash_or_an_empty_form_writes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(add_agent(d.path(), "Claude", "x", &[], false).is_err());
+        assert!(add_agent(d.path(), "  ", "x", &[], false).is_err());
+        assert!(add_agent(d.path(), "ok", " ", &[], false).is_err());
+        assert!(!d.path().join(AGENTS_FILE).exists());
+    }
+
+    #[test]
+    fn qwen_and_antigravity_are_built_in() {
+        assert_eq!(
+            crate::profile::builtin_profile("qwen").unwrap().args,
+            ["--acp"]
+        );
+        assert_eq!(
+            crate::profile::builtin_profile("antigravity")
+                .unwrap()
+                .command,
+            "agy"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -374,7 +532,7 @@ mod tests {
             "#,
         )
         .expect("parsed");
-        assert_eq!(ps.len(), 4);
+        assert_eq!(ps.len(), 6);
         let goose = ps.iter().find(|p| p.id == "goose").expect("goose");
         assert_eq!(goose.args, ["acp"]);
         assert_eq!(goose.env_allowlist, ["GOOSE_*"]);
@@ -408,9 +566,9 @@ mod tests {
         let ps = load_catalogue(Some(d.path())).expect("loaded");
         assert_eq!(
             ps.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
-            ["claude", "codex", "gemini"]
+            ["claude", "codex", "gemini", "qwen", "antigravity"]
         );
-        assert_eq!(load_catalogue(None).expect("none").len(), 3);
+        assert_eq!(load_catalogue(None).expect("none").len(), 5);
     }
 
     fn resolver(dir: &Path, platform: Platform, path: &Path) -> Resolver {

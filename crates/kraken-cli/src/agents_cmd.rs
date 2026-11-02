@@ -56,6 +56,26 @@ fn find<'a>(profiles: &'a [AgentProfile], id: &str) -> Result<&'a AgentProfile, 
     })
 }
 
+/// `kraken agents bridge`: an ACP agent on stdin and stdout, around a tool that has none.
+fn bridge(m: &ArgMatches, err: &mut dyn Write) -> i32 {
+    let text = |n: &str| m.get_one::<String>(n).cloned().unwrap_or_default();
+    let Some(style) = kraken_acp::print_bridge::BridgeStyle::parse(&text("style")) else {
+        let _ = writeln!(err, "unknown bridge style");
+        return 2;
+    };
+    let args: Vec<String> = m
+        .get_many::<String>("args")
+        .map(|a| a.cloned().collect())
+        .unwrap_or_default();
+    match kraken_acp::print_bridge::run(style, std::path::Path::new(&text("program")), args) {
+        Ok(()) => 0,
+        Err(e) => {
+            let _ = writeln!(err, "the bridge stopped: {e}");
+            1
+        }
+    }
+}
+
 pub(crate) async fn run_agents(
     env: &CliEnv,
     sm: &ArgMatches,
@@ -65,6 +85,7 @@ pub(crate) async fn run_agents(
 ) -> i32 {
     let result = match sm.subcommand() {
         Some(("list", _)) => list(env, json_out, out),
+        Some(("bridge", m)) => Ok(bridge(m, err)),
         Some(("setup", m)) => setup(env, m, json_out, out, err).await,
         Some(("run", m)) => run_agent(env, m, json_out, out, err).await,
         Some(("__fake-agent", _)) => {

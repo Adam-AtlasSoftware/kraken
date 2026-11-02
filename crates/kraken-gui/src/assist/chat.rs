@@ -48,6 +48,8 @@ pub fn panel(ui: &mut Ui, vm: &mut ViewModel, st: &mut UiState) {
     egui::Panel::bottom(Id::new("kraken_assist_input"))
         .frame(Frame::new().inner_margin(Margin::symmetric(0, 4)))
         .show_separator_line(false)
+        // A resizable panel keeps the height it has; this one has to follow the input box.
+        .resizable(false)
         .show(ui, |ui| input_area(ui, vm, &mut st.assist, &p));
 
     let mut acts = Acts::default();
@@ -372,7 +374,14 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
         vm.assist_send_with(&text, images);
     }
     // Along the bottom edge: the box grows upwards and the buttons stay by the last line.
-    let row = vec2(ui.available_width(), ui.spacing().interact_size.y);
+    let width = ui.available_width();
+    // The row is laid out before the box, and a scroll area stays inside its row, so the height
+    // comes from what the box measured last frame.
+    let row = vec2(
+        width,
+        a.input_height
+            .clamp(ui.spacing().interact_size.y, INPUT_MAX_HEIGHT),
+    );
     ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Max), |ui| {
         if ui
             .add_enabled(has_backend, egui::Button::new("+"))
@@ -382,7 +391,7 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
         {
             pick_pictures(a, ui.ctx());
         }
-        let w = (ui.available_width() - 70.0).max(80.0);
+        let w = (width - INPUT_SIDES).max(80.0);
         let id = Id::new("kraken_assist_input_text");
         let focused = ui.memory(|m| m.has_focus(id));
         // Read before the box: it takes these keys for itself.
@@ -413,8 +422,8 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
         let input = &mut a.input;
         let r = egui::ScrollArea::vertical()
             .id_salt("kraken_assist_input_scroll")
-            .max_height(180.0)
-            .min_scrolled_height(0.0)
+            .max_height(row.y)
+            .min_scrolled_height(row.y)
             .max_width(w)
             .auto_shrink([false, true])
             .stick_to_bottom(true)
@@ -436,6 +445,10 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
                     )
             })
             .inner;
+        if (r.rect.height() - a.input_height).abs() > 0.5 {
+            a.input_height = r.rect.height();
+            ui.ctx().request_repaint();
+        }
         if a.focus_input {
             a.focus_input = false;
             r.request_focus();
@@ -490,6 +503,11 @@ fn input_area(ui: &mut Ui, vm: &mut ViewModel, a: &mut AssistUi, p: &Palette) {
     ui.label(RichText::new(line).size(11.0).color(p.text_dim))
         .on_hover_text(FOOTER_HINT);
 }
+
+/// What the buttons beside the input box take from the row.
+const INPUT_SIDES: f32 = 104.0;
+/// The tallest the input box gets; longer text scrolls inside it.
+const INPUT_MAX_HEIGHT: f32 = 180.0;
 
 /// Keeps what is being sent for the Up key.
 fn remember(a: &mut AssistUi) {

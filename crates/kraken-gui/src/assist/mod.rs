@@ -67,6 +67,8 @@ pub struct AssistUi {
     pub input: String,
     /// Put the cursor in the input box next frame.
     pub focus_input: bool,
+    /// How tall the input box's text was last frame.
+    pub input_height: f32,
     /// The "?" explanation under the header is open.
     pub help_open: bool,
     /// The open "Explain" menu.

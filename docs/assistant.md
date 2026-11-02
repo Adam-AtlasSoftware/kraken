@@ -162,9 +162,26 @@ On Linux, KRAKEN starts the agent in a small sandbox (user, mount and PID namesp
 
 If your system does not allow unprivileged user namespaces, you get a warning (a note in the conversation, or on stderr), the agent gets no daemon connection, and it is not protected from reading the user token. On macOS and Windows this protection does not exist yet. See [Security](security.md).
 
-### Other ACP agents
+### Qwen Code and Google Antigravity
 
-Any agent that speaks ACP over stdio can be added in `~/.config/kraken/agents.toml`:
+**Qwen Code** speaks ACP itself: install `qwen` and it is ready in the picker. **Google Antigravity** has no ACP mode, so KRAKEN runs its `agy` command through a small bridge (`kraken agents bridge`): each message runs `agy` in print mode and continues the same conversation. Sign in with `agy` itself first. While a message runs, the bridge adds a server called `kraken-assistant` to `agy`'s MCP settings and one rule to its `settings.json` that allows that server alone, so it can use KRAKEN's tools, and removes both afterwards. Pictures do not reach Antigravity. In this mode `agy` cannot ask, so there are no permission cards: anything its own rules do not allow is refused, and the chat says what was. Allow more under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` (for example `command(ls)`), not with KRAKEN. A dangerous KRAKEN command cannot be approved this way: it asks in the KRAKEN window when a daemon is running, and is declined otherwise.
+
+### Other agents
+
+In **Settings > Assistant**, open **Add a command-line agent**: name it, give the command and arguments, and it joins the list. That writes `~/.config/kraken/agents.toml`, which you can also edit by hand.
+
+A tool without ACP works too, with the **It has no ACP mode** switch, or `mode = "print"` in the file. `{prompt}` in its arguments becomes your message, or the message goes to its standard input without one, and what it prints is the answer. Such a tool gets the conversation with every message, and it cannot use KRAKEN's tools or show tool steps.
+
+```toml
+[[agent]]
+id = "my-tool"
+name = "My tool"
+command = "my-tool"
+args = ["--ask", "{prompt}"]
+mode = "print"
+```
+
+Any agent that speaks ACP over stdio:
 
 ```toml
 [[agent]]

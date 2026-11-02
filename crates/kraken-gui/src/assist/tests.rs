@@ -566,3 +566,22 @@ fn a_message_with_a_picture_shows_it_and_sends_it() {
     assert!(matches!(vm.assist.items[0], ChatItem::Attachments(_)));
     assert!(matches!(vm.assist.items[1], ChatItem::User(_)));
 }
+
+#[test]
+fn the_input_box_measures_its_text_for_the_row_that_holds_it() {
+    let mut h = Harness::new(Services::offline());
+    h.provide(vec![]);
+    h.app.pending_nav().bring_to_front = Some(Tab::Assistant);
+    let height = |h: &mut Harness, text: String| {
+        h.app.pending_nav().assist.input = text;
+        for _ in 0..4 {
+            h.step();
+        }
+        h.app.pending_nav().assist.input_height
+    };
+    let one = height(&mut h, "line".to_string());
+    let four = height(&mut h, "line\n".repeat(3));
+    assert!(four > one * 2.0, "{one} then {four}");
+    let back = height(&mut h, String::new());
+    assert!(back < four, "it shrinks again: {back}");
+}

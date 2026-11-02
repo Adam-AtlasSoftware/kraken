@@ -45,6 +45,18 @@ pub struct AiSettings {
     policy_dirty: bool,
     extras: super::settings_extras::AiExtras,
     typing: ModelTyping,
+    add_agent: AddAgent,
+}
+
+/// The form that adds a command-line agent.
+#[derive(Default)]
+struct AddAgent {
+    name: String,
+    command: String,
+    args: String,
+    /// The tool has no ACP mode: it takes a message and prints an answer.
+    print: bool,
+    error: Option<String>,
 }
 
 impl Default for AiSettings {
@@ -64,6 +76,7 @@ impl Default for AiSettings {
             policy_dirty: false,
             extras: super::settings_extras::AiExtras::default(),
             typing: ModelTyping::default(),
+            add_agent: AddAgent::default(),
         }
     }
 }
@@ -398,6 +411,7 @@ impl AiSettings {
                 }
             }
         }
+        self.add_agent_form(ui, config_path);
         ui.add_space(2.0);
 
         if self.draft.kind.is_agent() {
@@ -532,6 +546,84 @@ impl AiSettings {
         }
         if agent {
             self.extras.permissions(ui, config_path);
+        }
+    }
+
+    /// "Add a command-line agent": any tool on this computer, written to `agents.toml`.
+    fn add_agent_form(&mut self, ui: &mut Ui, config_path: Option<&PathBuf>) {
+        let p = pal(ui);
+        let s = style::status(style::dark(ui));
+        let mut added = None;
+        egui::CollapsingHeader::new("Add a command-line agent")
+            .id_salt("kraken_add_agent")
+            .show(ui, |ui| {
+                let f = &mut self.add_agent;
+                ui.label(
+                    RichText::new("Any agent you can start in a terminal. It joins the list above and is saved in agents.toml.")
+                        .size(12.0)
+                        .color(p.text_dim),
+                );
+                egui::Grid::new("kraken_add_agent_grid")
+                    .num_columns(2)
+                    .spacing([10.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Name");
+                        ui.add(egui::TextEdit::singleline(&mut f.name).hint_text("My agent").desired_width(320.0))
+                            .on_hover_text("What the list calls it");
+                        ui.end_row();
+                        ui.label("Command");
+                        ui.add(egui::TextEdit::singleline(&mut f.command).hint_text("goose").desired_width(320.0))
+                            .on_hover_text("The program, on PATH or as a full path");
+                        ui.end_row();
+                        ui.label("Arguments");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut f.args)
+                                .hint_text(if f.print { "-p {prompt}" } else { "acp" })
+                                .desired_width(320.0),
+                        )
+                        .on_hover_text("Separated by spaces. With the switch on, {prompt} becomes your message; without it the message goes to the program's input");
+                        ui.end_row();
+                        ui.label("");
+                        style::toggle_switch(ui, &mut f.print, "It has no ACP mode")
+                            .on_hover_text("For a tool that takes a message and prints an answer. KRAKEN sends it the conversation each time. Agents that speak ACP keep their own and can use KRAKEN's tools");
+                        ui.end_row();
+                    });
+                if ui
+                    .button("Add agent")
+                    .on_hover_text("Save this agent and choose it")
+                    .clicked()
+                {
+                    let args: Vec<String> =
+                        f.args.split_whitespace().map(str::to_string).collect();
+                    let dir = config_path
+                        .and_then(|p| p.parent().map(PathBuf::from))
+                        .or_else(|| {
+                            kraken_host::KrakenConfig::default_path()
+                                .and_then(|p| p.parent().map(PathBuf::from))
+                        });
+                    match dir
+                        .ok_or_else(|| "HOME is not set.".to_string())
+                        .and_then(|d| kraken_acp::add_agent(&d, &f.name, &f.command, &args, f.print))
+                    {
+                        Ok(id) => {
+                            *f = AddAgent::default();
+                            added = Some(id);
+                        }
+                        Err(e) => f.error = Some(e),
+                    }
+                }
+                if let Some(e) = &f.error {
+                    ui.add(egui::Label::new(RichText::new(e).size(12.0).color(s.danger)).wrap());
+                }
+            });
+        if let Some(id) = added {
+            self.draft.kind = ProviderKind::TerminalAgent;
+            self.draft.agent = id;
+            self.draft.model.clear();
+            if let Some(h) = self.hub.as_mut() {
+                h.refresh();
+            }
+            self.agents_dirty = true;
         }
     }
 

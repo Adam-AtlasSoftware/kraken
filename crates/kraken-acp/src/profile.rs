@@ -82,6 +82,8 @@ pub enum AgentSetup {
     Command,
     /// Installed with npm into KRAKEN's data dir and run with Node.js.
     NodeAdapter(&'static AdapterSpec),
+    /// `command` has no ACP mode and is run through `kraken agents bridge`.
+    Bridge(crate::print_bridge::BridgeStyle),
 }
 
 /// How to start one agent.
@@ -140,7 +142,7 @@ static GEMINI: AdapterSpec = AdapterSpec {
     native_binary: Some("gemini"),
 };
 
-/// The built-in profiles: Claude Code, Codex and Gemini CLI.
+/// The built-in profiles: Claude Code, Codex, Gemini CLI, Qwen Code and Google Antigravity.
 pub fn builtin_profiles() -> Vec<AgentProfile> {
     vec![
         AgentProfile {
@@ -172,6 +174,26 @@ pub fn builtin_profiles() -> Vec<AgentProfile> {
             env_allowlist: vec!["GEMINI_CLI_HOME".into()],
             env: vec![],
             setup: AgentSetup::NodeAdapter(&GEMINI),
+        },
+        AgentProfile {
+            id: "qwen".into(),
+            display_name: "Qwen Code".into(),
+            summary: "Alibaba's coding agent; it speaks ACP itself (`qwen --acp`)".into(),
+            command: "qwen".into(),
+            args: vec!["--acp".into()],
+            env_allowlist: vec!["QWEN_HOME".into(), "DASHSCOPE_API_KEY".into()],
+            env: vec![],
+            setup: AgentSetup::Command,
+        },
+        AgentProfile {
+            id: "antigravity".into(),
+            display_name: "Google Antigravity".into(),
+            summary: "Google's agent CLI `agy`, through KRAKEN's bridge".into(),
+            command: "agy".into(),
+            args: vec![],
+            env_allowlist: vec![],
+            env: vec![],
+            setup: AgentSetup::Bridge(crate::print_bridge::BridgeStyle::Agy),
         },
     ]
 }
@@ -242,7 +264,7 @@ impl AgentProfile {
                     self.args.push("-c".into());
                     self.args.push(format!("model=\"{m}\""));
                 }
-                "gemini" => {
+                "gemini" | "qwen" | "antigravity" => {
                     self.args.push("--model".into());
                     self.args.push(m.into());
                 }
@@ -428,7 +450,7 @@ mod tests {
     fn builtin_adapters_pin_versions_and_lockfiles() {
         for p in builtin_profiles() {
             let AgentSetup::NodeAdapter(a) = p.setup else {
-                panic!("{} should be an npm adapter", p.id);
+                continue;
             };
             assert!(
                 !a.version.contains(['^', '~', '*']),

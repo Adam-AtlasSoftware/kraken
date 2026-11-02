@@ -22,13 +22,14 @@ pub mod node;
 pub mod notice;
 pub mod paths;
 pub mod platform;
+pub mod print_bridge;
 pub mod process;
 pub mod profile;
 
 pub use adapter::{AdapterError, install_adapter};
 pub use agents::{
-    AGENTS_FILE, AgentReport, AgentStatus, AgentsFileError, LaunchSpec, Resolver, load_catalogue,
-    report,
+    AGENTS_FILE, AgentReport, AgentStatus, AgentsFileError, LaunchSpec, Resolver, add_agent,
+    load_catalogue, report,
 };
 pub use host::{
     AcpError, AcpEvent, AcpHost, AgentInfo, AllowAll, DenyAll, HostConfig, MCP_SERVER_NAME,

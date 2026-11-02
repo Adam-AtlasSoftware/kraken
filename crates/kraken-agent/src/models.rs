@@ -38,6 +38,16 @@ pub const GPT_MODELS: &[&str] = &[
     "o4-mini",
 ];
 
+/// Models Google Antigravity's `agy` offers (`agy models`).
+pub const ANTIGRAVITY_MODELS: &[&str] = &[
+    "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low",
+    "claude-opus-4-6-thinking",
+    "claude-sonnet-4-6",
+    "gpt-oss-120b-medium",
+];
+
 /// What people call the known models.
 const MODEL_NAMES: &[(&str, &str)] = &[
     ("claude-fable-5-1", "Claude Fable 5.1"),
@@ -49,6 +59,11 @@ const MODEL_NAMES: &[(&str, &str)] = &[
     ("claude-opus-4-8", "Claude Opus 4.8"),
     ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
     ("claude-haiku-4-5", "Claude Haiku 4.5"),
+    ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+    ("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
+    ("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+    ("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"),
+    ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
     ("gemini-2.5-pro", "Gemini 2.5 Pro"),
     ("gemini-2.5-flash", "Gemini 2.5 Flash"),
     ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
@@ -71,6 +86,7 @@ pub fn agent_models(agent: &str) -> &'static [&'static str] {
         "claude" => CLAUDE_MODELS,
         "gemini" => GEMINI_MODELS,
         "codex" => GPT_MODELS,
+        "antigravity" => ANTIGRAVITY_MODELS,
         _ => &[],
     }
 }

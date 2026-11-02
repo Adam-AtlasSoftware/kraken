@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kraken_acp::{
-    AgentPaths, AgentProfile, AgentSetup, AgentStatus, Resolver, config_dir_with, load_catalogue,
+    AgentPaths, AgentProfile, AgentStatus, Resolver, config_dir_with, load_catalogue,
 };
 use kraken_host::provision::Fetcher;
 
@@ -187,7 +187,7 @@ pub(super) fn build(cfg: &AgentsConfig) -> Built {
                 name: p.display_name.clone(),
                 summary: p.summary.clone(),
                 availability,
-                builtin: matches!(p.setup, AgentSetup::NodeAdapter(_)),
+                builtin: kraken_acp::builtin_profile(&p.id).is_some(),
                 profile: p,
             }
         })
