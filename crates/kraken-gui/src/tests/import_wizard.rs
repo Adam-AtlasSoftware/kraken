@@ -204,6 +204,15 @@ fn the_wizard_finds_checks_and_attaches_a_separate_debug_file() {
         Some(want.as_str())
     );
     let w = k.h.state().import_wizard().unwrap();
+    let native = w.dialog.as_ref().and_then(|d| d.probed()).is_some_and(|p| {
+        p.engines
+            .iter()
+            .any(|e| e.kind == kraken_registry::EngineKind::Native && e.usable)
+    });
+    if !native {
+        eprintln!("skipped: this build has no native engine to attach the file with");
+        return;
+    }
     assert_eq!(
         w.blocker(),
         None,
