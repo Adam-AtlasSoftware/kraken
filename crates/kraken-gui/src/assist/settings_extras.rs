@@ -8,6 +8,7 @@ use egui::{RichText, Ui};
 use kraken_agent::{Effort, ModelList, ModelSource, ProviderConfig, ThinkingConfig};
 use tokio::runtime::Handle;
 
+use super::model_field::{ModelField, ModelTyping, model_field};
 use crate::style::{medium, pal};
 
 /// State of the extra sections.
@@ -17,17 +18,25 @@ pub struct AiExtras {
     list_for: String,
     list: Option<ModelList>,
     list_rx: Option<Receiver<ModelList>>,
+    typing: ModelTyping,
 }
 
 impl AiExtras {
-    /// Draws the model picker under the model text box: the provider's models (or the
-    /// well-known ones when it cannot be reached) in a drop-down that fills the box. The box
-    /// itself stays for a custom name.
-    pub fn model_picker(
+    /// Forgets whether the person was typing the name.
+    pub fn reset_model(&mut self) {
+        self.typing.reset();
+    }
+
+    /// Draws the model field of a model API and the button that asks the provider for its
+    /// models. The answer replaces the well-known list, or gives a server its first list.
+    #[allow(clippy::too_many_arguments)]
+    pub fn api_model(
         &mut self,
         ui: &mut Ui,
         rt: &Handle,
         key: &str,
+        builtin: &[String],
+        hint: &str,
         cfg: Option<ProviderConfig>,
         keyring: Option<std::sync::Arc<dyn kraken_agent::Keyring>>,
         model: &mut String,
@@ -44,65 +53,58 @@ impl AiExtras {
             self.list_rx = None;
         }
         let p = pal(ui);
-        ui.horizontal(|ui| {
-            let loading = self.list_rx.is_some();
-            let text = if loading {
-                "Looking up models..."
-            } else {
-                "Pick a model"
+        ui.vertical(|ui| {
+            let known = match &self.list {
+                Some(l) if !l.ids.is_empty() => l.ids.as_slice(),
+                _ => builtin,
             };
-            ui.add_enabled_ui(self.list.is_some(), |ui| {
-                egui::ComboBox::from_id_salt("kraken_model_picker")
-                    .selected_text(text)
-                    .width(240.0)
-                    .show_ui(ui, |ui| {
-                        if let Some(l) = &self.list {
-                            for id in &l.ids {
-                                if ui
-                                    .selectable_label(model == id, id)
-                                    .on_hover_text("Use this model")
-                                    .clicked()
-                                {
-                                    *model = id.clone();
-                                }
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text(
-                        "Models the provider offers, or well-known ones when it cannot be reached. You can also type any model name above",
-                    );
-            });
-            let can = cfg.is_some() && !loading;
-            if ui
-                .add_enabled(can, egui::Button::new("Look up models").small())
-                .on_hover_text("Ask the provider which models it offers")
-                .on_disabled_hover_text("Fill in the provider settings first, or wait for the running lookup")
-                .clicked()
-                && let Some(cfg) = cfg
-            {
-                let (tx, rx) = channel();
-                self.list_rx = Some(rx);
-                let ctx = ui.ctx().clone();
-                rt.spawn(async move {
-                    let list = kraken_agent::model_choices(
-                        &cfg,
-                        &kraken_agent::LayeredSecrets { keyring },
+            model_field(
+                ui,
+                &ModelField {
+                    salt: "kraken_model_picker",
+                    key,
+                    known,
+                    empty: None,
+                    hint,
+                },
+                &mut self.typing,
+                model,
+            );
+            ui.horizontal(|ui| {
+                let loading = self.list_rx.is_some();
+                let can = cfg.is_some() && !loading;
+                if ui
+                    .add_enabled(can, egui::Button::new("Look up models").small())
+                    .on_hover_text("Ask the provider which models it offers")
+                    .on_disabled_hover_text(
+                        "Fill in the provider settings first, or wait for the running lookup",
                     )
-                    .await;
-                    let _ = tx.send(list);
-                    ctx.request_repaint();
-                });
-            }
-            if loading {
-                ui.spinner();
-            }
-            if let Some(l) = &self.list
-                && l.source == ModelSource::BuiltIn
-                && let Some(n) = &l.note
-            {
-                ui.label(RichText::new(n).size(11.5).color(p.text_dim));
-            }
+                    .clicked()
+                    && let Some(cfg) = cfg
+                {
+                    let (tx, rx) = channel();
+                    self.list_rx = Some(rx);
+                    let ctx = ui.ctx().clone();
+                    rt.spawn(async move {
+                        let list = kraken_agent::model_choices(
+                            &cfg,
+                            &kraken_agent::LayeredSecrets { keyring },
+                        )
+                        .await;
+                        let _ = tx.send(list);
+                        ctx.request_repaint();
+                    });
+                }
+                if loading {
+                    ui.spinner();
+                }
+                if let Some(l) = &self.list
+                    && l.source == ModelSource::BuiltIn
+                    && let Some(n) = &l.note
+                {
+                    ui.label(RichText::new(n).size(11.5).color(p.text_dim));
+                }
+            });
         });
     }
 

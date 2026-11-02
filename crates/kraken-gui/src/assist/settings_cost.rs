@@ -1,6 +1,7 @@
 //! Settings > AI, the parts about cost: the model the Rust rewrite uses ("Rewriting", the
 //! `[rewrite]` table) and the limits on AI work (`[ai_limits]`).
 
+use super::model_field::{ModelField, ModelTyping, model_field};
 use std::path::{Path, PathBuf};
 
 use egui::{RichText, Ui};
@@ -9,7 +10,7 @@ use kraken_assist::{AiLimits, AiPolicy, load_rewrite_config, save_rewrite_config
 use kraken_proto::money;
 
 use crate::infer::InferSettings;
-use crate::style::{self, medium, pal};
+use crate::style::{self, pal};
 
 /// What the rewrite's own model is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,6 +72,8 @@ pub struct RewriteForm {
     pub kind: RewriteKind,
     /// The model name.
     pub model: String,
+    /// Whether the name is typed rather than picked.
+    typing: ModelTyping,
     /// The environment variable holding the key (cloud APIs).
     pub key_env: String,
     /// The server address (local model).
@@ -258,6 +261,18 @@ impl RewriteForm {
         }
     }
 
+    /// The ids of the models known for the form's choice.
+    fn known_models(&self) -> Vec<String> {
+        let list: &[&str] = match self.kind {
+            RewriteKind::Anthropic => kraken_agent::CLAUDE_MODELS,
+            RewriteKind::OpenAi => kraken_agent::GPT_MODELS,
+            RewriteKind::Gemini => kraken_agent::GEMINI_MODELS,
+            RewriteKind::Agent => kraken_agent::agent_models(self.agent.trim()),
+            RewriteKind::Local | RewriteKind::OnThisComputer => &[],
+        };
+        list.iter().map(ToString::to_string).collect()
+    }
+
     /// Draws the section; true when the file was saved.
     pub fn show(
         &mut self,
@@ -269,7 +284,6 @@ impl RewriteForm {
         let p = pal(ui);
         let s = style::status(style::dark(ui));
         let mut saved = false;
-        ui.label(medium("Rewriting", 14.0).color(p.text_strong));
         ui.add(
             egui::Label::new(
                 RichText::new(
@@ -282,7 +296,7 @@ impl RewriteForm {
         );
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.own, false, "Use the assistant's model")
-                .on_hover_text("The rewrite uses the model chosen above for the assistant");
+                .on_hover_text("The rewrite uses the model chosen on the Assistant page");
             ui.radio_value(&mut self.own, true, "Use its own model")
                 .on_hover_text(
                     "Choose a separate model for the rewrite (the [rewrite] table of config.toml)",
@@ -415,7 +429,7 @@ impl RewriteForm {
                                 .hint_text("claude, codex or gemini")
                                 .desired_width(320.0),
                         )
-                        .on_hover_text("Which terminal agent; set it up in the assistant section first");
+                        .on_hover_text("Which terminal agent; set it up on the Assistant page first");
                         ui.end_row();
                     }
                     ui.label(if self.kind == RewriteKind::Agent {
@@ -423,8 +437,20 @@ impl RewriteForm {
                     } else {
                         "Model"
                     });
-                    ui.add(egui::TextEdit::singleline(&mut self.model).desired_width(320.0))
-                        .on_hover_text("The name of the model the rewrite asks");
+                    let known = self.known_models();
+                    model_field(
+                        ui,
+                        &ModelField {
+                            salt: "kraken_rewrite_model_pick",
+                            key: &format!("{:?}|{}", self.kind, self.agent),
+                            known: &known,
+                            empty: (self.kind == RewriteKind::Agent)
+                                .then_some("The agent's own choice"),
+                            hint: "model name",
+                        },
+                        &mut self.typing,
+                        &mut self.model,
+                    );
                     ui.end_row();
                     if !matches!(self.kind, RewriteKind::Agent) {
                         ui.label(if self.kind == RewriteKind::Local {
@@ -570,7 +596,6 @@ impl LimitsForm {
         let p = pal(ui);
         let s = style::status(style::dark(ui));
         let mut saved = false;
-        ui.label(medium("Limits on AI work", 14.0).color(p.text_strong));
         ui.add(
             egui::Label::new(
                 RichText::new(

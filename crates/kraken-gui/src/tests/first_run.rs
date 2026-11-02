@@ -185,9 +185,11 @@ fn the_settings_window_changes_the_keymap_at_once_and_saves_it() {
     r.k.h
         .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
     r.k.h.run_steps(5);
+    r.click("Keyboard shortcuts");
     r.click("Classic RE tool");
     assert_eq!(r.k.h.state().active_keymap(), "ida-like");
     assert_eq!(r.config().ui.keymap.as_deref(), Some("ida-like"));
+    r.click("Appearance");
     r.click("90%");
     assert_eq!(r.config().ui.zoom_percent, Some(90));
 }

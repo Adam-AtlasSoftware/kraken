@@ -15,8 +15,9 @@ use kraken_viewmodel::assist::{
 use tokio::runtime::Handle;
 
 use super::agents_ui::{SetupAct, availability_chip, notice_card, setup_card};
+use super::model_field::{ModelField, ModelTyping, model_field};
 use crate::infer::InferSettings;
-use crate::style::{self, chip, medium, pal};
+use crate::style::{self, chip, pal};
 
 /// A change the app should pass on to the assistant.
 pub enum Change {
@@ -43,6 +44,7 @@ pub struct AiSettings {
     limits: super::settings_cost::LimitsForm,
     policy_dirty: bool,
     extras: super::settings_extras::AiExtras,
+    typing: ModelTyping,
 }
 
 impl Default for AiSettings {
@@ -61,6 +63,7 @@ impl Default for AiSettings {
             limits: super::settings_cost::LimitsForm::default(),
             policy_dirty: false,
             extras: super::settings_extras::AiExtras::default(),
+            typing: ModelTyping::default(),
         }
     }
 }
@@ -115,6 +118,8 @@ impl AiSettings {
         self.loaded = false;
         self.status = None;
         self.test = None;
+        self.typing.reset();
+        self.extras.reset_model();
     }
 
     /// Starts the form from the standard settings of `kind`.
@@ -287,14 +292,8 @@ impl AiSettings {
         }
     }
 
-    /// Draws the section.
-    pub fn show(
-        &mut self,
-        ui: &mut Ui,
-        rt: &Handle,
-        config_path: Option<&PathBuf>,
-        infer: &mut InferSettings,
-    ) {
+    /// Keeps the form current while the window is open, whichever page shows.
+    pub fn prepare(&mut self, rt: &Handle, config_path: Option<&PathBuf>) {
         self.load(config_path);
         self.drain();
         if self.hub.is_none() {
@@ -304,9 +303,37 @@ impl AiSettings {
         if let Some(h) = self.hub.as_mut() {
             h.ensure_loaded();
         }
+    }
+
+    /// Draws the Rewriting page.
+    pub fn rewriting_page(
+        &mut self,
+        ui: &mut Ui,
+        config_path: Option<&PathBuf>,
+        infer: &mut InferSettings,
+    ) {
+        if self.rewrite.show(ui, config_path, infer) {
+            self.policy_dirty = true;
+        }
+    }
+
+    /// Draws the Limits page.
+    pub fn limits_page(&mut self, ui: &mut Ui, config_path: Option<&PathBuf>) {
+        if self.limits.show(ui, config_path) {
+            self.policy_dirty = true;
+        }
+    }
+
+    /// Draws the Assistant page.
+    pub fn assistant_page(
+        &mut self,
+        ui: &mut Ui,
+        rt: &Handle,
+        config_path: Option<&PathBuf>,
+        infer: &mut InferSettings,
+    ) {
         let p = pal(ui);
         let s = style::status(style::dark(ui));
-        ui.label(medium("AI assistant", 14.0).color(p.text_strong));
         ui.label(
             RichText::new(
                 "The assistant explains code and suggests names. Pick what answers it: an AI model (on your computer or in the cloud) or a terminal agent such as Claude Code. Both work the same way in the Assistant tab.",
@@ -377,7 +404,10 @@ impl AiSettings {
             self.agent_form(ui, &p, &s);
         } else if self.draft.kind == ProviderKind::Local {
             if self.draft.model.is_empty() {
-                ui.label(RichText::new("Pick a model above, or set one up.").color(p.text_dim));
+                ui.label(
+                    RichText::new("Pick a model in the Assistant list, or set one up.")
+                        .color(p.text_dim),
+                );
             } else {
                 infer.card(ui, "assistant", &self.draft.model.clone(), config_path);
             }
@@ -473,29 +503,6 @@ impl AiSettings {
             }
             None => {}
         }
-        ui.separator();
-        if let Some(cfg) = self
-            .store
-            .config_of(&self.draft)
-            .ok()
-            .or_else(|| self.store.load().ok().flatten())
-        {
-            let key = ThinkingConfig::key_of(&cfg);
-            if let Some(e) = self.extras.thinking(ui, &key, config_path) {
-                self.status = Some(Err(e));
-            }
-        }
-        if agent {
-            self.extras.permissions(ui, config_path);
-        }
-        ui.separator();
-        if self.rewrite.show(ui, config_path, infer) {
-            self.policy_dirty = true;
-        }
-        ui.separator();
-        if self.limits.show(ui, config_path) {
-            self.policy_dirty = true;
-        }
         if agent && let Some(h) = &self.hub {
             match &h.test {
                 AgentTestState::Passed { agent_id, message } if *agent_id == self.draft.agent => {
@@ -510,6 +517,21 @@ impl AiSettings {
                 }
                 _ => {}
             }
+        }
+        ui.separator();
+        if let Some(cfg) = self
+            .store
+            .config_of(&self.draft)
+            .ok()
+            .or_else(|| self.store.load().ok().flatten())
+        {
+            let key = ThinkingConfig::key_of(&cfg);
+            if let Some(e) = self.extras.thinking(ui, &key, config_path) {
+                self.status = Some(Err(e));
+            }
+        }
+        if agent {
+            self.extras.permissions(ui, config_path);
         }
     }
 
@@ -536,26 +558,28 @@ impl AiSettings {
                     ui.end_row();
                 }
                 ui.label("Model");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.draft.model)
-                        .hint_text(match self.draft.kind {
-                            ProviderKind::Ollama => "for example qwen3:14b (see `ollama list`)",
-                            ProviderKind::LmStudio => "the model id shown in LM Studio",
-                            _ => "model name",
-                        })
-                        .desired_width(380.0),
-                )
-                .on_hover_text("The name of the model to ask");
-                ui.end_row();
-                ui.label("");
                 let key = format!("{:?}|{}", self.draft.kind, self.draft.base_url);
                 let cfg = self.store.config_of(&self.draft).ok();
                 let keyring = self
                     .store
                     .secrets()
                     .map(|k| std::sync::Arc::new(k) as std::sync::Arc<dyn kraken_agent::Keyring>);
-                self.extras
-                    .model_picker(ui, rt, &key, cfg, keyring, &mut self.draft.model);
+                let builtin = self.draft.known_models();
+                let hint = match self.draft.kind {
+                    ProviderKind::Ollama => "for example qwen3:14b (see `ollama list`)",
+                    ProviderKind::LmStudio => "the model id shown in LM Studio",
+                    _ => "model name",
+                };
+                self.extras.api_model(
+                    ui,
+                    rt,
+                    &key,
+                    &builtin,
+                    hint,
+                    cfg,
+                    keyring,
+                    &mut self.draft.model,
+                );
                 ui.end_row();
 
                 let optional = !self.draft.kind.needs_key();
@@ -735,18 +759,23 @@ impl AiSettings {
             ui.add(egui::Label::new(RichText::new(e).size(11.5).color(s.warning)).wrap());
         }
 
+        let known = self.draft.known_models();
         egui::Grid::new("kraken_settings_agent")
             .num_columns(2)
             .spacing([10.0, 6.0])
             .show(ui, |ui| {
                 ui.label("Model (optional)");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.draft.model)
-                        .hint_text("leave empty to let the agent choose")
-                        .desired_width(380.0),
-                )
-                .on_hover_text(
-                    "Ask the agent for this model. Leave it empty for the agent's own choice",
+                model_field(
+                    ui,
+                    &ModelField {
+                        salt: "kraken_agent_model",
+                        key: &format!("agent|{}", self.draft.agent),
+                        known: &known,
+                        empty: Some("The agent's own choice"),
+                        hint: "leave empty to let the agent choose",
+                    },
+                    &mut self.typing,
+                    &mut self.draft.model,
                 );
                 ui.end_row();
                 ui.label("Extra arguments (optional)");

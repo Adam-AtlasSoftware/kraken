@@ -119,7 +119,9 @@ fn build(
     });
     let mut k = kit_sized(services, &options(false), gpu, size);
     k.h.run_steps(3);
-    k.h.state_mut().settings_mut().show_window();
+    k.h.state_mut()
+        .settings_mut()
+        .show_section(crate::settings::Section::Assistant);
     k.h.run_steps(3);
     Rig {
         k,
@@ -555,6 +557,7 @@ fn an_agent_can_open_and_drive_the_setup_and_the_step_is_described() {
 #[test]
 fn rewriting_has_the_same_list_and_a_card() {
     let mut r = rig(None);
+    r.click("Rewriting");
     r.click("Use its own model");
     r.open_picker("Anthropic API (cloud)");
     for t in [
@@ -716,4 +719,66 @@ fn the_pick_step_offers_strata_engine_choices_and_a_model_file_you_have() {
             .save(dir.join("setup-2-strata.png"))
             .unwrap();
     }
+}
+
+use egui_kittest::kittest::NodeT;
+
+fn api_provider(kind: &str, model: &str) -> serde_json::Value {
+    serde_json::json!({"kind": kind, "model": model, "api_key": {"env": "KRAKEN_TEST_KEY"}})
+}
+
+#[test]
+fn the_model_drop_down_offers_names_and_the_switch_swaps_it_for_a_box() {
+    let mut r = rig(Some(api_provider("anthropic", "claude-sonnet-5-5")));
+    r.open_picker("Claude Sonnet 5.5");
+    r.click("Claude Opus 5.5");
+    assert_eq!(r.k.h.state().settings().ai.draft().model, "claude-opus-5-5");
+    assert!(r.k.h.query_by_label_contains("Type a name").is_some());
+    r.click("Type a name");
+    assert!(
+        r.k.h
+            .query_all_by_value("claude-opus-5-5")
+            .any(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+    );
+    r.click("Type a name");
+}
+
+#[test]
+fn a_saved_name_the_list_does_not_hold_opens_in_the_box() {
+    let mut r = rig(Some(api_provider("anthropic", "my-finetune")));
+    r.k.h.run_steps(2);
+    assert_eq!(
+        r.k.h.get_by_label("Type a name").accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
+}
+
+#[test]
+fn a_choice_without_a_list_has_the_drop_down_off_and_a_box() {
+    let mut r = rig(None);
+    r.k.h.run_steps(2);
+    assert!(
+        r.k.h
+            .get_by_value("No model list for this choice")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        r.k.h
+            .get_by_label("Type a name")
+            .accesskit_node()
+            .is_disabled()
+    );
+}
+
+#[test]
+fn each_section_shows_only_its_own_settings() {
+    let mut r = rig(None);
+    assert!(r.k.h.query_by_label("Save and use").is_some());
+    assert!(r.k.h.query_by_label("Save rewriting model").is_none());
+    r.click("Rewriting");
+    assert!(r.k.h.query_by_label("Save rewriting model").is_some());
+    assert!(r.k.h.query_by_label("Save and use").is_none());
+    r.click("Limits and cost");
+    assert!(r.k.h.query_by_label("Most calls per run").is_some());
 }

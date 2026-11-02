@@ -1,11 +1,12 @@
-//! The settings window (Ctrl+,): engine paths, theme, daemon status and first-time setup.
+//! The settings window (Ctrl+,): a list of sections on the left and the section's settings on the
+//! right, laid out like the help window.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use egui::{Align2, Id, RichText, Ui, vec2};
+use egui::{Align2, Id, RichText, ScrollArea, Ui, vec2};
 use kraken_host::KrakenConfig;
 use kraken_host::provision::{HttpsFetcher, Layout, Progress, SetupOptions, pinned, setup};
 use kraken_viewmodel::DaemonClientBackend;
@@ -34,6 +35,64 @@ pub enum SettingsAction {
     SetUpLocalModel,
     /// A danger mode for the assistant was picked.
     SetDangerMode(kraken_host::DangerMode),
+}
+
+/// A page of the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Appearance,
+    Keyboard,
+    Assistant,
+    Rewriting,
+    Limits,
+    Control,
+    Engine,
+    Background,
+}
+
+impl Section {
+    /// The list's groups, in order.
+    const GROUPS: [(&'static str, &'static [Section]); 3] = [
+        ("General", &[Section::Appearance, Section::Keyboard]),
+        (
+            "AI",
+            &[
+                Section::Assistant,
+                Section::Rewriting,
+                Section::Limits,
+                Section::Control,
+            ],
+        ),
+        ("Engine", &[Section::Engine, Section::Background]),
+    ];
+
+    /// The name in the list and on top of the page.
+    pub fn title(self) -> &'static str {
+        match self {
+            Section::Appearance => "Appearance",
+            Section::Keyboard => "Keyboard shortcuts",
+            Section::Assistant => "Assistant",
+            Section::Rewriting => "Rewriting",
+            Section::Limits => "Limits and cost",
+            Section::Control => "Assistant control",
+            Section::Engine => "Analysis engine",
+            Section::Background => "Background engine",
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            Section::Appearance => "Theme, text size and title bar",
+            Section::Keyboard => "Which set of keyboard shortcuts KRAKEN uses",
+            Section::Assistant => "What answers the assistant: a model or a terminal agent",
+            Section::Rewriting => "Which model the Rust rewrite uses",
+            Section::Limits => "Caps and a daily budget for AI work",
+            Section::Control => "What the assistant may do with dangerous commands",
+            Section::Engine => "The engine for new projects, Ghidra, Java and their setup",
+            Section::Background => "The krakend service that owns projects",
+        }
+    }
 }
 
 enum SetupMsg {
@@ -70,6 +129,9 @@ struct Draft {
 pub struct Settings {
     /// Whether the window is showing.
     pub open: bool,
+    /// The page showing.
+    section: Section,
+    reset_scroll: bool,
     draft: Draft,
     /// The AI section.
     pub ai: crate::assist::AiSettings,
@@ -97,6 +159,8 @@ impl Default for Settings {
         let (status_tx, status_rx) = channel();
         Settings {
             open: false,
+            section: Section::default(),
+            reset_scroll: false,
             draft: Draft::default(),
             ai: crate::assist::AiSettings::default(),
             infer: crate::infer::InferSettings::default(),
@@ -132,6 +196,30 @@ pub struct SettingsEnv<'a> {
     pub connect_error: Option<&'a str>,
     /// The assistant's danger mode in use.
     pub danger: kraken_host::DangerMode,
+}
+
+/// The Keyboard shortcuts page. A preset takes effect at once.
+fn keyboard(ui: &mut Ui, env: &SettingsEnv<'_>, actions: &mut Vec<SettingsAction>) {
+    let p = pal(ui);
+    ui.label(
+        RichText::new("Ctrl+/ lists the keys of the set in use.")
+            .size(12.0)
+            .color(p.text_dim),
+    );
+    ui.add_space(4.0);
+    for k in crate::keymap::presets() {
+        let id: &'static str = k.id.as_str();
+        if ui
+            .radio(env.keymap.id == k.id, &k.name)
+            .on_hover_text("Takes effect at once")
+            .clicked()
+            && env.keymap.id != k.id
+        {
+            actions.push(SettingsAction::SetKeymap(id));
+        }
+        ui.label(RichText::new(&k.blurb).size(12.0).color(p.text_dim));
+        ui.add_space(4.0);
+    }
 }
 
 fn mib(bytes: u64) -> f64 {
@@ -208,6 +296,19 @@ impl Settings {
         self.titlebar_note = None;
         self.ai.reset();
         self.infer.reload();
+    }
+
+    /// Opens the window on `section`.
+    pub fn show_section(&mut self, section: Section) {
+        self.pick(section);
+        self.show_window();
+    }
+
+    fn pick(&mut self, section: Section) {
+        if self.section != section {
+            self.section = section;
+            self.reset_scroll = true;
+        }
     }
 
     /// Keeps the link to the services that run local models: call every frame, also while the
@@ -404,34 +505,45 @@ impl Settings {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
 
-        let dark = env.dark;
+        self.ai.prepare(env.rt, env.config_path);
+
         let mut open = true;
         egui::Window::new(medium("Settings", 15.0))
             .id(Id::new("kraken_settings"))
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .anchor(Align2::CENTER_CENTER, vec2(0.0, -20.0))
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .default_size(vec2(
-                560.0,
-                (ctx.content_rect().height() * 0.85).clamp(560.0, 1400.0),
+                880.0,
+                (ctx.content_rect().height() - 120.0).clamp(360.0, 1400.0),
             ))
+            .min_width(680.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        self.appearance(ui, dark, env, &mut actions);
-                        ui.separator();
-                        self.ai.show(ui, env.rt, env.config_path, &mut self.infer);
-                        ui.separator();
-                        self.danger_choice(ui, env.danger, &mut actions);
-                        ui.separator();
-                        self.engine(ui, env, &mut actions);
-                        ui.separator();
-                        self.setup_section(ui, env, ctx);
-                        ui.separator();
-                        self.daemon_section(ui, env, ctx);
+                let height = ui.available_height();
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(170.0);
+                        ScrollArea::vertical()
+                            .id_salt("kraken_settings_sections")
+                            .max_height(height)
+                            .min_scrolled_height(height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| self.section_list(ui));
                     });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        let mut area = ScrollArea::vertical()
+                            .id_salt("kraken_settings_page")
+                            .max_height(height)
+                            .min_scrolled_height(height)
+                            .auto_shrink([false, false]);
+                        if std::mem::take(&mut self.reset_scroll) {
+                            area = area.vertical_scroll_offset(0.0);
+                        }
+                        area.show(ui, |ui| self.page(ui, env, ctx, &mut actions));
+                    });
+                });
             });
         while let Some(id) = self.infer.take_removed() {
             self.ai.model_removed(&id);
@@ -445,6 +557,62 @@ impl Settings {
         actions
     }
 
+    fn section_list(&mut self, ui: &mut Ui) {
+        let p = pal(ui);
+        ui.spacing_mut().item_spacing.y = 1.0;
+        let mut picked = None;
+        for (i, (group, sections)) in Section::GROUPS.into_iter().enumerate() {
+            if i > 0 {
+                ui.add_space(6.0);
+            }
+            ui.label(RichText::new(group).size(11.5).color(p.text_dim));
+            for &section in sections {
+                if ui
+                    .selectable_label(self.section == section, section.title())
+                    .on_hover_text(section.hint())
+                    .clicked()
+                {
+                    picked = Some(section);
+                }
+            }
+        }
+        if let Some(section) = picked {
+            self.pick(section);
+        }
+    }
+
+    fn page(
+        &mut self,
+        ui: &mut Ui,
+        env: &SettingsEnv<'_>,
+        ctx: &egui::Context,
+        actions: &mut Vec<SettingsAction>,
+    ) {
+        let p = pal(ui);
+        ui.set_min_width(ui.available_width());
+        ui.label(medium(self.section.title(), 20.0).color(p.text_strong));
+        ui.add_space(6.0);
+        match self.section {
+            Section::Appearance => self.appearance(ui, env.dark, env, actions),
+            Section::Keyboard => keyboard(ui, env, actions),
+            Section::Assistant => {
+                self.ai
+                    .assistant_page(ui, env.rt, env.config_path, &mut self.infer);
+            }
+            Section::Rewriting => {
+                self.ai.rewriting_page(ui, env.config_path, &mut self.infer);
+            }
+            Section::Limits => self.ai.limits_page(ui, env.config_path),
+            Section::Control => self.danger_choice(ui, env.danger, actions),
+            Section::Engine => {
+                self.engine(ui, env, actions);
+                ui.separator();
+                self.setup_section(ui, env, ctx);
+            }
+            Section::Background => self.daemon_section(ui, env, ctx),
+        }
+    }
+
     fn appearance(
         &mut self,
         ui: &mut Ui,
@@ -453,9 +621,8 @@ impl Settings {
         actions: &mut Vec<SettingsAction>,
     ) {
         let config_path = env.config_path;
-        let p = pal(ui);
-        ui.label(medium("Appearance", 14.0).color(p.text_strong));
         ui.horizontal(|ui| {
+            ui.label("Theme:");
             if ui
                 .radio(dark, "Dark")
                 .on_hover_text("Use the dark look")
@@ -472,7 +639,9 @@ impl Settings {
             {
                 actions.push(SettingsAction::SetDark(false));
             }
-            ui.separator();
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
             ui.label("Text size:");
             for z in kraken_viewmodel::first_run::ZOOM_STEPS {
                 if ui
@@ -485,24 +654,8 @@ impl Settings {
                 }
             }
         });
+        ui.add_space(4.0);
         self.titlebar_choice(ui, config_path);
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Keys:");
-            for k in crate::keymap::presets() {
-                let id: &'static str = k.id.as_str();
-                if ui
-                    .radio(env.keymap.id == k.id, &k.name)
-                    .on_hover_text(format!(
-                        "{} Takes effect at once; Ctrl+/ lists the keys.",
-                        k.blurb
-                    ))
-                    .clicked()
-                    && env.keymap.id != k.id
-                {
-                    actions.push(SettingsAction::SetKeymap(id));
-                }
-            }
-        });
     }
 
     /// "Assistant control": what the assistant may do with dangerous commands. Saved at once by
@@ -514,7 +667,6 @@ impl Settings {
         actions: &mut Vec<SettingsAction>,
     ) {
         let p = pal(ui);
-        ui.label(medium("Assistant control of KRAKEN", 14.0).color(p.text_strong));
         ui.label(
             RichText::new(
                 "What the assistant may do with dangerous commands: exporting a patched binary, \
@@ -620,7 +772,6 @@ impl Settings {
     fn engine(&mut self, ui: &mut Ui, env: &SettingsEnv<'_>, actions: &mut Vec<SettingsAction>) {
         let p = pal(ui);
         let s = style::status(style::dark(ui));
-        ui.label(medium("Analysis engine", 14.0).color(p.text_strong));
         ui.label(
             RichText::new(
                 "Engine for new projects. Each project keeps the engine it was made with.",
@@ -773,7 +924,6 @@ impl Settings {
     fn daemon_section(&mut self, ui: &mut Ui, env: &SettingsEnv<'_>, ctx: &egui::Context) {
         let p = pal(ui);
         let s = style::status(style::dark(ui));
-        ui.label(medium("Background engine (krakend)", 14.0).color(p.text_strong));
         if env.mode == Mode::NoDaemon {
             ui.label(
                 RichText::new("Running without krakend (--no-daemon): the engine lives inside this window, and agents cannot share the project.")

@@ -11,6 +11,7 @@ mod chat;
 mod demo;
 mod learn;
 mod menu;
+mod model_field;
 mod overlays;
 mod settings_ai;
 mod settings_cost;

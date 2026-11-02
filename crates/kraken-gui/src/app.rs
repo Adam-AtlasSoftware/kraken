@@ -27,7 +27,7 @@ use crate::menu::{self, MenuCmd, MenuEnv};
 use crate::private::{self, PrivateDaemon};
 use crate::recent::{self, Prefs};
 use crate::services::{Mode, Services};
-use crate::settings::{Settings, SettingsAction, SettingsEnv};
+use crate::settings::{Section, Settings, SettingsAction, SettingsEnv};
 use crate::tour::{self, Spot, Tour, TourEvent};
 use crate::welcome::{self, Choice, Welcome, WelcomeAction};
 use crate::wizard::WizardEvent;
@@ -1702,7 +1702,7 @@ impl KrakenApp {
         match w.assistant {
             Some(AssistantChoice::LocalModel) => self.open_local_setup(ctx),
             Some(AssistantChoice::TerminalAgent | AssistantChoice::ModelApi) => {
-                self.settings.show_window()
+                self.settings.show_section(Section::Assistant)
             }
             _ => {}
         }
@@ -1960,7 +1960,7 @@ impl KrakenApp {
                     }
                 }
                 AssistRequest::OpenSettings(kind) => {
-                    self.settings.show_window();
+                    self.settings.show_section(Section::Assistant);
                     if let Some(k) = kind {
                         self.settings.ai.preset(k);
                     }

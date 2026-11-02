@@ -109,6 +109,67 @@ pub fn primary_button(ui: &mut Ui, text: &str) -> egui::Response {
     )
 }
 
+/// A toggle switch with its text beside it. Returns the response of both.
+pub fn toggle_switch(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
+    let height = ui.spacing().interact_size.y * 0.8;
+    let track = egui::vec2(height * 1.8, height);
+    let gap = ui.spacing().item_spacing.x;
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    let size = egui::vec2(
+        track.x + gap + galley.size().x,
+        ui.spacing().interact_size.y,
+    );
+    // The caller adds the hover text.
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let enabled = ui.is_enabled();
+    let value = *on;
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, value, text)
+    });
+    if ui.is_rect_visible(rect) {
+        let t = ui.ctx().animate_bool_responsive(response.id, *on);
+        let visuals = ui.style().interact_selectable(&response, *on);
+        let track_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + track.x / 2.0, rect.center().y),
+            track,
+        );
+        let radius = track.y / 2.0;
+        ui.painter().rect(
+            track_rect,
+            radius,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let x = egui::lerp(
+            (track_rect.left() + radius)..=(track_rect.right() - radius),
+            t,
+        );
+        ui.painter().circle(
+            egui::pos2(x, track_rect.center().y),
+            radius * 0.75,
+            visuals.fg_stroke.color,
+            Stroke::NONE,
+        );
+        let at = egui::pos2(
+            rect.left() + track.x + gap,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter()
+            .galley(at, galley, ui.visuals().widgets.inactive.text_color());
+    }
+    response
+}
+
 /// `HH:MM:SS` (UTC) of a millisecond Unix timestamp.
 pub fn clock(ts_ms: i64) -> String {
     let secs = ts_ms.div_euclid(1000).rem_euclid(86_400);

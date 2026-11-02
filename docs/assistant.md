@@ -23,7 +23,7 @@ Either one works everywhere the assistant does: the **Assistant** tab, **Explain
 
 ### Choose it in the GUI
 
-Open **Settings > AI** (Ctrl+,). One picker lists the AI models and, below them, the terminal agents with whether each can run here: *Ready*, *Needs setup*, *Not found* or *Not supported here*. Press **Save and use**; the choice is saved as the `[provider]` table of `config.toml`, so the CLI uses it too.
+Open **Settings > Assistant** (Ctrl+,). One picker lists the AI models and, below them, the terminal agents with whether each can run here: *Ready*, *Needs setup*, *Not found* or *Not supported here*. Press **Save and use**; the choice is saved as the `[provider]` table of `config.toml`, so the CLI uses it too.
 
 The **Assistant** tab always shows what is answering: the service or agent, the model (a terminal agent says which model it uses once it has started), and whether it runs on your computer, in the cloud, or is a terminal agent.
 
@@ -332,7 +332,7 @@ pipeline's builds and exports. One setting decides what the assistant may do wit
 
 Reversible edits never ask in any mode: renames, comments, types, and staging or removing a byte
 patch (`patch_set`, `patch_remove`; nothing reaches a file until `patch_export`). Change the mode
-in **Settings > Assistant control of KRAKEN**, with the `assistant: Ask` chip at the top of the
+in **Settings > Assistant control**, with the `assistant: Ask` chip at the top of the
 Assistant tab, or in the config:
 
 ```toml
@@ -442,10 +442,7 @@ in the cloud, a model on your computer, or a terminal agent:
 
 ### Pick a model
 
-In Settings > AI the model box has a **Look up models** button. KRAKEN asks the provider's
-`/models` endpoint and lists what it offers in the drop-down; when the provider cannot be
-reached it lists well-known Claude, Gemini and GPT ids instead and says so. The text box next to
-it still takes any model name you type.
+For Anthropic, OpenAI, Gemini and the built-in terminal agents, **Settings > Assistant** lists the well-known models by name, such as *Claude Opus 5.5*. Turn on **Type a name** to enter any other model. For a server you run or a custom agent KRAKEN does not know the models, so the list is off and you type the name; **Look up models** asks a model API's `/models` endpoint and fills the list from its answer. It needs the provider's address and key, and when the provider cannot be reached the well-known list stays.
 
 ### Thinking effort
 

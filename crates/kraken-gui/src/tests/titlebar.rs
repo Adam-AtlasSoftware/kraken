@@ -279,8 +279,9 @@ fn the_memory_question_from_a_chip_shows_with_settings_closed() {
     });
     assert!(!r.k.h.state().settings().open);
     r.k.h.get_by_label("Cancel").click();
-    r.k.h.run_steps(3);
-    assert!(!r.has("Not enough memory"));
+    r.until("the question to close", |k| {
+        k.h.query_by_label_contains("Not enough memory").is_none()
+    });
 }
 
 #[test]
