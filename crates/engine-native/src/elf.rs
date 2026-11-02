@@ -3,7 +3,7 @@
 //! convention so anchors stay compatible with Ghidra projects: a position-independent image whose
 //! lowest address is 0 is loaded at 0x100000 (0x10000 for 32-bit x86).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
@@ -890,7 +890,12 @@ pub fn load_with(
         for (i, name) in undefined.enumerate() {
             externals.insert(start + (i * ptr) as u64, name.to_string());
         }
-        let external = |name: &str| externals.iter().find(|(_, n)| *n == name).map(|(a, _)| *a);
+        // the first of a name, as the addresses count up
+        let mut external_of: HashMap<&str, u64> = HashMap::with_capacity(externals.len());
+        for (a, n) in &externals {
+            external_of.entry(n).or_insert(*a);
+        }
+        let external = |name: &str| external_of.get(name).copied();
         if mips {
             for (slot, value) in mips_got_slots(&file, endian, ptr) {
                 let value = match value {
