@@ -144,7 +144,9 @@ pub fn build_request(model: &str, default_max_tokens: u32, req: &ChatRequest) ->
             .collect::<Vec<_>>()
             .into();
     }
-    if let Some(t) = req.temperature {
+    if let Some(t) = req.temperature
+        && crate::thinking::anthropic_takes_temperature(model)
+    {
         body["temperature"] = json!(t);
     }
     body

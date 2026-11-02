@@ -27,7 +27,10 @@ pub use agent::{
 pub use config::{EnvSecrets, Keyring, LayeredSecrets, ProviderConfig, SecretRef, SecretResolver};
 pub use error::AgentError;
 pub use low_context::{LowContextHost, TOOL_HELP};
-pub use models::{ModelList, ModelSource, builtin_models, model_choices};
+pub use models::{
+    CLAUDE_MODELS, GEMINI_MODELS, GPT_MODELS, ModelList, ModelSource, agent_models, builtin_models,
+    model_choices, model_name,
+};
 pub use provider::ChatProvider;
 pub use provider::local::{LocalEndpoint, LocalProvider, LocalResolver};
 pub use provider::replay::{

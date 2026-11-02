@@ -348,6 +348,19 @@ pub struct ProviderDraft {
 }
 
 impl ProviderDraft {
+    /// The ids of the models known for this choice without asking anyone; empty when they
+    /// cannot be known here, as for a server you run or a custom agent.
+    pub fn known_models(&self) -> Vec<String> {
+        let list: &[&str] = match self.kind {
+            ProviderKind::Anthropic => kraken_agent::CLAUDE_MODELS,
+            ProviderKind::OpenAi => kraken_agent::GPT_MODELS,
+            ProviderKind::Gemini => kraken_agent::GEMINI_MODELS,
+            ProviderKind::TerminalAgent => kraken_agent::agent_models(self.agent.trim()),
+            _ => &[],
+        };
+        list.iter().map(ToString::to_string).collect()
+    }
+
     /// The starting values of `kind`.
     pub fn preset(kind: ProviderKind) -> Self {
         ProviderDraft {

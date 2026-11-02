@@ -10,11 +10,16 @@ use serde_json::Value;
 use crate::config::{ProviderConfig, SecretResolver};
 use crate::provider::{anthropic, gemini, http_client, validate_base_url};
 
-/// Known Claude model ids.
+/// Known Claude model ids, newest and most capable first.
 pub const CLAUDE_MODELS: &[&str] = &[
+    "claude-fable-5-1",
+    "claude-opus-5-5",
     "claude-sonnet-5-5",
-    "claude-opus-4-1",
-    "claude-sonnet-4-5",
+    "claude-haiku-5-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
     "claude-haiku-4-5",
 ];
 /// Known Gemini model ids.
@@ -32,6 +37,43 @@ pub const GPT_MODELS: &[&str] = &[
     "gpt-4.1-mini",
     "o4-mini",
 ];
+
+/// What people call the known models.
+const MODEL_NAMES: &[(&str, &str)] = &[
+    ("claude-fable-5-1", "Claude Fable 5.1"),
+    ("claude-opus-5-5", "Claude Opus 5.5"),
+    ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+    ("claude-haiku-5-5", "Claude Haiku 5.5"),
+    ("claude-opus-5", "Claude Opus 5"),
+    ("claude-sonnet-5", "Claude Sonnet 5"),
+    ("claude-opus-4-8", "Claude Opus 4.8"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    ("claude-haiku-4-5", "Claude Haiku 4.5"),
+    ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+    ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+    ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
+    ("gpt-5", "GPT-5"),
+    ("gpt-5-mini", "GPT-5 mini"),
+    ("gpt-5-nano", "GPT-5 nano"),
+    ("gpt-4.1", "GPT-4.1"),
+    ("gpt-4.1-mini", "GPT-4.1 mini"),
+    ("o4-mini", "OpenAI o4-mini"),
+];
+
+/// The name people know the model `id` by, when it is a known one.
+pub fn model_name(id: &str) -> Option<&'static str> {
+    MODEL_NAMES.iter().find(|(m, _)| *m == id).map(|(_, n)| *n)
+}
+
+/// The known models of the built-in terminal agent `agent`; none for a custom agent.
+pub fn agent_models(agent: &str) -> &'static [&'static str] {
+    match agent {
+        "claude" => CLAUDE_MODELS,
+        "gemini" => GEMINI_MODELS,
+        "codex" => GPT_MODELS,
+        _ => &[],
+    }
+}
 
 /// How long the live listing may take before the built-in list is used.
 const LIST_TIMEOUT: Duration = Duration::from_secs(4);
@@ -63,12 +105,7 @@ pub fn builtin_models(cfg: &ProviderConfig) -> Vec<String> {
         ProviderConfig::OpenaiCompatible { base_url, .. } if base_url.contains("openai.com") => {
             GPT_MODELS
         }
-        ProviderConfig::TerminalAgent { agent, .. } => match agent.as_str() {
-            "claude" => CLAUDE_MODELS,
-            "gemini" => GEMINI_MODELS,
-            "codex" => GPT_MODELS,
-            _ => &[],
-        },
+        ProviderConfig::TerminalAgent { agent, .. } => agent_models(agent),
         _ => &[],
     };
     list.iter().map(|s| s.to_string()).collect()
@@ -204,6 +241,16 @@ mod tests {
         ]}));
         assert_eq!(g, ["gemini-2.5-pro"]);
         assert!(parse_models(&json!({"error": "x"})).is_empty());
+    }
+
+    #[test]
+    fn every_known_model_has_a_name() {
+        for id in CLAUDE_MODELS.iter().chain(GEMINI_MODELS).chain(GPT_MODELS) {
+            assert!(model_name(id).is_some(), "{id}");
+        }
+        assert_eq!(model_name("claude-opus-5-5"), Some("Claude Opus 5.5"));
+        assert_eq!(model_name("my-finetune"), None);
+        assert!(agent_models("my-agent").is_empty());
     }
 
     #[test]

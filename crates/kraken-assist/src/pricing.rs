@@ -6,7 +6,7 @@
 //!
 //! ```toml
 //! [pricing]
-//! "claude-sonnet-5-5" = { input = 3.0, output = 15.0 }
+//! "claude-sonnet-5-5" = { input = 2.0, output = 10.0 }
 //! "my-finetune" = { input = 0.5, output = 1.5 }
 //! ```
 //!
@@ -39,6 +39,10 @@ impl Price {
 /// name prefixes. Keep this the only list of prices in the code base.
 pub const DEFAULT_PRICES: &[(&str, f64, f64)] = &[
     // Anthropic
+    ("claude-fable", 10.0, 50.0),
+    ("claude-opus-5-5", 4.0, 20.0),
+    ("claude-sonnet-5", 2.0, 10.0),
+    ("claude-haiku-5-5", 0.1, 0.5),
     ("claude-opus-4-0", 15.0, 75.0),
     ("claude-opus-4-1", 15.0, 75.0),
     ("claude-opus-4-2025", 15.0, 75.0),
@@ -188,7 +192,9 @@ mod tests {
             "[pricing]\n\"qwen3:14b\" = { input = 0.1, output = 0.2 }\n\"claude-sonnet\" = { input = 1.0, output = 2.0 }\nbroken = 3\n",
         );
         assert_eq!(c.price_of("qwen3:14b").unwrap().output, 0.2);
-        assert_eq!(c.price_of("claude-sonnet-5-5").unwrap().input, 1.0);
+        assert_eq!(c.price_of("claude-sonnet-4-6").unwrap().input, 1.0);
+        assert_eq!(p.price_of("claude-sonnet-5-5").unwrap().input, 2.0);
+        assert_eq!(p.price_of("claude-opus-5-5").unwrap().output, 20.0);
         assert_eq!(bad, vec!["broken".to_string()]);
         let price = c.price_of("qwen3:14b").unwrap();
         assert!((price.cost(1_000_000, 500_000) - 0.2).abs() < 1e-9);
