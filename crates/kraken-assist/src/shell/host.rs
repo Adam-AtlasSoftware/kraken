@@ -50,6 +50,8 @@ pub struct ShellHost {
     global: ShellConfig,
     project_dir: Option<PathBuf>,
     binary: Option<PathBuf>,
+    /// Full access: commands neither ask nor are refused. They still run in the sandbox.
+    full_access: bool,
 }
 
 impl ShellHost {
@@ -69,7 +71,14 @@ impl ShellHost {
             global,
             project_dir,
             binary,
+            full_access: false,
         }
+    }
+
+    /// Lets every command run without asking (danger mode Full).
+    pub fn with_full_access(mut self, on: bool) -> Self {
+        self.full_access = on;
+        self
     }
 
     /// True when commands can be sandboxed on this computer.
@@ -123,6 +132,9 @@ impl ToolHost for ShellHost {
         let Some(command) = args.get("command").and_then(Value::as_str) else {
             return Decision::Deny("`command` must be a string.".into());
         };
+        if self.full_access {
+            return Decision::Allow;
+        }
         match self.policy().classify(command) {
             Verdict::Allow => Decision::Allow,
             Verdict::Ask(_) => Decision::Ask,
@@ -152,7 +164,9 @@ impl ToolHost for ShellHost {
                 .clamp(1, MAX_TIMEOUT_SECS),
         };
         // Whoever approved it, a refused command does not run.
-        if let Verdict::Deny(why) = self.policy().classify(&command) {
+        if !self.full_access
+            && let Verdict::Deny(why) = self.policy().classify(&command)
+        {
             return Err(ToolError::Failed(why));
         }
         let scratch = self.session.scratch().map_err(ToolError::Failed)?;

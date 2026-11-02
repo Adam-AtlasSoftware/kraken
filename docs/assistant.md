@@ -346,6 +346,7 @@ pipeline's builds and exports. One setting decides what the assistant may do wit
 | **Deny** | They are not offered to the assistant at all; you run them yourself. |
 | **Ask** (default) | The assistant may call them, and each call asks you first: a card with Allow/Deny in the Assistant tab, a `[y/N]` question in `kraken assist` on a terminal. Without a terminal the call is declined. |
 | **YOLO** | The assistant runs them without asking. |
+| **Full access** | For an AI you trust completely: as YOLO, and a terminal agent's own tools run without asking, so it can change any of your files and run any program. The assistant's shell neither asks nor refuses, though its commands still run in the sandbox. A `deny` entry in `[permissions]` still holds. |
 
 Reversible edits never ask in any mode: renames, comments, types, and staging or removing a byte
 patch (`patch_set`, `patch_remove`; nothing reaches a file until `patch_export`). Change the mode
@@ -353,10 +354,10 @@ in **Settings > Assistant control**, with the `assistant: Ask` chip at the top o
 Assistant tab, or in the config:
 
 ```toml
-danger_mode = "ask"   # deny | ask | yolo
+danger_mode = "ask"   # deny | ask | yolo | full
 ```
 
-A terminal agent's own tools (its file and shell tools, outside KRAKEN) are not covered by this mode: they follow the `[permissions]` table. When you allow a dangerous KRAKEN command, by YOLO or on its card, KRAKEN leaves a one-use approval for exactly that command that lapses within a minute, so you are not asked a second time.
+Below Full access, a terminal agent's own tools (its file and shell tools, outside KRAKEN) are not covered by this mode: they follow the `[permissions]` table. When you allow a dangerous KRAKEN command, by YOLO or on its card, KRAKEN leaves a one-use approval for exactly that command that lapses within a minute, so you are not asked a second time.
 
 The shell below has its own, stricter policy, whatever this mode is.
 
@@ -759,3 +760,7 @@ Press **Enter** to send and **Shift+Enter** for a new line; the box grows with w
 Attach a picture by pasting it (Ctrl+V), dropping it on the window or pressing **+**. Pictures go to the model with your message; KRAKEN makes large ones smaller first, and the model has to be able to read images. With a project open, a dropped picture goes to the assistant rather than being opened.
 
 **Stop** ends the current answer and keeps the conversation: your question and what the assistant had said so far stay, so the next message goes on from there. Only **New chat** clears it. A status line under the conversation says what the assistant is doing and for how long, and when the model shows its reasoning it appears as a folded *Thought* above the answer.
+
+## No limits
+
+**Settings > Limits and cost > No limits** (`unlimited = true` in `[ai_limits]`) removes the caps on calls, cost and a day's spending, the question before paid work, and the step, tool-call and token budgets of a run. AI work runs until it is done or you press Stop. A paid model can then spend without bound. Your numbers stay saved for when you turn it off.

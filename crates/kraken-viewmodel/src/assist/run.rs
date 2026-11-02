@@ -44,6 +44,8 @@ const KEEP_TOOL_RESULTS: usize = 40;
 /// Pictures kept in the conversation.
 const KEEP_IMAGES: usize = 8;
 const MAX_WRITES: usize = 30;
+/// A step count no run reaches, with "No limits" on.
+const NO_LIMIT: usize = usize::MAX / 2;
 
 fn text_of(v: &Value) -> String {
     match v {
@@ -661,6 +663,12 @@ impl ViewModel {
         kraken_assist::AiLimits::load(path.as_deref()).auto_continue_limit()
     }
 
+    /// Whether "No limits" is on.
+    fn assist_unlimited(&self) -> bool {
+        let path = kraken_assist::provider_config_path(&|k| std::env::var_os(k));
+        kraken_assist::AiLimits::load(path.as_deref()).unlimited
+    }
+
     fn assist_chat_turn(&mut self, text: &str, show_user: bool, images: Vec<Attachment>) {
         let Some((seq, engine, cancel)) = self.assist_begin_with(
             RunKind::Chat,
@@ -684,24 +692,28 @@ impl ViewModel {
         let run_id = self.assist.run_ids.next_id();
         let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
         let danger = self.assist_danger_mode();
+        let unlimited = self.assist_unlimited();
         let registry_host = Arc::new(RegistryToolHost::new(
             self.assist.registry.clone(),
             backend,
             HostOptions {
                 agent_id: ASSISTANT_ID.to_string(),
                 surface: Surface::Gui,
-                max_writes: Some(MAX_WRITES),
+                max_writes: (!unlimited).then_some(MAX_WRITES),
                 danger,
                 ..HostOptions::default()
             },
         ));
-        let host = Arc::new(ShellHost::new(
-            registry_host,
-            self.assist.shell_session.clone(),
-            self.shell_settings(),
-            self.shell_project_dir(),
-            self.project.as_ref().map(|p| p.binary_path.clone().into()),
-        ));
+        let host = Arc::new(
+            ShellHost::new(
+                registry_host,
+                self.assist.shell_session.clone(),
+                self.shell_settings(),
+                self.shell_project_dir(),
+                self.project.as_ref().map(|p| p.binary_path.clone().into()),
+            )
+            .with_full_access(danger == kraken_host::DangerMode::Full),
+        );
         let mut system_extra = ASSISTANT_CHAT_PROMPT.to_string();
         let reading = self.current.as_ref().map(|cur| {
             format!(
@@ -724,9 +736,9 @@ impl ViewModel {
         messages.push(Message::user(text));
         self.assist.history = messages.clone();
         let config = AgentConfig {
-            max_steps: 12,
-            max_tool_calls: 30,
-            token_budget: Some(150_000),
+            max_steps: if unlimited { NO_LIMIT } else { 12 },
+            max_tool_calls: if unlimited { NO_LIMIT } else { 30 },
+            token_budget: (!unlimited).then_some(150_000),
             run_id,
             system_extra: Some(system_extra),
             max_tokens: Some(8192),
@@ -951,9 +963,14 @@ impl ViewModel {
         &mut self,
         seq: u64,
         engine: Arc<dyn AssistBackend>,
-        task: Task,
+        mut task: Task,
         cancel: CancellationToken,
     ) {
+        if self.assist_unlimited() {
+            task.budget.max_steps = NO_LIMIT;
+            task.budget.max_tool_calls = NO_LIMIT;
+            task.budget.token_budget = None;
+        }
         let backend: Arc<dyn CommandBackend> = Arc::new(VmCommands::new(self.backend().clone()));
         let approver = self.poster();
         let danger = self.assist_danger_mode();

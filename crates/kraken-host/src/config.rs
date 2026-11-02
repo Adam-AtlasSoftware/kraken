@@ -171,11 +171,20 @@ pub enum DangerMode {
     Ask,
     /// The assistant runs dangerous commands without asking. Full hands-off control of KRAKEN.
     Yolo,
+    /// For an AI you trust completely: as `Yolo`, and a terminal agent's own tools run without
+    /// asking and the assistant's shell neither asks nor refuses. A `deny` entry of the
+    /// `[permissions]` table still holds: that is the person's own instruction.
+    Full,
 }
 
 impl DangerMode {
     /// Every mode, in the order a picker shows them.
-    pub const ALL: [DangerMode; 3] = [DangerMode::Deny, DangerMode::Ask, DangerMode::Yolo];
+    pub const ALL: [DangerMode; 4] = [
+        DangerMode::Deny,
+        DangerMode::Ask,
+        DangerMode::Yolo,
+        DangerMode::Full,
+    ];
 
     /// Short name for people.
     pub fn label(self) -> &'static str {
@@ -183,6 +192,7 @@ impl DangerMode {
             DangerMode::Deny => "Deny",
             DangerMode::Ask => "Ask",
             DangerMode::Yolo => "YOLO",
+            DangerMode::Full => "Full access",
         }
     }
 
@@ -192,6 +202,11 @@ impl DangerMode {
             DangerMode::Deny => "The assistant never runs dangerous commands; you run them.",
             DangerMode::Ask => "The assistant asks you before each dangerous command.",
             DangerMode::Yolo => "The assistant runs dangerous commands without asking.",
+            DangerMode::Full => {
+                "The assistant does anything without asking, including a terminal agent's own \
+                 tools, which can change any of your files and run any program. Only for an AI \
+                 you trust completely."
+            }
         }
     }
 }

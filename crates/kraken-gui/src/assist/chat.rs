@@ -197,7 +197,7 @@ fn danger_chip(ui: &mut Ui, vm: &mut ViewModel) {
     let color = match mode {
         DangerMode::Deny => pal(ui).text_dim,
         DangerMode::Ask => s.warning,
-        DangerMode::Yolo => s.danger,
+        DangerMode::Yolo | DangerMode::Full => s.danger,
     };
     let chip = chip(ui, &format!("assistant: {}", mode.label()), color)
         .interact(egui::Sense::click())

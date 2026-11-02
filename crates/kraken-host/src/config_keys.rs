@@ -186,7 +186,7 @@ pub const CONFIG_KEYS: &[ConfigKey] = &[
     ),
     key(
         "danger_mode",
-        "deny, ask or yolo",
+        "deny, ask, yolo or full",
         "What the assistant may do with dangerous commands",
         true,
     ),

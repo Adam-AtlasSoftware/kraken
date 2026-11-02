@@ -51,6 +51,10 @@ pub struct AiLimits {
     /// themselves.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_continue: Option<u32>,
+    /// No limits: no caps on calls, cost or a day's spending, no question before paid work, and
+    /// a run goes on until it is done. The numbers above stay saved for when this is turned off.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unlimited: bool,
 }
 
 /// What `auto_continue` is when the table does not set it.
@@ -77,9 +81,28 @@ impl AiLimits {
     /// The limits of the config file at `path` (none when it or the table is missing or does
     /// not parse).
     pub fn load(path: Option<&Path>) -> Self {
+        Self::load_saved(path).in_force()
+    }
+
+    /// The table as saved, for the settings form: [`load`](Self::load) gives what is in force.
+    pub fn load_saved(path: Option<&Path>) -> Self {
         path.and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|t| Self::from_config_text(&t).ok())
             .unwrap_or_default()
+    }
+
+    /// What applies: with `unlimited` set the caps are gone and nothing is asked first.
+    pub fn in_force(self) -> Self {
+        if !self.unlimited {
+            return self;
+        }
+        AiLimits {
+            max_calls_per_run: None,
+            max_cost_per_run: None,
+            daily_budget: None,
+            skip_confirm_under: Some(f64::MAX),
+            ..self
+        }
     }
 
     /// Writes the table into the config file at `path`, keeping everything else.
@@ -395,7 +418,8 @@ impl AiPolicy {
                 AiLimits::default()
             }
             None => AiLimits::default(),
-        };
+        }
+        .in_force();
         let pricing = text
             .as_deref()
             .map(|t| Pricing::from_config_text(t).0)
@@ -519,6 +543,32 @@ mod thinking_tests {
                 .contains("per_run_cap = 5")
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod unlimited_tests {
+    use super::*;
+
+    #[test]
+    fn no_limits_lifts_the_caps_and_keeps_the_saved_numbers() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("config.toml");
+        std::fs::write(
+            &p,
+            "[ai_limits]\nmax_calls_per_run = 3\ndaily_budget = 2.0\nunlimited = true\n",
+        )
+        .unwrap();
+        let now = AiLimits::load(Some(&p));
+        assert_eq!((now.max_calls_per_run, now.daily_budget), (None, None));
+        assert_eq!(now.skip_confirm_under, Some(f64::MAX));
+        assert_eq!(AiLimits::load_saved(Some(&p)).daily_budget, Some(2.0));
+        let policy = AiPolicy::load(Some(&p));
+        assert_eq!(
+            policy.limits.max_calls_per_run, None,
+            "the meter reads this"
+        );
+        assert_eq!(policy.limits.daily_budget, None);
     }
 }
 

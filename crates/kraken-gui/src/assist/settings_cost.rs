@@ -525,6 +525,8 @@ pub struct LimitsForm {
     pub skip_under: String,
     /// Low context mode.
     pub low_context: bool,
+    /// No limits on AI work.
+    pub unlimited: bool,
     /// Automatic continuations for local models; empty means the default.
     pub auto_continue: String,
     loaded: bool,
@@ -544,6 +546,7 @@ impl LimitsForm {
             daily: text_of(l.daily_budget),
             skip_under: text_of(l.skip_confirm_under),
             low_context: l.low_context_mode,
+            unlimited: l.unlimited,
             auto_continue: text_of(l.auto_continue),
             loaded: true,
             status: None,
@@ -584,6 +587,7 @@ impl LimitsForm {
             daily_budget: num(&self.daily, "The daily budget")?,
             skip_confirm_under: num(&self.skip_under, "The ask-first threshold")?,
             low_context_mode: self.low_context,
+            unlimited: self.unlimited,
             auto_continue,
         })
     }
@@ -591,7 +595,8 @@ impl LimitsForm {
     /// Draws the section; true when the file was saved.
     pub fn show(&mut self, ui: &mut Ui, config_path: Option<&PathBuf>) -> bool {
         if !self.loaded {
-            *self = LimitsForm::from_limits(&AiLimits::load(config_path.map(PathBuf::as_path)));
+            *self =
+                LimitsForm::from_limits(&AiLimits::load_saved(config_path.map(PathBuf::as_path)));
         }
         let p = pal(ui);
         let s = style::status(style::dark(ui));
@@ -631,6 +636,17 @@ impl LimitsForm {
                     .on_hover_text("When a local model reaches its limit for one question, the chat goes on by itself this many times. 0 asks each time. Paid models always ask");
                 ui.end_row();
             });
+        ui.checkbox(&mut self.unlimited, "No limits")
+            .on_hover_text(
+                "Ignore every limit above: AI work runs until it is done and nothing is asked first. A paid model can then spend without bound. Press Save below to apply it",
+            );
+        if self.unlimited {
+            ui.label(
+                RichText::new("Spending has no ceiling now. The numbers above are kept for when you turn this off.")
+                    .size(12.0)
+                    .color(s.warning),
+            );
+        }
         ui.checkbox(&mut self.low_context, "Low context mode")
             .on_hover_text(
                 "For a model with a small context window. The assistant is told what tools exist by name and one line, and asks for a tool's full description and parameters before using it. Saves thousands of tokens per request. Save limits to apply it",

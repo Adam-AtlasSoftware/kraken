@@ -782,6 +782,12 @@ impl Job {
             Some(mcp),
         );
         cfg.permission = PermissionPolicy::AskUser;
+        // `agy` cannot ask KRAKEN anything, so full access has to be said when it starts.
+        if self.settings.profile.id == "antigravity" && self.danger_mode() == DangerMode::Full {
+            cfg.launch
+                .args
+                .push("--dangerously-skip-permissions".into());
+        }
         cfg.parent_env = self.settings.parent_env.clone();
         cfg.start_timeout = self.settings.start_timeout;
         let (host, rx) = AcpHost::start(cfg).await?;
@@ -819,7 +825,7 @@ impl Job {
             return match self.danger_mode() {
                 DangerMode::Deny => Some(req.reject()),
                 DangerMode::Ask => None,
-                DangerMode::Yolo => {
+                DangerMode::Yolo | DangerMode::Full => {
                     self.grant(&name);
                     Some(req.allow())
                 }
@@ -856,7 +862,8 @@ impl Job {
     /// tasks keep the tool list and read-only rules of `auto_decision`. A KRAKEN tool the
     /// registry marks dangerous is only ever refused by it, never allowed.
     fn policy_decision(&self, req: &PermissionRequest) -> Option<PermissionDecision> {
-        if !matches!(self.spec.purpose, Purpose::Chat) {
+        let full = self.danger_mode() == DangerMode::Full;
+        if !full && !matches!(self.spec.purpose, Purpose::Chat) {
             return None;
         }
         let rules = crate::permissions::PermissionRules::load(
@@ -871,6 +878,7 @@ impl Job {
         match rules.decide(title, req.tool_kind.as_deref()) {
             crate::permissions::Verdict::Deny => Some(req.reject()),
             crate::permissions::Verdict::Allow if !kraken => Some(req.allow()),
+            _ if full => Some(req.allow()),
             _ => None,
         }
     }

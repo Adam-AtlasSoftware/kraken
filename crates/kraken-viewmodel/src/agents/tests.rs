@@ -120,7 +120,15 @@ fn availability_states_for_each_kind_of_agent() {
     r.load();
     assert_eq!(
         r.hub.rows.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
-        ["claude", "codex", "gemini", "fake", "ghost"]
+        [
+            "claude",
+            "codex",
+            "gemini",
+            "qwen",
+            "antigravity",
+            "fake",
+            "ghost"
+        ]
     );
 
     // No Node.js anywhere: the built-in agents need setup, and setup would download Node.js.

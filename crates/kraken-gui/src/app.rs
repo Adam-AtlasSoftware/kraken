@@ -2697,7 +2697,7 @@ fn ai_close_dialog(
 /// Saves "do not ask before AI work estimated under `under` dollars" to the config file.
 fn save_skip_threshold(path: Option<&Path>, under: f64) -> Result<(), String> {
     let path = path.ok_or_else(|| "there is no settings file (HOME is not set)".to_string())?;
-    let mut limits = kraken_assist::AiLimits::load(Some(path));
+    let mut limits = kraken_assist::AiLimits::load_saved(Some(path));
     limits.skip_confirm_under = Some(under);
     limits.save(path)
 }
