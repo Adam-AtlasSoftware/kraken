@@ -32,6 +32,7 @@ use kraken_agent::{
     AgentError, AgentEvent, AgentRun, ApprovalDecision, ApprovalHandle, ChatRequest, Message,
     ProviderInfo, StopReason, Usage,
 };
+use kraken_host::{DangerMode, KrakenConfig};
 use kraken_proto::sanitize;
 use kraken_registry::{CommandKind, Permission as RegPermission, Registry};
 use serde_json::{Value, json};
@@ -770,22 +771,56 @@ impl Job {
         if !kraken {
             return None;
         }
-        // A task names the tools it may use; the agent's MCP server offers all of them, so
-        // anything else is refused here.
+        // A task names the tools it may change things with; the agent's MCP server offers all of
+        // them, so anything else is refused here. Reading is always fine: refusing a harmless
+        // query only makes the agent report that the person denied it.
+        let entry = self.registry.get(&name);
         if matches!(self.spec.purpose, Purpose::Task { .. })
             && !self.spec.tools.tools().iter().any(|t| t.name == name)
+            && !entry.as_ref().is_some_and(|e| {
+                e.spec().kind == CommandKind::Query && e.spec().permission == RegPermission::Safe
+            })
         {
             return Some(req.reject());
         }
-        let entry = self.registry.get(&name)?;
-        let spec = entry.spec();
+        let spec = entry?.spec();
         if spec.permission == RegPermission::Dangerous {
-            return None;
+            if read_only {
+                return Some(req.reject());
+            }
+            return match self.danger_mode() {
+                DangerMode::Deny => Some(req.reject()),
+                DangerMode::Ask => None,
+                DangerMode::Yolo => {
+                    self.grant(&name);
+                    Some(req.allow())
+                }
+            };
         }
         if read_only && spec.kind == CommandKind::Mutation {
             return Some(req.reject());
         }
         Some(req.allow())
+    }
+
+    /// The danger mode, re-read on every request so a change applies to the running session.
+    fn danger_mode(&self) -> DangerMode {
+        crate::provider::provider_config_path(&|k| std::env::var_os(k))
+            .and_then(|p| KrakenConfig::from_file(&p).ok())
+            .map(|c| c.danger_mode)
+            .unwrap_or_default()
+    }
+
+    /// Lets the `kraken mcp` process run `command` once without asking anyone: the decision was
+    /// made here. Without the grant the call is asked about again, which only costs a question.
+    fn grant(&self, command: &str) {
+        if let Some(dir) = kraken_host::approval_grants::default_dir()
+            && let Err(e) = kraken_host::approval_grants::grant(&dir, command)
+        {
+            lock(&self.shared.notes).push(format!(
+                "KRAKEN could not record the approval of {command}, so it may ask again: {e}"
+            ));
+        }
     }
 
     /// The answer the `[permissions]` table gives, re-read on every request so a change (or an
@@ -879,7 +914,13 @@ impl Job {
                     Some((id, decision)) = self.approvals.recv() => {
                         if let Some(req) = waiting.remove(&id) {
                             let d = match decision {
-                                ApprovalDecision::Approve => req.allow(),
+                                ApprovalDecision::Approve => {
+                                    let (name, kraken) = classify_tool(&req.title);
+                                    if kraken {
+                                        self.grant(&name);
+                                    }
+                                    req.allow()
+                                }
                                 ApprovalDecision::Deny => req.reject(),
                             };
                             host.answer_permission(req.request_id, d);

@@ -43,6 +43,12 @@ fn deny(reason: impl Into<String>) -> ApprovalDecision {
 #[async_trait]
 impl ApprovalRequester for McpApprover {
     async fn request(&self, req: ApprovalRequest) -> ApprovalDecision {
+        // The assistant's window already decided: YOLO mode, or the person's permission card.
+        if kraken_host::approval_grants::default_dir()
+            .is_some_and(|d| kraken_host::approval_grants::take(&d, &req.command))
+        {
+            return ApprovalDecision::Allow;
+        }
         let message = format!(
             "KRAKEN: the agent asks to run the dangerous command `{}`.\n{}\nArguments: {}",
             req.command, req.summary, req.args
@@ -53,7 +59,11 @@ impl ApprovalRequester for McpApprover {
             .await
         {
             Ok(Some(form)) if form.approve => ApprovalDecision::Allow,
-            Ok(_) => deny(format!("the user did not approve `{}`", req.command)),
+            Ok(_) => deny(format!(
+                "no approval arrived for `{}`; nobody was necessarily asked, so say so rather \
+                 than that the person refused",
+                req.command
+            )),
             Err(ElicitationError::CapabilityNotSupported) => deny(format!(
                 "`{}` is a dangerous command and this MCP client cannot ask the user (no \
                  elicitation capability); run it from the KRAKEN CLI or GUI instead",

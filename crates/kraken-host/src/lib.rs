@@ -11,6 +11,7 @@
 //! - [`author`]: user and agent identities and run ids.
 //! - [`convention`]: output conventions applied identically by every surface.
 
+pub mod approval_grants;
 pub mod author;
 pub mod backend;
 pub mod config;

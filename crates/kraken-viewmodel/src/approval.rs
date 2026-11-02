@@ -64,6 +64,12 @@ impl ApprovalBroker {
 #[async_trait]
 impl Approver for ApprovalBroker {
     async fn approve(&self, prompt: ApprovalPrompt) -> bool {
+        // The assistant's run already decided: YOLO mode, or the person's permission card.
+        if kraken_host::approval_grants::default_dir()
+            .is_some_and(|d| kraken_host::approval_grants::take(&d, &prompt.command))
+        {
+            return true;
+        }
         let (tx, rx) = oneshot::channel();
         {
             let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
