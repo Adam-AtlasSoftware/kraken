@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+alacritty_terminal = { version = "0.26", default-features = false }
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 # default_fonts is deliberately off: the app bundles IBM Plex (decision 93).
 eframe = { version = "=0.36.2", default-features = false, features = [

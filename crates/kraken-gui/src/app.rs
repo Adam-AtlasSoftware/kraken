@@ -978,6 +978,9 @@ impl KrakenApp {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context, reqs: &mut Vec<UiRequest>) {
+        if self.state.terminals.has_keyboard(ctx) {
+            return;
+        }
         let km = self.keymap;
         let (settings, open_project, open_binary, close, quit, cheat, help) = ctx.input_mut(|i| {
             // The shifted chord first: a plain Ctrl+O pattern also matches it.

@@ -367,10 +367,7 @@ fn ctrl_tab_and_ctrl_number_switch_dock_tabs() {
     assert_eq!(focused_pane(h.app.dock()).1, 1, "Ctrl+2 is the second tab");
     h.press_with(Key::Num1, ctrl());
     assert_eq!(focused_pane(h.app.dock()).1, 0, "Ctrl+1 is the first tab");
+    // The pane holds nine tabs since the Terminal joined it, so Ctrl+9 reaches the last.
     h.press_with(Key::Num9, ctrl());
-    assert_eq!(
-        focused_pane(h.app.dock()).1,
-        0,
-        "a number past the last tab does nothing"
-    );
+    assert_eq!(focused_pane(h.app.dock()).1, 8, "Ctrl+9 is the ninth tab");
 }

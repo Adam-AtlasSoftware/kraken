@@ -48,7 +48,7 @@ Show panels and change the look.
 
 | Item | What it does | Shortcut |
 |---|---|---|
-| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Emulation, Debug, Edit, History, Proposals, Assistant, Rewrite, Types, AI Activity. |  |
+| One item per panel | Show a panel and bring it to the front: Functions, Decompiler, Hex, Listing, Graph, Xrefs, Strings, Imports / Exports, Search, Bookmarks, Patches, Emulation, Debug, Terminal, Edit, History, Proposals, Assistant, Rewrite, Types, AI Activity. |  |
 | Switch light / dark theme | Change between the dark and light look |  |
 | Toggle learn mode | Show a short explanation on every panel |  |
 | Refresh everything | Reload functions, history and proposals |  |
@@ -349,6 +349,21 @@ How to use it:
 
 Shortcuts here: `F5` start the program in the debugger, or continue it; `F9` set or clear a breakpoint at the selected instruction; `F10` debugger: step over; `F11` debugger: step into; `Shift+F11` debugger: step out.
 
+### Terminal
+
+Your own shell, in a terminal like any other, starting in the project's folder.
+
+The Terminal tab runs your usual shell with your settings, as a terminal program does. Everything that works in a terminal works here: full-screen programs, colours, the mouse in programs that use it, and the scrollback. It is not KRAKEN's sandbox: commands run as you, on this computer. Several shells can be open at once.
+
+How to use it:
+
+- Click the terminal to type in it. While it has the keys, KRAKEN's own shortcuts wait.
+- Ctrl+Shift+C copies the selection and Ctrl+Shift+V pastes; Ctrl+C stops the running program.
+- Drag to select, double-click for a word, triple-click for a line. Hold Shift to select in a program that uses the mouse.
+- Press + for another shell; middle-click a shell's name, or Close, to end it.
+
+Shortcuts here: `Ctrl+Shift+C` copy the selected text; `Ctrl+Shift+V` paste into the shell; `Ctrl+C` stop the program running in the shell.
+
 ### Edit
 
 Experimental: edit a function's C and let the assistant turn it into a byte patch.
@@ -472,6 +487,9 @@ How to use it:
 | `Ctrl+1 ... Ctrl+9` | Jump to a tab of the focused pane | Project |
 | `Up / Down, Enter` | Move through a list and open the row | Lists and palette |
 | `Escape` | Close a dialog, menu or the palette | Dialogs |
+| `Ctrl+Shift+C` | Copy the selected text | Terminal |
+| `Ctrl+Shift+V` | Paste into the shell | Terminal |
+| `Ctrl+C` | Stop the program running in the shell | Terminal |
 
 Press **Ctrl+/** in the app for this list.
 

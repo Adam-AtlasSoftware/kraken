@@ -641,6 +641,13 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Lists and palette",
     ),
     sc("Escape", "Close a dialog, menu or the palette", "Dialogs"),
+    sc("Ctrl+Shift+C", "Copy the selected text", "Terminal"),
+    sc("Ctrl+Shift+V", "Paste into the shell", "Terminal"),
+    sc(
+        "Ctrl+C",
+        "Stop the program running in the shell",
+        "Terminal",
+    ),
 ];
 
 /// Something only the window can do; the view-model hands these back to the GUI.

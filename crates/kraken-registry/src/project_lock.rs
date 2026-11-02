@@ -95,24 +95,35 @@ pub fn acquire(dir: &Path) -> Result<ProjectLock, ProtoError> {
                 format!("cannot open {}: {e}", path.display()),
             )
         })?;
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => {
-            let mut text = String::new();
-            let pid = file
-                .read_to_string(&mut text)
-                .ok()
-                .and_then(|_| text.trim().parse::<u32>().ok());
-            return Err(ProtoError::new(
-                ErrorCode::Unsupported,
-                in_use_message(&key, pid),
-            ));
-        }
-        Err(TryLockError::Error(e)) => {
-            return Err(ProtoError::new(
-                ErrorCode::Internal,
-                format!("cannot lock {}: {e}", path.display()),
-            ));
+    // Held under this process's own pid, the lock was released here but a child forked meanwhile
+    // still has the file until it execs (the engine worker sets up its sandbox in between). That
+    // passes in moments; a lock with another process's pid is refused at once.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) => {
+                let mut text = String::new();
+                let pid = file
+                    .seek(SeekFrom::Start(0))
+                    .and_then(|_| file.read_to_string(&mut text))
+                    .ok()
+                    .and_then(|_| text.trim().parse::<u32>().ok());
+                if pid == Some(std::process::id()) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                    continue;
+                }
+                return Err(ProtoError::new(
+                    ErrorCode::Unsupported,
+                    in_use_message(&key, pid),
+                ));
+            }
+            Err(TryLockError::Error(e)) => {
+                return Err(ProtoError::new(
+                    ErrorCode::Internal,
+                    format!("cannot lock {}: {e}", path.display()),
+                ));
+            }
         }
     }
     // The pid is a courtesy for the message another process shows; failing to write it is not
@@ -162,5 +173,21 @@ mod tests {
         assert!(e.message.contains("daemon"), "{}", e.message);
         drop(other);
         acquire(tmp.path()).expect("free again");
+    }
+
+    #[test]
+    fn a_lock_left_with_this_process_s_pid_is_waited_for() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(LOCK_FILE);
+        std::fs::write(&path, format!("{}\n", std::process::id())).expect("write");
+        let other = File::open(&path).expect("open");
+        other.try_lock().expect("lock");
+        // A forked child that has not yet exec'd: it lets go in a moment.
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(other);
+        });
+        acquire(tmp.path()).expect("taken once the child let go");
+        release.join().expect("thread");
     }
 }

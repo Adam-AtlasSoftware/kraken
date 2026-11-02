@@ -37,6 +37,7 @@ pub enum Tab {
     Emulation,
     AiActivity,
     Debug,
+    Terminal,
 }
 
 /// How long a tab flashed by `ui_highlight` stays marked.
@@ -66,10 +67,11 @@ impl Tab {
             Tab::Emulation => "emulation",
             Tab::AiActivity => "ai_activity",
             Tab::Debug => "debug",
+            Tab::Terminal => "terminal",
         }
     }
 
-    pub const ALL: [Tab; 20] = [
+    pub const ALL: [Tab; 21] = [
         Tab::Functions,
         Tab::Decompiler,
         Tab::Hex,
@@ -90,6 +92,7 @@ impl Tab {
         Tab::Emulation,
         Tab::AiActivity,
         Tab::Debug,
+        Tab::Terminal,
     ];
 
     pub fn title(self) -> &'static str {
@@ -114,6 +117,7 @@ impl Tab {
             Tab::Emulation => "Emulation",
             Tab::AiActivity => "AI Activity",
             Tab::Debug => "Debug",
+            Tab::Terminal => "Terminal",
         }
     }
 
@@ -141,6 +145,7 @@ pub fn initial_dock() -> DockState<Tab> {
             Tab::Rewrite,
             Tab::Search,
             Tab::Bookmarks,
+            Tab::Terminal,
         ],
     );
     dock
@@ -165,6 +170,7 @@ pub fn graph_dock() -> DockState<Tab> {
             Tab::Rewrite,
             Tab::Search,
             Tab::Bookmarks,
+            Tab::Terminal,
         ],
     );
     dock
@@ -192,6 +198,8 @@ pub struct UiState {
     pub help_request: Option<Tab>,
     /// The question asked before AI work starts.
     pub ai_confirm: crate::ai_activity::ConfirmUi,
+    /// The shells of the Terminal tab.
+    pub terminals: crate::terminal::Terminals,
 }
 
 impl UiState {
@@ -356,6 +364,15 @@ impl TabViewer for Viewer<'_> {
             Tab::Emulation => panels::emulation::show(ui, self.vm),
             Tab::AiActivity => crate::ai_activity::panel(ui, self.vm),
             Tab::Debug => panels::debug::show(ui, self.vm),
+            Tab::Terminal => {
+                self.ui.terminals.cwd = self
+                    .vm
+                    .project
+                    .as_ref()
+                    .filter(|p| !p.project_dir.is_empty())
+                    .map(|p| p.project_dir.clone().into());
+                crate::terminal::panel(ui, &mut self.ui.terminals)
+            }
         }
     }
 }

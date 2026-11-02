@@ -43,7 +43,7 @@ pub struct MenuEnv<'a> {
 }
 
 /// The tabs the View menu lists, in menu order.
-pub const VIEW_TABS: [Tab; 20] = [
+pub const VIEW_TABS: [Tab; 21] = [
     Tab::Functions,
     Tab::Decompiler,
     Tab::Listing,
@@ -64,6 +64,7 @@ pub const VIEW_TABS: [Tab; 20] = [
     Tab::Assistant,
     Tab::Rewrite,
     Tab::AiActivity,
+    Tab::Terminal,
 ];
 
 const NEED_PROJECT: &str = "Open a project first.";

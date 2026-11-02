@@ -180,6 +180,19 @@ pub const PANEL_HELP: &[PanelHelp] = &[
         terms: &["breakpoint", "register", "instruction", "stack"],
     },
     PanelHelp {
+        panel: "Terminal",
+        short: "Your own shell, in a terminal like any other, starting in the project's folder.",
+        text: "The Terminal tab runs your usual shell with your settings, as a terminal program does. Everything that works in a terminal works here: full-screen programs, colours, the mouse in programs that use it, and the scrollback. It is not KRAKEN's sandbox: commands run as you, on this computer. Several shells can be open at once.",
+        how: &[
+            "Click the terminal to type in it. While it has the keys, KRAKEN's own shortcuts wait.",
+            "Ctrl+Shift+C copies the selection and Ctrl+Shift+V pastes; Ctrl+C stops the running program.",
+            "Drag to select, double-click for a word, triple-click for a line. Hold Shift to select in a program that uses the mouse.",
+            "Press + for another shell; middle-click a shell's name, or Close, to end it.",
+        ],
+        keys: &["Ctrl+Shift+C", "Ctrl+Shift+V", "Ctrl+C"],
+        terms: &[],
+    },
+    PanelHelp {
         panel: "Edit",
         short: "Experimental: edit a function's C and let the assistant turn it into a byte patch.",
         text: "Change the decompiled C of a function, for example a constant, a comparison or which branch runs. The assistant's model works out the smallest change to the machine code that does the same, then the patched bytes are decompiled again to check it. Nothing changes until you stage the patches, and nothing on disk changes until you export. It works best for small, local changes; for anything bigger, patch the bytes by hand or rewrite the function.",

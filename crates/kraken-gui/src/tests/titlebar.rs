@@ -278,8 +278,12 @@ fn the_memory_question_from_a_chip_shows_with_settings_closed() {
         k.h.query_by_label_contains("Not enough memory").is_some()
     });
     assert!(!r.k.h.state().settings().open);
-    r.k.h.get_by_label("Cancel").click();
+    // Under load a click can land while the window still moves into place; press again until
+    // the answer is seen.
     r.until("the question to close", |k| {
+        if let Some(cancel) = k.h.query_by_label("Cancel") {
+            cancel.click();
+        }
         k.h.query_by_label_contains("Not enough memory").is_none()
     });
 }

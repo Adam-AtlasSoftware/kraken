@@ -411,3 +411,37 @@ fn screenshot_the_assistant_with_markdown() {
     }
     save(&mut k, "assistant-top.png");
 }
+
+/// `KRAKEN_SHOT_DIR=<dir> cargo test -p kraken-gui screenshot_the_terminal -- --ignored`.
+#[cfg(unix)]
+#[test]
+#[ignore = "writes a PNG file and needs a GPU; run by hand"]
+fn screenshot_the_terminal() {
+    let mut k = kit_with(true, true);
+    k.h.set_size(egui::vec2(1280.0, 900.0));
+    ready_demo(&mut k);
+    let st = k.h.state_mut().pending_nav();
+    st.terminals.program = Some(("/bin/sh".into(), vec![]));
+    st.bring_to_front = Some(crate::workspace::Tab::Terminal);
+    k.h.run_steps(5);
+    let line = "ls --color=always /usr/bin | head -3; printf '\\033[1;31mred\\033[0m \\033[42m green bg \\033[0m \\033[38;5;208mcolour 208\\033[0m \\033[4munderline\\033[0m \\033[38;2;80;160;255mtruecolor\\033[0m\\n'\r";
+    if let Some(s) = k.h.state_mut().pending_nav().terminals.active() {
+        s.write(line.as_bytes().to_vec());
+    }
+    for _ in 0..40 {
+        k.h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    save(&mut k, "terminal.png");
+    if let Some(s) = k.h.state_mut().pending_nav().terminals.active() {
+        s.write(b"top -d 0.5\r".to_vec());
+    }
+    for _ in 0..60 {
+        k.h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    save(&mut k, "terminal-top.png");
+    if let Some(s) = k.h.state_mut().pending_nav().terminals.active() {
+        s.write(b"q".to_vec());
+    }
+}

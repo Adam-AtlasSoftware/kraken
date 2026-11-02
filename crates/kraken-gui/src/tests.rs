@@ -475,7 +475,7 @@ fn every_tab_has_a_title_and_a_plain_tooltip() {
         assert!(tip.ends_with('.'), "{tip}");
         assert!(tip.len() < 100, "one plain sentence: {tip}");
     }
-    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 13);
+    assert_eq!(workspace::initial_dock().iter_all_tabs().count(), 14);
 }
 
 #[test]

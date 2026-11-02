@@ -389,17 +389,30 @@ fn lock(data_dir: &Path) -> Result<File, UpdateError> {
         .write(true)
         .open(&path)
         .map_err(io_err(format!("cannot open {}", path.display())))?;
-    match f.try_lock() {
-        Ok(()) => Ok(f),
-        Err(fs::TryLockError::WouldBlock) => {
-            Err(refused("another update is running; wait for it to finish"))
+    // A process this one forks keeps every open file, the lock among them, until it execs; for
+    // those few moments the lock looks taken. A real update holds it far longer than this wait.
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match f.try_lock() {
+            Ok(()) => return Ok(f),
+            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                return Err(refused("another update is running; wait for it to finish"));
+            }
+            Err(fs::TryLockError::Error(e)) => {
+                return Err(UpdateError::Io {
+                    what: "cannot lock the update".into(),
+                    source: e,
+                });
+            }
         }
-        Err(fs::TryLockError::Error(e)) => Err(UpdateError::Io {
-            what: "cannot lock the update".into(),
-            source: e,
-        }),
     }
 }
+
+/// How long a busy update lock is waited for before another update is assumed.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Keeps `keep` and drops every other generation.
 fn prune_generations(data_dir: &Path, keep: &str) {

@@ -263,7 +263,7 @@ impl HelpUi {
         }
         let mut open = true;
         let mut out = None;
-        let height = (ctx.content_rect().height() - 140.0).clamp(240.0, 640.0);
+        let height = (ctx.content_rect().height() - 100.0).clamp(240.0, 760.0);
         egui::Window::new("Help")
             .open(&mut open)
             .collapsible(false)

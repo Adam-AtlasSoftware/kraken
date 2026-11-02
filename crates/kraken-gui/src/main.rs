@@ -28,6 +28,7 @@ mod services;
 mod settings;
 mod setup_status;
 mod style;
+mod terminal;
 mod titlebar;
 mod tour;
 mod updates;
