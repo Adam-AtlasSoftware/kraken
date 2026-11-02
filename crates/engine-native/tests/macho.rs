@@ -222,6 +222,216 @@ fn hostile_files_are_refused_or_bounded() {
     assert!(e.message.contains("processor"), "{}", e.message);
 }
 
+/// The load commands of a minimal x86-64 program: `__TEXT` with a little code, an empty `__DATA`
+/// and `linkedit` behind them.
+mod crafted {
+    const BASE: u64 = 0x1_0000_0000;
+    const LINKEDIT: u64 = 0x3000;
+
+    pub fn segment(
+        name: &str,
+        vm: u64,
+        size: u64,
+        file: (u64, u64),
+        sections: &[Vec<u8>],
+    ) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend(0x19u32.to_le_bytes());
+        b.extend((72 + 80 * sections.len() as u32).to_le_bytes());
+        let mut padded = [0u8; 16];
+        padded[..name.len()].copy_from_slice(name.as_bytes());
+        b.extend(padded);
+        for v in [vm, size, file.0, file.1] {
+            b.extend(v.to_le_bytes());
+        }
+        for v in [7, 7, sections.len() as u32, 0] {
+            b.extend(v.to_le_bytes());
+        }
+        b.extend(sections.concat());
+        b
+    }
+
+    pub fn section(
+        name: &str,
+        segment: &str,
+        addr: u64,
+        size: u64,
+        offset: u32,
+        flags: u32,
+    ) -> Vec<u8> {
+        let mut b = vec![0u8; 80];
+        b[..name.len()].copy_from_slice(name.as_bytes());
+        b[16..16 + segment.len()].copy_from_slice(segment.as_bytes());
+        b[32..40].copy_from_slice(&addr.to_le_bytes());
+        b[40..48].copy_from_slice(&size.to_le_bytes());
+        b[48..52].copy_from_slice(&offset.to_le_bytes());
+        b[64..68].copy_from_slice(&flags.to_le_bytes());
+        b
+    }
+
+    pub fn header(commands: &[Vec<u8>]) -> Vec<u8> {
+        let size: usize = commands.iter().map(Vec::len).sum();
+        let mut b = Vec::new();
+        for v in [
+            0xfeed_facfu32,
+            0x0100_0007,
+            3,
+            2,
+            commands.len() as u32,
+            size as u32,
+            0x20_0000,
+            0,
+        ] {
+            b.extend(v.to_le_bytes());
+        }
+        b.extend(commands.concat());
+        b
+    }
+
+    /// A program with `tail` in `__LINKEDIT` and one more command that refers to it.
+    fn program(tail: &[u8], command: Vec<u8>) -> Vec<u8> {
+        let text = section("__text", "__TEXT", BASE + 0x1000, 8, 0x1000, 0x8000_0400);
+        let mut d = header(&[
+            segment("__TEXT", BASE, 0x2000, (0, 0x2000), &[text]),
+            segment("__DATA", BASE + 0x2000, 0x1000, (0x2000, 0x1000), &[]),
+            segment(
+                "__LINKEDIT",
+                BASE + 0x3000,
+                (tail.len() as u64).next_multiple_of(0x1000),
+                (LINKEDIT, tail.len() as u64),
+                &[],
+            ),
+            command,
+        ]);
+        d.resize(0x1000, 0);
+        d.extend([0x55, 0x48, 0x89, 0xe5, 0x31, 0xc0, 0x5d, 0xc3]);
+        d.resize(LINKEDIT as usize, 0);
+        d.extend(tail);
+        d
+    }
+
+    pub fn with_binds(table: &[u8]) -> Vec<u8> {
+        let mut c = Vec::new();
+        for v in [
+            0x8000_0022u32,
+            48,
+            0,
+            0,
+            LINKEDIT as u32,
+            table.len() as u32,
+        ] {
+            c.extend(v.to_le_bytes());
+        }
+        c.resize(48, 0);
+        program(table, c)
+    }
+
+    pub fn with_exports(trie: &[u8]) -> Vec<u8> {
+        let mut c = Vec::new();
+        for v in [0x8000_0033u32, 16, LINKEDIT as u32, trie.len() as u32] {
+            c.extend(v.to_le_bytes());
+        }
+        program(trie, c)
+    }
+
+    pub fn uleb(mut v: u64, out: &mut Vec<u8>) {
+        while v >= 0x80 {
+            out.push(v as u8 | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    }
+
+    /// Binds `name` to `count` slots of `__DATA` with one opcode.
+    pub fn bind_many(name: &[u8], count: u64) -> Vec<u8> {
+        let mut b = vec![0x11, 0x40];
+        b.extend(name);
+        b.extend([0, 0x51, 0x71]);
+        uleb(0, &mut b);
+        b.push(0xc0);
+        uleb(count, &mut b);
+        uleb(0, &mut b);
+        b.push(0);
+        b
+    }
+}
+
+/// `f` on its own thread, failing the test when it hangs instead of hanging the test.
+fn in_time<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the loader must finish quickly")
+}
+
+#[test]
+fn one_long_name_bound_many_times_stays_small() {
+    let mut name = vec![b'A'; 1 << 20];
+    name[0] = b'_';
+    let d = crafted::with_binds(&crafted::bind_many(&name, 1 << 22));
+    let l = in_time(move || load(&d, None).expect("load"));
+    let kept: usize = l.import_slots.values().map(String::len).sum();
+    assert!(!l.import_slots.is_empty());
+    assert!(kept <= 1 << 28, "{kept} bytes of names");
+}
+
+#[test]
+fn ordinary_binds_survive_the_budget() {
+    let d = crafted::with_binds(&crafted::bind_many(b"_a", 16));
+    let l = load(&d, None).expect("load");
+    assert_eq!(l.import_slots.len(), 16);
+    assert!(l.import_slots.values().all(|n| n == "_a"));
+}
+
+#[test]
+fn an_export_trie_that_shares_its_nodes_ends_quickly() {
+    // 14 levels of 8 edges to the next level: 8^13 paths and no export on any of them
+    let mut trie = Vec::new();
+    for level in 0u64..14 {
+        let mut node = vec![0, if level < 13 { 8 } else { 0 }];
+        if level < 13 {
+            for edge in 0..8 {
+                node.extend([b'a' + edge, 0]);
+                crafted::uleb((level + 1) * 0x40, &mut node);
+            }
+        }
+        node.resize(0x40, 0);
+        trie.extend(node);
+    }
+    let d = crafted::with_exports(&trie);
+    let l = in_time(move || load(&d, None).expect("load"));
+    assert!(l.exports.is_empty());
+}
+
+#[test]
+fn every_section_walking_the_whole_table_ends_quickly() {
+    use crafted::{header, section, segment};
+    let at = 0x1_0000_0000;
+    let lazy: Vec<Vec<u8>> = (0..4096u64)
+        .map(|i| section("__la", "__DATA", at + i, 1 << 40, 0, 7))
+        .collect();
+    let mut d = header(&[segment("__DATA", at, 0x1000, (0, 0x1000), &lazy)]);
+    d.resize(d.len() + 0x1000, 0);
+    let l = in_time(move || load(&d, None).expect("load"));
+    assert_eq!(l.blocks.iter().filter(|b| b.name == "EXTERNAL").count(), 0);
+}
+
+#[test]
+fn segments_at_the_top_of_the_address_space_are_refused() {
+    use crafted::{header, segment};
+    let mut d = header(&[
+        segment("__TEXT", 0xffff_ffff_ffff_f001, 0xf00, (0, 0), &[]),
+        segment("__DATA", 0xffff_ffff_ffff_ff10, 0x10, (0, 0), &[]),
+    ]);
+    d.resize(0x200, 0);
+    let Err(e) = load(&d, None) else {
+        panic!("nothing is left above these segments");
+    };
+    assert!(e.message.contains("room"), "{}", e.message);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn decompiles_a_sample_function_on_both_architectures() {
     for arch in ["x64", "arm64"] {

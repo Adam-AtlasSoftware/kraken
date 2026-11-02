@@ -15,7 +15,8 @@
 //! A universal binary is cut down to one slice before it gets here (`kraken_engine::fat`).
 //!
 //! Hostile input: every count and range comes from the file, so segments must fit the address
-//! space and may not overlap, walks are capped and anything outside the file ends the walk.
+//! space and may not overlap, anything outside the file ends a walk, and every walk draws on one
+//! [`Budget`]: a small file must not be able to name a large one's worth of symbols.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,10 +24,10 @@ use engine_native_sys::{Image, Segment};
 use kraken_proto::{ErrorCode, MemoryBlock, MemoryKind, ProtoError, SymbolKind as ProtoSymbolKind};
 use object::macho;
 use object::read::macho::{
-    DyldChainedFixups, ExportData, Fixup, LoadCommandVariant, MachHeader, MachOFile64, Nlist,
-    Section as _, Segment as _,
+    DyldChainedFixups, Fixup, LoadCommandVariant, MachHeader, MachOFile64, Nlist, Section as _,
+    Segment as _,
 };
-use object::{Endianness, FileKind};
+use object::{Bytes, Endianness, FileKind};
 
 use crate::elf::{DataSymbol, ExportSymbol, ImportSymbol, Language, Loaded};
 
@@ -37,13 +38,21 @@ const ADDRESS_HEADROOM: u64 = 1 << 33;
 /// Most segments and sections taken; binding tables index segments with one byte.
 const MAX_SEGMENTS: usize = 256;
 const MAX_SECTIONS: usize = 4096;
-/// Most fixups, binds, exports and function starts read from one table.
+/// Most function starts and unwind entries read from one table.
 const MAX_WALK: usize = 1 << 22;
+/// Most fixups, binds and stub or pointer entries read from the whole file.
+const MAX_STEPS: usize = 1 << 23;
+/// Most bytes of symbol names kept for the whole file. A name is kept several times over (the
+/// import, its slot, the slot's label), and a table can name one long string many times.
+const MAX_NAME_BYTES: usize = 1 << 28;
 /// Most stand-ins for imports without a stub; they are mapped, and the symbol table is the
 /// file's to choose.
 const MAX_EXTERNALS: usize = 1 << 16;
 /// Ghidra's distance between the import stand-ins in `EXTERNAL`.
 const EXTERNAL_SPACING: u64 = 0x100;
+
+/// `EXPORT_SYMBOL_FLAGS_REEXPORT` of an exports trie.
+const EXPORT_REEXPORT: u64 = 0x08;
 
 const X86_RET: u8 = 0xc3;
 const AARCH64_RET: [u8; 4] = [0xc0, 0x03, 0x5f, 0xd6];
@@ -108,10 +117,20 @@ impl Sect {
             || self.flags.contains(macho::S_ATTR_PURE_INSTRUCTIONS)
             || self.flags.contains(macho::S_ATTR_SOME_INSTRUCTIONS)
     }
+}
 
-    fn holds(&self, addr: u64) -> bool {
-        addr >= self.addr && addr - self.addr < self.size
+/// `ranges` sorted by start, with those that touch or overlap joined.
+fn merged_ranges(ranges: impl Iterator<Item = (u64, u64)>) -> Vec<(u64, u64)> {
+    let mut sorted: Vec<(u64, u64)> = ranges.collect();
+    sorted.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::with_capacity(sorted.len());
+    for (start, end) in sorted {
+        match out.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => out.push((start, end)),
+        }
     }
+    out
 }
 
 /// A piece of a segment on its way to being a memory block.
@@ -184,6 +203,45 @@ fn patch(segments: &mut [Segment], addr: u64, bytes: &[u8]) {
     }
 }
 
+/// What the tables of a file may still cost, shared by all of them: per-table caps would multiply
+/// with the number of tables and sections, and counting entries says nothing about their names.
+struct Budget {
+    steps: usize,
+    name_bytes: usize,
+}
+
+impl Budget {
+    fn new() -> Budget {
+        Budget {
+            steps: MAX_STEPS,
+            name_bytes: MAX_NAME_BYTES,
+        }
+    }
+
+    /// Takes one table entry; `false` when none are left.
+    fn step(&mut self) -> bool {
+        let left = self.steps > 0;
+        self.steps = self.steps.saturating_sub(1);
+        left
+    }
+
+    /// Takes up to `want` table entries and says how many there are.
+    fn steps(&mut self, want: u64) -> usize {
+        let got = want.min(self.steps as u64) as usize;
+        self.steps -= got;
+        got
+    }
+
+    /// Takes a name of `len` bytes; `false` when it does not fit any more.
+    fn name(&mut self, len: usize) -> bool {
+        let fits = len <= self.name_bytes;
+        if fits {
+            self.name_bytes -= len;
+        }
+        fits
+    }
+}
+
 /// What the binding tables say about pointer slots, at link addresses.
 #[derive(Default)]
 struct Binding {
@@ -209,11 +267,12 @@ fn walk_chained(
     data: &[u8],
     link: u64,
     out: &mut Binding,
+    budget: &mut Budget,
 ) -> Result<(), object::Error> {
     let mut names: Vec<(String, Option<usize>)> = Vec::new();
     let mut imports = fixups.imports(endian)?;
     while let Some(i) = imports.next()? {
-        if names.len() >= MAX_WALK {
+        if !budget.step() || !budget.name(i.name.len()) {
             break;
         }
         names.push((symbol_name(i.name), ordinal(i.dylib)));
@@ -228,21 +287,22 @@ fn walk_chained(
             continue;
         };
         let mut walk = chain.fixups(endian, link, bytes);
-        let mut seen = 0;
         // a damaged chain ends here; what was read stays
-        while let Ok(Some((offset, fixup))) = walk.next() {
-            seen += 1;
-            if seen > MAX_WALK {
+        while budget.step() {
+            let Ok(Some((offset, fixup))) = walk.next() else {
                 break;
-            }
+            };
             let slot = seg.vm.wrapping_add(offset);
             match fixup {
                 Fixup::Rebase(r) => {
                     out.rebases.insert(slot, link.wrapping_add(r.target_offset));
                 }
                 Fixup::Bind(b) => {
-                    if let Some((name, lib)) = names.get(b.ordinal as usize) {
-                        out.binds.entry(slot).or_insert_with(|| name.clone());
+                    if let Some((name, lib)) = names.get(b.ordinal as usize)
+                        && !out.binds.contains_key(&slot)
+                        && budget.name(name.len())
+                    {
+                        out.binds.insert(slot, name.clone());
                         out.libraries.entry(name.clone()).or_insert(*lib);
                     }
                 }
@@ -259,13 +319,14 @@ fn walk_dyld_info(
     segs: &[Seg],
     data: &[u8],
     out: &mut Binding,
+    budget: &mut Budget,
 ) {
     let vm = |index: u8, offset: u64| {
         segs.get(usize::from(index))
             .map(|s| s.vm.wrapping_add(offset))
     };
     if let Ok(mut it) = info.rebases(endian, data, 8) {
-        for _ in 0..MAX_WALK {
+        while budget.step() {
             let Ok(Some(r)) = it.next() else { break };
             if let Some(slot) = vm(r.segment_index, r.segment_offset)
                 && let Some(b) = read_at(segs, data, slot, 8)
@@ -282,19 +343,82 @@ fn walk_dyld_info(
     ];
     for table in tables {
         let Ok(mut it) = table else { continue };
-        for _ in 0..MAX_WALK {
+        while budget.step() {
             let Ok(Some(b)) = it.next() else { break };
+            let Some(slot) = vm(b.segment_index, b.segment_offset) else {
+                continue;
+            };
+            if out.binds.contains_key(&slot) {
+                continue;
+            }
+            if !budget.name(b.symbol.len()) {
+                break;
+            }
             let name = symbol_name(b.symbol);
             let lib = ordinal(b.dylib);
-            if let Some(slot) = vm(b.segment_index, b.segment_offset) {
-                out.binds.entry(slot).or_insert_with(|| name.clone());
-                let known = out.libraries.entry(name).or_insert(lib);
-                if known.is_none() {
-                    *known = lib;
-                }
+            out.binds.insert(slot, name.clone());
+            let known = out.libraries.entry(name).or_insert(lib);
+            if known.is_none() {
+                *known = lib;
             }
         }
     }
+}
+
+/// Calls `each` with the name and image offset of the exports in a trie, depth first, until it
+/// returns `false`. Reexports have no address here and are left out. A well-formed trie is a tree,
+/// so a node reached twice ends the walk: edges to shared nodes would otherwise multiply the work
+/// with every level, and `object`'s iterator can spend all of it between two exports.
+fn walk_exports(trie: &[u8], mut each: impl FnMut(&[u8], u64) -> bool) {
+    struct Frame<'d> {
+        rest: Bytes<'d>,
+        children: u8,
+        prefix: usize,
+    }
+    let mut seen = vec![false; trie.len()];
+    let mut stack: Vec<Frame<'_>> = Vec::new();
+    let mut name: Vec<u8> = Vec::new();
+    let mut next = Some(0u64);
+    let mut walk = || -> Option<()> {
+        loop {
+            if let Some(offset) = next.take() {
+                let offset = usize::try_from(offset).ok()?;
+                if std::mem::replace(seen.get_mut(offset)?, true) {
+                    return None;
+                }
+                let mut node = Bytes(trie.get(offset..)?);
+                let terminal = node.read_uleb128().ok()?;
+                if terminal != 0 {
+                    let mut info = node.read_bytes(usize::try_from(terminal).ok()?).ok()?;
+                    let flags = info.read_uleb128().ok()?;
+                    if flags & EXPORT_REEXPORT == 0 {
+                        // of a stub and resolver pair, the stub comes first
+                        let address = info.read_uleb128().ok()?;
+                        if !each(&name, address) {
+                            return None;
+                        }
+                    }
+                }
+                let children = *node.read::<u8>().ok()?;
+                stack.push(Frame {
+                    rest: node,
+                    children,
+                    prefix: name.len(),
+                });
+            }
+            let top = stack.last_mut()?;
+            name.truncate(top.prefix);
+            if top.children == 0 {
+                stack.pop();
+                continue;
+            }
+            top.children -= 1;
+            let edge = top.rest.read_string().ok()?;
+            next = Some(top.rest.read_uleb128().ok()?);
+            name.extend_from_slice(edge);
+        }
+    };
+    let _ = walk();
 }
 
 /// Function offsets (from `__TEXT`) listed in a `__unwind_info` section.
@@ -465,13 +589,13 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
         .collect();
     let mut by_addr = mapped.clone();
     by_addr.sort_by_key(|s| s.vm);
+    let floor = by_addr.first().map_or(0, |s| s.vm);
     let lowest = mapped
         .iter()
         .filter(|s| s.filesize > 0)
         .map(|s| s.vm)
         .min()
-        .unwrap_or(0);
-    let floor = by_addr.first().map_or(0, |s| s.vm);
+        .unwrap_or(floor);
     for s in &by_addr {
         let Some(end) = s.vm.checked_add(s.vmsize) else {
             return Err(bad("a segment does not fit the address space"));
@@ -486,10 +610,12 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
     let link_end = by_addr.last().map_or(lowest, |s| s.vm + s.vmsize);
     let base = base_override.unwrap_or(lowest);
     let span = link_end - floor;
-    if base
-        .checked_add(span)
-        .and_then(|e| e.checked_add(ADDRESS_HEADROOM))
-        .is_none()
+    // segments without file bytes may lie below the one that takes the load address
+    if base.checked_sub(lowest - floor).is_none()
+        || base
+            .checked_add(span)
+            .and_then(|e| e.checked_add(ADDRESS_HEADROOM))
+            .is_none()
     {
         return Err(bad("the load address does not leave room for the program"));
     }
@@ -593,10 +719,19 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
         .map_or(lowest, |s| s.vm);
 
     // the symbol table
+    let mut budget = Budget::new();
     let table = file.macho_symbol_table();
     let strings = table.strings();
-    let exec_sects: Vec<&Sect> = sects.iter().filter(|c| c.executable()).collect();
-    let in_exec = |a: u64| exec_sects.iter().any(|c| c.holds(a));
+    let exec_ranges = merged_ranges(
+        sects
+            .iter()
+            .filter(|c| c.executable() && c.size > 0)
+            .map(|c| (c.addr, c.addr.saturating_add(c.size))),
+    );
+    let in_exec = |a: u64| {
+        let i = exec_ranges.partition_point(|(_, end)| *end <= a);
+        exec_ranges.get(i).is_some_and(|(start, _)| *start <= a)
+    };
     let mut functions: BTreeMap<u64, String> = BTreeMap::new();
     let mut code_symbols: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     let mut data_symbols: BTreeMap<u64, DataSymbol> = BTreeMap::new();
@@ -612,6 +747,9 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
         };
         if name.is_empty() {
             continue;
+        }
+        if !budget.name(name.len()) {
+            break;
         }
         let name = symbol_name(name);
         let kind = sym.n_type().typ();
@@ -655,10 +793,10 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
     if let Some(cmd) = chained {
         // an empty or damaged table leaves the pointers as the file has them
         if let Ok(f) = cmd.chained_fixups(endian, data) {
-            let _ = walk_chained(&f, endian, &segs, data, link, &mut binding);
+            let _ = walk_chained(&f, endian, &segs, data, link, &mut binding, &mut budget);
         }
     } else if let Some(info) = dyld_info {
-        walk_dyld_info(info, endian, &segs, data, &mut binding);
+        walk_dyld_info(info, endian, &segs, data, &mut binding, &mut budget);
     }
 
     // the indirect table: stubs, and symbol pointers older files bind by it alone
@@ -666,14 +804,14 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
         .and_then(|d| d.indirect_symbols(endian, data).ok())
         .map(|s| s.iter().map(|e| e.get(endian).0).collect())
         .unwrap_or_default();
-    let indirect_name = |i: usize| -> Option<String> {
+    let indirect_name = |i: usize| -> Option<&[u8]> {
         let index = *indirect.get(i)?;
         if index & (macho::INDIRECT_SYMBOL_LOCAL.0 | macho::INDIRECT_SYMBOL_ABS.0) != 0 {
             return None;
         }
         let sym = table.symbols().get(index as usize)?;
         let name = sym.name(endian, strings).ok()?;
-        (!name.is_empty()).then(|| symbol_name(name))
+        (!name.is_empty()).then_some(name)
     };
     let mut plt: BTreeMap<u64, String> = BTreeMap::new();
     let mut stub_of: BTreeMap<String, u64> = BTreeMap::new();
@@ -683,9 +821,12 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
         match c.kind {
             macho::S_SYMBOL_STUBS if c.reserved2 > 0 => {
                 let stride = u64::from(c.reserved2);
-                let count = (c.size / stride).min(MAX_WALK as u64) as usize;
+                let count = budget.steps(c.size / stride);
                 for i in 0..count {
-                    if let Some(name) = indirect_name(first + i) {
+                    if let Some(name) = indirect_name(first + i)
+                        && budget.name(name.len())
+                    {
+                        let name = symbol_name(name);
                         let stub = c.addr.wrapping_add(i as u64 * stride);
                         plt.insert(at(stub), name.clone());
                         stub_of.entry(name).or_insert(at(stub));
@@ -693,7 +834,7 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
                 }
             }
             macho::S_LAZY_SYMBOL_POINTERS | macho::S_NON_LAZY_SYMBOL_POINTERS => {
-                let count = (c.size / 8).min(MAX_WALK as u64) as usize;
+                let count = budget.steps(c.size / 8);
                 for i in 0..count {
                     let slot = c.addr.wrapping_add(i as u64 * 8);
                     if let Some(b) = read_at(&segs, data, slot, 8) {
@@ -704,8 +845,11 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
                             got_code.push(at(v));
                         }
                     }
-                    if let Some(name) = indirect_name(first + i) {
-                        binding.binds.entry(slot).or_insert(name);
+                    if !binding.binds.contains_key(&slot)
+                        && let Some(name) = indirect_name(first + i)
+                        && budget.name(name.len())
+                    {
+                        binding.binds.insert(slot, symbol_name(name));
                     }
                 }
             }
@@ -744,7 +888,10 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
 
     // stand-ins for the imports without a stub, on the next page after the image
     let top = blocks.iter().map(|b| b.end.0).max().unwrap_or(base);
-    let externals_start = top.div_ceil(0x1000) * 0x1000;
+    // the headroom checked above keeps this and the stand-ins in the address space
+    let externals_start = top
+        .checked_next_multiple_of(0x1000)
+        .ok_or_else(|| bad("the program ends at the top of the address space"))?;
     let mut externals: BTreeMap<u64, String> = BTreeMap::new();
     let mut external_of: BTreeMap<&str, u64> = BTreeMap::new();
     for n in names
@@ -817,28 +964,32 @@ fn load_64(data: &[u8], base_override: Option<u64>) -> Result<Loaded, ProtoError
     // exports: the trie when there is one
     let mut exports: BTreeMap<u64, ExportSymbol> = BTreeMap::new();
     let trie = exports_trie
-        .and_then(|t| t.exports_trie(endian, data).ok())
-        .or_else(|| dyld_info.and_then(|d| d.exports_trie(endian, data).ok()));
-    if let Some(mut it) = trie {
-        for _ in 0..MAX_WALK {
-            let Ok(Some(e)) = it.next() else { break };
-            let offset = match e.data() {
-                ExportData::Regular { address } => *address,
-                ExportData::StubAndResolver { stub_address, .. } => *stub_address,
-                _ => continue,
-            };
+        .and_then(|t| t.data(endian, data).ok())
+        .or_else(|| dyld_info.and_then(|d| d.export_data(endian, data).ok()));
+    if let Some(trie) = trie {
+        walk_exports(trie, |name, offset| {
             let addr = link.wrapping_add(offset);
+            if exports.contains_key(&at(addr)) {
+                return true;
+            }
+            if !budget.name(name.len()) {
+                return false;
+            }
             let kind = if in_exec(addr) {
                 ProtoSymbolKind::Function
             } else {
                 ProtoSymbolKind::Data
             };
-            exports.entry(at(addr)).or_insert(ExportSymbol {
-                name: symbol_name(e.name()),
-                kind,
-                member: None,
-            });
-        }
+            exports.insert(
+                at(addr),
+                ExportSymbol {
+                    name: symbol_name(name),
+                    kind,
+                    member: None,
+                },
+            );
+            true
+        });
     }
     if exports.is_empty() {
         exports = defined_exports;
