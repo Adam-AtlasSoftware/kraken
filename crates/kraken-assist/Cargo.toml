@@ -18,6 +18,7 @@ kraken-ipc = { path = "../kraken-ipc", version = "0.4.1" }
 kraken-model = { path = "../kraken-model", version = "0.4.1" }
 kraken-proto.workspace = true
 kraken-registry = { path = "../kraken-registry", version = "0.4.1" }
+llm-prices = "1.8.0"
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
