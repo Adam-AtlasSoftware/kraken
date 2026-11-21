@@ -10,10 +10,11 @@
 //! "my-finetune" = { input = 0.5, output = 1.5 }
 //! ```
 //!
-//! A model is looked up by its exact name first, then by the longest known name it starts with
-//! (`claude-sonnet-4-5-20250929` finds `claude-sonnet`).
+//! A model is looked up in the `[pricing]` table first (exact name, then longest prefix), then
+//! in the dated, source-cited table of the `llm-prices` crate, then by the longest built-in name
+//! it starts with (`claude-sonnet-9` finds `claude-sonnet`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use kraken_proto::{AiBilling, AiProviderKind};
@@ -79,6 +80,10 @@ pub const DEFAULT_PRICES: &[(&str, f64, f64)] = &[
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pricing {
     prices: BTreeMap<String, Price>,
+    /// Names from `[pricing]` or [`Pricing::set`]; they win over `llm-prices`.
+    custom: BTreeSet<String>,
+    /// Whether `llm-prices` is consulted (not for [`Pricing::empty`]).
+    catalog: bool,
 }
 
 impl Default for Pricing {
@@ -96,6 +101,8 @@ impl Default for Pricing {
                     )
                 })
                 .collect(),
+            custom: BTreeSet::new(),
+            catalog: true,
         }
     }
 }
@@ -105,11 +112,14 @@ impl Pricing {
     pub fn empty() -> Self {
         Pricing {
             prices: BTreeMap::new(),
+            custom: BTreeSet::new(),
+            catalog: false,
         }
     }
 
     /// Adds or replaces the price of `model`.
     pub fn set(&mut self, model: &str, price: Price) {
+        self.custom.insert(model.to_ascii_lowercase());
         self.prices.insert(model.to_ascii_lowercase(), price);
     }
 
@@ -139,22 +149,39 @@ impl Pricing {
             .unwrap_or_default()
     }
 
-    /// The price of `model`: exact name, else the longest known prefix.
+    /// The price of `model`: the `[pricing]` table, then `llm-prices`, then the longest
+    /// built-in prefix.
     pub fn price_of(&self, model: &str) -> Option<Price> {
         let m = model.trim().to_ascii_lowercase();
         if m.is_empty() {
             return None;
         }
-        if let Some(p) = self.prices.get(&m) {
-            return Some(*p);
-        }
         // Providers prefix names (`anthropic/claude-...`, `models/gemini-...`).
         let bare = m.rsplit('/').next().unwrap_or(&m);
-        self.prices
-            .iter()
-            .filter(|(k, _)| bare.starts_with(k.as_str()))
-            .max_by_key(|(k, _)| k.len())
-            .map(|(_, p)| *p)
+        let longest = |custom: bool| {
+            if let Some(p) = self
+                .prices
+                .get(&m)
+                .filter(|_| self.custom.contains(&m) == custom)
+            {
+                return Some(*p);
+            }
+            self.prices
+                .iter()
+                .filter(|(k, _)| self.custom.contains(k.as_str()) == custom)
+                .filter(|(k, _)| bare.starts_with(k.as_str()))
+                .max_by_key(|(k, _)| k.len())
+                .map(|(_, p)| *p)
+        };
+        longest(true)
+            .or_else(|| {
+                let p = llm_prices::lookup(&m).filter(|_| self.catalog)?;
+                Some(Price {
+                    input: p.input?,
+                    output: p.output?,
+                })
+            })
+            .or_else(|| longest(false))
     }
 
     /// How a call to `model` on `kind` is paid for, and its price when metered.
@@ -196,6 +223,33 @@ mod tests {
         assert_eq!(p.price_of("claude-sonnet-5-5").unwrap().input, 2.0);
         assert_eq!(p.price_of("claude-opus-5-5").unwrap().output, 20.0);
         assert_eq!(bad, vec!["broken".to_string()]);
+        // Dated rows from llm-prices, not the "gpt-5" prefix ($1.25 / $10).
+        assert_eq!(
+            p.price_of("gpt-5.4").unwrap(),
+            Price {
+                input: 2.5,
+                output: 15.0
+            }
+        );
+        assert_eq!(
+            p.price_of("openai/gpt-5.5").unwrap(),
+            Price {
+                input: 5.0,
+                output: 30.0
+            }
+        );
+        assert_eq!(
+            p.price_of("gpt-5.6-sol").unwrap(),
+            Price {
+                input: 4.0,
+                output: 20.0
+            }
+        );
+        // `[pricing]` still wins over llm-prices.
+        let (o, _) =
+            Pricing::from_config_text("[pricing]\n\"gpt-5.4\" = { input = 1.0, output = 2.0 }\n");
+        assert_eq!(o.price_of("gpt-5.4").unwrap().input, 1.0);
+        assert!(Pricing::empty().price_of("gpt-5.4").is_none());
         let price = c.price_of("qwen3:14b").unwrap();
         assert!((price.cost(1_000_000, 500_000) - 0.2).abs() < 1e-9);
     }
