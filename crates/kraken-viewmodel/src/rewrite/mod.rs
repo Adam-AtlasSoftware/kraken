@@ -550,14 +550,19 @@ pub fn check_export_dir(project_dir: Option<&str>, input: &str) -> DirCheck {
             "A folder path cannot contain \"..\". Type the full path instead.".into(),
         );
     }
-    if !p.is_absolute() {
+    // On Windows `\x` and `C:x` are not absolute, yet the command does not put them in the
+    // project either: joined to the project folder they name another place on the disk.
+    let rooted = p.is_absolute()
+        || p.has_root()
+        || matches!(p.components().next(), Some(Component::Prefix(_)));
+    if !rooted {
         return DirCheck::Inside;
     }
     if p.parent().is_none() {
         return DirCheck::Invalid("Pick a folder, not the root of a disk.".into());
     }
     match project_dir {
-        Some(dir) if p.starts_with(dir) => DirCheck::Inside,
+        Some(dir) if Path::new(dir).join(p).starts_with(dir) => DirCheck::Inside,
         _ => DirCheck::Outside,
     }
 }

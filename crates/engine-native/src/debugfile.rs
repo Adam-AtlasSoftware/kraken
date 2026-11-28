@@ -51,23 +51,25 @@ fn candidates_in(binary: &Path, w: &Wanted, system: &Path) -> Vec<PathBuf> {
         && id.len() > 1
     {
         let hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
-        let rel = format!(".build-id/{}/{}.debug", &hex[..2], &hex[2..]);
+        let rel = Path::new(".build-id")
+            .join(&hex[..2])
+            .join(format!("{}.debug", &hex[2..]));
         out.push(dir.join(&rel));
         out.push(system.join(&rel));
     }
     if let Some((name, _)) = &w.link
         && !name.is_empty()
-        && !name.contains('/')
+        && !name.contains(['/', '\\'])
     {
         out.push(dir.join(name));
         out.push(dir.join(".debug").join(name));
         // /usr/lib/debug/<directory of the program>/<name>
         let abs = dir.canonicalize().unwrap_or(dir);
-        out.push(
-            system
-                .join(abs.strip_prefix("/").unwrap_or(&abs))
-                .join(name),
-        );
+        let below: PathBuf = abs
+            .components()
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect();
+        out.push(system.join(below).join(name));
     }
     out
 }
@@ -197,16 +199,13 @@ mod tests {
             &w,
             Path::new("/usr/lib/debug"),
         );
-        // separators as on Unix, so the expectations hold on Windows too
-        let c: Vec<String> = c
-            .iter()
-            .map(|p| p.display().to_string().replace('\\', "/"))
-            .collect();
-        assert_eq!(c[0], "/opt/app/bin/.build-id/ab/cdef.debug");
-        assert_eq!(c[1], "/usr/lib/debug/.build-id/ab/cdef.debug");
-        assert_eq!(c[2], "/opt/app/bin/prog.debug");
-        assert_eq!(c[3], "/opt/app/bin/.debug/prog.debug");
-        assert!(c[4].ends_with("opt/app/bin/prog.debug") && c[4].starts_with("/usr/lib/debug/"));
+        let p = |s: &str| s.split('/').fold(PathBuf::from("/"), |p, c| p.join(c));
+        assert_eq!(c[0], p("opt/app/bin/.build-id/ab/cdef.debug"));
+        assert_eq!(c[1], p("usr/lib/debug/.build-id/ab/cdef.debug"));
+        assert_eq!(c[2], p("opt/app/bin/prog.debug"));
+        assert_eq!(c[3], p("opt/app/bin/.debug/prog.debug"));
+        assert!(c[4].ends_with(Path::new("opt").join("app").join("bin").join("prog.debug")));
+        assert!(c[4].starts_with(p("usr/lib/debug")));
         // a link name with a slash is not followed
         let w = Wanted {
             build_id: None,

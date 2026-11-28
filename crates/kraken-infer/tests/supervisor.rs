@@ -105,6 +105,8 @@ async fn gives_up_after_max_restarts() {
     p.stop().await;
 }
 
+// SIGTERM and its grace period exist on Unix; on Windows a stop terminates the process at once.
+#[cfg(unix)]
 #[tokio::test]
 async fn sigkill_after_grace_when_term_ignored() {
     let p = ManagedProcess::start(spec(&["--ignore-term"])).unwrap();
@@ -119,6 +121,7 @@ async fn sigkill_after_grace_when_term_ignored() {
     assert!(p.logs().iter().any(|l| l.text.contains("signal 9")));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn clean_sigterm_is_fast() {
     let p = ManagedProcess::start(spec(&[])).unwrap();
@@ -147,15 +150,16 @@ async fn missing_binary_fails_at_start() {
 
 #[tokio::test]
 async fn generic_backend_end_to_end() {
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     let manifest = format!(
         r#"
 id = "fake"
 license = "MIT"
-command = ["{FAKE}", "--port", "{{port}}", "--ready-after", "{{delay}}"]
+command = ['{FAKE}', "--port", "{{port}}", "--ready-after", "{{delay}}"]
 health_path = "/v1/models"
 [capabilities]
-os = ["linux"]
-arch = ["x86_64"]
+os = ["{os}"]
+arch = ["{arch}"]
 [settings_schema.properties.delay]
 type = "number"
 default = 0

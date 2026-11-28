@@ -473,6 +473,8 @@ struct FileStamp {
     len: u64,
     #[cfg(unix)]
     inode: (u64, u64),
+    #[cfg(windows)]
+    file_id: Option<(u32, u64)>,
 }
 
 impl FileStamp {
@@ -487,12 +489,15 @@ impl FileStamp {
                 use std::os::unix::fs::MetadataExt;
                 (md.dev(), md.ino())
             },
+            #[cfg(windows)]
+            file_id: crate::winfs::file_id(path),
         })
     }
 }
 
 /// A value read from a file, read again only when the file's time, size or inode changed (a
-/// save that replaces the file changes the inode even within one timestamp tick).
+/// save that replaces the file changes the inode, or the file index on Windows, even within one
+/// timestamp tick).
 struct FileCache<T> {
     slot: Mutex<Option<(Option<FileStamp>, T)>>,
 }

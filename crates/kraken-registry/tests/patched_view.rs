@@ -40,6 +40,17 @@ fn x86() -> FixtureFile {
 
 #[tokio::test]
 async fn a_flipped_branch_and_a_nop_show_in_the_patched_listing_only() {
+    // The patched rows are decoded with the SLEIGH specs: skipped where they are not compiled,
+    // unless KRAKEN_REQUIRE_SPECS says they must be there.
+    let specs = kraken_emu::SpecRoots::discover();
+    if kraken_emu::Machine::new(kraken_emu::Arch::X86, &specs).is_err() {
+        assert!(
+            std::env::var_os("KRAKEN_REQUIRE_SPECS").is_none(),
+            "KRAKEN_REQUIRE_SPECS is set but no SLEIGH specs were found"
+        );
+        eprintln!("skipped: no SLEIGH specs for x86");
+        return;
+    }
     let env = Setup::new(x86()).start().await;
     let u = user();
     let plain = env

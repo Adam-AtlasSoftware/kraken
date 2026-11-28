@@ -372,18 +372,18 @@ fn locations(binary: &Path, refs: &DebugRefs, system: &Path) -> Vec<(PathBuf, Ca
     }
     if let Some(l) = &refs.debuglink
         && !l.name.0.is_empty()
-        && !l.name.0.contains('/')
+        && !l.name.0.contains(['/', '\\'])
     {
         let name = &l.name.0;
         out.push((dir.join(name), CandidateSource::Beside));
         out.push((dir.join(".debug").join(name), CandidateSource::Beside));
         let abs = dir.canonicalize().unwrap_or(dir);
-        out.push((
-            system
-                .join(abs.strip_prefix("/").unwrap_or(&abs))
-                .join(name),
-            CandidateSource::System,
-        ));
+        // <system>/<directory of the program>/<name>, also for a directory with a drive letter.
+        let below: PathBuf = abs
+            .components()
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect();
+        out.push((system.join(below).join(name), CandidateSource::System));
     }
     if let Some(root) = super::debuginfo_fetch::download_cache()
         && let Some(w) = super::debuginfo_fetch::wanted_of(refs)
@@ -477,7 +477,7 @@ fn add_candidate(
     source: CandidateSource,
     candidates: &mut Vec<DebugCandidate>,
 ) {
-    let p = std::fs::canonicalize(&p).unwrap_or(p);
+    let p = kraken_proto::fspath::canonicalize(&p).unwrap_or(p);
     let shown = p.to_string_lossy().into_owned();
     if candidates.iter().any(|c| c.path.0 == shown) {
         return;
@@ -599,7 +599,7 @@ pub fn resolve_for_attach(binary: &Path, debug_file: &Path) -> Result<PathBuf, P
     // listed once, under its own source, and is still the one the person chose.
     let named = debug_file
         .is_file()
-        .then(|| std::fs::canonicalize(debug_file).ok())
+        .then(|| kraken_proto::fspath::canonicalize(debug_file).ok())
         .flatten();
     let chosen: Vec<_> = out
         .candidates

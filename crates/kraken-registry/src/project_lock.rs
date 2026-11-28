@@ -18,6 +18,14 @@ use kraken_proto::{ErrorCode, ProtoError};
 /// Name of the lock file in the project directory.
 pub const LOCK_FILE: &str = "kraken.lock";
 
+/// The file that names the process holding the lock: the lock file itself on Unix. A lock on
+/// Windows is mandatory, so another process cannot read a locked file and the pid goes beside it.
+pub const PID_FILE: &str = if cfg!(windows) {
+    "kraken.lock.pid"
+} else {
+    LOCK_FILE
+};
+
 static HELD: LazyLock<Mutex<HashMap<PathBuf, Weak<Held>>>> = LazyLock::new(Mutex::default);
 
 fn held() -> MutexGuard<'static, HashMap<PathBuf, Weak<Held>>> {
@@ -32,6 +40,9 @@ struct Held {
 impl Drop for Held {
     fn drop(&mut self) {
         let mut map = held();
+        if cfg!(windows) {
+            let _ = std::fs::remove_file(self.key.join(PID_FILE));
+        }
         // Unlock while the table is locked, so an acquire racing this drop never finds the file
         // still locked by this process.
         let _ = self.file.unlock();
@@ -72,7 +83,7 @@ pub(crate) fn in_use_message(dir: &Path, pid: Option<u32>) -> String {
 /// Takes this process's lock on the project in `dir` (an existing directory), or shares the one
 /// it already holds. Fails with `unsupported` when another process holds it.
 pub fn acquire(dir: &Path) -> Result<ProjectLock, ProtoError> {
-    let key = std::fs::canonicalize(dir).map_err(|e| {
+    let key = kraken_proto::fspath::canonicalize(dir).map_err(|e| {
         ProtoError::new(
             ErrorCode::NotFound,
             format!("cannot open the project {}: {e}", dir.display()),
@@ -103,12 +114,7 @@ pub fn acquire(dir: &Path) -> Result<ProjectLock, ProtoError> {
         match file.try_lock() {
             Ok(()) => break,
             Err(TryLockError::WouldBlock) => {
-                let mut text = String::new();
-                let pid = file
-                    .seek(SeekFrom::Start(0))
-                    .and_then(|_| file.read_to_string(&mut text))
-                    .ok()
-                    .and_then(|_| text.trim().parse::<u32>().ok());
+                let pid = read_pid(&mut file, &key);
                 if pid == Some(std::process::id()) && std::time::Instant::now() < deadline {
                     std::thread::sleep(std::time::Duration::from_millis(25));
                     continue;
@@ -128,16 +134,33 @@ pub fn acquire(dir: &Path) -> Result<ProjectLock, ProtoError> {
     }
     // The pid is a courtesy for the message another process shows; failing to write it is not
     // a reason to refuse the open.
-    let _ = file
-        .set_len(0)
-        .and_then(|()| file.seek(SeekFrom::Start(0)))
-        .and_then(|_| writeln!(file, "{}", std::process::id()));
+    if cfg!(windows) {
+        let _ = std::fs::write(key.join(PID_FILE), format!("{}\n", std::process::id()));
+    } else {
+        let _ = file
+            .set_len(0)
+            .and_then(|()| file.seek(SeekFrom::Start(0)))
+            .and_then(|_| writeln!(file, "{}", std::process::id()));
+    }
     let h = Arc::new(Held {
         key: key.clone(),
         file,
     });
     map.insert(key, Arc::downgrade(&h));
     Ok(ProjectLock { inner: h })
+}
+
+/// The pid of the process holding the lock, from the open lock file or the file beside it.
+fn read_pid(file: &mut File, dir: &Path) -> Option<u32> {
+    let mut text = String::new();
+    if cfg!(windows) {
+        text = std::fs::read_to_string(dir.join(PID_FILE)).ok()?;
+    } else {
+        file.seek(SeekFrom::Start(0))
+            .and_then(|_| file.read_to_string(&mut text))
+            .ok()?;
+    }
+    text.trim().parse::<u32>().ok()
 }
 
 #[cfg(test)]
@@ -149,12 +172,16 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let a = acquire(tmp.path()).expect("first");
         let b = acquire(tmp.path()).expect("second handle in the same process");
-        let text = std::fs::read_to_string(tmp.path().join(LOCK_FILE)).expect("lock file");
+        let text = std::fs::read_to_string(tmp.path().join(PID_FILE)).expect("pid file");
         assert_eq!(text.trim(), std::process::id().to_string());
         drop(a);
-        assert!(held().contains_key(&std::fs::canonicalize(tmp.path()).expect("canon")));
+        assert!(
+            held().contains_key(&kraken_proto::fspath::canonicalize(tmp.path()).expect("canon"))
+        );
         drop(b);
-        assert!(!held().contains_key(&std::fs::canonicalize(tmp.path()).expect("canon")));
+        assert!(
+            !held().contains_key(&kraken_proto::fspath::canonicalize(tmp.path()).expect("canon"))
+        );
         // another open file description stands in for another process
         let other = File::open(tmp.path().join(LOCK_FILE)).expect("open");
         other.try_lock().expect("released");
@@ -164,7 +191,8 @@ mod tests {
     fn a_lock_held_elsewhere_is_refused_with_the_pid() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join(LOCK_FILE);
-        std::fs::write(&path, "4242\n").expect("write");
+        std::fs::write(&path, "").expect("write");
+        std::fs::write(tmp.path().join(PID_FILE), "4242\n").expect("write");
         let other = File::open(&path).expect("open");
         other.try_lock().expect("lock");
         let e = acquire(tmp.path()).expect_err("held elsewhere");
@@ -179,7 +207,12 @@ mod tests {
     fn a_lock_left_with_this_process_s_pid_is_waited_for() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join(LOCK_FILE);
-        std::fs::write(&path, format!("{}\n", std::process::id())).expect("write");
+        std::fs::write(&path, "").expect("write");
+        std::fs::write(
+            tmp.path().join(PID_FILE),
+            format!("{}\n", std::process::id()),
+        )
+        .expect("write");
         let other = File::open(&path).expect("open");
         other.try_lock().expect("lock");
         // A forked child that has not yet exec'd: it lets go in a moment.

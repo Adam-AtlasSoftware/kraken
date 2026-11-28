@@ -426,6 +426,13 @@ impl KrakenConfig {
         if let Some(x) = non_empty("XDG_CONFIG_HOME").filter(|p| p.is_absolute()) {
             return Some(x.join("kraken/config.toml"));
         }
+        // Windows: the roaming settings folder, whatever shell started the program (HOME is set
+        // by only some of them).
+        if cfg!(windows)
+            && let Some(a) = non_empty("APPDATA").filter(|p| p.is_absolute())
+        {
+            return Some(a.join("kraken").join("config.toml"));
+        }
         non_empty("HOME").map(|h| h.join(".config/kraken/config.toml"))
     }
 

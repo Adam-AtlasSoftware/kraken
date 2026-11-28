@@ -339,7 +339,7 @@ fn a_failed_swap_puts_back_what_was_moved() {
         (p.join("new/a"), p.join("bin/a"), PathBuf::from("bin/a")),
         (p.join("new/b"), p.join("bin/b"), PathBuf::from("bin/b")),
     ];
-    assert!(swap(&entries, &p.join("backup")).is_err());
+    assert!(swap(&RealFs, &entries, &p.join("backup")).is_err());
     assert_eq!(fs::read_to_string(p.join("bin/a")).expect("a"), "old a");
     assert_eq!(fs::read_to_string(p.join("bin/b")).expect("b"), "old b");
 }
@@ -459,4 +459,328 @@ fn a_kept_copy_of_another_install_is_not_cleared() {
     fs::write(root.join(MANIFEST), r#"{"version":"0.4.0","entries":[]}"#).expect("manifest");
     clear_backup_root(&root, "0.4.0").expect("cleared");
     assert!(!root.exists());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Windows behaviour, simulated: a running program can be renamed but not deleted, the data
+// directory may be on another volume than the install, and an antivirus scan holds a new file
+// for a moment. The real rules are checked on Windows by the `cfg(windows)` test at the end.
+
+/// The real file system with Windows' refusals added.
+#[derive(Default)]
+struct WindowsLikeFs {
+    /// Running programs: they can be renamed (the name follows the file) but not deleted.
+    running: Mutex<Vec<PathBuf>>,
+    /// Paths under this directory are on another volume than everything else.
+    other_volume: Option<PathBuf>,
+    /// Renames from these paths fail as "busy" this many more times.
+    busy: Mutex<HashMap<PathBuf, u32>>,
+}
+
+impl WindowsLikeFs {
+    fn on_other_volume(&self, p: &Path) -> bool {
+        self.other_volume.as_ref().is_some_and(|v| p.starts_with(v))
+    }
+
+    fn holds_running(&self, p: &Path) -> bool {
+        self.running
+            .lock()
+            .expect("lock")
+            .iter()
+            .any(|r| r.starts_with(p))
+    }
+}
+
+impl SwapFs for WindowsLikeFs {
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        if let Some(n) = self.busy.lock().expect("lock").get_mut(from)
+            && *n > 0
+        {
+            *n -= 1;
+            return Err(io::Error::new(io::ErrorKind::ResourceBusy, "scanned"));
+        }
+        if self.on_other_volume(from) != self.on_other_volume(to) {
+            return Err(io::Error::new(
+                io::ErrorKind::CrossesDevices,
+                "other volume",
+            ));
+        }
+        fs::rename(from, to)?;
+        for r in self.running.lock().expect("lock").iter_mut() {
+            if let Ok(rest) = r.strip_prefix(from) {
+                *r = to.join(rest);
+            }
+        }
+        Ok(())
+    }
+
+    fn remove(&self, path: &Path) -> io::Result<()> {
+        if self.holds_running(path) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "running"));
+        }
+        remove_any(path)
+    }
+
+    fn retry_delays(&self) -> &[Duration] {
+        &[Duration::ZERO; 3]
+    }
+}
+
+const WIN_TARGET: &str = "x86_64-pc-windows-msvc";
+
+/// Reads the stand-in program instead of running it: these "programs" are text.
+fn read_version(exe: &Path, _: &[&str], _: &[(&str, &str)], _: Duration) -> Option<String> {
+    let text = fs::read_to_string(exe).ok()?;
+    let at = text.find("kraken ")?;
+    Some(text[at..].trim_end_matches(['"', '\n', '\r']).to_string())
+}
+
+/// The Windows release zip as `scripts/package.sh` makes it.
+fn release_zip(version: &str) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut z = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        let top = format!("kraken-{version}-{WIN_TARGET}");
+        for (name, body) in [
+            ("bin/kraken.exe", format!("kraken {version}")),
+            ("bin/krakend.exe", "new daemon".to_string()),
+            ("bin/kraken-gui.exe", "new gui".to_string()),
+            ("share/kraken/kraken-ghidra.jar", "new jar".to_string()),
+            (
+                "share/kraken/kraken-dotnet/kraken-dotnet.dll",
+                "new dll".to_string(),
+            ),
+            ("README.md", "readme".to_string()),
+        ] {
+            z.start_file(format!("{top}/{name}"), opts).expect("start");
+            z.write_all(body.as_bytes()).expect("write");
+        }
+        z.finish().expect("finish");
+    }
+    buf.into_inner()
+}
+
+/// An install by `install.ps1` (receipt `windows_installer`) of 0.3.0, release 0.4.0 signed.
+fn windows_fixture() -> Fixture {
+    let f = Fixture::new();
+    for p in ["bin/kraken", "bin/krakend"] {
+        let _ = fs::remove_file(f.prefix.join(p));
+    }
+    fs::write(f.prefix.join("bin/kraken.exe"), "kraken 0.3.0").expect("w");
+    fs::write(f.prefix.join("bin/krakend.exe"), "old daemon").expect("w");
+    fs::write(f.prefix.join("bin/kraken-gui.exe"), "old gui").expect("w");
+    fs::create_dir_all(f.prefix.join("share/kraken/kraken-dotnet")).expect("mkdir");
+    fs::write(
+        f.prefix
+            .join("share/kraken/kraken-dotnet/kraken-dotnet.dll"),
+        "old dll",
+    )
+    .expect("w");
+    fs::write(
+        f.prefix.join("share/kraken/install.json"),
+        r#"{"method": "windows_installer", "version": "0.3.0", "prefix": "x"}"#,
+    )
+    .expect("receipt");
+    let zip = release_zip("0.4.0");
+    let name = format!("kraken-0.4.0-{WIN_TARGET}.zip");
+    let sums = format!("{}  {name}\n", sha(&zip));
+    let base = format!("{BASE}/v0.4.0");
+    f.fetcher.put(&format!("{base}/{name}"), zip);
+    f.fetcher.put(
+        &format!("{base}/SHA256SUMS.minisig"),
+        f.key
+            .sign(sums.as_bytes(), &trusted_comment("0.4.0"))
+            .into_bytes(),
+    );
+    f.fetcher
+        .put(&format!("{base}/SHA256SUMS"), sums.into_bytes());
+    f
+}
+
+fn windows_updater(f: &Fixture, fs: Arc<WindowsLikeFs>) -> HostUpdater {
+    f.updater(InstallKind::WindowsInstaller {
+        prefix: f.prefix.clone(),
+    })
+    .with_target(WIN_TARGET)
+    .with_version_runner(read_version)
+    .with_fs(fs)
+}
+
+fn leftovers(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.contains(LEFTOVER_MARK))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn running_programs_are_renamed_aside_and_rolled_back_on_windows() {
+    for other_volume in [false, true] {
+        let f = windows_fixture();
+        let wfs = Arc::new(WindowsLikeFs {
+            running: Mutex::new(vec![
+                f.prefix.join("bin/kraken.exe"),
+                f.prefix.join("bin/krakend.exe"),
+                f.prefix
+                    .join("share/kraken/kraken-dotnet/kraken-dotnet.dll"),
+            ]),
+            other_volume: other_volume.then(|| f.data.clone()),
+            busy: Mutex::new(HashMap::new()),
+        });
+        let stopped = Arc::new(Mutex::new(false));
+        let s2 = stopped.clone();
+        let u = windows_updater(&f, wfs.clone()).with_before_swap(Arc::new(move || {
+            let s2 = s2.clone();
+            Box::pin(async move {
+                *s2.lock().expect("lock") = true;
+            })
+        }));
+        let done = u.apply(&quiet).await.expect("update");
+        assert!(
+            *stopped.lock().expect("lock"),
+            "the daemon is stopped first"
+        );
+        assert_eq!(done.to, "0.4.0");
+        assert_eq!(f.read("bin/kraken.exe"), "kraken 0.4.0");
+        assert_eq!(f.read("bin/krakend.exe"), "new daemon");
+        assert_eq!(f.read("bin/kraken-gui.exe"), "new gui");
+        assert_eq!(
+            f.read("share/kraken/kraken-dotnet/kraken-dotnet.dll"),
+            "new dll"
+        );
+        assert!(f.read("share/kraken/install.json").contains("\"0.4.0\""));
+        let kept = f.data.join("previous/0.3.0/bin/kraken.exe");
+        assert_eq!(fs::read_to_string(&kept).expect("kept"), "kraken 0.3.0");
+        // Across volumes the running programs could only be renamed beside themselves; they
+        // wait in the install for the next start.
+        let left = leftovers(&f.prefix.join("bin"));
+        if other_volume {
+            assert_eq!(left.len(), 2, "{left:?}");
+            assert_eq!(leftovers(&f.prefix.join("share/kraken")).len(), 1);
+        } else {
+            assert!(left.is_empty(), "{left:?}");
+        }
+
+        // The rollback runs from the new program, which is running now.
+        *wfs.running.lock().expect("lock") = vec![f.prefix.join("bin/kraken.exe")];
+        let back = u.rollback().expect("rollback");
+        assert_eq!(back.to, "0.3.0");
+        assert_eq!(f.read("bin/kraken.exe"), "kraken 0.3.0");
+        assert_eq!(f.read("bin/krakend.exe"), "old daemon");
+        assert_eq!(
+            f.read("share/kraken/kraken-dotnet/kraken-dotnet.dll"),
+            "old dll"
+        );
+        assert!(f.read("share/kraken/install.json").contains("\"0.3.0\""));
+
+        // The next start deletes what had to stay.
+        sweep_leftovers(&f.prefix);
+        assert!(leftovers(&f.prefix.join("bin")).is_empty());
+        assert!(leftovers(&f.prefix.join("share/kraken")).is_empty());
+        assert_eq!(f.read("bin/kraken.exe"), "kraken 0.3.0");
+    }
+}
+
+fn two_file_swap(p: &Path) -> Vec<(PathBuf, PathBuf, PathBuf)> {
+    fs::create_dir_all(p.join("new")).expect("mkdir");
+    fs::create_dir_all(p.join("bin")).expect("mkdir");
+    for n in ["a", "b"] {
+        fs::write(p.join("new").join(n), format!("new {n}")).expect("w");
+        fs::write(p.join("bin").join(n), format!("old {n}")).expect("w");
+    }
+    vec![
+        (p.join("new/a"), p.join("bin/a"), PathBuf::from("bin/a")),
+        (p.join("new/b"), p.join("bin/b"), PathBuf::from("bin/b")),
+    ]
+}
+
+#[test]
+fn a_file_held_for_a_moment_is_tried_again_and_one_held_too_long_undoes_the_swap() {
+    // Held twice: the retries get through.
+    let d = tempfile::tempdir().expect("tmp");
+    let entries = two_file_swap(d.path());
+    let wfs = WindowsLikeFs::default();
+    wfs.busy
+        .lock()
+        .expect("lock")
+        .insert(d.path().join("new/b"), 2);
+    swap(&wfs, &entries, &d.path().join("backup")).expect("swap");
+    assert_eq!(
+        fs::read_to_string(d.path().join("bin/b")).expect("b"),
+        "new b"
+    );
+
+    // Held longer than the retries last: everything is put back and the message says why.
+    let d = tempfile::tempdir().expect("tmp");
+    let entries = two_file_swap(d.path());
+    let wfs = WindowsLikeFs::default();
+    wfs.busy
+        .lock()
+        .expect("lock")
+        .insert(d.path().join("bin/b"), 10);
+    let e = swap(&wfs, &entries, &d.path().join("backup")).expect_err("held");
+    assert!(e.to_string().contains("kraken daemon stop"), "{e}");
+    assert_eq!(
+        fs::read_to_string(d.path().join("bin/a")).expect("a"),
+        "old a"
+    );
+    assert_eq!(
+        fs::read_to_string(d.path().join("bin/b")).expect("b"),
+        "old b"
+    );
+}
+
+#[test]
+fn the_update_lock_is_held_by_one_update_at_a_time() {
+    let d = tempfile::tempdir().expect("tmp");
+    let first = lock(d.path()).expect("first");
+    let e = lock(d.path()).expect_err("second");
+    assert!(e.to_string().contains("another update is running"), "{e}");
+    drop(first);
+    lock(d.path()).expect("free again");
+}
+
+/// On Windows itself: a running program cannot be overwritten, but the update renames it aside,
+/// puts the new one in its place, and a rollback brings it back.
+#[cfg(windows)]
+#[tokio::test]
+async fn on_windows_a_running_daemon_is_replaced_and_restored() {
+    let f = windows_fixture();
+    let system = std::env::var_os("SystemRoot").expect("SystemRoot");
+    let ping = PathBuf::from(system).join(r"System32\PING.EXE");
+    let daemon = f.prefix.join("bin/krakend.exe");
+    fs::copy(&ping, &daemon).expect("copy");
+    let original = fs::read(&daemon).expect("read");
+    let mut child = std::process::Command::new(&daemon)
+        .args(["-n", "60", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        fs::write(&daemon, b"x").is_err(),
+        "a running program cannot be overwritten"
+    );
+    let u = f
+        .updater(InstallKind::WindowsInstaller {
+            prefix: f.prefix.clone(),
+        })
+        .with_target(WIN_TARGET)
+        .with_version_runner(read_version);
+    let result = u.apply(&quiet).await;
+    let replaced = f.read("bin/krakend.exe");
+    let back = result.as_ref().ok().map(|_| u.rollback());
+    let _ = child.kill();
+    let _ = child.wait();
+    result.expect("update");
+    assert_eq!(replaced, "new daemon");
+    back.expect("rollback ran").expect("rollback");
+    assert_eq!(fs::read(&daemon).expect("read"), original);
+    assert_eq!(f.read("bin/kraken.exe"), "kraken 0.3.0");
 }

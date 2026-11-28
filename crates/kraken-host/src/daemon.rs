@@ -300,7 +300,7 @@ fn exe_name() -> &'static str {
 }
 
 /// Finds `krakend`: `$KRAKEN_KRAKEND`, else the directory of the running executable (and, for
-/// test binaries in `target/<profile>/deps`, its parent).
+/// test binaries, the cargo profile directory).
 pub fn find_krakend() -> Result<PathBuf, DaemonError> {
     if let Some(p) = std::env::var_os(ENV_KRAKEND).filter(|p| !p.is_empty()) {
         return Ok(PathBuf::from(p));
@@ -310,9 +310,16 @@ pub fn find_krakend() -> Result<PathBuf, DaemonError> {
         .parent()
         .ok_or_else(|| DaemonError::NoBinary("executable has no directory".into()))?;
     let mut candidates = vec![dir.join(exe_name())];
-    if dir.file_name().is_some_and(|n| n == "deps")
-        && let Some(up) = dir.parent()
-    {
+    // A test binary: `target/<profile>/deps/` before cargo 1.100,
+    // `target/<profile>/build/<pkg>/<hash>/out/` since.
+    let profile = if dir.ends_with("deps") {
+        dir.parent()
+    } else if dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build")) {
+        dir.ancestors().nth(4)
+    } else {
+        None
+    };
+    if let Some(up) = profile {
         candidates.push(up.join(exe_name()));
     }
     candidates

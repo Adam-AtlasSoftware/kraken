@@ -276,7 +276,10 @@ fn enum_values<'a>(values: impl Iterator<Item = &'a str>) -> String {
 mod tests {
     use super::*;
 
+    // The committed reference lists every command; the debugger commands are registered on Unix
+    // only, so elsewhere the registry renders a shorter page.
     #[test]
+    #[cfg_attr(not(unix), ignore = "the reference is rendered from the Unix registry")]
     fn committed_reference_is_up_to_date() {
         let path = reference_path();
         let committed = fs::read_to_string(&path).unwrap_or_default();

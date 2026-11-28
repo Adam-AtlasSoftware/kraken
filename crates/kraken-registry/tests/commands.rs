@@ -237,7 +237,16 @@ async fn kraken_help_finds_sections_and_ui_commands_validate() {
 fn standard_registry_is_complete_and_self_describing() {
     let r = Registry::standard();
     let names: Vec<_> = r.iter().map(|e| e.spec().name.as_str()).collect();
-    assert_eq!(names, EXPECTED);
+    // The debugger, its traces and `emulate_call` run on the Unix sandbox only and are not
+    // registered elsewhere.
+    let unix_only =
+        |n: &str| n.starts_with("debug_") || n.starts_with("coverage_") || n == "emulate_call";
+    let expected: Vec<&str> = EXPECTED
+        .iter()
+        .copied()
+        .filter(|n| cfg!(unix) || !unix_only(n))
+        .collect();
+    assert_eq!(names, expected);
     for e in r.iter() {
         let spec = e.spec();
         assert!(

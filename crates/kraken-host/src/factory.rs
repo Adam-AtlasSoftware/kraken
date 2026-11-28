@@ -849,7 +849,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("dotnet");
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("dotnet"), b"").unwrap();
+        std::fs::write(
+            root.join(format!("dotnet{}", std::env::consts::EXE_SUFFIX)),
+            b"",
+        )
+        .unwrap();
         let ext = dir.path().join("kraken-dotnet.dll");
         std::fs::write(&ext, b"").unwrap();
         let f = HostEngineFactory::new(KrakenConfig {

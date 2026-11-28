@@ -1,0 +1,9 @@
+# Check text files out with LF on every platform: committed outputs (schema, fixtures, docs,
+# cassettes) are compared byte for byte by tests, and a CRLF checkout on Windows changes them.
+* text=auto eol=lf
+
+# Files that are CRLF on purpose (firmware images in their native text formats, a vendored text).
+corpus/raw/fw_cortexm.hex -text
+corpus/raw/fw_cortexm.srec -text
+crates/kraken-gui/assets/fonts/LICENSE.txt -text
+

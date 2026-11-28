@@ -799,7 +799,8 @@ async fn an_auto_strata_model_runs_on_the_big_card_alone_from_its_own_config() {
     assert_eq!(run["gpu"], 1);
     let args = run["args"].to_string();
     assert!(!args.contains("--peer"), "{args}");
-    assert!(spawn.contains("kraken-run/s.json"), "{spawn}");
+    let overlay = Path::new("kraken-run").join("s.json");
+    assert!(spawn.contains(&overlay.display().to_string()), "{spawn}");
     assert!(spawn.ends_with("--gpu 1 --replicas 1"), "{spawn}");
     assert_eq!(
         std::fs::read_to_string(&r.config).expect("config"),

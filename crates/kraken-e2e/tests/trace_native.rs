@@ -47,7 +47,7 @@ fn runner() -> Option<PathBuf> {
         return Some(PathBuf::from(p));
     }
     let exe = std::env::current_exe().ok()?;
-    let p = exe.parent()?.parent()?.join("kraken-emu-run");
+    let p = cargo_profile_dir(exe.parent()?)?.join("kraken-emu-run");
     p.is_file().then_some(p)
 }
 
@@ -210,4 +210,14 @@ async fn coverage_of_switch_vm_matches_the_cases_that_ran() {
     assert_eq!(cleared["removed"], 1);
     let cleared = call(&registry, &session, "coverage_clear", json!({})).await;
     assert_eq!(cleared["remaining"], 0);
+}
+
+/// `target/<profile>` from the directory of a test executable: `<profile>/deps` before cargo
+/// 1.100, `<profile>/build/<pkg>/<hash>/out` since.
+fn cargo_profile_dir(dir: &Path) -> Option<&Path> {
+    if dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build")) {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    }
 }

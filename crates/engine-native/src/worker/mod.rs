@@ -21,7 +21,7 @@
 // the wire helpers are only used by the client and server
 #![cfg_attr(not(any(unix, windows)), allow(dead_code))]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kraken_proto::{ErrorCode, ProtoError};
@@ -195,7 +195,7 @@ impl WorkerOptions {
         let name = format!("{WORKER_BIN}{}", std::env::consts::EXE_SUFFIX);
         let dir = exe.parent();
         dir.into_iter()
-            .chain(dir.and_then(|d| d.parent()))
+            .chain(dir.and_then(cargo_profile_dir))
             .map(|d| d.join(&name))
             .find(|p| p.is_file())
             .ok_or_else(|| {
@@ -294,4 +294,14 @@ pub(crate) fn rpc_error(e: &ProtoError) -> Value {
 
 pub(crate) fn duration_ms(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// `target/<profile>` from the directory of a test executable: `<profile>/deps` before cargo
+/// 1.100, `<profile>/build/<pkg>/<hash>/out` since.
+fn cargo_profile_dir(dir: &Path) -> Option<&Path> {
+    if dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build")) {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    }
 }
