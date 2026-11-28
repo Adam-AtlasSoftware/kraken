@@ -1178,7 +1178,7 @@ impl Session {
         let binary_path = {
             let binary = binary.to_path_buf();
             blocking(move || {
-                let p = std::fs::canonicalize(&binary)
+                let p = kraken_proto::fspath::canonicalize(&binary)
                     .map_err(|e| io_err("cannot open binary", &binary, e))?;
                 // A FIFO or device would block the hash or feed the engine endless data.
                 crate::trust::ensure_regular_file(&p)?;

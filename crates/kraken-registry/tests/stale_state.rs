@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use engine_fake::FakeEngine;
 use kraken_engine::{CancellationToken, SharedEngine};
 use kraken_proto::{ErrorCode, Locator, ProtoError};
-use kraken_registry::project_lock::LOCK_FILE;
+use kraken_registry::project_lock::{LOCK_FILE, PID_FILE};
 use kraken_registry::{CallContext, EngineFactory, Registry, Session, Surface};
 use serde_json::{Value, json};
 
@@ -201,7 +201,7 @@ async fn a_project_open_in_another_process_is_refused() {
 
     // another open file description stands in for the lock of another process
     let lock_path = w.dir.join(LOCK_FILE);
-    let text = std::fs::read_to_string(&lock_path).expect("lock file");
+    let text = std::fs::read_to_string(w.dir.join(PID_FILE)).expect("pid file");
     assert_eq!(text.trim(), std::process::id().to_string());
     let other = std::fs::File::open(&lock_path).expect("open");
     assert!(other.try_lock().is_err(), "the project is locked");

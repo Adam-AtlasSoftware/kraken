@@ -34,6 +34,22 @@ fn runtime_dir(env: &CliEnv) -> Result<RuntimeDir, ProtoError> {
     }
 }
 
+/// Stops the running daemon, if there is one, and waits until it is gone. For an update on
+/// Windows, where the daemon and the engines it started hold KRAKEN's files; the next command
+/// starts it again. Quiet: a daemon that does not stop only means that the swap may meet files
+/// in use, which it reports.
+pub(crate) async fn stop_quietly(dir: &RuntimeDir) -> bool {
+    match DaemonClient::connect_running(dir, ClientKind::Cli, BUILD).await {
+        Ok(Some(c)) => c.shutdown().await.is_ok() && wait_until_stopped(dir, STOP_TIMEOUT).await,
+        _ => false,
+    }
+}
+
+/// The runtime directory this CLI uses for the daemon, if one can be resolved.
+pub(crate) fn runtime_dir_of(env: &CliEnv) -> Option<RuntimeDir> {
+    runtime_dir(env).ok()
+}
+
 /// The running daemon, if any (never starts one).
 async fn running(env: &CliEnv) -> Result<Option<Arc<DaemonClient>>, ProtoError> {
     if let DaemonMode::Connected(c) = &env.daemon {

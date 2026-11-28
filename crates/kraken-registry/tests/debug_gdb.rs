@@ -17,9 +17,7 @@ fn runner() -> PathBuf {
     if let Some(p) = std::env::var_os("KRAKEN_EMU_RUN").filter(|v| !v.is_empty()) {
         return PathBuf::from(p);
     }
-    let exe = std::env::current_exe().expect("exe");
-    let dir = exe.parent().and_then(Path::parent).expect("target dir");
-    dir.join("kraken-emu-run")
+    common::cargo_profile_dir().join("kraken-emu-run")
 }
 
 struct Rsp(UnixStream);

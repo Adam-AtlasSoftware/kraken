@@ -5,10 +5,21 @@
 //! swap under an exclusive lock. Every file that is replaced must be a regular file (or, for the
 //! data directories, a directory) that the user owns; the old ones go to
 //! `<data dir>/previous/<old version>/`, and a failure puts back what was already moved.
+//!
+//! Windows does not let a running program be overwritten or deleted, but it can be renamed, so
+//! every step is a rename: the running `kraken.exe` moves aside and the new one takes its name.
+//! When the data directory is on another volume than the install, a file is first renamed beside
+//! itself (`<name>.kraken-old-<n>`), then copied to `previous/`, and the renamed file is deleted
+//! when it can be, else by [`sweep_leftovers`] on the next start. Renames and deletes are retried
+//! for a few seconds while another program (an antivirus scan of a new file) holds the file. All
+//! of this goes through [`SwapFs`], so tests make the operations fail as Windows does.
 
 use std::fs::{self, File};
+use std::future::Future;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use kraken_registry::commands::UpdateApplied;
@@ -19,7 +30,7 @@ use sha2::{Digest, Sha256};
 
 use super::UpdateError;
 use super::check::{fetch_capped, is_newer};
-use super::install::{InstallKind, is_root, run_path_with_timeout};
+use super::install::{InstallKind, is_root};
 use super::verify::{sum_for, verify_sums};
 use crate::provision::{Fetcher, extract_tar_gz, extract_zip};
 
@@ -27,7 +38,7 @@ use crate::provision::{Fetcher, extract_tar_gz, extract_zip};
 pub const MAX_ASSET_BYTES: u64 = 2 << 30;
 
 /// What an update works with.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApplyContext {
     /// How KRAKEN was installed.
     pub kind: InstallKind,
@@ -43,6 +54,127 @@ pub struct ApplyContext {
     pub download_base: String,
     /// Longest wait for the staged `kraken --version`.
     pub version_timeout: Duration,
+    /// Runs the staged program and returns what it printed (tests use a stand-in).
+    pub run_version: RunVersion,
+    /// The file operations of the swap.
+    pub fs: Arc<dyn SwapFs>,
+    /// Runs after the new release passed every check and before the first file moves: the CLI
+    /// stops the daemon here on Windows, so no KRAKEN program holds the old files.
+    pub before_swap: Option<BeforeSwap>,
+}
+
+impl std::fmt::Debug for ApplyContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApplyContext")
+            .field("kind", &self.kind)
+            .field("current", &self.current)
+            .field("target", &self.target)
+            .field("data_dir", &self.data_dir)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Runs a program with arguments and extra environment, with a timeout; stdout on success.
+pub type RunVersion = fn(&Path, &[&str], &[(&str, &str)], Duration) -> Option<String>;
+
+/// A step before the swap.
+pub type BeforeSwap = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+/// The file operations a swap makes. The defaults are the real ones; tests override them to fail
+/// the way Windows does (a file in use, another volume).
+pub trait SwapFs: Send + Sync {
+    /// Renames `from` to `to`.
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        fs::rename(from, to)
+    }
+    /// Deletes a file or a whole directory; a missing one is fine.
+    fn remove(&self, path: &Path) -> io::Result<()> {
+        remove_any(path)
+    }
+    /// The waits between tries of an operation that failed for a moment.
+    fn retry_delays(&self) -> &[Duration] {
+        &RETRY_DELAYS
+    }
+}
+
+/// The real file system.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RealFs;
+
+impl SwapFs for RealFs {}
+
+/// About three seconds in all: long enough for an antivirus scan of a new program.
+const RETRY_DELAYS: [Duration; 6] = [
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+    Duration::from_millis(1500),
+];
+
+/// True for an error that goes away once another program lets go of the file: a sharing or lock
+/// violation on Windows (an antivirus scan, an indexer), or access denied while a file is being
+/// deleted. `ResourceBusy` stands for the same everywhere else.
+pub fn is_transient(e: &io::Error) -> bool {
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    e.kind() == io::ErrorKind::ResourceBusy
+        || (cfg!(windows)
+            && matches!(
+                e.raw_os_error(),
+                Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
+            ))
+}
+
+/// Runs `op`, trying again after each of `delays` while it fails with a transient error.
+fn with_retries<T>(delays: &[Duration], mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    let mut waits = delays.iter();
+    loop {
+        match op() {
+            Err(e) if is_transient(&e) => match waits.next() {
+                Some(d) => std::thread::sleep(*d),
+                None => return Err(e),
+            },
+            r => return r,
+        }
+    }
+}
+
+fn rename_retrying(fs: &dyn SwapFs, from: &Path, to: &Path) -> io::Result<()> {
+    with_retries(fs.retry_delays(), || fs.rename(from, to))
+}
+
+fn remove_retrying(fs: &dyn SwapFs, path: &Path) -> io::Result<()> {
+    with_retries(fs.retry_delays(), || fs.remove(path))
+}
+
+/// Marks a file that was renamed aside because it could not be deleted (a running program).
+const LEFTOVER_MARK: &str = ".kraken-old-";
+
+/// A free name beside `path` for moving it aside: `<name>.kraken-old-<n>`.
+fn aside_name(path: &Path) -> PathBuf {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    (0u32..)
+        .map(|n| path.with_file_name(format!("{name}{LEFTOVER_MARK}{n}")))
+        .find(|p| fs::symlink_metadata(p).is_err())
+        .unwrap_or_else(|| path.with_file_name(format!("{name}{LEFTOVER_MARK}x")))
+}
+
+/// Deletes what earlier updates had to leave behind in an install (programs that were running
+/// when they were replaced). Errors are ignored: a file still in use stays for the next start.
+pub fn sweep_leftovers(prefix: &Path) {
+    for sub in ["bin", "share/kraken"] {
+        let Ok(rd) = fs::read_dir(prefix.join(sub)) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy().contains(LEFTOVER_MARK) {
+                let _ = remove_any(&e.path());
+            }
+        }
+    }
 }
 
 /// The release file for `version`: never taken from the release metadata.
@@ -93,15 +225,25 @@ pub fn check_replaceable(path: &Path, dir_ok: bool) -> Result<(), UpdateError> {
     Ok(())
 }
 
-/// Moves `from` to `to`: a rename, or a copy and delete across filesystems.
-fn relocate(from: &Path, to: &Path) -> io::Result<()> {
+/// Moves `from` to `to`: a rename, or across volumes a rename beside itself, a copy and a delete
+/// that may wait for the next start (a running program cannot be deleted on Windows).
+fn relocate(fs: &dyn SwapFs, from: &Path, to: &Path) -> io::Result<()> {
     if let Some(p) = to.parent() {
         fs::create_dir_all(p)?;
     }
-    match fs::rename(from, to) {
+    match rename_retrying(fs, from, to) {
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
-            copy_tree(from, to)?;
-            remove_any(from)
+            let aside = aside_name(from);
+            rename_retrying(fs, from, &aside)?;
+            if let Err(e) = copy_tree(&aside, to) {
+                let _ = remove_any(to);
+                let _ = rename_retrying(fs, &aside, from);
+                return Err(e);
+            }
+            if let Err(e) = remove_retrying(fs, &aside) {
+                tracing::info!(file = %aside.display(), error = %e, "left for the next start");
+            }
+            Ok(())
         }
         r => r,
     }
@@ -139,7 +281,8 @@ fn remove_any(p: &Path) -> io::Result<()> {
 fn private_dir(p: &Path) -> Result<(), UpdateError> {
     if fs::symlink_metadata(p).is_ok() {
         check_replaceable(p, true)?;
-        remove_any(p).map_err(io_err(format!("cannot clear {}", p.display())))?;
+        with_retries(&RETRY_DELAYS, || remove_any(p))
+            .map_err(io_err(format!("cannot clear {}", p.display())))?;
     }
     let mut b = fs::DirBuilder::new();
     b.recursive(true);
@@ -239,13 +382,14 @@ fn step(progress: &(dyn Fn(JobProgress) + Send + Sync), phase: &str, message: St
 
 /// Checks that the program at `exe` (run with `args`) reports `version`.
 fn check_version(
+    run: RunVersion,
     exe: &Path,
     args: &[&str],
     env: &[(&str, &str)],
     version: &Version,
     timeout: Duration,
 ) -> Result<(), UpdateError> {
-    let out = run_path_with_timeout(exe, args, env, timeout).ok_or_else(|| {
+    let out = run(exe, args, env, timeout).ok_or_else(|| {
         refused(format!(
             "the new program did not run (`{} --version`); nothing was replaced",
             exe.display()
@@ -291,6 +435,7 @@ fn previous_dir(data_dir: &Path) -> PathBuf {
 /// Moves each `(new, original)` into place, the old copies under `backup_root` (keyed by
 /// `rel`). Any failure puts back what was moved and returns the error.
 fn swap(
+    fs: &dyn SwapFs,
     entries: &[(PathBuf, PathBuf, PathBuf)],
     backup_root: &Path,
 ) -> Result<Vec<Kept>, UpdateError> {
@@ -299,9 +444,13 @@ fn swap(
     for (new, original, rel) in entries {
         let backup = if fs::symlink_metadata(original).is_ok() {
             let b = backup_root.join(rel);
-            if let Err(e) = relocate(original, &b) {
+            if let Err(e) = relocate(fs, original, &b) {
                 result = Err(UpdateError::Io {
-                    what: format!("cannot move {} aside", original.display()),
+                    what: format!(
+                        "cannot move {} aside{}",
+                        original.display(),
+                        in_use_hint(&e)
+                    ),
                     source: e,
                 });
                 break;
@@ -314,9 +463,13 @@ fn swap(
             original: original.clone(),
             backup,
         });
-        if let Err(e) = fs::rename(new, original) {
+        if let Err(e) = rename_retrying(fs, new, original) {
             result = Err(UpdateError::Io {
-                what: format!("cannot move the new {} into place", original.display()),
+                what: format!(
+                    "cannot move the new {} into place{}",
+                    original.display(),
+                    in_use_hint(&e)
+                ),
                 source: e,
             });
             break;
@@ -325,22 +478,29 @@ fn swap(
     match result {
         Ok(()) => Ok(done),
         Err(e) => {
-            undo(&done);
+            undo(fs, &done);
             Err(e)
         }
     }
 }
 
+/// What to do about a file that stays in use (a folder whose library a running sidecar loaded).
+fn in_use_hint(e: &io::Error) -> &'static str {
+    if is_transient(e) {
+        "; close KRAKEN (`kraken daemon stop`) and try again; nothing was changed"
+    } else {
+        ""
+    }
+}
+
 /// Puts the kept copies back, newest move first.
-fn undo(done: &[Kept]) {
+fn undo(fs: &dyn SwapFs, done: &[Kept]) {
     for k in done.iter().rev() {
-        if let Some(b) = &k.backup {
-            let _ = remove_any(&k.original);
-            if let Err(e) = relocate(b, &k.original) {
-                tracing::error!(error = %e, file = %k.original.display(), "could not put back the old file");
-            }
-        } else {
-            let _ = remove_any(&k.original);
+        let _ = remove_retrying(fs, &k.original);
+        if let Some(b) = &k.backup
+            && let Err(e) = relocate(fs, b, &k.original)
+        {
+            tracing::error!(error = %e, file = %k.original.display(), "could not put back the old file");
         }
     }
 }
@@ -637,7 +797,18 @@ async fn install_prefix(
             )));
         }
         step(progress, "check", "trying the new kraken --version".into());
-        check_version(&exe, &["--version"], &[], version, ctx.version_timeout)?;
+        check_version(
+            ctx.run_version,
+            &exe,
+            &["--version"],
+            &[],
+            version,
+            ctx.version_timeout,
+        )?;
+        if let Some(hook) = &ctx.before_swap {
+            step(progress, "install", "stopping the KRAKEN daemon".into());
+            hook().await;
+        }
 
         let entries = plan_entries(&root, prefix)?;
         for (new, original, _) in &entries {
@@ -656,7 +827,7 @@ async fn install_prefix(
         let old = ctx.current.to_string();
         let backup_root = previous_dir(&ctx.data_dir).join(&old);
         clear_backup_root(&backup_root, &old)?;
-        let kept = swap(&entries, &backup_root)?;
+        let kept = swap(ctx.fs.as_ref(), &entries, &backup_root)?;
         let receipt = receipt_path(prefix);
         let generation = Generation {
             version: old.clone(),
@@ -669,7 +840,7 @@ async fn install_prefix(
         if let Err(e) = fs::create_dir_all(&backup_root)
             .and_then(|()| fs::write(backup_root.join(MANIFEST), manifest))
         {
-            undo(&kept);
+            undo(ctx.fs.as_ref(), &kept);
             return Err(UpdateError::Io {
                 what: "cannot record the previous version; the update was undone".into(),
                 source: e,
@@ -733,6 +904,7 @@ async fn install_appimage(
         }
         step(progress, "check", "trying the new AppImage".into());
         check_version(
+            ctx.run_version,
             &part,
             &["kraken", "--version"],
             &[("APPIMAGE_EXTRACT_AND_RUN", "1")],
@@ -744,7 +916,11 @@ async fn install_appimage(
         let backup_root = previous_dir(&ctx.data_dir).join(&old);
         clear_backup_root(&backup_root, &old)?;
         let rel = PathBuf::from(image.file_name().unwrap_or_default());
-        let kept = swap(&[(part.clone(), image.to_path_buf(), rel)], &backup_root)?;
+        let kept = swap(
+            ctx.fs.as_ref(),
+            &[(part.clone(), image.to_path_buf(), rel)],
+            &backup_root,
+        )?;
         let generation = Generation {
             version: old.clone(),
             entries: kept.clone(),
@@ -756,7 +932,7 @@ async fn install_appimage(
         if let Err(e) = fs::create_dir_all(&backup_root)
             .and_then(|()| fs::write(backup_root.join(MANIFEST), manifest))
         {
-            undo(&kept);
+            undo(ctx.fs.as_ref(), &kept);
             return Err(UpdateError::Io {
                 what: "cannot record the previous version; the update was undone".into(),
                 source: e,
@@ -797,6 +973,15 @@ fn newest_generation(data_dir: &Path) -> Option<(PathBuf, Generation)> {
 
 /// Puts back the kept generation: the files the last update replaced.
 pub fn rollback(data_dir: &Path, current: &str) -> Result<UpdateApplied, UpdateError> {
+    rollback_with(&RealFs, data_dir, current)
+}
+
+/// [`rollback`] over the given file operations.
+pub fn rollback_with(
+    fs: &dyn SwapFs,
+    data_dir: &Path,
+    current: &str,
+) -> Result<UpdateApplied, UpdateError> {
     if is_root() {
         return Err(refused("KRAKEN does not roll back as root"));
     }
@@ -819,8 +1004,13 @@ pub fn rollback(data_dir: &Path, current: &str) -> Result<UpdateApplied, UpdateE
     for (i, k) in g.entries.iter().enumerate() {
         let current_copy = if fs::symlink_metadata(&k.original).is_ok() {
             let a = aside.join(i.to_string());
-            if let Err(e) = relocate(&k.original, &a) {
-                failure = Some((format!("cannot move {} aside", k.original.display()), e));
+            if let Err(e) = relocate(fs, &k.original, &a) {
+                let what = format!(
+                    "cannot move {} aside{}",
+                    k.original.display(),
+                    in_use_hint(&e)
+                );
+                failure = Some((what, e));
                 break;
             }
             Some(a)
@@ -829,7 +1019,7 @@ pub fn rollback(data_dir: &Path, current: &str) -> Result<UpdateApplied, UpdateE
         };
         moved.push((i, current_copy));
         if let Some(b) = &k.backup
-            && let Err(e) = relocate(b, &k.original)
+            && let Err(e) = relocate(fs, b, &k.original)
         {
             failure = Some((format!("cannot put back {}", k.original.display()), e));
             break;
@@ -841,11 +1031,11 @@ pub fn rollback(data_dir: &Path, current: &str) -> Result<UpdateApplied, UpdateE
             if let Some(b) = &k.backup
                 && fs::symlink_metadata(b).is_err()
             {
-                let _ = relocate(&k.original, b);
+                let _ = relocate(fs, &k.original, b);
             }
             if let Some(a) = current_copy {
-                let _ = remove_any(&k.original);
-                let _ = relocate(&a, &k.original);
+                let _ = remove_retrying(fs, &k.original);
+                let _ = relocate(fs, &a, &k.original);
             }
         }
         return Err(UpdateError::Io { what, source });

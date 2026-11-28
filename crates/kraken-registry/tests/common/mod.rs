@@ -113,9 +113,12 @@ impl Setup {
 
     pub async fn start(self) -> Env {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let binary = tmp.path().join("prog.bin");
+        // The canonical spelling, as the session reports paths (on Windows the temporary folder
+        // can be named with short 8.3 names).
+        let root = kraken_proto::fspath::canonicalize(tmp.path()).expect("canonical");
+        let binary = root.join("prog.bin");
         std::fs::write(&binary, b"\x7fELF fake binary contents").expect("write binary");
-        let project_dir = tmp.path().join("proj");
+        let project_dir = root.join("proj");
         let factory = Arc::new(TestFactory {
             fixture: self.fixture,
             delay: self.delay,
@@ -212,4 +215,20 @@ pub fn agent(run: &str) -> CallContext {
 
 pub fn code(e: &ProtoError) -> ErrorCode {
     e.code
+}
+
+/// The cargo profile directory (`target/<profile>`) holding the workspace's binaries, from the
+/// running test executable: `<profile>/deps/<exe>` before cargo 1.100,
+/// `<profile>/build/<pkg>/<hash>/out/<exe>` since.
+pub fn cargo_profile_dir() -> PathBuf {
+    let exe = std::env::current_exe().expect("exe");
+    let dir = exe.parent().expect("exe dir");
+    let new_layout =
+        dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build"));
+    let profile = if new_layout {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    };
+    profile.expect("target dir").to_path_buf()
 }

@@ -110,6 +110,7 @@ fn cache_dir() -> PathBuf {
     static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
     ONCE.call_once(|| {
         let d = tempfile::tempdir().unwrap().keep();
+        let d = kraken_proto::fspath::canonicalize(&d).unwrap();
         // SAFETY: set before any test in this binary reads it, under `Once`.
         unsafe {
             std::env::set_var("KRAKEN_DEBUGINFO_CACHE", &d);
@@ -150,8 +151,9 @@ fn id_hex(tag: u8) -> String {
 fn program(tag: u8) -> Option<(tempfile::TempDir, PathBuf, Vec<u8>)> {
     cache_dir();
     let dir = tempfile::tempdir().unwrap();
-    let prog = dir.path().join("prog");
-    let dbg = dir.path().join("prog.full");
+    let root = kraken_proto::fspath::canonicalize(dir.path()).unwrap();
+    let prog = root.join("prog");
+    let dbg = root.join("prog.full");
     if !with_build_id(&corpus("bin/stripped_calc-O0-stripped"), &prog, tag)
         || !with_build_id(&corpus("bin/stripped_calc-O0"), &dbg, tag)
     {

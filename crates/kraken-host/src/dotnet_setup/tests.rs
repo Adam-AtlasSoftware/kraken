@@ -80,8 +80,9 @@ fn spec_for(bytes: &[u8]) -> ArtifactSpec {
 }
 
 fn runtime_archive() -> Vec<u8> {
+    let host = format!("./{}", host_name());
     tar_gz(&[
-        ("./dotnet", b"#!host", 0o644),
+        (host.as_str(), b"#!host", 0o644),
         ("./LICENSE.txt", b"mit", 0o644),
         (
             "./shared/Microsoft.NETCore.App/10.0.13/System.Runtime.dll",
@@ -160,7 +161,7 @@ async fn setup_installs_the_runtime_and_the_sidecar_and_is_idempotent() {
     .unwrap();
     assert!(done.is_complete(), "{done:?}");
     let rt = done.dotnet_root.unwrap();
-    assert!(rt.join("dotnet").is_file());
+    assert!(rt.join(host_name()).is_file());
     assert!(
         rt.join("shared/Microsoft.NETCore.App/10.0.13/System.Runtime.dll")
             .is_file()

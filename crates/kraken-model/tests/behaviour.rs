@@ -322,5 +322,7 @@ fn reopen_keeps_data_and_migrates_once() {
     let s = Store::open(&path).unwrap();
     assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
     assert_eq!(s.entity_versions().unwrap().len(), 1);
+    // The database must be closed first: Windows does not delete a file that is open.
+    drop(s);
     std::fs::remove_dir_all(&dir).unwrap();
 }

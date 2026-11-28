@@ -14,6 +14,7 @@ pub mod ctext;
 pub mod debuginfo;
 pub mod decompile;
 pub mod error;
+pub mod fspath;
 pub mod hex;
 pub mod infer;
 pub mod locator;

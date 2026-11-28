@@ -269,6 +269,17 @@ fn the_context_menu_patch_items_preview_then_apply_a_nop() {
 
 #[test]
 fn the_patched_toggle_shows_the_patch_in_the_listing_and_offers_a_patched_decompile() {
+    // The patched listing is decoded with the SLEIGH specs: skipped where they are not compiled,
+    // unless KRAKEN_REQUIRE_SPECS says they must be there.
+    let specs = kraken_emu::SpecRoots::discover();
+    if kraken_emu::Machine::new(kraken_emu::Arch::X86_64, &specs).is_err() {
+        assert!(
+            std::env::var_os("KRAKEN_REQUIRE_SPECS").is_none(),
+            "KRAKEN_REQUIRE_SPECS is set but no SLEIGH specs were found"
+        );
+        eprintln!("skipped: no SLEIGH specs for x86-64");
+        return;
+    }
     let mut h = Harness::ready_demo();
     let ctx = h.ctx.clone();
     h.app.dispatch(AppAction::GoToMain, &ctx);

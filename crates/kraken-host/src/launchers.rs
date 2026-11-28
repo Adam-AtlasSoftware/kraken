@@ -340,7 +340,12 @@ fn add_to_profile(profile: &Path, bin: &Path) -> Result<(), String> {
 
 /// Runs a PowerShell script with its values in the environment, so none needs quoting.
 fn powershell(script: &str, env: &[(&str, &Path)]) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("powershell.exe");
+    // The system's own copy, not whatever `powershell.exe` comes first on `PATH`.
+    let exe = std::env::var_os("SystemRoot")
+        .map(|r| PathBuf::from(r).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("powershell.exe"));
+    let mut cmd = std::process::Command::new(exe);
     cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
     for (k, v) in env {
         cmd.env(k, v);
@@ -356,10 +361,16 @@ fn powershell(script: &str, env: &[(&str, &Path)]) -> Result<(), String> {
 }
 
 /// PowerShell's own call also tells running programs that the variable changed.
-const ADD_USER_PATH: &str = r"$p = [Environment]::GetEnvironmentVariable('Path', 'User')
+/// The value is read and written unexpanded with its own kind, so entries such as
+/// `%USERPROFILE%\bin` keep working; the last line only broadcasts the change.
+const ADD_USER_PATH: &str = r"$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+$p = [string]$k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+$kind = if ($p) { $k.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
 $dirs = @($p -split ';' | Where-Object { $_ })
-if ($dirs -notcontains $env:KRAKEN_DIR) {
-  [Environment]::SetEnvironmentVariable('Path', (($dirs + $env:KRAKEN_DIR) -join ';'), 'User')
+$want = $env:KRAKEN_DIR.TrimEnd('\')
+if (-not ($dirs | Where-Object { $_.TrimEnd('\') -ieq $want })) {
+  $k.SetValue('Path', (($dirs + $env:KRAKEN_DIR) -join ';'), $kind)
+  [Environment]::SetEnvironmentVariable('KRAKEN_PATH_CHANGED', $null, 'User')
 }";
 
 const MAKE_SHORTCUT: &str = r"$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:KRAKEN_LINK)
@@ -522,17 +533,20 @@ mod tests {
 
     #[test]
     fn places_follow_the_system_and_its_variables() {
+        // Absolute on the host, whatever it is ("/l" is not absolute on Windows).
+        let base = std::env::temp_dir();
+        let (home, local, roaming) = (base.join("home-a"), base.join("l"), base.join("r"));
         let env = |k: &str| match k {
-            "HOME" => Some("/home/a".into()),
-            "LOCALAPPDATA" => Some("/l".into()),
-            "APPDATA" => Some("/r".into()),
+            "HOME" => Some(home.clone().into_os_string()),
+            "LOCALAPPDATA" => Some(local.clone().into_os_string()),
+            "APPDATA" => Some(roaming.clone().into_os_string()),
             _ => None,
         };
         let l = Places::from_env_with("linux", &env).unwrap();
-        assert_eq!(l.bin, Path::new("/home/a/.local/bin"));
-        assert_eq!(l.apps, Path::new("/home/a/.local/share/applications"));
+        assert_eq!(l.bin, home.join(".local/bin"));
+        assert_eq!(l.apps, home.join(".local/share/applications"));
         let w = Places::from_env_with("windows", &env).unwrap();
-        assert_eq!(w.bin, Path::new("/l/KRAKEN/bin"));
+        assert_eq!(w.bin, local.join("KRAKEN").join("bin"));
         assert!(w.windows);
         assert!(Places::from_env_with("macos", &env).is_none());
     }

@@ -283,7 +283,7 @@ fn fake_agent() -> PathBuf {
         let exe = std::env::current_exe().expect("test exe");
         let profile_dir = exe
             .parent()
-            .and_then(Path::parent)
+            .and_then(cargo_profile_dir)
             .expect("target profile dir")
             .to_path_buf();
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
@@ -361,4 +361,14 @@ async fn the_fake_terminal_agent_gives_the_same_scores_as_the_cassette() {
         "{:?}",
         t.transcript
     );
+}
+
+/// `target/<profile>` from the directory of a test executable: `<profile>/deps` before cargo
+/// 1.100, `<profile>/build/<pkg>/<hash>/out` since.
+fn cargo_profile_dir(dir: &Path) -> Option<&Path> {
+    if dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build")) {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    }
 }

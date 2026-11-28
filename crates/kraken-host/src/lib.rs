@@ -33,6 +33,8 @@ pub mod provision;
 pub mod setup;
 pub mod strata_setup;
 pub mod update;
+#[cfg(windows)]
+mod winfs;
 
 pub use author::{RunIdGen, agent_id_from_client, user_id};
 pub use config::{

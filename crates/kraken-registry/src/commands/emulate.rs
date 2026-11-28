@@ -485,10 +485,12 @@ fn no_sysroot_note(arch: Arch) -> Option<&'static str> {
 }
 
 /// A dynamically linked program whose architecture has no sysroot to run in, and one that
-/// `setup_sysroots` can install (there is none for riscv32).
+/// `setup_sysroots` can install (there is none for riscv32). Never where whole programs are not
+/// emulated at all (the runner is Unix-only).
 pub(super) fn needs_sysroot(path: &Path) -> bool {
-    super::guide::dynamic_elf_arch(path)
-        .is_some_and(|a| a != Arch::Riscv32 && sysroot_for(a).is_none())
+    cfg!(unix)
+        && super::guide::dynamic_elf_arch(path)
+            .is_some_and(|a| a != Arch::Riscv32 && sysroot_for(a).is_none())
 }
 
 /// A dynamically linked program that would run on this computer's own libraries, because no

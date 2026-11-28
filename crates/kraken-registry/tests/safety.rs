@@ -248,6 +248,8 @@ async fn dangerous_commands_ask_for_approval_and_deny_by_default() {
     assert_eq!(e.code, ErrorCode::Cancelled);
 }
 
+// `debug_trace` is registered on Unix only, like the rest of the debugger.
+#[cfg(unix)]
 #[tokio::test]
 async fn agents_and_mcp_callers_cannot_write_trace_exports() {
     let env = Setup::new(tiny()).start().await;

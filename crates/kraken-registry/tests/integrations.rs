@@ -97,7 +97,7 @@ impl IntegrationsBackend for Fake {
         Ok(LaunchSpec {
             id: id.into(),
             name: id.into(),
-            exe: PathBuf::from("/bin/echo"),
+            exe: echo().clone(),
             argv: vec!["{exe}".into(), "ran".into(), "{binary}".into()],
             gdb_argv: Some(vec!["{exe}".into(), "debug".into(), "{port}".into()]),
             gdb_port: Some(4321),
@@ -105,6 +105,22 @@ impl IntegrationsBackend for Fake {
             env: Vec::new(),
         })
     }
+}
+
+/// A program that prints its arguments: `/bin/echo`, or on Windows a command file that does the
+/// same (`@echo %*`).
+fn echo() -> &'static PathBuf {
+    static ECHO: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+        if cfg!(windows) {
+            let dir = tempfile::tempdir().unwrap().keep();
+            let file = dir.join("echo.cmd");
+            std::fs::write(&file, "@echo %*\r\n").unwrap();
+            file
+        } else {
+            PathBuf::from("/bin/echo")
+        }
+    });
+    &ECHO
 }
 
 fn approved(ctx: CallContext) -> CallContext {
@@ -189,7 +205,7 @@ async fn use_path_wants_an_absolute_path_and_remove_is_dangerous() {
     env.ok(
         &user(),
         "integration_use_path",
-        json!({"id": "plain", "path": "/bin/echo"}),
+        json!({"id": "plain", "path": echo()}),
     )
     .await;
     // `remove` and `emulator_run` always go through the approver; the default refuses.
@@ -261,10 +277,7 @@ async fn emulator_run_hands_the_file_to_the_emulator() {
     .await
     .unwrap();
     assert_eq!(out["gdb"], "127.0.0.1:4321");
-    assert_eq!(
-        out["command"],
-        json!(["/bin/echo", "debug", "4321", "--extra"])
-    );
+    assert_eq!(out["command"], json!([echo(), "debug", "4321", "--extra"]));
 
     // Bad requests.
     assert!(run(json!({"id": "plain", "target": "file"})).await.is_err());

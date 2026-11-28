@@ -69,7 +69,7 @@ pub fn this_install() -> &'static (PathBuf, InstallKind) {
     static INSTALL: OnceLock<(PathBuf, InstallKind)> = OnceLock::new();
     INSTALL.get_or_init(|| {
         let exe = std::env::current_exe().unwrap_or_default();
-        let exe = exe.canonicalize().unwrap_or(exe);
+        let exe = kraken_proto::fspath::canonicalize(&exe).unwrap_or(exe);
         let kind = install::detect(&exe, install::BUILD_CHANNEL, &SystemProbe);
         (exe, kind)
     })
@@ -123,6 +123,9 @@ pub struct HostUpdater {
     downloads: Option<Arc<dyn Fetcher>>,
     check_timeout: Duration,
     version_timeout: Duration,
+    run_version: apply::RunVersion,
+    fs: Arc<dyn apply::SwapFs>,
+    before_swap: Option<apply::BeforeSwap>,
 }
 
 impl std::fmt::Debug for HostUpdater {
@@ -135,9 +138,19 @@ impl std::fmt::Debug for HostUpdater {
 }
 
 impl HostUpdater {
-    /// This computer: the real install, data directory, config file and GitHub.
+    /// This computer: the real install, data directory, config file and GitHub. The first call
+    /// in a process also deletes what an earlier update had to leave in the install (programs
+    /// that were running when they were replaced on Windows).
     pub fn system() -> Self {
         let (exe, kind) = this_install().clone();
+        static SWEPT: OnceLock<()> = OnceLock::new();
+        SWEPT.get_or_init(|| {
+            if kind.self_updating()
+                && let Some(prefix) = kind.prefix()
+            {
+                apply::sweep_leftovers(prefix);
+            }
+        });
         HostUpdater {
             data_dir: crate::llama_setup::data_dir_with(&|k| std::env::var_os(k)),
             config: KrakenConfig::default_path(),
@@ -152,6 +165,9 @@ impl HostUpdater {
             downloads: None,
             check_timeout: Duration::from_secs(15),
             version_timeout: Duration::from_secs(30),
+            run_version: install::run_path_with_timeout,
+            fs: Arc::new(apply::RealFs),
+            before_swap: None,
         }
     }
 
@@ -181,7 +197,30 @@ impl HostUpdater {
             downloads: Some(fetcher),
             check_timeout: Duration::from_secs(15),
             version_timeout: Duration::from_secs(30),
+            run_version: install::run_path_with_timeout,
+            fs: Arc::new(apply::RealFs),
+            before_swap: None,
         }
+    }
+
+    /// Runs `hook` after the new release passed its checks and before any file moves (the CLI
+    /// stops the daemon there on Windows).
+    pub fn with_before_swap(mut self, hook: apply::BeforeSwap) -> Self {
+        self.before_swap = Some(hook);
+        self
+    }
+
+    /// Swaps through `fs` (tests: operations that fail as on Windows).
+    pub fn with_fs(mut self, fs: Arc<dyn apply::SwapFs>) -> Self {
+        self.fs = fs;
+        self
+    }
+
+    /// Runs the staged `kraken --version` with `run` (tests on a system that cannot run the
+    /// stand-in program).
+    pub fn with_version_runner(mut self, run: apply::RunVersion) -> Self {
+        self.run_version = run;
+        self
     }
 
     /// Uses `env` instead of the process environment (tests).
@@ -422,6 +461,9 @@ impl HostUpdater {
             public_key: self.public_key.clone(),
             download_base: self.download_base.clone(),
             version_timeout: self.version_timeout,
+            run_version: self.run_version,
+            fs: self.fs.clone(),
+            before_swap: self.before_swap.clone(),
         };
         apply::install(&ctx, downloads.as_ref(), &found.version, progress).await
     }
@@ -498,7 +540,11 @@ impl UpdateBackend for HostUpdater {
 
     fn rollback(&self) -> Result<UpdateApplied, ProtoError> {
         let d = self.data_dir()?.to_path_buf();
-        Ok(apply::rollback(&d, &self.current.to_string())?)
+        Ok(apply::rollback_with(
+            self.fs.as_ref(),
+            &d,
+            &self.current.to_string(),
+        )?)
     }
 
     fn skip(&self, version: Option<String>) -> Result<(), ProtoError> {

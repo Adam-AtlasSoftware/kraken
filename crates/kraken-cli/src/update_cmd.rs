@@ -3,6 +3,7 @@
 //! `update_*` commands (`kraken_host::update`). Also the daily notice after interactive commands.
 
 use std::io::{BufRead, IsTerminal, Write};
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::ArgMatches;
@@ -82,8 +83,12 @@ pub(crate) fn status_text(s: &UpdateStatusOut) -> String {
     t
 }
 
+/// Whether the daemon is stopped before KRAKEN's files are swapped: on Windows, where a running
+/// daemon (and the .NET sidecar it started) keeps folders of the install open.
+const STOP_DAEMON_FOR_SWAP: bool = cfg!(windows);
+
 pub(crate) async fn run_update(
-    _env: &CliEnv,
+    env: &CliEnv,
     sm: &ArgMatches,
     json_out: bool,
     out: &mut dyn Write,
@@ -91,7 +96,18 @@ pub(crate) async fn run_update(
 ) -> i32 {
     let flag = |n: &str| sm.try_get_one::<bool>(n).ok().flatten().copied() == Some(true);
     let yes = flag("yes");
-    let updater = HostUpdater::system();
+    let runtime = STOP_DAEMON_FOR_SWAP
+        .then(|| crate::daemon_cmd::runtime_dir_of(env))
+        .flatten();
+    let mut updater = HostUpdater::system();
+    if let Some(dir) = runtime.clone() {
+        updater = updater.with_before_swap(Arc::new(move || {
+            let dir = dir.clone();
+            Box::pin(async move {
+                crate::daemon_cmd::stop_quietly(&dir).await;
+            })
+        }));
+    }
 
     if flag("rollback") {
         let target = updater.status_now().rollback_to;
@@ -113,6 +129,9 @@ pub(crate) async fn run_update(
             Ok(true) => {}
             Ok(false) => return 1,
             Err(e) => return fail(&e, json_out, err),
+        }
+        if let Some(dir) = &runtime {
+            crate::daemon_cmd::stop_quietly(dir).await;
         }
         return match updater.rollback() {
             Ok(r) if json_out => {

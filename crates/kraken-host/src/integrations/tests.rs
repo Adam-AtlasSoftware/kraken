@@ -59,7 +59,18 @@ fn zip_with(name: &str, content: &[u8]) -> Vec<u8> {
     buf.into_inner()
 }
 
+/// The toy emulator: a script the host runs directly.
+#[cfg(not(windows))]
 const SCRIPT: &[u8] = b"#!/bin/sh\necho \"toyemu 1.2 $*\"\n";
+#[cfg(windows)]
+const SCRIPT: &[u8] = b"@echo toyemu 1.2 %*\r\n";
+
+/// The toy's file inside its archive: a command file on Windows, which runs it without a shell.
+const TOY_ENTRY: &str = if cfg!(windows) {
+    "bin/toy.cmd"
+} else {
+    "bin/toy"
+};
 
 fn manifest_for(zip: &[u8], bad_hash: bool) -> String {
     let hash = if bad_hash { "0".repeat(64) } else { sha(zip) };
@@ -76,13 +87,15 @@ argv = ["{{exe}}", "{{binary}}"]
 gui = false
 [[emulator.artifact]]
 version = "1.2"
+os = "{os}"
 url = "https://example.test/toy.zip"
 sha256 = "{hash}"
 size = {size}
 format = "zip"
-entry = "bin/toy"
+entry = "{TOY_ENTRY}"
 "#,
-        size = zip.len()
+        size = zip.len(),
+        os = std::env::consts::OS,
     )
 }
 
@@ -94,7 +107,7 @@ struct Fixture {
 
 fn fixture(bad_hash: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
-    let zip = zip_with("bin/toy", SCRIPT);
+    let zip = zip_with(TOY_ENTRY, SCRIPT);
     let user = dir.path().join("emulators.d");
     std::fs::create_dir_all(&user).unwrap();
     std::fs::write(user.join("toy.toml"), manifest_for(&zip, bad_hash)).unwrap();
@@ -141,7 +154,7 @@ async fn install_verifies_unpacks_runs_and_removes() {
     assert_eq!(v.version.as_deref(), Some("1.2"));
     assert!(v.disk_bytes > 0);
     assert!(v.progress.is_none());
-    let exe = f.root.join("toyemu/1.2/bin/toy");
+    let exe = f.root.join("toyemu").join("1.2").join(TOY_ENTRY);
     assert!(exe.is_file());
     assert_eq!(v.path.as_deref(), exe.to_str());
     let spec = f.catalogue.launch_spec("toyemu").unwrap();
@@ -187,6 +200,8 @@ fn use_path_and_remove_forget_without_touching_the_program() {
     let f = fixture(false);
     let prog = f._dir.path().join("my-toy");
     std::fs::write(&prog, SCRIPT).unwrap();
+    // Windows has no executable bit: any file the person names is taken.
+    #[cfg(unix)]
     assert!(
         f.catalogue.use_path("toyemu", &prog).is_err(),
         "not executable yet"
@@ -204,6 +219,8 @@ fn use_path_and_remove_forget_without_touching_the_program() {
     assert_eq!(toy(&f.catalogue).status, IntegrationStatus::NotInstalled);
 }
 
+// Unix names and places (`mgba-qt` on PATH, AppImages in ~/Applications) with shell-script stand-ins.
+#[cfg(unix)]
 #[test]
 fn system_copies_are_found_on_path_and_in_well_known_places() {
     let f = fixture(false);
@@ -506,6 +523,8 @@ fn the_shipped_catalogue_has_the_sysroots_and_the_toolchain() {
     );
 }
 
+// Sysroots feed the Linux user-mode emulator, which runs on Unix only; they unpack symbolic links.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_sysroot_is_unpacked_in_the_emulator_layout_and_removed() {
     let f = sysroot_fixture("data.tar.xz", false);
@@ -541,6 +560,8 @@ async fn a_sysroot_is_unpacked_in_the_emulator_layout_and_removed() {
     );
 }
 
+// Sysroots feed the Linux user-mode emulator, which runs on Unix only; they unpack symbolic links.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_sysroot_with_a_wrong_hash_or_an_unsupported_package_installs_nothing() {
     let f = sysroot_fixture("data.tar.xz", true);
@@ -653,6 +674,8 @@ entry = "rustup-init"
     }
 }
 
+// The managed toolchain serves the rewrite sandbox, which exists on Unix only; rustup-init is a shell-script stand-in.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_toolchain_is_installed_by_rustup_inside_the_data_directory() {
     let f = toolchain_fixture(FAKE_RUSTUP);
@@ -696,6 +719,8 @@ async fn the_toolchain_is_installed_by_rustup_inside_the_data_directory() {
     assert!(!f.root.join("rust-toy").exists());
 }
 
+// The managed toolchain serves the rewrite sandbox, which exists on Unix only; rustup-init is a shell-script stand-in.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_failing_rustup_leaves_nothing_behind() {
     let f = toolchain_fixture(b"#!/bin/sh\necho 'no network' >&2\nexit 3\n");
@@ -714,6 +739,8 @@ async fn a_failing_rustup_leaves_nothing_behind() {
     );
 }
 
+// The managed toolchain serves the rewrite sandbox, which exists on Unix only; rustup-init is a shell-script stand-in.
+#[cfg(unix)]
 #[test]
 fn a_cargo_on_path_is_used_before_anything_is_installed() {
     let f = toolchain_fixture(FAKE_RUSTUP);
