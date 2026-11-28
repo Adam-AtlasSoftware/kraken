@@ -17,9 +17,12 @@ require-native = []
 [dependencies]
 thiserror.workspace = true
 
-# only Linux builds the native library (decision 95); elsewhere the stub needs no C++ toolchain
-[target.'cfg(target_os = "linux")'.dependencies]
+# Linux and Windows (MSVC) build the native library; elsewhere the stub needs no C++ toolchain
+[target.'cfg(any(target_os = "linux", all(windows, target_env = "msvc")))'.dependencies]
 cxx = "1.0.150"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 cc = { version = "1.2", features = ["parallel"] }

@@ -1,5 +1,6 @@
 //! `emulate_call`: argument checks with the fake engine, and real calls of corpus functions on
-//! x86-64, AArch64 and RISC-V.
+//! x86-64, AArch64 and RISC-V. The command runs on the Unix sandbox and exists only there.
+#![cfg(unix)]
 
 mod common;
 
@@ -75,9 +76,7 @@ fn runner() -> PathBuf {
     if let Some(p) = std::env::var_os("KRAKEN_EMU_RUN").filter(|v| !v.is_empty()) {
         return PathBuf::from(p);
     }
-    let exe = std::env::current_exe().expect("exe");
-    let dir = exe.parent().and_then(Path::parent).expect("target dir");
-    dir.join("kraken-emu-run")
+    common::cargo_profile_dir().join("kraken-emu-run")
 }
 
 fn le_u32(b: &[u8]) -> u32 {

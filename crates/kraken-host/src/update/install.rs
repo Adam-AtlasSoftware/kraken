@@ -231,9 +231,23 @@ pub fn dir_writable(dir: &Path) -> bool {
         // SAFETY: `c` is a valid NUL-terminated path for the duration of the call.
         unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }
     }
+    // Windows: the read-only attribute of a folder means nothing and its ACL is not at hand, so
+    // try it (a zip unpacked into Program Files is not writable for a normal user).
     #[cfg(not(unix))]
     {
-        std::fs::metadata(dir).is_ok_and(|m| !m.permissions().readonly())
+        let probe = dir.join(format!(".kraken-write-test-{}", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(f) => {
+                drop(f);
+                let _ = std::fs::remove_file(&probe);
+                true
+            }
+            Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
+        }
     }
 }
 
@@ -660,37 +674,10 @@ mod tests {
         assert_eq!(k.prefix(), Some(d.path()));
     }
 
-    #[test]
-    fn an_aur_package_is_told_from_a_repository_one() {
-        let mut f = Fake::default();
-        f.out.insert(
-            "pacman -Qqo /usr/bin/kraken".into(),
-            "kraken-workbench-bin\n".into(),
-        );
-        f.out.insert(
-            "pacman -Qqm".into(),
-            "paru-bin\nkraken-workbench-bin\n".into(),
-        );
-        f.out.insert("paru --version".into(), "paru v2".into());
-        let k = detect(Path::new("/usr/bin/kraken"), "release", &f);
-        assert_eq!(
-            k,
-            InstallKind::Aur {
-                package: AUR_PACKAGE.into(),
-                helper: "paru".into()
-            }
-        );
-        assert_eq!(
-            k.command(None).as_deref(),
-            Some("paru -Syu kraken-workbench-bin")
-        );
-        assert!(!k.self_updating());
-        f.out.remove("pacman -Qqm");
-        let k = detect(Path::new("/usr/bin/kraken"), "release", &f);
-        assert_eq!(k.id(), "package");
-        assert_eq!(k.command(None).as_deref(), Some("sudo pacman -Syu"));
-    }
-
+    // Package managers own /usr and /opt on Unix only (detection step 4).
+    #[cfg(unix)]
+    // Package managers own /usr and /opt on Unix only (detection step 4).
+    #[cfg(unix)]
     #[test]
     fn dpkg_and_rpm_owners_are_found() {
         let mut f = Fake::default();

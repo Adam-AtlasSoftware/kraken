@@ -30,14 +30,25 @@ serde_json.workspace = true
 sha2 = "0.10"
 tempfile = "3"
 thiserror.workspace = true
-tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "io-std"] }
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "io-std", "fs"] }
 tokio-util = { version = "0.7.16", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "1.47", features = ["process"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
+] }
 
 [dev-dependencies]
 kraken-engine = { path = "../kraken-engine", version = "0.4.1", features = ["testing"] }
 engine-fake = { path = "../engine-fake", version = "0.4.1" }
 tempfile = "3"
 tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

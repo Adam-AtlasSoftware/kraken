@@ -62,9 +62,19 @@ pub fn find_runner() -> Option<PathBuf> {
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    [dir.join(RUNNER), dir.parent()?.join(RUNNER)]
+    [dir.join(RUNNER), cargo_profile_dir(dir)?.join(RUNNER)]
         .into_iter()
         .find(|p| p.is_file())
+}
+
+/// `target/<profile>` from the directory of a test executable: `<profile>/deps` before cargo
+/// 1.100, `<profile>/build/<pkg>/<hash>/out` since.
+fn cargo_profile_dir(dir: &Path) -> Option<&Path> {
+    if dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build")) {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    }
 }
 
 /// What the parent works out before starting a runner: the spec the child gets (spec root

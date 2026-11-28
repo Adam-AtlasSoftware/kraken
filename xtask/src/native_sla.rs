@@ -7,7 +7,7 @@
 //! with the `.ldefs`, `.pspec`, `.cspec` files from the archive and the `.sla` files compiled
 //! here. The compiler itself is the Makefile's `sleigh_opt` set (CORE, SLEIGH and SLACOMP)
 //! plus the bundled zlib, built with the system C++ compiler (`CXX`, default `c++`; `CC` for
-//! zlib, default `cc`).
+//! zlib, default `cc`; on Windows MSVC's `cl.exe` unless `CXX` is set).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -121,30 +121,135 @@ pub fn native_sla() -> Result<()> {
     Ok(())
 }
 
+/// The C and C++ compilers the Sleigh compiler is built with.
+enum Toolchain {
+    /// A GCC-style driver pair (`CXX`, default `c++`; `CC`, default `cc`).
+    Gnu { cxx: String, cc: String },
+    /// MSVC's `cl.exe` with the environment of its installation (Windows, when `CXX` is unset).
+    #[cfg(windows)]
+    Msvc(cc::Tool),
+}
+
+impl Toolchain {
+    fn detect() -> Result<Toolchain> {
+        #[cfg(windows)]
+        if std::env::var_os("CXX").is_none() {
+            return cc::windows_registry::find_tool("x86_64-pc-windows-msvc", "cl.exe")
+                .map(Toolchain::Msvc)
+                .ok_or_else(|| {
+                    "no MSVC C++ compiler found (install the Visual Studio C++ build tools, or \
+                     set CXX and CC to a GCC-style compiler)"
+                        .into()
+                });
+        }
+        Ok(Toolchain::Gnu {
+            cxx: std::env::var("CXX").unwrap_or_else(|_| "c++".into()),
+            cc: std::env::var("CC").unwrap_or_else(|_| "cc".into()),
+        })
+    }
+
+    fn name(&self) -> String {
+        match self {
+            Toolchain::Gnu { cxx, .. } => cxx.clone(),
+            #[cfg(windows)]
+            Toolchain::Msvc(t) => t.path().display().to_string(),
+        }
+    }
+
+    fn object_suffix(&self) -> &'static str {
+        match self {
+            Toolchain::Gnu { .. } => "o",
+            #[cfg(windows)]
+            Toolchain::Msvc(_) => "obj",
+        }
+    }
+
+    /// The command compiling `source` (C++ when `cpp`) into `object`.
+    fn compile(&self, cpp: bool, includes: &[&Path], source: &Path, object: &Path) -> Command {
+        match self {
+            Toolchain::Gnu { cxx, cc } => {
+                let mut c = Command::new(if cpp { cxx } else { cc });
+                if cpp {
+                    c.arg("-std=c++17");
+                }
+                c.args(["-O2", "-w", "-DLOCAL_ZLIB", "-DNO_GZIP", "-c"]);
+                for i in includes {
+                    c.arg("-I").arg(i);
+                }
+                c.arg(source).arg("-o").arg(object);
+                c
+            }
+            #[cfg(windows)]
+            Toolchain::Msvc(t) => {
+                let mut c = t.to_command();
+                c.args(["/nologo", "/O2", "/w", "/utf-8", "/bigobj", "/MD"]);
+                if cpp {
+                    c.args(["/std:c++17", "/EHsc"]);
+                }
+                c.args([
+                    "/DLOCAL_ZLIB",
+                    "/DNO_GZIP",
+                    "/D_WINDOWS",
+                    "/DWIN32_LEAN_AND_MEAN",
+                    "/DNOMINMAX",
+                    "/D_CRT_SECURE_NO_WARNINGS",
+                    "/c",
+                ]);
+                for i in includes {
+                    c.arg("/I").arg(i);
+                }
+                let mut out = std::ffi::OsString::from("/Fo");
+                out.push(object);
+                c.arg(source).arg(out);
+                c
+            }
+        }
+    }
+
+    /// The command linking `objects` into the executable `exe`.
+    fn link(&self, objects: &[&PathBuf], exe: &Path) -> Command {
+        match self {
+            Toolchain::Gnu { cxx, .. } => {
+                let mut c = Command::new(cxx);
+                c.arg("-o").arg(exe).args(objects);
+                c
+            }
+            #[cfg(windows)]
+            Toolchain::Msvc(t) => {
+                let mut c = t.to_command();
+                let mut out = std::ffi::OsString::from("/Fe");
+                out.push(exe);
+                c.arg("/nologo").arg(out).args(objects);
+                c
+            }
+        }
+    }
+}
+
 /// Compiles the Sleigh compiler into `build/sleigh`, reusing objects newer than their source.
 fn build_compiler(src: &Path, build: &Path) -> Result<PathBuf> {
     let obj = build.join("obj");
     fs::create_dir_all(&obj).map_err(|e| format!("cannot create {}: {e}", obj.display()))?;
-    let cxx = std::env::var("CXX").unwrap_or_else(|_| "c++".into());
-    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".into());
+    let tools = Toolchain::detect()?;
+    let suffix = tools.object_suffix();
     let cpp = src.join("cpp");
     let zlib = src.join("zlib");
-    let mut jobs: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+    let mut jobs: Vec<(bool, PathBuf, PathBuf)> = Vec::new();
     for f in COMPILER_SOURCES {
         let s = cpp.join(format!("{f}.cc"));
         if !s.is_file() {
             return Err(format!("{} is missing", s.display()));
         }
-        jobs.push((cxx.clone(), s, obj.join(format!("{f}.o"))));
+        jobs.push((true, s, obj.join(format!("{f}.{suffix}"))));
     }
     for f in ZLIB {
         jobs.push((
-            cc.clone(),
+            false,
             zlib.join(format!("{f}.c")),
-            obj.join(format!("z_{f}.o")),
+            obj.join(format!("z_{f}.{suffix}")),
         ));
     }
-    let stale: Vec<&(String, PathBuf, PathBuf)> =
+    let stale: Vec<&(bool, PathBuf, PathBuf)> =
         jobs.iter().filter(|(_, s, o)| !newer(o, s)).collect();
     if !stale.is_empty() {
         println!(
@@ -161,31 +266,20 @@ fn build_compiler(src: &Path, build: &Path) -> Result<PathBuf> {
             scope.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some((tool, s, o)) = stale.get(i) else {
+                    let Some((is_cpp, s, o)) = stale.get(i) else {
                         break;
                     };
-                    let mut c = Command::new(tool);
-                    if tool == &cxx {
-                        c.arg("-std=c++17");
-                    }
-                    c.args(["-O2", "-w", "-DLOCAL_ZLIB", "-DNO_GZIP", "-c"])
-                        .arg("-I")
-                        .arg(&cpp)
-                        .arg("-I")
-                        .arg(&zlib)
-                        .arg(s)
-                        .arg("-o")
-                        .arg(o);
+                    let mut c = tools.compile(*is_cpp, &[&cpp, &zlib], s, o);
                     match c.status() {
                         Ok(st) if st.success() => {}
                         Ok(st) => errors
                             .lock()
                             .unwrap_or_else(|p| p.into_inner())
-                            .push(format!("{} failed on {}: {st}", tool, s.display())),
+                            .push(format!("{} failed on {}: {st}", tools.name(), s.display())),
                         Err(e) => errors
                             .lock()
                             .unwrap_or_else(|p| p.into_inner())
-                            .push(format!("cannot run {tool}: {e}")),
+                            .push(format!("cannot run {}: {e}", tools.name())),
                     }
                 }
             });
@@ -195,14 +289,13 @@ fn build_compiler(src: &Path, build: &Path) -> Result<PathBuf> {
     if !errors.is_empty() {
         return Err(errors.join("\n"));
     }
-    let exe = build.join("sleigh");
+    let exe = build.join(format!("sleigh{}", std::env::consts::EXE_SUFFIX));
     if !stale.is_empty() || !exe.is_file() {
-        let status = Command::new(&cxx)
-            .arg("-o")
-            .arg(&exe)
-            .args(jobs.iter().map(|(_, _, o)| o))
+        let objects: Vec<&PathBuf> = jobs.iter().map(|(_, _, o)| o).collect();
+        let status = tools
+            .link(&objects, &exe)
             .status()
-            .map_err(|e| format!("cannot run {cxx}: {e}"))?;
+            .map_err(|e| format!("cannot run {}: {e}", tools.name()))?;
         if !status.success() {
             return Err(format!("linking the Sleigh compiler failed: {status}"));
         }

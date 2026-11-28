@@ -1,4 +1,5 @@
-//! The worker side: serves an [`InProcessEngine`] over the protocol socketpair on fd 0.
+//! The worker side: serves an [`InProcessEngine`] over the protocol socketpair on fd 0 (on
+//! Windows over the stdin and stdout pipes).
 //!
 //! Requests carry an `op` number chosen by the parent; `cancel {op}` fires that request's
 //! cancellation token. Each request runs on its own task, so cheap queries are answered while a
@@ -7,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::io;
+#[cfg(unix)]
 use std::os::fd::AsFd;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -81,21 +83,69 @@ pub fn main() -> i32 {
     }
 }
 
-/// Marks the process non-dumpable, so a crash ends it at once instead of after a core dump.
+/// The protocol channel: the socketpair on fd 0.
+#[cfg(unix)]
+fn channel() -> io::Result<(
+    tokio::net::unix::OwnedReadHalf,
+    tokio::net::unix::OwnedWriteHalf,
+)> {
+    let fd = io::stdin().as_fd().try_clone_to_owned()?;
+    let channel = std::os::unix::net::UnixStream::from(fd);
+    channel.set_nonblocking(true)?;
+    Ok(tokio::net::UnixStream::from_std(channel)?.into_split())
+}
+
+/// The protocol channel: the stdin and stdout pipes, each as its own file so a read waiting for
+/// the parent never holds up a write. Standard output is then pointed at standard error, so a
+/// stray print cannot corrupt a frame.
+#[cfg(windows)]
+fn channel() -> io::Result<(tokio::fs::File, tokio::fs::File)> {
+    use std::os::windows::io::AsHandle;
+    let input = io::stdin().as_handle().try_clone_to_owned()?;
+    let output = io::stdout().as_handle().try_clone_to_owned()?;
+    redirect_stdout_to_stderr();
+    Ok((
+        tokio::fs::File::from_std(std::fs::File::from(input)),
+        tokio::fs::File::from_std(std::fs::File::from(output)),
+    ))
+}
+
+#[cfg(windows)]
+fn redirect_stdout_to_stderr() {
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    // SAFETY: both calls only read or replace entries of the process's standard handle table.
+    unsafe {
+        let err = GetStdHandle(STD_ERROR_HANDLE);
+        if !err.is_null() {
+            SetStdHandle(STD_OUTPUT_HANDLE, err);
+        }
+    }
+}
+
+/// Marks the process non-dumpable, so a crash ends it at once instead of after a core dump (on
+/// Windows: without the error reporting dialog, which would keep it alive until dismissed).
 fn no_core_dumps() {
     #[cfg(target_os = "linux")]
     // SAFETY: PR_SET_DUMPABLE only changes a flag of the calling process.
     unsafe {
         libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
     }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
+        };
+        // SAFETY: SetErrorMode only changes the error mode flags of the calling process.
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+        }
+    }
 }
 
 async fn serve(hooks: bool) -> io::Result<()> {
-    let fd = io::stdin().as_fd().try_clone_to_owned()?;
-    let channel = std::os::unix::net::UnixStream::from(fd);
-    channel.set_nonblocking(true)?;
-    let stream = tokio::net::UnixStream::from_std(channel)?;
-    let (mut reader, mut writer) = stream.into_split();
+    let (mut reader, mut writer) = channel()?;
     let (out, mut frames) = mpsc::unbounded_channel::<Vec<u8>>();
     let writer_task = tokio::spawn(async move {
         while let Some(body) = frames.recv().await {
@@ -341,7 +391,8 @@ fn probe() -> Value {
         }
     }
     let tmp = std::env::temp_dir();
-    json!({
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut probe = json!({
         "tcp_connect": res(std::net::TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
             Duration::from_millis(200),
@@ -349,8 +400,6 @@ fn probe() -> Value {
         "tcp_bind": res(std::net::TcpListener::bind("127.0.0.1:0")),
         "udp_bind": res(std::net::UdpSocket::bind("127.0.0.1:0")),
         "tcp6_bind": res(std::net::TcpListener::bind("[::1]:0")),
-        "unix_socket": res(std::os::unix::net::UnixDatagram::unbound()),
-        "unix_pair": res(std::os::unix::net::UnixStream::pair()),
         "read_etc_passwd": res(std::fs::read("/etc/passwd")),
         // the one /proc file discovery reads, to see how much memory is free
         "read_meminfo": res(std::fs::read_to_string("/proc/meminfo")),
@@ -365,5 +414,11 @@ fn probe() -> Value {
         "env": std::env::vars_os()
             .map(|(k, _)| k.to_string_lossy().into_owned())
             .collect::<Vec<_>>(),
-    })
+    });
+    #[cfg(unix)]
+    {
+        probe["unix_socket"] = res(std::os::unix::net::UnixDatagram::unbound());
+        probe["unix_pair"] = res(std::os::unix::net::UnixStream::pair());
+    }
+    probe
 }

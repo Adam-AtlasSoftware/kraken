@@ -241,9 +241,27 @@ impl RuntimeDir {
         self.dir.join("daemon.json")
     }
 
-    /// Windows named pipe name, `\\.\pipe\kraken-<user>`.
+    /// Windows named pipe name: `\\.\pipe\kraken-<user>` for the default runtime directory,
+    /// with a hash of the directory appended for any other one (`KRAKEN_RUNTIME_DIR`). Pipes
+    /// are not files, so without it a private runtime directory (a test, a second daemon) would
+    /// meet the daemon of the default one, or fail to create the pipe while that one runs.
     pub fn pipe_name(&self) -> String {
-        pipe_name_for(&current_user_name())
+        let base = pipe_name_for(&current_user_name());
+        if self.is_default_dir() {
+            base
+        } else {
+            format!("{base}-{:016x}", dir_hash(&self.dir))
+        }
+    }
+
+    #[cfg(windows)]
+    fn is_default_dir(&self) -> bool {
+        windows_state_dir().is_ok_and(|d| same_dir(&d, &self.dir))
+    }
+
+    #[cfg(not(windows))]
+    fn is_default_dir(&self) -> bool {
+        false
     }
 }
 
@@ -260,6 +278,27 @@ fn with_advice(e: IpcError, var: &str, value: &Path, tmpdir: Option<&Path>) -> I
         },
         other => other,
     }
+}
+
+/// Two spellings of one directory on Windows: case and separators do not matter.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn same_dir(a: &Path, b: &Path) -> bool {
+    folded(a) == folded(b)
+}
+
+fn folded(p: &Path) -> String {
+    p.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// A stable 64-bit FNV-1a hash of the directory's spelling (case and separators folded), the
+/// same in every process and every build.
+fn dir_hash(dir: &Path) -> u64 {
+    folded(dir).bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 /// Formats the pipe name for a user.
@@ -450,6 +489,25 @@ mod tests {
             Err(IpcError::InsecureDir { .. } | IpcError::SocketPathTooLong { .. }) => {}
             Err(e) => panic!("{e}"),
         }
+    }
+
+    #[test]
+    fn private_runtime_dirs_get_their_own_pipe() {
+        let a = RuntimeDir {
+            dir: PathBuf::from(r"C:\T\a"),
+            notice: None,
+        };
+        let a2 = RuntimeDir {
+            dir: PathBuf::from("c:/t/A/"),
+            notice: None,
+        };
+        let b = RuntimeDir {
+            dir: PathBuf::from(r"C:\T\b"),
+            notice: None,
+        };
+        assert_eq!(a.pipe_name(), a2.pipe_name());
+        assert_ne!(a.pipe_name(), b.pipe_name());
+        assert!(a.pipe_name().starts_with(r"\\.\pipe\kraken-"));
     }
 
     #[test]

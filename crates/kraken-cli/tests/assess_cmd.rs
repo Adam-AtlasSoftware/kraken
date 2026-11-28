@@ -388,10 +388,13 @@ async fn a_live_rewrite_run_is_held_to_the_configured_limits() {
     .await;
     let v = run.json();
     assert_eq!(v["summary"]["rewrite"]["passed"], 0, "{v:#}");
+    // Elsewhere than Linux the sandbox for generated code does not exist, and the task is
+    // refused for that before the limit is consulted; the model is not asked either way.
     assert!(
-        v["tasks"][0]["problem"]
-            .as_str()
-            .is_some_and(|p| p.contains("max_calls_per_run")),
+        v["tasks"][0]["problem"].as_str().is_some_and(|p| {
+            p.contains("max_calls_per_run")
+                || (!cfg!(target_os = "linux") && p.contains("cannot confine generated code"))
+        }),
         "{v:#}\n{}",
         run.stderr
     );

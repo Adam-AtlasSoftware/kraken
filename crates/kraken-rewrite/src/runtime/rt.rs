@@ -786,10 +786,46 @@ pub fn errno_location() -> *mut i32 {
 }
 
 fn set_errno(e: &std::io::Error) {
+    // The program expects Linux errno values; elsewhere the OS code means something else (a
+    // Windows error number), so the kind of error is translated instead.
+    let code = if cfg!(target_os = "linux") {
+        e.raw_os_error()
+    } else {
+        None
+    };
     ERRNO.store(
-        e.raw_os_error().unwrap_or(5),
+        code.unwrap_or_else(|| linux_errno(e.kind())),
         std::sync::atomic::Ordering::Relaxed,
     );
+}
+
+/// The Linux errno for a kind of I/O error (EIO when there is no closer one).
+fn linux_errno(kind: std::io::ErrorKind) -> i32 {
+    use std::io::ErrorKind as K;
+    match kind {
+        K::NotFound => 2,
+        K::Interrupted => 4,
+        K::WouldBlock => 11,
+        K::OutOfMemory => 12,
+        K::PermissionDenied => 13,
+        K::ResourceBusy => 16,
+        K::AlreadyExists => 17,
+        K::CrossesDevices => 18,
+        K::NotADirectory => 20,
+        K::IsADirectory => 21,
+        K::InvalidInput => 22,
+        K::FileTooLarge => 27,
+        K::StorageFull => 28,
+        K::NotSeekable => 29,
+        K::ReadOnlyFilesystem => 30,
+        K::TooManyLinks => 31,
+        K::BrokenPipe => 32,
+        K::InvalidFilename => 36,
+        K::Unsupported => 38,
+        K::DirectoryNotEmpty => 39,
+        K::TimedOut => 110,
+        _ => 5,
+    }
 }
 
 /// Writes `bytes` to `stream`; false on an error.

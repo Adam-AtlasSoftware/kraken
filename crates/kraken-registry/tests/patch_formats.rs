@@ -341,6 +341,8 @@ async fn an_import_that_overlaps_a_staged_patch_stages_nothing() {
     assert_eq!(patch_rows(&env).await.len(), 1, "only the earlier patch");
 }
 
+// /proc exists on Unix only.
+#[cfg(unix)]
 #[tokio::test]
 async fn an_agent_cannot_import_from_a_kernel_file_system() {
     let env = Setup::new(tiny()).start().await;

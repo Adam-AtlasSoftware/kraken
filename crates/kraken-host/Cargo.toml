@@ -24,7 +24,9 @@ lzma-rs = "0.3"
 minisign-verify = "0.3"
 kraken-registry = { path = "../kraken-registry", version = "0.4.1" }
 semver = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# system-proxy: the proxy of the Windows (and macOS) settings as well as HTTPS_PROXY; native roots: a
+# corporate TLS-inspection root in the system store is trusted as well as the bundled roots.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "system-proxy"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
@@ -37,6 +39,12 @@ zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
 
 [dev-dependencies]
 minisign = "0.9"

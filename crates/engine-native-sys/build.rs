@@ -4,8 +4,8 @@
 //! `Ghidra/Features/Decompiler/src/decompile`), else the copy `cargo xtask native-src` puts in
 //! `~/.cache/kraken-dev/ghidra-src/Ghidra_12.2_build/decompile`. When neither exists the crate
 //! builds a stub whose `available()` is false, unless the `require-native` feature is on, which
-//! turns that into a build error. `KRAKEN_NATIVE_STUB=1` forces the stub. Only Linux builds the
-//! native library for now (decision 95).
+//! turns that into a build error. `KRAKEN_NATIVE_STUB=1` forces the stub. Linux and Windows (MSVC,
+//! or clang-cl when cross-compiling) build the native library; other targets get the stub.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -113,6 +113,7 @@ fn main() {
     println!("cargo::rerun-if-env-changed=KRAKEN_GHIDRA_SRC");
     println!("cargo::rerun-if-env-changed=KRAKEN_NATIVE_STUB");
     println!("cargo::rerun-if-env-changed=HOME");
+    println!("cargo::rerun-if-env-changed=USERPROFILE");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=shim/kraken_shim.hh");
     println!("cargo::rerun-if-changed=shim/kraken_shim.cc");
@@ -120,12 +121,17 @@ fn main() {
 
     let required = env::var_os("CARGO_FEATURE_REQUIRE_NATIVE").is_some();
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if os != "linux" {
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let windows = os == "windows";
+    if !(os == "linux" || (windows && target_env == "msvc")) {
         if required {
-            panic!("engine-native-sys: the native decompiler only builds on Linux for now");
+            panic!(
+                "engine-native-sys: the native decompiler builds on Linux and Windows (MSVC) only"
+            );
         }
         println!(
-            "cargo::warning=engine-native-sys: native decompiler not built on {os} (Linux only)"
+            "cargo::warning=engine-native-sys: native decompiler not built on {os} (Linux and \
+             Windows only)"
         );
         return;
     }
@@ -155,9 +161,8 @@ fn main() {
     println!("cargo::rerun-if-changed={}", zlib.display());
 
     let mut z = cc::Build::new();
-    z.warnings(false)
-        .extra_warnings(false)
-        .flag_if_supported("-w");
+    z.warnings(false).extra_warnings(false);
+    quiet(&mut z);
     z.define("NO_GZIP", None).opt_level(2);
     for f in ZLIB {
         z.file(zlib.join(format!("{f}.c")));
@@ -169,14 +174,13 @@ fn main() {
         .std("c++17")
         .warnings(false)
         .extra_warnings(false)
-        .flag_if_supported("-w")
         .opt_level(2)
         .define("LOCAL_ZLIB", None)
-        .define("LINUX", None)
-        .define("_LINUX", None)
         .include(&cpp)
         // the decompiler registers capabilities through static constructors: keep every object
         .link_lib_modifier("+whole-archive");
+    quiet(&mut d);
+    platform(&mut d, windows);
     for f in SOURCES {
         let p = cpp.join(format!("{f}.cc"));
         if !p.is_file() {
@@ -194,21 +198,63 @@ fn main() {
     bridge
         .file("shim/kraken_shim.cc")
         .std("c++17")
-        // Ghidra's headers as system headers: their warnings are not ours to fix
-        .flag("-isystem")
-        .flag(cpp.to_string_lossy().as_ref())
         .define("LOCAL_ZLIB", None)
-        .define("LINUX", None)
-        .define("_LINUX", None)
-        .flag_if_supported("-Wno-unused-parameter")
-        .flag_if_supported("-Wno-sign-compare")
-        // false positives in cxx's generated Vec constructors with GCC 16
-        .flag_if_supported("-Wno-maybe-uninitialized")
         .opt_level(2);
+    platform(&mut bridge, windows);
+    if bridge.get_compiler().is_like_msvc() {
+        // Ghidra's headers as external headers: their warnings are not ours to fix
+        bridge
+            .flag("/external:W0")
+            .flag("/external:I")
+            .flag(cpp.to_string_lossy().as_ref());
+    } else {
+        bridge
+            .flag("-isystem")
+            .flag(cpp.to_string_lossy().as_ref())
+            .flag_if_supported("-Wno-unused-parameter")
+            .flag_if_supported("-Wno-sign-compare")
+            // false positives in cxx's generated Vec constructors with GCC 16
+            .flag_if_supported("-Wno-maybe-uninitialized");
+    }
     bridge.compile("kraken_native_shim");
 
     println!("cargo::rustc-cfg=kraken_native");
     println!("cargo::metadata=src={}", src.display());
+}
+
+/// Turns every compiler warning off (third-party sources).
+fn quiet(b: &mut cc::Build) {
+    if b.get_compiler().is_like_msvc() {
+        b.flag("/w");
+    } else {
+        b.flag_if_supported("-w");
+    }
+}
+
+/// The platform defines of Ghidra's own build, plus the MSVC switches the sources need.
+fn platform(b: &mut cc::Build, windows: bool) {
+    if windows {
+        b.define("_WINDOWS", None)
+            .define("WIN32_LEAN_AND_MEAN", None)
+            .define("NOMINMAX", None)
+            .define("_CRT_SECURE_NO_WARNINGS", None);
+    } else {
+        b.define("LINUX", None).define("_LINUX", None);
+    }
+    let compiler = b.get_compiler();
+    if compiler.is_like_msvc() {
+        // C++ exceptions, UTF-8 sources, the section count of the biggest objects and a
+        // truthful __cplusplus
+        b.flag("/EHsc")
+            .flag("/utf-8")
+            .flag("/bigobj")
+            .flag("/Zc:__cplusplus");
+    }
+    if compiler.is_like_clang_cl() {
+        // clang-cl types `0xffffffffffffffffLL` as signed like old MSVC did, and then refuses
+        // the narrowing in Ghidra's mask tables; cl.exe makes it unsigned
+        b.flag("-Wno-c++11-narrowing");
+    }
 }
 
 fn locate_sources() -> Option<PathBuf> {
@@ -222,7 +268,8 @@ fn locate_sources() -> Option<PathBuf> {
             p.display()
         );
     }
-    let home = env::var_os("HOME")?;
+    // HOME as on Unix (also set by Git Bash on Windows), else the Windows profile directory
+    let home = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))?;
     let p = Path::new(&home)
         .join(".cache/kraken-dev/ghidra-src")
         .join(TAG)

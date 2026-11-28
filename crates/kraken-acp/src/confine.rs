@@ -511,15 +511,21 @@ mod tests {
 
     #[test]
     fn runtime_dirs_are_collected_once_and_absolute() {
+        // An absolute path on every platform ("/r" is relative to the drive on Windows).
+        let base = std::env::temp_dir();
+        let (r, u) = (base.join("r"), base.join("run-u"));
         let env = vec![
-            (OsString::from("KRAKEN_RUNTIME_DIR"), OsString::from("/r")),
-            (OsString::from("XDG_RUNTIME_DIR"), OsString::from("/run/u")),
+            (
+                OsString::from("KRAKEN_RUNTIME_DIR"),
+                r.clone().into_os_string(),
+            ),
+            (
+                OsString::from("XDG_RUNTIME_DIR"),
+                u.clone().into_os_string(),
+            ),
         ];
-        let dirs = runtime_dirs(Some("/r"), &env);
-        assert_eq!(
-            dirs,
-            vec![PathBuf::from("/r"), PathBuf::from("/run/u/kraken")]
-        );
+        let dirs = runtime_dirs(r.to_str(), &env);
+        assert_eq!(dirs, vec![r, u.join("kraken")]);
         assert!(runtime_dirs(Some("rel"), &[]).is_empty());
     }
 }

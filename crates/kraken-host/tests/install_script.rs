@@ -232,3 +232,23 @@ fn only_the_pinned_unsigned_releases_skip_the_signature() {
         );
     }
 }
+
+/// The Windows script embeds the same key, wants the same trusted comment, writes the receipt the
+/// updater reads, and stays ASCII: Windows PowerShell 5.1 reads a saved script without a BOM in
+/// the ANSI code page.
+#[test]
+fn the_windows_script_embeds_the_key_and_stays_ascii() {
+    let text = std::fs::read_to_string(repo_file("scripts/install.ps1")).unwrap();
+    let line = format!(
+        "$KrakenPublicKey = '{}'",
+        kraken_host::update::verify::RELEASE_PUBLIC_KEY
+    );
+    assert!(
+        text.contains(&line),
+        "install.ps1 must embed the release key"
+    );
+    assert!(text.contains("\"kraken v$Ver SHA256SUMS\""));
+    assert!(text.contains("windows_installer"));
+    let bad = text.char_indices().find(|(_, c)| !c.is_ascii());
+    assert!(bad.is_none(), "install.ps1 is not ASCII at {bad:?}");
+}

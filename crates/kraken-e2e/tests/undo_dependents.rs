@@ -103,7 +103,7 @@ fn kraken_bin() -> PathBuf {
     let exe = std::env::current_exe().expect("test exe path");
     let profile_dir = exe
         .parent()
-        .and_then(Path::parent)
+        .and_then(cargo_profile_dir)
         .expect("target profile directory")
         .to_path_buf();
     let bin = profile_dir.join("kraken");
@@ -443,4 +443,14 @@ fn cli_create(bin: &Path, env: &KrakenEnv, binary: &Path, project: &Path) -> Val
         String::from_utf8_lossy(&out.stderr)
     );
     serde_json::from_str(stdout.trim()).unwrap_or_else(|e| panic!("project-create: {e}: {stdout}"))
+}
+
+/// `target/<profile>` from the directory of a test executable: `<profile>/deps` before cargo
+/// 1.100, `<profile>/build/<pkg>/<hash>/out` since.
+fn cargo_profile_dir(dir: &Path) -> Option<&Path> {
+    if dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build")) {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    }
 }

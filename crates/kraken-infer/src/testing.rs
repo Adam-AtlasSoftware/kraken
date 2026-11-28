@@ -9,7 +9,17 @@ const NAME: &str = "kraken-fake-server";
 
 fn find(dir: &Path) -> Option<PathBuf> {
     let file = format!("{NAME}{}", std::env::consts::EXE_SUFFIX);
-    [Some(dir), dir.parent()]
+    // The test executable's directory, then the cargo profile directory: its parent for
+    // `<profile>/deps` (before cargo 1.100), the fourth ancestor for
+    // `<profile>/build/<pkg>/<hash>/out` (since).
+    let new_layout =
+        dir.ends_with("out") && dir.ancestors().nth(3).is_some_and(|b| b.ends_with("build"));
+    let profile = if new_layout {
+        dir.ancestors().nth(4)
+    } else {
+        dir.parent()
+    };
+    [Some(dir), profile]
         .into_iter()
         .flatten()
         .map(|d| d.join(&file))

@@ -42,7 +42,7 @@ fn resolve(path: &Path) -> std::io::Result<PathBuf> {
     let mut existing = abs.as_path();
     let mut tail = Vec::new();
     loop {
-        match std::fs::canonicalize(existing) {
+        match kraken_proto::fspath::canonicalize(existing) {
             Ok(mut resolved) => {
                 resolved.extend(tail.iter().rev());
                 return Ok(resolved);
@@ -75,21 +75,46 @@ pub fn check_agent_path_in(
         }
     }
     if let Some(home) = home {
-        let home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+        let home = kraken_proto::fspath::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
         if let Ok(rest) = resolved.strip_prefix(&home)
-            && rest
+            && !in_windows_temp(&resolved)
+        {
+            if rest
                 .components()
                 .any(|c| matches!(c, Component::Normal(n) if n.to_string_lossy().starts_with('.')))
-        {
-            return Err(refuse(
-                what,
-                path,
-                "it is inside a hidden directory of the home directory (credentials and \
-                 configuration live there)",
-            ));
+            {
+                return Err(refuse(
+                    what,
+                    path,
+                    "it is inside a hidden directory of the home directory (credentials and \
+                     configuration live there)",
+                ));
+            }
+            // Windows keeps settings and credentials in AppData rather than in dot folders.
+            if cfg!(windows)
+                && rest
+                    .components()
+                    .next()
+                    .is_some_and(|c| c.as_os_str().eq_ignore_ascii_case("AppData"))
+            {
+                return Err(refuse(
+                    what,
+                    path,
+                    "it is inside AppData of the home directory (settings and credentials live \
+                     there)",
+                ));
+            }
         }
     }
     Ok(resolved)
+}
+
+/// True for a path in the temporary folder on Windows, which lies inside the home directory
+/// (`AppData\Local\Temp`) but holds no settings or credentials.
+fn in_windows_temp(resolved: &Path) -> bool {
+    cfg!(windows)
+        && kraken_proto::fspath::canonicalize(std::env::temp_dir())
+            .is_ok_and(|t| resolved.starts_with(t))
 }
 
 /// [`check_agent_path_in`] with the home directory of the current user.

@@ -123,7 +123,7 @@ pub fn archive_path() -> Result<PathBuf> {
 }
 
 pub fn extract(archive: &Path, into: &Path, member: &str, strip: u32) -> Result<()> {
-    let status = Command::new("tar")
+    let status = Command::new(tar())
         .arg("-xzf")
         .arg(archive)
         .arg("-C")
@@ -138,6 +138,20 @@ pub fn extract(archive: &Path, into: &Path, member: &str, strip: u32) -> Result<
     } else {
         Err(format!("tar failed extracting {member}: {status}"))
     }
+}
+
+/// The `tar` to run. On Windows that is the system's bsdtar: a GNU tar from Git Bash or MSYS2
+/// earlier on `PATH` takes the `C:` of an archive path for a remote host.
+fn tar() -> PathBuf {
+    if cfg!(windows)
+        && let Some(root) = std::env::var_os("SystemRoot")
+    {
+        let bsdtar = Path::new(&root).join("System32").join("tar.exe");
+        if bsdtar.is_file() {
+            return bsdtar;
+        }
+    }
+    PathBuf::from("tar")
 }
 
 pub fn sha256_file(path: &Path) -> Result<String> {

@@ -363,7 +363,10 @@ async fn the_ready_made_engine_is_fetched_checked_packed_and_handed_over_as_a_fo
     .expect("installed");
     let args = setup_args(&rec);
     assert!(!args.iter().any(|a| a == "--build"), "{args:?}");
-    let folder = root.join("downloads/engine-v9.9.9/prebuilt");
+    let folder = root
+        .join("downloads")
+        .join("engine-v9.9.9")
+        .join("prebuilt");
     assert!(
         args.windows(2)
             .any(|w| w[0] == "--prebuilt" && w[1] == format!("{}/", folder.display())),

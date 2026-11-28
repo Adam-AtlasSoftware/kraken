@@ -56,16 +56,14 @@ async fn surfaces() -> Surfaces {
     let client = ApprovingClient.serve(c).await.expect("client connects");
     Surfaces {
         cli,
-        cli_dir: work
-            .tmp
-            .path()
+        cli_dir: kraken_proto::fspath::canonicalize(work.tmp.path())
+            .expect("canonical")
             .join("proj-cli")
             .to_string_lossy()
             .into_owned(),
         mcp_session,
-        mcp_dir: work
-            .tmp
-            .path()
+        mcp_dir: kraken_proto::fspath::canonicalize(work.tmp.path())
+            .expect("canonical")
             .join("proj-mcp")
             .to_string_lossy()
             .into_owned(),

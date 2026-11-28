@@ -14,3 +14,7 @@ serde.workspace = true
 sha2 = "0.10"
 serde_json.workspace = true
 toml = "0.8"
+
+# finds MSVC's cl.exe for `cargo xtask native-sla` on Windows
+[target.'cfg(windows)'.dependencies]
+cc = "1.2"

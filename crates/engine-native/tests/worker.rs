@@ -1,6 +1,6 @@
 //! The confined worker: confinement, the watchdog's hard deadline, crash recovery and hard
 //! cancellation. Needs the native build and a spec tree like `native.rs`; skipped otherwise.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", windows))]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -20,12 +20,15 @@ fn root() -> PathBuf {
 }
 
 fn options() -> WorkerOptions {
-    WorkerOptions {
+    let mut o = WorkerOptions {
         test_hooks: true,
         request_timeout: Duration::from_secs(3),
         cancel_grace: Duration::from_millis(300),
         ..WorkerOptions::with_program(env!("CARGO_BIN_EXE_kraken-native-worker"))
-    }
+    };
+    // Windows confines the worker with its job object only, which the spawner calls unconfined
+    o.confinement.allow_unconfined |= cfg!(windows);
+    o
 }
 
 async fn open(opts: WorkerOptions) -> Option<NativeEngine> {
@@ -86,6 +89,7 @@ async fn alive(e: &NativeEngine) {
     assert!(r.text.contains("cmp_id"), "{}", r.text);
 }
 
+#[cfg(target_os = "linux")]
 fn gone(pid: u32) -> bool {
     for _ in 0..100 {
         if !Path::new(&format!("/proc/{pid}")).exists() {
@@ -96,6 +100,25 @@ fn gone(pid: u32) -> bool {
     false
 }
 
+#[cfg(windows)]
+fn gone(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: the handle is checked before use and closed once.
+    unsafe {
+        let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if h.is_null() {
+            return true;
+        }
+        let r = WaitForSingleObject(h, 2000);
+        CloseHandle(h);
+        r == WAIT_OBJECT_0
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn denied(probe: &Value, key: &str) {
     let v = probe[key].as_str().unwrap_or_default();
     assert_ne!(
@@ -105,6 +128,42 @@ fn denied(probe: &Value, key: &str) {
     assert!(!v.is_empty(), "{key} missing from the probe: {probe}");
 }
 
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn windows_worker_has_a_scrubbed_environment_and_dies_with_its_engine() {
+    let Some(e) = open(options()).await else {
+        return;
+    };
+    assert!(e.is_isolated());
+    let pid = e.worker_pid().expect("worker pid");
+    assert_ne!(pid, std::process::id());
+    let report = e.confinement().expect("report");
+    assert!(report.parent_death_signal, "{report}");
+    let probe = e
+        .worker_test_hook("test_probe", &CancellationToken::new())
+        .await
+        .expect("probe");
+    assert_eq!(probe["write_tmp_home"], "ok", "{probe}");
+    let mut env: Vec<String> = probe["env"]
+        .as_array()
+        .expect("env")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_ascii_uppercase)
+        // Wine adds its own variables and two system ones to every process it starts
+        .filter(|k| !k.starts_with("WINE") && k != "PROCESSOR_ARCHITECTURE" && k != "SYSTEMDRIVE")
+        .collect();
+    env.sort_unstable();
+    assert_eq!(
+        env,
+        ["PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE"],
+        "scrubbed environment"
+    );
+    drop(e);
+    assert!(gone(pid), "the worker outlives its engine");
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn worker_is_confined() {
     let Some(e) = open(options()).await else {
@@ -197,8 +256,13 @@ async fn crash_is_reported_and_the_next_request_restarts() {
     let d = err.details.clone().expect("details");
     assert_eq!(d["worker"], "crashed", "{err:?}");
     assert_eq!(d["method"], "test_crash", "{err:?}");
-    assert_eq!(d["signal"], libc_sigabrt(), "{err:?}");
-    assert!(err.message.contains("signal"), "{err}");
+    if cfg!(unix) {
+        assert_eq!(d["signal"], libc_sigabrt(), "{err:?}");
+        assert!(err.message.contains("signal"), "{err}");
+    } else {
+        assert!(d["exit_code"].is_i64(), "{err:?}");
+        assert!(err.message.contains("exit"), "{err}");
+    }
     alive(&e).await;
     assert_ne!(e.worker_pid(), Some(first));
     assert_eq!(e.worker_restarts(), 1);

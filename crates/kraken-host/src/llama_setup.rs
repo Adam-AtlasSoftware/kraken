@@ -212,13 +212,14 @@ pub fn data_dir_with(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> 
     if let Some(x) = non_empty("XDG_DATA_HOME").filter(|p| p.is_absolute()) {
         return Some(x.join("kraken"));
     }
-    if let Some(h) = non_empty("HOME") {
-        return Some(h.join(".local/share/kraken"));
+    // On Windows the per-user folder comes before HOME, which only some shells set: a program
+    // started from the Start Menu and one started from such a shell must find the same data.
+    if cfg!(windows)
+        && let Some(l) = non_empty("LOCALAPPDATA").filter(|p| p.is_absolute())
+    {
+        return Some(l.join("kraken"));
     }
-    if cfg!(windows) {
-        return non_empty("LOCALAPPDATA").map(|l| l.join("kraken"));
-    }
-    None
+    non_empty("HOME").map(|h| h.join(".local/share/kraken"))
 }
 
 /// What is installed.
