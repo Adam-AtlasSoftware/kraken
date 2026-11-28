@@ -727,16 +727,70 @@ pub fn available() -> bool {
 pub fn start(ghidra_home: &Path) -> NativeResult<()> {
     #[cfg(kraken_native)]
     {
-        let home = ghidra_home
-            .to_str()
-            .ok_or_else(|| NativeError::Native("Ghidra path is not UTF-8".into()))?;
+        let home = library_path(ghidra_home)?;
         let _g = lock();
-        real::ffi::start_library(home).map_err(real::err)
+        real::ffi::start_library(&home).map_err(real::err)
     }
     #[cfg(not(kraken_native))]
     {
         let _ = ghidra_home;
         Err(unavailable())
+    }
+}
+
+#[cfg(all(kraken_native, not(windows)))]
+fn library_path(p: &Path) -> NativeResult<String> {
+    p.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| NativeError::Native("Ghidra path is not UTF-8".into()))
+}
+
+/// `p` as the library's file code opens it on Windows: through the ANSI API, so without the
+/// `\\?\` prefix of a canonical path, and by its short (8.3) name when it is not ASCII.
+#[cfg(all(kraken_native, windows))]
+fn library_path(p: &Path) -> NativeResult<String> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let text = p
+        .to_str()
+        .ok_or_else(|| NativeError::Native("Ghidra path is not valid Unicode".into()))?;
+    let text = strip_verbatim(text);
+    if text.is_ascii() {
+        return Ok(text.to_string());
+    }
+    let wide: Vec<u16> = std::ffi::OsStr::new(&*text)
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY: `wide` is NUL-terminated and `buf` holds as many units as we say it does.
+    let n = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+            wide.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    } as usize;
+    let short = (n > 0 && n < buf.len())
+        .then(|| std::ffi::OsString::from_wide(&buf[..n]))
+        .and_then(|s| s.into_string().ok())
+        .filter(|s| s.is_ascii());
+    short.ok_or_else(|| {
+        NativeError::Native(format!(
+            "the Sleigh spec path {text} has characters outside ASCII and no short name; move \
+             the compiled Sleigh files to a plain path and point KRAKEN_NATIVE_SPECS at it"
+        ))
+    })
+}
+
+/// `C:\x` for `\\?\C:\x` and `\\server\share` for `\\?\UNC\server\share`.
+#[cfg(any(windows, test))]
+fn strip_verbatim(p: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}").into();
+    }
+    match p.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.into(),
+        _ => p.into(),
     }
 }
 
@@ -1434,6 +1488,14 @@ mod tests {
         assert!(matches!(Operands::from(long.as_str()), Operands::Heap(_)));
         assert_eq!(&*Operands::from(long.as_str()), long);
         assert_eq!(&*Operands::from(""), "");
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_stripped_for_the_library() {
+        assert_eq!(strip_verbatim(r"\\?\C:\specs"), r"C:\specs");
+        assert_eq!(strip_verbatim(r"\\?\UNC\host\share\x"), r"\\host\share\x");
+        assert_eq!(strip_verbatim(r"C:\specs"), r"C:\specs");
+        assert_eq!(strip_verbatim("/home/x/specs"), "/home/x/specs");
     }
 
     #[test]

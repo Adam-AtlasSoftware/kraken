@@ -2,11 +2,11 @@ KRAKEN release archive
 ======================
 
 Contents
-  bin/                       kraken (CLI and MCP server), krakend (daemon), kraken-gui, and on
-                             Linux kraken-native-worker (the native engine's decompiler
-                             process) and kraken-emu-run (the emulator's sandbox)
-  share/kraken/native-sla/   (Linux) Ghidra's processor specifications compiled for the native
-                             engine, so it needs no Java, no Ghidra and no setup
+  bin/                       kraken (CLI and MCP server), krakend (daemon), kraken-gui,
+                             kraken-native-worker (the native engine's decompiler process; Linux
+                             and Windows) and on Linux kraken-emu-run (the emulator's sandbox)
+  share/kraken/native-sla/   (Linux and Windows) Ghidra's processor specifications compiled for
+                             the native engine, so it needs no Java, no Ghidra and no setup
   share/kraken/kraken-ghidra.jar
                              prebuilt Ghidra extension; `kraken setup` installs it, so you do
                              not need Gradle or a JDK to build it
@@ -26,8 +26,9 @@ Install
      or run scripts/install.sh from the repository, which does this after checking the download.
        Windows:      unzip anywhere and add its bin folder to PATH
      KRAKEN finds kraken-ghidra.jar next to the program or in ../share/kraken.
-  2. Linux: the native engine works right away (`kraken setup --native` checks it). For the
-     optional Ghidra engine (Mach-O, other processors, PDB) and on macOS and Windows, run
+  2. Linux and Windows: the native engine works right away (`kraken setup --native` checks it;
+     on Windows set KRAKEN_ALLOW_UNCONFINED=1 first, see docs/install.md). For the optional
+     Ghidra engine (other processors) and on macOS, run
      `kraken setup`: it downloads the pinned Ghidra and Temurin JDK 25 (both checked against
      compiled-in SHA-256 hashes) into your user data directory. Nothing needs root.
   3. Optional, for .NET assemblies (C# decompilation): `kraken setup --dotnet`. It downloads the

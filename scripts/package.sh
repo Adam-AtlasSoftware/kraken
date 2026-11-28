@@ -11,7 +11,8 @@
 #   CARGO_TARGET_DIR   cargo target directory (default: target)
 #   KRAKEN_REQUIRE_NATIVE
 #                      1: fail unless kraken-native-worker was built (the native engine's
-#                      confined decompiler process; Linux release builds link the decompiler)
+#                      confined decompiler process; Linux and Windows release builds link the
+#                      decompiler)
 #                      and KRAKEN_NATIVE_SLA_DIR holds the compiled Sleigh files
 #   KRAKEN_NATIVE_SLA_DIR
 #                      the tree `cargo xtask native-sla` compiled (Ghidra_<version>_build); shipped

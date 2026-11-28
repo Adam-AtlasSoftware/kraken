@@ -2,7 +2,7 @@
 //! engine, chosen by [`NativeConfig::isolation`].
 
 use std::path::Path;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,21 +17,21 @@ use kraken_proto::{
     Page, PageRequest, StringEntry, SymbolEntry, TypeDef, VersionedLogOp, Xref,
 };
 use kraken_sidecar::ConfinementReport;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::engine::check;
 use crate::engine::{InProcessEngine, NativeConfig, NativeStats};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::worker::Isolation;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::worker::client::WorkerEngine;
 
 enum Backend {
     Local(Box<InProcessEngine>),
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Worker(Arc<WorkerEngine>),
 }
 
@@ -60,7 +60,7 @@ macro_rules! route {
     ($self:ident, $local:ident => $l:expr, $worker:ident => $w:expr) => {
         match &$self.backend {
             Backend::Local($local) => $l,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Backend::Worker($worker) => $w,
         }
     };
@@ -70,7 +70,7 @@ impl NativeEngine {
     /// An engine with no program loaded.
     pub fn new(config: NativeConfig) -> NativeEngine {
         let backend = match &config.isolation {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Isolation::Worker(opts) => {
                 Backend::Worker(Arc::new(WorkerEngine::new(config.clone(), opts.clone())))
             }
@@ -555,7 +555,7 @@ impl TypeStore for NativeEngine {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn asm_through_worker(
     w: &WorkerEngine,
     at: u64,

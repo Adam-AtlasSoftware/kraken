@@ -103,7 +103,7 @@ impl NativeConfig {
         if let Some(p) = std::env::var_os("KRAKEN_GHIDRA_HOME") {
             return Some(NativeConfig::new(p));
         }
-        let dir = PathBuf::from(std::env::var_os("HOME")?).join(".cache/kraken-dev/ghidra");
+        let dir = home_dir()?.join(".cache/kraken-dev/ghidra");
         let mut kids: Vec<PathBuf> = std::fs::read_dir(dir)
             .ok()?
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -117,10 +117,24 @@ impl NativeConfig {
 /// Where `cargo xtask native-sla` puts the spec tree it compiles.
 pub fn compiled_specs_dir() -> Option<PathBuf> {
     Some(
-        PathBuf::from(std::env::var_os("HOME")?)
+        home_dir()?
             .join(".cache/kraken-dev/native-sla")
             .join(SOURCE_TAG),
     )
+}
+
+/// `HOME`, else on Windows the profile directory (`USERPROFILE`): where `cargo xtask` keeps its
+/// cache.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| {
+            if cfg!(windows) {
+                std::env::var_os("USERPROFILE")
+            } else {
+                None
+            }
+        })
+        .map(PathBuf::from)
 }
 
 /// Directory name of the compiled specifications in a release archive, under `share/kraken`.

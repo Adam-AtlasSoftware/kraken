@@ -197,7 +197,11 @@ mod tests {
             &w,
             Path::new("/usr/lib/debug"),
         );
-        let c: Vec<String> = c.iter().map(|p| p.display().to_string()).collect();
+        // separators as on Unix, so the expectations hold on Windows too
+        let c: Vec<String> = c
+            .iter()
+            .map(|p| p.display().to_string().replace('\\', "/"))
+            .collect();
         assert_eq!(c[0], "/opt/app/bin/.build-id/ab/cdef.debug");
         assert_eq!(c[1], "/usr/lib/debug/.build-id/ab/cdef.debug");
         assert_eq!(c[2], "/opt/app/bin/prog.debug");

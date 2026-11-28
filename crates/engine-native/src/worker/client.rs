@@ -1,7 +1,7 @@
 //! The parent side: starts the worker under confinement and watches every request.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -10,7 +10,10 @@ use kraken_engine::Watermark;
 use kraken_engine::{AnalysisSummary, OpenReporter, Progress, ProgressSender, Stage};
 use kraken_proto::{ErrorCode, OpenStage, OpenUpdate, ProtoError, TypeDef, VersionedLogOp};
 use kraken_sidecar::rpc::{JobSubscription, SIDECAR_EXITED, WireProgress};
+#[cfg(unix)]
 use kraken_sidecar::sandbox::Sandbox;
+#[cfg(windows)]
+use kraken_sidecar::sandbox::WinSandbox as Sandbox;
 use kraken_sidecar::{ConfinementReport, LogSink, RpcClient, SpawnSpec};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -30,6 +33,67 @@ const LOG_TAIL: usize = 20;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The protocol channel to a worker: a socketpair on Unix, its stdout and stdin pipes on Windows.
+#[cfg(unix)]
+type Channel = std::os::unix::net::UnixStream;
+#[cfg(windows)]
+type Channel = (tokio::process::ChildStdout, tokio::process::ChildStdin);
+
+#[cfg(unix)]
+fn launch(spec: SpawnSpec, log: &LogSink) -> Result<(Sandbox, Channel), ProtoError> {
+    Sandbox::spawn(spec, log).map_err(ProtoError::from)
+}
+
+/// Runs on a blocking thread of the runtime, which the Windows spawner needs for its exit watch.
+#[cfg(windows)]
+fn launch(spec: SpawnSpec, log: &LogSink) -> Result<(Sandbox, Channel), ProtoError> {
+    let (sandbox, stdout, stdin) = Sandbox::spawn(spec, log).map_err(ProtoError::from)?;
+    Ok((sandbox, (stdout, stdin)))
+}
+
+#[cfg(unix)]
+fn client_over(channel: Channel) -> Result<RpcClient, ProtoError> {
+    channel
+        .set_nonblocking(true)
+        .map_err(|e| internal(format!("configuring the worker channel: {e}")))?;
+    let stream = tokio::net::UnixStream::from_std(channel)
+        .map_err(|e| internal(format!("registering the worker channel: {e}")))?;
+    let (reader, writer) = stream.into_split();
+    Ok(RpcClient::new(reader, writer))
+}
+
+#[cfg(windows)]
+fn client_over((stdout, stdin): Channel) -> Result<RpcClient, ProtoError> {
+    Ok(RpcClient::new(stdout, stdin))
+}
+
+/// The worker's whole environment: its private home and temp directory.
+#[cfg(unix)]
+fn worker_env(home: &Path, tmp: &Path) -> Vec<(OsString, OsString)> {
+    vec![
+        ("HOME".into(), home.into()),
+        ("TMPDIR".into(), tmp.into()),
+        ("LANG".into(), "C.UTF-8".into()),
+    ]
+}
+
+/// The worker's whole environment: its private profile and temp directory, plus `SystemRoot`
+/// and the system directories, without which system libraries (Winsock among them) fail to load.
+#[cfg(windows)]
+fn worker_env(home: &Path, tmp: &Path) -> Vec<(OsString, OsString)> {
+    let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    let mut path = Path::new(&system_root).join("System32").into_os_string();
+    path.push(";");
+    path.push(&system_root);
+    vec![
+        ("PATH".into(), path),
+        ("SystemRoot".into(), system_root),
+        ("USERPROFILE".into(), home.into()),
+        ("TEMP".into(), tmp.into()),
+        ("TMP".into(), tmp.into()),
+    ]
 }
 
 /// One running worker. Field order is drop order: the channel closes, then the process is
@@ -368,11 +432,7 @@ impl WorkerEngine {
             let spec = SpawnSpec {
                 program: program.clone(),
                 args,
-                env: vec![
-                    ("HOME".into(), home.path().into()),
-                    ("TMPDIR".into(), tmp.into()),
-                    ("LANG".into(), "C.UTF-8".into()),
-                ],
+                env: worker_env(home.path(), &tmp),
                 cwd: home.path().to_path_buf(),
                 read_only: [program, spec_root, binary]
                     .into_iter()
@@ -380,7 +440,11 @@ impl WorkerEngine {
                     .collect(),
                 // the memory figures let the sessions of a first open wait for each other when
                 // little is free
-                optional_read_only: vec!["/etc/ld.so.cache".into(), "/proc/meminfo".into()],
+                optional_read_only: if cfg!(unix) {
+                    vec!["/etc/ld.so.cache".into(), "/proc/meminfo".into()]
+                } else {
+                    Vec::new()
+                },
                 proc_self_read: false,
                 // besides its home, the worker may write the engine directory and nothing else
                 read_write: std::iter::once(home.path().to_path_buf())
@@ -389,18 +453,12 @@ impl WorkerEngine {
                 options: opts.confinement.clone(),
             };
             let log = LogSink::default();
-            let (sandbox, channel) = Sandbox::spawn(spec, &log).map_err(ProtoError::from)?;
+            let (sandbox, channel) = launch(spec, &log)?;
             Ok::<_, ProtoError>((sandbox, home, log, channel))
         })
         .await
         .map_err(|e| internal(format!("worker launch task failed: {e}")))??;
-        channel
-            .set_nonblocking(true)
-            .map_err(|e| internal(format!("configuring the worker channel: {e}")))?;
-        let stream = tokio::net::UnixStream::from_std(channel)
-            .map_err(|e| internal(format!("registering the worker channel: {e}")))?;
-        let (reader, writer) = stream.into_split();
-        let client = RpcClient::new(reader, writer);
+        let client = client_over(channel)?;
         *lock(&self.report) = Some(sandbox.report().clone());
         self.pid.store(u64::from(sandbox.pid()), Ordering::SeqCst);
         let live = Live {
@@ -699,6 +757,10 @@ impl WorkerEngine {
         let how = match status {
             Some(s) => match (s.code, s.signal) {
                 (_, Some(sig)) => format!("killed by signal {sig}"),
+                // an NTSTATUS such as 0xc0000005 (access violation) or 0xc0000409 (abort)
+                (Some(code), None) if cfg!(windows) && code < 0 => {
+                    format!("exit status {:#010x}", code.cast_unsigned())
+                }
                 (Some(code), None) => format!("exit code {code}"),
                 (None, None) => "unknown status".to_string(),
             },

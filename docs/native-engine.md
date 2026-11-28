@@ -8,7 +8,8 @@ and smaller than the Ghidra engine, so each project chooses.
 
 ## Quick path
 
-From a checkout of the repository (the native pieces are not in the release archives yet):
+From a checkout of the repository (the Linux and Windows release archives already carry the native
+engine):
 
 ```sh
 cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native
@@ -41,7 +42,7 @@ new projects.
 | Debug-info (DWARF) types, C++ and Rust name demangling | Yes (types, prototypes, locals on x86) | Yes |
 | Function discovery on stripped code | Finds the functions Ghidra finds on the stripped x86 and x86-64 corpus (every one of the 432 ELF, 95 ELF32 and 160 PE recorded entries): besides calls and pointers, a function that starts with a jump is a thunk whose target is a function, and a start that follows a body's end past alignment padding at a 16-byte boundary is one (gcc's `register_tm_clones`) unless the body before it jumps to it or switches to it; Ghidra also lists its imported symbols as functions, so counts differ | The reference |
 | References after deleting or creating functions | Not rebuilt | Kept up to date |
-| Runs where | Linux | Linux; macOS and Windows experimental |
+| Runs where | Linux; Windows (preview, x86-64) | Linux; macOS and Windows experimental |
 
 Use native to get going quickly, for ELF programs (x86, ARM, AArch64, RISC-V), Windows PE images
 and macOS programs. Switch a project to Ghidra (create it again with `--engine ghidra`) when you
@@ -95,6 +96,14 @@ cargo build --release -p kraken-cli -p krakend -p kraken-gui -p engine-native
 
 `-p engine-native` builds `kraken-native-worker`, the process the decompiler runs in (see below);
 it has to sit next to `kraken` and `krakend`, or be named by `KRAKEN_NATIVE_WORKER`.
+
+On Windows (x86-64) the same commands work in a checkout with the Visual Studio C++ build tools
+installed: the decompiler and the Sleigh compiler are built with MSVC (`cargo xtask native-sla`
+finds `cl.exe` itself; set `CXX` and `CC` to use a GCC-style compiler instead), and the pinned
+sources and compiled files go to `%USERPROFILE%\.cache\kraken-dev`. The worker runs as
+`kraken-native-worker.exe`, spoken to over its standard input and output and tied to KRAKEN by a
+job object; Windows has no sandbox around it yet, so it starts only with `allow_unconfined = true`
+(or `KRAKEN_ALLOW_UNCONFINED=1`), as the Ghidra engine does there.
 
 Elsewhere, `kraken setup --native` cannot build anything and prints the exact commands to run in a
 checkout of the repository. Put the compiled files somewhere else with `native_specs` in

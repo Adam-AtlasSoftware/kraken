@@ -14,10 +14,12 @@
 //! directory) and then replays the edit-log operations and type definitions the worker had
 //! accepted but not yet saved.
 //!
-//! Only Unix has the worker; elsewhere [`Isolation::Worker`] runs in-process.
+//! Unix and Windows have the worker (on Windows the protocol runs over the stdin and stdout pipes
+//! and a kill-on-close job object holds the process); elsewhere [`Isolation::Worker`] runs
+//! in-process.
 
-// the wire helpers are only used by the Unix client and server
-#![cfg_attr(not(unix), allow(dead_code))]
+// the wire helpers are only used by the client and server
+#![cfg_attr(not(any(unix, windows)), allow(dead_code))]
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -27,9 +29,9 @@ use kraken_sidecar::ConfinementOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) mod client;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod serve;
 
 /// Name of the worker executable.
@@ -42,6 +44,19 @@ pub const WORKER_ENV: &str = "KRAKEN_NATIVE_WORKER";
 pub const TEST_HOOKS_ARG: &str = "--test-hooks";
 /// Argument that keeps the worker dumpable, so a crash leaves a core dump.
 pub const CORE_DUMPS_ARG: &str = "--core-dumps";
+/// Environment variable that lets the worker start where it cannot be confined (`1`, `true`,
+/// `yes` or `on`), the same switch as `allow_unconfined` in KRAKEN's configuration. Read by
+/// [`WorkerOptions::default`]; Windows needs it, having no sandbox for the worker yet.
+pub const ALLOW_UNCONFINED_ENV: &str = "KRAKEN_ALLOW_UNCONFINED";
+
+fn env_allows_unconfined() -> bool {
+    std::env::var_os(ALLOW_UNCONFINED_ENV).is_some_and(|v| {
+        matches!(
+            v.to_string_lossy().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
 
 /// Where the native engine runs the decompiler.
 #[derive(Debug, Clone)]
@@ -107,7 +122,10 @@ impl Default for WorkerOptions {
     fn default() -> Self {
         WorkerOptions {
             program: None,
-            confinement: ConfinementOptions::default(),
+            confinement: ConfinementOptions {
+                allow_unconfined: env_allows_unconfined(),
+                ..ConfinementOptions::default()
+            },
             request_timeout: Duration::from_secs(60),
             open_idle_timeout: Duration::from_secs(120),
             idle_kills: false,

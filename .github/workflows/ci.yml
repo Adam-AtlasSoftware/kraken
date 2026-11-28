@@ -323,10 +323,51 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       KRAKEN_NO_DAEMON: "1"
+      # Windows has no sandbox for the engines yet: the tests run them with the job object only
+      KRAKEN_ALLOW_UNCONFINED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
+      # The native engine builds Ghidra's decompiler with MSVC from the pinned sources; the Sleigh
+      # compiler is built with MSVC too (`cargo xtask native-sla` finds cl.exe).
+      - name: Cache the pinned Ghidra sources and the compiled Sleigh tree
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/kraken-dev/ghidra-src
+            ~/.cache/kraken-dev/native-sla
+          key: kraken-dev-native-${{ runner.os }}-${{ hashFiles('xtask/src/native_src.rs', 'xtask/src/native_sla.rs') }}
+      - name: Fetch the native engine sources and compile its Sleigh files
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xtask native-src
+          cargo xtask native-sla
+          cache=$(cygpath -w "$HOME/.cache/kraken-dev")
+          {
+            echo "KRAKEN_GHIDRA_SRC=$cache\\ghidra-src\\Ghidra_${GHIDRA_VERSION}_build\\decompile"
+            echo "KRAKEN_NATIVE_SPECS=$cache\\native-sla\\Ghidra_${GHIDRA_VERSION}_build"
+          } >> "$GITHUB_ENV"
+
       - run: cargo build --workspace --all-targets
+      - name: The native engine (decompiler built, PE agreement, worker)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          KRAKEN_AGREEMENT_SET: corpus/pe
+        run: |
+          cargo test -p engine-native-sys -p engine-native --features engine-native-sys/require-native 2>&1 | tee native-output.log
+          test ${PIPESTATUS[0]} -eq 0
+          cargo test -p engine-native --features engine-native-sys/require-native \
+            --test agreement agreement_over_the_corpus -- --ignored --nocapture 2>&1 | tee -a native-output.log
+          test ${PIPESTATUS[0]} -eq 0
+          if grep -n 'skipped:' native-output.log; then
+            echo "::error title=native tests skipped::a prerequisite is missing, the comparison did not run"
+            exit 1
+          fi
       - name: cargo test --workspace
         shell: bash
         run: cargo test --workspace --no-fail-fast 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}

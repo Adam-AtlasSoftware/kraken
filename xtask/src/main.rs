@@ -95,8 +95,17 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+/// `~/.cache/kraken-dev`; on Windows without `HOME`, under the profile directory.
 fn cache_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/kraken-dev"))
+    std::env::var_os("HOME")
+        .or_else(|| {
+            if cfg!(windows) {
+                std::env::var_os("USERPROFILE")
+            } else {
+                None
+            }
+        })
+        .map(|h| PathBuf::from(h).join(".cache/kraken-dev"))
 }
 
 /// First directory entry of `parent` (the pinned archives each extract to one top-level directory).
